@@ -9,6 +9,8 @@ use std::{
 #[derive(Clone)]
 pub(super) struct ObservedDevice {
     pub raw: wgpu::Device,
+    pub resources: Arc<resources::DeviceResources>,
+    pub operation: Option<Arc<resources::OperationState>>,
     pub context: ObservationContext,
     pub batch: Option<Arc<Mutex<BatchState>>>,
 }
@@ -21,6 +23,8 @@ impl Deref for ObservedDevice {
 #[derive(Clone)]
 pub(super) struct ObservedQueue {
     pub raw: wgpu::Queue,
+    pub resources: Arc<resources::DeviceResources>,
+    pub operation: Option<Arc<resources::OperationState>>,
     pub context: ObservationContext,
 }
 impl Deref for ObservedQueue {
@@ -329,21 +333,29 @@ impl WgpuBackend {
             pipe: self.pipe.with_observed(
                 ObservedDevice {
                     raw: self.device.raw.clone(),
+                    resources: self.device.resources.clone(),
+                    operation: self.device.operation.clone(),
                     context: context.clone(),
                     batch: state.clone(),
                 },
                 ObservedQueue {
                     raw: self.queue.raw.clone(),
+                    resources: self.queue.resources.clone(),
+                    operation: self.queue.operation.clone(),
                     context: context.clone(),
                 },
             ),
             device: ObservedDevice {
                 raw: self.device.raw.clone(),
+                resources: self.device.resources.clone(),
+                operation: self.device.operation.clone(),
                 context: context.clone(),
                 batch: state.clone(),
             },
             queue: ObservedQueue {
                 raw: self.queue.raw.clone(),
+                resources: self.queue.resources.clone(),
+                operation: self.queue.operation.clone(),
                 context,
             },
             pipeline_cache: self.pipeline_cache.clone(),
@@ -471,6 +483,7 @@ impl ObservedDevice {
     ) -> ObservedEncoder {
         let mut state = CommandState::default();
         state.batch = self.batch.clone();
+        state.operation = self.operation.clone();
         ObservedEncoder {
             raw: self.raw.create_command_encoder(d),
             context: self.context.clone(),
@@ -530,10 +543,32 @@ impl ObservedQueue {
         &self,
         commands: impl IntoIterator<Item = ObservedCommand>,
     ) -> wgpu::SubmissionIndex {
+        // Encoded commands may outlive their originating backend/guard and be
+        // submitted through another derivative. Keep those owners alive until
+        // the resulting submission has acquired its retirement index.
+        let mut owners: Vec<Arc<resources::OperationState>> = Vec::new();
+        let commands = commands.into_iter().map(|mut command| {
+            if let Some(owner) = command.state.operation.take()
+                && self
+                    .operation
+                    .as_ref()
+                    .is_none_or(|current| !Arc::ptr_eq(current, &owner))
+                && !owners.iter().any(|current| Arc::ptr_eq(current, &owner))
+            {
+                owners.push(owner);
+            }
+            command
+        });
         if !self.context.enabled() {
-            return self
-                .raw
-                .submit(commands.into_iter().map(|command| command.raw));
+            let (retirement, _) = self.resources.submit(
+                &self.raw,
+                commands.map(|command| command.raw),
+                self.operation.as_ref(),
+            );
+            for owner in owners {
+                owner.retain_submission(retirement.clone());
+            }
+            return retirement.index;
         }
         let submitted = Instant::now();
         let mut count = 0;
@@ -546,43 +581,52 @@ impl ObservedQueue {
         let mut device_bytes = 0;
         let mut resolve_count = 0;
         let mut telemetry_bytes = 0;
-        let result = self.raw.submit(commands.into_iter().map(|mut command| {
-            count += 1;
-            let state = &mut command.state;
-            passes += state.pass_count;
-            timed += state.timed_count;
-            dispatches += state.dispatch_count;
-            staging_count += state.stage_count;
-            staging_bytes += state.stage_bytes;
-            device_count += state.device_count;
-            device_bytes += state.device_bytes;
-            resolve_count += state.telemetry_resolve_count;
-            telemetry_bytes += state.telemetry_copy_bytes;
-            if let Some(batch) = &command.batch {
-                let mut batch = batch.lock();
-                batch.submitted.get_or_insert(submitted);
-                self.context.record_omitted_details(
-                    state.pass_count.saturating_sub(state.passes.len() as u64),
-                );
-                batch.executed += state.pass_count;
-                batch.timed += state.timed_count;
-                batch.pending_details -= state.reservation_count;
-                state.reservation_count = 0;
-                for pass in &mut state.passes {
-                    pass.index = pass
-                        .index
-                        .saturating_add((batch.executed - state.pass_count) as u32);
-                    if let Some(parent) = &pass.scope {
-                        let scope =
-                            parent.scope(pass.name, ObservationKind::Pass, parent.purpose());
-                        pass.scope = scope.context().retained().then(|| scope.context().clone());
+        let (result, waited) = self.resources.submit(
+            &self.raw,
+            commands.into_iter().map(|mut command| {
+                count += 1;
+                let state = &mut command.state;
+                passes += state.pass_count;
+                timed += state.timed_count;
+                dispatches += state.dispatch_count;
+                staging_count += state.stage_count;
+                staging_bytes += state.stage_bytes;
+                device_count += state.device_count;
+                device_bytes += state.device_bytes;
+                resolve_count += state.telemetry_resolve_count;
+                telemetry_bytes += state.telemetry_copy_bytes;
+                if let Some(batch) = &command.batch {
+                    let mut batch = batch.lock();
+                    batch.submitted.get_or_insert(submitted);
+                    self.context.record_omitted_details(
+                        state.pass_count.saturating_sub(state.passes.len() as u64),
+                    );
+                    batch.executed += state.pass_count;
+                    batch.timed += state.timed_count;
+                    batch.pending_details -= state.reservation_count;
+                    state.reservation_count = 0;
+                    for pass in &mut state.passes {
+                        pass.index = pass
+                            .index
+                            .saturating_add((batch.executed - state.pass_count) as u32);
+                        if let Some(parent) = &pass.scope {
+                            let scope =
+                                parent.scope(pass.name, ObservationKind::Pass, parent.purpose());
+                            pass.scope =
+                                scope.context().retained().then(|| scope.context().clone());
+                        }
                     }
+                    batch.passes.append(&mut state.passes);
                 }
-                batch.passes.append(&mut state.passes);
-            }
-            command.raw
-        }));
+                command.raw
+            }),
+            self.operation.as_ref(),
+        );
+        for owner in owners {
+            owner.retain_submission(result.clone());
+        }
         let work = WorkCounters {
+            host_wait_count: Some(u64::from(waited)),
             submit_count: Some(1),
             command_buffer_count: Some(count),
             dispatch_count: Some(dispatches),
@@ -606,11 +650,12 @@ impl ObservedQueue {
             self.context.record_executor(Executor::Gpu, None);
         }
         self.context.record_work(&work);
-        result
+        result.index
     }
 }
 #[derive(Default)]
 struct CommandState {
+    operation: Option<Arc<resources::OperationState>>,
     pass_count: u64,
     timed_count: u64,
     dispatch_count: u64,

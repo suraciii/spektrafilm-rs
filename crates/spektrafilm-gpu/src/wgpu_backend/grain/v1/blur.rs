@@ -3,7 +3,7 @@ use spektrafilm_math::precision::{Scalar, from_f64};
 use std::num::NonZeroU64;
 
 #[path = "blur_bounded.rs"]
-mod bounded;
+pub(in crate::wgpu_backend) mod bounded;
 
 const FIR_LAYOUT: [wgpu::BufferBindingType; 4] = [
     wgpu::BufferBindingType::Uniform,

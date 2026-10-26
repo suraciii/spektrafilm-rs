@@ -32,13 +32,14 @@ pub(super) fn build_gamut_state(
                 .into(),
         );
     }
-    let pipe = backend.cached_pipeline(
+    let pipe = backend.cached_pointwise_pipeline(
         GAMUT_SHADER,
         &[
             wgpu::BufferBindingType::Uniform,
             wgpu::BufferBindingType::Storage { read_only: true },
             wgpu::BufferBindingType::Storage { read_only: false },
         ],
+        &[(2, "img")],
     );
     #[repr(C)]
     #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
@@ -117,7 +118,7 @@ pub(super) fn build_gamut_state(
     let dispatch = backend.chain_pointwise(
         pipe,
         &[&params_buf, &cmax_buf, &pages],
-        &[(2, true)],
+        &[(2, super::page_views::Access::ReadWrite)],
         n_pixels,
         false,
         "output_gamut",

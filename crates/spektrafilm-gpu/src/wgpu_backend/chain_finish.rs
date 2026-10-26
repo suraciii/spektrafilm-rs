@@ -41,7 +41,7 @@ impl WgpuBackend {
                 }),
                 usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_SRC,
             });
-        let pipeline = self.cached_pipeline(
+        let pipeline = self.cached_pointwise_pipeline(
             concat!(
                 include_str!("../../../spektrafilm-shaders/wgsl/cctf_lib.wgsl"),
                 include_str!("../../../spektrafilm-shaders/wgsl/cctf_transfer.wgsl")
@@ -50,12 +50,13 @@ impl WgpuBackend {
                 wgpu::BufferBindingType::Uniform,
                 wgpu::BufferBindingType::Storage { read_only: false },
             ],
+            &[(1, "data")],
         );
         let pages = image.pages();
         self.chain_pointwise(
             pipeline,
             &[&uniform, &pages],
-            &[(1, true)],
+            &[(1, super::page_views::Access::ReadWrite)],
             n_pixels,
             false,
             "output_transfer",
@@ -106,7 +107,7 @@ impl WgpuBackend {
                 }),
                 usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_SRC,
             });
-        let pipeline = self.cached_pipeline(
+        let pipeline = self.cached_pointwise_pipeline(
             concat!(
                 include_str!("../../../spektrafilm-shaders/wgsl/cctf_lib.wgsl"),
                 include_str!("../../../spektrafilm-shaders/wgsl/cmyk_ink.wgsl")
@@ -115,12 +116,13 @@ impl WgpuBackend {
                 wgpu::BufferBindingType::Uniform,
                 wgpu::BufferBindingType::Storage { read_only: false },
             ],
+            &[(1, "data")],
         );
         let pages = image.pages();
         self.chain_pointwise(
             pipeline,
             &[&uniform, &pages],
-            &[(1, true)],
+            &[(1, super::page_views::Access::ReadWrite)],
             n_pixels,
             false,
             "cmyk",

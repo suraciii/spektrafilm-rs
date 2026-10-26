@@ -9,9 +9,7 @@ pub(in crate::wgpu_backend) mod mt19937;
 pub(in crate::wgpu_backend) mod raster;
 pub mod v1;
 pub(in crate::wgpu_backend) use raster::RasterStorage;
-pub(in crate::wgpu_backend) use v1::{
-    GRAIN_V1_STAGE_NAME, SpektraGrainV1State, build_spektra_grain_state,
-};
+pub(in crate::wgpu_backend) use v1::{GRAIN_V1_STAGE_NAME, build_spektra_grain_state};
 
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
@@ -226,7 +224,7 @@ impl WgpuBackend {
 }
 
 mod procedural;
-pub(super) use procedural::{GrainV2State, build_grain_v2_state};
+pub(super) use procedural::build_grain_v2_state;
 
 #[cfg(test)]
 mod tests {

@@ -16,7 +16,6 @@ mod optical;
 
 #[path = "dye_paged.rs"]
 mod paged;
-pub(in crate::wgpu_backend) use paged::DyePagedState;
 
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
@@ -110,6 +109,42 @@ impl WgpuBackend {
         params: &DyeGpuParams,
     ) -> Result<(), String> {
         self.dye_plan(width, height, params).map(|_| ())
+    }
+
+    /// Additional resident field output, shared band scratch, and retained
+    /// per-band coefficients. Aliased band handles are counted only once.
+    pub(in crate::wgpu_backend) fn dye_workspace_bytes(
+        &self,
+        width: u32,
+        height: u32,
+        params: &DyeGpuParams,
+        response_wavelengths: Option<usize>,
+    ) -> Result<u64, String> {
+        let plan = self.dye_plan(width, height, params)?;
+        let per_band = dye_layers::LAYER_PARAMS_BYTES
+            + std::mem::size_of::<AccumulateParams>() as u64
+            + 2 * dye_spatial::SPATIAL_PARAMS_BYTES
+            + response_wavelengths.map_or(0, |_| optical::RESPONSE_PARAMS_BYTES);
+        let parts = [
+            u64::from(params.grid.width)
+                .checked_mul(u64::from(params.grid.height))
+                .and_then(|v| v.checked_mul(12)),
+            Some(plan.max_band_bytes[0] / 3),
+            plan.max_band_bytes
+                .into_iter()
+                .try_fold(0u64, u64::checked_add),
+            Some(plan.max_output_bytes),
+            (plan.bands.len() as u64).checked_mul(per_band),
+            Some(std::mem::size_of_val(params.tables.tables.as_slice()) as u64),
+            (params.tables.curves.len() as u64).checked_mul(4),
+            (params.taps.len() as u64).checked_mul(4),
+            response_wavelengths.map_or(Some(0), |n| (n as u64).checked_mul(32)),
+            Some(8), // execution status and its four-byte readback
+        ];
+        parts.into_iter().try_fold(0u64, |sum, part| {
+            sum.checked_add(part.ok_or("Dye workspace byte size overflow")?)
+                .ok_or_else(|| "Dye workspace byte size overflow".to_owned())
+        })
     }
 
     fn dye_plan(&self, width: u32, height: u32, params: &DyeGpuParams) -> Result<DyePlan, String> {

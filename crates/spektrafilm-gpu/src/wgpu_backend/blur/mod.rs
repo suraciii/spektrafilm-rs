@@ -129,12 +129,6 @@ impl BlurJob {
     }
 }
 
-pub(super) struct DispatchJob {
-    pub(super) _params_buf: wgpu::Buffer,
-    pub(super) pipeline: CachedPipelineRef,
-    pub(super) bg: wgpu::BindGroup,
-}
-
 pub(super) struct SimpleBlurState {
     dst: Vec<ImagePage>,
     blur: BlurJob,

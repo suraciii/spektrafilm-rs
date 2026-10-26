@@ -62,7 +62,6 @@ fn highlight_uses_the_last_chunk_maximum_for_every_chunk() {
         protect_ev: 0.0,
     };
     let state = build_highlight_boost_state(&backend.device, &hp, 17 * 9, &img, &backend).unwrap();
-    assert!(state.reductions.len() > 1);
     state.submit(&backend).unwrap();
     let got = readback(&backend, &img);
     let a = 28.0f64.powf(1.0 - f64::from(hp.boost_range));

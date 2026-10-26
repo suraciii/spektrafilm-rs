@@ -4,6 +4,10 @@ struct Params {
     scale: f32,
     _pad0: u32,
     _pad1: u32,
+    source_base: u32,
+    destination_base: u32,
+    _pad_bases0: u32,
+    _pad_bases1: u32,
 }
 @group(0) @binding(0) var<uniform> params: Params;
 @group(0) @binding(1) var<storage, read> tail: array<f32>;
@@ -14,6 +18,6 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_workgroups) 
     if pixel >= params.n_pixels { return; }
     for (var c = 0u; c < 3u; c += 1u) {
         let i = pixel * 3u + c;
-        gaussian[i] = (1.0 - params.scale) * gaussian[i] + params.scale * tail[i];
+        gaussian[params.destination_base + i] = (1.0 - params.scale) * gaussian[params.destination_base + i] + params.scale * tail[params.source_base + i];
     }
 }

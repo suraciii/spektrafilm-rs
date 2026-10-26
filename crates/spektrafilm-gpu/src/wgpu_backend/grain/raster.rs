@@ -1,19 +1,14 @@
 //! Storage windows over physically paged full-source rasters.
-use super::super::observation::ObservedCommand;
 use super::super::paged::ImagePage;
 use super::super::*;
 
 pub(in crate::wgpu_backend) trait RasterStorage {
     fn visit(&self, visitor: &mut dyn FnMut(u64, &wgpu::Buffer));
     fn image_pages(&self) -> Vec<ImagePage>;
-    fn samples(&self) -> u64 {
-        let mut samples = 0;
-        self.visit(&mut |first, buffer| samples = samples.max((first + buffer.size()) / 4));
-        samples
-    }
     fn pages(&self) -> Vec<ImagePage> {
         self.image_pages()
     }
+    #[cfg(test)]
     fn read(
         &self,
         encoder: &mut ObservedEncoder,
@@ -109,58 +104,6 @@ pub(in crate::wgpu_backend) fn paged_transport(
     let count =
         u32::try_from(pixels).map_err(|_| format!("{label} logical pixel indexing overflows"))?;
     backend.allocate_image_pages(count, 1, label)
-}
-
-/// Keep at most two submitted command batches alive while the next is encoded.
-/// Submission alone only polls completed work: a fast producer can otherwise
-/// retain every command buffer and its transient uniforms behind a slow GPU.
-#[derive(Default)]
-pub(in crate::wgpu_backend) struct SubmissionWindow {
-    latest: Option<wgpu::SubmissionIndex>,
-}
-
-impl SubmissionWindow {
-    pub fn submit(
-        &mut self,
-        backend: &WgpuBackend,
-        command: ObservedCommand,
-    ) -> Result<(), String> {
-        backend.check_cancelled()?;
-        let index = backend.queue.submit(Some(command));
-        if let Some(previous) = self.latest.replace(index) {
-            Self::retire(backend, previous)?;
-        }
-        backend.check_cancelled()
-    }
-
-    pub fn finish(&mut self, backend: &WgpuBackend) -> Result<(), String> {
-        backend.check_cancelled()?;
-        if let Some(index) = self.latest.take() {
-            Self::retire(backend, index)?;
-        }
-        backend.check_cancelled()
-    }
-
-    fn retire(backend: &WgpuBackend, index: wgpu::SubmissionIndex) -> Result<(), String> {
-        backend.check_cancelled()?;
-        // This is resource retirement, not image-map readiness. The observed
-        // blocking poll would incorrectly close the whole batch's timing here.
-        // As with readback, an entered driver wait may finish after cancellation.
-        backend
-            .device
-            .raw
-            .poll(wgpu::Maintain::WaitForSubmissionIndex(index));
-        if backend.device.context.enabled() {
-            backend
-                .device
-                .context
-                .record_work(&spektrafilm_backend::telemetry::WorkCounters {
-                    host_wait_count: Some(1),
-                    ..Default::default()
-                });
-        }
-        backend.check_cancelled()
-    }
 }
 
 pub(in crate::wgpu_backend) enum RasterCommand {
@@ -285,7 +228,6 @@ impl RasterCommands {
     /// Bound both commands per submission and submitted resource lifetimes.
     /// The queue preserves scratch reuse and stochastic state ordering.
     pub fn submit(&self, backend: &WgpuBackend) -> Result<(), String> {
-        let mut window = SubmissionWindow::default();
         for commands in self.0.chunks(64) {
             backend.check_cancelled()?;
             let mut encoder = backend.device.create_command_encoder(&Default::default());
@@ -326,9 +268,9 @@ impl RasterCommands {
                 }
             }
             backend.check_cancelled()?;
-            window.submit(backend, encoder.finish())?;
+            backend.queue.submit(Some(encoder.finish()));
         }
-        window.finish(backend)
+        backend.check_cancelled()
     }
 }
 
@@ -360,98 +302,4 @@ pub(super) fn uniform<P: bytemuck::Pod>(backend: &WgpuBackend, params: &P) -> wg
             contents: bytemuck::bytes_of(params),
             usage: wgpu::BufferUsages::UNIFORM,
         })
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use spektrafilm_backend::telemetry::{
-        AvailabilityReason, CollectionMode, Measurement, ObservationContext, ObservationKind,
-        Purpose,
-    };
-    use std::sync::mpsc;
-
-    #[test]
-    fn submission_window_retires_work_without_claiming_image_readiness() {
-        let gpu = crate::test_support::adapter();
-        let mut backend = gpu.derived_explicit();
-        let context = ObservationContext::new(CollectionMode::Summary);
-        let stage = context.scope("grain_spektra_v1", ObservationKind::Stage, Purpose::Image);
-        backend.context_mut(stage.context().clone());
-        let (backend, batch_guard) = backend.observed_batch("grain_retirement");
-        let expected = [17u32, 29, 43, 71];
-        let source = backend
-            .device
-            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("retirement_source"),
-                contents: bytemuck::cast_slice(&expected),
-                usage: wgpu::BufferUsages::COPY_SRC,
-            });
-        let intermediate = transport(&backend, source.size(), "retirement_intermediate").unwrap();
-        let result = backend.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("retirement_readback"),
-            size: source.size(),
-            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-            mapped_at_creation: false,
-        });
-        let mut window = SubmissionWindow::default();
-        let mut first = backend.device.create_command_encoder(&Default::default());
-        first.copy_buffer_to_buffer(&source, 0, &intermediate, 0, source.size());
-        window.submit(&backend, first.finish()).unwrap();
-        let (first_done, first_ready) = mpsc::channel();
-        backend.queue.on_submitted_work_done(move || {
-            let _ = first_done.send(());
-        });
-        let mut second = backend.device.create_command_encoder(&Default::default());
-        second.copy_buffer_to_buffer(&intermediate, 0, &result, 0, source.size());
-        window.submit(&backend, second.finish()).unwrap();
-        assert_eq!(
-            first_ready.try_recv(),
-            Ok(()),
-            "oldest batch must be retired"
-        );
-
-        let (mapped, map_ready) = mpsc::channel();
-        result
-            .slice(..)
-            .map_async(wgpu::MapMode::Read, move |status| {
-                let _ = mapped.send(status);
-            });
-        let (finished, finish_ready) = mpsc::channel();
-        backend.queue.on_submitted_work_done(move || {
-            let _ = finished.send(());
-        });
-        window.finish(&backend).unwrap();
-        // No test-side poll or submission may complete the callbacks for us.
-        assert_eq!(
-            finish_ready.try_recv(),
-            Ok(()),
-            "final batch must be retired"
-        );
-        map_ready
-            .try_recv()
-            .expect("final retirement must deliver the map callback")
-            .expect("retired result must map successfully");
-        let values = result.slice(..).get_mapped_range();
-        assert_eq!(bytemuck::cast_slice::<u8, u32>(&values), &expected);
-        drop(values);
-        result.unmap();
-
-        // Resource fences are not an image-map completion boundary, even when
-        // a test readback happens to map while those fences are being retired.
-        drop(batch_guard);
-        drop(stage);
-        let snapshot = context.snapshot();
-        let measurements = snapshot
-            .observations
-            .iter()
-            .find(|observation| observation.kind == ObservationKind::Batch)
-            .unwrap()
-            .batch
-            .as_ref()
-            .unwrap();
-        let incomplete = Measurement::unavailable(AvailabilityReason::Incomplete);
-        assert_eq!(measurements.submit_to_map_ready, incomplete);
-        assert_eq!(measurements.host_materialize, incomplete);
-    }
 }

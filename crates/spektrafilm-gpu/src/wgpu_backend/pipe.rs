@@ -37,6 +37,7 @@ struct ReadbackPool {
 /// Cap pooled readback buffers so pathological image sizes cannot
 /// accumulate device memory across frames.
 const READBACK_POOL_MAX_BUFFERS: usize = 8;
+const READBACK_POOL_MAX_BYTES: u64 = super::resources::WORKSPACE_BINDING_BYTES;
 
 /// Cap the cross-frame static-resource cache so a parameter sweep (every frame
 /// a new configuration) cannot grow device memory or the host-side content
@@ -108,11 +109,7 @@ impl StaticBufferCache {
             },
         );
         while entries.len() > STATIC_CACHE_MAX_ENTRIES
-            || entries
-                .iter()
-                .map(|entry| entry.contents.len() as u64)
-                .sum::<u64>()
-                > STATIC_CACHE_MAX_BYTES
+            || entries.iter().map(|entry| entry.buffer.size()).sum::<u64>() > STATIC_CACHE_MAX_BYTES
         {
             entries.pop();
         }
@@ -148,6 +145,20 @@ pub(super) struct GpuPipe {
 }
 
 impl GpuPipe {
+    pub(super) fn retained_cache_bytes(&self) -> Result<u64, String> {
+        let pool = self.pool.lock();
+        let cache = self.static_cache.entries.lock();
+        pool.buffers
+            .iter()
+            .map(|(_, buffer)| buffer.size())
+            .chain(cache.iter().map(|entry| entry.buffer.size()))
+            .try_fold(0u64, |bytes, size| {
+                bytes
+                    .checked_add(size)
+                    .ok_or_else(|| "retained GPU pipe capacity overflows".to_owned())
+            })
+    }
+
     pub(super) fn new(
         device: ObservedDevice,
         queue: ObservedQueue,
@@ -295,6 +306,34 @@ impl GpuPipe {
             );
             return None;
         }
+        let additional = bindings.iter().try_fold(
+            bindings[output_idx].data.len() as u64,
+            |bytes, binding| {
+                let allocation = (binding.data.len() as u64).max(4).checked_add(3)? / 4 * 4;
+                bytes.checked_add(allocation)
+            },
+        )?;
+        // A chain already owns its complete checked working set. Standalone
+        // host dispatches still share admission with render/export derivatives.
+        let operation = if self.queue.operation.is_none() {
+            let cached = if self.device.resources.native_buffer_bytes().is_none() {
+                self.retained_cache_bytes().ok()?
+            } else {
+                0
+            };
+            Some(
+                self.device
+                    .resources
+                    .admit(additional, cached, self.cancellation.as_ref())
+                    .ok()?,
+            )
+        } else {
+            None
+        };
+        let queue = operation.as_ref().map_or_else(
+            || self.queue.clone(),
+            |operation| operation.queue(&self.queue),
+        );
         let binding_types: Vec<wgpu::BufferBindingType> =
             bindings.iter().map(|b| b.binding_type).collect();
         let (cached, hit) =
@@ -359,7 +398,7 @@ impl GpuPipe {
             dispatch_linear(&mut pass, n_pixels);
         }
         encoder.copy_buffer_to_buffer(&gpu_buffers[output_idx], 0, &readback, 0, output_size);
-        self.queue.submit(Some(encoder.finish()));
+        queue.submit(Some(encoder.finish()));
 
         let out = self.read_mapped_f32(&readback, output_size);
         self.return_readback(readback, output_size);
@@ -556,7 +595,11 @@ impl GpuPipe {
 
     fn return_readback(&self, buffer: wgpu::Buffer, size: u64) {
         let mut pool = self.pool.lock();
-        if pool.buffers.len() < READBACK_POOL_MAX_BUFFERS {
+        if pool.buffers.len() < READBACK_POOL_MAX_BUFFERS
+            && size
+                <= READBACK_POOL_MAX_BYTES
+                    .saturating_sub(pool.buffers.iter().map(|(bytes, _)| *bytes).sum())
+        {
             pool.buffers.push((size, buffer));
         }
     }

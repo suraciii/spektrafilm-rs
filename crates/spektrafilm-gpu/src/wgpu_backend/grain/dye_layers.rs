@@ -27,6 +27,8 @@ struct LayerParams {
     region: [u32; 4],
 }
 
+pub(super) const LAYER_PARAMS_BYTES: u64 = std::mem::size_of::<LayerParams>() as u64;
+
 pub(super) struct LayerPass {
     pipeline: CachedPipelineRef,
     group: wgpu::BindGroup,

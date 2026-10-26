@@ -12,6 +12,8 @@ struct ResponseUniform {
     matrix: [[f32; 4]; 3],
 }
 
+pub(super) const RESPONSE_PARAMS_BYTES: u64 = std::mem::size_of::<ResponseUniform>() as u64;
+
 pub(super) struct ResponseSetup {
     uniform: ResponseUniform,
     spectrum: wgpu::Buffer,

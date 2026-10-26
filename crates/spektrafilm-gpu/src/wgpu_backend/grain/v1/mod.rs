@@ -19,6 +19,12 @@ use spektrafilm_backend::GrainV1GpuParams;
 /// Pass name in the resident chain's stage list (the density-fence slot).
 pub(in crate::wgpu_backend) const GRAIN_V1_STAGE_NAME: &str = "grain_spektra_v1";
 
+/// Bound transport scratch independently of image paging and coefficient
+/// bindings. This changes only execution partitions, never global RNG indices.
+pub(in crate::wgpu_backend) fn transport_window_limit(binding_limit: u64) -> u64 {
+    binding_limit.min(super::super::resources::WORKSPACE_BINDING_BYTES)
+}
+
 /// Resident grain formation, layer optics, clumping, and density finishing.
 pub(in crate::wgpu_backend) struct SpektraGrainV1State {
     dispatch: RasterCommands,
@@ -75,6 +81,7 @@ fn build_spektra_grain_state_with_limit(
     backend: &WgpuBackend,
     limit: u64,
 ) -> Result<SpektraGrainV1State, String> {
+    let window_limit = transport_window_limit(limit);
     if !device
         .features()
         .contains(wgpu::Features::SHADER_F64 | wgpu::Features::SHADER_INT64)
@@ -103,7 +110,7 @@ fn build_spektra_grain_state_with_limit(
         .checked_mul(height)
         .filter(|&n| n > 0 && n <= u32::MAX / 3)
         .ok_or("Spektra grain indexing overflows")?;
-    let chunk = (limit / (12 * u64::from(n_layers.max(1)))).min(u64::from(n_pixels)) as u32;
+    let chunk = (window_limit / (12 * u64::from(n_layers.max(1)))).min(u64::from(n_pixels)) as u32;
     if chunk == 0 {
         return Err("Spektra grain minimum layer window exceeds storage binding limit".into());
     }

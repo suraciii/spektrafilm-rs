@@ -13,8 +13,8 @@
 
 struct Params {
     n_pixels: u32,
-    _pad0: u32,
-    _pad1: u32,
+    source_base: u32,
+    destination_base: u32,
     _pad2: u32,
     // Amplitude-matched receiver knee, reference and activity per
     // channel (`.w` padding).
@@ -33,7 +33,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_workgroups) 
     if idx >= params.n_pixels { return; }
     let base = idx * 3u;
 
-    var c: vec3<f32> = vec3<f32>(src[base], src[base + 1u], src[base + 2u]);
+    var c: vec3<f32> = vec3<f32>(src[params.source_base + base], src[params.source_base + base + 1u], src[params.source_base + base + 2u]);
     // g(C) = C (Kr + C_ref) / (Kr + C) — amplitude-matched at C_ref.
     let k = params.receiver_k.xyz;
     let r = params.receiver_ref.xyz;
@@ -45,7 +45,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_workgroups) 
         select(c.z, saturated.z, mask.z > 0.5),
     );
 
-    dst[base] = dst[base] - c.x;
-    dst[base + 1u] = dst[base + 1u] - c.y;
-    dst[base + 2u] = dst[base + 2u] - c.z;
+    dst[params.destination_base + base] = dst[params.destination_base + base] - c.x;
+    dst[params.destination_base + base + 1u] = dst[params.destination_base + base + 1u] - c.y;
+    dst[params.destination_base + base + 2u] = dst[params.destination_base + base + 2u] - c.z;
 }

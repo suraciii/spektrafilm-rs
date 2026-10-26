@@ -1,5 +1,5 @@
 use super::{
-    ImageBuf, InputDecodeState, WgpuBackend, build_dir_state, build_gamut_state, build_glare_state,
+    ImageBuf, WgpuBackend, build_dir_state, build_gamut_state, build_glare_state,
     build_grain_v2_state, build_halation_state, build_highlight_boost_state,
     build_input_decode_state, build_simple_blur_state, build_spektra_grain_state,
     build_unsharp_state, dispatch_linear, f32_to_scalars, scalars_to_f32,
@@ -35,6 +35,7 @@ impl WgpuBackend {
 
 mod buffers;
 pub(super) mod device_image;
+mod effect_resources;
 mod input_geometry;
 mod output_samples;
 mod passes;

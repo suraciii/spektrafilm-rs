@@ -13,7 +13,7 @@ precision-f64 = ["spektrafilm-math/precision-f64", "spektrafilm-backend/precisio
 spektrafilm-backend.workspace = true
 spektrafilm-math.workspace = true
 tracing.workspace = true
-wgpu = { workspace = true, optional = true, features = ["wgsl"] }
+wgpu = { workspace = true, optional = true, features = ["wgsl", "counters"] }
 bytemuck = { version = "1.25", features = ["derive"] }
 pollster = "0.4"
 parking_lot = "0.12"

@@ -47,10 +47,14 @@ impl ComputeBackend for WgpuBackend {
             raw: self.device.raw.clone(),
             context: context.clone(),
             batch: None,
+            resources: self.device.resources.clone(),
+            operation: self.device.operation.clone(),
         };
         let queue = ObservedQueue {
             raw: self.queue.raw.clone(),
             context,
+            resources: self.queue.resources.clone(),
+            operation: self.queue.operation.clone(),
         };
         Some(Box::new(Self {
             pipe: self.pipe.with_observed(device.clone(), queue.clone()),

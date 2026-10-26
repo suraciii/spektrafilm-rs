@@ -61,7 +61,6 @@ pub(in crate::wgpu_backend) struct DyePagedState {
     bands: Vec<PagedBand>,
     pub(in crate::wgpu_backend) output_pages: Vec<ImagePage>,
     pub(in crate::wgpu_backend) width: u32,
-    pub(in crate::wgpu_backend) height: u32,
     status: wgpu::Buffer,
 }
 
@@ -211,7 +210,6 @@ impl WgpuBackend {
             bands,
             output_pages,
             width: params.grid.width,
-            height: params.grid.height,
             status,
         })
     }

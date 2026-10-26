@@ -3,6 +3,14 @@ use spektrafilm_backend::cpu_backend::CpuBackend;
 use spektrafilm_math::precision::{from_f64, to_f64};
 
 #[test]
+fn transport_scratch_does_not_scale_with_hardware_binding_maximum() {
+    let cap = super::super::super::resources::WORKSPACE_BINDING_BYTES;
+    assert_eq!(transport_window_limit(u64::MAX), cap);
+    assert_eq!(transport_window_limit(cap * 8), cap);
+    assert_eq!(transport_window_limit(4096), 4096);
+}
+
+#[test]
 fn layered_fast_stats_matches_reference_across_workgroups() {
     let gpu = crate::test_support::adapter();
     assert!(
@@ -155,27 +163,39 @@ fn layered_fast_stats_matches_reference_across_workgroups() {
                     }),
             })
             .collect();
-        let bounded = build_spektra_grain_state_with_limit(
-            &gpu.device,
-            width,
-            height,
-            &pages,
-            &params,
-            &gpu,
-            4096,
-        )
-        .expect("bounded global-index grain");
-        bounded.submit(&gpu).unwrap();
-        let mut encoder = gpu.device.create_command_encoder(&Default::default());
-        let mut copies = RasterCommands::default();
-        copies.copy(&pages, 0, &readback, 0, bytes);
-        copies.encode(&mut encoder);
-        gpu.queue.submit(Some(encoder.finish()));
-        assert_eq!(
-            actual,
-            gpu.read_mapped_f32(&readback, bytes),
-            "storage windows changed global RNG identity"
-        );
+        // Each replay starts from immutable original samples. Chunk changes
+        // must preserve global RNG identity, not reseed each transport window.
+        for limit in [4096, 540] {
+            for page in &pages {
+                let first = page.first_pixel as usize * 3;
+                gpu.queue.write_buffer(
+                    &page.buffer,
+                    0,
+                    bytemuck::cast_slice(&input[first..first + page.n_pixels as usize * 3]),
+                );
+            }
+            let bounded = build_spektra_grain_state_with_limit(
+                &gpu.device,
+                width,
+                height,
+                &pages,
+                &params,
+                &gpu,
+                limit,
+            )
+            .expect("bounded global-index grain");
+            bounded.submit(&gpu).unwrap();
+            let mut encoder = gpu.device.create_command_encoder(&Default::default());
+            let mut copies = RasterCommands::default();
+            copies.copy(&pages, 0, &readback, 0, bytes);
+            copies.encode(&mut encoder);
+            gpu.queue.submit(Some(encoder.finish()));
+            assert_eq!(
+                actual,
+                gpu.read_mapped_f32(&readback, bytes),
+                "storage window {limit} changed global RNG identity"
+            );
+        }
         for (i, (&actual, &expected)) in actual.iter().zip(&reference.data).enumerate() {
             let expected = to_f64(expected);
             assert!(

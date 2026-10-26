@@ -24,6 +24,7 @@ struct PipelineKey {
     shader_source: usize,
     binding_types: Vec<BufferBindingKey>,
     entry_point: &'static str,
+    pointwise_images: [Option<&'static str>; 16],
 }
 
 impl PipelineKey {
@@ -36,6 +37,7 @@ impl PipelineKey {
             shader_source: shader_source.as_ptr() as usize,
             binding_types: binding_types.iter().copied().map(Into::into).collect(),
             entry_point,
+            pointwise_images: [None; 16],
         }
     }
 }
@@ -77,13 +79,42 @@ impl PipelineCache {
         binding_types: &[wgpu::BufferBindingType],
         entry_point: &'static str,
     ) -> (CachedPipelineRef, bool) {
-        let key = PipelineKey::new(shader_source, binding_types, entry_point);
+        self.get_or_compile_key(
+            device,
+            PipelineKey::new(shader_source, binding_types, entry_point),
+            binding_types,
+            || Cow::Borrowed(shader_source),
+        )
+    }
+
+    pub(super) fn get_or_compile_pointwise(
+        &self,
+        device: &wgpu::Device,
+        original: &'static str,
+        binding_types: &[wgpu::BufferBindingType],
+        images: &[(usize, &'static str)],
+        source: impl FnOnce() -> String,
+    ) -> (CachedPipelineRef, bool) {
+        let mut key = PipelineKey::new(original, binding_types, "main");
+        for &(binding, name) in images {
+            key.pointwise_images[binding] = Some(name);
+        }
+        self.get_or_compile_key(device, key, binding_types, || Cow::Owned(source()))
+    }
+
+    fn get_or_compile_key(
+        &self,
+        device: &wgpu::Device,
+        key: PipelineKey,
+        binding_types: &[wgpu::BufferBindingType],
+        source: impl FnOnce() -> Cow<'static, str>,
+    ) -> (CachedPipelineRef, bool) {
         let mut cache = self.pipelines.lock();
         let hit = cache.contains_key(&key);
         if !hit {
             let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
                 label: Some("compute_shader"),
-                source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(shader_source)),
+                source: wgpu::ShaderSource::Wgsl(source()),
             });
             let entries: Vec<wgpu::BindGroupLayoutEntry> = binding_types
                 .iter()
@@ -113,7 +144,7 @@ impl PipelineCache {
                 label: Some("compute_pipeline"),
                 layout: Some(&pipeline_layout),
                 module: &shader,
-                entry_point: Some(entry_point),
+                entry_point: Some(key.entry_point),
                 compilation_options: Default::default(),
                 cache: None,
             });

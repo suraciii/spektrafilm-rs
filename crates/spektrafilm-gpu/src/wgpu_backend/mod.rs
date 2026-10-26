@@ -1,6 +1,9 @@
 //! wgpu compute backend — dispatches WGSL shaders on GPU via Metal/Vulkan/DX12.
 
 mod observation;
+#[cfg(feature = "wgpu-backend")]
+mod page_views;
+mod resources;
 use observation::{ObservedDevice, ObservedEncoder, ObservedPass, ObservedQueue};
 use spektrafilm_backend::telemetry::*;
 
@@ -207,13 +210,21 @@ impl WgpuBackend {
             "wgpu backend initialized"
         );
 
+        let resources = std::sync::Arc::new(resources::DeviceResources::new(
+            device.clone(),
+            adapter_info.backend == wgpu::Backend::Vulkan,
+        ));
         let device = ObservedDevice {
             raw: device,
+            resources: resources.clone(),
+            operation: None,
             context: ObservationContext::default(),
             batch: None,
         };
         let queue = ObservedQueue {
             raw: queue,
+            resources,
+            operation: None,
             context: ObservationContext::default(),
         };
         let pipeline_cache = std::sync::Arc::new(PipelineCache::default());
@@ -257,11 +268,15 @@ impl WgpuBackend {
     pub fn derived_explicit(&self) -> Self {
         let device = ObservedDevice {
             raw: self.device.raw.clone(),
+            resources: self.device.resources.clone(),
+            operation: self.device.operation.clone(),
             context: self.device.context.clone(),
             batch: None,
         };
         let queue = ObservedQueue {
             raw: self.queue.raw.clone(),
+            resources: self.queue.resources.clone(),
+            operation: self.queue.operation.clone(),
             context: self.queue.context.clone(),
         };
         Self {
@@ -334,6 +349,11 @@ impl WgpuBackend {
             binding_types,
             entry_point,
         );
+        self.record_pipeline_cache_lookup(hit);
+        cached
+    }
+
+    fn record_pipeline_cache_lookup(&self, hit: bool) {
         if self.device.context.enabled() {
             let mut w = WorkCounters::default();
             if hit {
@@ -343,7 +363,6 @@ impl WgpuBackend {
             }
             self.device.context.record_work(&w);
         }
-        cached
     }
 }
 

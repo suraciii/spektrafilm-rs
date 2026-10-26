@@ -97,28 +97,40 @@ fn fresh_backend(
         },
         timestamp_reason: reason,
     };
+    let resources = Arc::new(super::resources::DeviceResources::new(
+        device.clone(),
+        info.backend == wgpu::Backend::Vulkan,
+    ));
     Some((
         device_guard,
         WgpuBackend {
             pipe: super::pipe::GpuPipe::new(
                 ObservedDevice {
                     raw: device.clone(),
+                    resources: resources.clone(),
+                    operation: None,
                     context: ObservationContext::default(),
                     batch: None,
                 },
                 ObservedQueue {
                     raw: queue.clone(),
+                    resources: resources.clone(),
+                    operation: None,
                     context: ObservationContext::default(),
                 },
                 Arc::new(PipelineCache::default()),
             ),
             device: ObservedDevice {
                 raw: device,
+                resources: resources.clone(),
+                operation: None,
                 context: ObservationContext::default(),
                 batch: None,
             },
             queue: ObservedQueue {
                 raw: queue,
+                resources,
+                operation: None,
                 context: ObservationContext::default(),
             },
             pipeline_cache: Arc::new(PipelineCache::default()),

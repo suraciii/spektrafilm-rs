@@ -18,6 +18,20 @@
 
 use super::*;
 
+#[test]
+fn diffusion_reservation_tracks_support_instead_of_hardware_capacity() {
+    let modest = super::bounded::workspace_plan(1, 1, 1, 128 << 20, false).unwrap();
+    let large = super::bounded::workspace_plan(1, 1, 1, 1 << 30, false).unwrap();
+    assert_eq!(large, modest);
+    assert!(
+        large < 1024,
+        "one-pixel identity diffusion must not reserve gigabytes"
+    );
+    let wider = super::bounded::workspace_plan(64, 48, 9, 1 << 30, true).unwrap();
+    assert!(wider > large);
+    assert!(wider < 1 << 20);
+}
+
 /// A deterministic RGB image with a bright corner block, exercising the
 /// PSF core and halo tails plus the reflected image boundaries.
 fn hotspot_image(n: u32) -> ImageBuf {
@@ -353,7 +367,9 @@ fn scanner_generated_lut_matches_log_xyz_reference_with_bounded_aliasing() {
                 | wgpu::BufferUsages::COPY_DST,
         });
     backend
-        .execute_scanner_lut_resident(&retained, &retained, 9, &params)
+        .spectral_lut_transport(&retained, &retained, 9, |source, output, count| {
+            backend.execute_scanner_lut_resident(source, output, count, &params)
+        })
         .unwrap();
     let alias = backend.pipe.readback_buffer(&retained, 9 * 12);
     for (pixel, source) in image.data.as_chunks::<3>().0.iter().enumerate() {

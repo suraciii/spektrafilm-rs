@@ -446,6 +446,8 @@ impl DyePlan {
 
 /// Device uniform of the spatial passes. Members are `vec4`-aligned in WGSL,
 /// so each Rust member is one 16-byte group and the padding is structural.
+pub(super) const SPATIAL_PARAMS_BYTES: u64 = std::mem::size_of::<DyeSpatialUniforms>() as u64;
+
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Default, bytemuck::Pod, bytemuck::Zeroable)]
 struct DyeSpatialUniforms {
