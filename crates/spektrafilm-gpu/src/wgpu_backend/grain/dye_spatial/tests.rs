@@ -497,6 +497,55 @@ fn readout_matches_the_oracle_at_placed_boundaries() {
     );
 }
 
+/// Preview-sized output can cover hundreds of microscopic cells per axis.
+/// Keep the existing readout budget at this scale, not only near one cell.
+#[test]
+fn coarse_readout_preserves_constants_and_matches_the_oracle() {
+    let backend = crate::test_support::adapter();
+    for ratio in [1.0, 17.3, 35000.0 / 97.0 / 1.75, 511.7] {
+        for phase in [0.0, 0.37, -0.81] {
+            let g = Geometry {
+                src_w: 3,
+                src_h: 3,
+                h: 1.75,
+                pitch: ratio * 1.75,
+                origin: [phase * 1.75, -phase * 1.75],
+                out_pitch: [ratio * 1.75, (ratio + 0.23) * 1.75],
+                out: (2, 2),
+                taps: vec![1.0],
+                mins: [0.125, 0.25, 0.5],
+            };
+            for pattern in [0, 1, 2] {
+                let mut case = case_for_rows(&g, 0, g.out.1);
+                if pattern == 0 {
+                    for cell in case.cells.as_chunks_mut::<3>().0 {
+                        cell.copy_from_slice(&[1.0, 0.75, -0.5]);
+                    }
+                }
+                if pattern == 2 {
+                    case.cells.fill(0.0);
+                    let hot = ((case.band.ext_rows / 3 * case.band.ext_cols
+                        + case.band.ext_cols / 2)
+                        * 3) as usize;
+                    case.cells[hot..hot + 3].copy_from_slice(&[1.0, -0.5, 0.25]);
+                }
+                let (_, output) = case.run(&backend).expect("coarse device readout");
+                let expected = oracle_output(&case).expect("coarse f64 oracle");
+                assert_eq!(output.len(), expected.len());
+                assert!(output.iter().all(|value| value.is_finite()));
+                let error = max_error(&output, &expected);
+                eprintln!(
+                    "coarse ratio={ratio} phase={phase} pattern={pattern}: error={error:.9e}"
+                );
+                assert!(
+                    error < 1e-5,
+                    "coarse readout error {error} at ratio {ratio}, phase {phase}, pattern {pattern}"
+                );
+            }
+        }
+    }
+}
+
 // ── tap law and edges ──
 
 #[test]
@@ -851,91 +900,95 @@ fn resource_bounds_reduce_both_axes_and_partition_large_footprints() {
 #[test]
 fn cell_partitions_preserve_fractional_readout_and_single_base_subtraction() {
     let backend = crate::test_support::adapter();
-    let g = Geometry {
-        src_w: 9,
-        src_h: 7,
-        h: 1.75,
-        pitch: 1.13,
-        origin: [-7.3, 2.1],
-        out_pitch: [12.9, 10.6],
-        out: (3, 2),
-        taps: vec![0.05, 0.11, 0.18, 0.32, 0.18, 0.11, 0.05],
-        mins: [0.125, 0.25, 0.5],
-    };
-    let whole = case_for_rows(&g, 0, g.out.1);
-    let params = whole.params();
-    let expected = oracle_output(&whole).unwrap();
-    let [left, right] = split_cell_band(g.src_w, g.src_h, &params, whole.band).unwrap();
-    let mut pieces = Vec::new();
-    pieces.extend(split_cell_band(g.src_w, g.src_h, &params, left).unwrap());
-    pieces.extend(split_cell_band(g.src_w, g.src_h, &params, right).unwrap());
-    let alloc = |label, bytes| {
-        backend.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some(label),
-            size: bytes,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
-            mapped_at_creation: false,
-        })
-    };
-    let bytes = u64::from(g.out.0) * u64::from(g.out.1) * 12;
-    for response in [false, true] {
-        let output = alloc("partition_output", bytes);
-        for (index, mut band) in pieces.iter().copied().enumerate() {
-            band.readout_flags = u32::from(index > 0) | (u32::from(index + 1 < pieces.len()) << 1);
-            let mut cells = Vec::new();
-            for row in 0..band.ext_rows {
-                let x = u32::try_from(band.cell_x - whole.band.cell_x).unwrap();
-                let y = u32::try_from(band.cell_y - whole.band.cell_y).unwrap() + row;
-                let start = ((y * whole.band.ext_cols + x) * 3) as usize;
-                cells.extend_from_slice(&whole.cells[start..start + band.ext_cols as usize * 3]);
+    for scale in [1.0, 28.0] {
+        let g = Geometry {
+            src_w: 9,
+            src_h: 7,
+            h: 1.75,
+            pitch: 1.13,
+            origin: [-7.3, 2.1],
+            out_pitch: [12.9 * scale, 10.6 * scale],
+            out: (3, 2),
+            taps: vec![0.05, 0.11, 0.18, 0.32, 0.18, 0.11, 0.05],
+            mins: [0.125, 0.25, 0.5],
+        };
+        let whole = case_for_rows(&g, 0, g.out.1);
+        let params = whole.params();
+        let expected = oracle_output(&whole).unwrap();
+        let [left, right] = split_cell_band(g.src_w, g.src_h, &params, whole.band).unwrap();
+        let mut pieces = Vec::new();
+        pieces.extend(split_cell_band(g.src_w, g.src_h, &params, left).unwrap());
+        pieces.extend(split_cell_band(g.src_w, g.src_h, &params, right).unwrap());
+        let alloc = |label, bytes| {
+            backend.device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some(label),
+                size: bytes,
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+                mapped_at_creation: false,
+            })
+        };
+        let bytes = u64::from(g.out.0) * u64::from(g.out.1) * 12;
+        for response in [false, true] {
+            let output = alloc("partition_output", bytes);
+            for (index, mut band) in pieces.iter().copied().enumerate() {
+                band.readout_flags =
+                    u32::from(index > 0) | (u32::from(index + 1 < pieces.len()) << 1);
+                let mut cells = Vec::new();
+                for row in 0..band.ext_rows {
+                    let x = u32::try_from(band.cell_x - whole.band.cell_x).unwrap();
+                    let y = u32::try_from(band.cell_y - whole.band.cell_y).unwrap() + row;
+                    let start = ((y * whole.band.ext_cols + x) * 3) as usize;
+                    cells
+                        .extend_from_slice(&whole.cells[start..start + band.ext_cols as usize * 3]);
+                }
+                let cells = backend
+                    .device
+                    .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                        label: Some("partition_cells"),
+                        contents: bytemuck::cast_slice(&cells),
+                        usage: wgpu::BufferUsages::STORAGE,
+                    });
+                let [sl, cl, _, h, f] = band_bytes(&band);
+                let source = alloc("partition_source", sl);
+                let layers = alloc("partition_layers", cl);
+                let horizontal = alloc("partition_horizontal", h);
+                let formed = alloc("partition_formed", f);
+                let spatial = build_spatial(
+                    &backend,
+                    &params,
+                    &band,
+                    g.src_w,
+                    g.src_h,
+                    &source,
+                    &layers,
+                    &cells,
+                    &horizontal,
+                    &formed,
+                    &output,
+                );
+                let readout = build_band_readout(
+                    &backend,
+                    &params,
+                    &band,
+                    [g.src_w, g.src_h],
+                    &formed,
+                    &output,
+                    response,
+                    true,
+                );
+                let mut encoder = backend.device.create_command_encoder(&Default::default());
+                spatial.encode_formation(&mut encoder);
+                readout.encode(&mut encoder);
+                backend.queue.submit(Some(encoder.finish()));
             }
-            let cells = backend
-                .device
-                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("partition_cells"),
-                    contents: bytemuck::cast_slice(&cells),
-                    usage: wgpu::BufferUsages::STORAGE,
-                });
-            let [sl, cl, _, h, f] = band_bytes(&band);
-            let source = alloc("partition_source", sl);
-            let layers = alloc("partition_layers", cl);
-            let horizontal = alloc("partition_horizontal", h);
-            let formed = alloc("partition_formed", f);
-            let spatial = build_spatial(
-                &backend,
-                &params,
-                &band,
-                g.src_w,
-                g.src_h,
-                &source,
-                &layers,
-                &cells,
-                &horizontal,
-                &formed,
-                &output,
-            );
-            let readout = build_band_readout(
-                &backend,
-                &params,
-                &band,
-                [g.src_w, g.src_h],
-                &formed,
-                &output,
-                response,
-                true,
-            );
-            let mut encoder = backend.device.create_command_encoder(&Default::default());
-            spatial.encode_formation(&mut encoder);
-            readout.encode(&mut encoder);
-            backend.queue.submit(Some(encoder.finish()));
-        }
-        let actual = backend.pipe.readback_buffer(&output, bytes);
-        for (index, (&a, &e)) in actual.iter().zip(&expected).enumerate() {
-            let e = f64::from(e) + if response { g.mins[index % 3] } else { 0.0 };
-            assert!(
-                (f64::from(a) - e).abs() < 1e-5,
-                "partition response={response} sample={index}: actual={a} expected={e}"
-            );
+            let actual = backend.pipe.readback_buffer(&output, bytes);
+            for (index, (&a, &e)) in actual.iter().zip(&expected).enumerate() {
+                let e = f64::from(e) + if response { g.mins[index % 3] } else { 0.0 };
+                assert!(
+                    (f64::from(a) - e).abs() < 1e-5,
+                    "partition response={response} sample={index}: actual={a} expected={e}"
+                );
+            }
         }
     }
 }
