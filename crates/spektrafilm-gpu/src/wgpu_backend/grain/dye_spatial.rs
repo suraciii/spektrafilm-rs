@@ -912,7 +912,7 @@ impl SpatialCase {
         state.encode_formation_readout(&mut encoder);
         encoder.copy_buffer_to_buffer(&cell_layers, 0, &cell_readback, 0, cell_bytes);
         encoder.copy_buffer_to_buffer(&output, 0, &output_readback, 0, output_bytes);
-        backend.queue.submit(Some(encoder.finish()));
+        backend.submit_commands(Some(encoder.finish()))?;
         Ok((
             backend.read_mapped_f32(&cell_readback, cell_bytes),
             backend.read_mapped_f32(&output_readback, output_bytes),

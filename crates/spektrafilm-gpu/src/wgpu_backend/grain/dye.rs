@@ -90,8 +90,10 @@ impl WgpuBackend {
         for page in state.output_pages {
             self.check_cancelled()?;
             samples.extend(
-                self.pipe
-                    .readback_buffer(&page.buffer, u64::from(page.n_pixels) * 12),
+                self.pipe.readback_buffer_cancellable::<f32>(
+                    &page.buffer,
+                    u64::from(page.n_pixels) * 12,
+                )?,
             );
         }
         self.check_cancelled()?;
@@ -441,9 +443,9 @@ impl WgpuBackend {
                 self.build_dye_accumulate(&params, &band, &table_buffer, &layers, &output, &status);
             let mut encoder = self.device.create_command_encoder(&Default::default());
             pass.encode(&mut encoder);
-            self.queue.submit(Some(encoder.finish()));
+            self.submit_commands(Some(encoder.finish()))?;
             self.check_dye_status(&status)?;
-            let values = self.pipe.readback_buffer(&output, 24);
+            let values: Vec<f32> = self.pipe.readback_buffer_cancellable(&output, 24)?;
             let expected = if expectation {
                 [1.0, 1.0, 0.0, 0.0, 0.0, 1.0]
             } else {
@@ -483,7 +485,7 @@ impl WgpuBackend {
         });
         let mut encoder = self.device.create_command_encoder(&Default::default());
         encoder.copy_buffer_to_buffer(status, 0, &readback, 0, 4);
-        self.queue.submit(Some(encoder.finish()));
+        self.submit_commands(Some(encoder.finish()))?;
         let code = self.read_mapped_u32(&readback, 4)[0];
         self.check_cancelled()?;
         if code == 0 {

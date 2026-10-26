@@ -546,6 +546,74 @@ fn failed_and_pending_query_callbacks_preserve_completed_image() {
 }
 
 #[test]
+fn cancellation_during_backpressure_drops_the_third_mutation_without_counting_it() {
+    let Some((_device, mut backend)) = fresh_backend(wgpu::Features::empty()) else {
+        return;
+    };
+    let context = ObservationContext::new(CollectionMode::Summary);
+    let stage = context.scope("grain_spektra_v1", ObservationKind::Stage, Purpose::Image);
+    backend.context_mut(stage.context().clone());
+    let cancellation = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    backend.cancellation = Some(cancellation.clone());
+    let (backend, guard) = backend.observed_batch("cancelled_backpressure");
+    let operation = backend.admit_operation(1024).unwrap();
+    let backend = operation.backend(&backend);
+    let owner = Arc::downgrade(backend.queue.operation.as_ref().unwrap());
+    let work = Workload::new(&backend, false, &INPUT);
+    backend
+        .submit_commands([work.encode(&backend, 1, true).finish()])
+        .unwrap();
+    backend
+        .submit_commands([work.encode(&backend, 1, false).finish()])
+        .unwrap();
+    let last = operation.last_submission().unwrap();
+    let (mapped, ready) = mpsc::channel();
+    let token = cancellation.clone();
+    // Only the first submission uses this buffer. No further submit or poll
+    // occurs before the third submission enters shared-queue backpressure.
+    work.result
+        .slice(..)
+        .map_async(wgpu::MapMode::Read, move |result| {
+            token.store(true, std::sync::atomic::Ordering::Release);
+            mapped.send(result).unwrap();
+        });
+    assert!(
+        !cancellation.load(std::sync::atomic::Ordering::Acquire),
+        "cancellation must begin inside the backpressure poll"
+    );
+    let result = backend.submit_commands([work.encode(&backend, 1, false).finish()]);
+    assert_eq!(result.err().as_deref(), Some("operation cancelled"));
+    ready
+        .try_recv()
+        .expect("backpressure must run the cancellation callback")
+        .unwrap();
+    work.result.unmap();
+    assert!(operation.last_submission().unwrap().same_submission(&last));
+    let counters = context.snapshot().totals;
+    assert_eq!(counters.submit_count, Some(2));
+    assert_eq!(counters.command_buffer_count, Some(2));
+    assert_eq!(counters.executed_pass_count, Some(2));
+    assert_eq!(counters.dispatch_count, Some(2));
+    assert_eq!(counters.staging_copy_count, Some(1));
+    assert_eq!(counters.host_wait_count, Some(1));
+    operation.retire_pending();
+    // Read back without new compute work, using the explicitly noncancellable
+    // queue API for cleanup after cancellation. Pixels prove no third mutation.
+    backend
+        .queue
+        .submit([work.encode(&backend, 0, true).finish()]);
+    assert_eq!(work.materialize(&backend), INPUT.map(|pixel| pixel * 4.0));
+    drop(backend);
+    drop(operation);
+    assert!(
+        owner.upgrade().is_none(),
+        "cancelled commands retain no credit owner"
+    );
+    drop(guard);
+    drop(stage);
+}
+
+#[test]
 fn discarded_and_finished_unsubmitted_commands_contribute_no_executed_work() {
     let Some((_device, mut backend)) = fresh_backend(wgpu::Features::TIMESTAMP_QUERY) else {
         return;

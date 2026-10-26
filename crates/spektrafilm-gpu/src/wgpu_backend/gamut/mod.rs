@@ -178,7 +178,7 @@ impl WgpuBackend {
         state.submit(self)?;
         let out = self
             .pipe
-            .readback_buffer(&buf, img.pixel_count() as u64 * 3 * 4);
+            .readback_buffer_cancellable(&buf, img.pixel_count() as u64 * 3 * 4)?;
         Ok(ImageBuf::from_data(
             img.width,
             img.height,

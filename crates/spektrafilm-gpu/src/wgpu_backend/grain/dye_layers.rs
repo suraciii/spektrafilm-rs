@@ -155,7 +155,7 @@ impl WgpuBackend {
         &self,
         densities: &[[f32; 3]],
         tables: &DyeChannelTablesGpu,
-    ) -> Vec<[f32; 9]> {
+    ) -> Result<Vec<[f32; 9]>, String> {
         self.dye_layer_targets_with(densities, tables, SHADER)
     }
 
@@ -183,7 +183,7 @@ impl WgpuBackend {
                     [&dominant, &secondary, &zero]
                 },
             }));
-            for (input, output) in inputs.iter().zip(self.dye_layer_targets(&inputs, &tables)) {
+            for (input, output) in inputs.iter().zip(self.dye_layer_targets(&inputs, &tables)?) {
                 let value = input[0];
                 let expected = if fallback {
                     [value / 6.0, value / 3.0, value / 2.0]
@@ -213,9 +213,9 @@ impl WgpuBackend {
         densities: &[[f32; 3]],
         tables: &DyeChannelTablesGpu,
         shader: &'static str,
-    ) -> Vec<[f32; 9]> {
+    ) -> Result<Vec<[f32; 9]>, String> {
         if densities.is_empty() {
-            return Vec::new();
+            return Ok(Vec::new());
         }
         let input = self
             .device
@@ -260,14 +260,15 @@ impl WgpuBackend {
         );
         let mut encoder = self.device.create_command_encoder(&Default::default());
         layer_pass.encode(&mut encoder);
-        self.queue.submit(Some(encoder.finish()));
+        self.submit_commands(Some(encoder.finish()))?;
         // This diagnostic also exercises the endpoint clamp outside the
         // production envelope; production checks the status before publication.
-        self.pipe
-            .readback_buffer(&targets, bytes)
+        Ok(self
+            .pipe
+            .readback_buffer_cancellable(&targets, bytes)?
             .as_chunks::<9>()
             .0
-            .to_vec()
+            .to_vec())
     }
 }
 
@@ -315,11 +316,9 @@ mod tests {
                 )
                 .into_boxed_str(),
         );
-        let control = backend.dye_layer_targets_with(
-            &[[3.5; 3]],
-            &make([&dominant, &secondary, &zero]),
-            broken,
-        );
+        let control = backend
+            .dye_layer_targets_with(&[[3.5; 3]], &make([&dominant, &secondary, &zero]), broken)
+            .unwrap();
         let control_error = control[0]
             .iter()
             .zip([1.0, 2.0, 0.5].into_iter().cycle())
@@ -334,7 +333,7 @@ mod tests {
             (make([&dominant, &secondary, &zero]), false),
             (make([&zero; 3]), true),
         ] {
-            let output = backend.dye_layer_targets(&inputs, &tables);
+            let output = backend.dye_layer_targets(&inputs, &tables).unwrap();
             let mut maximum_error = 0.0_f64;
             for (input, layers) in inputs.iter().zip(output) {
                 let total = f64::from(input[0]).clamp(0.0, 6.0);
@@ -378,7 +377,9 @@ mod tests {
                 inv_dx: &inv_dx,
                 layers: [&weights; 3],
             }));
-            let output = backend.dye_layer_targets(&[[scale as f32; 3]], &tables);
+            let output = backend
+                .dye_layer_targets(&[[scale as f32; 3]], &tables)
+                .unwrap();
             for value in output[0] {
                 assert!(
                     (f64::from(value) / (scale / 3.0) - 1.0).abs() < 2e-6,

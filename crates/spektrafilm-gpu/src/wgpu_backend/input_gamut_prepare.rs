@@ -353,8 +353,8 @@ impl WgpuBackend {
             .map(wgpu::Buffer::as_entire_buffer_binding),
             3,
         );
-        self.queue.submit(Some(encoder.finish()));
-        let neutral: Vec<f64> = self.pipe.readback_buffer_as(&neutral_result, 24);
+        self.submit_commands(Some(encoder.finish()))?;
+        let neutral: Vec<f64> = self.pipe.readback_buffer_cancellable(&neutral_result, 24)?;
         self.device.context.record_executor(Executor::Gpu, None);
         Ok(PreparedTable {
             values: Arc::new(PreparationTable {

@@ -195,7 +195,7 @@ impl WgpuBackend {
                     &centers,
                     0,
                 )?;
-                self.queue.submit(Some(encoder.finish()));
+                self.submit_commands(Some(encoder.finish()))?;
                 for ky in 0..k {
                     let sy = reflect(
                         i64::from(y) + i64::from(ky) - i64::from(params.radius),
@@ -283,7 +283,7 @@ impl WgpuBackend {
                             pass.set_bind_group(0, &group, &[]);
                             dispatch_linear(&mut pass, count);
                         }
-                        self.queue.submit(Some(encoder.finish()));
+                        self.submit_commands(Some(encoder.finish()))?;
                         first += n;
                     }
                 }
@@ -296,7 +296,7 @@ impl WgpuBackend {
                     (u64::from(y) * u64::from(source.width) + u64::from(x)) * 3,
                     u64::from(count) * 3,
                 )?;
-                self.queue.submit(Some(encoder.finish()));
+                self.submit_commands(Some(encoder.finish()))?;
                 x += count;
             }
         }
@@ -371,7 +371,7 @@ impl WgpuBackend {
                 pass.set_bind_group(0, &group, &[]);
                 dispatch_linear(&mut pass, page.n_pixels);
             }
-            self.queue.submit(Some(encoder.finish()));
+            self.submit_commands(Some(encoder.finish()))?;
         }
         Ok(output)
     }
@@ -507,7 +507,7 @@ impl WgpuBackend {
                         u64::from(width) * 3,
                     )?;
                 }
-                self.queue.submit(Some(encoder.finish()));
+                self.submit_commands(Some(encoder.finish()))?;
             }
         }
         Ok(output)

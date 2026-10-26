@@ -713,7 +713,7 @@ impl WgpuBackend {
     /// Keep each RAW submission tied to this derived backend's operation token.
     fn raw_submit(&self, encoder: ObservedEncoder) -> Result<(), String> {
         self.check_cancelled()?;
-        self.queue.submit(Some(encoder.finish()));
+        self.submit_commands(Some(encoder.finish()))?;
         self.check_cancelled()
     }
 

@@ -444,7 +444,7 @@ impl WgpuBackend {
         }
         encoder.copy_buffer_to_buffer(&counts, 0, &readback, 0, bytes);
         encoder.copy_buffer_to_buffer(&words, 0, &readback, bytes, bytes);
-        self.queue.submit(Some(encoder.finish()));
+        self.submit_commands(Some(encoder.finish()))?;
         let out = self.read_mapped_u32(&readback, 2 * bytes);
         Ok((out[..n].to_vec(), out[n..2 * n].to_vec()))
     }

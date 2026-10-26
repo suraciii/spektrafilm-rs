@@ -154,7 +154,7 @@ fn build_meter_state_with_limit(
             });
         }
         backend.check_cancelled()?;
-        backend.queue.submit(Some(encoder.finish()));
+        backend.submit_commands(Some(encoder.finish()))?;
         normalized =
             BufferPayload::from_pages(backend.backend_id(), pages, source.width, source.height);
         &normalized
@@ -367,7 +367,7 @@ fn build_meter_state_with_limit(
             );
         }
         backend.check_cancelled()?;
-        backend.queue.submit(Some(encoder.finish()));
+        backend.submit_commands(Some(encoder.finish()))?;
         backend.check_cancelled()?;
     }
     let weights: [f64; 25] = std::array::from_fn(|i| {
@@ -517,7 +517,8 @@ impl MeterState {
         }
         encoder.copy_buffer_to_buffer(&self.result, 0, &staging, 0, 8);
         check_cancelled()?;
-        pipe.queue().submit(Some(encoder.finish()));
+        pipe.queue()
+            .submit_cancellable(Some(encoder.finish()), self.cancellation.as_ref())?;
         let ev = pipe.read_mapped::<f64>(&staging, 8)[0];
         check_cancelled()?;
         Ok(ev)

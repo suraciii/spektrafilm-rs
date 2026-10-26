@@ -169,7 +169,7 @@ impl WgpuBackend {
             );
         }
         self.check_cancelled()?;
-        self.queue.submit(Some(encoder.finish()));
+        self.submit_commands(Some(encoder.finish()))?;
         Ok(())
     }
 

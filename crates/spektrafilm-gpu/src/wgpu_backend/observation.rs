@@ -3,7 +3,7 @@ use parking_lot::Mutex;
 use spektrafilm_backend::telemetry::*;
 use std::{
     ops::{Deref, DerefMut},
-    sync::Arc,
+    sync::{Arc, atomic::AtomicBool},
     time::Instant,
 };
 #[derive(Clone)]
@@ -254,6 +254,14 @@ impl Drop for BatchGuard {
     }
 }
 impl WgpuBackend {
+    pub(super) fn submit_commands(
+        &self,
+        commands: impl IntoIterator<Item = ObservedCommand>,
+    ) -> Result<wgpu::SubmissionIndex, String> {
+        self.queue
+            .submit_cancellable(commands, self.cancellation.as_ref())
+    }
+
     pub(super) fn context_mut(&mut self, context: ObservationContext) {
         self.device.context = context.clone();
         self.queue.context = context;
@@ -543,6 +551,15 @@ impl ObservedQueue {
         &self,
         commands: impl IntoIterator<Item = ObservedCommand>,
     ) -> wgpu::SubmissionIndex {
+        self.submit_cancellable(commands, None)
+            .expect("noncancellable submission cannot be cancelled")
+    }
+
+    pub fn submit_cancellable(
+        &self,
+        commands: impl IntoIterator<Item = ObservedCommand>,
+        cancellation: Option<&Arc<AtomicBool>>,
+    ) -> Result<wgpu::SubmissionIndex, String> {
         // Encoded commands may outlive their originating backend/guard and be
         // submitted through another derivative. Keep those owners alive until
         // the resulting submission has acquired its retirement index.
@@ -560,15 +577,17 @@ impl ObservedQueue {
             command
         });
         if !self.context.enabled() {
-            let (retirement, _) = self.resources.submit(
+            let retirement = self.resources.submit(
                 &self.raw,
                 commands.map(|command| command.raw),
                 self.operation.as_ref(),
-            );
+                cancellation,
+                &self.context,
+            )?;
             for owner in owners {
                 owner.retain_submission(retirement.clone());
             }
-            return retirement.index;
+            return Ok(retirement.index);
         }
         let submitted = Instant::now();
         let mut count = 0;
@@ -581,7 +600,7 @@ impl ObservedQueue {
         let mut device_bytes = 0;
         let mut resolve_count = 0;
         let mut telemetry_bytes = 0;
-        let (result, waited) = self.resources.submit(
+        let result = self.resources.submit(
             &self.raw,
             commands.into_iter().map(|mut command| {
                 count += 1;
@@ -621,12 +640,13 @@ impl ObservedQueue {
                 command.raw
             }),
             self.operation.as_ref(),
-        );
+            cancellation,
+            &self.context,
+        )?;
         for owner in owners {
             owner.retain_submission(result.clone());
         }
         let work = WorkCounters {
-            host_wait_count: Some(u64::from(waited)),
             submit_count: Some(1),
             command_buffer_count: Some(count),
             dispatch_count: Some(dispatches),
@@ -650,7 +670,7 @@ impl ObservedQueue {
             self.context.record_executor(Executor::Gpu, None);
         }
         self.context.record_work(&work);
-        result.index
+        Ok(result.index)
     }
 }
 #[derive(Default)]

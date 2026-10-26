@@ -26,9 +26,9 @@ pub(super) struct DeviceImage {
     pub(super) bytes: u64,
 }
 
-/// Pool of reusable MAP_READ readback buffers keyed by byte size. A buffer
-/// returns to the pool only after `read_mapped_f32` unmapped it; that path
-/// already polled the device, so a pooled buffer is immediately reusable.
+/// Pool of reusable MAP_READ readback buffers keyed by byte size. A submitted
+/// buffer returns only after mapping and unmapping finish; a cancelled copy
+/// that was never submitted can return immediately.
 #[derive(Default)]
 struct ReadbackPool {
     buffers: Vec<(u64, wgpu::Buffer)>,
@@ -324,7 +324,12 @@ impl GpuPipe {
             Some(
                 self.device
                     .resources
-                    .admit(additional, cached, self.cancellation.as_ref())
+                    .admit(
+                        additional,
+                        cached,
+                        self.cancellation.as_ref(),
+                        &self.device.context,
+                    )
                     .ok()?,
             )
         } else {
@@ -398,7 +403,13 @@ impl GpuPipe {
             dispatch_linear(&mut pass, n_pixels);
         }
         encoder.copy_buffer_to_buffer(&gpu_buffers[output_idx], 0, &readback, 0, output_size);
-        queue.submit(Some(encoder.finish()));
+        if queue
+            .submit_cancellable(Some(encoder.finish()), self.cancellation.as_ref())
+            .is_err()
+        {
+            self.return_readback(readback, output_size);
+            return None;
+        }
 
         let out = self.read_mapped_f32(&readback, output_size);
         self.return_readback(readback, output_size);
@@ -517,7 +528,9 @@ impl GpuPipe {
             pass.set_bind_group(0, &bind_group, &[]);
             dispatch_linear(&mut pass, n_pixels);
         }
-        self.queue.submit(Some(encoder.finish()));
+        self.queue
+            .submit_cancellable(Some(encoder.finish()), self.cancellation.as_ref())
+            .ok()?;
         Some(DeviceImage {
             buf: out,
             n_pixels,
@@ -539,8 +552,8 @@ impl GpuPipe {
         self.upload_image(&out, input.n_pixels)
     }
 
-    /// Final readback of a device image. One of the three pipe transfer
-    /// points.
+    /// Infallible final readback for the legacy device-image/fence helpers.
+    /// These helpers are not part of the cancellable production chain.
     #[allow(dead_code)]
     pub(super) fn readback_image(&self, image: &DeviceImage) -> Vec<f32> {
         let readback = self.take_readback(image.bytes);
@@ -636,11 +649,11 @@ impl GpuPipe {
         Ok(())
     }
 
-    /// Materialize a device image buffer through the pooled readback path.
-    /// Records one readback of `bytes`.
-    /// Copy `buf` into the pooled readback buffer and map the result as `T`.
-    /// This is the readback protocol: the source buffer stays a plain storage
-    /// buffer, and the pooled copy target alone carries `MAP_READ | COPY_DST`.
+    /// Infallible diagnostic materialization through the pooled readback path.
+    /// Records one readback of `bytes`; request work instead uses
+    /// `readback_buffer_cancellable` so cancellation can prevent its COPY.
+    /// The source stays a plain storage buffer; only the pooled copy target
+    /// carries `MAP_READ | COPY_DST`.
     pub(super) fn readback_buffer_as<T: bytemuck::Pod>(
         &self,
         buf: &wgpu::Buffer,
@@ -667,11 +680,13 @@ impl GpuPipe {
         let readback = self.take_readback(bytes);
         let mut encoder = self.device.create_command_encoder(&Default::default());
         encoder.copy_buffer_to_buffer(buffer, 0, &readback, 0, bytes);
-        if let Err(error) = self.check_cancelled() {
+        if let Err(error) = self
+            .queue
+            .submit_cancellable(Some(encoder.finish()), self.cancellation.as_ref())
+        {
             self.return_readback(readback, bytes);
             return Err(error);
         }
-        self.queue.submit(Some(encoder.finish()));
         let result = self.read_mapped::<T>(&readback, bytes);
         self.return_readback(readback, bytes);
         #[cfg(test)]
@@ -682,7 +697,7 @@ impl GpuPipe {
         Ok(result)
     }
 
-    /// The f32 specialization every image-sized readback uses.
+    /// The f32 specialization for noncancellable diagnostic materialization.
     pub(super) fn readback_buffer(&self, buf: &wgpu::Buffer, bytes: u64) -> Vec<f32> {
         self.readback_buffer_as(buf, bytes)
     }

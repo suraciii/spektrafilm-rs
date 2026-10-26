@@ -111,7 +111,7 @@ impl ScanDensityState {
         } else {
             &self.status
         };
-        let code = backend.pipe.readback_buffer_as::<u32>(status, 4)[0];
+        let code = backend.pipe.readback_buffer_cancellable::<u32>(status, 4)?[0];
         backend.check_cancelled()?;
         if code & 2 != 0 {
             return Err("standard setup requires finite film record densities".into());

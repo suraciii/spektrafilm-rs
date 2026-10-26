@@ -362,7 +362,7 @@ impl ViewPlan {
             execute(&mut encoder, &chunk)?;
             self.copies(&mut encoder, &chunk, true);
             backend.check_cancelled()?;
-            backend.queue.submit(Some(encoder.finish()));
+            backend.submit_commands(Some(encoder.finish()))?;
             first += u64::from(chunk.count);
         }
         backend.check_cancelled()
@@ -390,7 +390,7 @@ impl ViewPlan {
                 let mut encoder = backend.device.create_command_encoder(&Default::default());
                 self.copies(&mut encoder, &chunk, false);
                 backend.check_cancelled()?;
-                backend.queue.submit(Some(encoder.finish()));
+                backend.submit_commands(Some(encoder.finish()))?;
             }
             execute(&chunk)?;
             backend.check_cancelled()?;
@@ -398,7 +398,7 @@ impl ViewPlan {
                 let mut encoder = backend.device.create_command_encoder(&Default::default());
                 self.copies(&mut encoder, &chunk, true);
                 backend.check_cancelled()?;
-                backend.queue.submit(Some(encoder.finish()));
+                backend.submit_commands(Some(encoder.finish()))?;
             }
             first += u64::from(chunk.count);
         }

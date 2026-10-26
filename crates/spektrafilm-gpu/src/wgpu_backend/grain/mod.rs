@@ -96,8 +96,10 @@ impl WgpuBackend {
         let mut output = Vec::with_capacity(input.len());
         for page in &output_pages {
             output.extend(
-                self.pipe
-                    .readback_buffer(&page.buffer, u64::from(page.n_pixels) * 12),
+                self.pipe.readback_buffer_cancellable::<f32>(
+                    &page.buffer,
+                    u64::from(page.n_pixels) * 12,
+                )?,
             );
         }
         Ok(ImageBuf::from_data(

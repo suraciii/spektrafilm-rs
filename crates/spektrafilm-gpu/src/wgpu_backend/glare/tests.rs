@@ -329,14 +329,22 @@ fn glare_executes_without_native_f64_or_int64_features() {
             .features()
             .intersects(wgpu::Features::SHADER_F64 | wgpu::Features::SHADER_INT64)
     );
+    let resources = std::sync::Arc::new(crate::wgpu_backend::resources::DeviceResources::new(
+        raw_device.clone(),
+        false,
+    ));
     let mut backend = gpu.derived_explicit();
     backend.device = ObservedDevice {
         raw: raw_device,
+        resources: resources.clone(),
+        operation: None,
         context: Default::default(),
         batch: None,
     };
     backend.queue = ObservedQueue {
         raw: raw_queue,
+        resources,
+        operation: None,
         context: Default::default(),
     };
     backend.pipeline_cache = std::sync::Arc::new(PipelineCache::default());

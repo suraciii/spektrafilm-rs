@@ -904,7 +904,7 @@ impl GrainBlurState {
                             backend.device.create_command_encoder(&Default::default());
                         direct.encode_pass(&mut encoder, pass);
                         backend.check_cancelled()?;
-                        backend.queue.submit(Some(encoder.finish()));
+                        backend.submit_commands(Some(encoder.finish()))?;
                     }
                 }
                 backend.check_cancelled()

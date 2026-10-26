@@ -118,20 +118,24 @@ fn concurrent_admission_is_atomic_and_derivatives_share_one_queue_bound() {
     let mut resources = DeviceResources::new(gpu.device.raw.clone(), false);
     resources.overlap_target = 100;
     let resources = Arc::new(resources);
-    let first = resources.admit(60, 0, None).unwrap();
+    let first = resources
+        .admit(60, 0, None, &ObservationContext::default())
+        .unwrap();
     let (acquired, ready) = mpsc::channel();
     let (release, released) = mpsc::channel();
     std::thread::scope(|scope| {
         let shared = resources.clone();
         let waiter = scope.spawn(move || {
-            let operation = shared.admit(60, 0, None).unwrap();
+            let operation = shared
+                .admit(60, 0, None, &ObservationContext::default())
+                .unwrap();
             acquired.send(()).unwrap();
             released.recv_timeout(Duration::from_secs(5)).unwrap();
             drop(operation);
         });
         await_admission_waiters(&resources, 1);
         assert_eq!(resources.reserved.lock().bytes, 60);
-        resources.retire_all();
+        resources.retire_all(&ObservationContext::default());
         assert!(
             matches!(ready.try_recv(), Err(mpsc::TryRecvError::Empty)),
             "retiring submissions must not release a live owner's credit"
@@ -171,38 +175,108 @@ fn concurrent_admission_is_atomic_and_derivatives_share_one_queue_bound() {
 }
 
 #[test]
-fn common_queue_retires_without_publishing_batch_ready() {
+fn one_pending_operation_retirement_counts_waits_without_publishing_batch_ready() {
+    let gpu = crate::test_support::adapter();
+    for explicit_retirement in [true, false] {
+        let mut backend = gpu.derived_explicit();
+        let context = ObservationContext::new(CollectionMode::Summary);
+        let stage = context.scope("grain_spektra_v1", ObservationKind::Stage, Purpose::Image);
+        backend.context_mut(stage.context().clone());
+        // Admission captures the request context, before nested batch scoping.
+        let operation = backend.admit_operation(1024).unwrap();
+        let (backend, batch_guard) = backend.observed_batch("resource_retirement");
+        let backend = operation.backend(&backend);
+        let (source, output) = buffers(&backend);
+        copy(&backend, &source, &output);
+        let retirement = operation.last_submission().unwrap();
+        assert_eq!(context.snapshot().totals.host_wait_count, Some(0));
+        if explicit_retirement {
+            operation.retire_pending();
+            // Already-complete retirement and repeated explicit cleanup must
+            // not count a host wait when no blocking poll actually runs.
+            gpu.device.resources.retire(&retirement, stage.context());
+            operation.retire_pending();
+        }
+        drop(backend);
+        drop(operation);
+        assert!(retirement.is_complete());
+        assert_eq!(gpu.device.resources.reserved.lock().bytes, 0);
+        drop(batch_guard);
+        drop(stage);
+        let snapshot = context.snapshot();
+        let batch = snapshot
+            .observations
+            .iter()
+            .find(|observation| observation.kind == ObservationKind::Batch)
+            .unwrap();
+        let measurements = batch.batch.as_ref().unwrap();
+        let incomplete = Measurement::unavailable(AvailabilityReason::Incomplete);
+        assert_eq!(measurements.submit_to_map_ready, incomplete);
+        assert_eq!(measurements.host_materialize, incomplete);
+        assert_eq!(snapshot.totals.host_wait_count, Some(1));
+        assert_eq!(batch.work.host_wait_count, Some(0));
+        let request = snapshot
+            .observations
+            .iter()
+            .find(|observation| observation.kind == ObservationKind::Stage)
+            .unwrap();
+        assert_eq!(request.work.host_wait_count, Some(1));
+    }
+}
+
+#[test]
+fn cancelled_unused_submission_slot_returns_credit_without_a_device_wait() {
     let gpu = crate::test_support::adapter();
     let mut backend = gpu.derived_explicit();
     let context = ObservationContext::new(CollectionMode::Summary);
-    let stage = context.scope("grain_spektra_v1", ObservationKind::Stage, Purpose::Image);
-    backend.context_mut(stage.context().clone());
-    let (backend, batch_guard) = backend.observed_batch("resource_retirement");
+    backend.context_mut(context.clone());
     let operation = backend.admit_operation(1024).unwrap();
-    let backend = operation.backend(&backend);
-    let (source, output) = buffers(&backend);
-    for _ in 0..3 {
-        copy(&backend, &source, &output);
-    }
-    assert!(backend.queue.resources.submissions.lock().pending.len() <= MAX_PENDING_SUBMISSIONS);
-    operation.retire_pending();
-    drop(backend);
+    let owned = operation.backend(&backend);
+    let (source, output) = buffers(&owned);
+    let mut encoder = owned.device.create_command_encoder(&Default::default());
+    encoder.copy_buffer_to_buffer(&source, 0, &output, 0, source.size());
+    let command = encoder.finish();
+    drop(owned);
     drop(operation);
-    drop(batch_guard);
-    drop(stage);
-    let snapshot = context.snapshot();
-    let measurements = snapshot
-        .observations
-        .iter()
-        .find(|observation| observation.kind == ObservationKind::Batch)
-        .unwrap()
-        .batch
-        .as_ref()
+    assert_eq!(gpu.device.resources.reserved.lock().bytes, 1024);
+    let cancellation = Arc::new(AtomicBool::new(true));
+    let result = backend
+        .queue
+        .submit_cancellable(Some(command), Some(&cancellation));
+    assert_eq!(result.err().as_deref(), Some("operation cancelled"));
+    assert_eq!(gpu.device.resources.reserved.lock().bytes, 0);
+    let submissions = gpu.device.resources.submissions.lock();
+    assert_eq!(submissions.submitting, 0);
+    assert!(submissions.pending.is_empty());
+    let counters = context.snapshot().totals;
+    assert_eq!(counters.host_wait_count, Some(0));
+    assert_eq!(counters.submit_count, Some(0));
+    assert_eq!(counters.command_buffer_count, Some(0));
+}
+
+#[test]
+fn exclusive_admission_attributes_prior_retirement_to_the_request_context() {
+    let gpu = crate::test_support::adapter();
+    let mut resources = DeviceResources::new(gpu.device.raw.clone(), false);
+    resources.overlap_target = 1;
+    let resources = Arc::new(resources);
+    let prior = ObservationContext::new(CollectionMode::Summary);
+    let request = ObservationContext::new(CollectionMode::Summary);
+    let command = gpu
+        .device
+        .raw
+        .create_command_encoder(&Default::default())
+        .finish();
+    let retirement = resources
+        .submit(&gpu.queue.raw, Some(command), None, None, &prior)
         .unwrap();
-    let incomplete = Measurement::unavailable(AvailabilityReason::Incomplete);
-    assert_eq!(measurements.submit_to_map_ready, incomplete);
-    assert_eq!(measurements.host_materialize, incomplete);
-    assert!(snapshot.totals.host_wait_count.unwrap_or(0) > 0);
+    let operation = resources.admit(2, 0, None, &request).unwrap();
+    assert!(operation.state.exclusive);
+    assert!(retirement.is_complete());
+    assert_eq!(prior.snapshot().totals.host_wait_count, Some(0));
+    assert_eq!(request.snapshot().totals.host_wait_count, Some(1));
+    drop(operation);
+    assert_eq!(request.snapshot().totals.host_wait_count, Some(1));
 }
 
 #[test]
@@ -316,13 +390,17 @@ fn portable_owner_inventory_deduplicates_physical_buffers_and_keeps_only_weak_ow
     small.overlap_target = 20;
     let small = Arc::new(small);
     small.register_image(&image);
-    let oversized = small.admit(9, 0, None).unwrap();
+    let oversized = small
+        .admit(9, 0, None, &ObservationContext::default())
+        .unwrap();
     assert!(
         small.reserved.lock().exclusive,
         "retained-heavy work must serialize, not be rejected at the overlap target"
     );
     drop(oversized);
-    let ordinary = small.admit(8, 0, None).unwrap();
+    let ordinary = small
+        .admit(8, 0, None, &ObservationContext::default())
+        .unwrap();
     assert!(!small.reserved.lock().exclusive);
     drop(ordinary);
     drop(image);
@@ -335,7 +413,11 @@ fn portable_owner_inventory_deduplicates_physical_buffers_and_keeps_only_weak_ow
     );
     assert!(resources.retained.lock().images.is_empty());
     assert!(resources.retained.lock().scans.is_empty());
-    assert!(small.admit(20, 0, None).is_ok());
+    assert!(
+        small
+            .admit(20, 0, None, &ObservationContext::default())
+            .is_ok()
+    );
 }
 
 #[test]
@@ -380,7 +462,9 @@ fn full_resolution_gui_peak_above_overlap_target_is_admitted_exclusively() {
     // rasters. This is admission coverage, not an allocation/VRAM claim.
     let planned_peak = 18u64 * 6342 * 9543 * 12;
     assert!(planned_peak > OVERLAP_TARGET_BYTES);
-    let operation = resources.admit(planned_peak, 0, None).unwrap();
+    let operation = resources
+        .admit(planned_peak, 0, None, &ObservationContext::default())
+        .unwrap();
     assert_eq!(operation.reserved_bytes(), planned_peak);
     assert!(operation.state.exclusive);
     assert_eq!(resources.reserved.lock().owners, 1);
@@ -394,14 +478,18 @@ fn oversized_owners_block_both_normal_and_oversized_admission_until_owner_releas
     let mut resources = DeviceResources::new(gpu.device.raw.clone(), false);
     resources.overlap_target = 100;
     let resources = Arc::new(resources);
-    let first = resources.admit(150, 0, None).unwrap();
+    let first = resources
+        .admit(150, 0, None, &ObservationContext::default())
+        .unwrap();
     let (large_acquired, large_ready) = mpsc::channel();
     let (release_large, large_released) = mpsc::channel();
     let (normal_acquired, normal_ready) = mpsc::channel();
     std::thread::scope(|scope| {
         let shared = resources.clone();
         let large = scope.spawn(move || {
-            let operation = shared.admit(200, 0, None).unwrap();
+            let operation = shared
+                .admit(200, 0, None, &ObservationContext::default())
+                .unwrap();
             large_acquired.send(()).unwrap();
             large_released.recv_timeout(Duration::from_secs(5)).unwrap();
             drop(operation);
@@ -409,12 +497,14 @@ fn oversized_owners_block_both_normal_and_oversized_admission_until_owner_releas
         await_admission_waiters(&resources, 1);
         let shared = resources.clone();
         let normal = scope.spawn(move || {
-            let operation = shared.admit(20, 0, None).unwrap();
+            let operation = shared
+                .admit(20, 0, None, &ObservationContext::default())
+                .unwrap();
             normal_acquired.send(()).unwrap();
             drop(operation);
         });
         await_admission_waiters(&resources, 2);
-        resources.retire_all();
+        resources.retire_all(&ObservationContext::default());
         assert!(matches!(
             large_ready.try_recv(),
             Err(mpsc::TryRecvError::Empty)
@@ -447,14 +537,17 @@ fn cancelled_admission_waits_drop_priority_without_releasing_another_owner() {
     resources.overlap_target = 100;
     let resources = Arc::new(resources);
     for requested in [60, 150] {
-        let first = resources.admit(60, 0, None).unwrap();
+        let first = resources
+            .admit(60, 0, None, &ObservationContext::default())
+            .unwrap();
         let cancellation = Arc::new(AtomicBool::new(false));
         let (finished, ready) = mpsc::channel();
         std::thread::scope(|scope| {
             let shared = resources.clone();
             let token = cancellation.clone();
             let waiter = scope.spawn(move || {
-                let result = shared.admit(requested, 0, Some(&token));
+                let result =
+                    shared.admit(requested, 0, Some(&token), &ObservationContext::default());
                 finished.send(result.err()).unwrap();
             });
             await_admission_waiters(&resources, 1);
@@ -474,7 +567,9 @@ fn cancelled_admission_waits_drop_priority_without_releasing_another_owner() {
         assert_eq!(state.waiters, 0);
         assert_eq!(state.exclusive_waiters, 0);
         drop(state);
-        let ordinary = resources.admit(20, 0, None).unwrap();
+        let ordinary = resources
+            .admit(20, 0, None, &ObservationContext::default())
+            .unwrap();
         assert_eq!(resources.reserved.lock().bytes, 80);
         drop(ordinary);
         drop(first);
@@ -486,12 +581,14 @@ fn cancelled_admission_waits_drop_priority_without_releasing_another_owner() {
 fn finite_peak_is_not_rejected_but_footprint_arithmetic_overflow_is() {
     let gpu = crate::test_support::adapter();
     let resources = Arc::new(DeviceResources::new(gpu.device.raw.clone(), false));
-    let result = resources.admit(u64::MAX, 1, None);
+    let result = resources.admit(u64::MAX, 1, None, &ObservationContext::default());
     assert_eq!(
         result.err().as_deref(),
         Some("GPU operation planned footprint overflows")
     );
-    let operation = resources.admit(u64::MAX, 0, None).unwrap();
+    let operation = resources
+        .admit(u64::MAX, 0, None, &ObservationContext::default())
+        .unwrap();
     assert!(operation.state.exclusive);
     assert_eq!(resources.reserved.lock().bytes, u64::MAX);
     drop(operation);

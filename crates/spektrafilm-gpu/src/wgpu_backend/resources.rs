@@ -6,6 +6,7 @@ use super::{
     ObservedQueue, WgpuBackend, film_chain::device_image::BufferPayload, scan::PreparedScan,
 };
 use parking_lot::{Condvar, Mutex};
+use spektrafilm_backend::telemetry::{ObservationContext, WorkCounters};
 use std::{
     collections::VecDeque,
     sync::{
@@ -98,6 +99,8 @@ struct Submissions {
 struct SubmissionSlot<'a> {
     resources: &'a DeviceResources,
     armed: bool,
+    raw_submit_started: bool,
+    context: &'a ObservationContext,
 }
 
 impl Drop for SubmissionSlot<'_> {
@@ -105,9 +108,16 @@ impl Drop for SubmissionSlot<'_> {
         if self.armed {
             self.resources.submissions.lock().submitting -= 1;
             self.resources.submitted.notify_all();
-            // A validation/error callback can unwind raw submit. Retire any
-            // work it accepted before command-origin operation owners unwind.
-            self.resources.device.poll(wgpu::Maintain::Wait);
+            if self.raw_submit_started {
+                // A validation/error callback can unwind raw submit. Retire any
+                // work it accepted before command-origin owners unwind. An
+                // unused slot needs no device wait when cancellation wins.
+                self.resources.device.poll(wgpu::Maintain::Wait);
+                self.context.record_work(&WorkCounters {
+                    host_wait_count: Some(1),
+                    ..Default::default()
+                });
+            }
         }
     }
 }
@@ -213,6 +223,7 @@ impl DeviceResources {
         planned_peak_bytes: u64,
         cache_bytes: u64,
         cancellation: Option<&Arc<AtomicBool>>,
+        context: &ObservationContext,
     ) -> Result<OperationGuard, String> {
         let mut waiter = AdmissionWaiter {
             resources: self,
@@ -248,7 +259,7 @@ impl DeviceResources {
                 if reserved.owners == 0 && !retired_prior {
                     drop(reserved);
                     // Retire unowned/prior queue work outside all ledger locks.
-                    self.retire_all();
+                    self.retire_all(context);
                     retired_prior = true;
                     continue;
                 }
@@ -272,6 +283,7 @@ impl DeviceResources {
                         resources: self.clone(),
                         bytes: planned_peak_bytes,
                         exclusive,
+                        context: context.clone(),
                         pending: Mutex::new(OperationSubmissions::default()),
                     }),
                 });
@@ -285,7 +297,7 @@ impl DeviceResources {
         }
     }
 
-    fn retire(&self, retirement: &Retirement) {
+    fn retire(&self, retirement: &Retirement, context: &ObservationContext) {
         if retirement.complete.load(Ordering::Acquire) {
             return;
         }
@@ -295,6 +307,10 @@ impl DeviceResources {
         self.device.poll(wgpu::Maintain::WaitForSubmissionIndex(
             retirement.index.clone(),
         ));
+        context.record_work(&WorkCounters {
+            host_wait_count: Some(1),
+            ..Default::default()
+        });
         retirement.complete.store(true, Ordering::Release);
         self.submissions
             .lock()
@@ -308,8 +324,9 @@ impl DeviceResources {
         queue: &wgpu::Queue,
         commands: impl IntoIterator<Item = wgpu::CommandBuffer>,
         operation: Option<&Arc<OperationState>>,
-    ) -> (Retirement, bool) {
-        let mut waited = false;
+        cancellation: Option<&Arc<AtomicBool>>,
+        context: &ObservationContext,
+    ) -> Result<Retirement, String> {
         loop {
             let mut submissions = self.submissions.lock();
             submissions
@@ -321,8 +338,7 @@ impl DeviceResources {
             }
             if let Some(oldest) = submissions.pending.front().cloned() {
                 drop(submissions);
-                self.retire(&oldest);
-                waited = true;
+                self.retire(&oldest, context);
             } else {
                 // Other threads are inside raw submit. Do not hold their slot
                 // lock while waiting for their submission indices to arrive.
@@ -332,9 +348,17 @@ impl DeviceResources {
         let mut slot = SubmissionSlot {
             resources: self,
             armed: true,
+            raw_submit_started: false,
+            context,
         };
+        // Acquiring capacity may poll callbacks that cancel the request. Check
+        // only after owning a slot, before consuming or submitting commands.
+        if cancellation.is_some_and(|token| token.load(Ordering::Acquire)) {
+            return Err("operation cancelled".into());
+        }
         // Neither submit nor poll may run with our locks held: wgpu can execute
         // user map/completion callbacks in either call.
+        slot.raw_submit_started = true;
         let index = queue.submit(commands);
         let retirement = Retirement {
             index,
@@ -350,15 +374,15 @@ impl DeviceResources {
         if let Some(operation) = operation {
             operation.retain_submission(retirement.clone());
         }
-        (retirement, waited)
+        Ok(retirement)
     }
 
-    pub(super) fn retire_all(&self) {
+    pub(super) fn retire_all(&self, context: &ObservationContext) {
         loop {
             let mut submissions = self.submissions.lock();
             if let Some(pending) = submissions.pending.front().cloned() {
                 drop(submissions);
-                self.retire(&pending);
+                self.retire(&pending, context);
             } else if submissions.submitting > 0 {
                 self.submitted.wait(&mut submissions);
             } else {
@@ -378,6 +402,7 @@ pub(super) struct OperationState {
     resources: Arc<DeviceResources>,
     bytes: u64,
     exclusive: bool,
+    context: ObservationContext,
     pending: Mutex<OperationSubmissions>,
 }
 
@@ -395,7 +420,7 @@ impl Drop for OperationState {
         // This final owner may be the guard or a backend derivative that outlived
         // it. Retire only this operation's submitted work before returning credit.
         for pending in &self.pending.get_mut().pending {
-            self.resources.retire(pending);
+            self.resources.retire(pending, &self.context);
         }
         let mut reserved = self.resources.reserved.lock();
         reserved.bytes -= self.bytes;
@@ -426,7 +451,9 @@ impl OperationGuard {
     pub(super) fn retire_pending(&self) {
         let pending = std::mem::take(&mut self.state.pending.lock().pending);
         for retirement in pending {
-            self.state.resources.retire(&retirement);
+            self.state
+                .resources
+                .retire(&retirement, &self.state.context);
         }
     }
 
@@ -480,9 +507,12 @@ impl WgpuBackend {
         } else {
             0
         };
-        self.device
-            .resources
-            .admit(planned_peak_bytes, cache_bytes, self.cancellation.as_ref())
+        self.device.resources.admit(
+            planned_peak_bytes,
+            cache_bytes,
+            self.cancellation.as_ref(),
+            &self.device.context,
+        )
     }
 }
 

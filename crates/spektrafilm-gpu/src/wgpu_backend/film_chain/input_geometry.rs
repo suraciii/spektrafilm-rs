@@ -564,7 +564,7 @@ impl WgpuBackend {
             encoder,
             self.device.create_command_encoder(&Default::default()),
         );
-        self.queue.submit(Some(pending.finish()));
+        self.submit_commands(Some(pending.finish()))?;
         self.check_cancelled()
     }
 

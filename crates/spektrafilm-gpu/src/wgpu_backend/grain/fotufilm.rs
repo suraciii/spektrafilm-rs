@@ -390,7 +390,9 @@ impl FotufilmPagedState {
         }
         // Execution status is the sole bounded orchestration readback.
         backend.check_cancelled()?;
-        let flags = backend.pipe.readback_buffer_as::<u32>(&status, 4);
+        let flags = backend
+            .pipe
+            .readback_buffer_cancellable::<u32>(&status, 4)?;
         match flags[0] {
             0 => {}
             1 => return Err("Fotufilm formation exceeded its crystal-count bound".into()),
@@ -534,7 +536,7 @@ impl FotufilmPagedState {
                         u64::from(width) * 3,
                     )?;
                 }
-                backend.queue.submit(Some(encoder.finish()));
+                backend.submit_commands(Some(encoder.finish()))?;
             }
         }
         backend.check_cancelled()?;
@@ -700,10 +702,10 @@ impl WgpuBackend {
         let mut data = Vec::with_capacity(params.width as usize * params.height as usize * 3);
         for page in &state.output_pages {
             self.check_cancelled()?;
-            data.extend(f32_to_scalars(
-                self.pipe
-                    .readback_buffer(&page.buffer, u64::from(page.n_pixels) * 12),
-            ));
+            data.extend(f32_to_scalars(self.pipe.readback_buffer_cancellable(
+                &page.buffer,
+                u64::from(page.n_pixels) * 12,
+            )?));
         }
         self.check_cancelled()?;
         Ok(ImageBuf::from_data(params.width, params.height, data))
@@ -762,7 +764,7 @@ impl WgpuBackend {
             self.check_cancelled()?;
             let mut encoder = self.device.create_command_encoder(&Default::default());
             encoder.clear_buffer(&log_light, 0, None);
-            self.queue.submit(Some(encoder.finish()));
+            self.submit_commands(Some(encoder.finish()))?;
             let gross = record.d_min + span * f64::from(level) / f64::from(LEVELS - 1);
             for (b, layer) in record.sublayers.iter().enumerate() {
                 self.check_cancelled()?;
@@ -808,7 +810,7 @@ impl WgpuBackend {
                         SAMPLE.div_ceil(GRID_WORKGROUP),
                     ),
                 );
-                self.queue.submit(Some(encoder.finish()));
+                self.submit_commands(Some(encoder.finish()))?;
             }
             self.check_cancelled()?;
             let mut encoder = self.device.create_command_encoder(&Default::default());
@@ -835,7 +837,7 @@ impl WgpuBackend {
                 &[&uniform, &tile, &bank.sums, &bank.tile_means],
                 (1, 1),
             );
-            self.queue.submit(Some(encoder.finish()));
+            self.submit_commands(Some(encoder.finish()))?;
         }
         self.check_cancelled()?;
         let density = self.fotufilm_scratch(
@@ -877,7 +879,7 @@ impl WgpuBackend {
             &buffers,
             (LEVELS, 1),
         );
-        self.queue.submit(Some(encoder.finish()));
+        self.submit_commands(Some(encoder.finish()))?;
         Ok(bank)
     }
 
@@ -908,7 +910,7 @@ impl WgpuBackend {
         let mut encoder = self.device.create_command_encoder(&Default::default());
         encoder.clear_buffer(deposits, 0, None);
         encoder.clear_buffer(uncovered, 0, None);
-        self.queue.submit(Some(encoder.finish()));
+        self.submit_commands(Some(encoder.finish()))?;
         for first_row in (0..cells).step_by(band_rows as usize) {
             self.check_cancelled()?;
             let rows = (cells - first_row).min(band_rows);
@@ -983,7 +985,7 @@ impl WgpuBackend {
                 );
                 chunk_first += chunk_rows as i32;
             }
-            self.queue.submit(Some(encoder.finish()));
+            self.submit_commands(Some(encoder.finish()))?;
         }
         Ok(())
     }
@@ -1092,7 +1094,7 @@ impl WgpuBackend {
                 (SAMPLE.div_ceil(8), SAMPLE.div_ceil(8)),
             );
         }
-        self.queue.submit(Some(encoder.finish()));
+        self.submit_commands(Some(encoder.finish()))?;
         self.check_cancelled()?;
         Ok(())
     }

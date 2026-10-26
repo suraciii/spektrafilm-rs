@@ -181,12 +181,13 @@ impl WgpuBackend {
                             pass.set_bind_group(0, &group, &[]);
                             dispatch_linear(&mut pass, n);
                         }
-                        self.queue.submit(Some(encoder.finish()));
+                        self.submit_commands(Some(encoder.finish()))?;
                     }
                 }
             }
             output.extend(f32_to_scalars(
-                self.pipe.readback_buffer(&result, u64::from(n) * 12),
+                self.pipe
+                    .readback_buffer_cancellable(&result, u64::from(n) * 12)?,
             ));
         }
         self.device.context.record_executor(Executor::Gpu, None);

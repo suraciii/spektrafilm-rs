@@ -273,7 +273,7 @@ impl RasterCommands {
                 }
             }
             backend.check_cancelled()?;
-            backend.queue.submit(Some(encoder.finish()));
+            backend.submit_commands(Some(encoder.finish()))?;
         }
         backend.check_cancelled()
     }

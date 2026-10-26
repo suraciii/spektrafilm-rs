@@ -248,7 +248,8 @@ impl WgpuBackend {
                         source: &wgpu::Buffer,
                         result64: &wgpu::Buffer,
                         result32: &wgpu::Buffer,
-                        n: u32| {
+                        n: u32|
+         -> Result<(), String> {
             let pipeline = self.cached_pipeline_at(SHADER, &types, entry);
             let uniform = self
                 .device
@@ -283,7 +284,8 @@ impl WgpuBackend {
                 pass.set_bind_group(0, &group, &[]);
                 dispatch_linear(&mut pass, n);
             }
-            self.queue.submit(Some(encoder.finish()));
+            self.submit_commands(Some(encoder.finish()))?;
+            Ok(())
         };
         let dummy_source = upload("spectral_empty_source", &[0; 4]);
         let neutral64 = allocate("spectral_final_neutral", 24);
@@ -312,9 +314,9 @@ impl WgpuBackend {
             p.first = (chunk_index * rows) as u32;
             p.cells = (data.len() / nw) as u32;
             let source = upload("spectral_reference_rows", bytemuck::cast_slice(data));
-            dispatch("reference", &p, &source, &neutral64, &dummy32, nw as u32);
+            dispatch("reference", &p, &source, &neutral64, &dummy32, nw as u32)?;
         }
-        dispatch("normalize", &p, &dummy_source, &neutral64, &dummy32, 1);
+        dispatch("normalize", &p, &dummy_source, &neutral64, &dummy32, 1)?;
         for first in (0..cells).step_by(rows) {
             let n = rows.min(cells - first);
             p.first = first as u32;
@@ -325,8 +327,8 @@ impl WgpuBackend {
             );
             let chunk64 = allocate("spectral_tc_chunk_f64", n as u64 * 24);
             let chunk32 = allocate("spectral_tc_chunk_f32", n as u64 * 12);
-            dispatch("contract", &p, &source, &chunk64, &chunk32, n as u32);
-            dispatch("gather_neutral", &p, &dummy_source, &chunk64, &chunk32, 48);
+            dispatch("contract", &p, &source, &chunk64, &chunk32, n as u32)?;
+            dispatch("gather_neutral", &p, &dummy_source, &chunk64, &chunk32, 48)?;
             let mut encoder = self.device.create_command_encoder(&Default::default());
             encoder.copy_buffer_to_buffer(
                 &chunk64,
@@ -336,10 +338,10 @@ impl WgpuBackend {
                 n as u64 * 24,
             );
             encoder.copy_buffer_to_buffer(&chunk32, 0, &output, first as u64 * 12, n as u64 * 12);
-            self.queue.submit(Some(encoder.finish()));
+            self.submit_commands(Some(encoder.finish()))?;
         }
-        dispatch("finish_neutral", &p, &dummy_source, &neutral64, &dummy32, 3);
-        let neutral: Vec<f64> = self.pipe.readback_buffer_as(&neutral64, 24);
+        dispatch("finish_neutral", &p, &dummy_source, &neutral64, &dummy32, 3)?;
+        let neutral: Vec<f64> = self.pipe.readback_buffer_cancellable(&neutral64, 24)?;
         self.device.context.record_executor(Executor::Gpu, None);
         Ok(PreparedTable {
             values: Arc::new(PreparationTable {

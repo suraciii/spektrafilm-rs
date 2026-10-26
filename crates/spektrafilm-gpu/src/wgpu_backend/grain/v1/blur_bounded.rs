@@ -291,7 +291,7 @@ impl<'a> Submission<'a> {
                     .device
                     .create_command_encoder(&Default::default()),
             );
-            self.backend.queue.submit(Some(encoder.finish()));
+            self.backend.submit_commands(Some(encoder.finish()))?;
             self.pending = 0;
         }
         Ok(())
