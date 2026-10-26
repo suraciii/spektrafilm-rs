@@ -1,7 +1,7 @@
 // Formed-cell CMY -> linear route response. Subtract the film base offset
 // before optics; fractional readout must not subtract it a second time.
 struct Params {
-    dims: vec4<u32>, // cells, wavelengths, print=0/scan=1, unused
+    dims: vec4<u32>, // cells, wavelengths, print=0/scan=1, flags: scalar fast=1/input=2
     controls: vec4<f32>, // normalization, print exposure scale
     preflash: vec4<f32>,
     mins: vec4<f32>,
@@ -13,18 +13,38 @@ struct Params {
 @group(0) @binding(2) var<storage, read> spectrum: array<f32>;
 @group(0) @binding(3) var<storage, read_write> linear: array<f32>;
 @group(0) @binding(4) var<storage, read_write> status: atomic<u32>;
-@compute @workgroup_size(256)
-fn main(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_workgroups) grid: vec3<u32>) {
-    let i = gid.x + gid.y * grid.x * 256u;
-    if (i >= p.dims.x) { return; }
-    let b = i * 3u;
-    let cmy = vec3<f32>(formed[b], formed[b + 1u], formed[b + 2u]) - p.mins.xyz;
+fn spectral_response(cmy: vec3<f32>) -> vec3<f32> {
     var raw = vec3<f32>(0.0);
     for (var wl = 0u; wl < p.dims.y; wl++) {
         let s = wl * 8u;
         let d = dot(cmy, vec3<f32>(spectrum[s], spectrum[s + 1u], spectrum[s + 2u])) + spectrum[s + 3u];
         let light = pow(10.0, -d) * spectrum[s + 4u];
         raw += light * vec3<f32>(spectrum[s + 5u], spectrum[s + 6u], spectrum[s + 7u]);
+    }
+    return raw;
+}
+@compute @workgroup_size(256)
+fn main(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_workgroups) grid: vec3<u32>) {
+    let i = gid.x + gid.y * grid.x * 256u;
+    if (i >= p.dims.x) { return; }
+    let b = i * 3u;
+    var cmy: vec3<f32>;
+    if ((p.dims.w & 2u) != 0u) {
+        cmy = vec3<f32>(formed[i]);
+    } else {
+        cmy = vec3<f32>(formed[b], formed[b + 1u], formed[b + 2u]);
+    }
+    cmy = cmy - p.mins.xyz;
+    var raw: vec3<f32>;
+    if ((p.dims.w & 1u) != 0u) {
+        let exponent = -p.preflash.x * cmy.x;
+        if (exponent >= p.controls.z && exponent <= p.controls.w) {
+            raw = p.preflash.yzw * pow(10.0, exponent);
+        } else {
+            raw = spectral_response(cmy);
+        }
+    } else {
+        raw = spectral_response(cmy);
     }
     var result: vec3<f32>;
     if (p.dims.z == 0u) {

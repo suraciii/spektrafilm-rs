@@ -948,3 +948,103 @@ fn negative_durations_and_nonpositive_timestamp_periods_are_rejected() {
         assert!(report.validate().is_err());
     }
 }
+
+#[test]
+fn scalar_record_reports_validate_constraints_and_keep_historical_reports_compatible() {
+    use spektrafilm_core::{params, profile, telemetry};
+    let profile: profile::Profile = serde_json::from_value(serde_json::json!({
+        "metadata": {}, "info": {}, "data": {}
+    }))
+    .unwrap();
+    let mut params = params::RuntimeParams::default();
+    params.workflow.route = "input > film > scan".into();
+    params.film_render.grain.engine = params::GrainEngine::Dye;
+    params.scanner.scan_output = "direct_scan".into();
+    let mut render = telemetry::RenderConfiguration::from_runtime(&params, &profile, &profile);
+    assert!(render.grain.record.is_none());
+    render.grain.record = Some(telemetry::RecordConfiguration {
+        law: telemetry::RecordLaw::ScalarFixedContribution,
+        event_contribution_d_um2: 0.2,
+        support_um: 1.0,
+        cell_um: 0.5,
+        seed: (1_u64 << 53) + 1,
+        expectation: false,
+        optical_order:
+            telemetry::RecordOpticalOrder::FormedDensityThenCellResponseThenFractionalIntegration,
+    });
+    let mut report = collected_report();
+    report.configuration.render = Some(render);
+    let decoded = Report::from_json(&report.to_json().unwrap()).unwrap();
+    assert_eq!(decoded.configuration.render, report.configuration.render);
+    let json = serde_json::to_value(&report).unwrap();
+    for (field, value) in [
+        ("event_contribution_d_um2", serde_json::json!(0.0)),
+        ("event_contribution_d_um2", serde_json::json!(-1.0)),
+        ("support_um", serde_json::json!(0.0)),
+        ("cell_um", serde_json::json!(-1.0)),
+        ("cell_um", serde_json::json!(0.75)),
+        ("law", serde_json::json!("unknown_law")),
+        (
+            "optical_order",
+            serde_json::json!("response_after_integration"),
+        ),
+    ] {
+        let mut invalid = json.clone();
+        invalid["configuration"]["render"]["grain"]["record"][field] = value;
+        assert!(Report::from_json(&invalid.to_string()).is_err(), "{field}");
+    }
+    for (field, value) in [
+        ("workflow_route", serde_json::json!("film_print_scan")),
+        ("scan_output", serde_json::json!("negative_to_positive")),
+        ("scanner_lut_requested", serde_json::json!(true)),
+    ] {
+        let mut invalid = json.clone();
+        invalid["configuration"]["render"][field] = value;
+        assert!(Report::from_json(&invalid.to_string()).is_err(), "{field}");
+    }
+    for (field, value) in [
+        ("active", serde_json::json!(false)),
+        ("engine", serde_json::json!("spektra")),
+        ("mode", serde_json::json!("noise")),
+    ] {
+        let mut invalid = json.clone();
+        invalid["configuration"]["render"]["grain"][field] = value;
+        assert!(Report::from_json(&invalid.to_string()).is_err(), "{field}");
+    }
+    let mut historical = json;
+    historical["configuration"]["render"]["grain"]
+        .as_object_mut()
+        .unwrap()
+        .remove("record");
+    let historical = Report::from_json(&historical.to_string()).unwrap();
+    assert!(
+        historical
+            .configuration
+            .render
+            .as_ref()
+            .unwrap()
+            .grain
+            .record
+            .is_none()
+    );
+    assert!(
+        !historical
+            .to_json()
+            .unwrap()
+            .contains("event_contribution_d_um2")
+    );
+    report
+        .configuration
+        .render
+        .as_mut()
+        .unwrap()
+        .grain
+        .record
+        .as_mut()
+        .unwrap()
+        .event_contribution_d_um2 = f64::NAN;
+    assert!(matches!(
+        report.validate(),
+        Err(telemetry::ValidationError::NonFinite(_))
+    ));
+}

@@ -15,6 +15,8 @@ pub enum ValidationError {
     MissingSourceRender,
     #[error("non-finite numeric measurement in {0}")]
     NonFinite(&'static str),
+    #[error("invalid effective scalar-record configuration")]
+    InvalidRecordConfiguration,
     #[error("duplicate observation identifier {0}")]
     DuplicateObservationId(u64),
     #[error("observation {0} has an unretained parent")]
@@ -128,6 +130,36 @@ fn validate_report(report: &Report) -> Result<(), ValidationError> {
         }
         if render.scan_operator.contrast <= 0.0 {
             return Err(ValidationError::InvalidMeasurement);
+        }
+        if let Some(record) = &render.grain.record {
+            use super::configuration::{GrainEngine, GrainMode, ScanOutput, WorkflowRoute};
+            for (value, field) in [
+                (
+                    record.event_contribution_d_um2,
+                    "configuration.render.grain.record.event_contribution_d_um2",
+                ),
+                (
+                    record.support_um,
+                    "configuration.render.grain.record.support_um",
+                ),
+                (record.cell_um, "configuration.render.grain.record.cell_um"),
+            ] {
+                validate_finite(value, field)?;
+                if value <= 0.0 {
+                    return Err(ValidationError::InvalidRecordConfiguration);
+                }
+            }
+            if !render.grain.active
+                || render.grain.engine != GrainEngine::Dye
+                || render.grain.mode != GrainMode::DyeField
+                || render.workflow_route != WorkflowRoute::FilmScan
+                || render.scan_output != ScanOutput::DirectScan
+                || render.enlarger_lut_requested
+                || render.scanner_lut_requested
+                || record.cell_um > record.support_um / 2.0
+            {
+                return Err(ValidationError::InvalidRecordConfiguration);
+            }
         }
         validate_text(&render.model_version)?;
         for stock in [&render.film_stock, &render.print_stock]

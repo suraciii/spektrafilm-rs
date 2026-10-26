@@ -12,6 +12,7 @@
 //! the readout region only, so field cells keep their global film positions
 //! and overlapping reads agree.
 use crate::WorkflowRoute;
+mod record_law;
 
 use rayon::prelude::*;
 use spektrafilm_math::image::ImageBuf;
@@ -43,13 +44,11 @@ const APERTURE_FACTOR_ENV: &str = "SPEKTRAFILM_GRAIN_V3_APERTURE_FACTOR";
 const CELL_SPECTRAL_ENV: &str = "SPEKTRAFILM_GRAIN_V3_CELL_SPECTRAL";
 
 pub fn cell_spectral_enabled() -> Result<bool, String> {
+    let record = record_law::contribution()?.is_some();
     match std::env::var_os(CELL_SPECTRAL_ENV) {
-        None => Ok(false),
+        None => Ok(record),
         Some(value) if value == "1" => Ok(true),
-        Some(value) => Err(format!(
-            "{CELL_SPECTRAL_ENV} must be exactly 1 when set (got {:?})",
-            value.to_string_lossy()
-        )),
+        Some(_) => Err(format!("{CELL_SPECTRAL_ENV} must be exactly 1 when set")),
     }
 }
 
@@ -371,10 +370,19 @@ pub fn configuration_report(film: &Profile, params: &RuntimeParams) -> serde_jso
     })
 }
 
+/// Resolve the effective opt-in scalar-record controls for rendering and reports.
+pub fn resolve_record(
+    film: &Profile,
+    params: &RuntimeParams,
+) -> Result<Option<crate::telemetry::RecordConfiguration>, String> {
+    record_law::resolve(film, params)
+}
+
 /// Fail before any work when Dye is selected outside its supported
 /// condition: color or monochrome filming stocks and film-scan or print routes
 /// (spec §Supported product boundary).
 pub fn validate_supported(film: &Profile, params: &RuntimeParams) -> Result<(), String> {
+    resolve_record(film, params)?;
     if !active(params) {
         return Ok(());
     }
@@ -710,6 +718,12 @@ pub fn readout(
     grid: ReadoutGrid,
     backend: &dyn spektrafilm_backend::ComputeBackend,
 ) -> Result<ImageBuf, String> {
+    if resolve_record(film, params)?.is_some() {
+        return Err(
+            "scalar record law requires exact-cell optical readout, not density-only stage collection"
+                .into(),
+        );
+    }
     let resolved = resolve(film, params)?;
     if backend.is_gpu() {
         match device_params(&resolved, source_pitch_um, grid) {
@@ -794,6 +808,17 @@ pub fn readout_with_response(
     response: impl Fn(&ImageBuf, &dyn spektrafilm_backend::ComputeBackend) -> Result<ImageBuf, String>
     + Sync,
 ) -> Result<ImageBuf, String> {
+    if let Some(record) = resolve_record(film, params)? {
+        return record_law::readout(
+            source,
+            record,
+            source_pitch_um,
+            grid,
+            backend,
+            device_response,
+            response,
+        );
+    }
     let resolved = resolve(film, params)?;
     if backend.is_gpu() {
         match device_params(&resolved, source_pitch_um, grid) {
@@ -857,7 +882,9 @@ fn device_params(
     });
     Ok(spektrafilm_backend::dye_params::DyeGpuParams {
         monochrome: resolved.monochrome,
-        tables: spektrafilm_backend::dye_params::DyeChannelTablesGpu::pack(parts),
+        law: spektrafilm_backend::dye_params::DyeFieldLaw::Capacity(
+            spektrafilm_backend::dye_params::DyeChannelTablesGpu::pack(parts),
+        ),
         cell_um: model.cell_um(),
         taps: model.taps().to_vec(),
         source_pitch_um,
@@ -895,9 +922,8 @@ pub fn resident_device_params_for_dims(
     height: u32,
     source_pitch_um: f64,
 ) -> Result<spektrafilm_backend::dye_params::DyeGpuParams, String> {
-    let resolved = resolve(film, params)?;
     let plan = resident_readout_plan_for_dims(film, params, width, height, source_pitch_um)?;
-    device_params(&resolved, source_pitch_um, plan.grid)
+    resident_device_params_for_grid(film, params, source_pitch_um, plan.grid)
 }
 
 /// Resolve the same device field at a topology-selected readout grid.
@@ -908,6 +934,9 @@ pub(crate) fn resident_device_params_for_grid(
     source_pitch_um: f64,
     grid: ReadoutGrid,
 ) -> Result<spektrafilm_backend::dye_params::DyeGpuParams, String> {
+    if let Some(record) = resolve_record(film, params)? {
+        return record_law::device_params(record, source_pitch_um, grid);
+    }
     device_params(&resolve(film, params)?, source_pitch_um, grid)
 }
 
@@ -1400,7 +1429,7 @@ mod tests {
             }
             let device = backend
                 .dye_layer_targets(&densities, &packed)
-                .expect("device Dye layer-target evaluation");
+                .expect("device layer-target diagnostic");
             assert_eq!(device.len(), densities.len());
             let mut worst = 0.0f64;
             for (index, density) in densities.iter().enumerate() {

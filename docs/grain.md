@@ -101,6 +101,24 @@ The bundled initial BW profiles are `kodak_doublex` (5222 negative, with selecta
 CPU material export retains the formed field in the existing `.sfstage` representation. Continuation does not generate a second field. Material export and continuation remain CPU-only; the existing exact-cell and aperture persistence restrictions still apply. See the [record-layout design](../specs/film-grain/v3/design.md#record-layout) for validation and ordering.
 
 
+### Scalar-record reference
+
+Set `SPEKTRAFILM_GRAIN_RECORD_Q` to a finite positive record contribution in `D·µm²` to select the scalar fixed-contribution experiment. Select active Dye, a BW filming stock, `--backend cpu` or `--backend gpu`, `--route 'input > film > scan'`, and `--scan-output direct_scan`. Without this variable, Dye retains its existing capacity law. There is no calibrated default q; `0.2` and `0.6` are experimental values, not stock presets.
+
+The new law uses one scalar image-forming density target. It does not use `v3_event_area_um2`, `rms_granularity`, `particle_scale_sublayers`, `uniformity`, `density_min`, or `channel_correlation`. It retains `v3_dye_support_um`, the seed, and the explicit cell-pitch and expectation diagnostics. A record contribution is not a grain area. See the [scalar-record design](../specs/film-grain/v3/design.md#scalar-fixed-contribution-law) for the count law and memory limits.
+
+This route automatically enables exact-cell optical response: form density, convert each cell with the scanner's linear spectral response, then integrate the output footprint. It rejects scanner/enlarger LUTs, incompatible spatial finishing, and aperture or legacy mass-law experiments. `SPEKTRAFILM_GRAIN_V3_CELL_SPECTRAL` must be absent or `1`. An invalid q, cell pitch, or expectation flag fails instead of falling back.
+
+Actual `--diagnostics` reports retain the effective law, q, support, cell pitch, full seed, expectation flag, and optical order in `configuration.render.grain.record`. Preserve the input, profile data, command, binary identity, and report to reproduce a comparison. The q environment variable is not saved in a recipe. Color, print, material export, and GUI controls are not part of this experiment.
+
+CPU execution reuses scan preparation and bounded tile scratch. A proven scalar spectral basis avoids repeated wavelength integration; wavelength-dependent bases and unsafe exponent ranges retain generic integration. These optimizations do not change q, support, cell pitch, or optical ordering.
+
+GPU execution forms the record directly on the selected device. It uses one density lane until the RGB optical response, reuses bounded band buffers, and does not upload a CPU-generated field or download intermediate bands. The certified f32 count-law rate limit is `65536`; unsupported representation fails explicitly rather than changing the model.
+
+CPU and GPU share the conditional law but not individual stochastic draws under the Dye executor contract. Use expectation-mode comparisons and independent count/formation checks for numerical alignment, plus per-executor seed and crop repeatability. A software Vulkan adapter is portability evidence, not hardware speed evidence.
+
+Compare the legacy law with and without `SPEKTRAFILM_GRAIN_V3_CELL_SPECTRAL=1` to isolate optical ordering. Compare that exact-cell legacy result with the record law to isolate the event law. Keep all other settings and physical geometry fixed. Encoded-RGB differences do not establish optical-density calibration or physical stock fidelity.
+
 ### Film geometry and routes
 
 The field belongs to film coordinates. The pipeline develops the full frame. The readout produces the requested region at the requested grid. A crop selects the readout region and never restarts texture.

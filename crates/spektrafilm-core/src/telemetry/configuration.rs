@@ -234,12 +234,38 @@ pub enum GrainMode {
     FotufilmFilm,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RecordLaw {
+    ScalarFixedContribution,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RecordOpticalOrder {
+    FormedDensityThenCellResponseThenFractionalIntegration,
+}
+
+/// Effective scalar-record controls resolved by the shared field owner.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct RecordConfiguration {
+    pub law: RecordLaw,
+    pub event_contribution_d_um2: f64,
+    pub support_um: f64,
+    pub cell_um: f64,
+    pub seed: u64,
+    pub expectation: bool,
+    pub optical_order: RecordOpticalOrder,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct GrainConfiguration {
     pub active: bool,
     pub engine: GrainEngine,
     pub mode: GrainMode,
     pub spektra_fast_statistics_sampler: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub record: Option<RecordConfiguration>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -463,6 +489,7 @@ impl RenderConfiguration {
                     && grain.engine == crate::params::GrainEngine::Spektra
                     && grain.sublayers_active
                     && params.settings.use_fast_stats,
+                record: None,
             },
             spatial: SpatialConfiguration {
                 lens_blur: spatial_active

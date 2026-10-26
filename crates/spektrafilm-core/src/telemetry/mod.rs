@@ -7,8 +7,9 @@ mod validator;
 
 pub use configuration::{
     BitDepth, ColorSpaceRole, Compression, GamutAlgorithm, GrainConfiguration, GrainEngine,
-    GrainMode, OutputFormat, RenderConfiguration, RgbToRawAlgorithm, SavingConfiguration,
-    ScanModelConfiguration, SpatialConfiguration, StockId, WorkflowRoute,
+    GrainMode, OutputFormat, RecordConfiguration, RecordLaw, RecordOpticalOrder,
+    RenderConfiguration, RgbToRawAlgorithm, SavingConfiguration, ScanModelConfiguration,
+    SpatialConfiguration, StockId, WorkflowRoute,
 };
 pub use operation::Operation;
 pub use persistence::{

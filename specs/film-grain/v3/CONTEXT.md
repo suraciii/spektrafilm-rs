@@ -12,6 +12,8 @@ This context defines the domain language for the film-coordinate Dye grain model
 
 **Dye event area**: The mass represented by one stochastic dye event. It controls count variance through the conditional count law; it is not a microscopic crystal area.
 
+**Record contribution**: The integrated density response of one effective stochastic record event, in density times area (`D·µm²`). It is not geometric grain area or a calibrated material constant.
+
 **Optical grain measurement**: A fixed-protocol measurement of a Dye realization after declared receiver, aperture, wavelength, density, and viewing conditions. Its RMS is evidence for that protocol, not a universal stock constant.
 
 **Absolute spectral density**: The total optical density of the passive film base and dye records at one wavelength. It is nonnegative. It differs from receiver density measured relative to a declared reference.

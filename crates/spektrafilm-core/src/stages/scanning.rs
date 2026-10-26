@@ -589,17 +589,99 @@ fn finish_tail(
 /// glare, gamut compression, unsharp, then encoding. Never re-acquires or
 /// re-interprets; the density-reading route finishes its own output.
 pub fn finish_capture(
-    mut rgb: ImageBuf,
+    rgb: ImageBuf,
     profile: &Profile,
     params: &RuntimeParams,
     backend: &dyn ComputeBackend,
     gamut: &crate::gamut_compression::OutputGamutCompress,
 ) -> Result<ImageBuf, String> {
+    let prepared = crate::chain_prep::PreparedChain::for_scan(profile, params, true);
+    finish_capture_prepared(rgb, params, backend, gamut, &prepared.scan)
+}
+
+pub(crate) fn finish_capture_prepared(
+    rgb: ImageBuf,
+    params: &RuntimeParams,
+    backend: &dyn ComputeBackend,
+    gamut: &crate::gamut_compression::OutputGamutCompress,
+    color: &crate::chain_prep::ScanColorContext,
+) -> Result<ImageBuf, String> {
     let output_space = colorspace::resolve(&params.io.output_color_space)
         .expect("output color space must be validated before scanning");
-    let prepared = crate::chain_prep::PreparedChain::for_scan(profile, params, true);
-    rgb = finish_tail(rgb, params, backend, gamut, &prepared.scan, output_space)?;
-    Ok(rgb)
+    finish_tail(rgb, params, backend, gamut, color, output_space)
+}
+
+/// One resolved exact-cell response shared by every tile in a render. Standalone
+/// capture uses the same preparation and execution owner as the tiled route.
+pub(crate) struct PreparedLinearCapture<'a> {
+    channel_density: &'a [[f64; 3]],
+    base_density: &'a [f64],
+    color: &'a crate::chain_prep::ScanColorContext,
+    cpu: Option<spektrafilm_backend::cpu_backend::PreparedScanCpu<'a>>,
+}
+
+impl<'a> PreparedLinearCapture<'a> {
+    fn validate(params: &RuntimeParams) -> Result<(), String> {
+        if params.settings.use_scanner_lut {
+            return Err(
+                "exact-cell scanning requires direct spectral capture without the scanner LUT"
+                    .to_owned(),
+            );
+        }
+        Ok(())
+    }
+
+    pub(crate) fn new(
+        channel_density: &'a [[f64; 3]],
+        base_density: &'a [f64],
+        color: &'a crate::chain_prep::ScanColorContext,
+        params: &RuntimeParams,
+        backend: &dyn ComputeBackend,
+    ) -> Result<Self, String> {
+        Self::validate(params)?;
+        Ok(Self {
+            channel_density,
+            base_density,
+            color,
+            cpu: (!backend.is_gpu()).then(|| {
+                spektrafilm_backend::cpu_backend::PreparedScanCpu::new(
+                    channel_density,
+                    base_density,
+                    &color.illuminant,
+                    color.normalization,
+                    &color.adapt,
+                    &color.base_xyz_to_rgb,
+                )
+            }),
+        })
+    }
+
+    pub(crate) fn capture(
+        &self,
+        density: &ImageBuf,
+        backend: &dyn ComputeBackend,
+    ) -> Result<ImageBuf, String> {
+        if !backend.is_gpu()
+            && let Some(cpu) = &self.cpu
+        {
+            if let Some(context) = backend.observation_context() {
+                context.record_executor(
+                    spektrafilm_backend::telemetry::Executor::Cpu,
+                    Some(spektrafilm_backend::telemetry::CpuReason::CpuSelected),
+                );
+            }
+            return Ok(cpu.capture(density));
+        }
+        backend.scan_spectral(
+            density,
+            self.channel_density,
+            self.base_density,
+            &self.color.illuminant,
+            self.color.normalization,
+            &self.color.adapt,
+            &self.color.base_xyz_to_rgb,
+        )
+    }
 }
 
 /// Linear optical capture before inversion, gamut compression and encoding.
@@ -609,22 +691,17 @@ pub fn capture_linear(
     params: &RuntimeParams,
     backend: &dyn ComputeBackend,
 ) -> Result<ImageBuf, String> {
-    if params.settings.use_scanner_lut {
-        return Err(
-            "exact-cell scanning requires direct spectral capture without the scanner LUT"
-                .to_owned(),
-        );
-    }
+    PreparedLinearCapture::validate(params)?;
     let prepared = crate::chain_prep::PreparedChain::for_scan(profile, params, true);
-    scan_spectral_rgb(
-        density_cmy,
-        profile,
-        params,
-        backend,
-        &crate::chain_prep::channel_density(profile),
+    let channel_density = crate::chain_prep::channel_density(profile);
+    PreparedLinearCapture::new(
+        &channel_density,
         &profile.data.base_density,
         &prepared.scan,
-    )
+        params,
+        backend,
+    )?
+    .capture(density_cmy, backend)
 }
 /// Scan with the film base included — the per-stage topology entry point.
 pub fn process(
@@ -1008,5 +1085,102 @@ mod tests {
         let a = scan(&density, &film, &style::STANDARD, &params);
         let b = scan(&density, &film, &warm, &params);
         assert_eq!(a, b);
+    }
+}
+
+#[cfg(test)]
+mod prepared_capture_tests {
+    use super::*;
+
+    #[test]
+    fn resolved_bw_capture_and_finished_scan_match_generic_consumer() {
+        let data = crate::test_support::data_dir();
+        let film = crate::profile::resolve_for_render(
+            crate::profile::load_profile_by_name(&data, "kodak_doublex").unwrap(),
+            None,
+        );
+        let backend = spektrafilm_backend::cpu_backend::CpuBackend;
+        let mut params = RuntimeParams::default();
+        params.io.scan_film = true;
+        params.scanner.scan_output = "direct_scan".into();
+        params.io.output_cctf_encoding = false;
+        params.settings.use_scanner_lut = false;
+        params.scanner.unsharp_mask = [0.0; 2];
+        params.scanner.lens_blur = 0.0;
+        params.print_render.glare.active = false;
+        let image = ImageBuf::from_data(
+            6,
+            1,
+            [-0.3, 0.0, 0.2, 1.0, 3.0, 12.0]
+                .into_iter()
+                .flat_map(|d| [from_f64(d); 3])
+                .collect(),
+        );
+        let tolerance = if cfg!(feature = "precision-f64") {
+            2e-12
+        } else {
+            2e-6
+        };
+        for custom_basis in [false, true] {
+            let mut profile = film.clone();
+            // A BW material can carry a wavelength-varying extinction basis.
+            if custom_basis {
+                let row = profile
+                    .data
+                    .channel_density
+                    .iter_mut()
+                    .find(|row| row[0].is_finite())
+                    .unwrap();
+                row[0] += 0.13;
+            }
+            let color = crate::chain_prep::PreparedChain::for_scan(&profile, &params, true);
+            let cd = crate::chain_prep::channel_density(&profile);
+            let response = PreparedLinearCapture::new(
+                &cd,
+                &profile.data.base_density,
+                &color.scan,
+                &params,
+                &backend,
+            )
+            .unwrap();
+            let generic = spektrafilm_backend::cpu_backend::scan_spectral_cpu(
+                &image,
+                &cd,
+                &profile.data.base_density,
+                &color.scan.illuminant,
+                color.scan.normalization,
+                &color.scan.adapt,
+                &color.scan.base_xyz_to_rgb,
+            );
+            for actual in [
+                response.capture(&image, &backend).unwrap(),
+                capture_linear(&image, &profile, &params, &backend).unwrap(),
+            ] {
+                for (&a, &e) in actual.data.iter().zip(&generic.data) {
+                    assert!((to_f64(a) - to_f64(e)).abs() <= tolerance * (1.0 + to_f64(e).abs()));
+                }
+            }
+            let gamut = crate::gamut_compression::OutputGamutCompress::identity();
+            let finished = finish_capture_prepared(
+                response.capture(&image, &backend).unwrap(),
+                &params,
+                &backend,
+                &gamut,
+                &color.scan,
+            )
+            .unwrap();
+            let full = process(
+                &image,
+                &profile,
+                &style::STANDARD,
+                &params,
+                &backend,
+                &gamut,
+            )
+            .unwrap();
+            for (&a, &e) in finished.data.iter().zip(&full.data) {
+                assert!((to_f64(a) - to_f64(e)).abs() <= tolerance * (1.0 + to_f64(e).abs()));
+            }
+        }
     }
 }

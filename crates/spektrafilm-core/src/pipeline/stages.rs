@@ -324,13 +324,22 @@ impl Pipeline {
                 if cell_spectral {
                     let channel_density = crate::chain_prep::channel_density(&self.film);
                     let sensitivity;
-                    let prepared_scan;
-                    let device_response = if self.params.io.scan_film {
-                        prepared_scan = crate::chain_prep::PreparedChain::for_scan(
-                            &self.film,
-                            &self.params,
-                            true,
-                        );
+                    let prepared_scan = self.params.io.scan_film.then(|| {
+                        crate::chain_prep::PreparedChain::for_scan(&self.film, &self.params, true)
+                    });
+                    let prepared_capture = prepared_scan
+                        .as_ref()
+                        .map(|prepared| {
+                            crate::stages::scanning::PreparedLinearCapture::new(
+                                &channel_density,
+                                &self.film.data.base_density,
+                                &prepared.scan,
+                                &self.params,
+                                backend,
+                            )
+                        })
+                        .transpose()?;
+                    let device_response = if let Some(prepared_scan) = &prepared_scan {
                         spektrafilm_backend::DyeResponseGpuParams::Scan {
                             channel_density: &channel_density,
                             base_density: &self.film.data.base_density,
@@ -359,13 +368,8 @@ impl Pipeline {
                         backend,
                         &device_response,
                         |cells, backend| {
-                            if self.params.io.scan_film {
-                                crate::stages::scanning::capture_linear(
-                                    cells,
-                                    &self.film,
-                                    &self.params,
-                                    backend,
-                                )
+                            if let Some(prepared) = &prepared_capture {
+                                prepared.capture(cells, backend)
                             } else {
                                 crate::stages::printing::expose_linear_calibrated(
                                     cells,
@@ -390,12 +394,12 @@ impl Pipeline {
                     }
                     if self.params.io.scan_film {
                         let observation = crate::stages::StageObservation::new(backend, "scanning");
-                        cur = crate::stages::scanning::finish_capture(
+                        cur = crate::stages::scanning::finish_capture_prepared(
                             cur,
-                            &self.film,
                             &self.params,
                             observation.backend(backend),
                             &self.output_gamut,
+                            &prepared_scan.as_ref().expect("film scan context").scan,
                         )?;
                         // The scanner tail finished the route: leave the
                         // topology at the terminal tap.

@@ -352,6 +352,150 @@ pub fn scan_log_xyz_cpu_with_cmfs(
     xyz_flat
 }
 
+/// Render-invariant direct scanner preparation. The generic spectral fallback
+/// retains flattened tables, while a proven scalar basis avoids spectral scratch.
+pub struct PreparedScanCpu<'a> {
+    base_density: &'a [f64],
+    illuminant: &'a [f64],
+    cd_flat: Vec<f64>,
+    cmf_flat: Vec<f64>,
+    n_wl: usize,
+    has_base: bool,
+    scalar: Option<(crate::scalar_scan::ScalarScanCoefficients, [f64; 2])>,
+    normalization: f64,
+    cat: [[f64; 3]; 3],
+    xyz_to_rgb: [f64; 9],
+}
+
+impl<'a> PreparedScanCpu<'a> {
+    pub fn new(
+        channel_density: &[[f64; 3]],
+        base_density: &'a [f64],
+        illuminant: &'a [f64],
+        normalization: f64,
+        cat: &[[f64; 3]; 3],
+        xyz_to_rgb: &[[f64; 3]; 3],
+    ) -> Self {
+        let cmfs: [[f64; 3]; spectral::N_WAVELENGTHS] = std::array::from_fn(|i| {
+            [
+                spectral::CMF_X_F64[i],
+                spectral::CMF_Y_F64[i],
+                spectral::CMF_Z_F64[i],
+            ]
+        });
+        Self::with_cmfs(
+            channel_density,
+            base_density,
+            illuminant,
+            &cmfs,
+            normalization,
+            cat,
+            xyz_to_rgb,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn with_cmfs(
+        channel_density: &[[f64; 3]],
+        base_density: &'a [f64],
+        illuminant: &'a [f64],
+        cmfs: &[[f64; 3]],
+        normalization: f64,
+        cat: &[[f64; 3]; 3],
+        xyz_to_rgb: &[[f64; 3]; 3],
+    ) -> Self {
+        let n_wl = channel_density.len().min(illuminant.len()).min(cmfs.len());
+        Self {
+            base_density,
+            illuminant,
+            cd_flat: channel_density[..n_wl].iter().flatten().copied().collect(),
+            cmf_flat: cmfs[..n_wl].iter().flatten().copied().collect(),
+            n_wl,
+            has_base: !base_density.is_empty() && base_density.len() >= n_wl,
+            scalar: crate::scalar_scan::ScalarScanCoefficients::prepare(
+                channel_density,
+                base_density,
+                illuminant,
+                cmfs,
+            )
+            .map(|scalar| {
+                // Keep one decade inside the normal f64 exponent domain. Both
+                // factored and original per-row powers must stay in this domain;
+                // outside it the generic path preserves its operation sequencing.
+                let bounds =
+                    scalar.exponent_bounds(f64::MIN_POSITIVE.log10() + 1.0, f64::MAX.log10() - 1.0);
+                (scalar, bounds)
+            }),
+            normalization,
+            cat: *cat,
+            xyz_to_rgb: std::array::from_fn(|i| xyz_to_rgb[i / 3][i % 3]),
+        }
+    }
+
+    pub fn capture(&self, density_cmy: &ImageBuf) -> ImageBuf {
+        let n_pix = density_cmy.width as usize * density_cmy.height as usize;
+        if let Some((scalar, bounds)) = self.scalar {
+            let mut out = ImageBuf::new(density_cmy.width, density_cmy.height);
+            let inv_norm = 1.0 / self.normalization;
+            let safe = out
+                .data
+                .par_chunks_exact_mut(3)
+                .zip(density_cmy.data.par_chunks_exact(3))
+                .try_for_each(|(dst, src)| {
+                    // NaN * 0 is masked by the generic spectral path, not ignored.
+                    if !src.iter().all(|&v| to_f64(v).is_finite()) {
+                        return Err(());
+                    }
+                    let exponent = -scalar.coefficient * to_f64(src[0]);
+                    if !exponent.is_finite() || exponent < bounds[0] || exponent > bounds[1] {
+                        return Err(());
+                    }
+                    let transmission = 10.0f64.powf(exponent);
+                    if !transmission.is_finite() || transmission == 0.0 {
+                        return Err(());
+                    }
+                    let xyz = scalar.xyz.map(|coefficient| coefficient * transmission);
+                    if !xyz.iter().all(|value| value.is_finite()) {
+                        return Err(());
+                    }
+                    let adapted = normalize_adapt_xyz(xyz, inv_norm, &self.cat);
+                    // Keep CAT and output conversion separate without launching
+                    // a threaded BLAS kernel for each small field tile.
+                    for (row, value) in dst.iter_mut().enumerate() {
+                        let matrix = &self.xyz_to_rgb[row * 3..row * 3 + 3];
+                        *value = from_f64(
+                            matrix[0] * adapted[0]
+                                + matrix[1] * adapted[1]
+                                + matrix[2] * adapted[2],
+                        );
+                    }
+                    Ok(())
+                });
+            if safe.is_ok() {
+                return out;
+            }
+        }
+        let density_f64: Vec<f64> = density_cmy.data.par_iter().map(|&v| to_f64(v)).collect();
+        let xyz = spectral_to_proj_tiled(
+            &density_f64,
+            &self.cd_flat,
+            self.base_density,
+            self.has_base,
+            self.illuminant,
+            &self.cmf_flat,
+            n_pix,
+            self.n_wl,
+        );
+        finish_scan_cpu(
+            density_cmy,
+            xyz,
+            self.normalization,
+            &self.cat,
+            &self.xyz_to_rgb,
+        )
+    }
+}
+
 /// CPU spectral scanning: density CMY → RGB via 81-wavelength spectral integration.
 /// All inputs are f64 for Python parity. Python: `density_to_light` → einsum CMFs / norm.
 /// CPU spectral scanning: print/film density → final RGB via spectral
@@ -426,7 +570,7 @@ pub fn scan_spectral_cpu_with_cmfs(
         .flat_map(|r| [r[0], r[1], r[2]])
         .collect();
     let cmf_flat: Vec<f64> = cmfs[..n_wl].iter().flatten().copied().collect();
-    let mut xyz_flat = spectral_to_proj_tiled(
+    let xyz_flat = spectral_to_proj_tiled(
         &density_f64,
         &cd_flat,
         base_density,
@@ -437,6 +581,28 @@ pub fn scan_spectral_cpu_with_cmfs(
         n_wl,
     );
 
+    let matrix = std::array::from_fn(|i| xyz_to_rgb[i / 3][i % 3]);
+    finish_scan_cpu(density_cmy, xyz_flat, normalization, cat, &matrix)
+}
+
+fn normalize_adapt_xyz(xyz: [f64; 3], inv_norm: f64, cat: &[[f64; 3]; 3]) -> [f64; 3] {
+    let normalized = xyz.map(|value| {
+        let log_xyz = ((value * inv_norm).max(0.0) + 1e-10).log10();
+        10.0f64.powf(log_xyz)
+    });
+    std::array::from_fn(|row| {
+        cat[row][0] * normalized[0] + cat[row][1] * normalized[1] + cat[row][2] * normalized[2]
+    })
+}
+
+fn finish_scan_cpu(
+    density_cmy: &ImageBuf,
+    mut xyz_flat: Vec<f64>,
+    normalization: f64,
+    cat: &[[f64; 3]; 3],
+    xyz_to_rgb_flat: &[f64; 9],
+) -> ImageBuf {
+    let n_pix = (density_cmy.width as usize) * (density_cmy.height as usize);
     // Python's `_density_to_rgb` does:
     //   log_xyz = log10(max(xyz/norm, 0) + 1e-10)
     //   xyz_again = 10**log_xyz
@@ -451,26 +617,16 @@ pub fn scan_spectral_cpu_with_cmfs(
     // passes (3·n_pix scalar log10+powf, then 9·n_pix muls).
     let inv_norm = 1.0 / normalization;
     xyz_flat.par_chunks_exact_mut(3).for_each(|px| {
-        let mut tmp = [0.0f64; 3];
-        for k in 0..3 {
-            let after_norm = px[k] * inv_norm;
-            let log_xyz = (after_norm.max(0.0) + 1e-10).log10();
-            tmp[k] = 10.0f64.powf(log_xyz);
-        }
-        // Apply CAT (xyz_adapted = cat @ xyz). Python's `colour.XYZ_to_RGB`
-        // calls `vecmul(M_CAT, XYZ)` and `vecmul(matrix_XYZ_to_RGB, ...)`
-        // as two sequential matmuls; collapsing loses ~1 ULP per output.
-        px[0] = cat[0][0] * tmp[0] + cat[0][1] * tmp[1] + cat[0][2] * tmp[2];
-        px[1] = cat[1][0] * tmp[0] + cat[1][1] * tmp[1] + cat[1][2] * tmp[2];
-        px[2] = cat[2][0] * tmp[0] + cat[2][1] * tmp[1] + cat[2][2] * tmp[2];
+        let adapted = normalize_adapt_xyz([px[0], px[1], px[2]], inv_norm, cat);
+        px.copy_from_slice(&adapted);
     });
 
     // ── rgb = xyz_adapted @ xyz_to_rgb.T
-    let xyz_to_rgb_flat: Vec<f64> = xyz_to_rgb.iter().flat_map(|r| [r[0], r[1], r[2]]).collect();
+    // The prepared matrix is row-major, as in the generic reference.
     let mut rgb_flat = vec![0.0f64; n_pix * 3];
     dgemm_blas(
         &xyz_flat,
-        &xyz_to_rgb_flat,
+        xyz_to_rgb_flat,
         &mut rgb_flat,
         n_pix,
         3,
