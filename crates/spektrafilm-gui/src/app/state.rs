@@ -443,7 +443,7 @@ impl App {
             extras["display"][key] = display[key].clone();
         }
         if !extras["rust"].is_object() {
-            extras["rust"] = serde_json::json!({"version":1});
+            extras["rust"] = serde_json::json!({"version": state::CURRENT_STATE_VERSION});
         }
         extras["rust"]["viewer"] = self.viewer.persistent_state();
         extras["rust"]["histogram"] = self.histogram.persistent_state();

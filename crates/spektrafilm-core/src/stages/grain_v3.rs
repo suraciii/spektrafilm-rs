@@ -1398,7 +1398,9 @@ mod tests {
                     ]);
                 }
             }
-            let device = backend.dye_layer_targets(&densities, &packed);
+            let device = backend
+                .dye_layer_targets(&densities, &packed)
+                .expect("device Dye layer-target evaluation");
             assert_eq!(device.len(), densities.len());
             let mut worst = 0.0f64;
             for (index, density) in densities.iter().enumerate() {

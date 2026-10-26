@@ -129,6 +129,33 @@ The existing grain selector MUST retain its stable engine names and preset secti
 
 No duplicate grain selector or automatic engine conversion is required.
 
+### Grain control disclosure
+
+Ordinary Grain browsing MUST place Enable grain and Engine first. It MUST show only the selected engine's effective controls. Turning grain off MUST hide numerical controls without clearing their requests.
+
+Dye MUST expose Event area and Dye support immediately. One Advanced disclosure MUST contain its effective secondary controls.
+
+Dye support MUST NOT be described as a pure grain-diameter control. The panel MUST explain the lightweight Preview bypass and direct inspection to SCAN and exact 100% zoom.
+
+Black-and-white Dye MUST show only record 0 for relative strength, density minimum, and uniformity. It MUST hide color-only channel correlation. Hidden color requests MUST remain stored.
+
+Its three numerical-component scales MUST remain independent editors. Spektra's consumed channel controls MUST NOT be hidden merely because the material is monochrome.
+
+Procedural Grain Profiles MUST appear ordinarily only for Procedural. Named profiles MUST retain the allowed Amount override. Custom-only controls MUST appear only after explicit Custom selection.
+
+Noise MUST hide Film Resolution and Resolution Type. Film Type metadata MUST NOT appear as a creative editor.
+
+Spektra MUST hide Dye-only RMS strength. Composite and sublayer controls MUST follow their actual sampling branches.
+
+Missing profile layer data MUST NOT imply a composite fallback while sublayers are requested. An unsupported request MUST retain an explicit reason and the control that permits an explicit correction.
+
+Fotufilm Film MUST preserve the constrained sublayer-share editor and read-only fourth remainder. An unsupported material selection MUST state its reason without changing the requested material or engine.
+
+Search, Only modified, and canonical locators MUST reveal hidden stored controls at their existing owners. Inactive matches MUST retain readable values and their actual applicability reasons.
+
+Discovery MUST NOT change the selected engine, profile, material, or enable state. Shared material leaves MUST retain one editor per canonical value.
+
+
 ## Stage and surface ownership
 
 Each module has one editing owner. The inspector MUST contain these stages and modules. A less frequently used control stays with its stage; frequency MUST NOT move it to a separate Advanced page.

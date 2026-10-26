@@ -118,6 +118,18 @@ pub(super) fn validate_state_parameters(value: &mut Value, version: Option<u64>)
             value["cmyk"]["active"] = json!(true);
         }
     }
+    // Validate the mirror before canonicalization drops extension-only leaves.
+    // In particular, an explicit null or unknown engine is never omission.
+    if let Some(grain) = value.get("grain") {
+        let mut grain = grain.clone();
+        normalize_grain_section(&mut grain);
+        let _: spektrafilm_core::params::GrainParams =
+            serde_json::from_value(grain).map_err(|error| {
+                crate::app::Message::new("operations.state.invalid_parameters")
+                    .arg("path", "grain")
+                    .context(error)
+            })?;
+    }
     let mut explicit = value["rust"]["runtime"].clone();
     if explicit.is_null() {
         explicit = json!({});

@@ -12,9 +12,9 @@ pub use spektrafilm_core::config::config_dir;
 pub(crate) use validation::validate_stored_runtime;
 use validation::{normalize_grain_section, validate_state_parameters};
 
-/// Version 5 removes scanner light controls and emits the canonical standard
-/// style. Explicit versions 1–4 migrate; current documents validate strictly.
-pub(crate) const CURRENT_STATE_VERSION: u64 = 5;
+/// Version 6 makes Dye the authored default. Explicit versions 1–5 without
+/// a grain engine migrate to their historical Spektra intent.
+pub(crate) const CURRENT_STATE_VERSION: u64 = 6;
 
 /// Enlarger controls the upstream GUI also exposes under `simulation`
 /// aliases, as `(simulation key, enlarger key)`. Both directions of the
@@ -194,6 +194,22 @@ impl GuiState {
             }
         }
         validate_state_parameters(&mut value, version)?;
+        // The upstream mirror has no engine owner. Promote an explicit import
+        // before canonicalizing it; only versioned historical omission means
+        // Spektra. Unversioned sparse requests use the new runtime default.
+        let engine = value.pointer("/grain/engine").cloned().or_else(|| {
+            (matches!(version, Some(1..=5))
+                && value
+                    .pointer("/rust/runtime/film_render/grain/engine")
+                    .is_none())
+            .then(|| json!("spektra"))
+        });
+        if let Some(engine) = engine {
+            if value.get("rust").is_none() {
+                value["rust"] = json!({"version": CURRENT_STATE_VERSION});
+            }
+            value["rust"]["runtime"]["film_render"]["grain"]["engine"] = engine;
+        }
         for scanner in [&value["scanner"], &value["rust"]["runtime"]["scanner"]] {
             if let Some(selection) = scanner.get("scan_output") {
                 spektrafilm_core::params::sources::ParameterEdits::parse(&format!(

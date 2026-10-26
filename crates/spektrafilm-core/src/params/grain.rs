@@ -8,9 +8,9 @@ use serde::{Deserialize, Serialize};
 #[serde(rename_all = "snake_case")]
 #[derive(Default)]
 pub enum GrainEngine {
-    #[default]
     Spektra,
     Procedural,
+    #[default]
     Dye,
     Fotufilm,
 }
@@ -99,7 +99,7 @@ impl Default for FotufilmGrainParams {
 pub struct GrainParams {
     #[serde(default = "default_true")]
     pub active: bool,
-    /// Selects the grain route; Spektra preserves the upstream default.
+    /// Selects the grain route; new and sparse requests default to Dye.
     #[serde(default)]
     pub engine: GrainEngine,
     #[serde(default)]
@@ -264,7 +264,7 @@ impl Default for GrainParams {
     fn default() -> Self {
         Self {
             active: true,
-            engine: GrainEngine::Spektra,
+            engine: GrainEngine::default(),
             fotufilm: FotufilmGrainParams::default(),
             v2_profile: default_grain_v2_profile().to_owned(),
             v2_mode: GrainV2Mode::Analogue,
@@ -400,6 +400,57 @@ fn default_1i() -> u32 {
 #[cfg(test)]
 mod fotufilm_tests {
     use super::*;
+    #[test]
+    fn authored_and_sparse_grain_defaults_use_dye_without_rewriting_explicit_engines() {
+        assert_eq!(GrainEngine::default(), GrainEngine::Dye);
+        assert_eq!(GrainParams::default().engine, GrainEngine::Dye);
+        for source in [
+            "{}",
+            r#"{"film_render":{}}"#,
+            r#"{"film_render":{"grain":{}}}"#,
+        ] {
+            let params: crate::params::RuntimeParams = serde_json::from_str(source).unwrap();
+            assert_eq!(params.film_render.grain.engine, GrainEngine::Dye);
+        }
+        for source in ["", "[film_render]", "[film_render.grain]"] {
+            let params: crate::params::RuntimeParams = toml::from_str(source).unwrap();
+            assert_eq!(params.film_render.grain.engine, GrainEngine::Dye);
+        }
+        let edits = crate::params::sources::ParameterEdits::parse(
+            "film_render.grain.v3_event_area_um2=2.25",
+        )
+        .unwrap();
+        let mut params = crate::params::RuntimeParams::default();
+        edits.apply(&mut params).unwrap();
+        assert_eq!(params.film_render.grain.engine, GrainEngine::Dye);
+        params.film_render.grain.engine = GrainEngine::Spektra;
+        edits.apply(&mut params).unwrap();
+        assert_eq!(params.film_render.grain.engine, GrainEngine::Spektra);
+        for (name, engine) in [
+            ("spektra", GrainEngine::Spektra),
+            ("procedural", GrainEngine::Procedural),
+            ("dye", GrainEngine::Dye),
+            ("fotufilm", GrainEngine::Fotufilm),
+        ] {
+            let source = serde_json::json!({"engine": name, "v3_event_area_um2": 2.25});
+            let params: GrainParams = serde_json::from_value(source).unwrap();
+            assert_eq!(params.engine, engine);
+            let saved = serde_json::to_value(&params).unwrap();
+            assert_eq!(
+                serde_json::from_value::<GrainParams>(saved).unwrap(),
+                params
+            );
+            let source = format!("engine = {name:?}\nv3_event_area_um2 = 2.25");
+            assert_eq!(toml::from_str::<GrainParams>(&source).unwrap(), params);
+        }
+        for source in [
+            r#"{"engine":null}"#,
+            r#"{"engine":"unknown"}"#,
+            r#"{"unknown":1}"#,
+        ] {
+            assert!(serde_json::from_str::<GrainParams>(source).is_err());
+        }
+    }
 
     /// A named control and the setter that writes it.
     type Setter = (&'static str, fn(&mut FotufilmGrainParams, f64));
@@ -407,9 +458,9 @@ mod fotufilm_tests {
     #[test]
     fn fotufilm_defaults_partial_sections_and_material_roundtrip() {
         let defaults = FotufilmGrainParams::default();
-        let legacy: GrainParams = serde_json::from_str("{}").unwrap();
-        assert_eq!(legacy.engine, GrainEngine::Spektra);
-        assert_eq!(legacy.fotufilm, defaults);
+        let sparse: GrainParams = serde_json::from_str("{}").unwrap();
+        assert_eq!(sparse.engine, GrainEngine::Dye);
+        assert_eq!(sparse.fotufilm, defaults);
         let partial: GrainParams =
             serde_json::from_str(r#"{"engine":"fotufilm","fotufilm":{"amount":2.0}}"#).unwrap();
         assert_eq!(partial.fotufilm.amount, 2.0);

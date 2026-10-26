@@ -2,7 +2,7 @@
 
 ## Identity and scope
 
-`fotufilm` MUST select the independent Fotufilm Film grain engine. The native GUI MUST display `Fotufilm Film`. Spektra MUST remain the default engine.
+`fotufilm` MUST select the independent Fotufilm Film grain engine. The native GUI MUST display `Fotufilm Film`. Engine defaults follow the [shared grain contract](../spec.md#defaults-and-compatibility).
 
 Selecting Fotufilm MUST NOT change the selected film or paper profile.
 

@@ -73,7 +73,7 @@ fn switching_language_preserves_photographic_identity_and_bilingual_search() {
 
 #[test]
 fn grain_correlation_search_survives_language_switch_without_changing_the_recipe() {
-    let mut s = session();
+    let mut s = grain_session();
     let h = &mut s.harness;
     reveal_control(h, "film_render.grain.engine");
     choose(h, "Engine", "Dye");
@@ -81,25 +81,23 @@ fn grain_correlation_search_survives_language_switch_without_changing_the_recipe
     h.run_steps(3);
     assert!(h.state().params.film_render.grain.monochrome);
     let params = h.state().params.clone();
+    let sections = h.state().gui_state.sections.clone();
     let revision = h.state().parameter_revision;
-    for (preference, search, label, reason) in [
+    for (preference, search, label) in [
         (
             LanguagePreference::English,
             "Search controls",
             "Channel correlation",
-            "Inactive for single-record black-and-white material; the requested value is retained for color film.",
         ),
         (
             LanguagePreference::SimplifiedChinese,
             "搜索控件",
             "通道相关性",
-            "对单记录黑白材料不生效；请求值会保留，切换回彩色胶片后恢复使用。",
         ),
         (
             LanguagePreference::English,
             "Search controls",
             "Channel correlation",
-            "Inactive for single-record black-and-white material; the requested value is retained for color film.",
         ),
     ] {
         language(h, preference);
@@ -114,13 +112,12 @@ fn grain_correlation_search_survives_language_switch_without_changing_the_recipe
             h.get_by_label(search).type_text(query);
             h.run_steps(3);
             assert!(
-                h.query_by_role_and_label(egui::accesskit::Role::TextInput, label)
-                    .is_some(),
+                h.query_by_label(label).is_some(),
                 "grain control unavailable for {query}"
             );
             assert!(h.get_by_label(label).node().is_disabled());
-            assert!(h.query_by_label(reason).is_some());
             assert_eq!(h.state().params, params);
+            assert_eq!(h.state().gui_state.sections, sections);
             assert_eq!(h.state().parameter_revision, revision);
         }
     }

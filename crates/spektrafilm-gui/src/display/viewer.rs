@@ -1488,6 +1488,7 @@ mod tests {
                 let _ = tx.send(());
             });
             let deadline = std::time::Instant::now() + Duration::from_secs(10);
+            let mut shown_frames = 0;
             let output = loop {
                 let output = ctx.run(
                     egui::RawInput {
@@ -1507,8 +1508,14 @@ mod tests {
                             });
                     },
                 );
+                shown_frames += 1;
                 if viewer.generation != 0 && viewer.generation == viewer.accepted_generation {
-                    break output;
+                    // egui hit-tests the previous frame's widgets. A fast worker can
+                    // finish in the first show, before the viewer can receive hover.
+                    if shown_frames >= 2 {
+                        break output;
+                    }
+                    continue;
                 }
                 rx.recv_timeout(deadline.saturating_duration_since(std::time::Instant::now()))
                     .expect("capped viewer repaint");

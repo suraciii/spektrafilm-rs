@@ -100,19 +100,6 @@ impl<'a> ControlFilter<'a> {
         });
     }
 
-    /// Query a group's actual canonical inventory entries without projecting
-    /// through labels shared by another engine.
-    pub(crate) fn any_matching_entry(
-        &self,
-        predicate: impl Fn(&super::inventory::ControlEntry) -> bool,
-    ) -> bool {
-        self.allowed_paths.as_ref().is_none_or(|paths| {
-            super::inventory()
-                .iter()
-                .any(|entry| paths.contains(&entry.path) && predicate(entry))
-        })
-    }
-
     /// Store the labels this render reached as the section's label cache.
     pub(crate) fn finish(mut self) {
         std::mem::swap(&mut self.cache.labels, &mut self.reached);
