@@ -833,6 +833,29 @@ mod tests {
     }
 
     #[test]
+    fn monochrome_crop_rejects_invalid_source_outside_the_readout() {
+        let backend = crate::test_support::adapter();
+        let mut params = monochrome_params(1, 1);
+        params.taps = vec![0.25, 0.5, 0.25];
+        for (value, reason) in [
+            (0.375 + 2e-6, "lanes disagree"),
+            (f64::NAN, "finite channel capacity"),
+            (f64::INFINITY, "finite channel capacity"),
+            (3.0, "finite channel capacity"),
+        ] {
+            let mut input = ImageBuf::from_data(
+                100,
+                100,
+                vec![spektrafilm_math::precision::from_f64(0.375); 100 * 100 * 3],
+            );
+            // The far corner is outside the origin crop and its formation halo.
+            input.data[(100 * 100 - 1) * 3 + 1] = spektrafilm_math::precision::from_f64(value);
+            let error = backend.dye_field(&input, &params).unwrap_err();
+            assert!(error.contains(reason), "{error}");
+        }
+    }
+
+    #[test]
     fn monochrome_device_rejects_inconsistent_lanes_and_noncanonical_tables() {
         let backend = crate::test_support::adapter();
         let params = monochrome_params(2, 1);

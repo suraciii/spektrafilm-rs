@@ -317,12 +317,13 @@ pub fn validate_scan_output_detailed(
             "scanner.scan_output=negative_to_positive requires a negative filming-stage film profile; positive film and paper scans use direct_scan",
         ));
     }
-    for channel in 0..3 {
-        for row in &film.data.density_curves {
-            if !row[channel].is_finite() {
+    // BW family columns index development times before render-time replication.
+    for row in &film.data.density_curves {
+        for (channel, value) in row.iter().enumerate() {
+            if !value.is_finite() {
                 return Err(Error::new(Reason::ScanFiniteDensity, "scanner.scan_output", format!(
                     "scanner.scan_output=negative_to_positive requires finite density curves (channel {channel})"
-                )).arg("channel", channel).arg("value", row[channel]));
+                )).arg("channel", channel).arg("value", value));
             }
         }
     }
@@ -836,6 +837,33 @@ mod tests {
         params.io.scan_film = true;
         params.scanner.scan_output = "negative_to_positive".into();
         assert!(validate_scan_output(&params, &film).is_ok());
+    }
+
+    #[test]
+    fn negative_to_positive_validates_raw_bw_development_families() {
+        let mut params = RuntimeParams::default();
+        params.workflow.route = "input > film > scan".into();
+        params.io.scan_film = true;
+        params.scanner.scan_output = "negative_to_positive".into();
+        params.film_render.grain.engine = GrainEngine::Dye;
+        params.film_render.grain.active = true;
+        for columns in [1, 2, 5] {
+            let mut film = profile("negative", "film", "filming");
+            film.info.channel_model = "bw".into();
+            film.data.development_time = (0..columns).map(|i| i as f64 + 1.0).collect();
+            film.data.density_curves =
+                vec![vec![0.1; columns], vec![0.5; columns], vec![1.0; columns]];
+            assert!(super::validate_scan_output_detailed(&params, &film).is_ok());
+            for column in 0..columns {
+                let mut invalid = film.clone();
+                invalid.data.density_curves[1][column] = f64::NAN;
+                let error = super::validate_scan_output_detailed(&params, &invalid).unwrap_err();
+                assert_eq!(
+                    error.reason,
+                    crate::params::ValidationReason::ScanFiniteDensity
+                );
+            }
+        }
     }
 
     #[test]
