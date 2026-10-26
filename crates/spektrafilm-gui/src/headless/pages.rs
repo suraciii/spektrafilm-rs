@@ -777,7 +777,7 @@ fn ordinary_grain_controls_follow_engine_and_enable_without_losing_values() {
     );
     assert!(h.query_by_label("Channel correlation").is_none());
     assert!(h.query_by_label("Procedural Grain Profiles").is_none());
-    assert!(h.query_by_label("particle area (µm²)").is_none());
+    assert!(h.query_by_label("blur").is_none());
     assert!(h.query_by_label("Layer amounts").is_none());
     edit(h, "Event area (strength)", "0.64");
     edit(h, "Dye support (spatial formation)", "4.5");
@@ -806,16 +806,16 @@ fn ordinary_grain_controls_follow_engine_and_enable_without_losing_values() {
 
     choose(h, "Engine", "Spektra");
     assert!(h.query_by_label("Event area (strength)").is_none());
-    edit(h, "particle area (µm²)", "0.35");
+    edit(h, "blur", "1.05");
     choose(h, "Engine", "Fotufilm Film");
-    assert!(h.query_by_label("particle area (µm²)").is_none());
+    assert!(h.query_by_label("blur").is_none());
     edit(h, "Amount", "2.25");
     choose(h, "Engine", "Dye");
     assert_eq!(h.state().params.film_render.grain.v3_event_area_um2, 0.64);
     assert_eq!(h.state().params.film_render.grain.v3_dye_support_um, 4.5);
     assert_eq!(h.state().params.film_render.grain.channel_correlation, 0.21);
     choose(h, "Engine", "Spektra");
-    assert_eq!(h.state().params.film_render.grain.particle_area_um2, 0.35);
+    assert_eq!(h.state().params.film_render.grain.blur, 1.05);
     choose(h, "Engine", "Fotufilm Film");
     assert_eq!(h.state().params.film_render.grain.fotufilm.amount, 2.25);
     assert!(!h.get_by_label("Amount").node().is_disabled());
@@ -887,33 +887,44 @@ fn procedural_named_amount_custom_and_noise_follow_effective_controls() {
 }
 
 #[test]
-fn spektra_sublayer_switch_exposes_effective_controls_and_retains_hidden_values() {
+fn spektra_curve_controls_are_effective_and_retain_hidden_values() {
     let mut s = grain_session();
     let h = &mut s.harness;
     open_grain(h);
     choose(h, "Engine", "Spektra");
-    assert!(h.state().params.film_render.grain.sublayers_active);
-    assert!(h.query_by_label("sub-layers").is_none());
+    edit(h, "blur", "1.05");
+    click(h, "Spektra Advanced");
+    for label in [
+        "rms granularity R",
+        "rms granularity G",
+        "rms granularity B",
+        "particle scale sublayers 2",
+    ] {
+        assert!(!h.get_by_label(label).node().is_disabled());
+    }
+    edit(h, "rms granularity R", "6.5");
+    edit(h, "rms granularity G", "8.5");
+    edit(h, "rms granularity B", "10.5");
+    edit(h, "dye-cloud blur", "1.25");
+    edit(h, "particle scale sublayers 2", "0.6");
+    let retained = h.state().params.film_render.grain.clone();
+    assert_eq!(retained.rms_granularity, [6.5, 8.5, 10.5]);
+    assert_eq!(retained.blur_dye_clouds_um, 1.25);
+    assert_eq!(retained.particle_scale_sublayers[2], 0.6);
     click(h, "Spektra Advanced");
     assert!(h.query_by_label("rms granularity R").is_none());
-    edit(h, "dye-cloud blur", "1.25");
-    assert!(
-        !h.get_by_label("particle scale sublayers 2")
-            .node()
-            .is_disabled()
-    );
-    click(h, "sublayers active");
-    edit(h, "sub-layers", "4");
     assert!(h.query_by_label("dye-cloud blur").is_none());
-    assert!(h.query_by_label("particle scale sublayers 2").is_none());
-    click(h, "sublayers active");
-    assert!(h.query_by_label("sub-layers").is_none());
-    assert_eq!(h.state().params.film_render.grain.n_sub_layers, 4);
-    assert_eq!(h.state().params.film_render.grain.blur_dye_clouds_um, 1.25);
-    let retained = h.state().params.film_render.grain.clone();
-    reveal_control(h, "film_render.grain.n_sub_layers");
-    assert!(h.get_by_label("sub-layers").node().is_disabled());
     assert_eq!(h.state().params.film_render.grain, retained);
+    choose(h, "Engine", "Dye");
+    let dye = h.state().params.film_render.grain.clone();
+    reveal_control(h, "film_render.grain.blur_dye_clouds_um");
+    assert!(h.get_by_label("dye-cloud blur").node().is_disabled());
+    assert_eq!(h.state().params.film_render.grain, dye);
+    open_grain(h);
+    choose(h, "Engine", "Spektra");
+    assert_eq!(h.state().params.film_render.grain, retained);
+    click(h, "Spektra Advanced");
+    assert!(!h.get_by_label("rms granularity G").node().is_disabled());
 }
 
 #[test]
@@ -931,7 +942,6 @@ fn canonical_search_reveals_unselected_grain_engines_without_mutating_values() {
             "Event area (strength)",
         ),
         ("film_render.grain.v2_timer", "Timer"),
-        ("film_render.grain.rms_granularity", "rms granularity G"),
     ] {
         reveal_control(h, path);
         assert!(
@@ -944,6 +954,11 @@ fn canonical_search_reveals_unselected_grain_engines_without_mutating_values() {
         assert_eq!(h.state().gui_state.sections, sections);
         assert_eq!(h.state().parameter_revision, revision);
     }
+    reveal_control(h, "film_render.grain.rms_granularity");
+    assert!(!h.get_by_label("rms granularity G").node().is_disabled());
+    assert_eq!(h.state().params, params);
+    assert_eq!(h.state().gui_state.sections, sections);
+    assert_eq!(h.state().parameter_revision, revision);
 }
 
 #[test]
@@ -1083,12 +1098,7 @@ fn hidden_grain_modified_locators_and_whole_reset_are_complete_scoped_and_revers
         "0.04",
     );
     choose_control(h, "film_render.grain.engine", "Engine", "Spektra");
-    edit_control(
-        h,
-        "film_render.grain.particle_area_um2",
-        "particle area (µm²)",
-        "0.4",
-    );
+    edit_control(h, "film_render.grain.blur", "blur", "1.05");
     choose_control(h, "film_render.grain.engine", "Engine", "Dye");
     edit_control(
         h,
@@ -1112,7 +1122,7 @@ fn hidden_grain_modified_locators_and_whole_reset_are_complete_scoped_and_revers
     click(h, "Only modified");
     for (path, label) in [
         ("film_render.grain.fotufilm.rms_density", "RMS density"),
-        ("film_render.grain.particle_area_um2", "particle area (µm²)"),
+        ("film_render.grain.blur", "blur"),
         (
             "film_render.grain.channel_correlation",
             "Channel correlation",

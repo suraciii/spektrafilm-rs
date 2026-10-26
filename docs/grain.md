@@ -17,11 +17,19 @@ Explicit engines in existing looks remain unchanged. To keep the historical engi
 
 Select Spektra with `film_render.grain.engine: "spektra"`.
 
-Spektra grain dispatch mirrors upstream `apply_grain`. `sublayers_active` runs the layered model by default, matching 0.3.4. The model splits the composite density through `density_curves_layers` into per-sublayer densities. Each sublayer samples its own Poisson-binomial particle field. Sampling uses per-layer density maxima/fractions, particle scaling, dye-cloud blur, and lognormal micro-structure. `sublayers_active: false` keeps the single composite-density sampler.
+Spektra follows upstream experimental `apply_grain`, pinned to commit `28bf883e1672e884307edc75852549376e13644e`. It splits developed density through the profile's layer curves and samples a Poisson-binomial particle field for each active layer. A profile without layer curves uses its total curve as one layer of the same model.
 
-`settings.use_fast_stats` switches the layered sampler to the `fast_stats` kernels like upstream. The micro-structure clumping field always uses them, as upstream does. This field uses a documented deterministic seed because Python draws it from numba's unseeded thread-global RNG.
+`rms_granularity` controls particle-population sizing through the profile's peak summed variance at a 48 µm diameter aperture. It is not a direct particle area or a guarantee of final RGB granularity. Stock values come from `data/presets/grain_spektra.toml`. `particle_scale_sublayers`, `density_min`, `uniformity`, dye-cloud blur, lognormal micro-structure, and multiplicative unsharp masking retain their separate roles.
 
-Spektra resolves on the selected executor in both sampling regimes. `settings.use_fast_stats` selects the per-element `fast_stats` streams; the composite path always samples the sequential scipy MT19937 regime, and the layered path does so whenever that setting is off. The device sampler reproduces the reference draw order exactly — all Poisson draws across the plane first, then all binomial draws — so it never substitutes a different noise law. A film profile without resolvable sublayer density curves keeps the faithful per-stage path. Preview disables active Spektra grain. The separate Grain Procedural implementation remains available.
+CLI sources and complete looks that select Spektra but omit RMS start with `[6, 8, 10]` before stock defaults apply. Explicit RMS values take precedence. GUI engine changes retain the existing shared material controls rather than reset their strength.
+
+Library callers that construct runtime parameters directly must supply a positive RMS target when selecting Spektra. Shared typed defaults remain Dye defaults.
+
+`settings.use_fast_stats: false` uses the sequential NumPy/scipy sampling regime: all Poisson draws for a plane, then all binomial draws. Micro-structure continues the final plane's NumPy state. Fast-stats uses the reference distribution branches with repeatable per-element streams; it does not reproduce numba's schedule-dependent random realizations.
+
+CPU and GPU use the same prepared model and precision boundaries. Grain working images remain f32 in both precision builds; curve preparation and reference-sensitive filtering use f64. GPU execution stays on the selected device and fails explicitly when the required precision or resources are unavailable. Preview disables active Spektra grain.
+
+Remove the obsolete controls `particle_area_um2`, `particle_scale`, `particle_scale_layers`, `sublayers_active`, and `n_sub_layers` from old parameter files. They are rejected. Use `rms_granularity` for grain strength; layer availability comes from the profile, not a toggle. Dye retains its independent defaults and relative-strength interpretation.
 
 ## Procedural
 
@@ -80,7 +88,7 @@ Dye realizes film-space Poisson counts with event area `v3_event_area_um2 × k_c
 
 A profile may give an individual component zero capacity. That component contributes no events. Each record still needs positive total capacity; an all-zero record is rejected by the model.
 
-The channel scale is `k_c = (rms_granularity_c / 6)²`. Here, `6` is the preset of the reference stock `kodak_portra_800`. The existing `rms_granularity` field is a relative Dye strength scale, not a certified optical RMS target. Entering `8` does not request a measured stock granularity of `8`. Zero or a missing stock value retains the existing fallback; use `active: false` to disable grain. Dye does not read Spektra's `particle_area_um2` or `particle_scale`.
+The channel scale is `k_c = (rms_granularity_c / 6)²`. Here, `6` is the preset of the reference stock `kodak_portra_800`. The existing `rms_granularity` field is a relative Dye strength scale, not a certified optical RMS target. Entering `8` does not request a measured stock granularity of `8`. Zero or a missing stock value retains the existing fallback; use `active: false` to disable grain. Dye does not use Spektra's RMS-to-particle-population preparation.
 
 Some preset channel ratios come from measured outputs of a commercial film simulator. They remain appearance references, not measurements of film material. The reference stock and its event area define the existing relative scale; they do not establish an absolute material calibration.
 

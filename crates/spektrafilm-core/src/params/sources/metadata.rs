@@ -494,13 +494,13 @@ fn description(path: &str) -> Option<&'static str> {
             "Film Resolution method for named profiles and Custom Analogue mode; inactive in Custom Noise mode.",
         ),
         "film_render.grain.particle_scale_sublayers" => Some(
-            "Three numerical-component scales, not RGB records; all three remain active for monochrome Dye. Spektra requires real film sublayers.",
+            "Three numerical-component scales, not RGB records; all three remain active for monochrome Dye. Spektra scales its curve-derived emulsion sublayers.",
         ),
         "film_render.grain.v2_amount" => Some(
             "Grain Procedural Amount in percent; used with named and custom Procedural profiles, distinct from RMS granularity.",
         ),
         "film_render.grain.rms_granularity" => Some(
-            "RMS granularity is distinct from Procedural Amount; Dye uses it to scale per-channel event area; upstream Spektra preserves it as a no-op.",
+            "RMS granularity is distinct from Procedural Amount: Spektra derives statistical particle area from the film density curves; Dye uses relative strength G to scale per-channel event area, not a certified optical RMS target.",
         ),
         _ => None,
     }

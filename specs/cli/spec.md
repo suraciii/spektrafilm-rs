@@ -215,7 +215,7 @@ Paths MUST use the runtime parameter vocabulary, such as `film_render.grain.v2_a
 
 `workflow.route` MUST use `--route`; `io.scan_film` MUST remain derived from the selected workflow. Neither path MAY appear in a parameter file or inline assignment. Random seed MUST remain outside this language.
 
-Pipeline-derived `film_render.grain.monochrome` and the legacy non-exported `particle_scale_layers` field MUST NOT be editable paths. Other runtime controls MUST use the shared editable parameter description.
+Pipeline-derived `film_render.grain.monochrome` MUST NOT be an editable path. Other runtime controls MUST use the shared editable parameter description. Removed Spektra controls MUST follow the [Spektra contract](../film-grain/v1/spec.md).
 
 Controls for inactive effects or engines MAY be stored without affecting output. [Procedural grain](../film-grain/v2/spec.md) MUST retain its named-profile and Custom behavior. Spektra RMS granularity and Procedural Amount MUST remain distinct controls.
 

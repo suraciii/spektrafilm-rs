@@ -7,6 +7,8 @@ original audited state from current integration contracts. Field entries
 retain implementation provenance without claiming universal coverage;
 `differential_evidence` records the exercised scenarios and tap metrics.
 
+The recorded Python 0.3.4 differential rows are historical evidence. They do not validate the [Spektra experimental reference](../../specs/film-grain/v1/spec.md) or its RMS-based parameterization.
+
 ## Historical coverage at the audited baseline
 
 | Issue | Scope | State at audited baseline |

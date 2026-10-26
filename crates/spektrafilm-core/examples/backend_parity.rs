@@ -206,32 +206,31 @@ fn main() -> Result<(), String> {
             }
         }
     }
-    for layered in [false, true] {
+    for use_fast_stats in [false, true] {
         let mut p = base.clone();
         p.film_render.grain.active = true;
         p.film_render.grain.engine = spektrafilm_core::params::GrainEngine::Spektra;
-        p.film_render.grain.sublayers_active = layered;
+        p.film_render.grain.rms_granularity = [6.0, 8.0, 10.0];
+        p.settings.use_fast_stats = use_fast_stats;
         let reference_pipeline =
             Pipeline::new_with_spectral(film.clone(), print.clone(), p.clone(), &dir)?;
         let pipeline =
             Pipeline::new_with_spectral_backend(film.clone(), print.clone(), p, &dir, &gpu)?;
-        // Spektra grain distribution runs as the assembled density fence, so
-        // the route stays resident instead of falling back to the CPU
-        // sampler route.
+        // Grain sampling and finishing remain on the resident device chain.
         let resident = pipeline
             .process_resident_borrowed(&input, &gpu)?
-            .ok_or("grain: expected the resident density fence")?;
+            .ok_or("grain: expected the resident device chain")?;
         let reference = reference_pipeline.process_with_taps(input.clone(), &cpu, None, None)?;
         let routed = pipeline.process(input.clone(), &gpu)?;
         let (max, mean) = difference(&reference, &routed)?;
         let (resident_max, resident_mean) = difference(&reference, &resident)?;
         println!(
-            "grain layered={layered} execution=resident_fence max_abs={max:.9e} mean_abs={mean:.9e} \
+            "grain fast_stats={use_fast_stats} execution=gpu_resident max_abs={max:.9e} mean_abs={mean:.9e} \
              resident_max_abs={resident_max:.9e} resident_mean_abs={resident_mean:.9e}"
         );
         if max > BUDGET || resident_max > BUDGET {
             return Err(format!(
-                "grain resident fence drift max={max} resident_max={resident_max}"
+                "grain resident device drift max={max} resident_max={resident_max}"
             ));
         }
     }

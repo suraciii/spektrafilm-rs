@@ -634,6 +634,7 @@ mod action_tests {
         let film = crate::profile::load_profile_by_name(&data, "kodak_portra_400").unwrap();
         let print = crate::profile::load_profile_by_name(&data, "kodak_portra_endura").unwrap();
         let mut params = RuntimeParams::default();
+        params.film_render.grain.rms_granularity = [6.0, 8.0, 10.0];
         params.workflow.route = "input > film > scan".into();
         params.io.scan_film = true;
         params.camera.auto_exposure = false;

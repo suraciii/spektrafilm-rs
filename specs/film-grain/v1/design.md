@@ -1,6 +1,16 @@
 # Spektra grain design
-- Spektra is called from the filming stage after film density and DIR chemistry are prepared.
-- The composite path samples one density field. The layered path derives sublayer densities from the fitted film model and samples each sublayer independently before recomposition.
-- The sampler preserves the reference f64 parameter values and random-number operation order under [stochastic alignment](../../gpu-execution/design.md#stochastic-alignment). f32 conversion is not allowed before Poisson or binomial decisions; a device without native f64 MUST use exact integer or extended-precision conditioning or fail under [numerical alignment](../../gpu-execution/design.md#numerical-alignment).
-- GPU MUST execute the same composite/layered algorithm with the same layer and channel identities under [numerical alignment](../../gpu-execution/design.md#numerical-alignment). GPU execution MUST NOT satisfy full-GPU scope with CPU image-stage work.
-- Film-profile validation belongs at pipeline construction so a bad layered profile fails before processing.
+- The filming stage MUST resolve the profile curves and physical pixel pitch after density and DIR preparation. `prepare_grain` MUST own RMS-to-population preparation for both CPU and GPU.
+- Preparation MUST retain f64 curve maxima, layer fractions, density floors, and variance-peak evaluation. Only active layers MUST contribute to the population.
+- Profile interpolation and array-valued floor addition MUST precede the f32 working-buffer store.
+- Scalar count conditioning and both in-place count products MUST use f32.
+- Poisson and binomial decisions MUST use those conditioned values with f64 reference sampling arithmetic.
+- Both host precision builds MUST preserve these boundaries.
+- CPU and GPU MUST preserve layer/channel identities and whole-plane draw order under [stochastic alignment](../../gpu-execution/design.md#stochastic-alignment).
+- Micro-structure MUST use NumPy Gaussian/lognormal draws in row-major channel-interleaved order.
+- Monochrome MUST sample channel zero once and replicate the completed result.
+- Spektra filtering MUST retain f64 coefficients and recursive state with f32 image-storage boundaries.
+- FIR MUST run vertical then horizontal; IIR MUST run horizontal then vertical.
+- Multiplicative unsharp masking MUST preserve the epsilon-clamped numerator, f32 power/product boundaries, and NumPy per-channel pairwise mass sums.
+- Device paging MUST preserve true image endpoints, recursive state, sampler state, and complete-image mass. It MUST NOT restart the stochastic field or renormalize individual pages.
+- A device without the required f64 arithmetic MUST fail under [numerical alignment](../../gpu-execution/design.md#numerical-alignment). GPU execution MUST NOT use CPU image-stage work.
+- Spektra stock defaults MUST use `data/presets/grain_spektra.toml`. Dye MUST retain its independent `data/presets/grain.toml` defaults and relative RMS interpretation.

@@ -292,9 +292,7 @@ pub fn develop(
         print_stage_timing(stage_timings, "filming_develop.dir_couplers", t);
     }
 
-    // Grain — Python `apply_grain` dispatch (model/grain.py):
-    // `sublayers_active == false` keeps the composite-density sampler,
-    // `true` runs the layered model on the interpolated sublayer densities.
+    // Grain samples the developed density through the upstream sublayer model.
     let grain = &params.film_render.grain;
     if grain.active && matches!(grain.engine, crate::params::grain::GrainEngine::Spektra) {
         let t = Instant::now();
@@ -316,60 +314,52 @@ pub fn develop(
     Ok(density_cmy)
 }
 
-/// Profile sublayer curves and their per-sublayer, per-channel maxima.
-struct SpektraLayerTables {
+struct PreparedSpektra {
     layers_tensor: Vec<[[f64; 3]; 3]>,
-    density_max_layers: [[f64; 3]; 3],
+    grain: spektrafilm_model::grain::v1::PreparedGrain,
 }
 
-/// The sublayer density tables the device pass reads, or the reason this film
-/// profile cannot realize the request.
-///
-/// One rule for both routes: `spektra_grain_device_params` builds from the
-/// returned tables, and the explicit-GPU preflight reports the reason, so the
-/// preflight cannot contradict the executed route.
-fn spektra_layer_tables(film: &Profile) -> Result<SpektraLayerTables, &'static str> {
-    let layers_tensor = film.density_curves_layers_f64();
-    if layers_tensor.is_empty() {
-        return Err("the film profile supplies no sublayer density curves");
+fn prepare_spektra(
+    film: &Profile,
+    grain: &crate::params::grain::GrainParams,
+    norm_curves_f64: &[[f64; 3]],
+    pixel_size_um: f64,
+) -> Result<PreparedSpektra, String> {
+    let source_layers = &film.data.density_curves_layers;
+    let (layers_tensor, layer_count) = if source_layers.is_empty() {
+        (
+            norm_curves_f64
+                .iter()
+                .map(|&curve| [curve, [0.0; 3], [0.0; 3]])
+                .collect(),
+            1,
+        )
+    } else {
+        let count = source_layers[0].len();
+        if !(1..=3).contains(&count) || source_layers.iter().any(|row| row.len() != count) {
+            return Err("Spektra grain requires one to three consistent sublayers".into());
+        }
+        (film.density_curves_layers_f64(), count as u32)
+    };
+    if layers_tensor.len() != norm_curves_f64.len() || norm_curves_f64.len() < 2 {
+        return Err("Spektra grain requires matching composite and sublayer curve tables".into());
     }
-    let density_max_layers =
-        spektrafilm_model::density_curves::density_max_layers_f64(&layers_tensor);
-    if density_max_layers.iter().any(|row| {
-        row.iter()
-            .any(|v| v.partial_cmp(&0.0) != Some(std::cmp::Ordering::Greater))
-    }) {
-        return Err("the film profile's per-sublayer density maxima are not positive");
-    }
-    Ok(SpektraLayerTables {
+    let prepared = spektrafilm_model::grain::v1::prepare_grain(
+        &layers_tensor,
+        layer_count,
+        pixel_size_um,
+        grain.rms_granularity,
+        grain.particle_scale_sublayers,
+        grain.density_min,
+        grain.uniformity,
+    )?;
+    Ok(PreparedSpektra {
         layers_tensor,
-        density_max_layers,
+        grain: prepared,
     })
 }
 
-/// Why the resident chain cannot resolve Spektra grain on the device for this
-/// film profile, or `None` when it can realize the request.
-pub(crate) fn spektra_device_gap(film: &Profile) -> Option<&'static str> {
-    spektra_layer_tables(film).err()
-}
-
-/// Resolve the device Spektra v1 grain request for the resident chain, or
-/// `None` when the film profile cannot supply the curves the pass reads.
-///
-/// The device realizes both sampling regimes. The layered `fast_stats` regime
-/// (`spektrafilm_model::grain::v1::apply_grain_to_density_layers` with
-/// `use_fast_stats`) is a per-pixel mapping over independent `FastStatsRng`
-/// streams. The composite path hardcodes the scipy MT19937 regime upstream
-/// regardless of the setting, and the layered path uses it whenever
-/// `use_fast_stats` is false: one sequential generator advanced across the
-/// whole array with variable-length rejection consumption. The device
-/// reproduces that draw order exactly — all Poisson draws across the plane
-/// first, then all binomial draws — so it never substitutes a different noise
-/// law (`specs/gpu-execution/design.md` §Stochastic alignment).
-///
-/// Every f64 control is resolved here on the host from the profile and the
-/// request, exactly as the host stage resolves them, so the device pass
-/// performs no image-dependent arithmetic of its own.
+/// Resolve the same curve-based RMS preparation used by the CPU sampler.
 pub(crate) fn spektra_grain_device_params(
     film: &Profile,
     grain: &crate::params::grain::GrainParams,
@@ -377,42 +367,11 @@ pub(crate) fn spektra_grain_device_params(
     use_fast_stats: bool,
     random_seed: u64,
     pixel_size_um: f64,
-) -> Option<spektrafilm_backend::GrainV1GpuParams> {
-    let SpektraLayerTables {
+) -> Result<spektrafilm_backend::GrainV1GpuParams, String> {
+    let PreparedSpektra {
         layers_tensor,
-        density_max_layers,
-    } = spektra_layer_tables(film).ok()?;
-    // Python: density_max_total = sum(density_max_layers, axis=sublayer);
-    //         fractions = density_max_layers / density_max_total;
-    //         density_min_layers = fractions * density_min;
-    //         density_max_layers += density_min_layers;
-    //         n_particles = pixel_area * fraction / particle_area_layer.
-    let pixel_area = pixel_size_um * pixel_size_um;
-    let mut total = [0.0f64; 3];
-    for layer in &density_max_layers {
-        for ch in 0..3 {
-            total[ch] += layer[ch];
-        }
-    }
-    let mut density_min_layers = [0.0f64; 9];
-    let mut density_max_adj = [0.0f64; 9];
-    let mut n_particles = [0.0f64; 9];
-    for (sl, layer) in density_max_layers.iter().enumerate() {
-        for (ch, &density_max) in layer.iter().enumerate() {
-            let slot = sl * 3 + ch;
-            let fraction = density_max / total[ch];
-            density_min_layers[slot] = fraction * grain.density_min[ch];
-            density_max_adj[slot] = density_max + density_min_layers[slot];
-            // Python multiplies the per-channel particle area by
-            // `particle_scale` before applying the sublayer scale.
-            let particle_area = grain.particle_area_um2
-                * grain.particle_scale[ch]
-                * grain.particle_scale_sublayers[sl];
-            n_particles[slot] = pixel_area * fraction / particle_area;
-        }
-    }
-    // The composite curve x column per channel, negated for a positive film —
-    // the same axis `interp_density_cmy_layers` looks up against.
+        grain: prepared,
+    } = prepare_spektra(film, grain, norm_curves_f64, pixel_size_um)?;
     let sign = if film.is_positive() { -1.0 } else { 1.0 };
     let mut curve_x = Vec::with_capacity(norm_curves_f64.len() * 3);
     for row in norm_curves_f64 {
@@ -423,64 +382,35 @@ pub(crate) fn spektra_grain_device_params(
     let mut curve_layers = Vec::with_capacity(layers_tensor.len() * 9);
     for row in &layers_tensor {
         for layer in row {
-            for &value in layer {
-                curve_layers.push(value);
-            }
+            curve_layers.extend_from_slice(layer);
         }
     }
-    Some(spektrafilm_backend::GrainV1GpuParams {
+    Ok(spektrafilm_backend::GrainV1GpuParams {
         base_seed: random_seed,
-        pixel_size_um,
-        particle_area: [
-            grain.particle_area_um2 * grain.particle_scale[0],
-            grain.particle_area_um2 * grain.particle_scale[1],
-            grain.particle_area_um2 * grain.particle_scale[2],
-        ],
-        particle_scale_layers: grain.particle_scale_sublayers,
-        density_min: grain.density_min,
-        uniformity: grain.uniformity,
-        density_min_layers,
-        density_max_adj,
-        n_particles,
+        layer_count: prepared.layer_count,
+        density_min: prepared.density_min,
+        uniformity: prepared.uniformity,
+        density_min_layers: std::array::from_fn(|i| prepared.density_min_layers[i / 3][i % 3]),
+        density_max_adj: std::array::from_fn(|i| prepared.density_max_adj[i / 3][i % 3]),
+        n_particles: std::array::from_fn(|i| prepared.n_particles[i / 3][i % 3]),
         monochrome: grain.monochrome,
         lookup_sign: sign as f32,
         blur_dye_clouds: grain.blur_dye_clouds_um,
         reference_f64: std::mem::size_of::<spektrafilm_math::precision::Scalar>() == 8,
-        micro_sigma: grain.micro_structure[1] as f64 * 0.001 / pixel_size_um,
-        micro_blur_px: grain.micro_structure[0] as f64 / pixel_size_um,
+        micro_sigma: grain.micro_structure[1] * 0.001 / pixel_size_um,
+        micro_blur_px: grain.micro_structure[0] / pixel_size_um,
         grain_blur: grain.blur,
         usm_sigma: grain.mult_usm_sigma,
         usm_amount: grain.mult_usm_amount,
         curve_x,
         curve_layers,
-        sublayers_active: grain.sublayers_active,
-        n_sub_layers: grain.n_sub_layers,
-        mt19937_regime: !grain.sublayers_active || !use_fast_stats,
-        density_max_composite: spektrafilm_model::density_curves::max_density_f64(norm_curves_f64),
-        n_particles_composite: std::array::from_fn(|ch| {
-            let count = pixel_area / (grain.particle_area_um2 * grain.particle_scale[ch]);
-            if grain.n_sub_layers > 1 {
-                count / grain.n_sub_layers as f64
-            } else {
-                count
-            }
-        }),
+        mt19937_regime: !use_fast_stats,
     })
 }
 
-/// Spektra composite/layered grain on the developed film density (Python
-/// `apply_grain` dispatch). Extracted so the resident GPU chain can run it
-/// as an assembled CPU fence on the density buffer (pipe architecture,
-/// capability class).
-///
-/// Uses f64 control values throughout — Python reads these from JSON as
-/// f64; the f32 storage in `GrainParams` would otherwise truncate to ~7
-/// decimals and shift every Poisson lambda by ~5e-8, producing a visibly
-/// different grain pattern. The upstream sampler uses `particle_area_um2`
-/// directly; `rms_granularity` is a profile/UI control only.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn apply_spektra_grain(
-    mut density_cmy: ImageBuf,
+    density_cmy: ImageBuf,
     film: &Profile,
     grain: &crate::params::grain::GrainParams,
     norm_curves_f64: &[[f64; 3]],
@@ -489,81 +419,24 @@ pub(crate) fn apply_spektra_grain(
     pixel_size_um: f64,
     backend: &dyn ComputeBackend,
 ) -> Result<ImageBuf, String> {
-    let particle_area_um2 = grain.particle_area_um2;
-    if grain.sublayers_active {
-        // Python `apply_grain_to_density_layers`: sublayer densities come
-        // from interpolating the composite density against the
-        // (normalized) composite curve, the layer maxima from the RAW
-        // `density_curves_layers` tensor.
-        let layers_tensor = film.density_curves_layers_f64();
-        assert!(
-            !layers_tensor.is_empty(),
-            "grain.sublayers_active requires the film profile to provide \
-             density_curves_layers ([n][3 sublayers][3 channels]); profile '{}' \
-             has none — disable sublayers_active or fix the profile",
-            film.info.stock.as_deref().unwrap_or("<unnamed>"),
-        );
-        let density_cmy_layers = spektrafilm_model::density_curves::interp_density_cmy_layers(
-            &density_cmy,
-            norm_curves_f64,
-            &layers_tensor,
-            film.is_positive(),
-        );
-        let density_max_layers =
-            spektrafilm_model::density_curves::density_max_layers_f64(&layers_tensor);
-        assert!(
-            density_max_layers
-                .iter()
-                .all(|row| row.iter().all(|&v| v > 0.0)),
-            "grain.sublayers_active requires positive per-sublayer density \
-             maxima; profile '{}' yields zero maxima (empty or all-zero \
-             density_curves_layers)",
-            film.info.stock.as_deref().unwrap_or("<unnamed>"),
-        );
-        // Python multiplies the per-channel particle area by
-        // `particle_scale` before applying the sublayer scale.
-        density_cmy = spektrafilm_model::grain::v1::apply_grain_to_density_layers(
-            &density_cmy_layers,
-            &density_max_layers,
-            density_cmy.width,
-            density_cmy.height,
-            pixel_size_um,
-            [
-                particle_area_um2 * grain.particle_scale[0],
-                particle_area_um2 * grain.particle_scale[1],
-                particle_area_um2 * grain.particle_scale[2],
-            ],
-            grain.particle_scale_sublayers,
-            grain.density_min,
-            grain.uniformity,
-            grain.blur,
-            grain.blur_dye_clouds_um,
-            grain.micro_structure,
-            grain.mult_usm_sigma,
-            grain.mult_usm_amount,
-            grain.monochrome,
-            use_fast_stats,
-            random_seed,
-            backend,
-        )?;
-    } else {
-        let density_max = spektrafilm_model::density_curves::max_density_f64(norm_curves_f64);
-        density_cmy = spektrafilm_model::grain::v1::apply_grain_to_density(
-            &density_cmy,
-            pixel_size_um,
-            particle_area_um2,
-            grain.particle_scale,
-            grain.density_min,
-            density_max,
-            grain.uniformity,
-            grain.blur,
-            grain.n_sub_layers,
-            grain.monochrome,
-            random_seed,
-            backend,
-        )?;
-    }
-    Ok(density_cmy)
+    let prepared = prepare_spektra(film, grain, norm_curves_f64, pixel_size_um)?;
+    spektrafilm_model::grain::v1::apply_grain(
+        &density_cmy,
+        norm_curves_f64,
+        &prepared.layers_tensor,
+        &prepared.grain,
+        pixel_size_um,
+        grain.blur,
+        grain.blur_dye_clouds_um,
+        grain.micro_structure,
+        grain.mult_usm_sigma,
+        grain.mult_usm_amount,
+        film.is_positive(),
+        grain.monochrome,
+        use_fast_stats,
+        random_seed,
+        backend,
+    )
 }
 
 /// Full filming stage: expose + develop on an already-prepared working
@@ -617,9 +490,11 @@ mod tests {
         }
 
         fn portra() -> Profile {
-            let path = data_dir().join("profiles/kodak_portra_400.json");
-            assert!(path.exists(), "test fixture required: {}", path.display());
-            profile::load_profile(&path).unwrap()
+            static FILM: std::sync::LazyLock<Profile> = std::sync::LazyLock::new(|| {
+                let path = data_dir().join("profiles/kodak_portra_400.json");
+                profile::load_profile(&path).expect("Portra test fixture required")
+            });
+            FILM.clone()
         }
 
         /// Small log-exposure image spread across the curve axis.
@@ -644,6 +519,7 @@ mod tests {
         fn base_params() -> RuntimeParams {
             let mut params = RuntimeParams::default();
             params.film_render.grain.engine = crate::params::GrainEngine::Spektra;
+            params.film_render.grain.rms_granularity = [6.0, 8.0, 10.0];
             params.film_render.dir_couplers.active = false;
             params.film_render.halation.active = false;
             // The small test images would otherwise imply ~2 mm pixels and
@@ -696,90 +572,41 @@ mod tests {
             assert_eq!(out.data, expected.data);
         }
 
-        /// The sublayer toggle must switch models: layered and composite
-        /// outputs differ, and each is deterministic across runs.
         #[test]
-        fn sublayers_toggle_switches_models() {
-            let film = portra();
-            let backend = CpuBackend;
-            let log_raw = log_raw();
+        fn single_curve_grain_tracks_requested_rms() {
+            let mut film = portra();
+            film.data.density_curves_layers.clear();
+            let curves: Vec<[f64; 3]> = (0..=128).map(|i| [2.2 * i as f64 / 128.0; 3]).collect();
             let mut params = base_params();
-            params.film_render.grain.sublayers_active = true;
-            let layered = develop(&log_raw, &film, &params, &backend, 12.0)
-                .expect("layered film development failed");
-            let layered_again = develop(&log_raw, &film, &params, &backend, 12.0)
-                .expect("repeated layered film development failed");
-            assert_eq!(layered.data, layered_again.data);
-
-            params.film_render.grain.sublayers_active = false;
-            let composite = develop(&log_raw, &film, &params, &backend, 12.0)
-                .expect("composite film development failed");
-            let composite_again = develop(&log_raw, &film, &params, &backend, 12.0)
-                .expect("repeated composite film development failed");
-            assert_eq!(composite.data, composite_again.data);
-            assert_ne!(layered.data, composite.data);
-        }
-
-        /// Layered grain must honor the per-channel particle scale. Larger
-        /// particles reduce the particle count and increase that channel's
-        /// density variance, matching Python's channel-wise area scaling.
-        #[test]
-        fn layered_grain_particle_scale_changes_channel_variance() {
-            let film = portra();
-            let backend = CpuBackend;
-            let log_raw = log_raw();
-            let mut params = base_params();
-            params.film_render.grain.blur = 0.0;
-            params.film_render.grain.blur_dye_clouds_um = 0.0;
-            params.film_render.grain.mult_usm_amount = 0.0;
-            params.film_render.grain.particle_scale = [1.0, 1.0, 1.0];
-            let small_particles = develop(&log_raw, &film, &params, &backend, 12.0)
-                .expect("small-particle film development failed");
-            params.film_render.grain.particle_scale[0] = 8.0;
-            let large_red_particles = develop(&log_raw, &film, &params, &backend, 12.0)
-                .expect("large-red-particle film development failed");
-
-            let small_mean = ch_mean(&small_particles, 0);
-            let large_mean = ch_mean(&large_red_particles, 0);
-            let small_variance = ch_variance(&small_particles, 0, small_mean);
-            let large_variance = ch_variance(&large_red_particles, 0, large_mean);
-            assert!(
-                large_variance > small_variance,
-                "larger particles should increase red grain variance: {large_variance} <= {small_variance}"
-            );
-            assert!(
-                (large_mean - small_mean).abs() < 0.15,
-                "particle scale must preserve expected density: {large_mean} vs {small_mean}"
-            );
-        }
-
-        /// `n_sub_layers` is a composite-path control (upstream consumes it
-        /// only in `apply_grain_to_density`): 1 vs 3 sub-layers must differ
-        /// there, and must not touch the layered path.
-        #[test]
-        fn n_sub_layers_is_composite_only() {
-            let film = portra();
-            let backend = CpuBackend;
-            let log_raw = log_raw();
-
-            let mut params = base_params();
-            params.film_render.grain.sublayers_active = false;
-            params.film_render.grain.n_sub_layers = 1;
-            let one = develop(&log_raw, &film, &params, &backend, 12.0)
-                .expect("single-sublayer composite film development failed");
-            params.film_render.grain.n_sub_layers = 3;
-            let three = develop(&log_raw, &film, &params, &backend, 12.0)
-                .expect("three-sublayer composite film development failed");
-            assert_ne!(one.data, three.data);
-
-            params.film_render.grain.sublayers_active = true;
-            params.film_render.grain.n_sub_layers = 1;
-            let l1 = develop(&log_raw, &film, &params, &backend, 12.0)
-                .expect("layered film development with n_sub_layers=1 failed");
-            params.film_render.grain.n_sub_layers = 4;
-            let l4 = develop(&log_raw, &film, &params, &backend, 12.0)
-                .expect("layered film development with n_sub_layers=4 failed");
-            assert_eq!(l1.data, l4.data);
+            let g = &mut params.film_render.grain;
+            g.rms_granularity = [6.0, 8.0, 10.0];
+            g.blur = 0.0;
+            g.blur_dye_clouds_um = 0.0;
+            g.micro_structure = [0.0; 2];
+            g.mult_usm_amount = 0.0;
+            let image = ImageBuf::from_data(128, 128, vec![from_f64(1.1); 128 * 128 * 3]);
+            let aperture_area = std::f64::consts::PI * 24.0_f64.powi(2);
+            let output = apply_spektra_grain(
+                image,
+                &film,
+                g,
+                &curves,
+                false,
+                0,
+                aperture_area.sqrt(),
+                &CpuBackend,
+            )
+            .unwrap();
+            for ch in 0..3 {
+                let mean = ch_mean(&output, ch);
+                let sigma = ch_variance(&output, ch, mean).sqrt();
+                assert!((mean - 1.1).abs() < 0.001, "channel {ch}: mean {mean}");
+                let expected = g.rms_granularity[ch] / 1000.0;
+                assert!(
+                    (sigma - expected).abs() < expected * 0.05,
+                    "channel {ch}: sigma {sigma}, target {expected}"
+                );
+            }
         }
 
         /// `use_fast_stats` switches the layered sampler's RNG regime:
@@ -837,20 +664,6 @@ mod tests {
             assert_ne!(out.data, log_raw.data);
         }
 
-        /// Layered grain on a profile without layer curves fails with an
-        /// actionable message instead of producing garbage — Python's
-        /// `np.nanmax` on the empty tensor raises for the same condition.
-        #[test]
-        #[should_panic(expected = "grain.sublayers_active requires the film profile")]
-        fn sublayers_without_layer_curves_fails() {
-            let mut film = portra();
-            film.data.density_curves_layers.clear();
-            let backend = CpuBackend;
-            let params = base_params();
-            develop(&log_raw(), &film, &params, &backend, 12.0)
-                .expect("film development should panic for missing layer curves");
-        }
-
         /// A monochrome (B&W) film runs the layered path with one shared
         /// noise field: identical per-channel input stays identical after
         /// grain (regression coverage for the Rust-only B&W addition; not
@@ -867,7 +680,7 @@ mod tests {
             // broadcast 3-channel engine runs one shared noise field.
             params.film_render.grain.monochrome = true;
             let g = &mut params.film_render.grain;
-            g.particle_scale = [g.particle_scale[0]; 3];
+            g.rms_granularity = [g.rms_granularity[0]; 3];
             g.density_min = [g.density_min[0]; 3];
             g.uniformity = [g.uniformity[0]; 3];
             g.blur = 0.0;

@@ -138,7 +138,9 @@ The `input` workflow color-manages an already rendered image to the output space
 
 Dye exposes **Event area (strength)** in µm² and **Dye support (spatial formation)** in µm. Open **Dye Advanced** for secondary controls. Support changes field formation and image detail, not just grain diameter.
 
-Black-and-white Dye shows one record for relative strength, density minimum, and uniformity. Color-only G/B requests and channel correlation stay stored. The three numerical-component scales remain independently editable; they are not RGB lanes.
+Black-and-white Spektra and Dye show only record 0 for RMS or relative strength, density minimum, and uniformity. Hidden G/B requests stay stored and reactivate for color material.
+
+Dye also retains hidden color-only channel correlation. The three numerical-component scales remain independently editable in both material models; they are not RGB lanes.
 
 **Procedural Grain Profiles** appears only for Procedural. Named profiles retain editable **Amount**; choose **Custom** to expose custom controls. Noise hides **Film Resolution** and **Resolution Type** without clearing their requests.
 

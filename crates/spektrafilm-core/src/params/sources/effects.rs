@@ -11,14 +11,11 @@ pub(super) enum Condition {
     Procedural,
     Dye,
     ColorRecords,
-    DyeRecord(Option<usize>),
+    MaterialRecord(Option<usize>),
     Analogue,
     Fotufilm,
     SpektraOrDye,
     Custom,
-    Sublayers,
-    SpektraSublayers,
-    NoSublayers,
     Spatial,
     Diffusion(bool),
     Halation,
@@ -53,8 +50,8 @@ impl Condition {
             Self::ColorRecords => {
                 "selected film has color records; channel_correlation is retained but inactive for single-record black-and-white material"
             }
-            Self::DyeRecord(_) => {
-                "Dye uses record 0 for black-and-white material; G/B values remain stored and inactive"
+            Self::MaterialRecord(_) => {
+                "Spektra and Dye use record 0 for black-and-white material; G/B values remain stored and inactive"
             }
             Self::Analogue => {
                 "effective Procedural mode = analogue; Noise does not use Film Resolution or its method"
@@ -64,13 +61,6 @@ impl Condition {
             Self::Custom => {
                 "film_render.grain.v2_profile = custom; select custom to use this control"
             }
-            Self::Sublayers => {
-                "film_render.grain.sublayers_active = true; film profile supplies sublayer density curves"
-            }
-            Self::SpektraSublayers => {
-                "when engine = spektra: film_render.grain.sublayers_active = true; film profile supplies sublayer density curves"
-            }
-            Self::NoSublayers => "film_render.grain.sublayers_active = false",
             Self::Spatial => "spatial effects enabled",
             Self::Diffusion(false) => {
                 "camera.diffusion_filter.active = true; strength and spatial_scale positive"
@@ -127,9 +117,8 @@ impl Condition {
             Self::Procedural => g.engine == GrainEngine::Procedural,
             Self::Dye => g.engine == GrainEngine::Dye,
             Self::ColorRecords => film.map_or(!g.monochrome, Profile::is_color),
-            Self::DyeRecord(component) => {
-                g.engine != GrainEngine::Dye
-                    || component.is_none_or(|component| component == 0)
+            Self::MaterialRecord(component) => {
+                component.is_none_or(|component| component == 0)
                     || film.map_or(!g.monochrome, Profile::is_color)
             }
             Self::Analogue => {
@@ -138,14 +127,7 @@ impl Condition {
             Self::Fotufilm => g.engine == GrainEngine::Fotufilm,
             Self::SpektraOrDye => matches!(g.engine, GrainEngine::Spektra | GrainEngine::Dye),
             Self::Custom => g.v2_profile == "custom",
-            Self::Sublayers => {
-                g.sublayers_active
-                    && film.is_none_or(|film| !film.data.density_curves_layers.is_empty())
-            }
-            Self::SpektraSublayers => {
-                g.engine != GrainEngine::Spektra || Self::Sublayers.holds_for(p, film)
-            }
-            Self::NoSublayers => !g.sublayers_active,
+
             Self::Spatial => !p.debug.deactivate_spatial_effects,
             Self::Diffusion(print) => {
                 let d = if print {
@@ -215,42 +197,26 @@ fn grain_conditions(path: &str, component: Option<usize>) -> [Option<Condition>;
                 out[3] = Some(Analogue);
             }
         }
-    } else if path.contains(".v3_")
-        || path.ends_with(".rms_granularity")
-        || path.ends_with(".channel_correlation")
-    {
+    } else if path.contains(".v3_") || path.ends_with(".channel_correlation") {
         out[1] = Some(Dye);
         if path.ends_with(".channel_correlation") {
             out[2] = Some(ColorRecords);
-        } else if path.ends_with(".rms_granularity") {
-            out[2] = Some(DyeRecord(component));
         }
-    } else if ["density_min", "uniformity", "particle_scale_sublayers"]
-        .iter()
-        .any(|field| path.ends_with(field))
+    } else if [
+        "rms_granularity",
+        "density_min",
+        "uniformity",
+        "particle_scale_sublayers",
+    ]
+    .iter()
+    .any(|field| path.ends_with(field))
     {
         out[1] = Some(SpektraOrDye);
-        out[2] = Some(if path.ends_with(".particle_scale_sublayers") {
-            SpektraSublayers
-        } else {
-            DyeRecord(component)
-        });
+        if !path.ends_with(".particle_scale_sublayers") {
+            out[2] = Some(MaterialRecord(component));
+        }
     } else {
         out[1] = Some(Spektra);
-        if path.ends_with(".n_sub_layers") {
-            out[2] = Some(NoSublayers);
-        }
-        if [
-            "blur_dye_clouds_um",
-            "micro_structure",
-            "mult_usm_sigma",
-            "mult_usm_amount",
-        ]
-        .iter()
-        .any(|field| path.ends_with(field))
-        {
-            out[2] = Some(Sublayers);
-        }
     }
     out
 }
@@ -258,7 +224,7 @@ fn grain_conditions(path: &str, component: Option<usize>) -> [Option<Condition>;
 /// Configured final-render applicability, without loading a film profile.
 ///
 /// `component` selects a zero-based vector lane; `None` queries the whole leaf.
-/// Color follows `grain.monochrome`, and sublayers follow `sublayers_active`.
+/// Color follows `grain.monochrome` unless an actual film profile is supplied.
 /// Preview bypass and profile/route support validation are deliberately excluded.
 /// Use the profile-aware query when actual material capabilities are available.
 pub fn grain_control_inactive_reason(
@@ -269,7 +235,7 @@ pub fn grain_control_inactive_reason(
     grain_inactive_reason(path, params, None, component)
 }
 
-/// Grain applicability using the loaded film's color and sublayer capabilities.
+/// Grain applicability using the loaded film's color-record capabilities.
 /// This does not replace render-time stock/route validation or model preparation.
 pub fn grain_control_inactive_reason_with_profile(
     path: &str,
@@ -508,7 +474,7 @@ mod tests {
             for component in [Some(1), Some(2)] {
                 assert_eq!(
                     grain_control_inactive_reason(path, &params, component),
-                    Some(Condition::DyeRecord(component).description())
+                    Some(Condition::MaterialRecord(component).description())
                 );
                 // Loaded material wins over a stale runtime monochrome flag.
                 assert_eq!(
@@ -558,14 +524,21 @@ mod tests {
         );
         params.film_render.grain.engine = GrainEngine::Spektra;
         for path in [
-            "film_render.grain.particle_scale",
+            "film_render.grain.rms_granularity",
             "film_render.grain.density_min",
             "film_render.grain.uniformity",
         ] {
-            // Spektra monochrome shares seeds, but still consumes each lane.
-            for component in [Some(0), Some(1), Some(2)] {
+            assert_eq!(
+                grain_control_inactive_reason_with_profile(path, &params, &bw, Some(0)),
+                None
+            );
+            for component in [Some(1), Some(2)] {
                 assert_eq!(
                     grain_control_inactive_reason_with_profile(path, &params, &bw, component),
+                    Some(Condition::MaterialRecord(component).description())
+                );
+                assert_eq!(
+                    grain_control_inactive_reason_with_profile(path, &params, &color, component),
                     None
                 );
             }
@@ -573,41 +546,33 @@ mod tests {
     }
 
     #[test]
-    fn spektra_sublayers_follow_real_film_capability() {
+    fn spektra_curve_controls_do_not_require_layered_profile_data() {
         let mut params = RuntimeParams::default();
         params.film_render.grain.engine = GrainEngine::Spektra;
-        let layered = film(true, true);
-        let composite = film(true, false);
-        let count = "film_render.grain.n_sub_layers";
-        let components = "film_render.grain.particle_scale_sublayers";
-        for enabled in [false, true] {
-            params.film_render.grain.sublayers_active = enabled;
-            for material in [&layered, &composite] {
-                let actual_sublayers = enabled && !material.data.density_curves_layers.is_empty();
+        for material in [film(true, true), film(true, false)] {
+            for path in [
+                "film_render.grain.rms_granularity",
+                "film_render.grain.particle_scale_sublayers",
+                "film_render.grain.blur_dye_clouds_um",
+                "film_render.grain.micro_structure",
+                "film_render.grain.mult_usm_sigma",
+                "film_render.grain.mult_usm_amount",
+            ] {
                 assert_eq!(
-                    grain_control_inactive_reason_with_profile(count, &params, material, None),
-                    enabled.then_some(Condition::NoSublayers.description())
+                    grain_control_inactive_reason_with_profile(path, &params, &material, None),
+                    None,
+                    "{path}"
                 );
-                for path in [components, "film_render.grain.blur_dye_clouds_um"] {
-                    assert_eq!(
-                        grain_control_inactive_reason_with_profile(path, &params, material, None)
-                            .is_none(),
-                        actual_sublayers,
-                        "{path} enabled={enabled}"
-                    );
-                }
-                assert_eq!(
-                    inactive_reason(count, &params, material, material).as_deref(),
-                    grain_control_inactive_reason_with_profile(count, &params, material, None)
-                );
+                assert_eq!(inactive_reason(path, &params, &material, &material), None);
             }
         }
-        params.film_render.grain.engine = GrainEngine::Dye;
-        params.film_render.grain.sublayers_active = false;
-        assert_eq!(
-            grain_control_inactive_reason_with_profile(components, &params, &layered, Some(2)),
-            None
-        );
+        for engine in [GrainEngine::Procedural, GrainEngine::Fotufilm] {
+            params.film_render.grain.engine = engine;
+            assert_eq!(
+                grain_control_inactive_reason("film_render.grain.rms_granularity", &params, None),
+                Some(Condition::SpektraOrDye.description())
+            );
+        }
     }
 
     #[test]

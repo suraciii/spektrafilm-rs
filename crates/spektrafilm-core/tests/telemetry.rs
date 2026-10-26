@@ -850,18 +850,20 @@ fn grain_configuration_describes_effective_sampler_branches() {
     .unwrap();
     let mut params = params::RuntimeParams::default();
     params.film_render.grain.engine = params::GrainEngine::Spektra;
+    params.film_render.grain.rms_granularity = [6.0, 8.0, 10.0];
     params.settings.use_fast_stats = true;
     assert!(
         RenderConfiguration::from_runtime(&params, &profile, &profile)
             .grain
             .spektra_fast_statistics_sampler
     );
-    params.film_render.grain.sublayers_active = false;
+    params.settings.use_fast_stats = false;
     assert!(
         !RenderConfiguration::from_runtime(&params, &profile, &profile)
             .grain
             .spektra_fast_statistics_sampler
     );
+    params.settings.use_fast_stats = true;
     params.film_render.grain.engine = params::GrainEngine::Procedural;
     params.settings.rgb_to_raw_method = "mallett2019".to_owned();
     let grain = RenderConfiguration::from_runtime(&params, &profile, &profile).grain;
@@ -872,7 +874,6 @@ fn grain_configuration_describes_effective_sampler_branches() {
     assert!(!grain.spektra_fast_statistics_sampler);
     params.film_render.grain.engine = params::GrainEngine::Spektra;
     params.film_render.grain.active = false;
-    params.film_render.grain.sublayers_active = true;
     assert!(
         !RenderConfiguration::from_runtime(&params, &profile, &profile)
             .grain
@@ -891,7 +892,6 @@ fn v3_grain_configuration_reports_engine_and_field_mode() {
     params.film_render.grain.engine = params::GrainEngine::Dye;
     params.film_render.grain.v3_dye_support_um = 8.0;
     params.settings.use_fast_stats = true;
-    params.film_render.grain.sublayers_active = true;
     let grain = telemetry::RenderConfiguration::from_runtime(&params, &profile, &profile).grain;
     assert!(grain.active);
     assert_eq!(grain.engine, telemetry::GrainEngine::Dye);

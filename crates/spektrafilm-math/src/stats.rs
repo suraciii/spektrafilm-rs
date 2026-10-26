@@ -99,7 +99,7 @@ pub fn fast_poisson(rng: &mut FastStatsRng, lam: f64) -> i64 {
         k - 1
     } else {
         let sample = lam + lam.sqrt() * rng.randn();
-        let sample_int = sample.round() as i64;
+        let sample_int = sample.round_ties_even() as i64;
         if sample_int < 0 { 0 } else { sample_int }
     }
 }
@@ -129,7 +129,7 @@ pub fn fast_binomial(rng: &mut FastStatsRng, n: i64, p: f64) -> i64 {
         let var = nf * p * (1.0 - p);
         if var > 10.0 {
             let approx = mean + var.sqrt() * rng.randn();
-            let mut approx_int = approx.round() as i64;
+            let mut approx_int = approx.round_ties_even() as i64;
             if approx_int < 0 {
                 approx_int = 0;
             } else if approx_int > n {
@@ -144,7 +144,7 @@ pub fn fast_binomial(rng: &mut FastStatsRng, n: i64, p: f64) -> i64 {
             while cdf < u && k <= n {
                 cdf += prob;
                 if k < n {
-                    prob *= ((nf - k as f64) / (k as f64 + 1.0)) * (p / (1.0 - p));
+                    prob = prob * ((nf - k as f64) / (k as f64 + 1.0)) * (p / (1.0 - p));
                 }
                 k += 1;
             }
@@ -298,6 +298,20 @@ mod tests {
         }
         let mean = sum / n as f64;
         (mean, sum2 / n as f64 - mean * mean)
+    }
+
+    #[test]
+    fn fast_normal_approximations_use_numpy_ties_to_even() {
+        // A cached zero normal isolates the half-integer decision in the
+        // actual distribution consumers, rather than testing round itself.
+        let zero_normal = || FastStatsRng {
+            state: 0,
+            spare: Some(0.0),
+        };
+        assert_eq!(fast_poisson(&mut zero_normal(), 30.5), 30);
+        assert_eq!(fast_poisson(&mut zero_normal(), 31.5), 32);
+        assert_eq!(fast_binomial(&mut zero_normal(), 101, 0.5), 50);
+        assert_eq!(fast_binomial(&mut zero_normal(), 103, 0.5), 52);
     }
 
     #[test]

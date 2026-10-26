@@ -506,6 +506,7 @@ fn gpu_timing_collection_survives_a_host_fence() {
     params.io.output_gamut_compress.algorithm = "off".into();
     // Explicit Spektra keeps this scenario on the assembled density fence.
     params.film_render.grain.engine = spektrafilm_core::params::GrainEngine::Spektra;
+    params.film_render.grain.rms_granularity = [6.0, 8.0, 10.0];
     let runtime = Runtime::new_with_backend(
         spektrafilm_core::profile::load_profile_by_name(&data, "kodak_portra_400").unwrap(),
         spektrafilm_core::profile::load_profile_by_name(&data, "kodak_portra_endura").unwrap(),

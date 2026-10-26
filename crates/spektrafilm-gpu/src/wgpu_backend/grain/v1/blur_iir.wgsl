@@ -2,8 +2,9 @@
 //
 // One invocation owns one whole row (horizontal) or column (vertical), so the
 // forward and backward recursions keep the reference's serial state order. The
-// state starts from the first sample and the backward pass re-reads the
-// forward results, exactly as `spektrafilm_math::gaussian::iir_filter_row`.
+// state starts from the first sample and the backward pass re-reads the stored
+// f32 forward endpoint, as upstream 28bf883 fast_gaussian_filter.py does.
+// Coefficients and recurrence history stay f64, unlike the shared math filter.
 // Storage bindings cover one image-sized RGB region from an aligned byte
 // offset; `source_base`/`destination_base` carry the residual sample offset.
 
@@ -12,10 +13,10 @@ struct Params {
   height: u32,
   channel: u32,
   vertical: u32,
-  a: f32,
-  b1: f32,
-  b2: f32,
-  b3: f32,
+  a: f64,
+  b1: f64,
+  b2: f64,
+  b3: f64,
   grid_width: u32,
   source_base: u32,
   destination_base: u32,
@@ -34,7 +35,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
   let length = select(p.width, p.height, p.vertical != 0u);
   let x0 = select(0u, line, p.vertical != 0u);
   let y0 = select(line, 0u, p.vertical != 0u);
-  let initial = source[p.source_base + (y0 * p.width + x0) * 3u + p.channel];
+  let initial = f64(source[p.source_base + (y0 * p.width + x0) * 3u + p.channel]);
   var w1 = initial;
   var w2 = initial;
   var w3 = initial;
@@ -42,16 +43,16 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     let x = select(j, line, p.vertical != 0u);
     let y = select(line, j, p.vertical != 0u);
     let offset = (y * p.width + x) * 3u + p.channel;
-    let value = p.a * source[p.source_base + offset]
+    let value = p.a * f64(source[p.source_base + offset])
       + p.b1 * w1 + p.b2 * w2 + p.b3 * w3;
-    destination[p.destination_base + offset] = value;
+    destination[p.destination_base + offset] = f32(value);
     w3 = w2;
     w2 = w1;
     w1 = value;
   }
   let last_x = select(length - 1u, line, p.vertical != 0u);
   let last_y = select(line, length - 1u, p.vertical != 0u);
-  let last = destination[p.destination_base + (last_y * p.width + last_x) * 3u + p.channel];
+  let last = f64(destination[p.destination_base + (last_y * p.width + last_x) * 3u + p.channel]);
   w1 = last;
   w2 = last;
   w3 = last;
@@ -60,8 +61,8 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     let x = select(coordinate, line, p.vertical != 0u);
     let y = select(line, coordinate, p.vertical != 0u);
     let index = p.destination_base + (y * p.width + x) * 3u + p.channel;
-    let value = p.a * destination[index] + p.b1 * w1 + p.b2 * w2 + p.b3 * w3;
-    destination[index] = value;
+    let value = p.a * f64(destination[index]) + p.b1 * w1 + p.b2 * w2 + p.b3 * w3;
+    destination[index] = f32(value);
     w3 = w2;
     w2 = w1;
     w1 = value;

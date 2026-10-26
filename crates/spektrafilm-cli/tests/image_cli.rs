@@ -139,7 +139,7 @@ fn process_publishes_and_replaces_png_jpeg_tiff_and_openexr() {
                     "--bit-depth",
                     depth,
                     "--set",
-                    "io.output_color_space=sRGB,io.output_cctf_encoding=true",
+                    "io.output_color_space=sRGB,io.output_cctf_encoding=true,film_render.grain.active=false",
                 ],
             );
             let stderr = String::from_utf8_lossy(&result.stderr);
@@ -201,7 +201,7 @@ fn process_native_write_failure_preserves_absent_and_existing_outputs() {
                     "--saving-cctf-encoding",
                     if extension == "exr" { "false" } else { "true" },
                     "--set",
-                    "io.output_color_space=sRGB,io.output_cctf_encoding=true",
+                    "io.output_color_space=sRGB,io.output_cctf_encoding=true,film_render.grain.active=false",
                 ],
             );
             // Only the exec child inherits this limit and signal disposition.

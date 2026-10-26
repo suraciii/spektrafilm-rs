@@ -1343,6 +1343,7 @@ mod tests {
         // Spektra ignores the controls, but stored values stay validated so a
         // later switch to Dye cannot render from an invalid recipe.
         params.film_render.grain.engine = super::grain::GrainEngine::Spektra;
+        params.film_render.grain.rms_granularity = [6.0, 8.0, 10.0];
         params.film_render.grain.v3_event_area_um2 = -1.0;
         assert!(params.validate().is_err());
     }
@@ -1402,6 +1403,7 @@ mod tests {
     fn film_format_validation_and_persistence() {
         let mut params = super::RuntimeParams::default();
         assert_eq!(params.camera.film_format_mm, 35.0);
+        params.film_render.grain.rms_granularity = [6.0, 8.0, 10.0];
         for engine in [
             super::GrainEngine::Spektra,
             super::GrainEngine::Procedural,

@@ -209,10 +209,7 @@ const UNOWNED_PRESET_FIELDS: &[(&str, &[&str])] = &[
         ],
     ),
     ("film_render", &["glare"]),
-    (
-        "film_render.grain",
-        &["micro_sublayers", "monochrome", "particle_scale_layers"],
-    ),
+    ("film_render.grain", &["micro_sublayers", "monochrome"]),
 ];
 
 fn remove_unowned_preset_fields(value: &mut Value) {
@@ -328,7 +325,10 @@ impl LookParameters {
     fn from_value_detailed(value: Value) -> Result<Self, PresetDocumentError> {
         reject_unowned_preset_fields_detailed(&value)?;
         reject_retired_preset_fields_detailed(&value)?;
-        let wire = serde_json::from_value::<LookParametersWire>(value).map_err(|error| {
+        let omitted_rms = value
+            .pointer("/film_render/grain/rms_granularity")
+            .is_none();
+        let mut wire = serde_json::from_value::<LookParametersWire>(value).map_err(|error| {
             PresetDocumentError::new(
                 PresetDocumentReason::Parser {
                     detail: error.to_string(),
@@ -336,6 +336,11 @@ impl LookParameters {
                 error.to_string(),
             )
         })?;
+        // The carrier owns omission: a typed default must never turn an
+        // explicit zero into a positive Spektra target or author Dye strength.
+        if omitted_rms && wire.film_render.grain.engine == crate::params::GrainEngine::Spektra {
+            wire.film_render.grain.rms_granularity = [6.0, 8.0, 10.0];
+        }
         Ok(Self {
             camera: wire.camera,
             enlarger: wire.enlarger,
@@ -514,13 +519,11 @@ impl LookParameters {
         let grain_internal = (
             params.film_render.grain.micro_sublayers,
             params.film_render.grain.monochrome,
-            params.film_render.grain.particle_scale_layers,
         );
         params.film_render = self.film_render.clone();
         params.film_render.glare = film_glare;
         params.film_render.grain.micro_sublayers = grain_internal.0;
         params.film_render.grain.monochrome = grain_internal.1;
-        params.film_render.grain.particle_scale_layers = grain_internal.2;
         params.print_render = self.print_render.clone();
         params.camera.diffusion_filter = self.camera_diffusion_filter.clone();
         params.output_mix = self.output_mix.clone();

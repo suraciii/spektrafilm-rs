@@ -275,7 +275,7 @@ fn shared_controls(
         filter,
         rms_granularity,
         "rms granularity",
-        "Per-channel relative Dye strength: event-area scale k = (G / 6)^2, not a certified optical RMS target. Zero retains the reference-scale fallback; upstream Spektra retains this value as a no-op. Distinct from Procedural Amount."
+        "Per-channel granularity G: Spektra derives statistical particle area from the film density curves using upstream granularity; Dye uses relative event-area strength k = (G / 6)^2, with zero retaining the reference-scale fallback. Neither is a certified optical RMS target. Distinct from Procedural Amount."
     );
     changed |= number!(
         ui,
@@ -346,62 +346,7 @@ fn engine_controls(
             });
         }
         GrainEngine::Spektra => {
-            changed |= control(
-                ui,
-                params,
-                filter,
-                "sublayers active",
-                "film_render.grain.sublayers_active",
-                |ui, params| {
-                    toggle(
-                        ui,
-                        "sublayers active",
-                        &mut params.film_render.grain.sublayers_active,
-                        "Split the developed density into the film profile's emulsion sublayers instead of applying grain to the composite density. Spektra-only; Dye always uses numerical curve components, and Procedural and Fotufilm ignore it.",
-                    )
-                },
-            );
-            if !filter.active()
-                && params.film_render.grain.sublayers_active
-                && let Some(reason) = crate::ui::grain_control_inactive_reason(
-                    ui.ctx(),
-                    "film_render.grain.particle_scale_sublayers",
-                    params,
-                    None,
-                )
-            {
-                notice(ui, "controls.grain.spektra_sublayers_unavailable");
-                ui.label(
-                    egui::RichText::new(localized(ui.ctx(), reason))
-                        .small()
-                        .color(theme::FG_MUTED),
-                );
-            }
-            changed |= number!(
-                ui,
-                params,
-                filter,
-                particle_area_um2,
-                "particle area (µm²)",
-                "Base statistical particle area in square film micrometers; smaller values give finer grain. Spektra reads this value; Dye uses its own event area."
-            );
-            changed |= vector!(
-                ui,
-                params,
-                filter,
-                particle_scale,
-                "particle scale",
-                "Per-channel multiplier on the particle area; the default makes the blue record coarser. Spektra reads this value; Dye uses the granularity preset instead."
-            );
             changed |= number!(ui, params, filter, blur, "blur", "Post-blur sigma.");
-            changed |= number!(
-                ui,
-                params,
-                filter,
-                n_sub_layers,
-                "sub-layers",
-                "Number of emulsion sub-layers the composite density is split into when sublayers active is off; each sub-layer draws its own grain realization. Spektra-only."
-            );
             changed |= advanced(
                 ui,
                 params,
@@ -857,11 +802,7 @@ mod tests {
     #[test]
     fn search_reveals_inactive_engines_without_changing_values_or_selection() {
         for (selected, query, label) in [
-            (
-                GrainEngine::Procedural,
-                "particle area",
-                "particle area (µm²)",
-            ),
+            (GrainEngine::Procedural, "dye-cloud blur", "dye-cloud blur"),
             (GrainEngine::Spektra, "shadows", "Shadows"),
             (
                 GrainEngine::Spektra,
@@ -873,6 +814,7 @@ mod tests {
         ] {
             let mut params = RuntimeParams::default();
             params.film_render.grain.engine = selected;
+            params.film_render.grain.rms_granularity = [6.0, 8.0, 10.0];
             let before = params.clone();
             let harness = Harness::new_ui_state(
                 grain_ui,
@@ -902,6 +844,7 @@ mod tests {
             ] {
                 let mut params = RuntimeParams::default();
                 params.film_render.grain.engine = selected;
+                params.film_render.grain.rms_granularity = [6.0, 8.0, 10.0];
                 let harness = Harness::new_ui_state(
                     grain_ui,
                     GrainUi {
@@ -912,11 +855,7 @@ mod tests {
                 assert_eq!(harness.query_all_by_label(label).count(), 1, "{label}");
                 assert_eq!(
                     harness.get_by_label(label).node().is_disabled(),
-                    if query == "rms granularity" {
-                        selected != GrainEngine::Dye
-                    } else {
-                        !matches!(selected, GrainEngine::Spektra | GrainEngine::Dye)
-                    },
+                    !matches!(selected, GrainEngine::Spektra | GrainEngine::Dye),
                     "{label}",
                 );
             }

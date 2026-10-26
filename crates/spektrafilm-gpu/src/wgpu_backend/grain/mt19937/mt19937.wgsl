@@ -1,58 +1,7 @@
-// Device Spektra v1 grain — the sequential scipy/NumPy MT19937 regime.
-//
-// CPU equivalent: `spektrafilm_model::grain::v1::layer_particle_model` with
-// `use_fast_stats = false`, which is what the composite path
-// (`apply_grain_to_density`) always uses and the layered path
-// (`apply_grain_to_density_layers`) uses whenever the request sets
-// `use_fast_stats = false`. The reference drives one `rand_mt::Mt`, seeded
-// from the u32-truncated `base_seed + seed_ch + sl·10`, across a whole
-// `(channel, sublayer)` plane in row-major order: every Poisson draw first,
-// then every binomial draw, with variable-length rejection consumption
-// inside each law (`spektrafilm_math::numpy_rng`).
-//
-// The regime is sequential by construction, so this pass is too. One
-// workgroup of one invocation owns one plane, walks it in row-major order,
-// and keeps the MT19937 state in that plane's own storage slot.
-// `specs/gpu-execution/design.md` §Stochastic alignment forbids reseeding,
-// reordering, or a jump-ahead shortcut — an element's next generator word
-// is not at a fixed offset, because rejection consumes a variable number of
-// words — so the only faithful device mapping is the same walk in the same
-// order.
-//
-// ## Chunking
-//
-// One dispatch draws one segment of every plane. A plane's first
-// `ceil(n / chunk)` dispatches are its Poisson segments, in element order,
-// and the next `ceil(n / chunk)` are its binomial segments in the same
-// order — the reference's two-pass call order over one generator. The
-// generator state and the segment counter live in the plane's storage slot
-// and are carried across dispatches, so a segment boundary is a submission
-// boundary only: the seed, the draw order, and the element index are
-// unchanged. That gives the caller watchdog and cancellation boundaries
-// without altering the realization.
-//
-// ## Precision
-//
-// The reference conditions both count laws on f64 values it reads at full
-// precision, so this shader runs entirely in f64 and needs SHADER_F64. It
-// calls the shared explicit `f64_math.wgsl` helpers instead of driver
-// log/exp/pow builtins, which return wrong values on some devices. Every
-// discrete decision is made in f64; only the finished particle field is
-// narrowed to f32, matching the sibling sampler's representation.
-//
-// The one transcendental the reference takes from libm is `lgamma` inside
-// the PTRS acceptance test. `sf64_lgamma` is a Lanczos approximation rather
-// than libm, so a PTRS acceptance decision that lands within that
-// approximation's error of its boundary can disagree with the reference.
-// This is a stated approximation with a measured disagreement budget owed
-// by the owning stage, not a verified equivalence.
-//
-// ## Output
-//
-// `[sl][pixel][ch]` f32 particle fields, sublayer-major then pixel then
-// channel — the same layout the sibling sampler and the composition pass
-// use. This pass writes fields only; composition, clumping, dye-cloud blur,
-// final blur, and the unsharp mask own the density buffer.
+// Resident NumPy compound Poisson/binomial draws and final-plane normals.
+// Source tables interpolate in f64; grain working arrays condition in f32.
+// Every complete plane's Poisson walk precedes its binomial walk. The last
+// plane retains MT state into NumPy HWC standard_normal microstructure.
 
 struct Params {
   width: u32,
@@ -61,22 +10,17 @@ struct Params {
   layers: u32,
   n_pixels: u32,
   chunk_elements: u32,
-  // Bit 0: composite (not layered) path. Bit 1: monochrome, which shares
-  // channel 0's stream for every channel like the reference. Bit 2: the
-  // reference keeps f64 samples, so `sample_round` is the identity.
+  // x: particle / continued normals / fresh normals; y: monochrome;
+  // z: host input representation; w: layer*3+channel.
   flags: vec4<u32>,
   base_seed: u64,
-  pixel_size_um: f64,
+  micro_sigma: f64,
   lookup_sign: f32,
   pad0: u32,
   // The three-value triples are `vec4<f64>`, not `vec3<f64>`: a uniform
   // `vec3` has a 32-byte stride with its own alignment, and spelling the
   // padded lane explicitly makes the host's `repr(C)` layout unambiguous.
-  particle_area: vec4<f64>,
-  density_min: vec4<f64>,
   uniformity: vec4<f64>,
-  density_max_composite: vec4<f64>,
-  n_particles_composite: vec4<f64>,
   // WGSL requires an array element stride to be a multiple of 16 in the
   // uniform address space, so each 9-value table is three `vec4` rows with
   // a padding lane the host leaves zero.
@@ -108,11 +52,13 @@ struct MtSlot {
   dispatch_index: u32,
   idx: u32,
   seeded: u32,
-  pad: u32,
+  has_gauss: u32,
   state: array<u32, 624>,
+  gauss: f64,
 }
 
 @group(0) @binding(6) var<storage, read_write> mt: array<MtSlot>;
+@group(0) @binding(7) var<storage, read_write> clump: array<f64>;
 
 // The local WGPU HAL uses this named function to select strict Metal math.
 // Every Poisson and binomial decision below is conditioned on an f64 value
@@ -122,15 +68,6 @@ fn spektrafilm_strict_float(v: f64) -> f64 {
   return v;
 }
 
-// The reference stores its intermediate density samples in `Scalar`, which
-// is f32 unless the pipeline runs in full f64 precision. Every value that
-// crosses that boundary in the reference is narrowed here on the f32 route,
-// so the conditioning the device computes is the same value the reference's
-// discrete decisions see. `flags.z` is 1 when the reference keeps f64.
-fn sample_round(value: f64) -> f64 {
-  if p.flags.z != 0u { return value; }
-  return f64(f32(value));
-}
 
 // ── MT19937 (`rand_mt::Mt`, bit-identical to numpy's RandomState) ──
 
@@ -362,26 +299,9 @@ fn rk_binomial_btpe(plane: u32, n: u64, p: f64) -> u64 {
   return u64(y_pos);
 }
 
-/// `ln Γ(x)`, the Lanczos approximation with `g = 7`, `n = 9`. NumPy takes
-/// this from libm; the approximation agrees with libm to within its own
-/// rounding over the arguments the PTRS test reaches (positive integers).
-///
-/// The reflection branch maps any `x < 0.5` to a core argument above 0.5,
-/// so one level is enough and no recursion is needed.
-///
-/// The coefficients are written out as a scalar accumulator rather than a
-/// constant array: a dynamically indexed local `array<f64, N>` loses the
-/// device on this driver, and a storage or uniform buffer would cost a
-/// binding for eight values that never change.
+// PTRS calls only at k+1 >= 1; reflection is unreachable and would introduce
+// native f64 sin into an otherwise explicit-transcendental device kernel.
 fn sf64_lgamma(x: f64) -> f64 {
-  if x < 0.5 {
-    return sf64_log(spektrafilm_strict_float(MT_PI / abs(sin(MT_PI * x))))
-      - sf64_lgamma_core(1.0 - x);
-  }
-  return sf64_lgamma_core(x);
-}
-
-fn sf64_lgamma_core(x: f64) -> f64 {
   // Lanczos g=7, n=9: the accumulator starts at the g coefficient divided
   // by (z + g), and each subsequent coefficient divides (z + g + i). The
   // reference's `lgamma` is libm, so this is an approximation of it; the
@@ -411,8 +331,8 @@ fn sf64_lgamma_core(x: f64) -> f64 {
 /// `<= x` (`partition_point(|v| v <= x)`).
 fn bracket(x: f64, ch: u32) -> vec2<f64> {
   let k = p.knots;
-  let first = sample_round(curve_x[ch]);
-  let last = sample_round(curve_x[(k - 1u) * 3u + ch]);
+  let first = curve_x[ch];
+  let last = curve_x[(k - 1u) * 3u + ch];
   if x <= first {
     return vec2<f64>(0.0, 0.0);
   }
@@ -426,65 +346,46 @@ fn bracket(x: f64, ch: u32) -> vec2<f64> {
       break;
     }
     let mid = (lo + hi) / 2u;
-    if sample_round(curve_x[mid * 3u + ch]) <= x {
+    if curve_x[mid * 3u + ch] <= x {
       lo = mid;
     } else {
       hi = mid;
     }
   }
-  let xa = sample_round(curve_x[lo * 3u + ch]);
-  let xb = sample_round(curve_x[hi * 3u + ch]);
-  let dx = sample_round(xb - xa);
+  let xa = curve_x[lo * 3u + ch];
+  let xb = curve_x[hi * 3u + ch];
+  let dx = xb - xa;
   var t: f64 = 0.0;
   if dx != 0.0 {
-    let inverse = sample_round(1.0 / dx);
-    t = sample_round(sample_round(x - xa) * inverse);
+    let inverse = 1.0 / dx;
+    t = (x - xa) * inverse;
   }
   return vec2<f64>(f64(lo), t);
 }
 
-/// Per-element conditioning for one sublayer, in the reference's f64
-/// arithmetic. Returns `(prob, saturation, od_particle, lam)`.
-///
-/// The layered path interpolates the composite density against the
-/// channel's composite curve and reads this sublayer's column at the same
-/// bracket, then adds the per-layer density floor. The composite path reads
-/// the composite density directly and adds the composite floor.
-fn conditioning(i: u32, ch: u32, sl: u32, layered: bool) -> vec4<f64> {
-  let gu = p.uniformity[ch];
-  var dmax: f64;
-  var npp: f64;
-  var density: f64;
-  if layered {
-    dmax = sample_round(p.density_max_adj[sl][ch]);
-    npp = sample_round(p.n_particles_layers[sl][ch]);
-    // The lookup axis and the query share the host's sign, so a positive
-    // film's descending axis still brackets. The reference negates the
-    // image sample in `Scalar`, so the sign flip is a f32 boundary too.
-    let x = sample_round(f64(density_cmy[i * 3u + ch]) * f64(p.lookup_sign));
-    let b = bracket(x, ch);
-    let lo = u32(b.x);
-    let t = b.y;
-    let y0 = sample_round(curve_layers[(lo * 3u + sl) * 3u + ch]);
-    let y1 = sample_round(curve_layers[((lo + 1u) * 3u + sl) * 3u + ch]);
-    let interpolated = sample_round(y0 + sample_round(t * sample_round(y1 - y0)));
-    // The reference adds the per-layer floor in `Scalar`.
-    density = sample_round(interpolated + sample_round(p.density_min_layers[sl][ch]));
+// Probability, saturation, optical density and lambda are f32 array values
+// promoted only at the discrete-sampler boundary.
+fn conditioning(i: u32, ch: u32, sl: u32) -> vec4<f64> {
+  let dmax = f32(p.density_max_adj[sl][ch]);
+  let npp = f32(p.n_particles_layers[sl][ch]);
+  let x = f64(density_cmy[i * 3u + ch]) * f64(p.lookup_sign);
+  let b = bracket(x, ch);
+  let lo = u32(b.x);
+  var interpolated: f32;
+  if x <= curve_x[ch] {
+    interpolated = f32(curve_layers[sl * 3u + ch]);
+  } else if x >= curve_x[(p.knots - 1u) * 3u + ch] {
+    interpolated = f32(curve_layers[((p.knots - 1u) * 3u + sl) * 3u + ch]);
   } else {
-    // The composite path reads the density buffer directly and adds the
-    // composite floor in `Scalar`.
-    dmax = sample_round(p.density_max_composite[ch] + p.density_min[ch]);
-    npp = sample_round(p.n_particles_composite[ch]);
-    density = sample_round(f64(density_cmy[i * 3u + ch]) + p.density_min[ch]);
+    let y0 = curve_layers[(lo * 3u + sl) * 3u + ch];
+    let y1 = curve_layers[((lo + 1u) * 3u + sl) * 3u + ch];
+    interpolated = f32(y0 + b.y * (y1 - y0));
   }
-  // `layer_particle_model` conditions both laws on these f64 values. The
-  // bounds are named so every one of them is f64 rather than an untyped
-  // abstract-float literal.
-  let eps = f64(1e-6);
-  let prob = clamp(density / dmax, eps, 1.0 - eps);
-  let saturation = 1.0 - prob * gu * (1.0 - eps);
-  let od_particle = dmax / npp;
-  return vec4<f64>(prob, saturation, od_particle, npp / saturation);
+  let density = f32(sf64_from_f32(interpolated) + p.density_min_layers[sl][ch]);
+  let prob = clamp(sf32_div(density, dmax), 1e-6f, 1.0f - 1e-6f);
+  let saturation = sf32_sub(1.0f, sf32_mul(sf32_mul(prob, f32(p.uniformity[ch])), 1.0f - 1e-6f));
+  let od = f32(p.density_max_adj[sl][ch] / p.n_particles_layers[sl][ch]);
+  return vec4<f64>(sf64_from_f32(prob), sf64_from_f32(saturation), sf64_from_f32(od), sf64_from_f32(sf32_div(npp, saturation)));
 }
 
 /// The seed of one `(channel, sublayer)` plane: `base_seed + seed_ch +
@@ -494,6 +395,58 @@ fn plane_seed(ch: u32, sl: u32) -> u32 {
   return u32(p.base_seed + u64(seed_ch) + u64(sl) * u64(10u));
 }
 
+// NumPy RandomState caches the first polar variate and returns the second.
+// Both the cached value and its presence survive device segment boundaries.
+fn rk_standard_normal(plane: u32) -> f64 {
+  if mt[plane].has_gauss != 0u {
+    mt[plane].has_gauss = 0u;
+    return mt[plane].gauss;
+  }
+  var result: f64 = 0.0;
+  loop {
+    let x1 = 2.0 * rk_double(plane) - 1.0;
+    let x2 = 2.0 * rk_double(plane) - 1.0;
+    let r2 = x1 * x1 + x2 * x2;
+    if r2 > 0.0 && r2 < 1.0 {
+      let factor = sqrt(-2.0 * sf64_log(r2) / r2);
+      mt[plane].gauss = factor * x1;
+      mt[plane].has_gauss = 1u;
+      result = factor * x2;
+      break;
+    }
+  }
+  return result;
+}
+
+fn draw_clumping(plane: u32) {
+  let segments = (p.n_pixels + p.chunk_elements - 1u) / p.chunk_elements;
+  let offset = select(0u, segments * 2u, p.flags.x == 1u);
+  let segment = mt[plane].dispatch_index - offset;
+  if segment >= segments { return; }
+  if mt[plane].seeded == 0u {
+    mt_reseed(plane, plane_seed(p.flags.w % 3u, p.flags.w / 3u));
+  }
+  let count = min(p.chunk_elements, p.n_pixels - segment * p.chunk_elements);
+  let variance = p.micro_sigma * p.micro_sigma;
+  let sum = 1.0 + variance;
+  // Compensated log1p preserves the low bits lost by forming 1+variance.
+  let sigma2 = sf64_log(sum) * (variance / (sum - 1.0));
+  let sigma = sqrt(sigma2);
+  for (var i = 0u; i < count; i = i + 1u) {
+    if p.flags.y != 0u {
+      let z = rk_standard_normal(plane);
+      let value = sf64_exp(z * sigma - 0.5 * sigma2);
+      for (var ch = 0u; ch < 3u; ch = ch + 1u) { clump[i * 3u + ch] = value; }
+    } else {
+      for (var ch = 0u; ch < 3u; ch = ch + 1u) {
+        let z = rk_standard_normal(plane);
+        clump[i * 3u + ch] = sf64_exp(z * sigma - 0.5 * sigma2);
+      }
+    }
+  }
+  mt[plane].dispatch_index = mt[plane].dispatch_index + 1u;
+}
+
 @compute @workgroup_size(1)
 fn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_index) lid: u32) {
   // One invocation owns the plane's sequential generator state.
@@ -501,6 +454,7 @@ fn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_index) 
     return;
   }
   let plane = 0u;
+  if p.flags.x != 0u { draw_clumping(plane); return; }
   let n = p.n_pixels;
   let chunk = p.chunk_elements;
   let poisson_segments = (n + chunk - 1u) / chunk;
@@ -511,7 +465,6 @@ fn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_index) 
   }
   let sl = p.flags.w / 3u;
   let ch = p.flags.w % 3u;
-  let layered = p.flags.x == 0u;
   // Each plane owns its own seed lanes, so the concurrent planes in one
   // dispatch never race on the same lanes.
   let seed_base = 0u;
@@ -540,7 +493,7 @@ fn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_index) 
   if phase == 0u {
     for (var j = 0u; j < count; j = j + 1u) {
       let i = j;
-      let c = conditioning(i, ch, sl, layered);
+      let c = conditioning(i, ch, sl);
       let seed = rk_poisson(plane, c.w);
       seeds[seed_base + i * 2u] = u32(seed & u64(0xffffffffu));
       seeds[seed_base + i * 2u + 1u] = u32(seed >> 32u);
@@ -548,10 +501,16 @@ fn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_index) 
   } else {
     for (var j = 0u; j < count; j = j + 1u) {
       let i = j;
-      let c = conditioning(i, ch, sl, layered);
+      let c = conditioning(i, ch, sl);
       let seed = (u64(seeds[seed_base + i * 2u + 1u]) << 32u) | u64(seeds[seed_base + i * 2u]);
       let developed = rk_binomial(plane, seed, c.x);
-      layer_fields[i * 3u + ch] = f32(f64(developed) * c.z * c.y);
+      let particle = sf32_mul(f32(developed), f32(c.z));
+      let value = sf32_mul(particle, f32(c.y));
+      layer_fields[i * 3u + ch] = value;
+      if p.flags.y != 0u {
+        layer_fields[i * 3u + 1u] = value;
+        layer_fields[i * 3u + 2u] = value;
+      }
     }
   }
   mt[plane].dispatch_index = dispatch_index + 1u;

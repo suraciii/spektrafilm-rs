@@ -74,15 +74,8 @@ particle_scale_sublayers = [
     0.4,
     0.25,
 ]
-mult_usm_sigma = 0.699999988079071
+mult_usm_sigma = 0.7
 mult_usm_amount = 1.5
-sublayers_active = true
-particle_area_um2 = 0.2
-particle_scale = [
-    1.6,
-    1.6,
-    3.2,
-]
 rms_granularity = [
     8.0,
     8.0,
@@ -98,13 +91,12 @@ uniformity = [
     0.97,
     0.97,
 ]
-blur = 0.8899999856948853
+blur = 0.89
 blur_dye_clouds_um = 2.0
 micro_structure = [
-    0.20000000298023224,
+    0.2,
     30.0,
 ]
-n_sub_layers = 1
 
 [parameters.film_render.halation]
 active = true

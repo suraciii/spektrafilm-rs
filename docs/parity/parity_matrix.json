@@ -401,40 +401,40 @@
         }
       },
       "grain.sublayers_active": {
-        "rust_status": "supported",
+        "rust_status": "intentionally_retired",
         "owner_issue": null,
-        "implementation_source": "crates/spektrafilm-core/src/params/; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain/",
-        "verification": "Implementation source and current differential/package evidence.",
+        "implementation_source": "specs/film-grain/v1/spec.md",
+        "verification": "Current model rejects this path; historical audit is not a current support or parity claim.",
         "audit_baseline": {
           "rust_status": "accepted_but_unread",
           "notes": "filming.rs:549-558"
         }
       },
       "grain.particle_area_um2": {
-        "rust_status": "supported",
+        "rust_status": "intentionally_retired",
         "owner_issue": null,
-        "implementation_source": "crates/spektrafilm-core/src/params/; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain/",
-        "verification": "Implementation source and current differential/package evidence.",
+        "implementation_source": "specs/film-grain/v1/spec.md",
+        "verification": "Current model rejects this path; historical audit is not a current support or parity claim.",
         "audit_baseline": {
           "rust_status": "supported",
           "notes": "renamed agx_particle_area_um2 in Rust; f64 preserved"
         }
       },
       "grain.particle_scale": {
-        "rust_status": "supported",
+        "rust_status": "intentionally_retired",
         "owner_issue": null,
-        "implementation_source": "crates/spektrafilm-core/src/params/; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain/",
-        "verification": "Implementation source and current differential/package evidence.",
+        "implementation_source": "specs/film-grain/v1/spec.md",
+        "verification": "Current model rejects this path; historical audit is not a current support or parity claim.",
         "audit_baseline": {
           "rust_status": "supported",
           "notes": "renamed agx_particle_scale"
         }
       },
       "grain.particle_scale_layers": {
-        "rust_status": "supported",
+        "rust_status": "intentionally_retired",
         "owner_issue": null,
-        "implementation_source": "crates/spektrafilm-core/src/params/; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain/",
-        "verification": "Implementation source and current differential/package evidence.",
+        "implementation_source": "specs/film-grain/v1/spec.md",
+        "verification": "Current model rejects this path; historical audit is not a current support or parity claim.",
         "audit_baseline": {
           "rust_status": "accepted_but_unread",
           "notes": "filming.rs:549-558"
@@ -491,10 +491,10 @@
         }
       },
       "grain.n_sub_layers": {
-        "rust_status": "supported",
+        "rust_status": "intentionally_retired",
         "owner_issue": null,
-        "implementation_source": "crates/spektrafilm-core/src/params/; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain/",
-        "verification": "Implementation source and current differential/package evidence.",
+        "implementation_source": "specs/film-grain/v1/spec.md",
+        "verification": "Current model rejects this path; historical audit is not a current support or parity claim.",
         "audit_baseline": {
           "rust_status": "supported",
           "notes": ""
