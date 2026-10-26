@@ -66,15 +66,27 @@ impl ResponseSetup {
         response: &DyeResponseGpuParams<'_>,
     ) -> Result<Self, String> {
         let mut uniform = ResponseUniform {
-            dims: [0; 4],
+            dims: [
+                0,
+                0,
+                0,
+                if matches!(params.law, DyeFieldLaw::ScalarRecord { .. }) {
+                    2
+                } else {
+                    0
+                },
+            ],
             controls: [0.0; 4],
             preflash: [0.0; 4],
-            mins: [
-                params.tables.tables[0].min,
-                params.tables.tables[1].min,
-                params.tables.tables[2].min,
-                0.0,
-            ],
+            mins: match &params.law {
+                DyeFieldLaw::Capacity(tables) => [
+                    tables.tables[0].min,
+                    tables.tables[1].min,
+                    tables.tables[2].min,
+                    0.0,
+                ],
+                DyeFieldLaw::ScalarRecord { .. } => [0.0; 4],
+            },
             matrix: [[0.0; 4]; 3],
         };
         let scan_weights: [[f64; 3]; spektrafilm_math::spectral::N_WAVELENGTHS];
@@ -127,7 +139,8 @@ impl ResponseSetup {
             }
         };
         let n = cd.len().min(illuminant.len()).min(weights.len());
-        if n == 0 || (!bd.is_empty() && bd.len() < n) {
+        let scalar_record = matches!(params.law, DyeFieldLaw::ScalarRecord { .. });
+        if n == 0 || (!scalar_record && !bd.is_empty() && bd.len() < n) {
             return Err(
                 "film grain Dye: optical response has inconsistent wavelength tables".into(),
             );
@@ -145,14 +158,71 @@ impl ResponseSetup {
                 "film grain Dye: optical response controls are not representable in f32".into(),
             );
         }
+        if uniform.dims[2] == 1
+            && matches!(params.law, DyeFieldLaw::ScalarRecord { .. })
+            && let Some(coefficients) =
+                spektrafilm_backend::scalar_scan::ScalarScanCoefficients::prepare(
+                    cd, bd, illuminant, weights,
+                )
+        {
+            let values = [
+                coefficients.coefficient,
+                coefficients.xyz[0],
+                coefficients.xyz[1],
+                coefficients.xyz[2],
+            ];
+            let packed = values.map(|v| v as f32);
+            let representable = values
+                .iter()
+                .zip(packed)
+                .all(|(&value, packed)| packed.is_finite() && (value == 0.0 || packed.is_normal()));
+            let bounds = coefficients.exponent_bounds(
+                f64::from(f32::MIN_POSITIVE).log10() + 1.0,
+                f64::from(f32::MAX).log10() - 1.0,
+            );
+            let lower = (bounds[0] as f32).next_up();
+            let upper = (bounds[1] as f32).next_down();
+            // The f64 helper proves algebraic separation. Also exclude
+            // f32 spectral inputs/base powers that lose normal precision
+            // before an otherwise safe exponent could rescale them.
+            let normal_spectrum = (0..n).all(|wl| {
+                let base = if bd.len() >= n { bd[wl] } else { 0.0 };
+                if cd[wl].iter().any(|v| v.is_nan()) || base.is_nan() || illuminant[wl].is_nan() {
+                    return true;
+                }
+                let lamp = illuminant[wl] as f32;
+                (10.0f64.powf(-base) as f32).is_normal()
+                    && (illuminant[wl] == 0.0 || lamp.is_normal())
+            });
+            if representable
+                && normal_spectrum
+                && lower.is_finite()
+                && upper.is_finite()
+                && lower <= upper
+            {
+                uniform.dims[3] |= 1;
+                uniform.preflash = packed;
+                uniform.controls[2] = lower;
+                uniform.controls[3] = upper;
+            }
+        }
         let mut spectrum = Vec::with_capacity(n * 8);
         for wl in 0..n {
             // CPU integration maps a NaN spectral transmission to zero:
             // any missing dye/base coefficient removes the entire wavelength,
             // rather than making the absent absorber transparent.
-            let base = bd.get(wl).copied().unwrap_or(0.0);
+            let base = if scalar_record && bd.len() < n {
+                0.0
+            } else {
+                bd.get(wl).copied().unwrap_or(0.0)
+            };
             let missing =
                 cd[wl].iter().any(|v| v.is_nan()) || base.is_nan() || illuminant[wl].is_nan();
+            if scalar_record && missing {
+                spectrum.extend([0.0_f32; 5]);
+                spectrum.extend(weights[wl].map(|v| v as f32));
+                continue;
+            }
             let sanitize = |v: f64| if v.is_nan() { 0.0 } else { v as f32 };
             spectrum.extend(cd[wl].map(sanitize));
             spectrum.push(sanitize(base));
@@ -180,6 +250,11 @@ impl ResponseSetup {
                 wgpu::BufferUsages::STORAGE,
             ),
         })
+    }
+
+    #[cfg(test)]
+    pub(super) fn uses_scalar_scan(&self) -> bool {
+        self.uniform.dims[3] & 1 != 0
     }
 
     pub(super) fn build(

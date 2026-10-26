@@ -6,8 +6,8 @@ struct PagedBand {
     source: std::sync::Arc<BufferPayload>,
     geometry: DyeBand,
     input: wgpu::Buffer,
-    layers: LayerPass,
-    accumulate: AccumulatePass,
+    layers: Option<LayerPass>,
+    accumulate: Option<AccumulatePass>,
     spatial: DyeSpatialState,
     response: Option<optical::OpticalPass>,
     output: wgpu::Buffer,
@@ -32,9 +32,13 @@ impl PagedBand {
             b.source_rows,
             &self.input,
         )?;
-        self.layers.encode(encoder);
+        if let Some(layers) = &self.layers {
+            layers.encode(encoder);
+        }
         self.spatial.encode_remap(encoder);
-        self.accumulate.encode(encoder);
+        if let Some(accumulate) = &self.accumulate {
+            accumulate.encode(encoder);
+        }
         self.spatial.encode_formation(encoder);
         if let Some(response) = &self.response {
             response.encode(encoder);
@@ -59,6 +63,7 @@ impl PagedBand {
 
 pub(in crate::wgpu_backend) struct DyePagedState {
     source_validation: Vec<LayerPass>,
+    scalar_validation: Vec<AccumulatePass>,
     bands: Vec<PagedBand>,
     pub(in crate::wgpu_backend) output_pages: Vec<ImagePage>,
     pub(in crate::wgpu_backend) width: u32,
@@ -74,9 +79,13 @@ impl DyePagedState {
     }
 
     pub(in crate::wgpu_backend) fn submit(&self, backend: &WgpuBackend) -> Result<(), String> {
-        if !self.source_validation.is_empty() {
+        if !self.source_validation.is_empty() || !self.scalar_validation.is_empty() {
             let mut encoder = backend.device.create_command_encoder(&Default::default());
             for validation in &self.source_validation {
+                backend.check_cancelled()?;
+                validation.encode(&mut encoder);
+            }
+            for validation in &self.scalar_validation {
                 backend.check_cancelled()?;
                 validation.encode(&mut encoder);
             }
@@ -112,32 +121,53 @@ impl WgpuBackend {
         let response = response
             .map(|r| optical::ResponseSetup::new(self, params, r))
             .transpose()?;
-        if let Some(certification) = self.pipe.dye_certification.get() {
+        let scalar_record = matches!(params.law, DyeFieldLaw::ScalarRecord { .. });
+        let certification_cache = if scalar_record {
+            &self.pipe.dye_scalar_certification
+        } else {
+            &self.pipe.dye_certification
+        };
+        if let Some(certification) = certification_cache.get() {
             certification.clone()?;
         } else {
             let certification = (|| {
                 self.certify_dye_counts()?;
-                self.certify_dye_layers()?;
-                self.certify_dye_accumulation()?;
-                self.certify_dye_spatial()
+                if scalar_record {
+                    scalar::certify(self)
+                } else {
+                    self.certify_dye_layers()?;
+                    self.certify_dye_accumulation()?;
+                    self.certify_dye_spatial()
+                }
             })();
             // Cancellation belongs to this request, not the shared device.
             self.check_cancelled()?;
-            self.pipe
-                .dye_certification
-                .get_or_init(|| certification)
-                .clone()?;
+            certification_cache.get_or_init(|| certification).clone()?;
         }
-        let tables = self.pipe.static_buffer(
-            "dye_channel_tables",
-            bytemuck::cast_slice(&params.tables.tables),
-            wgpu::BufferUsages::STORAGE,
-        );
-        let curves = self.pipe.static_buffer(
-            "dye_channel_curves",
-            bytemuck::cast_slice(&params.tables.curves),
-            wgpu::BufferUsages::STORAGE,
-        );
+        let capacity = match &params.law {
+            DyeFieldLaw::Capacity(tables) => Some((
+                self.pipe.static_buffer(
+                    "dye_channel_tables",
+                    bytemuck::cast_slice(&tables.tables),
+                    wgpu::BufferUsages::STORAGE,
+                ),
+                self.pipe.static_buffer(
+                    "dye_channel_curves",
+                    bytemuck::cast_slice(&tables.curves),
+                    wgpu::BufferUsages::STORAGE,
+                ),
+            )),
+            DyeFieldLaw::ScalarRecord { .. } => None,
+        };
+        let record = match &params.law {
+            DyeFieldLaw::ScalarRecord {
+                event_contribution_d_um2,
+            } => Some((
+                scalar::coefficients(self, params, *event_contribution_d_um2),
+                dye_spatial::formation_taps(self, params),
+            )),
+            DyeFieldLaw::Capacity(_) => None,
+        };
         let scratch = |label, size| {
             self.device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some(label),
@@ -150,10 +180,15 @@ impl WgpuBackend {
         };
         let status = scratch("dye_status", 4);
         let [sl, cl, c, h, f] = plan.max_band_bytes;
-        // RGB source windows are smaller than their nine-lane layer targets.
-        let input_window = scratch("dye_source_window", sl / 3);
-        let source_layers = scratch("dye_source_layers", sl);
-        let source_validation = if params.monochrome {
+        let input_window = scratch(
+            "dye_source_window",
+            if capacity.is_some() { sl / 3 } else { sl },
+        );
+        let source_layers = capacity.as_ref().map(|_| scratch("dye_source_layers", sl));
+        let cell_layers = capacity.as_ref().map(|_| scratch("dye_cell_layers", cl));
+        let source_validation = if let (true, Some((tables, curves)), Some(source_layers)) =
+            (params.monochrome, capacity.as_ref(), source_layers.as_ref())
+        {
             input
                 .pages
                 .iter()
@@ -161,10 +196,10 @@ impl WgpuBackend {
                     dye_layers::build_source_validation(
                         self,
                         page.n_pixels,
-                        &tables,
-                        &curves,
+                        tables,
+                        curves,
                         &page.buffer,
-                        &source_layers,
+                        source_layers,
                         &status,
                     )
                 })
@@ -172,10 +207,24 @@ impl WgpuBackend {
         } else {
             Vec::new()
         };
-        let cell_layers = scratch("dye_cell_layers", cl);
+        let scalar_validation = if record.is_some() {
+            input
+                .pages
+                .iter()
+                .map(|page| scalar::validate_source(self, page.n_pixels, &page.buffer, &status))
+                .collect()
+        } else {
+            Vec::new()
+        };
         let cells = scratch("dye_cell_density", c);
         let horizontal = scratch("dye_horizontal", h);
         let formed = scratch("dye_formed", f);
+        let scalar_response = if record.is_some() && response.is_some() {
+            Some(scratch("dye_scalar_optical_rgb", f * 3))
+        } else {
+            None
+        };
+        let linear = scalar_response.as_ref().unwrap_or(&horizontal);
         let band_output = scratch("dye_band_readout", plan.max_output_bytes);
         let output_pages =
             self.allocate_image_pages(params.grid.width, params.grid.height, "dye_output")?;
@@ -187,45 +236,69 @@ impl WgpuBackend {
             height,
         ));
         for band in plan.bands {
-            let layers = dye_layers::build_layers(
-                self,
-                [band.source_cols, band.source_rows, 0, 0],
-                [band.source_cols, band.source_rows],
-                params.monochrome,
-                &tables,
-                &curves,
-                &input_window,
-                &source_layers,
-                &status,
-            );
-            let accumulate =
-                self.build_dye_accumulate(params, &band, &tables, &cell_layers, &cells, &status);
-            let spatial = dye_spatial::build_spatial(
-                self,
-                params,
-                &band,
-                width,
-                height,
-                &source_layers,
-                &cell_layers,
-                &cells,
-                &horizontal,
-                &formed,
-                &band_output,
-            );
+            let (layers, accumulate, spatial) = if let (
+                Some((tables, curves)),
+                Some(source_layers),
+                Some(cell_layers),
+            ) = (
+                capacity.as_ref(),
+                source_layers.as_ref(),
+                cell_layers.as_ref(),
+            ) {
+                let layers = dye_layers::build_layers(
+                    self,
+                    [band.source_cols, band.source_rows, 0, 0],
+                    [band.source_cols, band.source_rows],
+                    params.monochrome,
+                    tables,
+                    curves,
+                    &input_window,
+                    source_layers,
+                    &status,
+                );
+                let accumulate =
+                    self.build_dye_accumulate(params, &band, tables, cell_layers, &cells, &status);
+                let spatial = dye_spatial::build_spatial(
+                    self,
+                    params,
+                    &band,
+                    width,
+                    height,
+                    source_layers,
+                    cell_layers,
+                    &cells,
+                    &horizontal,
+                    &formed,
+                    &band_output,
+                );
+                (Some(layers), Some(accumulate), spatial)
+            } else {
+                let (record, taps) = record.as_ref().expect("scalar law has record coefficients");
+                let spatial = dye_spatial::build_scalar_spatial(
+                    self,
+                    params,
+                    &band,
+                    [width, height],
+                    &input_window,
+                    &cells,
+                    &horizontal,
+                    &formed,
+                    &band_output,
+                    record,
+                    &status,
+                    taps,
+                );
+                (None, None, spatial)
+            };
             let response_band = response
                 .as_ref()
-                .map(|r| r.build(self, &band, &formed, &horizontal, &status));
+                .map(|r| r.build(self, &band, &formed, linear, &status));
             let readout = dye_spatial::build_band_readout(
                 self,
                 params,
                 &band,
                 [width, height],
-                if response.is_some() {
-                    &horizontal
-                } else {
-                    &formed
-                },
+                if response.is_some() { linear } else { &formed },
                 &band_output,
                 response.is_some(),
                 true,
@@ -244,6 +317,7 @@ impl WgpuBackend {
         }
         Ok(DyePagedState {
             source_validation,
+            scalar_validation,
             bands,
             output_pages,
             width: params.grid.width,
@@ -280,7 +354,7 @@ mod tests {
             layers: [&knots, &zero, &zero],
         }));
         let mut params = DyeGpuParams {
-            tables,
+            law: spektrafilm_backend::dye_params::DyeFieldLaw::Capacity(tables),
             cell_um: 1.0,
             taps: vec![0.25, 0.5, 0.25],
             source_pitch_um: 1.0,

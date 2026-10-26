@@ -148,6 +148,7 @@ impl RuntimePhotoParams {
 #[derive(Clone)]
 pub struct Runtime {
     pipeline: Pipeline,
+    record_configuration: Option<crate::telemetry::RecordConfiguration>,
     data_dir: std::path::PathBuf,
     timings: Arc<Mutex<Timings>>,
     last_elapsed_seconds: Arc<Mutex<Option<f64>>>,
@@ -171,8 +172,11 @@ impl Runtime {
         data_dir: &Path,
     ) -> Result<Self, String> {
         let pipeline = Pipeline::new_with_spectral(film, print, params, data_dir)?;
+        let record_configuration =
+            crate::stages::grain_v3::resolve_record(&pipeline.film, &pipeline.params)?;
         Ok(Self {
             pipeline,
+            record_configuration,
             data_dir: data_dir.to_owned(),
             timings: Arc::new(Mutex::new(BTreeMap::new())),
             last_elapsed_seconds: Arc::new(Mutex::new(None)),
@@ -240,8 +244,11 @@ impl Runtime {
         backend: &dyn ComputeBackend,
     ) -> Result<Self, String> {
         let pipeline = Pipeline::new_with_spectral_backend(film, print, params, data_dir, backend)?;
+        let record_configuration =
+            crate::stages::grain_v3::resolve_record(&pipeline.film, &pipeline.params)?;
         Ok(Self {
             pipeline,
+            record_configuration,
             data_dir: data_dir.to_owned(),
             timings: Arc::new(Mutex::new(BTreeMap::new())),
             last_elapsed_seconds: Arc::new(Mutex::new(None)),
@@ -694,12 +701,18 @@ impl Runtime {
         // Film-curve controls are absent from the spectral and calibration
         // control keys, so refresh the resolved film unconditionally and keep
         // the prepared grain cache and cancellation binding across the rebuild.
-        self.pipeline = self.pipeline.clone().rebuild_spectral(params)?;
+        let pipeline = self.pipeline.clone().rebuild_spectral(params)?;
+        let record_configuration =
+            crate::stages::grain_v3::resolve_record(&pipeline.film, &pipeline.params)?;
+        self.pipeline = pipeline;
+        self.record_configuration = record_configuration;
         Ok(())
     }
     /// Return a runtime with updated parameters while retaining the facade state.
     pub fn with_params(mut self, params: RuntimeParams) -> Result<Self, String> {
         self.pipeline = self.pipeline.with_params(params)?;
+        self.record_configuration =
+            crate::stages::grain_v3::resolve_record(&self.pipeline.film, &self.pipeline.params)?;
         Ok(self)
     }
 
@@ -709,6 +722,8 @@ impl Runtime {
         backend: &dyn ComputeBackend,
     ) -> Result<Self, String> {
         self.pipeline = self.pipeline.with_params_with_backend(params, backend)?;
+        self.record_configuration =
+            crate::stages::grain_v3::resolve_record(&self.pipeline.film, &self.pipeline.params)?;
         Ok(self)
     }
 
@@ -717,11 +732,13 @@ impl Runtime {
     }
 
     pub fn telemetry_configuration(&self) -> crate::telemetry::RenderConfiguration {
-        crate::telemetry::RenderConfiguration::from_runtime(
+        let mut configuration = crate::telemetry::RenderConfiguration::from_runtime(
             &self.pipeline.params,
             &self.pipeline.film,
             &self.pipeline.print,
-        )
+        );
+        configuration.grain.record = self.record_configuration;
+        configuration
     }
 
     pub fn data_dir(&self) -> &Path {

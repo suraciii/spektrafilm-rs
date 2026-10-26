@@ -326,13 +326,13 @@ struct Geometry {
 
 fn params_of(g: &Geometry) -> DyeGpuParams {
     DyeGpuParams {
-        tables: DyeChannelTablesGpu {
+        law: spektrafilm_backend::dye_params::DyeFieldLaw::Capacity(DyeChannelTablesGpu {
             tables: std::array::from_fn(|c| DyeChannelTableGpu {
                 min: g.mins[c] as f32,
                 ..Default::default()
             }),
             curves: Vec::new(),
-        },
+        }),
         cell_um: g.h,
         taps: g.taps.clone(),
         source_pitch_um: g.pitch,
@@ -788,8 +788,8 @@ fn resource_bounds_reduce_both_axes_and_partition_large_footprints() {
     // A device that admits a few rows of band storage, but not a full
     // 128-row band, must still serve the geometry.
     let bound = (largest_buffer(&one) + largest_buffer(&full)) / 2;
-    assert!(band_fit(&one, bound).is_ok());
-    assert!(band_fit(&full, bound).is_err());
+    assert!(band_fit(&one, bound, &params).is_ok());
+    assert!(band_fit(&full, bound, &params).is_err());
     let limits = wgpu::Limits {
         max_buffer_size: bound,
         max_storage_buffer_binding_size: bound as u32,
@@ -809,7 +809,7 @@ fn resource_bounds_reduce_both_axes_and_partition_large_footprints() {
         "bounded planning did not shrink the band below the default plan"
     );
     for band in &plan.bands {
-        band_fit(band, bound).expect("planned band exceeds the storage limit");
+        band_fit(band, bound, &params).expect("planned band exceeds the storage limit");
     }
     assert_eq!(
         plan.bands.iter().map(|band| band.output_rows).sum::<u32>(),
@@ -834,7 +834,7 @@ fn resource_bounds_reduce_both_axes_and_partition_large_footprints() {
         u64::from(g.out.0) * u64::from(g.out.1)
     );
     for band in &narrow.bands {
-        band_fit(band, narrow_bound).unwrap();
+        band_fit(band, narrow_bound, &params).unwrap();
     }
     let impossible = wgpu::Limits {
         max_buffer_size: 1,
@@ -871,7 +871,7 @@ fn resource_bounds_reduce_both_axes_and_partition_large_footprints() {
         u64::from(footprint.cols) * u64::from(footprint.rows)
     );
     for (index, band) in plan.bands.iter().enumerate() {
-        band_fit(band, bound).unwrap();
+        band_fit(band, bound, &large).unwrap();
         assert_eq!(
             (
                 band.output_x,

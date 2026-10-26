@@ -1997,18 +1997,20 @@ mod tests {
         for (width, height) in [(9, 7), (11, 9)] {
             let dye = DyeGpuParams {
                 monochrome: false,
-                tables: DyeChannelTablesGpu::pack(std::array::from_fn(|_| DyeChannelParts {
-                    min: 0.1,
-                    cap_total: 1.0,
-                    cap: [1.0, 0.0, 0.0],
-                    frac: [1.0, 0.0, 0.0],
-                    area: [0.2; 3],
-                    uniformity: 0.0,
-                    lookup_sign: 1.0,
-                    knots: &dye_knots,
-                    inv_dx: &inverse,
-                    layers: [&dye_knots, &zero, &zero],
-                })),
+                law: spektrafilm_backend::dye_params::DyeFieldLaw::Capacity(
+                    DyeChannelTablesGpu::pack(std::array::from_fn(|_| DyeChannelParts {
+                        min: 0.1,
+                        cap_total: 1.0,
+                        cap: [1.0, 0.0, 0.0],
+                        frac: [1.0, 0.0, 0.0],
+                        area: [0.2; 3],
+                        uniformity: 0.0,
+                        lookup_sign: 1.0,
+                        knots: &dye_knots,
+                        inv_dx: &inverse,
+                        layers: [&dye_knots, &zero, &zero],
+                    })),
+                ),
                 cell_um: 1.0,
                 taps: vec![0.25, 0.5, 0.25],
                 source_pitch_um: 1.0,

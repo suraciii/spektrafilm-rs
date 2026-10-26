@@ -12,7 +12,9 @@ Subject shape, tone, color, and fine detail MUST pass through the same field for
 
 ## Image-forming contract
 
-Dye MUST consume the developed record-density target at the film-density boundary. It MUST allocate the target across the selected film profile's three numerical curve components, realize conditional mass in global film coordinates, form the complete realization with the declared support operator, and read it through exact output footprints. Numerical components MUST NOT be described as measured silver populations.
+The default capacity law MUST consume the developed record-density target at the film-density boundary. It MUST allocate the target across the selected film profile's three numerical curve components, realize conditional mass in global film coordinates, form the complete realization with the declared support operator, and read it through exact output footprints.
+
+Numerical components MUST NOT be described as measured silver populations. The [scalar-record experiment](#scalar-record-experiment) replaces this allocation and count law only within its declared scope.
 
 Dye MUST NOT retain an independent clean-detail image and add grain after it. A mean-plus-residual implementation is valid only when the mean and residual represent the same conditional field and pass through identical formation and readout.
 
@@ -52,13 +54,29 @@ The product MUST record effective algorithm inputs and their provenance in accep
 
 ## Execution and repeatability
 
-Active Dye MUST use the formation, exact Poisson count law, global-coordinate random addressing, and rectangular readout defined by the [Dye design](design.md). CPU and GPU executors MUST implement the same model. A GPU implementation MUST NOT substitute a CPU-prepared image-sized field or a different count distribution.
+Active Dye MUST use the formation, exact Poisson count law, global-coordinate random addressing, and rectangular readout defined by the [Dye design](design.md). CPU and GPU executors MUST implement the same model for their supported law.
+
+A GPU implementation MUST NOT substitute a CPU-prepared image-sized field or a different count distribution.
 
 The pipeline MUST apply named inactive, preview, LUT, spatial-deactivation, and stochastic-deactivation bypasses before Dye field preparation. Active CLI Scan/Export and GUI Scan/Export MUST exercise Dye. The expectation diagnostic MUST NOT change the user's recipe or become a production bypass.
 
 The same source, resolved inputs, geometry, seed, precision, and implementation MUST reproduce the same result on the same executor. Global cell coordinates MUST remain stable under crop and tile partitioning. Different seeds MUST alter the realization without systematically changing its target mean or color.
 
 Different output dimensions MAY produce different footprints and therefore different samples; that difference MUST be reported as readout sampling, not as random drift.
+
+## Scalar-record experiment
+
+`SPEKTRAFILM_GRAIN_RECORD_Q` explicitly selects the scalar fixed-contribution law. The value MUST be finite and strictly positive, in `D·µm²`.
+
+An absent variable MUST retain the default capacity law. The implementation MUST NOT supply a calibrated default contribution.
+
+This law MUST accept only active Dye on a resolved monochrome filming stock with `input > film > scan` and `direct_scan`. CPU and GPU execution MUST retain the same event law and optical order. The law MUST reject incompatible aperture or mass-law experiments.
+
+Exact-cell optical readout MUST be enabled; its LUT and spatial-optics restrictions still apply. A selected GPU backend MUST realize the record field on the device or fail rather than execute another law.
+
+The [scalar-record design](design.md#scalar-fixed-contribution-law) owns its target, count, formation, and readout semantics. Legacy event area, relative granularity, numerical-component scales, uniformity, statistical floors, and channel coupling MUST NOT enter this law. Existing recipes, controls, and production defaults MUST remain unchanged.
+
+Actual render diagnostics MUST retain the effective law, contribution, support, cell pitch, seed, expectation flag, and optical order. This experimental availability MUST NOT imply stock calibration, photographic acceptance, color support, material persistence, or GUI/recipe integration.
 
 ## Acceptance
 

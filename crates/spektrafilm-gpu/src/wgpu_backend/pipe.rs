@@ -135,6 +135,7 @@ pub(super) struct GpuPipe {
     static_cache: std::sync::Arc<StaticBufferCache>,
     pub(super) viewer_icc_cache: std::sync::Arc<Mutex<super::viewer_icc::IccDeviceCache>>,
     pub(super) dye_certification: std::sync::Arc<std::sync::OnceLock<Result<(), String>>>,
+    pub(super) dye_scalar_certification: std::sync::Arc<std::sync::OnceLock<Result<(), String>>>,
     /// Device-generated exact histogram transitions, shared by backend derivatives.
     pub(super) histogram_boundaries: std::sync::Arc<std::sync::OnceLock<wgpu::Buffer>>,
     cancellation: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
@@ -174,6 +175,7 @@ impl GpuPipe {
                 super::viewer_icc::IccDeviceCache::default(),
             )),
             dye_certification: std::sync::Arc::new(std::sync::OnceLock::new()),
+            dye_scalar_certification: std::sync::Arc::new(std::sync::OnceLock::new()),
             histogram_boundaries: std::sync::Arc::new(std::sync::OnceLock::new()),
             cancellation: None,
             #[cfg(test)]
@@ -197,6 +199,7 @@ impl GpuPipe {
             static_cache: std::sync::Arc::clone(&self.static_cache),
             viewer_icc_cache: std::sync::Arc::clone(&self.viewer_icc_cache),
             dye_certification: std::sync::Arc::clone(&self.dye_certification),
+            dye_scalar_certification: std::sync::Arc::clone(&self.dye_scalar_certification),
             histogram_boundaries: std::sync::Arc::clone(&self.histogram_boundaries),
             cancellation: self.cancellation.clone(),
             #[cfg(test)]

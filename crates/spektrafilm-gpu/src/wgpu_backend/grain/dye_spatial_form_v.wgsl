@@ -20,14 +20,13 @@ fn main(
     let ci = index % cols;
     let row = index / cols;
     let d = p.tile.x;
-    var acc = vec3<f32>(0.0);
-    for (var t = 0u; t <= 2u * d; t = t + 1u) {
-        let src = ((row + 2u * d - t) * cols + ci) * 3u;
-        acc = acc + taps[t] * vec3<f32>(
-            horizontal[src], horizontal[src + 1u], horizontal[src + 2u]);
+    let components = select(3u, 1u, (p.ratios.w & 8u) != 0u);
+    for (var c = 0u; c < components; c++) {
+        var acc = 0.0;
+        for (var t = 0u; t <= 2u * d; t++) {
+            let src = ((row + 2u * d - t) * cols + ci) * components + c;
+            acc = acc + taps[t] * horizontal[src];
+        }
+        formed[index * components + c] = acc;
     }
-    let dst = index * 3u;
-    formed[dst] = acc.x;
-    formed[dst + 1u] = acc.y;
-    formed[dst + 2u] = acc.z;
 }

@@ -22,6 +22,7 @@ pub use device_image::{
 pub mod timing;
 pub use observed_backend::{bind_backend, bind_cpu_fallback};
 pub mod cpu_backend;
+pub mod scalar_scan;
 pub mod viewer_params;
 pub use viewer_params::ViewerComposeGpuParams;
 pub mod preparation;
