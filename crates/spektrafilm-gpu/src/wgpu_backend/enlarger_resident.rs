@@ -1,4 +1,5 @@
 use super::bounded::{chunk_elements, storage_binding_limit};
+use super::page_views::StorageView;
 use super::*;
 use spektrafilm_backend::{EnlargerSpectralLutGpuParams, ScannerSpectralLutGpuParams};
 
@@ -74,9 +75,9 @@ impl WgpuBackend {
     fn spectral_lut_host(
         &self,
         image: &ImageBuf,
-        execute: impl Fn(&wgpu::Buffer, &wgpu::Buffer, u32) -> Result<(), String>,
+        execute: impl Fn(&StorageView, &StorageView, u32) -> Result<(), String>,
     ) -> Result<ImageBuf, String> {
-        let pixels = chunk_elements(storage_binding_limit(self)?, 12)?;
+        let pixels = chunk_elements(storage_binding_limit(self)?.min(8 * 1024 * 1024), 12)?;
         let mut output = Vec::with_capacity(image.data.len());
         for samples in image.data.chunks(pixels * 3) {
             let input = scalars_to_f32(samples);
@@ -89,21 +90,26 @@ impl WgpuBackend {
                     usage: wgpu::BufferUsages::STORAGE,
                 });
             let result = self.enlarger_scratch(u64::from(n) * 12, "spectral_lut_output");
-            execute(&input, &result, n)?;
+            execute(
+                &StorageView::entire(&input),
+                &StorageView::entire(&result),
+                n,
+            )?;
             output.extend(f32_to_scalars(
-                self.pipe.readback_buffer(&result, u64::from(n) * 12),
+                self.pipe
+                    .readback_buffer_cancellable(&result, u64::from(n) * 12)?,
             ));
         }
         self.device.context.record_executor(Executor::Gpu, None);
         Ok(ImageBuf::from_data(image.width, image.height, output))
     }
 
-    /// Submit bounded generation/preparation/interpolation bricks. The buffers
-    /// contain `n` interleaved f32 triplets and may alias; neither is read back.
+    /// Submit bounded generation/preparation/interpolation bricks. The output
+    /// view survives every sparse brick dispatch; aliases are adapted upstream.
     pub(super) fn execute_enlarger_lut_resident(
         &self,
-        source: &wgpu::Buffer,
-        output: &wgpu::Buffer,
+        source: &StorageView,
+        output: &StorageView,
         n: u32,
         p: &EnlargerSpectralLutGpuParams<'_>,
     ) -> Result<(), String> {
@@ -114,8 +120,8 @@ impl WgpuBackend {
     /// then XYZ-to-RGB, in that order (the matrices are not precombined).
     pub(super) fn execute_scanner_lut_resident(
         &self,
-        source: &wgpu::Buffer,
-        output: &wgpu::Buffer,
+        source: &StorageView,
+        output: &StorageView,
         n: u32,
         p: &ScannerSpectralLutGpuParams<'_>,
     ) -> Result<(), String> {
@@ -152,8 +158,8 @@ impl WgpuBackend {
 
     fn execute_spectral_lut(
         &self,
-        input: &wgpu::Buffer,
-        output: &wgpu::Buffer,
+        input: &StorageView,
+        output: &StorageView,
         n: u32,
         p: &EnlargerSpectralLutGpuParams<'_>,
         scanner: Option<ScannerMatrices<'_>>,
@@ -172,11 +178,21 @@ impl WgpuBackend {
         }
         let limit = storage_binding_limit(self)?;
         let bytes = u64::from(n) * 12;
-        if bytes > limit
-            || input.size() > limit
-            || output.size() > limit
-            || input.size() < bytes
-            || output.size() < bytes
+        if input.buffer == output.buffer
+            || input.size > limit
+            || output.size > limit
+            || input.size < u64::from(input.base) * 4 + bytes
+            || output.size < u64::from(output.base) * 4 + bytes
+            || input
+                .offset
+                .checked_add(input.size)
+                .is_none_or(|end| end > input.buffer.size())
+            || output
+                .offset
+                .checked_add(output.size)
+                .is_none_or(|end| end > output.buffer.size())
+            || !input.buffer.usage().contains(wgpu::BufferUsages::STORAGE)
+            || !output.buffer.usage().contains(wgpu::BufferUsages::STORAGE)
         {
             return Err(format!(
                 "spectral LUT image chunk needs {bytes} bytes per binding; limit {limit}"
@@ -187,14 +203,15 @@ impl WgpuBackend {
         }
         // Each source halo retains binary64 log samples. Endpoint slopes use
         // three samples; two neighbours each side cover every interior brick.
+        let workspace_limit = limit.min(super::resources::WORKSPACE_BINDING_BYTES / 8);
         let minimum_source = u64::from(size.min(6)).pow(3) * 24;
-        if minimum_source > limit {
+        if minimum_source > workspace_limit {
             return Err(format!(
                 "spectral LUT minimum halo working set needs {minimum_source} bytes per binding; limit {limit}"
             ));
         }
         let mut edge = 2u32;
-        while edge < size && u64::from((edge + 5).min(size)).pow(3) * 24 <= limit {
+        while edge < size && u64::from((edge + 5).min(size)).pow(3) * 24 <= workspace_limit {
             edge += 1;
         }
         let n_wl = p
@@ -252,18 +269,22 @@ impl WgpuBackend {
             include_str!("enlarger_prepare.wgsl"),
             &[uniform, read, write, write, write, write, write, write],
         );
-        let interpolation = self.cached_pipeline(
+        let interpolation = self.cached_pointwise_pipeline(
             concat!(
                 include_str!("../../../spektrafilm-shaders/wgsl/f64_math.wgsl"),
                 include_str!("../../../spektrafilm-shaders/wgsl/spectral_lut_f64.wgsl")
             ),
             &[uniform, read, read, read, read, read, read, read, write],
+            &[(1, "input"), (8, "output")],
         );
-        // Keep input/output aliases safe until every lattice brick finishes.
-        let result = self.enlarger_scratch(bytes, "spectral_lut_interpolated");
+        let mut bases = [0u32; 16];
+        bases[1] = input.base;
+        bases[8] = output.base;
+        let bases = self.enlarger_uniform(&bases);
         for x in (0..size - 1).step_by((edge - 1) as usize) {
             for y in (0..size - 1).step_by((edge - 1) as usize) {
                 for z in (0..size - 1).step_by((edge - 1) as usize) {
+                    self.check_cancelled()?;
                     let origin = [x, y, z, 0];
                     let extent = [
                         edge.min(size - x),
@@ -353,20 +374,67 @@ impl WgpuBackend {
                         nodes,
                         "spectral_lut_prepare",
                     );
-                    self.enlarger_pass(
-                        &mut encoder,
-                        &interpolation,
-                        &[&ip, input, &lut, &sx, &sy, &sz, &lo, &hi, &result],
-                        n,
-                        "spectral_lut_interpolate",
-                    );
-                    self.queue.submit(Some(encoder.finish()));
+                    let buffers = [&ip, &lut, &sx, &sy, &sz, &lo, &hi];
+                    let entries = [
+                        wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: buffers[0].as_entire_binding(),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 1,
+                            resource: input.binding(),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 2,
+                            resource: buffers[1].as_entire_binding(),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 3,
+                            resource: buffers[2].as_entire_binding(),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 4,
+                            resource: buffers[3].as_entire_binding(),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 5,
+                            resource: buffers[4].as_entire_binding(),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 6,
+                            resource: buffers[5].as_entire_binding(),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 7,
+                            resource: buffers[6].as_entire_binding(),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 8,
+                            resource: output.binding(),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 9,
+                            resource: bases.as_entire_binding(),
+                        },
+                    ];
+                    let group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                        label: Some("spectral_lut_interpolate"),
+                        layout: &interpolation.layout,
+                        entries: &entries,
+                    });
+                    {
+                        let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                            label: Some("spectral_lut_interpolate"),
+                            timestamp_writes: None,
+                        });
+                        pass.set_pipeline(&interpolation.pipeline);
+                        pass.set_bind_group(0, &group, &[]);
+                        dispatch_linear(&mut pass, n);
+                    }
+                    self.submit_commands(Some(encoder.finish()))?;
                 }
             }
         }
-        let mut encoder = self.device.create_command_encoder(&Default::default());
-        encoder.copy_buffer_to_buffer(&result, 0, output, 0, bytes);
-        self.queue.submit(Some(encoder.finish()));
         Ok(())
     }
 
@@ -437,5 +505,93 @@ mod tests {
         assert_eq!(std::mem::offset_of!(Interpolate, cat), 128);
         assert_eq!(std::mem::offset_of!(Interpolate, rgb), 224);
         assert_eq!(std::mem::size_of::<Interpolate>(), 320);
+    }
+
+    #[test]
+    fn spectral_transport_preserves_all_brick_owners_and_sentinels() {
+        let backend = crate::test_support::adapter();
+        if !backend
+            .device
+            .features()
+            .contains(wgpu::Features::SHADER_F64)
+        {
+            return;
+        }
+        struct Restore(Option<std::ffi::OsString>);
+        impl Drop for Restore {
+            fn drop(&mut self) {
+                unsafe {
+                    match &self.0 {
+                        Some(value) => {
+                            std::env::set_var("SPEKTRAFILM_GPU_BINDING_LIMIT_BYTES", value)
+                        }
+                        None => std::env::remove_var("SPEKTRAFILM_GPU_BINDING_LIMIT_BYTES"),
+                    }
+                }
+            }
+        }
+        let _restore = Restore(std::env::var_os("SPEKTRAFILM_GPU_BINDING_LIMIT_BYTES"));
+        let p = EnlargerSpectralLutGpuParams {
+            channel_density: &[[0.1, 0.2, 0.3]],
+            base_density: &[0.02],
+            illuminant: &[1.0],
+            sensitivity: &[[1.0, 1.2, 0.8]],
+            normalization: 1.0,
+            preflash: [0.0; 3],
+            minimum: [0.0; 3],
+            maximum: [1.0; 3],
+            size: 8,
+        };
+        // The first and last pixels belong to widely separated lattice bricks.
+        let values = [0.0f32, 0.0, 0.0, 0.5, 0.5, 0.5, 1.0, 1.0, 1.0];
+        let run = |limit: &str, storage: bool| {
+            unsafe {
+                std::env::set_var("SPEKTRAFILM_GPU_BINDING_LIMIT_BYTES", limit);
+            }
+            let mut usage = wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST;
+            if storage {
+                usage |= wgpu::BufferUsages::STORAGE;
+            }
+            let source = backend
+                .device
+                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("lut_brick_source"),
+                    contents: bytemuck::cast_slice(&values),
+                    usage,
+                });
+            let sentinel = [-777.0f32; 12];
+            let output = backend
+                .device
+                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("lut_brick_output"),
+                    contents: bytemuck::cast_slice(&sentinel),
+                    usage,
+                });
+            let output_pages = vec![super::super::paged::ImagePage {
+                first_pixel: 0,
+                n_pixels: 3,
+                buffer: output.clone(),
+            }];
+            backend
+                .spectral_lut_transport(&source, &output_pages, 3, |source, output, n| {
+                    backend.execute_enlarger_lut_resident(source, output, n, &p)
+                })
+                .unwrap();
+            let result = backend.pipe.readback_buffer(&output, output.size());
+            assert_eq!(&result[9..], &sentinel[9..]);
+            assert!(
+                result[..9]
+                    .iter()
+                    .all(|value| value.is_finite() && *value != -777.0)
+            );
+            result[..9]
+                .iter()
+                .map(|value| value.to_bits())
+                .collect::<Vec<_>>()
+        };
+        let one_brick = run("20000", true);
+        // At 10000 bytes the eight-node lattice needs multiple halo bricks.
+        assert_eq!(run("10000", true), one_brick);
+        assert_eq!(run("10000", false), one_brick);
     }
 }

@@ -160,6 +160,8 @@ The viewer status strip identifies the retained **Preview** or **Scan**, pixel d
 
 **SCAN** renders the full-resolution input with spatial and stochastic effects. Automatic backend selection chooses CPU only when a usable GPU is unavailable. A selected GPU computation failure fails the operation without substituting host arithmetic. The resulting full-resolution output is retained for Save and inspection in the viewport.
 
+Large GPU operations may wait for earlier device work to release temporary storage. This scheduling preserves the selected resolution and effects; it does not substitute Preview or a different grain engine. Full-resolution input, retained output, and required model fields still consume memory proportional to their dimensions.
+
 **Scan → Scanner → scan for print** disables print viewing glare for the print scan. Toggle it again to restore the previous value. Loading state or changing profiles clears the transient snapshot.
 
 The current optical model moves scanner lens blur to linear readout light. It runs before interpretation, gamut, sharpening, and transfer encoding. Print viewing glare follows optical blur and does not expose or develop the print material. Nonzero blur can intentionally change historical direct-scan pixels. Recipes and reports identify the current model revision. Corrected scans use faithful per-stage execution when resident shaders cannot preserve that order. Preflash retains both exposure gains and floors. Resident printing applies its outer gain to flash as well as main exposure. Film grain stays in the material domain. Procedural grain stays a post-scan appearance. See [the output mix specification](../specs/output-mix/spec.md) and [the GUI workflow specification](../specs/gui-workflow/spec.md) for the owning semantics.
@@ -297,7 +299,7 @@ The collapsed **Advanced details** panel contains collection modes, the latest 2
 
 Search for `diagnostics.collection_mode` to reveal **Collection mode** inside Advanced details, even before the first report exists.
 
-Reports distinguish measured values from unsupported or uncollected measurements. Host waits are not shader execution time, and requested buffer bytes are not process RSS or committed VRAM. See the [telemetry specification](../specs/telemetry/spec.md) for report semantics.
+Reports distinguish measured values from unsupported or uncollected measurements. Host waits are not shader execution time. Buffer creation bytes are cumulative allocation traffic, not live storage, process RSS, or dedicated/shared GPU residency. Software WGPU runs do not establish Windows hardware performance. See the [telemetry specification](../specs/telemetry/spec.md) for report semantics.
 
 For controlled launches, `SPEKTRAFILM_GUI_DIAGNOSTICS_DIR` can override the automatic session destination. Ordinary GUI use does not need it.
 

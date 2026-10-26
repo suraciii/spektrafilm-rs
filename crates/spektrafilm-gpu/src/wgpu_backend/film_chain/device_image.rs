@@ -159,7 +159,9 @@ impl WgpuBackend {
         };
         let mut payload = BufferPayload::from_buffer(self.backend_id(), buf, width, height);
         payload.bytes = bytes;
-        DeviceImage::retained(meta, Arc::new(payload))
+        let payload = Arc::new(payload);
+        self.device.resources.register_image(&payload);
+        DeviceImage::retained(meta, payload)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -172,6 +174,15 @@ impl WgpuBackend {
         space: &'static spektrafilm_math::colorspace::RgbColorSpace,
         pixel_pitch_um: Option<f64>,
     ) -> DeviceImage {
+        let payload = Arc::new(BufferPayload {
+            backend_id: self.backend_id(),
+            bytes: u64::from(width) * u64::from(height) * 12,
+            n_pixels: width * height,
+            pages,
+            width,
+            height,
+        });
+        self.device.resources.register_image(&payload);
         DeviceImage::retained(
             RetainedImageMeta {
                 width,
@@ -181,14 +192,7 @@ impl WgpuBackend {
                 space,
                 pixel_pitch_um,
             },
-            Arc::new(BufferPayload {
-                backend_id: self.backend_id(),
-                pages,
-                bytes: u64::from(width) * u64::from(height) * 12,
-                n_pixels: width * height,
-                width,
-                height,
-            }),
+            payload,
         )
     }
 
@@ -278,7 +282,7 @@ impl WgpuBackend {
             dispatch_linear(&mut pass, source.n_pixels);
         }
         self.check_cancelled()?;
-        self.queue.submit(Some(encoder.finish()));
+        self.submit_commands(Some(encoder.finish()))?;
         #[cfg(test)]
         self.test_pointwise_submitted("scale");
         self.check_cancelled()?;
@@ -450,7 +454,7 @@ impl WgpuBackend {
             dispatch_linear(&mut pass, result_payload.n_pixels);
         }
         self.check_cancelled()?;
-        self.queue.submit(Some(encoder.finish()));
+        self.submit_commands(Some(encoder.finish()))?;
         #[cfg(test)]
         self.test_pointwise_submitted("mix");
         self.check_cancelled()?;
@@ -598,7 +602,7 @@ impl WgpuBackend {
             dispatch_linear(&mut pass, source.n_pixels);
         }
         self.check_cancelled()?;
-        self.queue.submit(Some(encoder.finish()));
+        self.submit_commands(Some(encoder.finish()))?;
         #[cfg(test)]
         self.test_pointwise_submitted("transfer");
         self.check_cancelled()?;
@@ -707,7 +711,7 @@ impl WgpuBackend {
             dispatch_linear(&mut pass, source.n_pixels);
         }
         self.check_cancelled()?;
-        self.queue.submit(Some(encoder.finish()));
+        self.submit_commands(Some(encoder.finish()))?;
         #[cfg(test)]
         self.test_pointwise_submitted("cmyk");
         self.check_cancelled()?;
@@ -802,7 +806,7 @@ impl WgpuBackend {
             dispatch_linear(&mut pass, source.n_pixels);
         }
         self.check_cancelled()?;
-        self.queue.submit(Some(encoder.finish()));
+        self.submit_commands(Some(encoder.finish()))?;
         #[cfg(test)]
         self.test_pointwise_submitted("matrix");
         self.check_cancelled()?;

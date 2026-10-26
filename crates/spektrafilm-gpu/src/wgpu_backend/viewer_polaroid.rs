@@ -196,7 +196,7 @@ impl WgpuBackend {
                     3,
                 );
                 self.check_cancelled()?;
-                self.queue.submit(Some(encoder.finish()));
+                self.submit_commands(Some(encoder.finish()))?;
             }
         }
         #[repr(C)]
@@ -278,7 +278,7 @@ impl WgpuBackend {
                 pass.dispatch_workgroups(x, count.div_ceil(x), 1);
             }
             self.check_cancelled()?;
-            self.queue.submit(Some(encoder.finish()));
+            self.submit_commands(Some(encoder.finish()))?;
         }
         self.check_cancelled()?;
         Ok(self.retain_image_pages(

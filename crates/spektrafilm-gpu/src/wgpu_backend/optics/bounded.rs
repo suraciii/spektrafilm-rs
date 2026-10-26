@@ -23,7 +23,82 @@ fn reflect(index: i64, extent: u32) -> u32 {
     }
 }
 
+fn window_geometry(width: u32, height: u32, k: u32, limit: u64) -> (u32, u32) {
+    let halo_pixels = limit / 12;
+    let tile_width = width
+        .min(
+            (halo_pixels / u64::from(k))
+                .saturating_sub(u64::from(k - 1))
+                .max(1) as u32,
+        )
+        .min(256);
+    let halo_width = tile_width + k - 1;
+    let tile_height = height
+        .min(
+            (halo_pixels / u64::from(halo_width))
+                .saturating_sub(u64::from(k - 1))
+                .max(1) as u32,
+        )
+        .min(64);
+    (tile_width, tile_height)
+}
+
+pub(super) fn workspace_plan(
+    width: u32,
+    height: u32,
+    k: u32,
+    limit: u64,
+    print: bool,
+) -> Result<u64, String> {
+    if width == 0 || height == 0 || k == 0 || limit < 24 {
+        return Err("optical diffusion cannot hold its minimum working set".into());
+    }
+    let image = u128::from(width) * u128::from(height) * 12;
+    let taps = u128::from(k) * u128::from(k) * 24;
+    let uniforms = std::mem::size_of::<Params>() as u128;
+    let temporary = if taps <= u128::from(limit) {
+        let (tw, th) = window_geometry(width, height, k, limit);
+        let halo = (u128::from(tw) + u128::from(k - 1)) * (u128::from(th) + u128::from(k - 1)) * 12;
+        taps + 3 * (halo + u128::from(tw) * u128::from(th) * 12 + uniforms)
+    } else {
+        let capacity = limit / 24;
+        let count = capacity.min(u64::from(width));
+        let n = capacity.min(u64::from(k));
+        u128::from(count) * 48
+            + 3 * (u128::from(count + n - 1) * 12 + u128::from(n) * 24 + uniforms)
+    };
+    // Two queued batches and one encoded batch can own tile/domain adapters.
+    let domain = if print {
+        3 * image.min(u128::from(limit))
+    } else {
+        0
+    };
+    u64::try_from(image * if print { 3 } else { 1 } + temporary + domain)
+        .map_err(|_| "optical diffusion resource plan overflows".into())
+}
+
 impl WgpuBackend {
+    pub(in crate::wgpu_backend) fn diffusion_workspace_bytes(
+        &self,
+        width: u32,
+        height: u32,
+        params: &spektrafilm_backend::OpticalDiffusionGpuParams<'_>,
+        print: bool,
+    ) -> Result<u64, String> {
+        let k = params
+            .radius
+            .checked_mul(2)
+            .and_then(|n| n.checked_add(1))
+            .ok_or("optical diffusion support overflows")?;
+        workspace_plan(
+            width,
+            height,
+            k,
+            crate::wgpu_backend::bounded::storage_binding_limit(self)?,
+            print,
+        )
+    }
+
     pub(in crate::wgpu_backend) fn diffusion_pages(
         &self,
         source: &BufferPayload,
@@ -120,7 +195,7 @@ impl WgpuBackend {
                     &centers,
                     0,
                 )?;
-                self.queue.submit(Some(encoder.finish()));
+                self.submit_commands(Some(encoder.finish()))?;
                 for ky in 0..k {
                     let sy = reflect(
                         i64::from(y) + i64::from(ky) - i64::from(params.radius),
@@ -208,7 +283,7 @@ impl WgpuBackend {
                             pass.set_bind_group(0, &group, &[]);
                             dispatch_linear(&mut pass, count);
                         }
-                        self.queue.submit(Some(encoder.finish()));
+                        self.submit_commands(Some(encoder.finish()))?;
                         first += n;
                     }
                 }
@@ -221,7 +296,7 @@ impl WgpuBackend {
                     (u64::from(y) * u64::from(source.width) + u64::from(x)) * 3,
                     u64::from(count) * 3,
                 )?;
-                self.queue.submit(Some(encoder.finish()));
+                self.submit_commands(Some(encoder.finish()))?;
                 x += count;
             }
         }
@@ -296,7 +371,7 @@ impl WgpuBackend {
                 pass.set_bind_group(0, &group, &[]);
                 dispatch_linear(&mut pass, page.n_pixels);
             }
-            self.queue.submit(Some(encoder.finish()));
+            self.submit_commands(Some(encoder.finish()))?;
         }
         Ok(output)
     }
@@ -332,24 +407,7 @@ impl WgpuBackend {
         );
         let output =
             self.allocate_image_pages(source.width, source.height, "diffusion_window_output")?;
-        let halo_pixels = limit / 12;
-        let tile_width = source
-            .width
-            .min(
-                (halo_pixels / u64::from(k))
-                    .saturating_sub(u64::from(k - 1))
-                    .max(1) as u32,
-            )
-            .min(256);
-        let halo_width = tile_width + k - 1;
-        let tile_height = source
-            .height
-            .min(
-                (halo_pixels / u64::from(halo_width))
-                    .saturating_sub(u64::from(k - 1))
-                    .max(1) as u32,
-            )
-            .min(64);
+        let (tile_width, tile_height) = window_geometry(source.width, source.height, k, limit);
         let buffer = |label: &str, bytes: u64| {
             self.device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some(label),
@@ -449,7 +507,7 @@ impl WgpuBackend {
                         u64::from(width) * 3,
                     )?;
                 }
-                self.queue.submit(Some(encoder.finish()));
+                self.submit_commands(Some(encoder.finish()))?;
             }
         }
         Ok(output)

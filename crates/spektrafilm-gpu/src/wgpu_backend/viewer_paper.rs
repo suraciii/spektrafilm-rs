@@ -267,7 +267,7 @@ impl WgpuBackend {
             false,
         );
         self.check_cancelled()?;
-        self.queue.submit(Some(encoder.finish()));
+        self.submit_commands(Some(encoder.finish()))?;
         let bounds = self.pipe.readback_buffer_cancellable::<u32>(&bounds, 16)?;
         let [xmin, xmax, ymin, ymax] = bounds[..] else {
             return Err("virtual paper stamp-bound readback is incomplete".into());
@@ -314,7 +314,7 @@ impl WgpuBackend {
             true,
         );
         self.check_cancelled()?;
-        self.queue.submit(Some(encoder.finish()));
+        self.submit_commands(Some(encoder.finish()))?;
         let pages = self.allocate_image_pages(width, height, "viewer_paper_rgb")?;
         let capacity = pages
             .iter()
@@ -377,7 +377,7 @@ impl WgpuBackend {
                 false,
             );
             self.check_cancelled()?;
-            self.queue.submit(Some(encoder.finish()));
+            self.submit_commands(Some(encoder.finish()))?;
         }
         self.check_cancelled()?;
         Ok(self.retain_image_pages(

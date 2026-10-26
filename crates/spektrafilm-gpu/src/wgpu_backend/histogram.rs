@@ -54,7 +54,7 @@ impl WgpuBackend {
         self.check_cancelled()?;
         // Concurrent initializers may submit identical boundaries. Publish only
         // a completed submission; all consumers then enqueue after its search.
-        self.queue.submit(Some(encoder.finish()));
+        self.submit_commands(Some(encoder.finish()))?;
         Ok(self.pipe.histogram_boundaries.get_or_init(|| boundaries))
     }
 
@@ -153,7 +153,7 @@ impl WgpuBackend {
                 &mut encoder,
             )?;
             self.check_cancelled()?;
-            self.queue.submit(Some(encoder.finish()));
+            self.submit_commands(Some(encoder.finish()))?;
         }
         self.check_cancelled()?;
         let mut encoder = self.device.create_command_encoder(&Default::default());
@@ -188,7 +188,7 @@ impl WgpuBackend {
             pass.dispatch_workgroups(1, 1, 1);
         }
         self.check_cancelled()?;
-        self.queue.submit(Some(encoder.finish()));
+        self.submit_commands(Some(encoder.finish()))?;
         let result: Vec<f32> = self.pipe.readback_buffer_cancellable(&output, 192 * 4)?;
         Ok(std::array::from_fn(|channel| {
             std::array::from_fn(|bin| result[channel * 64 + bin])

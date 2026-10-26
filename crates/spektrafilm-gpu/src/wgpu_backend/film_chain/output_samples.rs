@@ -181,7 +181,7 @@ impl WgpuBackend {
             dispatch_linear(&mut pass, word_count as u32);
         }
         self.check_cancelled()?;
-        self.queue.submit(Some(encoder.finish()));
+        self.submit_commands(Some(encoder.finish()))?;
         Ok(target)
     }
 

@@ -42,12 +42,13 @@ fn build_grain_post_with_limit(
     params: &GrainV1GpuParams,
     limit: u64,
 ) -> Result<GrainPostState, String> {
+    let window_limit = super::transport_window_limit(limit);
     let n = width
         .checked_mul(height)
         .filter(|&n| n > 0 && n <= u32::MAX / 3)
         .ok_or("grain post dimensions are not representable")?;
     let bytes = u64::from(n) * 12;
-    let chunk = (limit / 12).min(u64::from(n)) as u32;
+    let chunk = (window_limit / 12).min(u64::from(n)) as u32;
     if chunk == 0 {
         return Err("grain post minimum RGB binding needs 12 bytes".into());
     }
@@ -160,7 +161,7 @@ fn build_grain_post_with_limit(
         {
             return Err("grain multiplicative USM requires native shader f64".into());
         }
-        if limit < 48 {
+        if window_limit < 48 {
             return Err("grain USM minimum mass binding needs 48 bytes".into());
         }
         let blurred = paged_transport(backend, bytes, "grain_usm_blurred_transport")?;
@@ -264,7 +265,7 @@ fn build_grain_post_with_limit(
                 wgpu::BufferBindingType::Storage { read_only: false },
             ],
         );
-        let mass_items = (limit / 48).min(256) as u32;
+        let mass_items = (window_limit / 48).min(256) as u32;
         let mass_window = transport(backend, u64::from(mass_items) * 48, "grain_usm_mass_window")?;
         let mut items = first_items;
         while items > 1 {
@@ -462,16 +463,21 @@ mod tests {
             usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        let state = build_grain_post_with_limit(&gpu, width, height, &density, &p, 192).unwrap();
-        state.submit(&gpu).unwrap();
-        let mut encoder = gpu.device.create_command_encoder(&Default::default());
-        encoder.copy_buffer_to_buffer(&density, 0, &readback, 0, bytes);
-        gpu.queue.submit(Some(encoder.finish()));
-        assert_eq!(
-            expected,
-            gpu.read_mapped_f32(&readback, bytes),
-            "window-local USM mass changed the image"
-        );
+        for limit in [192, 1560] {
+            gpu.queue
+                .write_buffer(&density, 0, bytemuck::cast_slice(&input));
+            let state =
+                build_grain_post_with_limit(&gpu, width, height, &density, &p, limit).unwrap();
+            state.submit(&gpu).unwrap();
+            let mut encoder = gpu.device.create_command_encoder(&Default::default());
+            encoder.copy_buffer_to_buffer(&density, 0, &readback, 0, bytes);
+            gpu.queue.submit(Some(encoder.finish()));
+            assert_eq!(
+                expected,
+                gpu.read_mapped_f32(&readback, bytes),
+                "window {limit} changed complete-source USM mass"
+            );
+        }
     }
 
     fn reference_unsharp(image: &ImageBuf, sigma: f32, amount: f32) -> ImageBuf {

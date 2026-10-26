@@ -75,7 +75,7 @@ pub(super) fn build(
         });
         let mut encoder = backend.device.create_command_encoder(&Default::default());
         encoder.copy_buffer_to_buffer(uniform, 0, &result, 0, uniform.size());
-        backend.queue.submit(Some(encoder.finish()));
+        backend.submit_commands(Some(encoder.finish()))?;
         backend.queue.write_buffer(
             &result,
             0,

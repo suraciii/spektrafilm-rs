@@ -129,12 +129,6 @@ impl BlurJob {
     }
 }
 
-pub(super) struct DispatchJob {
-    pub(super) _params_buf: wgpu::Buffer,
-    pub(super) pipeline: CachedPipelineRef,
-    pub(super) bg: wgpu::BindGroup,
-}
-
 pub(super) struct SimpleBlurState {
     dst: Vec<ImagePage>,
     blur: BlurJob,
@@ -193,7 +187,7 @@ impl SimpleBlurState {
             copy.copy(&self.dst, first, dst_main, first, bytes);
             let mut encoder = backend.device.create_command_encoder(&Default::default());
             copy.encode(&mut encoder);
-            backend.queue.submit(Some(encoder.finish()));
+            backend.submit_commands(Some(encoder.finish()))?;
             first += bytes;
         }
         Ok(())
@@ -254,7 +248,7 @@ impl WgpuBackend {
         blur.submit(self)?;
         let mut encoder = self.device.create_command_encoder(&Default::default());
         encoder.copy_buffer_to_buffer(&buf_out, 0, &readback, 0, img_bytes);
-        self.queue.submit(Some(encoder.finish()));
+        self.submit_commands(Some(encoder.finish()))?;
         let out_f32 = self.read_mapped_f32(&readback, img_bytes);
         Ok(ImageBuf::from_data(w, h, f32_to_scalars(out_f32)))
     }
@@ -338,7 +332,7 @@ impl WgpuBackend {
             job.submit(self)?;
             let mut encoder = self.device.create_command_encoder(&Default::default());
             encoder.copy_buffer_to_buffer(out, 0, readback, 0, img_bytes);
-            self.queue.submit(Some(encoder.finish()));
+            self.submit_commands(Some(encoder.finish()))?;
         }
         for rb in &readbacks {
             let slice = rb.slice(..);

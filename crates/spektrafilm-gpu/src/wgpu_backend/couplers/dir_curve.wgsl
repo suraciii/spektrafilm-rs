@@ -9,6 +9,10 @@ struct Params {
     gamma_inv: f32,
     first_x: f32,
     last_x: f32,
+    source_base: u32,
+    exposure_base: u32,
+    density_base: u32,
+    destination_base: u32,
 }
 @group(0) @binding(0) var<uniform> params: Params;
 @group(0) @binding(1) var<storage, read> log_raw: array<f32>;
@@ -16,23 +20,23 @@ struct Params {
 @group(0) @binding(3) var<storage, read> density_curves: array<f32>;
 @group(0) @binding(4) var<storage, read_write> output: array<f32>;
 fn channel_value(index: u32, channel: u32) {
-    let xq = log_raw[index];
+    let xq = log_raw[params.source_base + index];
     let first = params.first_row;
     let end = first + params.page_rows;
     let xa0 = params.first_x * params.gamma_inv;
     let xa_last = params.last_x * params.gamma_inv;
     if xq <= xa0 || params.total_rows == 1u {
-        if first == 0u { output[index] = density_curves[channel]; }
+        if first == 0u { output[params.destination_base + index] = density_curves[params.density_base + channel]; }
         return;
     }
     if xq >= xa_last {
         if end == params.total_rows {
-            output[index] = density_curves[(params.page_rows - 1u) * 3u + channel];
+            output[params.destination_base + index] = density_curves[params.density_base + (params.page_rows - 1u) * 3u + channel];
         }
         return;
     }
     if xq != xq {
-        if first == 0u { output[index] = xq; }
+        if first == 0u { output[params.destination_base + index] = xq; }
         return;
     }
     if params.uniform_grid != 0u {
@@ -42,29 +46,29 @@ fn channel_value(index: u32, channel: u32) {
         if i < first || i + 1u >= end { return; }
         let local = i - first;
         let frac = t - f32(i);
-        let y0 = density_curves[local * 3u + channel];
-        let y1 = density_curves[(local + 1u) * 3u + channel];
-        output[index] = y0 + frac * (y1 - y0);
+        let y0 = density_curves[params.density_base + local * 3u + channel];
+        let y1 = density_curves[params.density_base + (local + 1u) * 3u + channel];
+        output[params.destination_base + index] = y0 + frac * (y1 - y0);
         return;
     }
-    let page_first = log_exposure[0] * params.gamma_inv;
-    let page_last = log_exposure[params.page_rows - 1u] * params.gamma_inv;
+    let page_first = log_exposure[params.exposure_base] * params.gamma_inv;
+    let page_last = log_exposure[params.exposure_base + params.page_rows - 1u] * params.gamma_inv;
     if xq < page_first || xq >= page_last { return; }
     var lo = 0u;
     var hi = params.page_rows;
     loop {
         if lo + 1u >= hi { break; }
         let mid = (lo + hi) / 2u;
-        if log_exposure[mid] * params.gamma_inv <= xq { lo = mid; }
+        if log_exposure[params.exposure_base + mid] * params.gamma_inv <= xq { lo = mid; }
         else { hi = mid; }
     }
-    let xa_lo = log_exposure[lo] * params.gamma_inv;
-    let xa_hi = log_exposure[lo + 1u] * params.gamma_inv;
+    let xa_lo = log_exposure[params.exposure_base + lo] * params.gamma_inv;
+    let xa_hi = log_exposure[params.exposure_base + lo + 1u] * params.gamma_inv;
     let dx = xa_hi - xa_lo;
     let frac = select(0.0, (xq - xa_lo) / dx, dx != 0.0);
-    let y0 = density_curves[lo * 3u + channel];
-    let y1 = density_curves[(lo + 1u) * 3u + channel];
-    output[index] = y0 + frac * (y1 - y0);
+    let y0 = density_curves[params.density_base + lo * 3u + channel];
+    let y1 = density_curves[params.density_base + (lo + 1u) * 3u + channel];
+    output[params.destination_base + index] = y0 + frac * (y1 - y0);
 }
 @compute @workgroup_size(256)
 fn main(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_workgroups) grid: vec3<u32>) {

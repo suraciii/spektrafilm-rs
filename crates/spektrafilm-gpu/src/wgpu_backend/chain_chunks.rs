@@ -1,156 +1,143 @@
-//! Bounded pointwise passes over complete device transport rasters. Each
-//! operation completes all its pages before the next photographic stage.
+//! Pointwise execution over checked common resident page intersections.
 use super::grain::RasterStorage;
+use super::page_views::{Access, StorageView, ViewPlan};
 use super::*;
 
 pub(super) struct PointwisePass {
     pipeline: CachedPipelineRef,
-    chunks: Vec<PointwiseChunk>,
-}
-struct PointwiseChunk {
-    group: wgpu::BindGroup,
-    first: u64,
-    count: u32,
-    images: Vec<(Vec<super::paged::ImagePage>, wgpu::Buffer, bool)>,
+    plan: ViewPlan,
+    uniform: wgpu::Buffer,
+    bindings: Vec<usize>,
+    dimensions: bool,
+    label: String,
 }
 impl PointwisePass {
     pub(super) fn submit(&self, backend: &WgpuBackend) -> Result<(), String> {
-        for chunk in &self.chunks {
-            backend.check_cancelled()?;
-            let mut encoder = backend.device.create_command_encoder(&Default::default());
-            self.encode_chunk(chunk, &mut encoder);
-            backend.queue.submit(Some(encoder.finish()));
-        }
-        Ok(())
-    }
-    fn encode_chunk(&self, chunk: &PointwiseChunk, encoder: &mut ObservedEncoder) {
-        for (transport, window, _) in &chunk.images {
-            transport.read(
-                encoder,
-                chunk.first * 3,
-                u64::from(chunk.count) * 3,
-                window,
+        self.plan.for_each(backend, |encoder, chunk| {
+            let params = backend.device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some(&self.label),
+                size: self.uniform.size(),
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            encoder.copy_buffer_to_buffer(&self.uniform, 0, &params, 0, self.uniform.size());
+            let geometry = [chunk.count, 1];
+            let patch = backend
+                .device
+                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("pointwise_geometry"),
+                    contents: bytemuck::cast_slice(if self.dimensions {
+                        &geometry[..]
+                    } else {
+                        &geometry[..1]
+                    }),
+                    usage: wgpu::BufferUsages::COPY_SRC,
+                });
+            encoder.copy_buffer_to_buffer(
+                &patch,
                 0,
+                &params,
+                0,
+                if self.dimensions { 8 } else { 4 },
             );
-        }
-        {
+            let mut bases = [0u32; 16];
+            for (index, view) in chunk.views.iter().enumerate() {
+                bases[index + 1] = view.base;
+            }
+            let base_buffer =
+                backend
+                    .device
+                    .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                        label: Some("pointwise_bases"),
+                        contents: bytemuck::cast_slice(&bases),
+                        usage: wgpu::BufferUsages::UNIFORM,
+                    });
+            let mut entries = vec![wgpu::BindGroupEntry {
+                binding: 0,
+                resource: params.as_entire_binding(),
+            }];
+            entries.extend(chunk.views.iter().enumerate().map(|(index, view)| {
+                wgpu::BindGroupEntry {
+                    binding: self.bindings[index] as u32,
+                    resource: view.binding(),
+                }
+            }));
+            entries.push(wgpu::BindGroupEntry {
+                binding: self.bindings.len() as u32 + 1,
+                resource: base_buffer.as_entire_binding(),
+            });
+            let group = backend
+                .device
+                .create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some(&self.label),
+                    layout: &self.pipeline.layout,
+                    entries: &entries,
+                });
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: Some("bounded_pointwise"),
+                label: Some(&self.label),
                 timestamp_writes: None,
             });
             pass.set_pipeline(&self.pipeline.pipeline);
-            pass.set_bind_group(0, &chunk.group, &[]);
+            pass.set_bind_group(0, &group, &[]);
             dispatch_linear(&mut pass, chunk.count);
-        }
-        for (transport, window, write) in &chunk.images {
-            if *write {
-                transport.write(
-                    encoder,
-                    window,
-                    0,
-                    chunk.first * 3,
-                    u64::from(chunk.count) * 3,
-                );
-            }
-        }
+            Ok(())
+        })
     }
 }
 impl WgpuBackend {
-    /// Binding zero is a uniform whose first word is the pixel count (or
-    /// width); `dimensions` additionally patches height to one. Other static
-    /// bindings retain their original coefficients and precision.
+    /// Binding zero is the original uniform. Images use independent scalar
+    /// residuals; fixed coefficients retain their original indexing.
     pub(super) fn chain_pointwise(
         &self,
         pipeline: CachedPipelineRef,
         buffers: &[&dyn RasterStorage],
-        images: &[(usize, bool)],
+        images: &[(usize, Access)],
         count: u32,
         dimensions: bool,
         label: &str,
     ) -> Result<PointwisePass, String> {
-        let limit = super::bounded::storage_binding_limit(self)?;
-        let capacity = super::bounded::chunk_elements(limit, 12)? as u32;
-        let mut chunks = Vec::new();
-        let scratch: Vec<_> = images
+        if buffers.len() < 2 || buffers.len() > 16 {
+            return Err(format!("{label}: unsupported pointwise binding count"));
+        }
+        let uniform = buffers[0].pages();
+        if uniform.len() != 1
+            || !uniform[0]
+                .buffer
+                .usage()
+                .contains(wgpu::BufferUsages::COPY_SRC)
+            || uniform[0].buffer.size() < if dimensions { 8 } else { 4 }
+        {
+            return Err(format!("{label}: uniform requires one COPY_SRC buffer"));
+        }
+        if images
             .iter()
-            .map(|(binding, write)| {
-                let window = self.device.create_buffer(&wgpu::BufferDescriptor {
-                    label: Some(label),
-                    size: u64::from(capacity.min(count)) * 12,
-                    usage: wgpu::BufferUsages::STORAGE
-                        | wgpu::BufferUsages::COPY_SRC
-                        | wgpu::BufferUsages::COPY_DST,
-                    mapped_at_creation: false,
-                });
-                (*binding, *write, window)
+            .any(|(index, _)| *index == 0 || *index >= buffers.len())
+        {
+            return Err(format!("{label}: invalid image binding"));
+        }
+        let raster_bindings: Vec<_> = buffers
+            .iter()
+            .enumerate()
+            .skip(1)
+            .map(|(index, buffer)| {
+                (
+                    *buffer,
+                    images
+                        .iter()
+                        .find(|(binding, _)| *binding == index)
+                        .map_or(Access::Fixed, |(_, access)| *access),
+                )
             })
             .collect();
-        let mut first = 0u32;
-        while first < count {
-            let n = capacity.min(count - first);
-            self.check_cancelled()?;
-            let uniform_pages = buffers[0].pages();
-            if uniform_pages.len() != 1 {
-                return Err(format!("{label}: uniform must fit one physical buffer"));
-            }
-            let source_uniform = &uniform_pages[0].buffer;
-            let params = self.device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("chunk_params"),
-                size: source_uniform.size(),
-                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            });
-            let mut encoder = self.device.create_command_encoder(&Default::default());
-            encoder.copy_buffer_to_buffer(source_uniform, 0, &params, 0, source_uniform.size());
-            self.queue.submit(Some(encoder.finish()));
-            let geometry = [n, 1];
-            let words = if dimensions {
-                &geometry[..]
-            } else {
-                &geometry[..1]
-            };
-            self.queue
-                .write_buffer(&params, 0, bytemuck::cast_slice(words));
-            let mut owned = vec![params];
-            let mut windows = Vec::new();
-            for (index, buffer) in buffers.iter().enumerate().skip(1) {
-                if let Some((_, write, window)) =
-                    scratch.iter().find(|(binding, _, _)| *binding == index)
-                {
-                    windows.push((buffer.pages(), window.clone(), *write));
-                    owned.push(window.clone());
-                } else {
-                    let pages = buffer.pages();
-                    if pages.len() != 1 || pages[0].buffer.size() > limit {
-                        return Err(format!(
-                            "{label}: coefficient binding exceeds {limit} bytes"
-                        ));
-                    }
-                    owned.push(pages[0].buffer.clone());
-                }
-            }
-            let entries: Vec<_> = owned
-                .iter()
-                .enumerate()
-                .map(|(i, b)| wgpu::BindGroupEntry {
-                    binding: i as u32,
-                    resource: b.as_entire_binding(),
-                })
-                .collect();
-            let group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some(label),
-                layout: &pipeline.layout,
-                entries: &entries,
-            });
-            chunks.push(PointwiseChunk {
-                group,
-                first: u64::from(first),
-                count: n,
-                images: windows,
-            });
-            first += n;
-        }
-        Ok(PointwisePass { pipeline, chunks })
+        let plan = ViewPlan::new(self, u64::from(count), 12, &raster_bindings, label)?;
+        Ok(PointwisePass {
+            pipeline,
+            plan,
+            uniform: uniform[0].buffer.clone(),
+            bindings: (1..buffers.len()).collect(),
+            dimensions,
+            label: label.into(),
+        })
     }
 }
 
@@ -182,7 +169,7 @@ impl WgpuBackend {
             );
         }
         self.check_cancelled()?;
-        self.queue.submit(Some(encoder.finish()));
+        self.submit_commands(Some(encoder.finish()))?;
         Ok(())
     }
 
@@ -200,18 +187,19 @@ impl WgpuBackend {
                 contents: bytemuck::cast_slice(&words),
                 usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_SRC,
             });
-        let pipeline = self.cached_pipeline(
+        let pipeline = self.cached_pointwise_pipeline(
             include_str!("print_lut_exposure.wgsl"),
             &[
                 wgpu::BufferBindingType::Uniform,
                 wgpu::BufferBindingType::Storage { read_only: false },
             ],
+            &[(1, "image")],
         );
         let pages = image.pages();
         self.chain_pointwise(
             pipeline,
             &[&params, &pages],
-            &[(1, true)],
+            &[(1, Access::ReadWrite)],
             count,
             false,
             "print_lut_roundtrip",
@@ -223,47 +211,19 @@ impl WgpuBackend {
         source: &(impl RasterStorage + ?Sized),
         output: &(impl RasterStorage + ?Sized),
         count: u32,
-        execute: impl Fn(&wgpu::Buffer, &wgpu::Buffer, u32) -> Result<(), String>,
+        execute: impl Fn(&StorageView, &StorageView, u32) -> Result<(), String>,
     ) -> Result<(), String> {
-        let limit = super::bounded::storage_binding_limit(self)?;
-        let capacity = super::bounded::chunk_elements(limit, 12)? as u32;
-        let mut first = 0;
-        while first < count {
-            self.check_cancelled()?;
-            let n = capacity.min(count - first);
-            let make = |label| {
-                self.device.create_buffer(&wgpu::BufferDescriptor {
-                    label: Some(label),
-                    size: u64::from(n) * 12,
-                    usage: wgpu::BufferUsages::STORAGE
-                        | wgpu::BufferUsages::COPY_SRC
-                        | wgpu::BufferUsages::COPY_DST,
-                    mapped_at_creation: false,
-                })
-            };
-            let input = make("spectral_lut_window_input");
-            let result = make("spectral_lut_window_output");
-            let mut encoder = self.device.create_command_encoder(&Default::default());
-            source.read(
-                &mut encoder,
-                u64::from(first) * 3,
-                u64::from(n) * 3,
-                &input,
-                0,
-            );
-            self.queue.submit(Some(encoder.finish()));
-            execute(&input, &result, n)?;
-            let mut encoder = self.device.create_command_encoder(&Default::default());
-            output.write(
-                &mut encoder,
-                &result,
-                0,
-                u64::from(first) * 3,
-                u64::from(n) * 3,
-            );
-            self.queue.submit(Some(encoder.finish()));
-            first += n;
-        }
-        Ok(())
+        let source = source.pages();
+        let output = output.pages();
+        let plan = ViewPlan::new(
+            self,
+            u64::from(count),
+            12,
+            &[(&source, Access::Read), (&output, Access::Write)],
+            "spectral_lut",
+        )?;
+        plan.for_each_submitted(self, |chunk| {
+            execute(&chunk.views[0], &chunk.views[1], chunk.count)
+        })
     }
 }

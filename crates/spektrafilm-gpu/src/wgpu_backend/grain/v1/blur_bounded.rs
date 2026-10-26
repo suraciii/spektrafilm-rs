@@ -3,14 +3,28 @@
 //! aligned, capped views and packed target-channel samples. The numerical
 //! shader and its FIR/IIR arithmetic order are unchanged.
 use super::*;
-use crate::wgpu_backend::grain::raster::SubmissionWindow;
 use crate::wgpu_backend::paged::ImagePage;
 
 const MAX_PAGE_COORDINATES: u32 = 4096;
 const TARGET_PAGE_COORDINATES: u32 = 64;
-const MAX_PAGE_VALUES: u32 = 65536;
+const MAX_PAGE_VALUES: u32 = 1 << 20;
 const MAX_COMMANDS_PER_SUBMIT: u32 = 128;
 
+/// Additional per-job buffers with caller-owned image intermediate/output.
+/// The bound includes one encoded batch and two submitted batches of uniforms.
+pub(in crate::wgpu_backend) fn workspace_bytes(
+    width: u32,
+    height: u32,
+    limit: u64,
+) -> Result<u64, String> {
+    let bytes = u64::from(width)
+        .checked_mul(u64::from(height))
+        .and_then(|n| n.checked_mul(12))
+        .ok_or("Gaussian workspace geometry overflows")?;
+    let page = limit.min(u64::from(MAX_PAGE_VALUES) * 4).min(bytes.max(76));
+    // Input, output, adapter and three-lane line state; at most 19 FIR taps/channel.
+    Ok(page * 4 + 3 * 76 + u64::from(MAX_COMMANDS_PER_SUBMIT) * 3 * 80)
+}
 #[derive(Clone)]
 struct Store(Vec<BytePage>);
 
@@ -250,7 +264,6 @@ struct Submission<'a> {
     backend: &'a WgpuBackend,
     encoder: ObservedEncoder,
     pending: u32,
-    window: SubmissionWindow,
 }
 
 impl<'a> Submission<'a> {
@@ -259,7 +272,6 @@ impl<'a> Submission<'a> {
             backend,
             encoder: backend.device.create_command_encoder(&Default::default()),
             pending: 0,
-            window: SubmissionWindow::default(),
         }
     }
     fn command(&mut self) -> Result<(), String> {
@@ -279,7 +291,7 @@ impl<'a> Submission<'a> {
                     .device
                     .create_command_encoder(&Default::default()),
             );
-            self.window.submit(self.backend, encoder.finish())?;
+            self.backend.submit_commands(Some(encoder.finish()))?;
             self.pending = 0;
         }
         Ok(())
@@ -626,7 +638,6 @@ impl BoundedBlur {
             }
         }
         submission.flush()?;
-        submission.window.finish(backend)?;
         backend.check_cancelled()
     }
 

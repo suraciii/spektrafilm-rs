@@ -62,7 +62,6 @@ pub(in crate::wgpu_backend) struct DyePagedState {
     bands: Vec<PagedBand>,
     pub(in crate::wgpu_backend) output_pages: Vec<ImagePage>,
     pub(in crate::wgpu_backend) width: u32,
-    pub(in crate::wgpu_backend) height: u32,
     status: wgpu::Buffer,
 }
 
@@ -81,13 +80,13 @@ impl DyePagedState {
                 backend.check_cancelled()?;
                 validation.encode(&mut encoder);
             }
-            backend.queue.submit(Some(encoder.finish()));
+            backend.submit_commands(Some(encoder.finish()))?;
         }
         for band in &self.bands {
             backend.check_cancelled()?;
             let mut encoder = backend.device.create_command_encoder(&Default::default());
             band.encode(backend, &mut encoder, &self.output_pages, self.width)?;
-            backend.queue.submit(Some(encoder.finish()));
+            backend.submit_commands(Some(encoder.finish()))?;
         }
         backend.check_cancelled()?;
         Ok(())
@@ -113,15 +112,22 @@ impl WgpuBackend {
         let response = response
             .map(|r| optical::ResponseSetup::new(self, params, r))
             .transpose()?;
-        self.pipe
-            .dye_certification
-            .get_or_init(|| {
+        if let Some(certification) = self.pipe.dye_certification.get() {
+            certification.clone()?;
+        } else {
+            let certification = (|| {
                 self.certify_dye_counts()?;
                 self.certify_dye_layers()?;
                 self.certify_dye_accumulation()?;
                 self.certify_dye_spatial()
-            })
-            .clone()?;
+            })();
+            // Cancellation belongs to this request, not the shared device.
+            self.check_cancelled()?;
+            self.pipe
+                .dye_certification
+                .get_or_init(|| certification)
+                .clone()?;
+        }
         let tables = self.pipe.static_buffer(
             "dye_channel_tables",
             bytemuck::cast_slice(&params.tables.tables),
@@ -241,7 +247,6 @@ impl WgpuBackend {
             bands,
             output_pages,
             width: params.grid.width,
-            height: params.grid.height,
             status,
         })
     }

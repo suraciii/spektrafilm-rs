@@ -29,7 +29,7 @@ impl WgpuBackend {
             0,
         )?;
         self.check_cancelled()?;
-        self.queue.submit(Some(encoder.finish()));
+        self.submit_commands(Some(encoder.finish()))?;
         let result: Vec<f32> = self.pipe.readback_buffer_cancellable(&sample, 12)?;
         Ok([result[0], result[1], result[2]])
     }
@@ -146,7 +146,7 @@ impl WgpuBackend {
             pass.dispatch_workgroups(x, y, 1);
         }
         self.check_cancelled()?;
-        self.queue.submit(Some(encoder.finish()));
+        self.submit_commands(Some(encoder.finish()))?;
         self.check_cancelled()?;
         Ok(())
     }
@@ -168,7 +168,7 @@ impl WgpuBackend {
             &buffer,
         )?;
         self.check_cancelled()?;
-        self.queue.submit(Some(encoder.finish()));
+        self.submit_commands(Some(encoder.finish()))?;
         self.check_cancelled()?;
         Ok(buffer)
     }

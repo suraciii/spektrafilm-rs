@@ -213,6 +213,46 @@ Cancellation MUST be checked before additional chunks, immediately before each a
 
 A readback that has already entered the driver's blocking wait cannot be interrupted; cancellation MUST stop the next submission or stage after that wait returns. Results from cancelled, failed, or superseded operations MUST NOT enter retained output or destination files. Releasing an operation MUST NOT invalidate resources still referenced by submitted work.
 
+### Pointwise storage views
+
+Pointwise execution MUST distinguish these access contracts:
+
+| Access | Required sample preservation |
+| --- | --- |
+| Read | The source MUST remain unchanged. |
+| Complete write | Every valid output sample MUST be written before handoff. Old output samples MUST NOT be gathered. |
+| Read-modify-write | Each result MUST use the required previous sample value. |
+| Partial write | Samples outside the dispatch's ownership MUST retain their previous values until their owning dispatch completes. |
+
+Compatible storage pages MUST execute through direct binding views without image gathering or scattering. Copy-only or incompatible bindings MAY use bounded device adapters.
+
+Each binding MUST retain its own aligned byte range and scalar residual. Work partitions MUST respect every participating page boundary and binding limit.
+
+Host pointwise work MUST scale with actual view intersections, not individual pixels. Adapter capacity MUST remain independent of the hardware's maximum binding capacity.
+
+Alias safety MUST cover reads across the complete pass, not only the current partition. Unsupported mappings MUST fail before the first output mutation.
+
+Sparse curve and lattice dispatches MUST complete their output ownership before an adapted result is scattered or published.
+
+### Operation resource ownership
+
+The actual injection and collection span MUST determine the resource plan before large allocations. Stages outside that span MUST NOT construct execution resources.
+
+The plan MUST separate retained carriers and caches, live cross-stage data, temporary workspaces, and submitted resources awaiting retirement. Aliased views of one physical buffer MUST count once within an owner inventory.
+
+Stage resources MUST be constructed when needed and released after their last required use. Shared Gaussian storage MUST follow the first and last active spatial consumer, not the complete chain lifetime.
+
+Workspace plans MUST derive capacity from the active geometry and support. A conservative peak bound MUST NOT be described as a proven minimum working set.
+
+An overlap scheduling target MUST NOT become a device capability limit. A larger valid operation MAY run exclusively rather than overlap another operation's workspace.
+
+Shared-device derivatives MUST use one submission backpressure boundary. Cancellation and failure MUST preserve retirement ownership for already submitted work, including commands encoded before submission.
+
+Resource credit MUST remain charged until the owning resources and submitted work permit its release. Queue completion MAY permit reuse without a host wait; dropping a state alone MUST NOT prove retirement.
+
+Application owner capacity, native allocator usage, driver residency, and cumulative allocation traffic MUST remain distinct evidence classes. An unavailable native measurement MUST NOT be reported as zero usage.
+
+
 ## Verification ownership
 
 Stage owners MUST supply domain and discrete-invariant comparisons. Runtime owners MUST prove integrated route and parameter composition. Frontends MUST prove real operations, saving attribution and stale-result behavior.

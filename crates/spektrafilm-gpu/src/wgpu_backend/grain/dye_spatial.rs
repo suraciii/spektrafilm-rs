@@ -446,6 +446,8 @@ impl DyePlan {
 
 /// Device uniform of the spatial passes. Members are `vec4`-aligned in WGSL,
 /// so each Rust member is one 16-byte group and the padding is structural.
+pub(super) const SPATIAL_PARAMS_BYTES: u64 = std::mem::size_of::<DyeSpatialUniforms>() as u64;
+
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Default, bytemuck::Pod, bytemuck::Zeroable)]
 struct DyeSpatialUniforms {
@@ -910,7 +912,7 @@ impl SpatialCase {
         state.encode_formation_readout(&mut encoder);
         encoder.copy_buffer_to_buffer(&cell_layers, 0, &cell_readback, 0, cell_bytes);
         encoder.copy_buffer_to_buffer(&output, 0, &output_readback, 0, output_bytes);
-        backend.queue.submit(Some(encoder.finish()));
+        backend.submit_commands(Some(encoder.finish()))?;
         Ok((
             backend.read_mapped_f32(&cell_readback, cell_bytes),
             backend.read_mapped_f32(&output_readback, output_bytes),

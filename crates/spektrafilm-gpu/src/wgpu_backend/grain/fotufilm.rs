@@ -312,6 +312,58 @@ struct FormationBuffers {
     rows: u32,
 }
 
+fn cloud_kernel_bytes(record: &FotufilmRecordGpuParams) -> Result<u64, String> {
+    let mut max_radius = 1u64;
+    for layer in &record.sublayers {
+        let sigma = layer.sigma_mm as f32 / (0.001 / 3.0);
+        for (s, _) in CLOUD_TERMS {
+            let spread = s * sigma;
+            let mut factor = (spread / 1.6).floor().max(1.0) as u32;
+            while factor > 1 && !SAMPLE.is_multiple_of(factor) {
+                factor -= 1;
+            }
+            let f = factor as f32;
+            let blur_sigma = if factor == 1 {
+                spread
+            } else {
+                (spread * spread - f * f / 3.0).sqrt() / f
+            };
+            max_radius = max_radius.max((3.5 * blur_sigma).ceil().max(1.0) as u64);
+        }
+    }
+    max_radius
+        .checked_mul(2)
+        .and_then(|n| n.checked_add(1))
+        .and_then(|n| n.checked_mul(4))
+        .ok_or_else(|| "Fotufilm cloud kernel byte size overflow".into())
+}
+
+fn formation_band_layout(
+    layer: &FotufilmSublayerGpuParams,
+    limit: u64,
+) -> Result<(u64, u32), String> {
+    if layer.cells == 0 || !layer.reach_texels.is_finite() || layer.reach_texels < 0.0 {
+        return Err("Fotufilm formation geometry is not representable".into());
+    }
+    let cell_texels = SAMPLE as f32 / layer.cells as f32;
+    let margin = layer.reach_texels.ceil() as u32;
+    let region = margin
+        .checked_mul(2)
+        .and_then(|v| v.checked_add(cell_texels.ceil() as u32))
+        .ok_or("Fotufilm formation region overflow")?
+        .max(1);
+    let per_row = u64::from(layer.cells)
+        .checked_mul(u64::from(region))
+        .and_then(|v| v.checked_mul(u64::from(region)))
+        .and_then(|v| v.checked_mul(4))
+        .ok_or("Fotufilm formation row byte size overflow")?;
+    let rows = u64::from(BAND_ROWS).min(limit / per_row) as u32;
+    if rows == 0 {
+        return Err("Fotufilm cannot bind one formation row".into());
+    }
+    Ok((per_row, rows))
+}
+
 /// One global bank and source carrier, independently partitioned output storage.
 pub(in crate::wgpu_backend) struct FotufilmPagedState {
     source: BufferPayload,
@@ -338,7 +390,9 @@ impl FotufilmPagedState {
         }
         // Execution status is the sole bounded orchestration readback.
         backend.check_cancelled()?;
-        let flags = backend.pipe.readback_buffer_as::<u32>(&status, 4);
+        let flags = backend
+            .pipe
+            .readback_buffer_cancellable::<u32>(&status, 4)?;
         match flags[0] {
             0 => {}
             1 => return Err("Fotufilm formation exceeded its crystal-count bound".into()),
@@ -482,7 +536,7 @@ impl FotufilmPagedState {
                         u64::from(width) * 3,
                     )?;
                 }
-                backend.queue.submit(Some(encoder.finish()));
+                backend.submit_commands(Some(encoder.finish()))?;
             }
         }
         backend.check_cancelled()?;
@@ -491,6 +545,89 @@ impl FotufilmPagedState {
 }
 
 impl WgpuBackend {
+    fn fotufilm_window_side(&self) -> Result<u32, String> {
+        let limit = super::super::bounded::storage_binding_limit(self)?;
+        if u64::from(LEVELS * SUMS_LEVEL) * 4 > limit || u64::from(SAMPLE * SAMPLE) * 4 > limit {
+            return Err(
+                "Fotufilm fixed bank lattices exceed the device storage binding limit".into(),
+            );
+        }
+        let mut side = 256u32;
+        while u64::from(side) * u64::from(side) * 24 > limit && side > 1 {
+            side /= 2;
+        }
+        if u64::from(side) * u64::from(side) * 24 > limit {
+            return Err("Fotufilm cannot bind one output sample on this device".into());
+        }
+        Ok(side)
+    }
+
+    /// Peak additional capacity of field output, retained record banks, and
+    /// the larger of record formation and output-window scratch.
+    pub(in crate::wgpu_backend) fn fotufilm_workspace_bytes(
+        &self,
+        width: u32,
+        height: u32,
+        params: &FotufilmGpuParams,
+    ) -> Result<u64, String> {
+        if width == 0
+            || height == 0
+            || params.source_width != width
+            || params.source_height != height
+            || params.width == 0
+            || params.height == 0
+            || params.records.len() != 3
+        {
+            return Err(
+                "Fotufilm source/output geometry or indexed record count is invalid".into(),
+            );
+        }
+        let add = |a: u64, b: u64| {
+            a.checked_add(b)
+                .ok_or_else(|| "Fotufilm workspace byte size overflow".to_owned())
+        };
+        let mul = |a: u64, b: u64| {
+            a.checked_mul(b)
+                .ok_or_else(|| "Fotufilm workspace byte size overflow".to_owned())
+        };
+        let side = self.fotufilm_window_side()?;
+        let bank_bytes =
+            u64::from(LEVELS * SUMS_LEVEL) * 4 + u64::from(LEVELS) * 16 + u64::from(LEVELS - 1) * 8;
+        let banks = mul(params.records.len() as u64, bank_bytes)?;
+        let mut formation_peak = 0;
+        let limit = super::super::bounded::storage_binding_limit(self)?.min(MAX_BAND_SCRATCH_BYTES);
+        for (r, record) in params.records.iter().enumerate() {
+            if record.sublayers.is_empty() || (params.monochrome && r != 1) {
+                continue;
+            }
+            // Seven SAMPLE² fields, tile, cloud taps, and pitch probe density
+            // remain live together until form_record returns.
+            let mut bytes = u64::from(SAMPLE * SAMPLE) * 4 * 7
+                + u64::from(TILE * TILE) * 4
+                + u64::from(PROBE * PROBE * LEVELS) * 8;
+            bytes = add(bytes, cloud_kernel_bytes(record)?)?;
+            for layer in &record.sublayers {
+                let (per_row, rows) = formation_band_layout(layer, limit)?;
+                bytes = add(bytes, mul(mul(per_row, u64::from(rows))?, 2)?)?;
+                bytes = add(
+                    bytes,
+                    std::mem::size_of_val(layer.thresholds.as_slice()) as u64,
+                )?;
+                bytes = add(
+                    bytes,
+                    std::mem::size_of_val(layer.forming.as_slice()) as u64,
+                )?;
+            }
+            formation_peak = formation_peak.max(bytes);
+        }
+        let windows = mul(
+            u64::from(side) * u64::from(side),
+            48 + 8 * params.records.len() as u64,
+        )?;
+        let output = mul(mul(u64::from(params.width), u64::from(params.height))?, 12)?;
+        add(add(add(output, banks)?, formation_peak.max(windows))?, 8)
+    }
+
     pub(in crate::wgpu_backend) fn prepare_fotufilm_paged(
         &self,
         width: u32,
@@ -516,19 +653,7 @@ impl WgpuBackend {
         if params.records.len() != 3 {
             return Err("Fotufilm requires three indexed records (including empty records)".into());
         }
-        let limit = super::super::bounded::storage_binding_limit(self)?;
-        if u64::from(LEVELS * SUMS_LEVEL) * 4 > limit || u64::from(SAMPLE * SAMPLE) * 4 > limit {
-            return Err(
-                "Fotufilm fixed bank lattices exceed the device storage binding limit".into(),
-            );
-        }
-        let mut side = 256u32;
-        while u64::from(side) * u64::from(side) * 24 > limit && side > 1 {
-            side /= 2;
-        }
-        if u64::from(side) * u64::from(side) * 24 > limit {
-            return Err("Fotufilm cannot bind one output sample on this device".into());
-        }
+        let side = self.fotufilm_window_side()?;
         Ok(FotufilmPagedState {
             source: BufferPayload::from_pages(
                 self.backend_id(),
@@ -577,10 +702,10 @@ impl WgpuBackend {
         let mut data = Vec::with_capacity(params.width as usize * params.height as usize * 3);
         for page in &state.output_pages {
             self.check_cancelled()?;
-            data.extend(f32_to_scalars(
-                self.pipe
-                    .readback_buffer(&page.buffer, u64::from(page.n_pixels) * 12),
-            ));
+            data.extend(f32_to_scalars(self.pipe.readback_buffer_cancellable(
+                &page.buffer,
+                u64::from(page.n_pixels) * 12,
+            )?));
         }
         self.check_cancelled()?;
         Ok(ImageBuf::from_data(params.width, params.height, data))
@@ -616,39 +741,14 @@ impl WgpuBackend {
         ];
         // Reserve the largest actual, untruncated Gaussian support of this
         // record. Its tap buffer is reused across sublayers and bank levels.
-        let mut max_radius = 1u64;
-        for layer in &record.sublayers {
-            let sigma = layer.sigma_mm as f32 / (0.001 / 3.0);
-            for (s, _) in CLOUD_TERMS {
-                let spread = s * sigma;
-                let mut factor = (spread / 1.6).floor().max(1.0) as u32;
-                while factor > 1 && !SAMPLE.is_multiple_of(factor) {
-                    factor -= 1;
-                }
-                let f = factor as f32;
-                let blur_sigma = if factor == 1 {
-                    spread
-                } else {
-                    (spread * spread - f * f / 3.0).sqrt() / f
-                };
-                max_radius = max_radius.max((3.5 * blur_sigma).ceil().max(1.0) as u64);
-            }
-        }
-        let cloud_kernel = self.fotufilm_scratch((2 * max_radius + 1) * 4, "fotufilm_cloud_kernel");
+        let cloud_kernel =
+            self.fotufilm_scratch(cloud_kernel_bytes(record)?, "fotufilm_cloud_kernel");
         let mut formation = Vec::with_capacity(record.sublayers.len());
         for (b, layer) in record.sublayers.iter().enumerate() {
-            let cell_texels = SAMPLE as f32 / layer.cells as f32;
-            let margin = layer.reach_texels.ceil() as u32;
-            let region = (cell_texels.ceil() as u32 + 2 * margin).max(1);
-            let per_row = u64::from(layer.cells) * u64::from(region) * u64::from(region) * 4;
             let limit =
                 super::super::bounded::storage_binding_limit(self)?.min(MAX_BAND_SCRATCH_BYTES);
-            let rows = BAND_ROWS.min((limit / per_row) as u32);
-            if rows == 0 {
-                return Err(format!(
-                    "Fotufilm record {r} sublayer {b} cannot bind one formation row"
-                ));
-            }
+            let (per_row, rows) = formation_band_layout(layer, limit)
+                .map_err(|error| format!("Fotufilm record {r} sublayer {b}: {error}"))?;
             formation.push(FormationBuffers {
                 deposits: self
                     .fotufilm_scratch(per_row * u64::from(rows), "fotufilm_band_deposits"),
@@ -664,7 +764,7 @@ impl WgpuBackend {
             self.check_cancelled()?;
             let mut encoder = self.device.create_command_encoder(&Default::default());
             encoder.clear_buffer(&log_light, 0, None);
-            self.queue.submit(Some(encoder.finish()));
+            self.submit_commands(Some(encoder.finish()))?;
             let gross = record.d_min + span * f64::from(level) / f64::from(LEVELS - 1);
             for (b, layer) in record.sublayers.iter().enumerate() {
                 self.check_cancelled()?;
@@ -710,7 +810,7 @@ impl WgpuBackend {
                         SAMPLE.div_ceil(GRID_WORKGROUP),
                     ),
                 );
-                self.queue.submit(Some(encoder.finish()));
+                self.submit_commands(Some(encoder.finish()))?;
             }
             self.check_cancelled()?;
             let mut encoder = self.device.create_command_encoder(&Default::default());
@@ -737,7 +837,7 @@ impl WgpuBackend {
                 &[&uniform, &tile, &bank.sums, &bank.tile_means],
                 (1, 1),
             );
-            self.queue.submit(Some(encoder.finish()));
+            self.submit_commands(Some(encoder.finish()))?;
         }
         self.check_cancelled()?;
         let density = self.fotufilm_scratch(
@@ -779,7 +879,7 @@ impl WgpuBackend {
             &buffers,
             (LEVELS, 1),
         );
-        self.queue.submit(Some(encoder.finish()));
+        self.submit_commands(Some(encoder.finish()))?;
         Ok(bank)
     }
 
@@ -810,7 +910,7 @@ impl WgpuBackend {
         let mut encoder = self.device.create_command_encoder(&Default::default());
         encoder.clear_buffer(deposits, 0, None);
         encoder.clear_buffer(uncovered, 0, None);
-        self.queue.submit(Some(encoder.finish()));
+        self.submit_commands(Some(encoder.finish()))?;
         for first_row in (0..cells).step_by(band_rows as usize) {
             self.check_cancelled()?;
             let rows = (cells - first_row).min(band_rows);
@@ -885,7 +985,7 @@ impl WgpuBackend {
                 );
                 chunk_first += chunk_rows as i32;
             }
-            self.queue.submit(Some(encoder.finish()));
+            self.submit_commands(Some(encoder.finish()))?;
         }
         Ok(())
     }
@@ -994,7 +1094,7 @@ impl WgpuBackend {
                 (SAMPLE.div_ceil(8), SAMPLE.div_ceil(8)),
             );
         }
-        self.queue.submit(Some(encoder.finish()));
+        self.submit_commands(Some(encoder.finish()))?;
         self.check_cancelled()?;
         Ok(())
     }
@@ -1159,6 +1259,55 @@ mod tests {
             color: 1.0,
             layers: [1.0, 1.0, 1.0],
         }
+    }
+
+    #[test]
+    fn formation_layout_rejects_overflow_and_respects_actual_row_capacity() {
+        let mut layer = FotufilmSublayerGpuParams {
+            cells: 96,
+            silver: false,
+            sigma_mm: 0.001,
+            capacity: 1.0,
+            edge: 0.0,
+            forming: Vec::new(),
+            thresholds: Vec::new(),
+            reach_texels: 1.0,
+            occupied_area: 1.0,
+        };
+        let row_bytes = 96 * 10 * 10 * 4;
+        assert_eq!(
+            formation_band_layout(&layer, row_bytes * 2).unwrap(),
+            (row_bytes, 2)
+        );
+        assert!(formation_band_layout(&layer, row_bytes - 1).is_err());
+        layer.reach_texels = f64::MAX;
+        assert!(
+            formation_band_layout(&layer, u64::MAX)
+                .unwrap_err()
+                .contains("overflow")
+        );
+        layer.reach_texels = 1.0;
+        layer.cells = 0;
+        assert!(formation_band_layout(&layer, u64::MAX).is_err());
+    }
+
+    #[test]
+    fn field_workspace_counts_output_growth_once_without_allocating_it() {
+        let gpu = crate::test_support::explicit_adapter();
+        let empty = FotufilmRecordGpuParams {
+            sublayers: Vec::new(),
+            d_min: 0.0,
+            d_max: 1.0,
+        };
+        let mut p = device_params(&[], (8, 4), (8, 4));
+        p.records = vec![empty; 3];
+        let small = gpu.fotufilm_workspace_bytes(8, 4, &p).unwrap();
+        p.width = 1024;
+        p.height = 1024;
+        let large = gpu.fotufilm_workspace_bytes(8, 4, &p).unwrap();
+        assert_eq!(large - small, (1024 * 1024 - 8 * 4) * 12);
+        p.source_width = 9;
+        assert!(gpu.fotufilm_workspace_bytes(8, 4, &p).is_err());
     }
 
     /// The developed source the stage hands the device: a mid-density ramp

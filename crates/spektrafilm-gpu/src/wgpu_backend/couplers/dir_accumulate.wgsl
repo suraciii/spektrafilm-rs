@@ -4,6 +4,10 @@ struct Params {
     scale: f32,
     clear_first: u32,
     _pad: u32,
+    source_base: u32,
+    destination_base: u32,
+    _pad_bases0: u32,
+    _pad_bases1: u32,
 }
 @group(0) @binding(0) var<uniform> params: Params;
 @group(0) @binding(1) var<storage, read> src: array<f32>;
@@ -15,7 +19,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_workgroups) 
     for (var c = 0u; c < 3u; c += 1u) {
         let i = pixel * 3u + c;
         var previous = 0.0;
-        if params.clear_first == 0u { previous = dst[i]; }
-        dst[i] = previous + params.scale * src[i];
+        if params.clear_first == 0u { previous = dst[params.destination_base + i]; }
+        dst[params.destination_base + i] = previous + params.scale * src[params.source_base + i];
     }
 }

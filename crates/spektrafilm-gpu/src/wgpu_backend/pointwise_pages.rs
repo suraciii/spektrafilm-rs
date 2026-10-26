@@ -44,7 +44,7 @@ impl WgpuBackend {
                 0,
             )?;
             self.check_cancelled()?;
-            self.queue.submit(Some(encoder.finish()));
+            self.submit_commands(Some(encoder.finish()))?;
             #[cfg(test)]
             self.test_pointwise_submitted("mix_page_copy");
             self.check_cancelled()?;
@@ -113,7 +113,7 @@ impl WgpuBackend {
                 0,
             )?;
             self.check_cancelled()?;
-            self.queue.submit(Some(encoder.finish()));
+            self.submit_commands(Some(encoder.finish()))?;
             #[cfg(test)]
             self.test_pointwise_submitted("pointwise_page_copy");
             self.check_cancelled()?;

@@ -18,7 +18,7 @@ pub(super) fn build_input_decode_state(
     n_pixels: u32,
     backend: &WgpuBackend,
 ) -> Result<InputDecodeState, String> {
-    let pipe = backend.cached_pipeline(
+    let pipe = backend.cached_pointwise_pipeline(
         concat!(
             include_str!("../../../../spektrafilm-shaders/wgsl/cctf_lib.wgsl"),
             include_str!("../../../../spektrafilm-shaders/wgsl/decode_input.wgsl")
@@ -27,6 +27,7 @@ pub(super) fn build_input_decode_state(
             wgpu::BufferBindingType::Uniform,
             wgpu::BufferBindingType::Storage { read_only: false },
         ],
+        &[(1, "data")],
     );
     #[repr(C)]
     #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
@@ -47,7 +48,7 @@ pub(super) fn build_input_decode_state(
         dispatch: backend.chain_pointwise(
             pipe,
             &[&params_buf, &pages],
-            &[(1, true)],
+            &[(1, super::page_views::Access::ReadWrite)],
             n_pixels,
             false,
             "input_decode",

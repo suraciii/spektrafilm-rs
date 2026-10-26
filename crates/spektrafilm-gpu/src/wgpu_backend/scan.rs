@@ -6,6 +6,7 @@ use super::grain::{
     raster::RasterCommands,
     v1::blur::{GrainBlurState, build_grain_blur_paged},
 };
+use super::page_views::Access;
 use spektrafilm_backend::{ConvertSolverGpuParams, ScannerDensityGpuParams};
 
 #[path = "scan_setup.rs"]
@@ -110,7 +111,7 @@ impl ScanDensityState {
         } else {
             &self.status
         };
-        let code = backend.pipe.readback_buffer_as::<u32>(status, 4)[0];
+        let code = backend.pipe.readback_buffer_cancellable::<u32>(status, 4)?[0];
         backend.check_cancelled()?;
         if code & 2 != 0 {
             return Err("standard setup requires finite film record densities".into());
@@ -143,10 +144,11 @@ impl WgpuBackend {
         shader: &'static str,
         types: &[wgpu::BufferBindingType],
         buffers: &[&dyn RasterStorage],
-        images: &[(usize, bool)],
+        images: &[(usize, Access)],
         count: u32,
+        image_names: &[(usize, &'static str)],
     ) -> Result<PointwisePass, String> {
-        let pipeline = self.cached_pipeline(shader, types);
+        let pipeline = self.cached_pointwise_pipeline(shader, types, image_names);
         self.chain_pointwise(pipeline, buffers, images, count, false, "scan_device")
     }
     pub(super) fn build_scan_direct_state(
@@ -242,8 +244,9 @@ impl WgpuBackend {
                 S { read_only: false },
             ],
             &buffers,
-            &[(1, false), (6, true)],
+            &[(1, Access::Read), (6, Access::Write)],
             width * height,
+            &[(1, "input"), (6, "output")],
         )
     }
     pub(super) fn build_convert_inverse_state(
@@ -352,8 +355,9 @@ impl WgpuBackend {
                     S { read_only: false },
                 ],
                 &buffers,
-                &[(1, false), (6, true)],
+                &[(1, Access::Read), (6, Access::Write)],
                 n,
+                &[(1, "input"), (6, "output")],
             )?,
         })
     }
@@ -519,6 +523,7 @@ impl WgpuBackend {
                 status: status.clone(),
             })
         };
+        self.device.resources.register_scan(&prepared);
         let source = src.image_pages();
         let destination = dst.image_pages();
         let all_params = self.pipe.static_buffer(
@@ -556,8 +561,9 @@ impl WgpuBackend {
                         ),
                         &source,
                     ],
-                    &[(1, true)],
+                    &[(1, Access::ReadWrite)],
                     pixels,
+                    &[(1, "image")],
                 )
             };
             let blur = build_grain_blur_paged(

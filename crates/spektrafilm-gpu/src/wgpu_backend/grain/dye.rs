@@ -16,7 +16,6 @@ mod optical;
 
 #[path = "dye_paged.rs"]
 mod paged;
-pub(in crate::wgpu_backend) use paged::DyePagedState;
 
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
@@ -91,8 +90,10 @@ impl WgpuBackend {
         for page in state.output_pages {
             self.check_cancelled()?;
             samples.extend(
-                self.pipe
-                    .readback_buffer(&page.buffer, u64::from(page.n_pixels) * 12),
+                self.pipe.readback_buffer_cancellable::<f32>(
+                    &page.buffer,
+                    u64::from(page.n_pixels) * 12,
+                )?,
             );
         }
         self.check_cancelled()?;
@@ -111,6 +112,42 @@ impl WgpuBackend {
         params: &DyeGpuParams,
     ) -> Result<(), String> {
         self.dye_plan(width, height, params).map(|_| ())
+    }
+
+    /// Additional resident field output, shared band scratch, and retained
+    /// per-band coefficients. Aliased band handles are counted only once.
+    pub(in crate::wgpu_backend) fn dye_workspace_bytes(
+        &self,
+        width: u32,
+        height: u32,
+        params: &DyeGpuParams,
+        response_wavelengths: Option<usize>,
+    ) -> Result<u64, String> {
+        let plan = self.dye_plan(width, height, params)?;
+        let per_band = dye_layers::LAYER_PARAMS_BYTES
+            + std::mem::size_of::<AccumulateParams>() as u64
+            + 2 * dye_spatial::SPATIAL_PARAMS_BYTES
+            + response_wavelengths.map_or(0, |_| optical::RESPONSE_PARAMS_BYTES);
+        let parts = [
+            u64::from(params.grid.width)
+                .checked_mul(u64::from(params.grid.height))
+                .and_then(|v| v.checked_mul(12)),
+            Some(plan.max_band_bytes[0] / 3),
+            plan.max_band_bytes
+                .into_iter()
+                .try_fold(0u64, u64::checked_add),
+            Some(plan.max_output_bytes),
+            (plan.bands.len() as u64).checked_mul(per_band),
+            Some(std::mem::size_of_val(params.tables.tables.as_slice()) as u64),
+            (params.tables.curves.len() as u64).checked_mul(4),
+            (params.taps.len() as u64).checked_mul(4),
+            response_wavelengths.map_or(Some(0), |n| (n as u64).checked_mul(32)),
+            Some(8), // execution status and its four-byte readback
+        ];
+        parts.into_iter().try_fold(0u64, |sum, part| {
+            sum.checked_add(part.ok_or("Dye workspace byte size overflow")?)
+                .ok_or_else(|| "Dye workspace byte size overflow".to_owned())
+        })
     }
 
     fn dye_plan(&self, width: u32, height: u32, params: &DyeGpuParams) -> Result<DyePlan, String> {
@@ -406,9 +443,9 @@ impl WgpuBackend {
                 self.build_dye_accumulate(&params, &band, &table_buffer, &layers, &output, &status);
             let mut encoder = self.device.create_command_encoder(&Default::default());
             pass.encode(&mut encoder);
-            self.queue.submit(Some(encoder.finish()));
+            self.submit_commands(Some(encoder.finish()))?;
             self.check_dye_status(&status)?;
-            let values = self.pipe.readback_buffer(&output, 24);
+            let values: Vec<f32> = self.pipe.readback_buffer_cancellable(&output, 24)?;
             let expected = if expectation {
                 [1.0, 1.0, 0.0, 0.0, 0.0, 1.0]
             } else {
@@ -448,7 +485,7 @@ impl WgpuBackend {
         });
         let mut encoder = self.device.create_command_encoder(&Default::default());
         encoder.copy_buffer_to_buffer(status, 0, &readback, 0, 4);
-        self.queue.submit(Some(encoder.finish()));
+        self.submit_commands(Some(encoder.finish()))?;
         let code = self.read_mapped_u32(&readback, 4)[0];
         self.check_cancelled()?;
         if code == 0 {

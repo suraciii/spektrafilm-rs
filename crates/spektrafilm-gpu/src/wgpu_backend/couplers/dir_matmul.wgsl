@@ -14,8 +14,8 @@
 struct Params {
     n_pixels: u32,
     positive: u32,
-    _pad0: u32,
-    _pad1: u32,
+    source_base: u32,
+    destination_base: u32,
     density_max: vec4<f32>, // .xyz used, .w padding
     // Amplitude-matched Langmuir knee, reference and activity per
     // channel (`.w` padding).
@@ -40,9 +40,9 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_workgroups) 
     let base = idx * 3u;
 
     var silver: vec3<f32> = vec3<f32>(
-        density_cmy[base],
-        density_cmy[base + 1u],
-        density_cmy[base + 2u],
+        density_cmy[params.source_base + base],
+        density_cmy[params.source_base + base + 1u],
+        density_cmy[params.source_base + base + 2u],
     );
     if params.positive != 0u {
         silver = params.density_max.xyz - silver;
@@ -67,7 +67,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_workgroups) 
     let c1 = silver.x * params.m_row0.y + silver.y * params.m_row1.y + silver.z * params.m_row2.y;
     let c2 = silver.x * params.m_row0.z + silver.y * params.m_row1.z + silver.z * params.m_row2.z;
 
-    correction[base] = c0;
-    correction[base + 1u] = c1;
-    correction[base + 2u] = c2;
+    correction[params.destination_base + base] = c0;
+    correction[params.destination_base + base + 1u] = c1;
+    correction[params.destination_base + base + 2u] = c2;
 }

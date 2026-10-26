@@ -12,6 +12,8 @@ struct ResponseUniform {
     matrix: [[f32; 4]; 3],
 }
 
+pub(super) const RESPONSE_PARAMS_BYTES: u64 = std::mem::size_of::<ResponseUniform>() as u64;
+
 pub(super) struct ResponseSetup {
     uniform: ResponseUniform,
     spectrum: wgpu::Buffer,
@@ -373,8 +375,10 @@ impl WgpuBackend {
         for page in pages {
             self.check_cancelled()?;
             samples.extend(
-                self.pipe
-                    .readback_buffer(&page.buffer, u64::from(page.n_pixels) * 12),
+                self.pipe.readback_buffer_cancellable::<f32>(
+                    &page.buffer,
+                    u64::from(page.n_pixels) * 12,
+                )?,
             );
         }
         self.check_cancelled()?;
@@ -417,7 +421,7 @@ impl WgpuBackend {
                     (u64::from(row) * u64::from(width) + u64::from(col)) * 3,
                     u64::from(count) * 3,
                 )?;
-                self.queue.submit(Some(encoder.finish()));
+                self.submit_commands(Some(encoder.finish()))?;
                 col += count;
             }
         }
@@ -444,7 +448,7 @@ impl WgpuBackend {
             )?;
             let (pass, output, _, _) = self.prepare_dye_log10(page.n_pixels, 1, &page.buffer)?;
             pass.encode(&mut encoder);
-            self.queue.submit(Some(encoder.finish()));
+            self.submit_commands(Some(encoder.finish()))?;
             pages.push(ImagePage {
                 first_pixel: page.first_pixel,
                 n_pixels: page.n_pixels,
@@ -532,7 +536,7 @@ impl WgpuBackend {
                     (u64::from(row) * u64::from(width) + u64::from(col)) * 3,
                     u64::from(count) * 3,
                 )?;
-                self.queue.submit(Some(encoder.finish()));
+                self.submit_commands(Some(encoder.finish()))?;
                 col += count;
             }
         }

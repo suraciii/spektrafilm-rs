@@ -81,30 +81,7 @@ fn build_bounded_grain_v2(
         matrix: [[f32; 4]; 3],
         window: [u32; 4],
     }
-    let amount = params.amount.clamp(0.0, 1.0);
-    let gsf = (5200.0 / width as f32).max(3100.0 / height as f32);
-    let base = (1.0 + (params.raw_scale - 1.0) / 47.0)
-        * (1.0 - params.resolution_factor.clamp(0.0, 100.0) / 100.0)
-        / gsf;
-    let resolution_scale = if params.resolution_type == 1 {
-        1.2
-    } else {
-        1.6
-    };
-    let radius = if params.mode != 0 {
-        0.0
-    } else {
-        base * resolution_scale * (0.7 * amount * amount + 0.3 * amount + 0.05)
-    };
-    let optical = params.resolution_type == 0;
-    let weights: Vec<[f32; 2]> = if optical {
-        spektrafilm_math::grain::optical_weights(radius)
-            .into_iter()
-            .map(|w| [w, 0.0])
-            .collect()
-    } else {
-        spektrafilm_math::grain::fast_blur_weights(radius)
-    };
+    let (radius, optical, weights) = resolution_weights(width, height, params);
     let dummy_weights = backend
         .device
         .create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -229,6 +206,103 @@ fn build_bounded_grain_v2(
         commands,
         n_bytes,
     })
+}
+
+fn resolution_weights(
+    width: u32,
+    height: u32,
+    params: &spektrafilm_backend::GrainV2GpuParams,
+) -> (f32, bool, Vec<[f32; 2]>) {
+    let amount = params.amount.clamp(0.0, 1.0);
+    let gsf = (5200.0 / width as f32).max(3100.0 / height as f32);
+    let base = (1.0 + (params.raw_scale - 1.0) / 47.0)
+        * (1.0 - params.resolution_factor.clamp(0.0, 100.0) / 100.0)
+        / gsf;
+    let resolution_scale = if params.resolution_type == 1 {
+        1.2
+    } else {
+        1.6
+    };
+    let radius = if params.mode != 0 {
+        0.0
+    } else {
+        base * resolution_scale * (0.7 * amount * amount + 0.3 * amount + 0.05)
+    };
+    let optical = params.resolution_type == 0;
+    let weights = if optical {
+        spektrafilm_math::grain::optical_weights(radius)
+            .into_iter()
+            .map(|w| [w, 0.0])
+            .collect()
+    } else {
+        spektrafilm_math::grain::fast_blur_weights(radius)
+    };
+    (radius, optical, weights)
+}
+
+impl WgpuBackend {
+    pub(in crate::wgpu_backend) fn procedural_workspace_bytes(
+        &self,
+        width: u32,
+        height: u32,
+        params: &spektrafilm_backend::GrainV2GpuParams,
+    ) -> Result<u64, String> {
+        let n = width
+            .checked_mul(height)
+            .filter(|&n| n > 0 && n <= u32::MAX / 3)
+            .ok_or("procedural grain dimensions overflow")?;
+        let limit = super::super::bounded::storage_binding_limit(self)?;
+        let page = (limit / 12).min(u64::from(n));
+        let batch = (limit / 432)
+            .min(u64::from(n))
+            .min(u64::from(u32::MAX / 108));
+        if batch == 0 {
+            return Err("procedural grain minimum gathered pixel needs 432 bytes".into());
+        }
+        let (radius, optical, weights) = resolution_weights(width, height, params);
+        let pages = u64::from(n).div_ceil(page);
+        let batches = u64::from(n).div_ceil(batch);
+        let mut bytes =
+            u128::from(n) * 48 + u128::from(page) * 24 + u128::from(batch) * (432 + 24) + 8;
+        bytes += u128::from(pages) * 96
+            + u128::from(batches) * std::mem::size_of::<ShaderParams>() as u128;
+        if params.mode == 0 {
+            bytes += u128::from(batches) * u128::from(pages) * 48;
+        }
+        if radius > 0.0 {
+            let reach = if optical {
+                weights.len() / 2 + 1
+            } else {
+                weights
+                    .iter()
+                    .map(|w| w[1].abs().ceil() as usize + 2)
+                    .max()
+                    .unwrap_or(1)
+            } as u64;
+            if (2 * reach + 1) * 24 <= limit && weights.len() as u64 * 8 <= limit {
+                let count = (page / 2).saturating_sub(2 * reach).max(1);
+                let jobs = u64::from(height) * u64::from(width).div_ceil(count)
+                    + u64::from(width) * u64::from(height).div_ceil(count);
+                bytes += u128::from(page) * 12 + weights.len() as u128 * 8 + u128::from(jobs) * 96;
+            } else {
+                let taps = if optical {
+                    weights.len() / 2
+                } else {
+                    weights.len()
+                } as u64;
+                let tap_chunk = (limit / 96).min(taps.max(1));
+                if tap_chunk == 0 {
+                    return Err("procedural resolution cannot hold one tap".into());
+                }
+                let partitions = taps.div_ceil(tap_chunk);
+                bytes += u128::from(tap_chunk) * 96 + 12;
+                bytes += 2
+                    * u128::from(n)
+                    * (u128::from(taps) * 16 + u128::from(partitions) * u128::from(pages + 1) * 48);
+            }
+        }
+        u64::try_from(bytes).map_err(|_| "procedural grain resource plan overflows".into())
+    }
 }
 
 #[repr(C)]
