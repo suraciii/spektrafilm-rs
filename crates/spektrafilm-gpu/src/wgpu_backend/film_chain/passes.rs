@@ -1996,6 +1996,7 @@ mod tests {
         let zero = [0.0; 2];
         for (width, height) in [(9, 7), (11, 9)] {
             let dye = DyeGpuParams {
+                monochrome: false,
                 tables: DyeChannelTablesGpu::pack(std::array::from_fn(|_| DyeChannelParts {
                     min: 0.1,
                     cap_total: 1.0,

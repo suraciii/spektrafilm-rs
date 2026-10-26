@@ -228,8 +228,8 @@ impl Drop for HistogramWorker {
 
 /// State for the histogram strip in the control panel.
 pub struct HistogramStrip {
-    /// Whether the strip is expanded. Default-on; the collapse state is
-    /// persisted as the readout's visibility state.
+    /// Whether the strip is expanded. The default is collapsed; the saved
+    /// readout visibility takes precedence when present.
     pub visible: bool,
     /// Cached histogram data for the output the strip shows or is waiting for.
     data: Option<HistogramData>,
@@ -244,7 +244,7 @@ pub struct HistogramStrip {
 impl Default for HistogramStrip {
     fn default() -> Self {
         Self {
-            visible: true,
+            visible: false,
             data: None,
             source_id: None,
             sequence: 0,
@@ -254,7 +254,7 @@ impl Default for HistogramStrip {
 }
 
 impl HistogramStrip {
-    /// Create a new histogram strip, default visible.
+    /// Create a new histogram strip, initially collapsed.
     pub fn new() -> Self {
         Self::default()
     }
@@ -264,8 +264,8 @@ impl HistogramStrip {
         serde_json::json!({"visible": self.visible})
     }
 
-    /// Restore the persisted visibility state; a missing or malformed value
-    /// keeps the default-on state.
+    /// Restore a saved visibility state; a missing or malformed value keeps
+    /// the current disclosure unchanged.
     pub fn restore_state(&mut self, value: &serde_json::Value) {
         if let Some(visible) = value.get("visible").and_then(|v| v.as_bool()) {
             self.visible = visible;
@@ -672,26 +672,25 @@ mod tests {
     #[test]
     fn visibility_state_persists_across_restore() {
         let mut strip = HistogramStrip::new();
-        assert!(strip.visible, "the strip is default-on");
-        strip.visible = false;
+        strip.visible = true;
         let state = strip.persistent_state();
         let mut restored = HistogramStrip::new();
         restored.restore_state(&state);
-        assert!(!restored.visible, "a collapsed strip restores collapsed");
-        restored.visible = true;
+        assert!(restored.visible, "an expanded strip restores expanded");
+        strip.visible = false;
         restored.restore_state(&strip.persistent_state());
-        assert!(!restored.visible, "re-expansion also round-trips");
+        assert!(!restored.visible, "a collapsed strip restores collapsed");
     }
 
     #[test]
-    fn restore_state_keeps_default_on_for_malformed_values() {
-        let mut strip = HistogramStrip::new();
-        strip.restore_state(&serde_json::json!({}));
-        assert!(strip.visible);
-        strip.restore_state(&serde_json::json!({"visible": "yes"}));
-        assert!(
-            strip.visible,
-            "a non-boolean value does not collapse the strip"
-        );
+    fn restore_state_preserves_visibility_when_values_are_missing_or_malformed() {
+        for visible in [false, true] {
+            let mut strip = HistogramStrip::new();
+            strip.visible = visible;
+            strip.restore_state(&serde_json::json!({}));
+            assert_eq!(strip.visible, visible);
+            strip.restore_state(&serde_json::json!({"visible": "yes"}));
+            assert_eq!(strip.visible, visible);
+        }
     }
 }

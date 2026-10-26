@@ -201,6 +201,7 @@ impl AdjustmentHistory {
         };
         let mut after = (*before).clone();
         after.params = AdjustmentState::photographic_params(params);
+        after.params.film_render.grain.monochrome = film.is_bw();
         after.film_name = film_name;
         after.print_name = print_name;
         after.film_reference_illuminant = film.info.reference_illuminant.clone();

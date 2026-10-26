@@ -2210,3 +2210,54 @@ fn retained_inactive_optical_grain_keeps_ordinary_crop_and_rescale() {
         }
     }
 }
+
+/// Compare identical developed print density so this regression owns glare
+/// parameter/seed composition, not front-end film or print conditioning.
+#[test]
+fn resident_print_glare_preserves_the_reference_seed_and_stream() {
+    let gpu = spektrafilm_gpu::test_support::adapter();
+    let dir = data_dir();
+    let film = crate::profile::load_profile_by_name(&dir, "kodak_gold_200").unwrap();
+    let print = crate::profile::load_profile_by_name(&dir, "kodak_supra_endura").unwrap();
+    let mut params = resident_parity_params(19);
+    params.workflow.route = "input > film > print > scan".into();
+    params.io.scan_film = false;
+    params.settings.preview_mode = false;
+    params.camera.auto_exposure = false;
+    params.scanner.unsharp_mask = [0.0, 0.0];
+    params.print_render.glare.active = true;
+    params.print_render.glare.percent = 0.1;
+    params.print_render.glare.roughness = 0.5;
+    params.print_render.glare.blur = 0.8;
+    let mut pipeline =
+        Pipeline::new_with_spectral_backend(film, print, params, &dir, gpu.backend()).unwrap();
+    let image = comparison_image(19);
+    let render = |pipeline: &Pipeline, backend: &dyn spektrafilm_backend::ComputeBackend| {
+        pipeline
+            .process_with_taps(
+                image.clone(),
+                backend,
+                Some(crate::params::Tap::CmyPrint),
+                Some(crate::params::Tap::RgbOut),
+            )
+            .unwrap()
+    };
+    for seed in [0, 42, u64::from(u32::MAX), (1u64 << 32) + 42] {
+        pipeline.params.random_seed = seed;
+        let cpu = render(&pipeline, &spektrafilm_backend::cpu_backend::CpuBackend);
+        let device = render(&pipeline, gpu.backend());
+        let (_, maximum) = parity_metrics(&device, &cpu);
+        assert!(
+            maximum < 1e-5,
+            "print glare seed={seed}: linear RGB max={maximum}"
+        );
+        let mut off = pipeline.clone();
+        off.params.print_render.glare.active = false;
+        let reference_off = render(&off, &spektrafilm_backend::cpu_backend::CpuBackend);
+        assert!(
+            parity_metrics(&cpu, &reference_off).1 > 1e-4,
+            "glare must be observable"
+        );
+        eprintln!("integrated print glare seed={seed}: linear RGB max={maximum:.9e}");
+    }
+}

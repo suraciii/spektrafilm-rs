@@ -537,3 +537,112 @@ fn material_defers_operator_correction_until_the_continued_scan() {
         );
     }
 }
+
+#[test]
+fn dye_bw_material_keeps_one_realization_through_scan_continuation() {
+    const CONTROLS: &str = "film_render.grain.engine=dye,film_render.grain.active=true,film_render.grain.channel_correlation=0.35,camera.auto_exposure=false,camera.film_format_mm=0.12,camera.diffusion_filter.active=false,film_render.halation.active=false,scanner.lens_blur=0,scanner.unsharp_mask=[0,0],io.output_gamut_compress.algorithm=off";
+    for bin in binaries() {
+        for stock in ["kodak_doublex", "kodak_trix"] {
+            let root = fixture();
+            let root = root.path();
+            let source = [
+                "--film",
+                stock,
+                "--input-color-space",
+                "sRGB",
+                "--input-cctf-decoding",
+                "true",
+                "--seed",
+                "42",
+                "--set",
+                CONTROLS,
+            ];
+            success(invoke(
+                bin,
+                root,
+                "input.png",
+                &[
+                    source.as_slice(),
+                    &["--route", "input > film", "-o", "film.sfstage"],
+                ]
+                .concat(),
+            ));
+            let state = spektrafilm_core::stage_artifact::read(root.join("film.sfstage")).unwrap();
+            assert_eq!(state.header.seed, 42);
+            assert_eq!(
+                state.header.density.as_ref().unwrap().channel_order,
+                "monochrome_record_replicated"
+            );
+            for pixel in state.density.pixels() {
+                assert_eq!(pixel[0], pixel[1]);
+                assert_eq!(pixel[0], pixel[2]);
+            }
+            let density_path = root
+                .join("film.sfstage")
+                .join(&state.header.density.as_ref().unwrap().path);
+            let frozen = fs::read(&density_path).unwrap();
+            let modes: &[&str] = if stock == "kodak_doublex" {
+                &["direct_scan", "negative_to_positive"]
+            } else {
+                &["direct_scan"]
+            };
+            for &mode in modes {
+                success(invoke(
+                    bin,
+                    root,
+                    "film.sfstage",
+                    &[
+                        "--route",
+                        "film > scan",
+                        "--scan-output",
+                        mode,
+                        "-o",
+                        "resumed.tif",
+                        "--raw-out",
+                        "resumed.raw",
+                    ],
+                ));
+                success(invoke(
+                    bin,
+                    root,
+                    "input.png",
+                    &[
+                        source.as_slice(),
+                        &[
+                            "--route",
+                            "input > film > scan",
+                            "--scan-output",
+                            mode,
+                            "-o",
+                            "whole.tif",
+                            "--raw-out",
+                            "whole.raw",
+                        ],
+                    ]
+                    .concat(),
+                ));
+                assert_eq!(
+                    fs::read(root.join("resumed.raw")).unwrap(),
+                    fs::read(root.join("whole.raw")).unwrap(),
+                    "{stock} {mode}"
+                );
+                assert_eq!(fs::read(&density_path).unwrap(), frozen);
+            }
+            let rejected = invoke(
+                bin,
+                root,
+                "film.sfstage",
+                &[
+                    "--route",
+                    "film > scan",
+                    "--set",
+                    "film_render.grain.channel_correlation=0.1",
+                    "-o",
+                    "changed.tif",
+                ],
+            );
+            assert!(!rejected.status.success());
+            assert!(!root.join("changed.tif").exists());
+        }
+    }
+}

@@ -52,6 +52,7 @@ pub(super) fn build_layers(
     backend: &WgpuBackend,
     source: [u32; 4],
     region: [u32; 2],
+    monochrome: bool,
     tables: &wgpu::Buffer,
     curves: &wgpu::Buffer,
     input: &wgpu::Buffer,
@@ -59,7 +60,39 @@ pub(super) fn build_layers(
     status: &wgpu::Buffer,
 ) -> LayerPass {
     build_layers_with_source(
-        backend, source, region, tables, curves, input, targets, status, SHADER,
+        backend,
+        source,
+        [region[0], region[1], u32::from(monochrome), 0],
+        tables,
+        curves,
+        input,
+        targets,
+        status,
+        SHADER,
+    )
+}
+
+/// Check one complete BW source page without writing its nine-lane targets.
+/// Page-local indexing also supports pages split in the middle of a row.
+pub(super) fn build_source_validation(
+    backend: &WgpuBackend,
+    pixels: u32,
+    tables: &wgpu::Buffer,
+    curves: &wgpu::Buffer,
+    input: &wgpu::Buffer,
+    targets: &wgpu::Buffer,
+    status: &wgpu::Buffer,
+) -> LayerPass {
+    build_layers_with_source(
+        backend,
+        [pixels, 1, 0, 0],
+        [pixels, 1, 1, 1],
+        tables,
+        curves,
+        input,
+        targets,
+        status,
+        SHADER,
     )
 }
 
@@ -67,7 +100,7 @@ pub(super) fn build_layers(
 fn build_layers_with_source(
     backend: &WgpuBackend,
     source: [u32; 4],
-    region: [u32; 2],
+    region: [u32; 4],
     tables: &wgpu::Buffer,
     curves: &wgpu::Buffer,
     input: &wgpu::Buffer,
@@ -77,10 +110,7 @@ fn build_layers_with_source(
 ) -> LayerPass {
     let uniform = backend.pipe.static_buffer(
         "dye_layer_params",
-        bytemuck::bytes_of(&LayerParams {
-            source,
-            region: [region[0], region[1], 0, 0],
-        }),
+        bytemuck::bytes_of(&LayerParams { source, region }),
         wgpu::BufferUsages::UNIFORM,
     );
     let storage = wgpu::BufferBindingType::Storage { read_only: true };
@@ -220,7 +250,7 @@ impl WgpuBackend {
         let layer_pass = build_layers_with_source(
             self,
             [densities.len() as u32, 1, 0, 0],
-            [densities.len() as u32, 1],
+            [densities.len() as u32, 1, 0, 0],
             &table_buffer,
             &curve_buffer,
             &input,
@@ -247,6 +277,8 @@ mod tests {
 
     #[test]
     fn saturation_retains_retired_layers_and_zero_weights_use_capacity() {
+        assert_eq!(std::mem::size_of::<LayerParams>(), 32);
+        assert_eq!(std::mem::offset_of!(LayerParams, region), 16);
         let backend = crate::test_support::adapter();
         eprintln!("G2 boundary sweep adapter: {}", backend.name());
         let knots = [0.0, 6.0];

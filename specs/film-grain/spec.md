@@ -31,7 +31,7 @@
 - Procedural's Analogue mode and Film Resolution controls MUST NOT be described as upstream material formation or scanner lens optics.
 - Procedural provides `Analogue` and `Noise` modes, Negative and Positive film types, named format/speed profiles, and a `custom` profile with explicit controls.
 - Procedural profile controls are bounded: Size 1–48; Amount, Shadows, Midtones, Highlights, Chroma, and Film Resolution 0–100.
-- Dye targets convincing color-film grain formed by a conditional film-coordinate dye field read by output footprints.
+- Dye targets convincing color-film grain and supplies an effective single-record monochrome model, formed in film coordinates and read through output footprints.
 - Its [contract](v3/spec.md) defines the product boundary and acceptance gates.
 - Calibration evidence is separate and does not lock algorithm values.
 

@@ -25,7 +25,8 @@ struct AccumulateParams {
     cell_area: f32,
     correlation: f32,
     expectation: u32,
-    padding: [u32; 3],
+    monochrome: u32,
+    padding: [u32; 2],
 }
 
 struct AccumulatePass {
@@ -249,6 +250,42 @@ impl WgpuBackend {
         if params.tables.curves.iter().any(|v| !v.is_finite()) {
             return Err("film grain Dye: channel curves are not representable in f32".into());
         }
+        if params.monochrome {
+            let first = &params.tables.tables[0];
+            let first_start = first.offset as usize;
+            let first_curves =
+                &params.tables.curves[first_start..first_start + first.knot_count as usize * 5 - 1];
+            for (c, table) in params.tables.tables.iter().enumerate() {
+                let scalar_equal = [
+                    table.min,
+                    table.cap_total,
+                    table.uniformity,
+                    table.lookup_sign,
+                ]
+                .into_iter()
+                .zip([
+                    first.min,
+                    first.cap_total,
+                    first.uniformity,
+                    first.lookup_sign,
+                ])
+                .all(|(value, canonical)| value.is_finite() && value == canonical);
+                let components_equal = (0..3).all(|l| {
+                    [table.cap[l], table.frac[l], table.area[l]]
+                        .into_iter()
+                        .zip([first.cap[l], first.frac[l], first.area[l]])
+                        .all(|(value, canonical)| value.is_finite() && value == canonical)
+                });
+                let start = table.offset as usize;
+                let curves =
+                    &params.tables.curves[start..start + table.knot_count as usize * 5 - 1];
+                if !scalar_equal || !components_equal || curves != first_curves {
+                    return Err(format!(
+                        "film grain Dye: monochrome channel {c} tables must match record 0 exactly"
+                    ));
+                }
+            }
+        }
         Ok(plan)
     }
 
@@ -275,7 +312,8 @@ impl WgpuBackend {
                 cell_area: (params.cell_um * params.cell_um) as f32,
                 correlation: params.channel_correlation,
                 expectation: u32::from(params.expectation),
-                padding: [0; 3],
+                monochrome: u32::from(params.monochrome),
+                padding: [0; 2],
             }),
             wgpu::BufferUsages::UNIFORM,
         );
@@ -347,6 +385,7 @@ impl WgpuBackend {
             seed: 0xFEDC_BA98_7654_3210,
             channel_correlation: 0.45,
             expectation: false,
+            monochrome: false,
         };
         let band = DyeBand {
             output_x: 0,
@@ -452,6 +491,8 @@ impl WgpuBackend {
         }
         let reason = if code & 1 != 0 {
             "developed density is outside the finite channel capacity envelope"
+        } else if code & 16 != 0 {
+            "monochrome developed density lanes disagree (absolute tolerance 1e-6 D)"
         } else if code & 2 != 0 {
             "conditional dye mass or rate is not representable"
         } else if code & 4 != 0 {
@@ -560,6 +601,7 @@ mod tests {
                     seed: 0xFEDC_BA98_7654_3210,
                     channel_correlation: correlation,
                     expectation: false,
+                    monochrome: false,
                 };
                 let table_buffer = backend.pipe.static_buffer(
                     "accumulation_test_tables",
@@ -692,6 +734,229 @@ mod tests {
             }
         }
     }
+
+    fn monochrome_params(width: u32, height: u32) -> DyeGpuParams {
+        let knots = [0.0, 3.0];
+        let inverse = [1.0 / 3.0];
+        let layers = [[0.0, 0.5], [0.0, 1.0], [0.0, 1.5]];
+        DyeGpuParams {
+            tables: DyeChannelTablesGpu::pack(std::array::from_fn(|_| DyeChannelParts {
+                min: 0.125,
+                cap_total: 3.0,
+                cap: [0.5, 1.0, 1.5],
+                frac: [0.25, 0.25, 0.5],
+                area: [0.125, 0.25, 0.5],
+                uniformity: 0.0,
+                lookup_sign: 1.0,
+                knots: &knots,
+                inv_dx: &inverse,
+                layers: [&layers[0], &layers[1], &layers[2]],
+            })),
+            cell_um: 1.0,
+            taps: vec![1.0],
+            source_pitch_um: 1.0,
+            grid: DyeReadoutGrid {
+                origin_um: [0.0; 2],
+                pitch_um: [1.0; 2],
+                width,
+                height,
+            },
+            seed: 0xFEDC_BA98_7654_3210,
+            channel_correlation: 0.45,
+            expectation: false,
+            monochrome: true,
+        }
+    }
+
+    #[test]
+    fn monochrome_device_field_uses_only_record_zero_component_streams() {
+        assert_eq!(std::mem::size_of::<AccumulateParams>(), 48);
+        assert_eq!(std::mem::offset_of!(AccumulateParams, expectation), 32);
+        assert_eq!(std::mem::offset_of!(AccumulateParams, monochrome), 36);
+        let backend = crate::test_support::adapter();
+        let params = monochrome_params(16, 8);
+        let input = ImageBuf::from_data(
+            16,
+            8,
+            vec![spektrafilm_math::precision::from_f64(2.875); 16 * 8 * 3],
+        );
+        let output = backend.dye_field(&input, &params).unwrap();
+        // Independent entry point on the same executor: not a CPU/GPU RNG
+        // identity claim. Full occupancy makes all rates and masses exact.
+        let cases: Vec<_> = (0..8)
+            .flat_map(|j| {
+                (0..16).flat_map(move |i| {
+                    [2.0, 1.0, 1.0]
+                        .into_iter()
+                        .enumerate()
+                        .map(move |(l, rate)| {
+                            DyeDecisionCase::new(rate, params.seed, l as u64, (i, j))
+                        })
+                })
+            })
+            .collect();
+        let (counts, _) = backend.dye_decision_counts(&cases).unwrap();
+        let samples = scalars_to_f32(&output.data);
+        for (pixel, counts) in samples
+            .as_chunks::<3>()
+            .0
+            .iter()
+            .zip(counts.as_chunks::<3>().0)
+        {
+            let scalar =
+                0.25 * counts[0] as f32 + counts[1] as f32 + 1.5 * counts[2] as f32 - 0.125;
+            assert_eq!(*pixel, [scalar; 3]);
+        }
+        assert!(samples.as_chunks::<3>().0.windows(2).any(|p| p[0] != p[1]));
+        // Existing color accumulation retains its own shared/private contract.
+        backend.certify_dye_accumulation().unwrap();
+    }
+
+    #[test]
+    fn monochrome_device_formation_is_replicated_and_correlation_invariant() {
+        let backend = crate::test_support::adapter();
+        let mut params = monochrome_params(13, 7);
+        params
+            .tables
+            .tables
+            .iter_mut()
+            .for_each(|table| table.uniformity = 0.3);
+        params.taps = vec![0.25, 0.5, 0.25];
+        params.grid.origin_um = [-0.25, 0.375];
+        params.grid.pitch_um = [0.875, 1.125];
+        let input = ImageBuf::from_data(
+            16,
+            9,
+            (0..16 * 9)
+                .flat_map(|i| {
+                    [spektrafilm_math::precision::from_f64(0.2 + f64::from(i % 17) / 8.0); 3]
+                })
+                .collect(),
+        );
+        for expectation in [false, true] {
+            params.expectation = expectation;
+            let baseline = backend.dye_field(&input, &params).unwrap();
+            assert!(
+                baseline
+                    .data
+                    .as_chunks::<3>()
+                    .0
+                    .iter()
+                    .all(|p| p[0] == p[1] && p[0] == p[2])
+            );
+            for correlation in [0.0, 0.2, 0.9] {
+                params.channel_correlation = correlation;
+                assert_eq!(
+                    backend.dye_field(&input, &params).unwrap().data,
+                    baseline.data
+                );
+            }
+            params.channel_correlation = 0.0;
+            params.monochrome = false;
+            let color = backend.dye_field(&input, &params).unwrap();
+            for (bw, color) in baseline
+                .data
+                .as_chunks::<3>()
+                .0
+                .iter()
+                .zip(color.data.as_chunks::<3>().0)
+            {
+                assert_eq!(bw[0], color[0], "record-0 zero-correlation reference");
+            }
+            params.monochrome = true;
+        }
+    }
+
+    #[test]
+    fn monochrome_crop_rejects_invalid_source_outside_the_readout() {
+        let backend = crate::test_support::adapter();
+        let mut params = monochrome_params(1, 1);
+        params.taps = vec![0.25, 0.5, 0.25];
+        for (value, reason) in [
+            (0.375 + 2e-6, "lanes disagree"),
+            (f64::NAN, "finite channel capacity"),
+            (f64::INFINITY, "finite channel capacity"),
+            (3.0, "finite channel capacity"),
+        ] {
+            let mut input = ImageBuf::from_data(
+                100,
+                100,
+                vec![spektrafilm_math::precision::from_f64(0.375); 100 * 100 * 3],
+            );
+            // The far corner is outside the origin crop and its formation halo.
+            input.data[(100 * 100 - 1) * 3 + 1] = spektrafilm_math::precision::from_f64(value);
+            let error = backend.dye_field(&input, &params).unwrap_err();
+            assert!(error.contains(reason), "{error}");
+        }
+    }
+
+    #[test]
+    fn monochrome_device_rejects_inconsistent_lanes_and_noncanonical_tables() {
+        let backend = crate::test_support::adapter();
+        let params = monochrome_params(2, 1);
+        let image = |values: [f64; 6]| {
+            ImageBuf::from_data(
+                2,
+                1,
+                values
+                    .into_iter()
+                    .map(spektrafilm_math::precision::from_f64)
+                    .collect(),
+            )
+        };
+        for (value, reason) in [
+            (0.375 + 2e-6, "lanes disagree"),
+            (f64::NAN, "finite channel capacity"),
+            (f64::INFINITY, "finite channel capacity"),
+            (f64::NEG_INFINITY, "finite channel capacity"),
+        ] {
+            for lane in 0..3 {
+                let mut values = [0.375; 6];
+                values[3 + lane] = value;
+                let error = backend.dye_field(&image(values), &params).unwrap_err();
+                assert!(error.contains(reason), "{error}");
+            }
+        }
+        // A tolerated lane difference does not exempt the original lane from
+        // its own capacity envelope, at either endpoint.
+        for (inside, outside) in [(-0.12500075, -0.1250015), (2.8750007, 2.8750015)] {
+            for lane in [1, 2] {
+                let mut values = [inside; 6];
+                values[lane] = outside;
+                let error = backend.dye_field(&image(values), &params).unwrap_err();
+                assert!(error.contains("finite channel capacity"), "{error}");
+            }
+        }
+        let accepted = backend
+            .dye_field(
+                &image([0.375, 0.375 + 5e-7, 0.375 - 5e-7, 0.5, 0.5, 0.5]),
+                &params,
+            )
+            .unwrap();
+        let canonical = backend
+            .dye_field(&image([0.375, 0.375, 0.375, 0.5, 0.5, 0.5]), &params)
+            .unwrap();
+        assert_eq!(
+            accepted.data, canonical.data,
+            "record 0 is authoritative within tolerance"
+        );
+        for mutation in 0..8 {
+            let mut invalid = params.clone();
+            let table = &mut invalid.tables.tables[1];
+            match mutation {
+                0 => table.min += 0.01,
+                1 => table.cap_total += 0.01,
+                2 => table.cap[0] += 0.01,
+                3 => table.frac[0] += 0.01,
+                4 => table.area[0] += 0.01,
+                5 => table.uniformity += 0.01,
+                6 => table.lookup_sign = -1.0,
+                _ => invalid.tables.curves[table.offset as usize] += 0.01,
+            }
+            let error = backend.validate_dye_resources(2, 1, &invalid).unwrap_err();
+            assert!(error.contains("tables must match record 0"), "{error}");
+        }
+    }
 }
 
 #[cfg(test)]
@@ -731,6 +996,7 @@ mod range_tests {
             seed: 7,
             channel_correlation: 0.45,
             expectation: false,
+            monochrome: false,
         };
         let input = ImageBuf::from_data(
             2,

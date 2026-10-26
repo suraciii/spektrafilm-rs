@@ -22,7 +22,7 @@ const WORKGROUP: u32 = 256u;
 
 struct LayerParams {
     source: vec4<u32>,
-    region: vec4<u32>,
+    region: vec4<u32>, // width, height, monochrome, validation-only
 }
 
 @group(0) @binding(0) var<uniform> params: LayerParams;
@@ -115,6 +115,23 @@ fn layer_target(table: Table, x: f32) -> vec3<f32> {
     return allocate(total, table.cap, weights);
 }
 
+fn validate_source(source_index: u32) {
+    let first_density = densities[source_index];
+    for (var channel = 0u; channel < 3u; channel = channel + 1u) {
+        let table = tables[channel];
+        let density = densities[source_index + channel];
+        // Check original lanes, never record-0 substitutions. Explicit IEEE
+        // finiteness checks prevent NaN and infinity from passing the envelope.
+        if ((bitcast<u32>(density) & 0x7f800000u) == 0x7f800000u ||
+            !(density >= -table.min - 1e-6 && density <= table.cap_total - table.min + 1e-6)) {
+            atomicOr(&status, 1u);
+        }
+        if (params.region.z != 0u && !(abs(density - first_density) <= 1e-6)) {
+            atomicOr(&status, 16u);
+        }
+    }
+}
+
 @compute @workgroup_size(WORKGROUP)
 fn main(
     @builtin(global_invocation_id) gid: vec3<u32>,
@@ -126,12 +143,20 @@ fn main(
     let x = index % params.region.x + params.source.z;
     let y = index / params.region.x + params.source.w;
     let source_index = (y * params.source.x + x) * 3u;
+    if (params.region.w != 0u) {
+        validate_source(source_index);
+        return;
+    }
+    // BW pages were checked in full before band-local allocation. Color keeps
+    // its existing band-local checks and allocation arithmetic.
+    if (params.region.z == 0u) {
+        validate_source(source_index);
+    }
+    let first_density = densities[source_index];
     for (var channel = 0u; channel < 3u; channel = channel + 1u) {
         let table = tables[channel];
-        let density = densities[source_index + channel];
-        if (!(density >= -table.min - 1e-6 && density <= table.cap_total - table.min + 1e-6)) {
-            atomicOr(&status, 1u);
-        }
+        let source_density = densities[source_index + channel];
+        let density = select(source_density, first_density, params.region.z != 0u);
         let layers = layer_target(table, density);
         let total = clamp(density + table.min, 0.0, table.cap_total);
         let sum = layers.x + layers.y + layers.z;

@@ -69,6 +69,9 @@ fn main(
             p.widths.y, p.widths.y);
         if (weight_y == 0.0) { continue; }
         let ly = u32(j - inner_y);
+        // Reduce one axis at a time. A coarse preview footprint can cover
+        // tens of thousands of cells; one flat f32 sum loses constant mass.
+        var row = vec3<f32>(0.0);
         for (var sx = lo_x; sx < hi_x; sx = sx + 1u) {
             let i = ix0 + i32(sx);
             let weight_x = overlap_weight(
@@ -77,9 +80,10 @@ fn main(
             if (weight_x == 0.0) { continue; }
             let lx = u32(i - inner_x);
             let src = (ly * p.tile.y + lx) * 3u;
-            acc = acc + (weight_x * weight_y) * vec3<f32>(
+            row = row + weight_x * vec3<f32>(
                 formed[src], formed[src + 1u], formed[src + 2u]);
         }
+        acc = acc + weight_y * row;
     }
     let dst = select(((p.tile.w + py) * p.phase.w + kx) * 3u,
         index * 3u, (p.ratios.w & 1u) != 0u);

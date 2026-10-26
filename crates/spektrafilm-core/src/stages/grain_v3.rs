@@ -344,8 +344,35 @@ pub fn active(params: &RuntimeParams) -> bool {
     super::grain_engine_active(params, GrainEngine::Dye) && !params.debug.deactivate_spatial_effects
 }
 
+/// Report material layout without claiming device execution or stock calibration.
+pub fn configuration_report(film: &Profile, params: &RuntimeParams) -> serde_json::Value {
+    let active = active(params);
+    let reason = crate::params::sources::inactive_reason(
+        "film_render.grain.channel_correlation",
+        params,
+        film,
+        film,
+    )
+    .or_else(|| (!active).then(|| "Dye field formation is inactive".to_owned()));
+    serde_json::json!({
+        "active": active,
+        "effective_backend": null,
+        "note": active.then_some(
+            "Dye executor resolves when rendering; compute-device availability is unchecked."
+        ),
+        "record_layout": if film.is_bw() { "single_record" } else { "three_records" },
+        "calibration_status": "uncalibrated",
+        "channel_correlation": {
+            "requested": params.film_render.grain.channel_correlation,
+            "effective": reason.is_none().then_some(params.film_render.grain.channel_correlation),
+            "status": if reason.is_some() { "inactive" } else { "active" },
+            "reason": reason,
+        },
+    })
+}
+
 /// Fail before any work when Dye is selected outside its supported
-/// condition: color filming stocks and film-scan or print routes
+/// condition: color or monochrome filming stocks and film-scan or print routes
 /// (spec §Supported product boundary).
 pub fn validate_supported(film: &Profile, params: &RuntimeParams) -> Result<(), String> {
     if !active(params) {
@@ -365,14 +392,14 @@ pub fn validate_supported(film: &Profile, params: &RuntimeParams) -> Result<(), 
     let info = &film.info;
     let stock_supported = film.is_film()
         && film.is_filming()
-        && film.is_color()
+        && (film.is_color() || film.is_bw())
         && (film.is_negative() || film.is_positive());
     if stock_supported && route_supported {
         return Ok(());
     }
     Err(format!(
         "film grain Dye: unsupported condition — this implementation supports \
-         color filming stocks on the `{PRINT_ROUTE}` route with io.scan_film = false \
+         color or monochrome filming stocks on the `{PRINT_ROUTE}` route with io.scan_film = false \
          or the `{FILM_SCAN_ROUTE}` route with io.scan_film = true, but got stock {:?} \
          (type {:?}, use {:?}, support {:?}, stage {:?}, channel model {:?}), \
          workflow.route {route:?}, io.scan_film {}; select a supported film and route, or set \
@@ -622,6 +649,7 @@ fn channel_event_scale(rms_granularity: [f64; 3]) -> [f64; 3] {
 pub fn resolve(film: &Profile, params: &RuntimeParams) -> Result<GrainV3Params, String> {
     validate_supported(film, params)?;
     let grain = &params.film_render.grain;
+    let monochrome = film.is_bw();
     let curves = crate::chain_prep::FilmCurves::prepare(film);
     let layer_curves = film.density_curves_layers_f64();
     if layer_curves.is_empty() || curves.normalized.is_empty() {
@@ -633,24 +661,29 @@ pub fn resolve(film: &Profile, params: &RuntimeParams) -> Result<GrainV3Params, 
         ));
     }
     let layer_max = spektrafilm_model::density_curves::density_max_layers_f64(&layer_curves);
-    if layer_max.iter().flatten().any(|&max| max <= 0.0) {
-        return Err(format!(
-            "film grain Dye: film profile '{}' yields a non-positive per-layer density \
-             maximum (empty or all-zero density_curves_layers), so no field can be \
-             realized",
-            film.info.stock.as_deref().unwrap_or("<unnamed>")
-        ));
-    }
     let support_um = grain.v3_dye_support_um as f64;
     Ok(GrainV3Params {
+        monochrome,
         support_um,
         cell_um: cell_um_override(),
         event_area_um2: grain.v3_event_area_um2,
         channel_correlation: grain.channel_correlation,
-        channel_scale: channel_event_scale(grain.rms_granularity),
+        channel_scale: channel_event_scale(if monochrome {
+            [grain.rms_granularity[0]; 3]
+        } else {
+            grain.rms_granularity
+        }),
         particle_scale_sublayers: grain.particle_scale_sublayers,
-        density_min: grain.density_min,
-        uniformity: grain.uniformity,
+        density_min: if monochrome {
+            [grain.density_min[0]; 3]
+        } else {
+            grain.density_min
+        },
+        uniformity: if monochrome {
+            [grain.uniformity[0]; 3]
+        } else {
+            grain.uniformity
+        },
         layer_max,
         composite_curves: curves.normalized.clone(),
         layer_curves,
@@ -823,6 +856,7 @@ fn device_params(
         layers: tables[c].layers,
     });
     Ok(spektrafilm_backend::dye_params::DyeGpuParams {
+        monochrome: resolved.monochrome,
         tables: spektrafilm_backend::dye_params::DyeChannelTablesGpu::pack(parts),
         cell_um: model.cell_um(),
         taps: model.taps().to_vec(),
@@ -1693,6 +1727,30 @@ mod tests {
         validate_supported(&film, &params).unwrap();
         resolve(&film, &params).unwrap();
 
+        // Resolved negative and reversal BW profiles use one material realization.
+        for (stock, time) in [
+            ("kodak_doublex", 6.5),
+            ("kodak_doublex", 9.0),
+            ("kodak_trix", 1.0),
+        ] {
+            let other = crate::profile::resolve_for_render(load(stock), Some(time));
+            let mut stock_params = params.clone();
+            crate::params_builder::apply_film_specifics(&mut stock_params, &other);
+            let resolved = resolve(&other, &stock_params).unwrap();
+            let source = ImageBuf::from_data(2, 2, vec![from_f64(0.2); 12]);
+            let grid = ReadoutGrid {
+                origin_um: [-0.25, 0.75],
+                pitch_um: [2.125, 1.375],
+                width: 2,
+                height: 2,
+            };
+            let actual = v3::apply(&source, 2.0, grid, &resolved).unwrap();
+            for pixel in actual.pixels() {
+                assert_eq!(pixel[0], pixel[1], "{stock} time {time}");
+                assert_eq!(pixel[0], pixel[2], "{stock} time {time}");
+            }
+        }
+
         // Still and cine color filming stocks share the same model boundary.
         for stock in [
             "kodak_portra_400",
@@ -1723,14 +1781,6 @@ mod tests {
             }
         }
 
-        // Non-color or non-filming chemistry stays outside the support.
-        let other = load("kodak_doublex");
-        let error = validate_supported(&other, &params).unwrap_err();
-        assert!(
-            error.contains("unsupported condition") && error.contains("kodak_doublex"),
-            "{error}"
-        );
-
         // Positive color filming stocks use the same field with the polarity
         // carried into the composite lookup axis.
         for stock in ["fujifilm_provia_100f", "fujifilm_velvia_100"] {
@@ -1753,7 +1803,11 @@ mod tests {
         }
         // Print stocks share `type = "negative"` and `use = "still"` but are
         // not filming emulsions.
-        for stock in ["kodak_portra_endura", "fujifilm_crystal_archive_typeii"] {
+        for stock in [
+            "kodak_portra_endura",
+            "fujifilm_crystal_archive_typeii",
+            "kodak_2302",
+        ] {
             let paper = load(stock);
             let error = validate_supported(&paper, &params).unwrap_err();
             assert!(
@@ -1764,12 +1818,12 @@ mod tests {
             );
         }
 
-        // A monochrome filming stock has no three-record color chemistry.
-        let mut monochrome = load("kodak_portra_800");
-        monochrome.info.channel_model = "bw".into();
-        let error = validate_supported(&monochrome, &params).unwrap_err();
+        // Unknown record layouts are not a monochrome shortcut.
+        let mut unknown = load("kodak_portra_800");
+        unknown.info.channel_model = "unknown".into();
+        let error = validate_supported(&unknown, &params).unwrap_err();
         assert!(
-            error.contains("unsupported condition") && error.contains("bw"),
+            error.contains("unsupported condition") && error.contains("unknown"),
             "{error}"
         );
 
@@ -1816,6 +1870,35 @@ mod tests {
         inactive.film_render.grain.active = false;
         inactive.workflow.route = "input".into();
         assert!(validate_supported(&film, &inactive).is_ok());
+    }
+
+    #[test]
+    fn zero_capacity_components_preserve_the_expected_density() {
+        for stock in ["kodak_doublex", "kodak_portra_800"] {
+            let mut film = crate::profile::resolve_for_render(load(stock), None);
+            film.data.density_curves_model = None;
+            film.data.log_exposure = vec![0.0, 1.0];
+            film.data.density_curves = vec![vec![0.0; 3], vec![1.0; 3]];
+            film.data.density_curves_layers = vec![
+                vec![vec![0.0; 3]; 3],
+                vec![vec![0.0; 3], vec![0.25; 3], vec![0.75; 3]],
+            ];
+            let mut params = supported_params();
+            crate::params_builder::apply_film_specifics(&mut params, &film);
+            let mut resolved = resolve(&film, &params).unwrap();
+            resolved.expectation = true;
+            let source = ImageBuf::from_data(2, 2, vec![from_f64(0.4); 12]);
+            let grid = ReadoutGrid {
+                origin_um: [0.0; 2],
+                pitch_um: [2.0; 2],
+                width: 2,
+                height: 2,
+            };
+            let output = v3::apply(&source, 2.0, grid, &resolved).unwrap();
+            for value in output.data {
+                assert!((value as f64 - 0.4).abs() < read_tolerance(), "{stock}");
+            }
+        }
     }
 
     #[test]

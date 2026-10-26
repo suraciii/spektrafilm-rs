@@ -259,7 +259,7 @@ fn session_fixture() -> Session {
         });
     await_input(&mut harness);
     assert_eq!(harness.state().image.as_ref().unwrap().width(), 160);
-    click(&mut harness, "◀");
+    click(&mut harness, "Collapse or expand Presets");
     Session { harness, directory }
 }
 
@@ -1142,13 +1142,16 @@ mod layout_snapshots {
                 rows.push((label, bounds));
             }
         }
-        for pair in rows.windows(2) {
-            assert!(
-                pair[0].1.y1 <= pair[1].1.y0,
-                "modal rows overlap: {} and {}",
-                pair[0].0,
-                pair[1].0
-            );
+        for (index, (label, bounds)) in rows.iter().enumerate() {
+            for (other, other_bounds) in &rows[..index] {
+                assert!(
+                    bounds.x1 <= other_bounds.x0
+                        || other_bounds.x1 <= bounds.x0
+                        || bounds.y1 <= other_bounds.y0
+                        || other_bounds.y1 <= bounds.y0,
+                    "modal rows overlap: {label} and {other}"
+                );
+            }
         }
         // The dialog must state what the chosen settings will write; the row
         // is a read-only label, so it carries no widget of its own to query.
@@ -1253,7 +1256,7 @@ fn style_session(styles: &[(&str, &str)]) -> Session {
         });
     await_input(&mut harness);
     assert_eq!(harness.state().image.as_ref().unwrap().width(), 160);
-    click(&mut harness, "◀");
+    click(&mut harness, "Collapse or expand Presets");
     Session { harness, directory }
 }
 
@@ -1455,7 +1458,7 @@ fn american_reminiscence_browser_restores_virtual_exposure_and_render() {
     let h = &mut s.harness;
     h.state_mut().params.camera.exposure_compensation_ev = -1.0;
     h.state_mut().params.camera.auto_exposure = true;
-    click(h, "▶");
+    click(h, "Collapse or expand Presets");
     click(h, "American Reminiscence");
     assert_eq!(h.state().params.camera.exposure_compensation_ev, 0.5);
     assert!(!h.state().params.camera.auto_exposure);

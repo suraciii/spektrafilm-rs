@@ -231,6 +231,7 @@ fn copied_settings(
     result.preparation = result.params.render_preparation_state();
     result.params.validate_detailed()?;
     let film = profile::load_profile_by_name(data_dir, &result.film)?;
+    result.params.film_render.grain.monochrome = film.is_bw();
     spektrafilm_core::validate_scan_output(&result.params, &film).map_err(anyhow::Error::msg)?;
     // Building the same snapshot boundary used by Export rejects missing styles,
     // profiles, and unsupported material combinations before any history mutation.
@@ -1709,6 +1710,37 @@ mod tests {
             .is_err()
         );
         assert_eq!(destination, before);
+    }
+
+    #[test]
+    fn copied_dye_look_derives_layout_without_erasing_channel_requests() {
+        let (app, _directory, _ctx) = app();
+        let baseline = app.capture_photograph_settings().unwrap();
+        for (source_film, destination_film, monochrome) in [
+            ("kodak_doublex", "kodak_portra_800", true),
+            ("kodak_portra_800", "kodak_doublex", false),
+        ] {
+            let mut source = baseline.clone();
+            source.film = source_film.into();
+            source.params.film_render.grain.engine = spektrafilm_core::params::GrainEngine::Dye;
+            source.params.film_render.grain.channel_correlation = 0.35;
+            source.params.film_render.grain.uniformity = [0.2, 0.4, 0.6];
+            let mut destination = baseline.clone();
+            destination.film = destination_film.into();
+            destination.params.film_render.grain.monochrome = !monochrome;
+            let copied = copied_settings(
+                &source,
+                &destination,
+                CopyScope::Look,
+                &app.data_dir,
+                app.backend.as_ref(),
+            )
+            .unwrap();
+            assert_eq!(copied.film, source_film);
+            assert_eq!(copied.params.film_render.grain.monochrome, monochrome);
+            assert_eq!(copied.params.film_render.grain.channel_correlation, 0.35);
+            assert_eq!(copied.params.film_render.grain.uniformity, [0.2, 0.4, 0.6]);
+        }
     }
 
     #[test]

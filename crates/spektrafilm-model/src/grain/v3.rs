@@ -53,6 +53,8 @@ pub struct ReadoutGrid {
 /// Resolved Dye inputs. Plain data — no profile or runtime types.
 #[derive(Debug, Clone)]
 pub struct GrainV3Params {
+    /// Profile-derived single-record layout, carried in three equal lanes.
+    pub monochrome: bool,
     /// Gaussian sigma of the dye support in micrometers.
     pub support_um: f64,
     /// Field-cell pitch in micrometers. `None` selects the production value
@@ -67,7 +69,7 @@ pub struct GrainV3Params {
     /// record retains its marginal count law; record-rate ratios affect count
     /// correlation. The model's structural domain is `[0, 1)`; runtime
     /// validation retains the historical supported range `[0, 0.45]`, not a
-    /// certified material limit.
+    /// certified material limit. Validated but inactive for monochrome.
     pub channel_correlation: f64,
     /// Relative per-channel event-area scale `(G / 6)^2`, not certified RMS.
     pub channel_scale: [f64; 3],
@@ -97,6 +99,9 @@ pub struct GrainV3Params {
 /// `target` is the full-source developed CMY density and `pitch_um` its pixel
 /// pitch on the full film. The returned image holds the readout density with
 /// `density_min` subtracted once.
+/// Monochrome tables must be canonical replicated records. Source lanes
+/// must be finite and agree within an absolute `1e-6` density tolerance;
+/// record 0 supplies the single material target, never their average.
 pub fn apply(
     target: &ImageBuf,
     pitch_um: f64,
@@ -529,6 +534,7 @@ pub struct Model {
     channels: [Channel; 3],
     seed: u64,
     expectation: bool,
+    monochrome: bool,
     channel_correlation: f64,
     mass_law: MassLaw,
 }
@@ -671,6 +677,9 @@ impl Model {
         if !cell_area.is_finite() || cell_area <= 0.0 {
             return Err("film grain Dye: squared field pitch must be finite and > 0; reduce the dye support or increase the field pitch".to_owned());
         }
+        if params.monochrome {
+            check_monochrome_tables(params)?;
+        }
         let mut channels = Vec::with_capacity(3);
         for c in 0..3 {
             channels.push(Channel::new(
@@ -701,6 +710,7 @@ impl Model {
                 .map_err(|_| "film grain Dye: channel state".to_owned())?,
             seed: params.seed,
             expectation: params.expectation,
+            monochrome: params.monochrome,
             channel_correlation,
             mass_law,
         })
@@ -711,10 +721,15 @@ impl Model {
     /// Implements `design.md#sublayer-target-allocation`: bracket lookup on
     /// the normalized composite axis, weights `v_lc + b_lc`, then iterative
     /// weighted capacity allocation of `T_c = D_c + density_min_c`.
-    /// Realized absolute cell density per channel for one cell target.
+    /// Monochrome allocates record 0 once and replicates its targets.
     pub fn layer_targets(&self, target: [f64; 3]) -> [[f64; 3]; 3] {
         let mut out = [[0.0f64; 3]; 3];
-        for (c, ch) in self.channels.iter().enumerate() {
+        for (c, ch) in self
+            .channels
+            .iter()
+            .enumerate()
+            .take(if self.monochrome { 1 } else { 3 })
+        {
             let total = (target[c] + ch.min).clamp(0.0, ch.cap_total);
             let (low, t) = ch.bracket(target[c]);
             let mut weights = [0.0f64; 3];
@@ -727,7 +742,7 @@ impl Model {
             }
             out[c] = allocate(total, &ch.cap, &weights);
         }
-        out
+        if self.monochrome { [out[0]; 3] } else { out }
     }
 
     /// Realized (or expected) absolute cell density per channel.
@@ -736,7 +751,10 @@ impl Model {
     /// random stream, so a crop or a tile boundary cannot change a cell's
     /// counts.
     ///
-    /// Each layer splits its per-channel rate `lambda_c` into a shared part
+    /// Monochrome draws only record-0 component streams `0, 1, 2`, without
+    /// shared counts, and replicates the absolute density before formation.
+    ///
+    /// In color, each layer splits its per-channel rate `lambda_c` into a shared part
     /// `corr * min_c(lambda_c)` and an independent remainder
     /// `lambda_c - shared`. The shared part is drawn once per layer, so the
     /// channels of one layer correlate while every channel keeps its marginal
@@ -759,6 +777,34 @@ impl Model {
         layers: [[f64; 3]; 3],
         cell_area: f64,
     ) -> Result<[f64; 3], String> {
+        if self.monochrome {
+            let ch = &self.channels[0];
+            let index = cell_stream_index(i, j);
+            let mut out = 0.0f64;
+            for l in 0..3 {
+                let target = layers[0][l];
+                if target <= 0.0 || ch.cap[l] <= 0.0 {
+                    continue;
+                }
+                let p = (target / ch.cap[l]).clamp(0.0, 1.0);
+                let s = 1.0 - ch.uniformity * (1.0 - 1e-6) * p;
+                let mass = ch.cap[l] * ch.area[l] * s / ch.frac[l];
+                let rate = cell_area * ch.frac[l] * p / (ch.area[l] * s);
+                let count = if self.expectation {
+                    rate
+                } else {
+                    let mut rng = FastStatsRng::stream(self.seed, l as u64, index);
+                    self.mass_law.sample(&mut rng, rate)?
+                };
+                out += mass * count / cell_area;
+                if !out.is_finite() {
+                    return Err(
+                        "film grain Dye: sampled dye mass exceeds finite density range".to_owned(),
+                    );
+                }
+            }
+            return Ok([out; 3]);
+        }
         let mut out = [0.0f64; 3];
         let index = cell_stream_index(i, j);
         for l in 0..3 {
@@ -996,14 +1042,55 @@ impl Channel {
     }
 }
 
+/// A single material record must arrive in canonical replicated tables.
+/// Reject disagreement instead of silently choosing a different grain law.
+fn check_monochrome_tables(params: &GrainV3Params) -> Result<(), String> {
+    let check = |values: &[f64; 3], name: &str| {
+        if values.iter().any(|v| !v.is_finite()) || values[1] != values[0] || values[2] != values[0]
+        {
+            Err(format!(
+                "film grain Dye: monochrome {name} must be finite and identical across records"
+            ))
+        } else {
+            Ok(())
+        }
+    };
+    check(&params.channel_scale, "channel scale")?;
+    check(&params.density_min, "density minimum")?;
+    check(&params.uniformity, "uniformity")?;
+    for row in &params.layer_max {
+        check(row, "layer maxima")?;
+    }
+    for row in &params.composite_curves {
+        check(row, "composite curve")?;
+    }
+    for row in &params.layer_curves {
+        for layer in row {
+            check(layer, "layer curve")?;
+        }
+    }
+    Ok(())
+}
+
 /// Fail before rendering when the developed target leaves the capacity
 /// envelope `[-density_min, sum_l M_lc]`.
 fn check_target_range(target: &ImageBuf, model: &Model) -> Result<(), String> {
+    const TOLERANCE: f64 = 1e-6;
     let mut low = [f64::INFINITY; 3];
     let mut high = [f64::NEG_INFINITY; 3];
     for px in target.pixels() {
         for c in 0..3 {
             let value = to_f64(px[c]);
+            if !value.is_finite() {
+                return Err(format!(
+                    "film grain Dye: channel {c} developed density must be finite"
+                ));
+            }
+            if model.monochrome && (value - to_f64(px[0])).abs() > TOLERANCE {
+                return Err(format!(
+                    "film grain Dye: monochrome developed density lanes must agree within {TOLERANCE} D"
+                ));
+            }
             if value < low[c] {
                 low[c] = value;
             }
@@ -1012,7 +1099,6 @@ fn check_target_range(target: &ImageBuf, model: &Model) -> Result<(), String> {
             }
         }
     }
-    const TOLERANCE: f64 = 1e-6;
     for c in 0..3 {
         let floor = -model.channels[c].min - TOLERANCE;
         let ceiling = model.channels[c].cap_total - model.channels[c].min + TOLERANCE;

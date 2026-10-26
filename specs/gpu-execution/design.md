@@ -163,6 +163,22 @@ The GPU MUST preserve the reference conditioning needed for those decisions; nat
 
 Mean, variance, spectrum, correlation, and photographic grain appearance checks MUST supplement sample and discrete-decision checks. Equal statistics with a different count law, clipped tail, conditional allocation, or grain population MUST fail algorithm alignment. Source-library parity and CPU/GPU alignment are distinct comparisons with identified references.
 
+### Viewing glare device execution
+
+Viewing glare MUST use the CPU reference's u32-truncated seed without an offset.
+
+It MUST retain the row-major MT19937 word stream, the two-word uniform construction, Marsaglia polar rejection, cached normal pair, and `sigma < 1e-6` no-draw branch. Chunk boundaries MUST retain both generator state and the cached normal.
+
+Viewing glare MAY evaluate conditioning and the normal transform with f32 arithmetic.
+
+The device MUST NOT require native f64 or int64 for this stage.
+
+The f32 path MUST preserve the reference law, seed interpretation, and word-consumption structure.
+
+Floating results and near-boundary rejection decisions MUST satisfy measured agreement checks rather than an unqualified identity claim.
+
+An insufficient generator-state binding MUST fail explicitly.
+
 ## Bounded execution
 
 The GPU backend MUST validate buffer arithmetic, binding sizes, workgroup limits, storage requirements and the minimum working set before allocating known workloads. It MUST plan bounded device resources for both small images and full photographic frames. Resource planning MUST NOT rely on a full microscopic grain canvas when the owning field algorithm permits bounded readout.

@@ -107,6 +107,7 @@ impl App {
             film.is_film() && film.is_filming() && print.is_print_stock(),
             Message::new("photo.error.material_role")
         );
+        settings.params.film_render.grain.monochrome = film.is_bw();
         settings
             .params
             .validate_detailed()

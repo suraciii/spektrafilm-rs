@@ -2,7 +2,9 @@
 
 ## Decision
 
-Dye is a conditional, film-coordinate dye-field algorithm. It consumes the developed CMY record-density target produced by the film stage and returns a CMY record-density field to the next spectral stage. It does not reconstruct microscopic crystals, model a scanner, or add noise to an encoded image.
+Dye is a conditional, film-coordinate record-field algorithm. It consumes the developed record-density target produced by the film stage and returns formed density to the next spectral stage.
+
+It models color dye records or an effective monochrome record. It does not reconstruct microscopic crystals, model a scanner, or add noise to an encoded image.
 
 The algorithm has four required operations:
 
@@ -88,6 +90,22 @@ A Spektra-only particle-area or blur control MUST NOT enter Dye unless a later D
 The runtime MUST validate finiteness, positivity, nonnegativity, domain constraints, and representability before allocation. An invalid or unrepresentable value MUST produce an actionable error. The implementation MUST NOT repair it by clipping, substituting a default, dropping a layer, or changing the count law.
 
 The implementation MUST expose no independent controls for particle count, event mass, sparsity, or measured RMS. Count rate and event mass are derived from the target, event area, occupancy policy, sublayer response, and cell geometry. RMS is a measurement result, not a formation input.
+
+## Record layout
+
+The resolved profile supplies an internal monochrome layout flag after development-time selection. A single-record branch makes the material realization explicit; merely admitting BW to three-record sampling would retain redundant independent fields. Three-lane storage remains shared with the existing formation and readout operators.
+
+For BW, the model MUST require identical record tables and parameters. Source samples MUST be finite and within each lane's capacity envelope. Each source lane MUST agree with record 0 within an absolute `1e-6 D`, the existing density-envelope tolerance.
+
+Validation MUST examine all original full-source samples before record-0 substitution, including samples outside the requested readout and its formation halo. Image-dependent GPU checks MUST execute on the selected device.
+
+The BW branch MUST allocate record 0 on the source grid before conservative remap. For each global cell it MUST sample that record's numerical components with private stream tags `0`, `1`, and `2`, without a shared-count draw.
+
+It MUST copy the summed absolute density to all three lanes before formation, optical response, and readout. Generating three fields and averaging them or desaturating final RGB is not equivalent.
+
+Replicated lanes MUST use identical statistical floors. The existing floor subtraction and downstream film-base spectrum remain distinct. The color path MUST retain its arithmetic order, stream tags, and default inputs.
+
+Saved BW material MUST retain the existing `monochrome_record_replicated` representation. Continuation MUST consume the formed field without resampling it. [GPU execution](../../gpu-execution/spec.md#computation-scope) owns the CPU-only material boundary; exact-cell and aperture persistence restrictions remain unchanged.
 
 ## Sublayer target allocation
 
@@ -294,4 +312,4 @@ Dye does not require microscopic crystal reconstruction, particle enumeration, m
 
 Real scans guide photographic validation. They do not define an algorithm until receiver, aperture, density, wavelength, source provenance, and processing are declared. Commercial simulation resemblance does not establish correctness or attribution.
 
-This revision defines a new Dye algorithm contract. Legacy parameter names, defaults, serialized shapes, feature-profile catalogs, and pixel identity are outside its scope. Any compatibility or migration policy MUST be specified separately and MUST NOT weaken this algorithm contract.
+The [product contract](spec.md#controls-and-resolved-inputs) owns the BW extension's parameter compatibility. It does not establish compatibility with earlier unsupported BW realizations or weaken the algorithm's validation gates.

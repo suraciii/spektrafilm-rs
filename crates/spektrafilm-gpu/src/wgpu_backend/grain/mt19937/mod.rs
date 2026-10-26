@@ -214,6 +214,7 @@ fn build_spektra_mt19937_state_with_limit(
     let pipe = backend.cached_pipeline(
         concat!(
             include_str!("../../../../../spektrafilm-shaders/wgsl/f64_math.wgsl"),
+            include_str!("../../../../../spektrafilm-shaders/wgsl/mt19937.wgsl"),
             include_str!("mt19937.wgsl")
         ),
         &[

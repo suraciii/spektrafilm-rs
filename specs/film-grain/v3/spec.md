@@ -1,16 +1,18 @@
 # Dye grain
 
-Dye is a film-coordinate conditional dye-field engine. This specification defines its product boundary, observable behavior, and acceptance gates. It does not define compatibility with an earlier Dye implementation and does not lock calibration values.
+Dye is a film-coordinate conditional record-field engine. This specification defines its product boundary, observable behavior, and acceptance gates. It does not lock calibration values.
 
 ## Goal
 
 Dye MUST form convincing color-film grain by conditioning a stochastic dye field on developed film record density. Real film scans are evidence for photographic validation. They are not a substitute for a declared optical measurement protocol.
 
+For monochrome profiles, Dye supplies a single-record BW effective model. Its availability MUST NOT be presented as calibrated silver-material fidelity.
+
 Subject shape, tone, color, and fine detail MUST pass through the same field formation and readout as the grain realization. A larger canvas, a softer source, post-encoded noise, or a separate clean-detail path does not establish success.
 
 ## Image-forming contract
 
-Dye MUST consume the developed CMY record-density target at the film-density boundary. It MUST allocate the target across the selected film profile's three dye-forming sublayers, realize conditional dye mass in global film coordinates, form the complete realization with the declared support operator, and read it through exact output footprints.
+Dye MUST consume the developed record-density target at the film-density boundary. It MUST allocate the target across the selected film profile's three numerical curve components, realize conditional mass in global film coordinates, form the complete realization with the declared support operator, and read it through exact output footprints. Numerical components MUST NOT be described as measured silver populations.
 
 Dye MUST NOT retain an independent clean-detail image and add grain after it. A mean-plus-residual implementation is valid only when the mean and residual represent the same conditional field and pass through identical formation and readout.
 
@@ -22,11 +24,11 @@ The film, print, and scan chain owns grain polarity and color. Dye MUST NOT forc
 
 ## Supported product boundary
 
-Dye supports a color filming profile only when the loaded profile declares the material and workflow conditions required by the film-chain contract. The implementation MUST use the caller's resolved film geometry and MUST NOT add a second stock-name or format whitelist.
+Dye supports color and monochrome filming profiles only when the loaded profile declares the material and workflow conditions required by the film-chain contract. The implementation MUST use the caller's resolved film geometry and MUST NOT add a second stock-name or format whitelist. Printing materials MUST NOT be admitted as filming stocks.
 
 The product resolver MUST reject an unsupported material, chemistry, route, or missing profile data before output publication. It MUST report the unsupported condition and the reason. Availability of a profile is not proof of stock calibration, optical-readout acceptance, or photographic acceptance.
 
-The implementation MUST run the same Dye algorithm for negative and positive color film profiles. Polarity belongs to the resolved film-density curves and downstream interpretation. A negative/positive comparison is valid only when the interpretation, receiver, and output condition are recorded.
+The implementation MUST run the same conditional law for negative and positive film profiles within each record layout. Polarity belongs to the resolved film-density curves and downstream interpretation. A negative/positive comparison is valid only when the interpretation, receiver, and output condition are recorded.
 
 Changing film geometry MUST preserve requested output raster dimensions while changing physical source and output footprint sizes. It MUST NOT silently rescale support, event area, stock strength, field resolution, or count addressing. A geometry or resource request that cannot be represented MUST fail before publication.
 
@@ -35,6 +37,12 @@ Changing film geometry MUST preserve requested output raster dimensions while ch
 Dye exposes only algorithm inputs that have an explicit owner and evidence contract. Support, event area, stock strength, sublayer response, occupancy, channel coupling, and field resolution have distinct meanings. The product MUST NOT expose independent particle-count, particle-mass, sparsity, and RMS controls that can contradict one another.
 
 The resolved film profile supplies its sublayer response and stock-relative strength. Dye consumes that result; it does not reinterpret unrelated Spektra or Procedural controls. A control owned by another engine MUST NOT silently affect Dye.
+
+The resolved profile MUST determine record layout. A monochrome profile MUST NOT enable an editable layout switch, a different grain engine, or an implicit silver-chemistry claim.
+
+`channel_correlation` MUST remain stored but inactive for a single-record material. CLI reports and GUI controls MUST explain its inactivity without discarding the requested value. Selecting a color profile MUST restore its applicability.
+
+Existing parameter names, ranges, defaults, and recipe syntax remain unchanged.
 
 RMS is not a per-image normalization target. The formation path MUST NOT inspect the current image, crop, ROI, or seed realization to retune event area or any other parameter. Fixed-reference RMS behavior, if later offered, MUST be an explicit calibration operation with a declared reference condition and an infeasibility error.
 
@@ -111,7 +119,7 @@ Dye does not require microscopic crystal reconstruction, explicit particle enume
 
 Dye does not promise pixel parity with Spektra, Procedural, Dehancer, a commercial simulator, or a scan receiver. It does not inherit another engine's controls, defaults, calibration, or evidence.
 
-This is a clean algorithm contract. Legacy parameter names, defaults, serialized shapes, feature-profile catalogs, migration behavior, and prior pixel identity are not part of this specification. If the product needs any of those behaviors, they require a separate decision and specification.
+The BW extension preserves the existing parameter documents and color execution behavior. It defines no historical BW pixel compatibility and does not import another engine's calibration or feature-profile catalog.
 
 ## References
 

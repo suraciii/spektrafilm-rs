@@ -698,7 +698,7 @@ fn browser_clear_collapse_and_reopen_preserve_controls_and_missing_context() {
             .query_by_label("Current look: My Presets / Absent look • missing")
             .is_none()
     );
-    harness.get_by_label("▶").click();
+    harness.get_by_label("Collapse or expand Presets").click();
     harness.run();
     assert!(
         harness
@@ -707,7 +707,7 @@ fn browser_clear_collapse_and_reopen_preserve_controls_and_missing_context() {
     );
     assert!(harness.state().presets.state.expanded);
     assert_eq!(harness.state().presets.state.width, preferred_width);
-    harness.get_by_label("◀").click();
+    harness.get_by_label("Collapse or expand Presets").click();
     harness.run();
     assert!(harness.state().presets.state.expanded);
     harness.set_size(egui::vec2(1460.0, 980.0));
@@ -718,11 +718,11 @@ fn browser_clear_collapse_and_reopen_preserve_controls_and_missing_context() {
             .query_by_label("Current look: My Presets / Absent look • missing")
             .is_some()
     );
-    harness.get_by_label("◀").click();
+    harness.get_by_label("Collapse or expand Presets").click();
     harness.run();
     assert!(!harness.state().presets.state.expanded);
     assert_eq!(harness.state().presets.query, "query-with-no-look-match");
-    harness.get_by_label("▶").click();
+    harness.get_by_label("Collapse or expand Presets").click();
     harness.run();
     assert!(harness.state().presets.state.expanded);
     harness.get_by_label("Clear preset search").click();

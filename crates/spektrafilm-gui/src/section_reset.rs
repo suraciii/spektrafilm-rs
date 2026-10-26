@@ -189,7 +189,7 @@ pub(crate) fn factory_value(path: &str) -> Option<Value> {
     if let Some(path) = path.strip_prefix("extras.") {
         document_value(&FACTORY_EXTRAS, path)
     } else {
-        document_value(&FACTORY_ROOT, path)
+        value_at(&FACTORY_ROOT, path)
     }
 }
 
@@ -228,7 +228,7 @@ pub(crate) fn path_modified(path: &str, live_root: &Value, extras: &Value) -> bo
     let live = if let Some(path) = path.strip_prefix("extras.") {
         extras_value(extras, path)
     } else {
-        document_value(live_root, path)
+        value_at(live_root, path)
     };
     match (live, factory_value(path)) {
         (Some(live), Some(factory)) => !same_bits(&live, &factory),
@@ -303,12 +303,14 @@ fn document_value(document: &Value, path: &str) -> Option<Value> {
     Some(current.clone())
 }
 
-/// The value a runtime path resolves to inside one runtime tree.
-///
-/// The tree is the serialized runtime model, so a path's first segment is a
-/// top-level field of `RuntimeParams`.
+/// Resettable value of one runtime path. Material-derived layout is not an
+/// editable Grain value and must not affect its modified marker or reset.
 fn value_at(root: &Value, path: &str) -> Option<Value> {
-    document_value(root, path)
+    let mut value = document_value(root, path)?;
+    if path == "film_render.grain" {
+        value.as_object_mut()?.remove("monochrome");
+    }
+    Some(value)
 }
 
 /// Whether a section's live parameters differ from the projected factory state.
@@ -431,6 +433,7 @@ pub fn reset(params: &mut RuntimeParams, extras: &mut Value, section: &str) -> b
                 if crate::state::validate_stored_runtime(&mut restored).is_err() {
                     return false;
                 }
+                restored.film_render.grain.monochrome = params.film_render.grain.monochrome;
                 restored.restore_render_preparation_state(&preparation);
                 *params = restored;
             } else {

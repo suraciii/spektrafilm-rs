@@ -58,6 +58,7 @@ impl PagedBand {
 }
 
 pub(in crate::wgpu_backend) struct DyePagedState {
+    source_validation: Vec<LayerPass>,
     bands: Vec<PagedBand>,
     pub(in crate::wgpu_backend) output_pages: Vec<ImagePage>,
     pub(in crate::wgpu_backend) width: u32,
@@ -73,6 +74,14 @@ impl DyePagedState {
     }
 
     pub(in crate::wgpu_backend) fn submit(&self, backend: &WgpuBackend) -> Result<(), String> {
+        if !self.source_validation.is_empty() {
+            let mut encoder = backend.device.create_command_encoder(&Default::default());
+            for validation in &self.source_validation {
+                backend.check_cancelled()?;
+                validation.encode(&mut encoder);
+            }
+            backend.queue.submit(Some(encoder.finish()));
+        }
         for band in &self.bands {
             backend.check_cancelled()?;
             let mut encoder = backend.device.create_command_encoder(&Default::default());
@@ -137,6 +146,25 @@ impl WgpuBackend {
         // RGB source windows are smaller than their nine-lane layer targets.
         let input_window = scratch("dye_source_window", sl / 3);
         let source_layers = scratch("dye_source_layers", sl);
+        let source_validation = if params.monochrome {
+            input
+                .pages
+                .iter()
+                .map(|page| {
+                    dye_layers::build_source_validation(
+                        self,
+                        page.n_pixels,
+                        &tables,
+                        &curves,
+                        &page.buffer,
+                        &source_layers,
+                        &status,
+                    )
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
         let cell_layers = scratch("dye_cell_layers", cl);
         let cells = scratch("dye_cell_density", c);
         let horizontal = scratch("dye_horizontal", h);
@@ -156,6 +184,7 @@ impl WgpuBackend {
                 self,
                 [band.source_cols, band.source_rows, 0, 0],
                 [band.source_cols, band.source_rows],
+                params.monochrome,
                 &tables,
                 &curves,
                 &input_window,
@@ -207,6 +236,7 @@ impl WgpuBackend {
             });
         }
         Ok(DyePagedState {
+            source_validation,
             bands,
             output_pages,
             width: params.grid.width,
@@ -221,6 +251,11 @@ mod tests {
 
     #[test]
     fn paged_source_preserves_the_same_stochastic_field() {
+        check_paged_source(false);
+        check_paged_source(true);
+    }
+
+    fn check_paged_source(monochrome: bool) {
         let backend = crate::test_support::adapter();
         let knots = [0.0, 1.0];
         let inv = [1.0];
@@ -237,7 +272,7 @@ mod tests {
             inv_dx: &inv,
             layers: [&knots, &zero, &zero],
         }));
-        let params = DyeGpuParams {
+        let mut params = DyeGpuParams {
             tables,
             cell_um: 1.0,
             taps: vec![0.25, 0.5, 0.25],
@@ -251,12 +286,17 @@ mod tests {
             seed: 0x1234_5678_9abc_def0,
             channel_correlation: 0.3,
             expectation: false,
+            monochrome: false,
         };
+        params.monochrome = monochrome;
         let image = ImageBuf::from_data(
             16,
             12,
             (0..16 * 12 * 3)
-                .map(|i| spektrafilm_math::precision::from_f64(0.2 + f64::from(i % 17) / 40.0))
+                .map(|i| {
+                    let index = if monochrome { i / 3 } else { i };
+                    spektrafilm_math::precision::from_f64(0.2 + f64::from(index % 17) / 40.0)
+                })
                 .collect(),
         );
         let contiguous = backend.pipe.upload_image(
@@ -288,7 +328,9 @@ mod tests {
                 .create_buffer_init(&wgpu::util::BufferInitDescriptor {
                     label: Some("dye_test_source_page"),
                     contents: bytemuck::cast_slice(&values),
-                    usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+                    usage: wgpu::BufferUsages::STORAGE
+                        | wgpu::BufferUsages::COPY_SRC
+                        | wgpu::BufferUsages::COPY_DST,
                 });
             pages.push(ImagePage {
                 first_pixel: (i * 19) as u32,
@@ -311,9 +353,39 @@ mod tests {
                     .readback_buffer(&page.buffer, u64::from(page.n_pixels) * 12)
             })
             .collect();
+        if monochrome {
+            assert!(
+                actual
+                    .as_chunks::<3>()
+                    .0
+                    .iter()
+                    .all(|p| p[0] == p[1] && p[0] == p[2])
+            );
+        }
         assert_eq!(
             expected, actual,
             "page transport must preserve one executor's stochastic draws and global footprints"
         );
+        if monochrome {
+            // The last page splits raster rows and lies outside this crop and
+            // its formation halo. Original BW samples there still need validation.
+            params.grid.origin_um = [0.0; 2];
+            params.grid.width = 1;
+            params.grid.height = 1;
+            let last = input.pages.last().unwrap();
+            backend.queue.write_buffer(
+                &last.buffer,
+                u64::from(last.n_pixels - 1) * 12 + 4,
+                bytemuck::bytes_of(&0.5_f32),
+            );
+            let cropped = backend
+                .prepare_dye_paged(16, 12, &input, &params, None)
+                .unwrap();
+            cropped.submit(&backend).unwrap();
+            let error = backend
+                .check_dye_status(&cropped.status_buffer())
+                .unwrap_err();
+            assert!(error.contains("lanes disagree"), "{error}");
+        }
     }
 }

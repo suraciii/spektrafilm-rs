@@ -21,6 +21,7 @@ impl App {
                 self.gui_state.sections["simulation"]["print_paper"] =
                     self.print_name.clone().into();
                 self.params = resolved.params;
+                self.params.film_render.grain.monochrome = resolved.film.is_bw();
                 self.film_dev_times = resolved.film.data.development_time;
                 self.print_dev_times = resolved.print.data.development_time;
                 self.presets.state.applied = Some(AppliedPreset {

@@ -25,7 +25,7 @@ pub struct BrowserState {
 impl Default for BrowserState {
     fn default() -> Self {
         Self {
-            width: 260.0,
+            width: 252.0,
             expanded: true,
             applied: None,
         }

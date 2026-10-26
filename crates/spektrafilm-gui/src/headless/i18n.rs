@@ -77,23 +77,29 @@ fn grain_correlation_search_survives_language_switch_without_changing_the_recipe
     let h = &mut s.harness;
     reveal_control(h, "film_render.grain.engine");
     choose(h, "Engine", "Dye");
+    h.state_mut().select_film_profile("kodak_doublex".into());
+    h.run_steps(3);
+    assert!(h.state().params.film_render.grain.monochrome);
     let params = h.state().params.clone();
     let revision = h.state().parameter_revision;
-    for (preference, search, label) in [
+    for (preference, search, label, reason) in [
         (
             LanguagePreference::English,
             "Search controls",
             "Channel correlation",
+            "Inactive for single-record black-and-white material; the requested value is retained for color film.",
         ),
         (
             LanguagePreference::SimplifiedChinese,
             "搜索控件",
             "通道相关性",
+            "对单记录黑白材料不生效；请求值会保留，切换回彩色胶片后恢复使用。",
         ),
         (
             LanguagePreference::English,
             "Search controls",
             "Channel correlation",
+            "Inactive for single-record black-and-white material; the requested value is retained for color film.",
         ),
     ] {
         language(h, preference);
@@ -112,6 +118,8 @@ fn grain_correlation_search_survives_language_switch_without_changing_the_recipe
                     .is_some(),
                 "grain control unavailable for {query}"
             );
+            assert!(h.get_by_label(label).node().is_disabled());
+            assert!(h.query_by_label(reason).is_some());
             assert_eq!(h.state().params, params);
             assert_eq!(h.state().parameter_revision, revision);
         }
@@ -333,8 +341,8 @@ fn chinese_header_actions_and_search_remain_reachable_at_supported_desktop_sizes
             theme::apply(&cc.egui_ctx);
             app(state_path, image_path, browser)
         });
-        if h.query_by_label("◀").is_some() {
-            click(&mut h, "◀");
+        if h.query_by_label("Search presets").is_some() {
+            click(&mut h, "Collapse or expand Presets");
         }
         language(&mut h, LanguagePreference::SimplifiedChinese);
         for label in ["打开", "设置", "导出", "搜索控件", "扫描", "保存"] {
@@ -604,7 +612,7 @@ fn preset_name_composition_does_not_submit_or_translate_authored_text() {
     let mut s = session();
     let h = &mut s.harness;
     language(h, LanguagePreference::SimplifiedChinese);
-    h.get_by_label("▶").click();
+    h.get_by_label("折叠或展开预设").click();
     h.run_steps(3);
     h.get_by_label("保存预设…").click();
     h.run_steps(3);

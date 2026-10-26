@@ -195,7 +195,15 @@ fn empty_histogram_shows_its_no_output_paint_branch_without_a_retained_render() 
     let h = &mut s.harness;
     h.run_steps(1);
     assert!(h.state().output_image.is_none());
-    assert!(h.state().histogram.visible, "the empty strip is visible");
+    assert!(
+        !h.state().histogram.visible,
+        "fresh sessions leave room for adjustments"
+    );
+    click(h, "Tonal distribution");
+    assert!(
+        h.state().histogram.visible,
+        "the empty readout can be revealed"
+    );
     // The painter's `data == None` branch is the real `No output` empty state.
     assert!(h.state().histogram.cached_data().is_none());
 }

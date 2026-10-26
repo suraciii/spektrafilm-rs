@@ -87,15 +87,17 @@ fn highlight_uses_the_last_chunk_maximum_for_every_chunk() {
 fn optical_chunks_preserve_glare_rng_and_reference_blur_across_seams() {
     let backend = crate::test_support::adapter();
     let _restore = RestoreLimit(std::env::var_os("SPEKTRAFILM_GPU_BINDING_LIMIT_BYTES"));
-    let width = 17;
-    let height = 9;
+    let width = 37;
+    let height = 19;
     let mut values: Vec<f32> = (0..width * height * 3)
         .map(|i| 0.03 + (i % 29) as f32 * 0.01)
         .collect();
-    // The impulse straddles the artificial 16-pixel binding boundary, and
-    // channel widths exercise FIR and IIR without averaging their sigmas.
+    // Impulses straddle the 16-pixel optical and 211-pixel glare binding
+    // boundaries. Channel widths exercise FIR and IIR without averaging sigmas.
     values[15 * 3] = 8.0;
     values[16 * 3 + 1] = 5.0;
+    values[210 * 3] = 8.0;
+    values[211 * 3 + 1] = 5.0;
     values[(width * height * 3 - 1) as usize] = 11.0;
     let hp = spektrafilm_backend::HalationGpuParams {
         scatter_amount: 0.35,
@@ -163,8 +165,16 @@ fn optical_chunks_preserve_glare_rng_and_reference_blur_across_seams() {
         readback(&backend, &img)
     };
     for stage in 0..4 {
-        let full = run("4096", stage);
-        let bounded = run("192", stage);
+        let full = run("65536", stage);
+        // The sequential glare generator needs its 2516-byte MT slot.
+        let bounded = run(
+            if stage == 1 || stage == 2 {
+                "2532"
+            } else {
+                "192"
+            },
+            stage,
+        );
         for (i, (&expected, &actual)) in full.iter().zip(&bounded).enumerate() {
             assert!(
                 actual.is_finite() && (actual - expected).abs() < 5e-5,
@@ -181,7 +191,7 @@ fn optical_chunks_preserve_glare_rng_and_reference_blur_across_seams() {
     // scatter tails, compressed-source bounces, seeded glare, and USM combine.
     let run_sequence = |reuse: bool| {
         unsafe {
-            std::env::set_var("SPEKTRAFILM_GPU_BINDING_LIMIT_BYTES", "192");
+            std::env::set_var("SPEKTRAFILM_GPU_BINDING_LIMIT_BYTES", "2532");
         }
         let img = image(&backend, &values);
         let mut shared = super::super::blur::GaussianScratch::new(width, height);

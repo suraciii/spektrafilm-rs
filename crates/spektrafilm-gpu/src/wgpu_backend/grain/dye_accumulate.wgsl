@@ -8,7 +8,7 @@ struct AccumulateParams {
     cell_area: f32,
     correlation: f32,
     expectation: u32,
-    pad0: u32,
+    monochrome: u32,
     pad1: u32,
     pad2: u32,
 }
@@ -36,6 +36,33 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_workgroups) 
     let i = params.geometry.x + i32(index % cols);
     let j = params.geometry.y + i32(index / cols);
     var result = vec3<f32>(0.0);
+    if (params.monochrome != 0u) {
+        let table = tables[0];
+        var scalar = 0.0;
+        for (var layer = 0u; layer < 3u; layer = layer + 1u) {
+            let value = layers[index * 9u + layer];
+            if (value <= 0.0 || table.cap[layer] <= 0.0) { continue; }
+            let occupancy = clamp(value / table.cap[layer], 0.0, 1.0);
+            let s = (1.0 - table.uniformity) + table.uniformity *
+                ((1.0 - occupancy) + 1e-6 * occupancy);
+            let mass = table.cap[layer] * table.area[layer] * s / table.frac[layer];
+            let rate = params.cell_area * table.frac[layer] * occupancy / (table.area[layer] * s);
+            if (!(rate > 0.0 && rate <= MAX_RATE && mass > 0.0 && mass <= 3.402823466e38)) {
+                atomicOr(&status, 2u);
+                break;
+            }
+            var count = rate;
+            if (params.expectation == 0u) { count = draw(rate, i, j, layer); }
+            scalar += mass * count / params.cell_area;
+        }
+        if (!(scalar >= 0.0 && scalar <= 3.402823466e38)) {
+            atomicOr(&status, 2u);
+        }
+        cells[index * 3u] = scalar;
+        cells[index * 3u + 1u] = scalar;
+        cells[index * 3u + 2u] = scalar;
+        return;
+    }
     for (var layer = 0u; layer < 3u; layer = layer + 1u) {
         var rate = vec3<f32>(0.0);
         var mass = vec3<f32>(0.0);

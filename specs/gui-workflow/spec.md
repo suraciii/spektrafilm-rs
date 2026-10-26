@@ -283,7 +283,9 @@ Cache availability MUST NOT change supported profiles or displayed pixel values.
 
 The viewer MUST expose a tonal-distribution readout of the retained output. It MUST be viewer-only: it MUST NOT alter saved or exported pixels.
 - The readout is a fixed strip at the top of the control panel, above search and stage navigation. It is co-visible with the controls, does not occlude the image, and does not increase the control panel width.
-- It is default-on, collapsible, and its visibility state is persisted. It is viewer-only and never affects saved or exported pixels.
+- It MUST start collapsed when no visibility state is saved.
+- A saved expanded or collapsed state MUST take precedence.
+- Visibility changes MUST be persisted.
 
 The readout MUST derive from the retained output. It MUST NOT require a second render.
 

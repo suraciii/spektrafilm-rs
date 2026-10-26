@@ -32,7 +32,7 @@ _Avoid_: Scanner white and black correction, output levels
 **Scanned density**: The density derived from one channel of a scan capture, relative to that channel's clear reference.
 _Avoid_: Record density, scan capture
 
-**Monochrome**: A film stock that forms one silver image. It uses the silver material law whether its profile is negative or positive. A chromogenic monochrome stock forms dye records and requires an explicit dye material law.
+**Monochrome**: A film material represented by one image-forming record. Monochrome does not identify whether the image consists of metallic silver or chromogenic dyes.
 _Avoid_: Black and white correction, scanner white and black correction
 
 **Negative conversion**: The interpretation of a developed negative as a positive image. It reads each dye record's density through the selected film's response and applies a positive tone response from one logistic curve family. It has one interpretation and no selectable method.
