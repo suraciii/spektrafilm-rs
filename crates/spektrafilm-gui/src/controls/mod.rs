@@ -170,12 +170,20 @@ pub(crate) fn enum_choice<T: Copy + PartialEq>(
     // parameter row. The selector paints in its own horizontal row inside a
     // vertical section body, so both share one explicit row here.
     ui.horizontal(|ui| {
-        ui.label(crate::controls::localized(ui.ctx(), label))
-            .on_hover_text(crate::controls::localized(ui.ctx(), tooltip));
         let width = ui
             .available_width()
             .clamp(theme::WIDTH_COMBO_MIN, theme::WIDTH_COMBO_MAX);
-        ui.add_space((ui.available_width() - width).max(0.0));
+        let label_width = (ui.available_width() - width - ui.spacing().item_spacing.x).max(0.0);
+        ui.allocate_ui_with_layout(
+            egui::vec2(label_width, theme::HEIGHT_CONTROL),
+            egui::Layout::top_down(egui::Align::Min),
+            |ui| {
+                ui.set_min_width(label_width);
+                ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
+                ui.label(crate::controls::localized(ui.ctx(), label))
+                    .on_hover_text(crate::controls::localized(ui.ctx(), tooltip));
+            },
+        );
         let response = egui::ComboBox::from_id_salt(label)
             .width(width)
             .wrap_mode(egui::TextWrapMode::Truncate)
@@ -233,10 +241,17 @@ pub(crate) fn stage_disclosure(ui: &mut Ui, title: &str, open: bool) -> egui::Re
 
 fn disclosure(ui: &mut Ui, title: &str, open: bool, size: f32) -> egui::Response {
     let name = crate::controls::localized(ui.ctx(), title);
-    let galley = ui.painter().layout_no_wrap(
-        name.as_ref().to_owned(),
-        egui::FontId::proportional(size),
-        theme::FG,
+    let galley = egui::WidgetText::from(
+        egui::RichText::new(name.as_ref())
+            .size(size)
+            .color(theme::FG)
+            .strong(),
+    )
+    .into_galley(
+        ui,
+        Some(egui::TextWrapMode::Extend),
+        f32::INFINITY,
+        egui::TextStyle::Body,
     );
     let size = egui::vec2(
         galley.size().x + theme::SPACE_4 + theme::SPACE_2,
@@ -482,12 +497,12 @@ pub(crate) const STAGE_LAYOUT: &[(Stage, &[&str])] = &[
         Stage::Input,
         &[
             "Workflow",
+            "Camera",
+            "Camera diffusion",
             "Input",
             "Import Raw",
             "Source rotation",
             "Crop and upscale",
-            "Camera",
-            "Camera diffusion",
             "Input gamut compress",
             "Spectral upsampling",
             "Convert",

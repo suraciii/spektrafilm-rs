@@ -91,52 +91,63 @@ pub(super) fn profile_dev_times(data_dir: &Path, stock: &str) -> Vec<f64> {
 
 /// Development-time picker for a B&W development-time family. `selection`
 /// of `None` means the profile's default (the floor-middle entry, matching
-/// upstream's `select_development_time`). Returns true when changed.
+/// upstream's `select_development_time`). Returns the change and editing response.
 pub(super) fn dev_time_combo(
     ui: &mut egui::Ui,
     salt: &str,
     label: &str,
     times: &[f64],
     selection: &mut Option<f64>,
-) -> bool {
+) -> (bool, egui::Response) {
     let times = if times.is_empty() { &[1.0][..] } else { times };
     // Same resolution as the render path, so the combo always highlights
     // exactly the entry the pipeline will use.
     let current_idx = profile::development_time_index(times, *selection);
     let mut changed = false;
     let tooltip = "Development time for a BW development-time family: selects the density curve and base+fog to render. '—' uses the representative middle development; ignored for single-curve and color stocks.";
-    let label_response = ui
-        .label(crate::controls::localized(ui.ctx(), label))
-        .on_hover_text(crate::controls::localized(ui.ctx(), tooltip));
-    egui::ComboBox::from_id_salt(salt)
-        .selected_text(format!("{} min", times[current_idx]))
-        .width(ui.available_width().min(280.0))
-        .show_ui(ui, |ui| {
-            for (i, t) in times.iter().enumerate() {
-                if ui
-                    .selectable_label(i == current_idx, format!("{t} min"))
-                    .clicked()
-                    && i != current_idx
-                {
-                    *selection = Some(*t);
-                    changed = true;
-                }
-            }
+    let response = ui
+        .horizontal(|ui| {
+            let width = ui
+                .available_width()
+                .clamp(crate::theme::WIDTH_COMBO_MIN, crate::theme::WIDTH_COMBO_MAX);
+            let label_width = (ui.available_width() - width - ui.spacing().item_spacing.x).max(0.0);
+            let label_response = ui
+                .allocate_ui_with_layout(
+                    egui::vec2(label_width, crate::theme::HEIGHT_CONTROL),
+                    egui::Layout::top_down(egui::Align::Min),
+                    |ui| {
+                        ui.set_min_width(label_width);
+                        ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
+                        ui.label(crate::controls::localized(ui.ctx(), label))
+                            .on_hover_text(crate::controls::localized(ui.ctx(), tooltip))
+                    },
+                )
+                .inner;
+            let response = egui::ComboBox::from_id_salt(salt)
+                .selected_text(format!("{} min", times[current_idx]))
+                .width(width)
+                .wrap_mode(egui::TextWrapMode::Truncate)
+                .show_ui(ui, |ui| {
+                    for (i, t) in times.iter().enumerate() {
+                        if ui
+                            .selectable_label(i == current_idx, format!("{t} min"))
+                            .clicked()
+                            && i != current_idx
+                        {
+                            *selection = Some(*t);
+                            changed = true;
+                        }
+                    }
+                })
+                .response
+                .on_hover_text(crate::controls::localized(ui.ctx(), tooltip))
+                .labelled_by(label_response.id);
+            ui.ctx()
+                .accesskit_node_builder(response.id, |node| node.clear_label());
+            response
         })
-        .response
-        .on_hover_text(crate::controls::localized(ui.ctx(), tooltip));
-    if let Some(response) = ui
-        .ctx()
-        .read_response(ui.make_persistent_id(egui::Id::new(salt)))
-    {
-        let id = response.id;
-        response.labelled_by(label_response.id);
-        // egui's unlabelled ComboBox installs an empty explicit label, which
-        // overrides the associated visible label in AccessKit consumers.
-        ui.ctx()
-            .accesskit_node_builder(id, |node| node.clear_label());
-    }
-    changed
+        .inner;
+    (changed, response)
 }
 
 /// The human-readable name of the selected stock: the matching entry's
@@ -159,37 +170,53 @@ pub(super) fn profile_combo(
     label: &str,
     entries: &[ProfileEntry],
     selected_stock: &mut String,
-) -> bool {
+) -> (bool, egui::Response) {
     let tooltip = if salt == "film" {
         "Film stock to simulate"
     } else {
         "Print stock to simulate"
     };
-    let label_response = ui
-        .label(crate::controls::localized(ui.ctx(), label))
-        .on_hover_text(crate::controls::localized(ui.ctx(), tooltip));
     let display = selected_display(entries, selected_stock);
     let prev = selected_stock.clone();
-    egui::ComboBox::from_id_salt(salt)
-        .selected_text(&display)
-        .width(ui.available_width().min(280.0))
-        .show_ui(ui, |ui| {
-            for entry in entries {
-                ui.selectable_value(selected_stock, entry.stock.clone(), &entry.display);
-            }
+    let response = ui
+        .horizontal(|ui| {
+            let width = ui
+                .available_width()
+                .clamp(crate::theme::WIDTH_COMBO_MIN, crate::theme::WIDTH_COMBO_MAX);
+            let label_width = (ui.available_width() - width - ui.spacing().item_spacing.x).max(0.0);
+            let label_response = ui
+                .allocate_ui_with_layout(
+                    egui::vec2(label_width, crate::theme::HEIGHT_CONTROL),
+                    egui::Layout::top_down(egui::Align::Min),
+                    |ui| {
+                        ui.set_min_width(label_width);
+                        ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
+                        ui.label(crate::controls::localized(ui.ctx(), label))
+                            .on_hover_text(crate::controls::localized(ui.ctx(), tooltip))
+                    },
+                )
+                .inner;
+            let response = egui::ComboBox::from_id_salt(salt)
+                .selected_text(&display)
+                .width(width)
+                .wrap_mode(egui::TextWrapMode::Truncate)
+                .show_ui(ui, |ui| {
+                    for entry in entries {
+                        ui.selectable_value(selected_stock, entry.stock.clone(), &entry.display);
+                    }
+                })
+                .response
+                .on_hover_text(format!(
+                    "{}\n{display}",
+                    crate::controls::localized(ui.ctx(), tooltip)
+                ))
+                .labelled_by(label_response.id);
+            ui.ctx()
+                .accesskit_node_builder(response.id, |node| node.clear_label());
+            response
         })
-        .response
-        .on_hover_text(crate::controls::localized(ui.ctx(), tooltip));
-    if let Some(response) = ui
-        .ctx()
-        .read_response(ui.make_persistent_id(egui::Id::new(salt)))
-    {
-        let id = response.id;
-        response.labelled_by(label_response.id);
-        ui.ctx()
-            .accesskit_node_builder(id, |node| node.clear_label());
-    }
-    prev != *selected_stock
+        .inner;
+    (prev != *selected_stock, response)
 }
 
 #[cfg(test)]
@@ -211,8 +238,8 @@ mod headless {
         ];
         let mut harness = Harness::new_ui_state(
             |ui, state: &mut (String, Option<f64>)| {
-                profile_combo(ui, "film", "Film", &entries, &mut state.0);
-                dev_time_combo(
+                let _ = profile_combo(ui, "film", "Film", &entries, &mut state.0);
+                let _ = dev_time_combo(
                     ui,
                     "film-dev",
                     "Film development",

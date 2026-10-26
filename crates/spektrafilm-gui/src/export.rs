@@ -317,14 +317,46 @@ fn editor_width(ui: &egui::Ui) -> f32 {
         .clamp(theme::WIDTH_COMBO_MIN, theme::WIDTH_COMBO_MAX)
 }
 
+/// A one-point boundary without the default separator's extra layout space.
+fn quiet_separator(ui: &mut egui::Ui) {
+    let (rect, _) = ui.allocate_exact_size(
+        egui::vec2(ui.available_width(), theme::STROKE_DEFAULT),
+        egui::Sense::hover(),
+    );
+    ui.painter().hline(
+        rect.x_range(),
+        rect.center().y,
+        egui::Stroke::new(theme::STROKE_DEFAULT, theme::BORDER),
+    );
+}
+
+fn section_heading(ui: &mut egui::Ui, label: &str) {
+    ui.label(
+        egui::RichText::new(controls::localized(ui.ctx(), label))
+            .color(theme::FG_SECONDARY)
+            .size(theme::SIZE_LABEL)
+            .strong(),
+    );
+}
+
+fn section_break(ui: &mut egui::Ui) {
+    // Ordinary body rows already contribute eight points after their content:
+    // complete a 16-point section end, then leave 12 points before the title.
+    ui.add_space(theme::SPACE_2);
+    quiet_separator(ui);
+    ui.add_space(theme::SPACE_1);
+}
+
 /// A read-only option row: product label and fixed value in the shared
 /// editor column, locatable at its canonical path. The value carries the
 /// row's accessible name like an editor does, so the row reads as the
 /// option's state rather than a disabled editor.
 fn readonly_row(ui: &mut egui::Ui, label: &str, value: &str, help: &str, path: &str) {
     ui.horizontal(|ui| {
-        ui.label(controls::localized(ui.ctx(), label))
-            .on_hover_text(help);
+        ui.label(
+            egui::RichText::new(controls::localized(ui.ctx(), label)).color(theme::FG_SECONDARY),
+        )
+        .on_hover_text(help);
         let cell = editor_width(ui);
         ui.add_space((ui.available_width() - cell).max(0.0));
         let response = ui
@@ -382,6 +414,18 @@ impl ExportDialog {
         let mut cancel = false;
         let mut close = false;
         let title = crate::i18n::text(ctx, "surfaces.export.title");
+        let close_label = controls::localized(ctx, "Close export");
+        let source_name = source
+            .and_then(Path::file_name)
+            .map(|name| name.to_string_lossy())
+            .unwrap_or_else(|| crate::i18n::text(ctx, "result.export.accepted_source"));
+        let source_text = crate::tr!(ctx, "result.export.source", source = source_name);
+        let dimensions_text = crate::tr!(
+            ctx,
+            "result.export.dimensions",
+            width = dimensions[0],
+            height = dimensions[1]
+        );
         // A canonical locator request owns the focus of its frame; otherwise
         // the dialog places it once, on its explicit close action.
         let locator_requested = ctx.data(|data| {
@@ -394,53 +438,70 @@ impl ExportDialog {
         // workspace behind the draft cannot change until the dialog is
         // dismissed. `Modal` centers the sheet like the prototype's
         // `min(500px, 100%)` dialog.
+        let frame = theme::dialog_frame();
         let modal = egui::Modal::new(egui::Id::new("full_render_export_options"))
+            .frame(frame)
             .show(ctx, |ui| {
                 let screen = ui.ctx().screen_rect();
-                let width = (screen.width() - 2.0 * theme::SPACE_4)
-                    .clamp(theme::WIDTH_CONTROL_PANEL, 500.0);
+                // Width includes the modal border, rather than adding the
+                // popup's default inset to the proposal's 500-point sheet.
+                let border = 2.0 * theme::STROKE_DEFAULT;
+                let width = ((screen.width() - 2.0 * theme::SPACE_DIALOG).min(500.0) - border)
+                    .max(1.0);
+                let max_height = (screen.height() * 0.9)
+                    .min(screen.height() - 2.0 * theme::SPACE_DIALOG)
+                    - border;
                 ui.set_min_width(width);
                 ui.set_max_width(width);
-                ui.set_max_height(screen.height() - 2.0 * theme::SPACE_4);
-                // Header: title and the explicit close action. Close drops
-                // the draft like Cancel; only the submit below returns it.
-                ui.horizontal(|ui| {
-                    ui.heading(title.clone());
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        let close_label = controls::localized(ui.ctx(), "Close export");
-                        let close_button = ui.button(close_label);
-                        if initial_focus {
-                            close_button.request_focus();
-                        }
-                        close = close_button.clicked();
-                    });
-                });
-                ui.separator();
-                let body_height =
-                    (ui.available_height() - theme::HEIGHT_ACTION_BAR_RESERVE).max(80.0);
-                let body = egui::ScrollArea::vertical()
-                    .id_salt("export-options-scroll")
-                    .max_height(body_height)
+                ui.set_max_height(max_height);
+                ui.spacing_mut().item_spacing.y = 0.0;
+                // 56-point header: one control-height row centered between
+                // 14-point vertical insets, with an icon-only close action.
+                egui::Frame::NONE
+                    .inner_margin(egui::Margin::symmetric(
+                        theme::SPACE_DIALOG as i8,
+                        ((theme::HEIGHT_DIALOG_HEADER - theme::HEIGHT_CONTROL) / 2.0) as i8,
+                    ))
                     .show(ui, |ui| {
-                let source_name = source.and_then(Path::file_name)
-                    .map(|name| name.to_string_lossy())
-                    .unwrap_or_else(|| crate::i18n::text(ui.ctx(), "result.export.accepted_source"));
-                ui.label(crate::tr!(ui.ctx(), "result.export.source", source = source_name));
-                ui.label(crate::tr!(ui.ctx(), "result.export.dimensions",
-                    width = dimensions[0], height = dimensions[1]));
-                ui.label(egui::RichText::new(crate::i18n::text(
-                    ui.ctx(), "result.export.guidance",
-                )).small().color(theme::FG_SECONDARY));
-                ui.separator();
-                // Quiet section headings group the option rows as the
-                // prototype does, changing no row or its values.
-                ui.add_space(theme::SPACE_3);
-                ui.label(
-                    egui::RichText::new(controls::localized(ui.ctx(), "File and container"))
-                        .color(theme::FG)
-                        .size(theme::SIZE_TITLE)
-                        .strong(),
-                );
+                        ui.horizontal(|ui| {
+                            ui.set_min_height(theme::HEIGHT_CONTROL);
+                            ui.label(
+                                egui::RichText::new(title.as_ref())
+                                    .size(theme::SIZE_TITLE)
+                                    .strong(),
+                            );
+                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                let close_button = controls::icon_button(
+                                    ui,
+                                    close_label.as_ref(),
+                                    controls::Icon::Close,
+                                );
+                                if initial_focus {
+                                    close_button.request_focus();
+                                }
+                                close = close_button.clicked();
+                            });
+                        });
+                    });
+                quiet_separator(ui);
+                // Only the body scrolls. Header, borders, body insets and
+                // the padded 28-point action row have their own reservation.
+                let body_height = (max_height
+                    - theme::HEIGHT_DIALOG_HEADER
+                    - theme::HEIGHT_DIALOG_FOOTER
+                    - 2.0 * theme::STROKE_DEFAULT
+                    - 2.0 * theme::SPACE_DIALOG)
+                    .max(1.0);
+                let body = egui::Frame::NONE
+                    .inner_margin(theme::SPACE_DIALOG as i8)
+                    .show(ui, |ui| {
+                        egui::ScrollArea::vertical()
+                            .id_salt("export-options-scroll")
+                            .auto_shrink([false, true])
+                            .max_height(body_height)
+                            .show(ui, |ui| {
+                ui.spacing_mut().item_spacing = egui::vec2(theme::SPACE_3, theme::SPACE_2);
+                section_heading(ui, "File and container");
                 enum_choice(ui, "Format", &mut draft.format, &[
                     (ExportFormat::Jpeg, ExportFormat::Jpeg.label()),
                     (ExportFormat::Png, ExportFormat::Png.label()),
@@ -462,7 +523,11 @@ impl ExportDialog {
                 }
                 let jpeg = draft.format == ExportFormat::Jpeg;
                 if jpeg {
-                    ui.label(crate::i18n::text(ui.ctx(), "surfaces.export.jpeg_warning"));
+                    ui.label(
+                        egui::RichText::new(crate::i18n::text(ui.ctx(), "surfaces.export.jpeg_warning"))
+                            .small()
+                            .color(theme::FG_SECONDARY),
+                    );
                     // The shared numeric owner models a parameter row: a
                     // labeled value entry with edit transactions and history
                     // gestures. This draft option is not a parameter row, and
@@ -471,9 +536,30 @@ impl ExportDialog {
                     // own editing owner.
                     let label = crate::i18n::text(ui.ctx(), "surfaces.export.jpeg_quality");
                     let help = crate::i18n::text(ui.ctx(), "surfaces.export.jpeg_quality_help");
-                    let slider = egui::Slider::new(&mut draft.jpeg_quality, 1..=100).text(label);
-                    let quality = ui.add(slider).on_hover_text(help);
-                    controls::locate_row(ui, "extras.rust.jpeg_quality", &quality);
+                    ui.horizontal(|ui| {
+                        let label_response = ui.label(
+                            egui::RichText::new(label.as_ref()).color(theme::FG_SECONDARY),
+                        ).on_hover_text(help.as_ref());
+                        let cell = editor_width(ui);
+                        ui.add_space((ui.available_width() - cell).max(0.0));
+                        ui.scope(|ui| {
+                            ui.spacing_mut().slider_width = (cell
+                                - ui.spacing().interact_size.x
+                                - ui.spacing().item_spacing.x)
+                                .max(1.0);
+                            let slider = egui::Slider::new(&mut draft.jpeg_quality, 1..=100);
+                            let quality = ui.add(slider)
+                                .labelled_by(label_response.id)
+                                .on_hover_text(help.as_ref());
+                            let enabled = ui.is_enabled();
+                            let value = f64::from(draft.jpeg_quality);
+                            quality.widget_info(|| egui::WidgetInfo::slider(enabled, value, label.as_ref()));
+                            ui.ctx().accesskit_node_builder(quality.id, |node| {
+                                node.set_label(label.as_ref());
+                            });
+                            controls::locate_row(ui, "extras.rust.jpeg_quality", &quality);
+                        });
+                    });
                     enum_choice(ui, "JPEG subsampling", &mut draft.jpeg_subsampling, &[
                         (JpegSubsampling::Yuv444, "4:4:4"),
                         (JpegSubsampling::Yuv420, "4:2:0"),
@@ -504,7 +590,7 @@ impl ExportDialog {
                                     egui::Label::new(
                                         egui::RichText::new(text)
                                             .small()
-                                            .color(theme::FG_MUTED),
+                                            .color(theme::FG_SECONDARY),
                                     )
                                     .sense(egui::Sense::focusable_noninteractive()),
                                 )
@@ -540,20 +626,18 @@ impl ExportDialog {
                         readonly_row(ui, "Compression", &value, &help, "extras.rust.export_compression");
                     }
                 }
-                ui.add_space(theme::SPACE_3);
-                ui.label(
-                    egui::RichText::new(controls::localized(ui.ctx(), "Color and computation"))
-                        .color(theme::FG)
-                        .size(theme::SIZE_TITLE)
-                        .strong(),
-                );
+                section_break(ui);
+                section_heading(ui, "Color and computation");
                 let spaces = if draft.format == ExportFormat::Exr { EXR_COLOR_SPACES } else { COLOR_SPACES };
                 // The shared choice owner models label, selector, and help;
                 // this selector additionally offers selection guidance inside
                 // its popup, so the dialog keeps its own owner for it.
                 ui.horizontal(|ui| {
-                    ui.label(crate::i18n::text(ui.ctx(), "surfaces.export.color_space"))
-                        .on_hover_text(crate::i18n::text(ui.ctx(), "surfaces.export.space_help"));
+                    ui.label(
+                        egui::RichText::new(crate::i18n::text(ui.ctx(), "surfaces.export.color_space"))
+                            .color(theme::FG_SECONDARY),
+                    )
+                    .on_hover_text(crate::i18n::text(ui.ctx(), "surfaces.export.space_help"));
                     let cell = editor_width(ui);
                     ui.add_space((ui.available_width() - cell).max(0.0));
                     let color_space = egui::ComboBox::from_id_salt("Saving color space")
@@ -575,11 +659,6 @@ impl ExportDialog {
                     controls::focus_response(ui, "Saving color space", &color_space);
                     controls::name_choice(ui, "Saving color space");
                 });
-                let cpu_label: &str = if cfg!(feature = "precision-f64") { "CPU (f64)" } else { "CPU (f32)" };
-                enum_choice(ui, "Backend", &mut draft.backend, &[
-                    (ExportBackend::Cpu, cpu_label),
-                    (ExportBackend::Gpu, "GPU (WGPU f32)"),
-                ], "CPU: highest precision, slower. GPU: faster, f32 precision.");
                 // The shared switch owner models this boolean draft option:
                 // the same presentation, state, and accessible naming an
                 // inspector boolean gets. Its response keeps the row
@@ -618,6 +697,14 @@ impl ExportDialog {
                         );
                     }
                 }
+                let cpu_label: &str = if cfg!(feature = "precision-f64") { "CPU (f64)" } else { "CPU (f32)" };
+                enum_choice(ui, "Backend", &mut draft.backend, &[
+                    (ExportBackend::Cpu, cpu_label),
+                    (ExportBackend::Gpu, "GPU (WGPU f32)"),
+                ], "CPU: highest precision, slower. GPU: faster, f32 precision.");
+                ui.label(egui::RichText::new(crate::i18n::text(
+                    ui.ctx(), "result.export.guidance",
+                )).small().color(theme::FG_SECONDARY));
                 draft.normalize();
                 let depth_label = match draft.depth {
                     BitDepth::Eight => "8 bit",
@@ -631,14 +718,11 @@ impl ExportDialog {
                     ExportFormat::Png => crate::tr!(ui.ctx(), "surfaces.export.summary_png", format = format_label, space = &draft.saving_color_space),
                     ExportFormat::Tiff => crate::tr!(ui.ctx(), "surfaces.export.summary_tiff", format = format_label, depth = depth_label, space = &draft.saving_color_space, encoding = if draft.saving_cctf_encoding { std::borrow::Cow::Borrowed("CCTF") } else { crate::i18n::text(ui.ctx(), "surfaces.export.linear") }, compression = match draft.compression { ExportCompression::Zip => std::borrow::Cow::Borrowed("ZIP"), ExportCompression::None => crate::i18n::text(ui.ctx(), "surfaces.export.none") }),
                 };
-                ui.add_space(theme::SPACE_3);
-                ui.label(
-                    egui::RichText::new(controls::localized(ui.ctx(), "Summary and actions"))
-                        .color(theme::FG)
-                        .size(theme::SIZE_TITLE)
-                        .strong(),
-                );
-                ui.label(egui::RichText::new(crate::tr!(ui.ctx(), "surfaces.export.summary", summary = summary)).small().color(theme::FG_MUTED))
+                section_break(ui);
+                section_heading(ui, "Summary and actions");
+                ui.label(egui::RichText::new(source_text.as_ref()).small().color(theme::FG_SECONDARY));
+                ui.label(egui::RichText::new(dimensions_text.as_ref()).small().color(theme::FG_SECONDARY));
+                ui.label(egui::RichText::new(crate::tr!(ui.ctx(), "surfaces.export.summary", summary = summary)).small().color(theme::FG_SECONDARY))
                     .on_hover_text(crate::i18n::text(ui.ctx(), "surfaces.export.summary_help"));
                 let compressed = container_compresses(draft);
                 let estimate = format_size(estimated_output_bytes(draft, dimensions));
@@ -653,7 +737,9 @@ impl ExportDialog {
                     } else {
                         crate::i18n::text(ui.ctx(), "surfaces.export.size_help")
                     });
-                    });
+                            })
+                    })
+                    .inner;
                 // The body's visible viewport is what the locator and the
                 // acceptance queries address, not the full scroll content.
                 let viewport = ui.interact(
@@ -669,24 +755,34 @@ impl ExportDialog {
                     node.set_role(egui::accesskit::Role::ScrollView);
                     node.set_label(content.as_ref());
                 });
-                ui.separator();
-                ui.allocate_ui_with_layout(
-                    egui::vec2(ui.available_width(), theme::HEIGHT_CONTROL),
-                    egui::Layout::right_to_left(egui::Align::Center),
-                    |ui| {
-                    // The sidebar opener and this submit are two steps of one
-                    // flow, so they carry distinct labels.
-                    let export = ui.add(egui::Button::new(
-                        egui::RichText::new(crate::i18n::text(ui.ctx(), "surfaces.export.submit"))
-                            .color(theme::CONTRAST_ON_ACCENT),
-                    ).fill(theme::ACCENT)).on_hover_text(crate::i18n::text(ui.ctx(), "surfaces.export.submit_help"));
-                    controls::locate_row(ui, "action.export", &export);
-                    submit = export.clicked();
-                    let discard = ui.button(crate::i18n::text(ui.ctx(), "surfaces.action.cancel")).on_hover_text(crate::i18n::text(ui.ctx(), "surfaces.export.discard_help"));
-                    controls::locate_row(ui, "action.cancel_export_draft", &discard);
-                    cancel = discard.clicked();
-                    },
-                );
+                quiet_separator(ui);
+                egui::Frame::NONE
+                    .inner_margin(theme::SPACE_DIALOG as i8)
+                    .show(ui, |ui| {
+                        ui.allocate_ui_with_layout(
+                            egui::vec2(ui.available_width(), theme::HEIGHT_CONTROL),
+                            egui::Layout::right_to_left(egui::Align::Center),
+                            |ui| {
+                                ui.spacing_mut().item_spacing.x = theme::SPACE_2;
+                                // The opener and submit are two distinct steps.
+                                let export = ui.add(
+                                    egui::Button::new(
+                                        egui::RichText::new(crate::i18n::text(ui.ctx(), "surfaces.export.submit"))
+                                            .color(theme::CONTRAST_ON_ACCENT),
+                                    ).fill(theme::ACCENT)
+                                        .min_size(egui::vec2(0.0, theme::HEIGHT_CONTROL)),
+                                ).on_hover_text(crate::i18n::text(ui.ctx(), "surfaces.export.submit_help"));
+                                controls::locate_row(ui, "action.export", &export);
+                                submit = export.clicked();
+                                let discard = ui.add(
+                                    egui::Button::new(crate::i18n::text(ui.ctx(), "surfaces.action.cancel"))
+                                        .min_size(egui::vec2(0.0, theme::HEIGHT_CONTROL)),
+                                ).on_hover_text(crate::i18n::text(ui.ctx(), "surfaces.export.discard_help"));
+                                controls::locate_row(ui, "action.cancel_export_draft", &discard);
+                                cancel = discard.clicked();
+                            },
+                        );
+                    });
             });
         // The modal root carries the dialog's accessible name and bounds.
         modal.response.widget_info(|| {

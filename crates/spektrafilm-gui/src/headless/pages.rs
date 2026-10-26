@@ -1112,11 +1112,13 @@ fn film_material_selection_retains_the_independently_selected_print_material() {
 fn applied_look_materials_follow_factory_filtering_and_undo() {
     let mut s = session();
     let h = &mut s.harness;
-    if h.query_by_label("▶").is_some() {
-        click(h, "▶");
+    if h.query_by_label("Search presets").is_none() {
+        click(h, "Collapse or expand Presets");
     }
     edit(h, "Search presets", "Kodak Portra 400");
-    click(h, "Kodak Portra 400");
+    h.get_by_role_and_label(egui::accesskit::Role::Button, "Kodak Portra 400")
+        .click();
+    h.run_steps(3);
     assert_eq!(h.state().film_name, "kodak_portra_400");
     search_controls(h, "extras.simulation.film_stock");
     click(h, "Only modified");

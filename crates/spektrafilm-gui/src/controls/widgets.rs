@@ -8,6 +8,256 @@ use egui::Ui;
 use serde_json::{Map, Value};
 use spektrafilm_core::params::diffusion::DiffusionFilterParams;
 
+/// Painter-backed symbols shared by actions and non-interactive marks.
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum Icon {
+    Open,
+    Undo,
+    Redo,
+    Settings,
+    Export,
+    Reset,
+    Close,
+    Add,
+    Image,
+    Help,
+    Aperture,
+    ChevronLeft,
+    Scan,
+    Save,
+    Layers,
+    Transitions,
+}
+
+/// Paint a symbol in the central 17-point square without relying on font glyphs.
+pub(crate) fn paint_icon(
+    painter: &egui::Painter,
+    rect: egui::Rect,
+    icon: Icon,
+    color: egui::Color32,
+) {
+    let center = rect.center();
+    let stroke = egui::Stroke::new(1.7_f32, color);
+    let point = |x, y| center + egui::vec2(x, y);
+    let line = |a: [f32; 2], b: [f32; 2]| {
+        painter.line_segment([point(a[0], a[1]), point(b[0], b[1])], stroke);
+    };
+    let path = |points: &[[f32; 2]]| {
+        for pair in points.windows(2) {
+            line(pair[0], pair[1]);
+        }
+    };
+    match icon {
+        Icon::Open => {
+            path(&[
+                [-7.0, 5.5],
+                [-7.0, -5.0],
+                [-2.5, -5.0],
+                [0.0, -2.5],
+                [6.0, -2.5],
+            ]);
+            path(&[
+                [-7.0, 5.5],
+                [-4.5, -0.5],
+                [7.5, -0.5],
+                [5.0, 5.5],
+                [-7.0, 5.5],
+            ]);
+        }
+        Icon::Undo | Icon::Redo => {
+            let direction = if matches!(icon, Icon::Redo) {
+                -1.0
+            } else {
+                1.0
+            };
+            let points = [
+                [5.5 * direction, 5.0],
+                [6.5 * direction, 1.5],
+                [5.0 * direction, -2.0],
+                [2.0 * direction, -4.0],
+                [-2.0 * direction, -4.0],
+                [-6.0 * direction, -1.0],
+            ];
+            path(&points);
+            path(&[
+                [-6.0 * direction, -5.5],
+                [-6.0 * direction, -1.0],
+                [-1.5 * direction, -1.0],
+            ]);
+        }
+        Icon::Settings => {
+            painter.circle_stroke(center, 4.0, stroke);
+            painter.circle_stroke(center, 1.25, stroke);
+            for (a, b) in [
+                ([0.0, -7.0], [0.0, -4.0]),
+                ([0.0, 4.0], [0.0, 7.0]),
+                ([-7.0, 0.0], [-4.0, 0.0]),
+                ([4.0, 0.0], [7.0, 0.0]),
+                ([-5.0, -5.0], [-3.0, -3.0]),
+                ([3.0, 3.0], [5.0, 5.0]),
+                ([5.0, -5.0], [3.0, -3.0]),
+                ([-3.0, 3.0], [-5.0, 5.0]),
+            ] {
+                line(a, b);
+            }
+        }
+        Icon::Export => {
+            line([0.0, -7.0], [0.0, 2.0]);
+            path(&[[-3.0, -1.0], [0.0, 2.0], [3.0, -1.0]]);
+            path(&[[-6.0, 1.0], [-6.0, 6.0], [6.0, 6.0], [6.0, 1.0]]);
+        }
+        Icon::Reset => {
+            path(&[
+                [-6.0, -2.0],
+                [-3.0, -5.5],
+                [1.5, -6.0],
+                [5.5, -3.5],
+                [6.5, 0.5],
+                [4.5, 4.5],
+                [0.5, 6.0],
+                [-3.5, 4.5],
+            ]);
+            path(&[[-6.0, -6.0], [-6.0, -2.0], [-2.0, -2.0]]);
+        }
+        Icon::Close => {
+            line([-5.0, -5.0], [5.0, 5.0]);
+            line([5.0, -5.0], [-5.0, 5.0]);
+        }
+        Icon::Add => {
+            line([-6.0, 0.0], [6.0, 0.0]);
+            line([0.0, -6.0], [0.0, 6.0]);
+        }
+        Icon::Image => {
+            painter.rect_stroke(
+                egui::Rect::from_center_size(center, egui::vec2(14.0, 12.0)),
+                1.0,
+                stroke,
+                egui::StrokeKind::Inside,
+            );
+            painter.circle_filled(point(-3.0, -2.0), 1.2, color);
+            path(&[
+                [-6.0, 4.0],
+                [-1.0, 0.0],
+                [2.0, 2.0],
+                [4.5, -0.5],
+                [6.0, 1.0],
+            ]);
+        }
+        Icon::Layers => {
+            path(&[
+                [0.0, -6.0],
+                [7.0, -2.0],
+                [0.0, 2.0],
+                [-7.0, -2.0],
+                [0.0, -6.0],
+            ]);
+            path(&[[-7.0, 2.0], [0.0, 6.0], [7.0, 2.0]]);
+        }
+        Icon::Transitions => {
+            path(&[[-6.0, -3.0], [6.0, -3.0], [3.0, -6.0]]);
+            path(&[[6.0, 3.0], [-6.0, 3.0], [-3.0, 6.0]]);
+        }
+        Icon::Help => {
+            painter.circle_stroke(center, 7.0, stroke);
+            path(&[
+                [-2.0, -2.5],
+                [-1.0, -4.0],
+                [1.5, -4.0],
+                [3.0, -2.5],
+                [2.0, -0.5],
+                [0.0, 1.0],
+            ]);
+            painter.circle_filled(point(0.0, 4.0), 0.9, color);
+        }
+        Icon::Aperture => {
+            painter.circle_stroke(center, 7.5, stroke);
+            for (a, b) in [
+                ([-3.5, -6.5], [3.0, -2.0]),
+                ([3.5, -6.5], [3.0, 2.0]),
+                ([7.0, 0.0], [0.0, 4.0]),
+                ([3.5, 6.5], [-3.0, 2.0]),
+                ([-3.5, 6.5], [-3.0, -2.0]),
+                ([-7.0, 0.0], [0.0, -4.0]),
+            ] {
+                line(a, b);
+            }
+        }
+        Icon::ChevronLeft => path(&[[2.0, -4.0], [-2.0, 0.0], [2.0, 4.0]]),
+        Icon::Scan => {
+            for points in [
+                [[-3.0, -6.0], [-6.0, -6.0], [-6.0, -3.0]],
+                [[3.0, -6.0], [6.0, -6.0], [6.0, -3.0]],
+                [[-3.0, 6.0], [-6.0, 6.0], [-6.0, 3.0]],
+                [[3.0, 6.0], [6.0, 6.0], [6.0, 3.0]],
+            ] {
+                path(&points);
+            }
+            line([-5.0, 0.0], [5.0, 0.0]);
+        }
+        Icon::Save => {
+            path(&[
+                [-6.0, -6.0],
+                [4.0, -6.0],
+                [6.0, -4.0],
+                [6.0, 6.0],
+                [-6.0, 6.0],
+                [-6.0, -6.0],
+            ]);
+            path(&[[-3.0, -6.0], [-3.0, -1.0], [3.0, -1.0], [3.0, -6.0]]);
+            path(&[[-3.0, 6.0], [-3.0, 2.0], [3.0, 2.0], [3.0, 6.0]]);
+        }
+    }
+}
+
+/// A normal framed action button whose canonical name is independent of its icon.
+pub(crate) fn icon_button(ui: &mut Ui, label: &str, icon: Icon) -> egui::Response {
+    painted_button(ui, label, icon, false)
+}
+
+/// A framed icon-and-text action with the same accessible name as its text.
+pub(crate) fn action_button(ui: &mut Ui, label: &str, icon: Icon) -> egui::Response {
+    painted_button(ui, label, icon, true)
+}
+
+fn painted_button(ui: &mut Ui, label: &str, icon: Icon, show_label: bool) -> egui::Response {
+    let galley = show_label.then(|| {
+        egui::WidgetText::from(label).into_galley(
+            ui,
+            Some(egui::TextWrapMode::Extend),
+            f32::INFINITY,
+            egui::TextStyle::Button,
+        )
+    });
+    let width = galley.as_ref().map_or(theme::HEIGHT_CONTROL, |galley| {
+        17.0 + theme::SPACE_2 + galley.size().x + ui.spacing().button_padding.x * 2.0
+    });
+    let response = ui
+        .add_sized([width, theme::HEIGHT_CONTROL], egui::Button::new(""))
+        .on_hover_text(label);
+    let enabled = ui.is_enabled();
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, label));
+    ui.ctx().accesskit_node_builder(response.id, |node| {
+        node.set_label(label);
+    });
+    let color = ui.style().interact(&response).text_color();
+    let mut icon_rect = response.rect;
+    if let Some(galley) = galley {
+        icon_rect.min.x += ui.spacing().button_padding.x;
+        icon_rect.max.x = icon_rect.min.x + 17.0;
+        ui.painter().galley(
+            egui::pos2(
+                icon_rect.right() + theme::SPACE_2,
+                response.rect.center().y - galley.size().y * 0.5,
+            ),
+            galley,
+            color,
+        );
+    }
+    paint_icon(ui.painter(), icon_rect, icon, color);
+    super::focus_feedback(ui, &response);
+    response
+}
+
 /// Editor range for `path`, from the single per-path table. A missing entry
 /// is a defect, not a silent default to the machine range.
 pub(crate) fn editor_range_for(path: &str) -> editor_ranges::EditorRange {
@@ -492,29 +742,26 @@ pub(crate) fn toggle_row(
     let mut changed = false;
     let response = ui
         .horizontal(|ui| {
+            let label_width = (ui.available_width() - 29.0 - ui.spacing().item_spacing.x).max(0.0);
             let label_response = ui
-                .label(crate::controls::localized(ui.ctx(), label))
+                .allocate_ui_with_layout(
+                    egui::vec2(label_width, theme::HEIGHT_CONTROL),
+                    egui::Layout::top_down(egui::Align::Min),
+                    |ui| {
+                        ui.set_min_width(label_width);
+                        ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
+                        row_label(ui, label, false)
+                    },
+                )
+                .inner
                 .on_hover_text(crate::controls::localized(ui.ctx(), tooltip));
             let mark = row_modified::RowMark::resolve(ui.ctx(), Some(label));
             mark.paint(ui, &label_response);
-            ui.add_space((ui.available_width() - 44.0).max(0.0));
             mark.gold(ui, |ui| {
-                let (fill, knob, text) = if *value {
-                    (theme::ACCENT, theme::CONTRAST_ON_ACCENT, "on")
-                } else {
-                    (theme::SURFACE3, theme::FG_MUTED, "off")
-                };
                 let response = ui
-                    .add(
-                        egui::Button::new(
-                            egui::RichText::new(super::localized(ui.ctx(), text))
-                                .color(knob)
-                                .size(theme::SIZE_HINT),
-                        )
-                        .fill(fill)
-                        .corner_radius(theme::RADIUS_CARD)
-                        .min_size(egui::vec2(44.0, theme::HEIGHT_CONTROL))
-                        .selected(*value),
+                    .add_sized(
+                        [29.0, theme::HEIGHT_CONTROL],
+                        egui::Button::new("").frame(false),
                     )
                     .on_hover_text(crate::controls::localized(ui.ctx(), tooltip));
                 super::focus_response(ui, label, &response);
@@ -522,6 +769,33 @@ pub(crate) fn toggle_row(
                     *value = !*value;
                     changed = true;
                 }
+                let (fill, knob) = if *value {
+                    (theme::ACCENT, theme::CONTRAST_ON_ACCENT)
+                } else {
+                    (theme::SURFACE3, theme::FG_SECONDARY)
+                };
+                let track =
+                    egui::Rect::from_center_size(response.rect.center(), egui::vec2(29.0, 17.0));
+                let border = if response.hovered() {
+                    theme::ACCENT_DIM
+                } else {
+                    theme::BORDER_ACTIVE
+                };
+                ui.painter().rect(
+                    track,
+                    9.0,
+                    fill,
+                    theme::stroke(border),
+                    egui::StrokeKind::Inside,
+                );
+                let knob_x = if *value {
+                    track.right() - 8.5
+                } else {
+                    track.left() + 8.5
+                };
+                ui.painter()
+                    .circle_filled(egui::pos2(knob_x, track.center().y), 5.5, knob);
+                super::focus_feedback(ui, &response);
                 let accessible_label = super::localized(ui.ctx(), label);
                 response.widget_info(|| {
                     egui::WidgetInfo::selected(
@@ -555,13 +829,9 @@ pub(crate) fn toggle_row(
 }
 /// The module factory-reset action presented on a module header.
 ///
-/// One presentation for the reset every resettable module carries: a quiet
-/// chip whose resting fill and border come from the theme, legible secondary
-/// text rather than the smallest muted role, and a minimum hit target sized
-/// from the spacing scale so the action is easy to hit beside its header. The
-/// caller owns the reset transaction and its history label; this owner
-/// presents the action, names its target for assistive technology, and states
-/// the factory baseline in accessible help so both survive without hover.
+/// A quiet frameless text action beside the module disclosure. The caller owns
+/// the reset transaction and its history label; this owner names its target
+/// and states the factory baseline in accessible help without relying on hover.
 pub(crate) fn module_reset(ui: &mut Ui, section: &str) -> egui::Response {
     let response = ui
         .add(
@@ -570,7 +840,7 @@ pub(crate) fn module_reset(ui: &mut Ui, section: &str) -> egui::Response {
                     .color(theme::FG_SECONDARY)
                     .size(theme::SIZE_UNIT),
             )
-            .corner_radius(theme::RADIUS_CARD)
+            .frame(false)
             .min_size(egui::vec2(theme::SPACE_4 * 3.0, theme::SPACE_3 * 2.0)),
         )
         .on_hover_text(crate::tr!(
@@ -591,10 +861,15 @@ pub(crate) fn module_reset(ui: &mut Ui, section: &str) -> egui::Response {
         "surfaces.section.restore",
         section = super::localized(ui.ctx(), section)
     );
+    let enabled = ui.is_enabled();
+    response.widget_info(|| {
+        egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, accessible_name.as_ref())
+    });
     ui.ctx().accesskit_node_builder(response.id, |node| {
         node.set_label(accessible_name);
         node.set_description(baseline);
     });
+    super::focus_feedback(ui, &response);
     response
 }
 
@@ -1083,6 +1358,119 @@ pub(crate) fn set_extra(extras: &mut Value, section: &str, key: &str, value: Val
 #[cfg(test)]
 mod layout_tests {
     use super::*;
+
+    #[test]
+    fn painter_actions_keep_button_names_and_keyboard_activation() {
+        use egui_kittest::{Harness, kittest::Queryable};
+
+        const ACTIONS: [(&str, Icon); 11] = [
+            ("Open image", Icon::Open),
+            ("Undo adjustment", Icon::Undo),
+            ("Redo adjustment", Icon::Redo),
+            ("Settings", Icon::Settings),
+            ("Export image", Icon::Export),
+            ("Reset module", Icon::Reset),
+            ("Close dialog", Icon::Close),
+            ("Add preset", Icon::Add),
+            ("Show image", Icon::Image),
+            ("Help", Icon::Help),
+            ("Aperture", Icon::Aperture),
+        ];
+        let mut harness = Harness::new_ui_state(
+            |ui, activated: &mut Vec<&'static str>| {
+                for (label, icon) in ACTIONS {
+                    if icon_button(ui, label, icon).clicked() {
+                        activated.push(label);
+                    }
+                }
+                if action_button(ui, "Named text action", Icon::Open).clicked() {
+                    activated.push("Named text action");
+                }
+            },
+            Vec::new(),
+        );
+        for label in ACTIONS
+            .map(|(label, _)| label)
+            .into_iter()
+            .chain(["Named text action"])
+        {
+            let action = harness.get_by_role_and_label(egui::accesskit::Role::Button, label);
+            if label != "Named text action" {
+                let bounds = action.raw_bounds().expect("icon button bounds");
+                assert!((bounds.x1 - bounds.x0 - f64::from(theme::HEIGHT_CONTROL)).abs() < 1.0);
+                assert!((bounds.y1 - bounds.y0 - f64::from(theme::HEIGHT_CONTROL)).abs() < 1.0);
+            }
+            action.focus();
+            harness.run();
+            harness.press_key(egui::Key::Space);
+            harness.run();
+            assert_eq!(harness.state().last(), Some(&label));
+        }
+        assert_eq!(harness.state().len(), ACTIONS.len() + 1);
+    }
+
+    #[test]
+    fn compact_switch_keeps_its_canonical_name_value_and_keyboard_behavior() {
+        use egui_kittest::{Harness, kittest::Queryable};
+
+        let mut harness = Harness::new_ui_state(
+            |ui, value| {
+                toggle_row(ui, "Enable diffusion", value, "Toggle diffusion filter");
+            },
+            false,
+        );
+        let switch =
+            harness.get_by_role_and_label(egui::accesskit::Role::Switch, "Enable diffusion");
+        assert_eq!(switch.toggled(), Some(egui::accesskit::Toggled::False));
+        switch.focus();
+        harness.run();
+        harness.press_key(egui::Key::Space);
+        harness.run();
+        assert!(*harness.state());
+        assert_eq!(
+            harness.get_by_label("Enable diffusion").toggled(),
+            Some(egui::accesskit::Toggled::True),
+        );
+        harness.get_by_label("Enable diffusion").simulate_click();
+        harness.run();
+        assert!(!*harness.state());
+    }
+
+    #[test]
+    fn choice_rows_wrap_long_labels_without_growing_the_module() {
+        for width in [280.0_f32, 344.0_f32] {
+            let ctx = egui::Context::default();
+            crate::theme::apply(&ctx);
+            let mut selected = 0;
+            let _ = ctx.run(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(width, 500.0),
+                    )),
+                    ..Default::default()
+                },
+                |ctx| {
+                    egui::CentralPanel::default().show(ctx, |ui| {
+                        let available = ui.available_width();
+                        let row = ui.scope(|ui| {
+                            super::super::enum_choice(
+                                ui,
+                                "A long choice label that must remain readable",
+                                &mut selected,
+                                &[(0, "First"), (1, "Second")],
+                                "Choice tooltip",
+                            )
+                        });
+                        assert!(!row.inner);
+                        assert!(row.response.rect.width() <= available + 1.0);
+                        assert!(row.response.rect.height() > theme::HEIGHT_CONTROL);
+                    });
+                },
+            );
+            assert_eq!(selected, 0);
+        }
+    }
 
     #[test]
     fn optional_capture_illuminant_stays_inside_a_narrow_control_panel() {

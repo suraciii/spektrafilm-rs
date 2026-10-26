@@ -477,6 +477,7 @@ pub(crate) fn numeric_marked<T: egui::emath::Numeric>(
                 egui::Layout::top_down(egui::Align::Min),
                 |ui| {
                     ui.set_min_width(label_width);
+                    ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
                     crate::controls::row_label(ui, label, experimental)
                 },
             )
@@ -491,6 +492,9 @@ pub(crate) fn numeric_marked<T: egui::emath::Numeric>(
                 egui::Layout::left_to_right(egui::Align::Center),
                 |ui| {
                     ui.set_min_width(editor_width);
+                    if unit.is_none() {
+                        ui.add_space(theme::WIDTH_UNIT + ui.spacing().item_spacing.x);
+                    }
                     mark.gold(ui, |ui| {
                         numeric_field(
                             ui,
@@ -544,6 +548,15 @@ fn row_slider<T: egui::emath::Numeric>(
         .push_id(
             ("numeric-slider", label, min.to_bits(), max.to_bits()),
             |ui| {
+                // Slider::new otherwise retains egui's 100-point default even
+                // in a wider inspector. Its own input/history owner is unchanged.
+                ui.spacing_mut().slider_width = ui.available_width();
+                ui.spacing_mut().slider_rail_height = 3.0;
+                ui.spacing_mut().interact_size.y = 16.0;
+                let visuals = &mut ui.visuals_mut().widgets;
+                visuals.inactive.fg_stroke = theme::stroke(theme::FG);
+                visuals.hovered.bg_fill = theme::FG;
+                visuals.active.bg_fill = theme::FG;
                 let mut slider =
                     egui::Slider::new(&mut candidate, T::from_f64(track_min)..=T::from_f64(max))
                         .show_value(false)
@@ -740,9 +753,22 @@ where
 
     let mut changed = false;
     ui.horizontal(|ui| {
+        if let Some(unit) = unit {
+            ui.add_sized(
+                [theme::WIDTH_UNIT, theme::HEIGHT_CONTROL],
+                egui::Label::new(
+                    egui::RichText::new(crate::controls::localized(ui.ctx(), unit))
+                        .color(theme::FG_MUTED)
+                        .size(theme::SIZE_UNIT),
+                )
+                .wrap(),
+            )
+            .on_hover_text(crate::controls::localized(ui.ctx(), tooltip));
+        }
         let mut text_edit = TextEdit::singleline(&mut state.text)
             .id(id)
             .font(theme::text(theme::TEXT_VALUE, theme::SIZE_VALUE))
+            .horizontal_align(egui::Align::Max)
             .desired_width(theme::WIDTH_VALUE);
         if is_invalid {
             // Invalid state is colour plus a border, never colour alone.
@@ -757,23 +783,21 @@ where
         // separate label node, and declare the visible label as the field's
         // labelling node so the two read as one control.
         let accessible_label = crate::controls::localized(ui.ctx(), label);
+        let accessible_description = unit.map(|unit| {
+            format!(
+                "{}; {}",
+                crate::controls::localized(ui.ctx(), tooltip),
+                crate::controls::localized(ui.ctx(), unit),
+            )
+        });
         ui.ctx().accesskit_node_builder(id, |node| {
             node.set_label(accessible_label.as_ref());
+            if let Some(description) = accessible_description {
+                node.set_description(description);
+            }
         });
         if let Some(label_id) = labelled_by {
             response = response.labelled_by(label_id);
-        }
-        if let Some(unit) = unit {
-            ui.add_sized(
-                [theme::WIDTH_UNIT, theme::HEIGHT_CONTROL],
-                egui::Label::new(
-                    egui::RichText::new(crate::controls::localized(ui.ctx(), unit))
-                        .color(theme::FG_MUTED)
-                        .size(theme::SIZE_UNIT),
-                )
-                .wrap(),
-            )
-            .on_hover_text(crate::controls::localized(ui.ctx(), tooltip));
         }
         if is_invalid {
             ui.painter().rect_stroke(
@@ -1000,6 +1024,114 @@ fn collect_wheel_events(ui: &Ui, response: &egui::Response, pending: &mut VecDeq
 #[cfg(test)]
 mod tests {
     use super::{SliderScale, numeric_field, parse_value, slider_scale};
+
+    #[test]
+    fn rows_reserve_units_before_right_aligned_values_without_hiding_long_text() {
+        use egui_kittest::{Harness, kittest::Queryable};
+
+        const ROWS: [(&str, Option<&str>); 3] = [
+            (
+                "A long parameter label that must remain readable",
+                Some("μm"),
+            ),
+            ("Preflash amount", Some("linear exposure multiplier")),
+            ("Unitless parameter", None),
+        ];
+        for width in [280.0, 344.0] {
+            let harness = Harness::builder()
+                .with_size(egui::vec2(width, 600.0))
+                .build_state(
+                    |ctx, values: &mut [f64; 3]| {
+                        crate::theme::apply(ctx);
+                        egui::CentralPanel::default().show(ctx, |ui| {
+                            for ((label, unit), value) in ROWS.iter().zip(values.iter_mut()) {
+                                super::numeric(
+                                    ui,
+                                    label,
+                                    value,
+                                    0.0,
+                                    1.0,
+                                    0.01,
+                                    2,
+                                    "Parameter tooltip",
+                                    *unit,
+                                    false,
+                                );
+                            }
+                        });
+                    },
+                    [0.5; 3],
+                );
+            let mut value_right: Option<f64> = None;
+            for (label, unit) in ROWS {
+                let node = harness.get_by_label(label);
+                let value = node.raw_bounds().expect("numeric editor bounds");
+                let label = node.labelled_by().next().expect("visible row label");
+                let label = label.raw_bounds().expect("visible label bounds");
+                assert!(label.x1 <= value.x0);
+                assert!(label.y0 < value.y1 && value.y0 < label.y1);
+                assert!(value.x1 <= f64::from(width));
+                if let Some(right) = value_right {
+                    assert!((value.x1 - right).abs() < 1.0, "value columns must align");
+                }
+                value_right = Some(value.x1);
+                if let Some(unit) = unit {
+                    let unit_bounds = harness
+                        .get_by_label(unit)
+                        .raw_bounds()
+                        .expect("visible unit bounds");
+                    assert!(label.x1 <= unit_bounds.x0 && unit_bounds.x1 <= value.x0);
+                    assert!(node.description().is_some_and(|text| text.contains(unit)));
+                }
+            }
+            assert_eq!(harness.state(), &[0.5; 3]);
+        }
+    }
+
+    #[test]
+    fn slider_uses_the_full_row_width_with_a_thin_track_and_small_handle() {
+        for width in [280.0, 344.0] {
+            let ctx = egui::Context::default();
+            crate::theme::apply(&ctx);
+            let mut value = 0.5_f64;
+            let output = ctx.run(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(width, 200.0),
+                    )),
+                    ..Default::default()
+                },
+                |ctx| {
+                    egui::CentralPanel::default().show(ctx, |ui| {
+                        let available = ui.available_width();
+                        let row = ui.scope(|ui| {
+                            super::row_slider(ui, "Exposure", &mut value, 0.0, 1.0, 0.01)
+                        });
+                        assert!(!row.inner);
+                        assert!((row.response.rect.width() - available).abs() < 1.0);
+                    });
+                },
+            );
+            let mut handles = 0;
+            let mut tracks = 0;
+            for shape in output.shapes {
+                match shape.shape {
+                    egui::Shape::Circle(circle) => {
+                        handles += 1;
+                        assert!(circle.radius <= 7.0);
+                    }
+                    egui::Shape::Rect(rect) if (rect.rect.height() - 3.0).abs() < 0.1 => {
+                        tracks += 1;
+                    }
+                    _ => {}
+                }
+            }
+            assert_eq!(handles, 1);
+            assert!(tracks >= 1);
+            assert_eq!(value, 0.5);
+        }
+    }
 
     #[test]
     fn slider_scale_picks_logarithmic_only_for_wide_positive_ranges() {

@@ -238,7 +238,7 @@ fn rotation_undo_redo_automatically_refreshes_viewable_and_saveable_output() {
                     data_dir(),
                 )
             });
-        click(&mut h, "◀");
+        click(&mut h, "Collapse or expand Presets");
         wait_until(&mut h, |a| !a.dirty && a.render_job.is_none());
         let source = h.state().image.as_ref().unwrap().clone();
         reveal_control(&mut h, "action.rotate_cw");
