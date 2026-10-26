@@ -285,6 +285,11 @@ impl RasterCommands {
     /// Bound both commands per submission and submitted resource lifetimes.
     /// The queue preserves scratch reuse and stochastic state ordering.
     pub fn submit(&self, backend: &WgpuBackend) -> Result<(), String> {
+        self.submit_named(backend, "grain_storage_window")
+    }
+
+    /// Keep the owning pass observable when non-grain stages reuse transport.
+    pub fn submit_named(&self, backend: &WgpuBackend, label: &str) -> Result<(), String> {
         let mut window = SubmissionWindow::default();
         for commands in self.0.chunks(64) {
             backend.check_cancelled()?;
@@ -311,7 +316,7 @@ impl RasterCommands {
                         groups,
                     } => {
                         let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                            label: Some("grain_storage_window"),
+                            label: Some(label),
                             timestamp_writes: None,
                         });
                         pass.set_pipeline(&pipeline.pipeline);
@@ -332,7 +337,7 @@ impl RasterCommands {
     }
 }
 
-pub(super) fn transport(
+pub(in crate::wgpu_backend) fn transport(
     backend: &WgpuBackend,
     bytes: u64,
     label: &str,
@@ -352,7 +357,10 @@ pub(super) fn transport(
     }))
 }
 
-pub(super) fn uniform<P: bytemuck::Pod>(backend: &WgpuBackend, params: &P) -> wgpu::Buffer {
+pub(in crate::wgpu_backend) fn uniform<P: bytemuck::Pod>(
+    backend: &WgpuBackend,
+    params: &P,
+) -> wgpu::Buffer {
     backend
         .device
         .create_buffer_init(&wgpu::util::BufferInitDescriptor {

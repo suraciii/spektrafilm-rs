@@ -418,7 +418,7 @@ impl Pipeline {
                     mu: mu as f32,
                     sigma: sigma as f32,
                     blur_px: g.blur,
-                    base_seed: self.params.random_seed.wrapping_add(42) as u32,
+                    base_seed: self.params.random_seed as u32,
                     rgb_offset: offset_rgb,
                 }
             });

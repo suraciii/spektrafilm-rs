@@ -1642,7 +1642,8 @@ pub struct UnsharpGpuParams {
 /// `add_glare_with_amount`.
 #[derive(Debug, Clone, Copy)]
 pub struct GlareGpuParams {
-    /// LogNormal μ and σ derived on the CPU from `percent` + `roughness`.
+    /// LogNormal conditioning derived from `percent` + `roughness`.
+    /// The device normal transform uses f32 arithmetic.
     pub mu: f32,
     pub sigma: f32,
     pub blur_px: f32,
