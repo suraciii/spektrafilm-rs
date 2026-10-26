@@ -661,14 +661,6 @@ pub fn resolve(film: &Profile, params: &RuntimeParams) -> Result<GrainV3Params, 
         ));
     }
     let layer_max = spektrafilm_model::density_curves::density_max_layers_f64(&layer_curves);
-    if layer_max.iter().flatten().any(|&max| max <= 0.0) {
-        return Err(format!(
-            "film grain Dye: film profile '{}' yields a non-positive per-layer density \
-             maximum (empty or all-zero density_curves_layers), so no field can be \
-             realized",
-            film.info.stock.as_deref().unwrap_or("<unnamed>")
-        ));
-    }
     let support_um = grain.v3_dye_support_um as f64;
     Ok(GrainV3Params {
         monochrome,
@@ -1878,6 +1870,35 @@ mod tests {
         inactive.film_render.grain.active = false;
         inactive.workflow.route = "input".into();
         assert!(validate_supported(&film, &inactive).is_ok());
+    }
+
+    #[test]
+    fn zero_capacity_components_preserve_the_expected_density() {
+        for stock in ["kodak_doublex", "kodak_portra_800"] {
+            let mut film = crate::profile::resolve_for_render(load(stock), None);
+            film.data.density_curves_model = None;
+            film.data.log_exposure = vec![0.0, 1.0];
+            film.data.density_curves = vec![vec![0.0; 3], vec![1.0; 3]];
+            film.data.density_curves_layers = vec![
+                vec![vec![0.0; 3]; 3],
+                vec![vec![0.0; 3], vec![0.25; 3], vec![0.75; 3]],
+            ];
+            let mut params = supported_params();
+            crate::params_builder::apply_film_specifics(&mut params, &film);
+            let mut resolved = resolve(&film, &params).unwrap();
+            resolved.expectation = true;
+            let source = ImageBuf::from_data(2, 2, vec![from_f64(0.4); 12]);
+            let grid = ReadoutGrid {
+                origin_um: [0.0; 2],
+                pitch_um: [2.0; 2],
+                width: 2,
+                height: 2,
+            };
+            let output = v3::apply(&source, 2.0, grid, &resolved).unwrap();
+            for value in output.data {
+                assert!((value as f64 - 0.4).abs() < read_tolerance(), "{stock}");
+            }
+        }
     }
 
     #[test]

@@ -75,6 +75,8 @@ Dye conditions a mixed film-coordinate dye field on `v3_dye_support_um`. This co
 
 Dye realizes film-space Poisson counts with event area `v3_event_area_um2 × k_c × particle_scale_sublayers`. `v3_event_area_um2` uses square micrometers and defaults to `1.28`. Dye uses the resolved `density_min` and `uniformity`. It allocates each channel across the profile's three numerical curve components; these components are not identified physical emulsion layers. Both `v3_dye_support_um` and `v3_event_area_um2` must be finite and strictly positive. Dye component scales must also be positive. They change statistical event mass and count rate, not separate component kernel widths. The components share Dye's spatial support.
 
+A profile may give an individual component zero capacity. That component contributes no events. Each record still needs positive total capacity; an all-zero record is rejected by the model.
+
 The channel scale is `k_c = (rms_granularity_c / 6)²`. Here, `6` is the preset of the reference stock `kodak_portra_800`. The existing `rms_granularity` field is a relative Dye strength scale, not a certified optical RMS target. Entering `8` does not request a measured stock granularity of `8`. Zero or a missing stock value retains the existing fallback; use `active: false` to disable grain. Dye does not read Spektra's `particle_area_um2` or `particle_scale`.
 
 Some preset channel ratios come from measured outputs of a commercial film simulator. They remain appearance references, not measurements of film material. The reference stock and its event area define the existing relative scale; they do not establish an absolute material calibration.
@@ -84,6 +86,8 @@ Some preset channel ratios come from measured outputs of a commercial film simul
 ### Black-and-white material
 
 A resolved `channel_model=bw` filming profile selects one effective material record. Dye uses record 0's `rms_granularity`, `density_min`, and `uniformity`. `particle_scale_sublayers` still supplies three numerical-component scales, not three record controls. One sampled density is carried in three equal lanes before formation and readout. This is not final-RGB desaturation or a calibrated silver-particle simulation.
+
+Both CPU and GPU validate the original BW samples across the full source, including samples outside the requested crop and its formation halo. Invalid samples there still reject the render. A BW profile may contain one or several development-time curves; negative-to-positive scanning accepts the single-time case without requiring three stored columns.
 
 `channel_correlation` has no effect for this layout. Its requested value remains stored. CLI edit feedback and the GUI explain the inactive control; selecting a color profile restores its applicability. Dry-run `film_grain_dye` reports `record_layout`, `calibration_status`, and requested/effective correlation without claiming a checked compute device.
 
@@ -119,6 +123,8 @@ Device carriers page full-source and output samples. Dye copies each source wind
 The CPU reference uses the same partition rule: reduce output rectangles along both axes, then divide an oversized footprint into formed-cell pieces with full halos. Each piece uses the original global count addresses and overlap weights. Optical response remains per formed cell before integration, and partial readouts stay in `f64` until the final output conversion.
 
 When both optical probes are enabled, the exact-cell response reads the fine aperture grid. Linear-light collapse restores the requested raster before paper development. This also corrects the previous combined-probe CPU path, which skipped aperture collapse and delivered the fine raster.
+
+The `SPEKTRAFILM_GRAIN_V3_EXPECTATION=1` diagnostic replaces Poisson counts with their conditional means. It retains field formation and readout, so it is not a grain-off render. It is also not the ensemble mean of final RGB: nonlinear optical conversion, negative interpretation, and encoding can shift the rendered population mean. Dye does not automatically match brightness or normalize RMS from the current image.
 
 See [the Dye specification](../specs/film-grain/v3/spec.md) for experimental readouts and diagnostic controls.
 

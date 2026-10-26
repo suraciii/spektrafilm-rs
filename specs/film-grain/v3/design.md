@@ -97,7 +97,7 @@ The resolved profile supplies an internal monochrome layout flag after developme
 
 For BW, the model MUST require identical record tables and parameters. Source samples MUST be finite and within each lane's capacity envelope. Each source lane MUST agree with record 0 within an absolute `1e-6 D`, the existing density-envelope tolerance.
 
-Validation MUST examine original samples before record-0 substitution. Image-dependent GPU checks MUST execute on the selected device.
+Validation MUST examine all original full-source samples before record-0 substitution, including samples outside the requested readout and its formation halo. Image-dependent GPU checks MUST execute on the selected device.
 
 The BW branch MUST allocate record 0 on the source grid before conservative remap. For each global cell it MUST sample that record's numerical components with private stream tags `0`, `1`, and `2`, without a shared-count draw.
 
