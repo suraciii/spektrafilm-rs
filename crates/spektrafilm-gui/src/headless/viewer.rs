@@ -1121,7 +1121,7 @@ fn an_unusable_display_profile_path_falls_back_without_breaking_state() {
 
 #[test]
 fn canonical_search_preserves_inspector_and_viewer_geometry_at_supported_desktop_sizes() {
-    for size in [egui::vec2(1460.0, 980.0), egui::vec2(1100.0, 800.0)] {
+    for size in [egui::vec2(1460.0, 980.0), egui::vec2(1100.0, 760.0)] {
         let directory = tempfile::tempdir().unwrap();
         let (image_path, state_path) = deterministic_inputs(directory.path());
         let browser_path = directory.path().join("browser.json");
@@ -1134,9 +1134,10 @@ fn canonical_search_preserves_inspector_and_viewer_geometry_at_supported_desktop
         h.run_steps(3);
         // Compact workspaces already start with the browser's reopen rail.
         if size.x > theme::WIDTH_COMPACT_WORKSPACE {
-            click(&mut h, "◀");
+            click(&mut h, "Collapse or expand Presets");
         }
-        assert!(h.query_by_label("▶").is_some());
+        assert!(h.query_by_label("Search presets").is_none());
+        assert!(h.query_by_label("Collapse or expand Presets").is_some());
         let params = h.state().params.clone();
         let initial_search = h.get_by_label("Search controls").raw_bounds().unwrap();
         let initial_viewer = h.state().viewer.observation().viewport;
@@ -1177,6 +1178,42 @@ fn canonical_search_preserves_inspector_and_viewer_geometry_at_supported_desktop
                 assert!(
                     bounds.y0 >= 0.0 && bounds.y1 <= size.y as f64,
                     "{action} clipped vertically at {size:?}"
+                );
+            }
+        }
+        click(&mut h, "Collapse or expand Presets");
+        let viewer = h.state().viewer.observation().viewport;
+        let mut footer = Vec::new();
+        for name in [
+            "Original",
+            "Modified",
+            "Paper back",
+            "transitions",
+            "fit",
+            "reset view",
+        ] {
+            footer.push((name.to_owned(), h.get_by_label(name).raw_bounds().unwrap()));
+        }
+        let zoom = h
+            .query_all_by_role(egui::accesskit::Role::Button)
+            .find(|node| node.label().is_some_and(|label| label.starts_with("zoom ")))
+            .expect("current zoom remains reachable");
+        footer.push(("zoom".to_owned(), zoom.raw_bounds().unwrap()));
+        for (index, (name, bounds)) in footer.iter().enumerate() {
+            assert!(
+                bounds.x0 >= f64::from(viewer.left())
+                    && bounds.x1 <= f64::from(viewer.right())
+                    && bounds.y0 >= f64::from(viewer.bottom())
+                    && bounds.y1 <= f64::from(size.y),
+                "reopened {size:?}: unreachable {name}: {bounds:?}"
+            );
+            for (other, other_bounds) in &footer[..index] {
+                assert!(
+                    bounds.x1 <= other_bounds.x0
+                        || other_bounds.x1 <= bounds.x0
+                        || bounds.y1 <= other_bounds.y0
+                        || other_bounds.y1 <= bounds.y0,
+                    "reopened {size:?}: {name} overlaps {other}"
                 );
             }
         }

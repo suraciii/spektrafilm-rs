@@ -103,6 +103,7 @@ impl Thumbnails {
         let texture = self.textures.get(&entry.name).and_then(Option::as_ref);
         if let Some(texture) = texture {
             let size = texture.size_vec2();
+            let uv_size = egui::vec2((size.y / size.x).min(1.0), (size.x / size.y).min(1.0));
             let label = crate::tr!(
                 ui.ctx(),
                 "surfaces.presets.discovery_reference_accessible",
@@ -110,7 +111,10 @@ impl Thumbnails {
             );
             let response = ui.add(
                 egui::Image::new((texture.id(), size))
-                    .fit_to_exact_size(egui::vec2(width, width * size.y / size.x)),
+                    .uv(egui::Rect::from_center_size(egui::pos2(0.5, 0.5), uv_size))
+                    .fit_to_exact_size(egui::vec2(width, width))
+                    .maintain_aspect_ratio(false)
+                    .corner_radius(crate::theme::RADIUS_CARD),
             );
             ui.ctx()
                 .accesskit_node_builder(response.id, |node| node.set_label(label));
@@ -124,7 +128,7 @@ impl Thumbnails {
                     ))
                     .weak(),
                 )
-                .wrap(),
+                .truncate(),
             );
         }
     }
@@ -134,12 +138,17 @@ impl Thumbnails {
             ui.ctx(),
             "surfaces.presets.discovery_reference",
         ));
-        ui.small("Luc Viatour / Lucnix.be · CC BY-SA 2.5");
-        ui.hyperlink_to(
-            crate::i18n::text(ui.ctx(), "surfaces.presets.discovery_reference_rights"),
+        let rights = crate::i18n::text(ui.ctx(), "surfaces.presets.discovery_reference_rights");
+        let response = ui.hyperlink_to(
+            egui::RichText::new("Luc Viatour / Lucnix.be · CC BY-SA 2.5")
+                .size(crate::theme::SIZE_HINT)
+                .color(crate::theme::FG_MUTED),
             "https://creativecommons.org/licenses/by-sa/2.5/",
-        )
-        .on_hover_text(
+        );
+        ui.ctx().accesskit_node_builder(response.id, |node| {
+            node.set_label(rights.as_ref());
+        });
+        response.on_hover_text(
             "https://commons.wikimedia.org/wiki/File:Kiwi_(Actinidia_chinensis)_1_Luc_Viatour.jpg",
         );
     }

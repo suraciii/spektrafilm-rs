@@ -9,32 +9,31 @@
 use egui::{Color32, CornerRadius, FontId, Rgba, Shadow, Stroke, TextStyle, Visuals};
 
 /// Warm gold accent used for active elements, sliders, and highlights.
-pub const ACCENT: Color32 = Color32::from_rgb(0xd4, 0xa8, 0x53);
+pub const ACCENT: Color32 = Color32::from_rgb(0xd6, 0xb3, 0x6a);
 /// Dimmed accent for hover borders and inactive indicators.
-pub const ACCENT_DIM: Color32 = Color32::from_rgb(0x8a, 0x6e, 0x35);
+pub const ACCENT_DIM: Color32 = Color32::from_rgb(0x8d, 0x73, 0x43);
 /// Deepest surface: the well behind editable text (`extreme_bg_color`).
 ///
 /// This is not the viewer's canvas. The 18% gray/black canvas behaviour is
 /// viewer state outside the palette, so no canvas role lives here.
-pub const BG: Color32 = Color32::from_rgb(0x0b, 0x0b, 0x0c);
+pub const BG: Color32 = Color32::from_rgb(0x0d, 0x0e, 0x0f);
 /// Panel background (control panel, viewer chrome).
-pub const SURFACE: Color32 = Color32::from_rgb(0x11, 0x11, 0x13);
+pub const SURFACE: Color32 = Color32::from_rgb(0x13, 0x14, 0x15);
 /// Slightly lighter surface for cards and section bodies.
-pub const SURFACE2: Color32 = Color32::from_rgb(0x1a, 0x1a, 0x1d);
+pub const SURFACE2: Color32 = Color32::from_rgb(0x19, 0x1a, 0x1c);
 /// Tertiary surface for hover states and nested elements.
 pub const SURFACE3: Color32 = Color32::from_rgb(0x22, 0x22, 0x26);
 /// Default border colour.
-pub const BORDER: Color32 = Color32::from_rgb(0x2a, 0x2a, 0x2e);
+pub const BORDER: Color32 = Color32::from_rgb(0x2b, 0x2c, 0x2f);
 /// Border colour for active/focused elements.
 pub const BORDER_ACTIVE: Color32 = Color32::from_rgb(0x3d, 0x3d, 0x44);
 /// Primary text colour.
-pub const FG: Color32 = Color32::from_rgb(0xe8, 0xe8, 0xe8);
-/// Secondary text for labels and descriptions. Lifted from the prototype's
-/// `--ink-2` so row labels stay readable at `SIZE_LABEL` on every surface.
-pub const FG_SECONDARY: Color32 = Color32::from_rgb(0xa6, 0xa6, 0xae);
+pub const FG: Color32 = Color32::from_rgb(0xf0, 0xee, 0xe9);
+/// Secondary text for parameter labels and descriptions.
+pub const FG_SECONDARY: Color32 = Color32::from_rgb(0xb8, 0xb5, 0xae);
 /// Muted text for hints, units, and metadata. The darkest content role that
 /// stays readable at `SIZE_HINT`, the panel's smallest text.
-pub const FG_MUTED: Color32 = Color32::from_rgb(0x98, 0x98, 0x9f);
+pub const FG_MUTED: Color32 = Color32::from_rgb(0x91, 0x8e, 0x87);
 /// Error red.
 pub const ERROR: Color32 = Color32::from_rgb(0xe0, 0x55, 0x55);
 /// Warning amber, for capability notices that are not errors.
@@ -67,6 +66,10 @@ pub const SPACE_3: f32 = 12.0;
 /// Fourth step of the spacing scale: the structural gap between two regions
 /// inside one surface.
 pub const SPACE_4: f32 = 16.0;
+/// Inset inside an expanded parameter module.
+pub const SPACE_MODULE: f32 = SPACE_3;
+/// Horizontal inset in dialog headers, bodies, and action rows.
+pub const SPACE_DIALOG: f32 = SPACE_4;
 
 /// Vertical gap between two items in the control panel.
 ///
@@ -186,10 +189,28 @@ pub const BUTTON_PADDING: [f32; 2] = [6.0, 3.0];
 pub const HEIGHT_CONTROL: f32 = 28.0;
 /// Window width below which the preset browser defaults to its reopen rail.
 pub const WIDTH_COMPACT_WORKSPACE: f32 = 1250.0;
+/// Compact global toolbar, including its outer spacing.
+pub const HEIGHT_HEADER: f32 = 64.0;
+/// Viewer-only tools below the photograph.
+pub const HEIGHT_VIEWER_FOOTER: f32 = 50.0;
+/// Stable retained-result identity strip above the photograph.
+pub const HEIGHT_VIEWER_STATUS: f32 = 34.0;
+/// Dialog title and close action, including their vertical spacing.
+pub const HEIGHT_DIALOG_HEADER: f32 = 56.0;
+/// Dialog actions, including their vertical spacing.
+pub const HEIGHT_DIALOG_FOOTER: f32 = HEIGHT_CONTROL + 2.0 * SPACE_DIALOG;
 
 /// A default-width stroke in `color`.
 pub fn stroke(color: Color32) -> Stroke {
     Stroke::new(STROKE_DEFAULT, color)
+}
+/// Shared sheet surface; each region owns its inset and bounded height.
+pub fn dialog_frame() -> egui::Frame {
+    egui::Frame::NONE
+        .fill(SURFACE)
+        .stroke(stroke(BORDER))
+        .corner_radius(RADIUS_WINDOW)
+        .shadow(SHADOW_WINDOW)
 }
 
 /// Apply the dark warm-accent theme to an egui context.

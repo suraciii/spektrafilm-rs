@@ -62,6 +62,8 @@ Stage headings MUST be stronger than module headings, and module headings MUST b
 
 The header toolbar MUST present Open, Undo, Redo, Settings, and Export without competing with the retained image. Preview remains automatic; Scan and Save MUST remain distinct and reachable under [stage and surface ownership](../gui-workflow/spec.md#stage-and-surface-ownership). Settings and Export MUST read as separate dialogs, not additional inspector stages.
 
+The toolbar MUST use one horizontal action row with read-only source and material context. Compact icon actions MUST retain their canonical accessible names. Routine render completion MUST NOT duplicate the viewer status identity.
+
 Live rendering feedback follows [viewer presentation](../gui-workflow/spec.md#viewer-presentation).
 
 The inspector MUST use one vertically scrolling control list. Long lists MUST NOT require horizontal scrolling to reach a value, reset action, or help. Labels and help MAY wrap without hiding the value or its editor.
@@ -87,9 +89,15 @@ The shared native tokens MUST use this baseline in logical points. Settings, Exp
 | Control height | 28 |
 | Inspector width | 344 |
 | Selector maximum width | 160 |
-| Action width and reserved action area | 64 and 80 |
+| Action height and reserved action area | 64 and 80 |
+| Header height | 64 |
+| Viewer status and footer height | 34 and 50 |
+| Expanded module inset | 12 |
+| Dialog header height and region inset | 56 and 16 |
 
 Long labels MUST wrap without obscuring their values. Fixed and inapplicable Export rows MUST use the same readable row structure as editable options under [dialog interaction](../gui-workflow/spec.md#dialog-interaction). Responsive preset geometry follows the [preset browser boundary](../presets/design.md#boundaries).
+
+Expanded modules MUST use a quiet bounded surface. Collapsed modules MUST remain visually lighter than their expanded controls. Workflow and Camera MUST precede source-detail modules in Input and capture.
 
 ## Parameter rows
 
@@ -108,6 +116,9 @@ Long labels MUST wrap without obscuring their values. Fixed and inapplicable Exp
 - A logarithmic slider with a zero minimum keeps zero reachable at the track's leftmost stop.
 - Slider bounds, step, and entry decimals come from the same declaration under [numeric editor ranges](../gui-workflow/spec.md#numeric-editor-ranges). Presentation MUST NOT add a different slider-only bound or rounding rule.
 - Units MUST remain readable beside values without becoming part of the label or editable numeric text.
+- Numeric rows MUST place the unit before the right-aligned value.
+- A unitless row MUST retain the same value-column alignment.
+- The slider MUST span the module's usable row width.
 - A tuple parameter row presents one editor per component, each with its component identifier.
 - A choice parameter row presents a selector as its editor. The row label is the selector's only label.
 - A boolean parameter row presents a switch as its editor. A checkbox belongs to list selection only.
@@ -144,6 +155,7 @@ Locator results and destination cues MUST remain readable and keyboard accessibl
 - The footer groups its actions by target. One action belongs to one group.
 - Its groups are layer selection, view zoom, and reveal or crossfade presentation.
 - The footer presents the current zoom as read-only text, apart from the actions.
+- The footer MUST keep Original and Modified together and Paper back separate. Compact Paper back and transition actions MAY use named icons to preserve nonoverlapping zoom and reset actions in a reopened narrow workspace.
 
 ## Preset browser
 
@@ -152,6 +164,8 @@ Locator results and destination cues MUST remain readable and keyboard accessibl
 - The browser MUST have a labeled, keyboard-operable collapse and reopen control. Collapsing it MUST NOT hide the only indication of how to reopen it.
 - Selection, hover, and keyboard focus MUST remain visually distinct. A selected preset MUST have a non-color cue.
 - Preset names and material identifiers MUST remain readable in long lists. Truncated names MUST remain available through accessible text and help.
+- The browser MUST keep the current-look summary independent of search and filters. Without an applied preset, it MUST identify current adjustments without inventing an applied look.
+- Reference credit MUST remain in a fixed footer outside the scrolling cards.
 
 ## States
 

@@ -341,8 +341,8 @@ fn chinese_header_actions_and_search_remain_reachable_at_supported_desktop_sizes
             theme::apply(&cc.egui_ctx);
             app(state_path, image_path, browser)
         });
-        if h.query_by_label("◀").is_some() {
-            click(&mut h, "◀");
+        if h.query_by_label("Search presets").is_some() {
+            click(&mut h, "Collapse or expand Presets");
         }
         language(&mut h, LanguagePreference::SimplifiedChinese);
         for label in ["打开", "设置", "导出", "搜索控件", "扫描", "保存"] {
@@ -612,7 +612,7 @@ fn preset_name_composition_does_not_submit_or_translate_authored_text() {
     let mut s = session();
     let h = &mut s.harness;
     language(h, LanguagePreference::SimplifiedChinese);
-    h.get_by_label("▶").click();
+    h.get_by_label("折叠或展开预设").click();
     h.run_steps(3);
     h.get_by_label("保存预设…").click();
     h.run_steps(3);

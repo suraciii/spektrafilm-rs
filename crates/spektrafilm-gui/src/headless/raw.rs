@@ -33,7 +33,7 @@ fn retained_raw_interpretation_matches_cpu_and_queued_exports_freeze_the_declara
                 data_dir(),
             )
         });
-    click(&mut h, "◀");
+    click(&mut h, "Collapse or expand Presets");
     wait_until(&mut h, |a| !a.dirty && a.render_job.is_none());
     let samples = h
         .state()
@@ -343,7 +343,7 @@ fn gpu_raw_import_preview_scan_and_export_reuse_retained_samples() {
                 data_dir(),
             )
         });
-    click(&mut h, "◀");
+    click(&mut h, "Collapse or expand Presets");
     // Observe the automatic import request from its first dispatch.
     h.state_mut().diagnostics.mode = spektrafilm_backend::telemetry::CollectionMode::Summary;
     script(&mut h, chooser::Chooser::chooser_path(&fixture));

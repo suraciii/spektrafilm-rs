@@ -498,83 +498,122 @@ impl Viewer {
                 .unwrap_or(0.0) as f32,
         );
     }
-    /// The shown layer: one compact row of the three viewer targets, with the
-    /// canonical locate paths and accessible names unchanged.
+    /// Original and Modified share a quiet segment; Paper back is a separate
+    /// secondary action, but still selects the same mutually exclusive layer.
     pub fn layer_controls(&mut self, ui: &mut egui::Ui) -> bool {
         let before = self.settings.layer;
+        let compact = ui.available_width() < 600.0;
         ui.horizontal(|ui| {
-            let input = ui
-                .selectable_value(
-                    &mut self.settings.layer,
-                    ViewLayer::Input,
-                    crate::i18n::text(ui.ctx(), "surfaces.viewer.input"),
+            egui::Frame::new()
+                .fill(theme::SURFACE2)
+                .stroke(theme::stroke(theme::BORDER))
+                .corner_radius(theme::RADIUS_CARD)
+                .inner_margin(2)
+                .show(ui, |ui| {
+                    ui.spacing_mut().item_spacing.x = 0.0;
+                    ui.visuals_mut().selection.bg_fill = theme::SURFACE3;
+                    ui.visuals_mut().selection.stroke = theme::stroke(theme::FG);
+                    ui.horizontal(|ui| {
+                        let input = ui
+                            .selectable_value(
+                                &mut self.settings.layer,
+                                ViewLayer::Input,
+                                crate::i18n::text(ui.ctx(), "surfaces.viewer.input"),
+                            )
+                            .on_hover_text(crate::i18n::text(
+                                ui.ctx(),
+                                "surfaces.viewer.input_help",
+                            ));
+                        crate::controls::locate_row(ui, "viewer.layer.input", &input);
+                        ui.add_enabled_ui(self.output.is_some(), |ui| {
+                            let output =
+                                ui.selectable_value(
+                                    &mut self.settings.layer,
+                                    ViewLayer::Output,
+                                    crate::i18n::text(ui.ctx(), "surfaces.viewer.output"),
+                                )
+                                .on_hover_text(crate::i18n::text(
+                                    ui.ctx(),
+                                    "surfaces.viewer.output_help",
+                                ))
+                                .on_disabled_hover_text(
+                                    crate::i18n::text(ui.ctx(), "surfaces.viewer.output_disabled"),
+                                );
+                            crate::controls::locate_row(ui, "viewer.layer.output", &output);
+                        });
+                    });
+                });
+            ui.separator();
+            let paper_label = crate::i18n::text(ui.ctx(), "surfaces.viewer.paper_back");
+            let paper_back = if compact {
+                crate::controls::icon_button(
+                    ui,
+                    paper_label.as_ref(),
+                    crate::controls::Icon::Layers,
                 )
-                .on_hover_text(crate::i18n::text(ui.ctx(), "surfaces.viewer.input_help"));
-            crate::controls::locate_row(ui, "viewer.layer.input", &input);
-            ui.add_enabled_ui(self.output.is_some(), |ui| {
-                let output = ui
-                    .selectable_value(
-                        &mut self.settings.layer,
-                        ViewLayer::Output,
-                        crate::i18n::text(ui.ctx(), "surfaces.viewer.output"),
-                    )
-                    .on_hover_text(crate::i18n::text(ui.ctx(), "surfaces.viewer.output_help"))
-                    .on_disabled_hover_text(crate::i18n::text(
-                        ui.ctx(),
-                        "surfaces.viewer.output_disabled",
-                    ));
-                crate::controls::locate_row(ui, "viewer.layer.output", &output);
+            } else {
+                ui.add(
+                    egui::Button::new(paper_label)
+                        .selected(self.settings.layer == ViewLayer::PaperBack),
+                )
+            }
+            .on_hover_text(crate::i18n::text(
+                ui.ctx(),
+                "surfaces.viewer.paper_back_help",
+            ));
+            ui.ctx().accesskit_node_builder(paper_back.id, |node| {
+                node.set_toggled(if self.settings.layer == ViewLayer::PaperBack {
+                    egui::accesskit::Toggled::True
+                } else {
+                    egui::accesskit::Toggled::False
+                });
             });
-            let paper_back = ui
-                .selectable_value(
-                    &mut self.settings.layer,
-                    ViewLayer::PaperBack,
-                    crate::i18n::text(ui.ctx(), "surfaces.viewer.paper_back"),
-                )
-                .on_hover_text(crate::i18n::text(
-                    ui.ctx(),
-                    "surfaces.viewer.paper_back_help",
-                ));
             crate::controls::locate_row(ui, "viewer.layer.paper_back", &paper_back);
+            if paper_back.clicked() {
+                self.settings.layer = ViewLayer::PaperBack;
+            }
         });
         before != self.settings.layer
     }
-    /// The viewer footer as one compact row, grouped by the target each action
-    /// acts on: the shown layer, the accepted-result transition, and the
-    /// retained view. The two transitions stay independent booleans in one
-    /// labelled popover, and the exact zoom choices live in one menu whose
-    /// button carries the current zoom as read-only text. Every footer control
-    /// changes viewing only; none of them reaches retained, saved or exported
-    /// pixels.
+    /// One nonwrapping footer row: layer segments and paper/transition actions
+    /// on the left, with the retained-view controls aligned to the right.
+    /// Transitions stay independent; all actions affect viewing only, never
+    /// retained, saved or exported pixels.
     pub fn footer_controls(&mut self, ui: &mut egui::Ui) {
-        ui.horizontal_wrapped(|ui| {
-            // Target: which retained image the viewer presents.
-            self.layer_controls(ui);
-            ui.separator();
-            // Transition: how an accepted result replaces the retained frame.
-            self.transition_menu(ui);
-            ui.separator();
-            // View: the exact zoom menu, then the distinct fit and reset.
-            // Exact percentages are a source-pixel-to-device-pixel scale, so
-            // 100% means one source pixel per device pixel.
-            self.zoom_menu(ui);
-            let fit = ui
-                .button(crate::i18n::text(ui.ctx(), "surfaces.viewer.fit"))
-                .on_hover_text(crate::i18n::text(ui.ctx(), "surfaces.viewer.fit_help"));
-            crate::controls::locate_row(ui, "viewer.fit", &fit);
-            if fit.clicked() {
-                self.fit_view();
-                ui.ctx().request_repaint();
-            }
-            let reset = ui
-                .button(crate::i18n::text(ui.ctx(), "surfaces.viewer.reset"))
-                .on_hover_text(crate::i18n::text(ui.ctx(), "surfaces.viewer.reset_help"));
-            crate::controls::locate_row(ui, "viewer.reset", &reset);
-            if reset.clicked() {
-                self.reset_view();
-                ui.ctx().request_repaint();
-            }
-        });
+        ui.allocate_ui_with_layout(
+            ui.available_size(),
+            egui::Layout::left_to_right(egui::Align::Center),
+            |ui| {
+                ui.spacing_mut().item_spacing.x = theme::SPACE_1;
+                self.layer_controls(ui);
+                self.transition_menu(ui);
+                ui.add_space(theme::SPACE_GROUP);
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let reset_label = crate::i18n::text(ui.ctx(), "surfaces.viewer.reset");
+                    let reset = crate::controls::icon_button(
+                        ui,
+                        reset_label.as_ref(),
+                        crate::controls::Icon::Reset,
+                    )
+                    .on_hover_text(crate::i18n::text(ui.ctx(), "surfaces.viewer.reset_help"));
+                    crate::controls::locate_row(ui, "viewer.reset", &reset);
+                    if reset.clicked() {
+                        self.reset_view();
+                        ui.ctx().request_repaint();
+                    }
+                    let fit = ui
+                        .button(crate::i18n::text(ui.ctx(), "surfaces.viewer.fit"))
+                        .on_hover_text(crate::i18n::text(ui.ctx(), "surfaces.viewer.fit_help"));
+                    crate::controls::locate_row(ui, "viewer.fit", &fit);
+                    if fit.clicked() {
+                        self.fit_view();
+                        ui.ctx().request_repaint();
+                    }
+                    self.zoom_menu(ui);
+                    ui.separator();
+                });
+            },
+        );
     }
     /// The accepted-result transitions: two independent booleans in one
     /// labelled popover, never one exclusive choice. A pending control-search
@@ -597,12 +636,16 @@ impl Viewer {
         if located {
             ui.memory_mut(|memory| memory.open_popup(popup_id));
         }
-        let menu = ui
-            .button(crate::i18n::text(ui.ctx(), "surfaces.viewer.transitions"))
-            .on_hover_text(crate::i18n::text(
-                ui.ctx(),
-                "surfaces.viewer.transitions_help",
-            ));
+        let label = crate::i18n::text(ui.ctx(), "surfaces.viewer.transitions");
+        let menu = if ui.available_width() < 360.0 {
+            crate::controls::icon_button(ui, label.as_ref(), crate::controls::Icon::Transitions)
+        } else {
+            ui.button(label)
+        }
+        .on_hover_text(crate::i18n::text(
+            ui.ctx(),
+            "surfaces.viewer.transitions_help",
+        ));
         if menu.clicked() {
             ui.memory_mut(|memory| memory.toggle_popup(popup_id));
         }
@@ -674,9 +717,26 @@ impl Viewer {
             },
             |percent| format!("{percent:.0}%"),
         );
+        let accessible_name = crate::tr!(ui.ctx(), "surfaces.viewer.zoom", zoom = zoom.as_str());
         let menu = ui
-            .button(crate::tr!(ui.ctx(), "surfaces.viewer.zoom", zoom = zoom))
+            .add(
+                egui::Button::new(zoom.as_str())
+                    .min_size(egui::vec2(theme::WIDTH_VALUE, theme::HEIGHT_CONTROL)),
+            )
             .on_hover_text(crate::i18n::text(ui.ctx(), "surfaces.viewer.zoom_help"));
+        // Keep the canonical action name, including the zoom prefix, separate
+        // from the compact visible readout. Do not localize under Context locks.
+        menu.widget_info(|| {
+            egui::WidgetInfo::labeled(
+                egui::WidgetType::Button,
+                ui.is_enabled(),
+                accessible_name.as_ref(),
+            )
+        });
+        ui.ctx().accesskit_node_builder(menu.id, |node| {
+            node.set_label(accessible_name.as_ref());
+        });
+        crate::controls::focus_feedback(ui, &menu);
         if menu.clicked() {
             ui.memory_mut(|memory| memory.toggle_popup(popup_id));
         }

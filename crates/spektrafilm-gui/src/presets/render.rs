@@ -149,6 +149,17 @@ impl App {
             panel.exact_width(RAIL_WIDTH)
         };
         let response = panel.show(ctx, |ui| {
+            // Content cannot resize the user's panel or its saved preference.
+            let panel_rect = ui.available_rect_before_wrap();
+            ui.allocate_space(panel_rect.size());
+            let mut content = ui.new_child(
+                egui::UiBuilder::new()
+                    .id_salt("preset-content")
+                    .max_rect(panel_rect)
+                    .layout(egui::Layout::top_down(egui::Align::Min)),
+            );
+            content.set_clip_rect(panel_rect);
+            let ui = &mut content;
             if self.input_transition_pending() {
                 ui.disable();
             }
@@ -156,9 +167,18 @@ impl App {
                 // Title and save share one compact row; the collapse control
                 // stays reachable at the row's end.
                 ui.horizontal(|ui| {
-                    ui.heading(crate::i18n::text(ui.ctx(), "surfaces.presets.title"));
+                    ui.label(
+                        egui::RichText::new(crate::i18n::text(ui.ctx(), "surfaces.presets.title"))
+                            .size(theme::SIZE_TITLE)
+                            .strong(),
+                    );
+                    let save_name = crate::i18n::text(ui.ctx(), "surfaces.presets.save");
                     if quiet_button(ui, |ui| {
-                        ui.button(crate::i18n::text(ui.ctx(), "surfaces.presets.save"))
+                        crate::controls::icon_button(
+                            ui,
+                            save_name.as_ref(),
+                            crate::controls::Icon::Add,
+                        )
                     })
                     .on_hover_text(crate::i18n::text(ui.ctx(), "surfaces.presets.save_help"))
                     .clicked()
@@ -166,10 +186,15 @@ impl App {
                         self.save_preset_as();
                     }
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if quiet_button(ui, |ui| ui.button("◀"))
-                            .on_hover_text(crate::i18n::text(ui.ctx(), "surfaces.presets.toggle"))
-                            .clicked()
-                        {
+                        let toggle_name = crate::i18n::text(ui.ctx(), "surfaces.presets.toggle");
+                        let toggle = quiet_button(ui, |ui| {
+                            crate::controls::icon_button(
+                                ui,
+                                toggle_name.as_ref(),
+                                crate::controls::Icon::ChevronLeft,
+                            )
+                        });
+                        if toggle.clicked() {
                             if wide {
                                 self.presets.state.expanded = false;
                             } else {
@@ -181,9 +206,15 @@ impl App {
             } else {
                 ui.with_layout(egui::Layout::top_down(egui::Align::Center), |ui| {
                     ui.add_space(theme::SPACE_2);
-                    if quiet_button(ui, |ui| ui.button("▶"))
-                        .on_hover_text(crate::i18n::text(ui.ctx(), "surfaces.presets.toggle"))
-                        .clicked()
+                    let toggle_name = crate::i18n::text(ui.ctx(), "surfaces.presets.toggle");
+                    if quiet_button(ui, |ui| {
+                        crate::controls::icon_button(
+                            ui,
+                            toggle_name.as_ref(),
+                            crate::controls::Icon::Image,
+                        )
+                    })
+                    .clicked()
                     {
                         if wide {
                             self.presets.state.expanded = true;
@@ -196,9 +227,11 @@ impl App {
             if !expanded {
                 return;
             }
-            let search_response = ui.add(
+            let search_response = ui.add_sized(
+                egui::vec2(ui.available_width(), theme::HEIGHT_CONTROL),
                 egui::TextEdit::singleline(&mut self.presets.query)
                     .id_salt("preset search")
+                    .margin(egui::vec2(theme::SPACE_2, 5.0))
                     .desired_width(ui.available_width())
                     .hint_text(crate::i18n::text(ui.ctx(), "surfaces.presets.search_hint")),
             );
@@ -216,8 +249,10 @@ impl App {
             {
                 self.presets.query.clear();
             }
-            ui.horizontal_wrapped(|ui| {
+            ui.horizontal(|ui| {
                 use super::discovery::Filter;
+                ui.spacing_mut().item_spacing.x = 0.0;
+                let segment_width = ui.available_width() / 3.0;
                 let mut changed = false;
                 for (filter, key, path) in [
                     (
@@ -236,13 +271,19 @@ impl App {
                         "presets.discovery.recent",
                     ),
                 ] {
-                    let response = ui.selectable_value(
-                        &mut self.presets.preferences.filter,
-                        filter,
-                        crate::i18n::text(ui.ctx(), key),
-                    );
+                    let response = ui
+                        .add_sized(
+                            egui::vec2(segment_width, theme::HEIGHT_CONTROL),
+                            egui::Button::new(crate::i18n::text(ui.ctx(), key))
+                                .truncate()
+                                .selected(self.presets.preferences.filter == filter),
+                        )
+                        .on_hover_text(crate::i18n::text(ui.ctx(), key));
+                    if response.clicked() && self.presets.preferences.filter != filter {
+                        self.presets.preferences.filter = filter;
+                        changed = true;
+                    }
                     crate::controls::locate_row(ui, path, &response);
-                    changed |= response.changed();
                 }
                 if changed {
                     self.presets.save_preferences();
@@ -254,54 +295,79 @@ impl App {
                     crate::tr!(ui.ctx(), "surfaces.presets.discovery_error", detail = error),
                 );
             }
-            if let Some(applied) = &self.presets.state.applied {
-                let state = match marker(
-                    applied,
-                    &self.presets.entries,
-                    &self.params,
-                    &self.film_name,
-                    &self.print_name,
-                ) {
-                    Marker::Applied => "applied",
-                    Marker::Modified => "modified",
-                    Marker::Missing => "missing",
-                };
-                let group = if applied.group == PresetGroup::BuiltIn {
-                    "Built-in"
-                } else {
-                    "My Presets"
-                };
-                let summary = crate::tr!(
-                    ui.ctx(),
-                    "surfaces.presets.current",
-                    group = crate::controls::localized(ui.ctx(), group),
-                    name = &applied.name,
-                    state = crate::controls::localized(ui.ctx(), state)
-                );
-                // The current look sits in its own block above the list, so its
-                // readable name and state stay visible even when search or
-                // filters hide its card, or the preset is missing entirely.
-                egui::Frame::NONE
-                    .fill(theme::SURFACE2)
-                    .stroke(theme::stroke(theme::ACCENT_DIM))
-                    .corner_radius(theme::RADIUS_CARD)
-                    .inner_margin(theme::SPACE_2)
-                    .show(ui, |ui| {
-                        ui.horizontal_top(|ui| {
+            // The summary is independent of search and filters. Matching the
+            // default parameters never manufactures an applied preset identity.
+            let current = egui::Frame::NONE
+                .inner_margin(theme::SPACE_2)
+                .show(ui, |ui| {
+                    ui.small(crate::i18n::text(
+                        ui.ctx(),
+                        "surfaces.presets.current_title",
+                    ));
+                    if let Some(applied) = &self.presets.state.applied {
+                        let state = match marker(
+                            applied,
+                            &self.presets.entries,
+                            &self.params,
+                            &self.film_name,
+                            &self.print_name,
+                        ) {
+                            Marker::Applied => "applied",
+                            Marker::Modified => "modified",
+                            Marker::Missing => "missing",
+                        };
+                        let group = if applied.group == PresetGroup::BuiltIn {
+                            "Built-in"
+                        } else {
+                            "My Presets"
+                        };
+                        let summary = crate::tr!(
+                            ui.ctx(),
+                            "surfaces.presets.current",
+                            group = crate::controls::localized(ui.ctx(), group),
+                            name = &applied.name,
+                            state = crate::controls::localized(ui.ctx(), state)
+                        );
+                        ui.horizontal(|ui| {
                             let (slot, _) = ui.allocate_exact_size(
-                                egui::vec2(CHECK_ICON, ui.spacing().interact_size.y),
+                                egui::vec2(CHECK_ICON, theme::SIZE_LABEL),
                                 egui::Sense::hover(),
                             );
                             paint_check(ui.painter(), slot);
                             ui.add(
-                                egui::Label::new(
-                                    egui::RichText::new(summary)
-                                        .color(theme::FG)
-                                        .size(theme::SIZE_LABEL),
-                                )
-                                .wrap(),
-                            );
+                                egui::Label::new(egui::RichText::new(&applied.name).strong())
+                                    .truncate(),
+                            )
+                            .on_hover_text(summary.as_ref());
                         });
+                        ui.small(crate::controls::localized(ui.ctx(), state));
+                        Some(summary)
+                    } else {
+                        ui.add(
+                            egui::Label::new(
+                                egui::RichText::new(crate::i18n::text(
+                                    ui.ctx(),
+                                    "surfaces.presets.unapplied",
+                                ))
+                                .size(theme::SIZE_HINT)
+                                .color(theme::FG_SECONDARY),
+                            )
+                            .wrap(),
+                        );
+                        None
+                    }
+                });
+            if let Some(summary) = current.inner {
+                current.response.widget_info(|| {
+                    egui::WidgetInfo::labeled(
+                        egui::WidgetType::Other,
+                        ui.is_enabled(),
+                        summary.as_ref(),
+                    )
+                });
+                ui.ctx()
+                    .accesskit_node_builder(current.response.id, |node| {
+                        node.set_label(summary.as_ref());
                     });
             }
             self.presets.update_search(&self.films, &self.papers);
@@ -324,6 +390,10 @@ impl App {
             self.presets
                 .thumbnails
                 .prepare(ctx, &self.presets.entries, &self.data_dir);
+            egui::TopBottomPanel::bottom("preset library reference footer")
+                .resizable(false)
+                .frame(egui::Frame::NONE.inner_margin(egui::Margin::symmetric(0, 8)))
+                .show_inside(ui, super::thumbnails::Thumbnails::reference_credit);
             egui::ScrollArea::vertical()
                 .id_salt("preset browser scroll")
                 .show(ui, |ui| {
@@ -355,18 +425,20 @@ impl App {
                         });
                     }
                     for group in [PresetGroup::BuiltIn, PresetGroup::User] {
-                        ui.separator();
-                        ui.heading(crate::i18n::text(
-                            ui.ctx(),
-                            if group == PresetGroup::BuiltIn {
-                                "surfaces.presets.builtin"
-                            } else {
-                                "surfaces.presets.mine"
-                            },
-                        ));
-                        if group == PresetGroup::BuiltIn {
-                            super::thumbnails::Thumbnails::reference_credit(ui);
-                        }
+                        ui.add_space(theme::SPACE_2);
+                        ui.label(
+                            egui::RichText::new(crate::i18n::text(
+                                ui.ctx(),
+                                if group == PresetGroup::BuiltIn {
+                                    "surfaces.presets.builtin"
+                                } else {
+                                    "surfaces.presets.mine"
+                                },
+                            ))
+                            .size(theme::SIZE_HINT)
+                            .color(theme::FG_SECONDARY)
+                            .strong(),
+                        );
                         if group == PresetGroup::User {
                             let directory = self.presets.library.directory().to_path_buf();
                             ui.add(egui::Label::new(directory.display().to_string()).wrap());
@@ -447,23 +519,24 @@ impl App {
                             } else {
                                 ""
                             };
-                            // Card-style preset entry with route metadata. The
-                            // card is quiet: the applied state is the accent
-                            // side rail, the check and the state word, never a
-                            // filled name button, so a long list stays
-                            // recessive behind the viewer and the state cue
-                            // stays distinct from any action fill.
+                            // Only the applied identity gets a frame. Name and
+                            // two material lines fit beside the 46 pt reference.
                             let card_frame = egui::Frame::NONE
-                                .fill(theme::SURFACE2)
-                                .stroke(theme::stroke(if active {
-                                    theme::ACCENT_DIM
+                                .fill(if active {
+                                    theme::SURFACE2
                                 } else {
-                                    theme::BORDER
-                                }))
+                                    egui::Color32::TRANSPARENT
+                                })
+                                .stroke(if active {
+                                    theme::stroke(theme::ACCENT_DIM)
+                                } else {
+                                    egui::Stroke::NONE
+                                })
                                 .corner_radius(theme::RADIUS_CARD)
                                 .inner_margin(theme::SPACE_2);
                             let card = card_frame.show(ui, |ui| {
                                 ui.set_min_height(CARD_HEIGHT - 2.0 * theme::SPACE_2);
+                                ui.set_width(ui.available_width());
                                 ui.horizontal(|ui| {
                                     if group == PresetGroup::BuiltIn {
                                         self.presets.thumbnails.show(ui, entry, THUMBNAIL);
@@ -472,10 +545,13 @@ impl App {
                                         theme::HEIGHT_CONTROL + ui.spacing().item_spacing.x;
                                     ui.vertical(|ui| {
                                         ui.set_width((ui.available_width() - controls).max(0.0));
+                                        ui.spacing_mut().item_spacing.y = 2.0;
+                                        ui.spacing_mut().interact_size.y = 0.0;
+                                        ui.spacing_mut().button_padding = egui::Vec2::ZERO;
                                         ui.horizontal(|ui| {
                                             if active {
                                                 let (slot, _) = ui.allocate_exact_size(
-                                                    egui::vec2(CHECK_ICON, theme::HEIGHT_CONTROL),
+                                                    egui::vec2(CHECK_ICON, theme::SIZE_LABEL),
                                                     egui::Sense::hover(),
                                                 );
                                                 paint_check(ui.painter(), slot);
@@ -485,7 +561,8 @@ impl App {
                                                     egui::Button::new(
                                                         egui::RichText::new(&entry.name)
                                                             .color(theme::FG)
-                                                            .size(theme::SIZE_LABEL),
+                                                            .size(theme::SIZE_LABEL)
+                                                            .strong(),
                                                     )
                                                     .wrap(),
                                                 )
@@ -516,9 +593,6 @@ impl App {
                                                 }
                                             });
                                         });
-                                        if active {
-                                            ui.small(crate::controls::localized(ui.ctx(), suffix));
-                                        }
                                         for (role, reference, profiles) in [
                                             ("Film", &entry.film_profile, &self.films),
                                             ("Print", &entry.print_profile, &self.papers),
@@ -528,33 +602,42 @@ impl App {
                                                     profiles,
                                                     &reference.stock,
                                                 );
-                                                ui.add(
+                                                let description = crate::tr!(
+                                                    ui.ctx(),
+                                                    "surfaces.presets.role",
+                                                    role =
+                                                        crate::controls::localized(ui.ctx(), role),
+                                                    name = &display
+                                                );
+                                                let material = ui.add(
                                                     egui::Label::new(
-                                                        egui::RichText::new(crate::tr!(
-                                                            ui.ctx(),
-                                                            "surfaces.presets.role",
-                                                            role = crate::controls::localized(
-                                                                ui.ctx(),
-                                                                role
-                                                            ),
-                                                            name = display
-                                                        ))
-                                                        .color(theme::FG_SECONDARY)
-                                                        .size(theme::SIZE_HINT),
+                                                        egui::RichText::new(display)
+                                                            .color(theme::FG_SECONDARY)
+                                                            .size(theme::SIZE_HINT),
                                                     )
                                                     .truncate(),
-                                                )
-                                                .on_hover_text(&reference.stock);
+                                                );
+                                                ui.ctx().accesskit_node_builder(
+                                                    material.id,
+                                                    |node| {
+                                                        node.set_label(description.as_ref());
+                                                    },
+                                                );
+                                                material.on_hover_text(format!(
+                                                    "{description}\n{}",
+                                                    reference.stock
+                                                ));
                                             }
                                         }
                                     });
-                                    // Favorite and the entry actions are two
-                                    // compact controls beside the content,
-                                    // never nested inside the clickable name;
-                                    // the context menu on the name stays an
-                                    // additional route to the same actions.
+                                    // One narrow action area fits within the
+                                    // thumbnail height. Both controls remain
+                                    // visible and independently keyboard reachable.
                                     ui.vertical(|ui| {
                                         ui.set_width(theme::HEIGHT_CONTROL);
+                                        ui.spacing_mut().item_spacing.y = 2.0;
+                                        ui.spacing_mut().interact_size.y = CARD_ACTION_HEIGHT;
+                                        ui.spacing_mut().button_padding.y = 0.0;
                                         let selected =
                                             self.presets.preferences.favorites.iter().any(
                                                 |identity| {
@@ -565,7 +648,7 @@ impl App {
                                         let favorite_response = quiet_button(ui, |ui| {
                                             ui.add(egui::Button::new("").min_size(egui::vec2(
                                                 theme::HEIGHT_CONTROL,
-                                                theme::HEIGHT_CONTROL,
+                                                CARD_ACTION_HEIGHT,
                                             )))
                                         });
                                         // The star is drawn rather than typeset:
@@ -596,10 +679,21 @@ impl App {
                                             ),
                                             name = &entry.name
                                         );
-                                        ui.ctx()
-                                            .accesskit_node_builder(favorite_response.id, |node| {
-                                                node.set_label(accessible_name)
-                                            });
+                                        favorite_response.widget_info(|| {
+                                            egui::WidgetInfo::labeled(
+                                                egui::WidgetType::Button,
+                                                ui.is_enabled(),
+                                                accessible_name.as_ref(),
+                                            )
+                                        });
+                                        ui.ctx().accesskit_node_builder(
+                                            favorite_response.id,
+                                            |node| {
+                                                node.set_label(accessible_name.as_ref());
+                                            },
+                                        );
+                                        let favorite_response =
+                                            favorite_response.on_hover_text(accessible_name);
                                         crate::controls::focus_feedback(ui, &favorite_response);
                                         if favorite_response.gained_focus() {
                                             favorite_response
@@ -626,9 +720,15 @@ impl App {
                                                     ui,
                                                     egui::Button::new("").min_size(egui::vec2(
                                                         theme::HEIGHT_CONTROL,
-                                                        theme::HEIGHT_CONTROL,
+                                                        CARD_ACTION_HEIGHT,
                                                     )),
-                                                    |ui| self.preset_actions(ui, entry),
+                                                    |ui| {
+                                                        ui.spacing_mut().interact_size.y =
+                                                            theme::HEIGHT_CONTROL;
+                                                        ui.spacing_mut().button_padding.y =
+                                                            theme::SPACE_1;
+                                                        self.preset_actions(ui, entry)
+                                                    },
                                                 )
                                             });
                                             // The affordance is drawn rather than
@@ -643,6 +743,13 @@ impl App {
                                                 "surfaces.presets.actions_name",
                                                 name = &entry.name
                                             );
+                                            actions.response.widget_info(|| {
+                                                egui::WidgetInfo::labeled(
+                                                    egui::WidgetType::Button,
+                                                    ui.is_enabled(),
+                                                    accessible_name.as_ref(),
+                                                )
+                                            });
                                             ui.ctx().accesskit_node_builder(
                                                 actions.response.id,
                                                 |node| {
@@ -997,6 +1104,8 @@ impl App {
 const RAIL_WIDTH: f32 = 48.0;
 const CARD_HEIGHT: f32 = 64.0;
 const THUMBNAIL: f32 = 46.0;
+/// Two visible controls and a 2 pt gap fit inside the reference image height.
+const CARD_ACTION_HEIGHT: f32 = 22.0;
 /// The size of the current look's painted check.
 const CHECK_ICON: f32 = 12.0;
 /// The current look's side rail width.

@@ -5,8 +5,8 @@ use spektrafilm_core::presets::{Preset, PresetLibrary, Provenance};
 use std::sync::mpsc;
 
 fn expand_preset_library(h: &mut Harness<'_, App>) {
-    if h.query_by_label("▶").is_some() {
-        click(h, "▶");
+    if h.query_by_label("Search presets").is_none() {
+        click(h, "Collapse or expand Presets");
     }
     scroll_preset_into_view(h, "Refresh");
     preset_pointer_click(h, "Refresh", egui::PointerButton::Primary);
@@ -479,7 +479,7 @@ fn settings_and_export_block_background_pointer_and_keyboard_and_restore_focus()
 fn settings_does_not_submit_or_cancel_a_background_preset_dialog() {
     let mut s = session();
     let h = &mut s.harness;
-    click(h, "▶");
+    click(h, "Collapse or expand Presets");
     click(h, "Save preset…");
     edit_preset_name(h, "Modal isolation");
     click(h, "Settings");

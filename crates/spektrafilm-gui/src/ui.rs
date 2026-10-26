@@ -253,7 +253,7 @@ impl App {
             || self.export_job.is_some()
             || self.calibration_job.is_some();
         let width = (ui.available_width() - ui.spacing().item_spacing.x) * 0.5;
-        let action = |ui: &mut egui::Ui, enabled: bool, label_key, caption_key| {
+        let action = |ui: &mut egui::Ui, enabled: bool, label_key, caption_key, icon, primary| {
             let label = crate::i18n::text(ui.ctx(), label_key);
             let mut text = egui::text::LayoutJob::default();
             text.append(
@@ -261,7 +261,7 @@ impl App {
                 0.0,
                 egui::TextFormat {
                     font_id: egui::FontId::proportional(theme::SIZE_LABEL),
-                    color: theme::FG,
+                    color: if primary { theme::ACCENT } else { theme::FG },
                     ..Default::default()
                 },
             );
@@ -275,14 +275,49 @@ impl App {
                     ..Default::default()
                 },
             );
-            let response = ui.add_enabled(
-                enabled,
-                egui::Button::new(text)
-                    .min_size(egui::vec2(width, 64.0))
-                    .wrap(),
+            text.wrap.max_width = (width - 44.0).max(1.0);
+            let galley = ui.fonts(|fonts| fonts.layout_job(text));
+            let button = egui::Button::new("")
+                .fill(if primary {
+                    theme::SURFACE2
+                } else {
+                    theme::SURFACE3
+                })
+                .stroke(theme::stroke(if primary {
+                    theme::ACCENT_DIM
+                } else {
+                    theme::BORDER
+                }))
+                .min_size(egui::vec2(width, 64.0));
+            let response = ui.add_enabled(enabled, button);
+            let icon_rect = egui::Rect::from_center_size(
+                egui::pos2(response.rect.left() + 20.0, response.rect.center().y),
+                egui::vec2(17.0, 17.0),
             );
+            controls::paint_icon(
+                ui.painter(),
+                icon_rect,
+                icon,
+                if primary {
+                    theme::ACCENT
+                } else {
+                    theme::FG_SECONDARY
+                },
+            );
+            ui.painter().galley(
+                egui::pos2(
+                    response.rect.left() + 36.0,
+                    response.rect.center().y - galley.size().y * 0.5,
+                ),
+                galley,
+                theme::FG,
+            );
+            response.widget_info(|| {
+                egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, label.as_ref())
+            });
             ui.ctx()
                 .accesskit_node_builder(response.id, |node| node.set_label(label.as_ref()));
+            controls::focus_feedback(ui, &response);
             response
         };
         ui.horizontal(|ui| {
@@ -291,6 +326,8 @@ impl App {
                 self.image.is_some() && !busy,
                 "surfaces.action.scan",
                 "surfaces.action.scan_caption",
+                controls::Icon::Scan,
+                true,
             );
             if scan
                 .on_hover_text(crate::i18n::text(ui.ctx(), "surfaces.action.scan_help"))
@@ -306,6 +343,8 @@ impl App {
                     && self.pending_saves.is_empty(),
                 "surfaces.action.save_retained",
                 "surfaces.action.save_caption",
+                controls::Icon::Save,
+                false,
             );
             controls::locate_row(ui, "action.save_retained", &save);
             if save
@@ -709,64 +748,89 @@ impl App {
             });
             let temporary_open = !self.filter.is_empty() || self.only_modified;
             let open = normal_open || temporary_open || reveal;
-            let mut heading = None;
-            ui.horizontal(|ui| {
-                let title = if section == "Glare" {
-                    "Print viewing glare"
+            let frame = egui::Frame::NONE
+                .fill(if open {
+                    theme::SURFACE2
                 } else {
-                    section
-                };
-                let response = controls::disclosure_header(ui, title, open);
-                if response.clicked() && !temporary_open {
-                    ui.ctx()
-                        .data_mut(|data| data.insert_persisted(disclosure_id, !normal_open));
-                }
-                heading = Some(response);
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    self.section_reset_controls_with_order(ui, section, true);
+                    egui::Color32::TRANSPARENT
+                })
+                .stroke(if open {
+                    theme::stroke(theme::BORDER)
+                } else {
+                    egui::Stroke::NONE
+                })
+                .corner_radius(theme::RADIUS_CARD)
+                .inner_margin(egui::Margin::symmetric(
+                    theme::SPACE_MODULE as i8,
+                    if open {
+                        theme::SPACE_MODULE as i8
+                    } else {
+                        theme::SPACE_1 as i8
+                    },
+                ));
+            frame.show(ui, |ui| {
+                ui.set_min_width(ui.available_width());
+                ui.spacing_mut().item_spacing.y = theme::SPACE_2;
+                let mut heading = None;
+                ui.horizontal(|ui| {
+                    let title = if section == "Glare" {
+                        "Print viewing glare"
+                    } else {
+                        section
+                    };
+                    let mut response = controls::disclosure_header(ui, title, open);
+                    if let Some(summary) = section_summary(section) {
+                        response = response.on_hover_text(controls::localized(ui.ctx(), summary));
+                    }
+                    if response.clicked() && !temporary_open {
+                        ui.ctx()
+                            .data_mut(|data| data.insert_persisted(disclosure_id, !normal_open));
+                    }
+                    heading = Some(response);
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        self.section_reset_controls_with_order(ui, section, true);
+                    });
                 });
-            });
-            if reveal {
-                self.pending_scroll = None;
-                if !temporary_open {
-                    ui.ctx()
-                        .data_mut(|data| data.insert_persisted(disclosure_id, true));
+                if reveal {
+                    self.pending_scroll = None;
+                    if !temporary_open {
+                        ui.ctx()
+                            .data_mut(|data| data.insert_persisted(disclosure_id, true));
+                    }
+                    if let Some(response) = heading {
+                        response.request_focus();
+                        ui.scroll_to_rect(response.rect, Some(egui::Align::TOP));
+                    }
                 }
-                if let Some(response) = heading {
-                    response.request_focus();
-                    ui.scroll_to_rect(response.rect, Some(egui::Align::TOP));
+                if open {
+                    ui.push_id("body", |ui| self.module_body(ui, section));
                 }
-            }
-            if open {
-                ui.indent("body", |ui| self.module_body(ui, section));
-            } else if let Some(summary) = section_summary(section) {
-                ui.label(
-                    egui::RichText::new(controls::localized(ui.ctx(), summary))
+                if let Some(materials) = ui.ctx().data(|data| {
+                    data.get_temp::<Arc<InspectorMaterials>>(egui::Id::new(
+                        "inspector-material-context",
+                    ))
+                }) && let Some(reason) = controls::module_applicability(
+                    section,
+                    &self.params,
+                    &materials.film,
+                    &materials.print,
+                ) {
+                    ui.label(
+                        egui::RichText::new(crate::tr!(
+                            ui.ctx(),
+                            "surfaces.section.inactive",
+                            reason = controls::localized(ui.ctx(), &reason)
+                        ))
                         .color(theme::FG_MUTED)
                         .small(),
-                );
-            }
-            if let Some(materials) = ui.ctx().data(|data| {
-                data.get_temp::<Arc<InspectorMaterials>>(egui::Id::new(
-                    "inspector-material-context",
-                ))
-            }) && let Some(reason) = controls::module_applicability(
-                section,
-                &self.params,
-                &materials.film,
-                &materials.print,
-            ) {
-                ui.label(
-                    egui::RichText::new(crate::tr!(
-                        ui.ctx(),
-                        "surfaces.section.inactive",
-                        reason = controls::localized(ui.ctx(), &reason)
-                    ))
-                    .color(theme::FG_MUTED)
-                    .small(),
-                );
-            }
-            ui.add_space(theme::SPACE_ROW);
+                    );
+                }
+            });
+            ui.add_space(if open {
+                theme::SPACE_MODULE
+            } else {
+                theme::SPACE_2
+            });
         });
     }
 
@@ -810,21 +874,12 @@ impl App {
                     } else {
                         self.print_name.clone()
                     };
-                    let changed = if film {
+                    let (changed, response) = if film {
                         profile_combo(ui, "film", "film profile", &self.films, &mut selected)
                     } else {
                         profile_combo(ui, "paper", "print profile", &self.papers, &mut selected)
                     };
-                    if let Some(response) =
-                        ui.ctx()
-                            .read_response(ui.make_persistent_id(egui::Id::new(if film {
-                                "film"
-                            } else {
-                                "paper"
-                            })))
-                    {
-                        controls::locate_row(ui, path, &response);
-                    }
+                    controls::locate_row(ui, path, &response);
                     if changed {
                         self.label_adjustment(if film {
                             "Change film material"
@@ -1253,7 +1308,7 @@ impl App {
                 &mut self.params.print_render.development_time,
             )
         };
-        let changed = ui
+        let (changed, response) = ui
             .add_enabled_ui(inactive.is_none(), |ui| {
                 dev_time_combo(
                     ui,
@@ -1275,16 +1330,7 @@ impl App {
             );
             self.mark_parameters_changed();
         }
-        if let Some(response) =
-            ui.ctx()
-                .read_response(ui.make_persistent_id(egui::Id::new(if film {
-                    "film-time"
-                } else {
-                    "print-time"
-                })))
-        {
-            controls::locate_row(ui, path, &response);
-        }
+        controls::locate_row(ui, path, &response);
     }
 
     fn controls_panel(&mut self, ui: &mut egui::Ui) {
@@ -1335,13 +1381,31 @@ impl App {
                 continue;
             }
             ui.push_id(("stage", stage.label()), |ui| {
+                ui.add_space(theme::SPACE_2);
                 let open_id = ui.make_persistent_id("open");
                 let normal_open = ui
                     .ctx()
                     .data_mut(|data| *data.get_persisted_mut_or_insert_with(open_id, || true));
                 let filtered = !self.filter.is_empty() || self.only_modified;
                 let open = normal_open || filtered || reveal_stage || has_locator;
-                let response = controls::stage_disclosure(ui, stage.label(), open);
+                let response = ui
+                    .horizontal(|ui| {
+                        let number = match stage {
+                            controls::Stage::Input => "01",
+                            controls::Stage::Film => "02",
+                            controls::Stage::Print => "03",
+                            controls::Stage::Scan => "04",
+                            controls::Stage::Output => "05",
+                        };
+                        ui.label(
+                            egui::RichText::new(number)
+                                .monospace()
+                                .small()
+                                .color(theme::ACCENT_DIM),
+                        );
+                        controls::stage_disclosure(ui, stage.label(), open)
+                    })
+                    .inner;
                 let accessible_name = crate::tr!(
                     ui.ctx(),
                     "surfaces.section.stage",
@@ -1368,7 +1432,7 @@ impl App {
                         self.parameter_section(ui, section);
                     }
                 }
-                ui.separator();
+                ui.add_space(theme::SPACE_MODULE);
             });
         }
         if input_view_before
@@ -1421,16 +1485,44 @@ impl App {
             self.viewer.settings.use_display_transform,
             self.params.settings.preview_max_size,
         );
-        let modal = egui::Modal::new(egui::Id::new("application-settings")).show(ctx, |ui| {
-            ui.set_width(520.0_f32.min(ctx.screen_rect().width() - theme::SPACE_4 * 2.0));
-            ui.set_max_height(ctx.screen_rect().height() - 2.0 * theme::SPACE_4);
-            ui.heading(crate::i18n::text(ctx, "surfaces.settings.title"));
+        let modal = egui::Modal::new(egui::Id::new("application-settings"))
+            .frame(theme::dialog_frame())
+            .show(ctx, |ui| {
+            let screen = ctx.screen_rect();
+            let border = 2.0 * theme::STROKE_DEFAULT;
+            let width = ((screen.width() - 2.0 * theme::SPACE_DIALOG).min(520.0) - border).max(1.0);
+            let max_height = (screen.height() * 0.9)
+                .min(screen.height() - 2.0 * theme::SPACE_DIALOG) - border;
+            ui.set_min_width(width);
+            ui.set_max_width(width);
+            ui.set_max_height(max_height);
+            ui.spacing_mut().item_spacing.y = 0.0;
+            egui::Frame::NONE
+                .inner_margin(egui::Margin::symmetric(theme::SPACE_DIALOG as i8,
+                    ((theme::HEIGHT_DIALOG_HEADER - theme::HEIGHT_CONTROL) / 2.0) as i8))
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.set_min_height(theme::HEIGHT_CONTROL);
+                        ui.label(egui::RichText::new(crate::i18n::text(ctx, "surfaces.settings.title"))
+                            .size(theme::SIZE_TITLE).strong());
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            let label = crate::i18n::text(ctx, "surfaces.settings.close");
+                            let response = controls::icon_button(ui, label.as_ref(), controls::Icon::Close);
+                            if first_frame && !locating { response.request_focus(); }
+                            close = response.clicked();
+                        });
+                    });
+                });
             ui.separator();
-            let scroll = egui::ScrollArea::vertical()
+            let body_height = (max_height - theme::HEIGHT_DIALOG_HEADER - theme::HEIGHT_DIALOG_FOOTER
+                - 2.0 * theme::SPACE_DIALOG - 2.0 * theme::STROKE_DEFAULT).max(1.0);
+            let scroll = egui::Frame::NONE.inner_margin(theme::SPACE_DIALOG as i8)
+                .show(ui, |ui| egui::ScrollArea::vertical()
                 .id_salt("settings-scroll")
-                .max_height((ctx.screen_rect().height() - 180.0).max(100.0))
+                .max_height(body_height)
                 .auto_shrink([false, true])
                 .show(ui, |ui| {
+                    ui.spacing_mut().item_spacing = egui::vec2(theme::SPACE_2, theme::SPACE_2);
                     // Search opens this owner without filtering its contents. A
                     // canonical target scrolls its actual response, not the header.
                     for section in ["Session", "GUI parameters", "Display", "Diagnostics"] {
@@ -1439,11 +1531,13 @@ impl App {
                             data.get_temp::<(String, String)>(egui::Id::new("control_focus_request"))
                                 .is_some_and(|(owner, _)| owner == section)
                         });
-                        let response = egui::CollapsingHeader::new(if section == "Session" {
+                        let label = if section == "Session" {
                             crate::i18n::text(ctx, "surfaces.settings.general")
                         } else {
                             controls::localized(ctx, section)
-                        })
+                        };
+                        let response = egui::CollapsingHeader::new(
+                            egui::RichText::new(label).size(theme::SIZE_TITLE).strong())
                         .id_salt(section)
                         .default_open(matches!(section, "Session" | "Display"))
                         .open(reveal.then_some(true))
@@ -1508,8 +1602,9 @@ impl App {
                                 self.pending_scroll = None;
                             }
                         }
+                        ui.add_space(theme::SPACE_MODULE);
                     }
-                });
+                })).inner;
             let viewport = ui.interact(scroll.inner_rect, ui.id().with("settings-viewport"), egui::Sense::hover());
             let content_label = crate::i18n::text(ctx, "surfaces.settings.content");
             viewport.widget_info(|| egui::WidgetInfo::labeled(
@@ -1519,15 +1614,16 @@ impl App {
                 node.set_label(content_label.as_ref());
             });
             ui.separator();
-            ui.allocate_ui_with_layout(
-                egui::vec2(ui.available_width(), theme::HEIGHT_CONTROL),
-                egui::Layout::right_to_left(egui::Align::Center),
-                |ui| {
-                let response = ui.button(crate::i18n::text(ctx, "surfaces.settings.close"));
-                if first_frame && !locating { response.request_focus(); }
-                close = response.clicked();
-                },
-            );
+            egui::Frame::NONE.inner_margin(theme::SPACE_DIALOG as i8).show(ui, |ui| {
+                ui.allocate_ui_with_layout(
+                    egui::vec2(ui.available_width(), theme::HEIGHT_CONTROL),
+                    egui::Layout::right_to_left(egui::Align::Center),
+                    |ui| {
+                        let label = crate::i18n::text(ctx, "surfaces.action.close");
+                        close |= ui.button(label).clicked();
+                    },
+                );
+            });
         });
         let title = crate::i18n::text(ctx, "surfaces.settings.title");
         modal.response.widget_info(|| {
@@ -1619,7 +1715,7 @@ impl App {
         .into_owned()
     }
 
-    /// One dedicated strip describes the displayed layer and retained result.
+    /// One stable line describes the displayed layer and retained result.
     fn viewer_status(&self, ui: &mut egui::Ui) {
         let has_output = self.output_image.is_some() || self.output_retained.is_some();
         let original = self.viewer.settings.layer == display::ViewLayer::Input;
@@ -1632,196 +1728,374 @@ impl App {
         } else {
             self.retained_result_identity(ui.ctx())
         };
-        ui.allocate_ui_with_layout(
-            egui::vec2(
-                ui.available_width(),
-                ui.text_style_height(&egui::TextStyle::Body),
-            ),
-            egui::Layout::right_to_left(egui::Align::Center),
-            |ui| {
-                if self.viewer_render_pending() {
-                    let label = ui.label(crate::i18n::text(ui.ctx(), "surfaces.viewer.rendering"));
-                    controls::locate_row(ui, "viewer.rendering", &label);
-                }
-                ui.add_sized(
-                    egui::vec2(
-                        ui.available_width(),
-                        ui.text_style_height(&egui::TextStyle::Body),
-                    ),
-                    egui::Label::new(
-                        egui::RichText::new(&identity)
-                            .size(theme::SIZE_LABEL)
-                            .color(
-                                if !original && has_output && self.accepted_frame_is_stale() {
-                                    theme::WARNING
-                                } else {
-                                    theme::FG_SECONDARY
-                                },
-                            ),
-                    )
-                    .truncate()
-                    .halign(egui::Align::Min),
-                )
-                .on_hover_text(&identity);
-            },
-        );
-        if !original
+        let preview = !original
             && self.viewer.settings.layer == display::ViewLayer::Output
             && has_output
-            && self.retained_kind == Some(RenderKind::Preview)
-        {
-            ui.label(
-                egui::RichText::new(crate::i18n::text(
-                    ui.ctx(),
-                    "result.identity.preview_caveat",
-                ))
-                .size(theme::SIZE_HINT)
-                .color(theme::FG_SECONDARY),
-            );
-        }
+            && self.retained_kind == Some(RenderKind::Preview);
+        ui.allocate_ui_with_layout(
+            ui.available_size(),
+            egui::Layout::right_to_left(egui::Align::Center),
+            |ui| {
+                let help = crate::i18n::text(ui.ctx(), "surfaces.viewer.gestures_help");
+                let help_button = controls::icon_button(ui, help.as_ref(), controls::Icon::Help);
+                let help_id = ui.make_persistent_id("viewer-gesture-help");
+                if help_button.clicked() {
+                    ui.memory_mut(|memory| memory.toggle_popup(help_id));
+                }
+                egui::popup::popup_below_widget(
+                    ui,
+                    help_id,
+                    &help_button,
+                    egui::popup::PopupCloseBehavior::CloseOnClickOutside,
+                    |ui| {
+                        ui.set_max_width(320.0);
+                        let layer = crate::i18n::text(
+                            ui.ctx(),
+                            if original {
+                                "surfaces.viewer.input"
+                            } else if self.viewer.settings.layer == display::ViewLayer::PaperBack {
+                                "surfaces.viewer.paper_back"
+                            } else {
+                                "surfaces.viewer.output"
+                            },
+                        );
+                        ui.label(crate::tr!(
+                            ui.ctx(),
+                            "surfaces.viewer.gestures",
+                            layer = layer,
+                            zoom = format!(
+                                "{:.0}",
+                                self.viewer
+                                    .zoom_percent()
+                                    .unwrap_or(self.viewer.zoom * 100.0)
+                            )
+                        ));
+                    },
+                );
+                if self.viewer_render_pending() {
+                    let label = ui.label(
+                        egui::RichText::new(crate::i18n::text(
+                            ui.ctx(),
+                            "surfaces.viewer.rendering",
+                        ))
+                        .small(),
+                    );
+                    controls::locate_row(ui, "viewer.rendering", &label);
+                }
+                let width = ui.available_width();
+                ui.allocate_ui_with_layout(
+                    egui::vec2(width, theme::HEIGHT_CONTROL),
+                    egui::Layout::left_to_right(egui::Align::Center),
+                    |ui| {
+                        let color = if !original && has_output && self.accepted_frame_is_stale() {
+                            theme::WARNING
+                        } else {
+                            theme::FG_SECONDARY
+                        };
+                        let (dot, _) =
+                            ui.allocate_exact_size(egui::vec2(6.0, 6.0), egui::Sense::hover());
+                        ui.painter().circle_filled(dot.center(), 2.5, color);
+                        let identity_width = if preview {
+                            ui.available_width() * 0.62
+                        } else {
+                            ui.available_width()
+                        };
+                        ui.allocate_ui_with_layout(
+                            egui::vec2(identity_width, theme::HEIGHT_CONTROL),
+                            egui::Layout::left_to_right(egui::Align::Center),
+                            |ui| {
+                                ui.set_min_width(identity_width);
+                                ui.add(
+                                    egui::Label::new(
+                                        egui::RichText::new(&identity).small().color(color),
+                                    )
+                                    .truncate(),
+                                )
+                            },
+                        )
+                        .inner
+                        .on_hover_text(&identity);
+                        if preview {
+                            ui.separator();
+                            let caveat =
+                                crate::i18n::text(ui.ctx(), "result.identity.preview_caveat");
+                            ui.add(
+                                egui::Label::new(
+                                    egui::RichText::new(caveat.as_ref())
+                                        .small()
+                                        .color(theme::FG_MUTED),
+                                )
+                                .truncate(),
+                            )
+                            .on_hover_text(caveat);
+                        }
+                    },
+                );
+            },
+        );
     }
 
-    /// One header owns global actions, read-only context, and operation status.
+    /// One toolbar row owns global actions and two-line photograph context.
     fn window_header(&mut self, ctx: &egui::Context) {
         egui::TopBottomPanel::top("window-header")
-            .frame(egui::Frame::default().fill(theme::SURFACE2).inner_margin(
-                egui::Margin::symmetric(theme::SPACE_GROUP as i8, theme::SPACE_ROW as i8),
-            ))
+            .exact_height(theme::HEIGHT_HEADER)
+            .frame(
+                egui::Frame::NONE
+                    .fill(theme::SURFACE)
+                    .inner_margin(egui::Margin::symmetric(theme::SPACE_4 as i8, 14)),
+            )
             .show(ctx, |ui| {
-                ui.horizontal(|ui| {
-                    ui.label(
-                        egui::RichText::new("spektrafilm")
-                            .strong()
-                            .size(theme::SIZE_TITLE),
-                    );
-                    self.photograph_toolbar(ui);
-                    ui.add_space(theme::SPACE_GROUP);
-                    if ui
-                        .button(crate::i18n::text(ui.ctx(), "surfaces.action.open"))
-                        .on_hover_text(crate::i18n::text(ui.ctx(), "surfaces.action.open_help"))
-                        .clicked()
-                    {
-                        self.open_image_dialog();
-                    }
-                    ui.horizontal(|ui| {
-                        let undo_label = self.undo_label_localized(ui.ctx()).map_or_else(
-                            || crate::i18n::text(ui.ctx(), "surfaces.history.no_undo").into_owned(),
-                            |label| {
-                                crate::tr!(ui.ctx(), "surfaces.history.undo", label = label)
-                                    .into_owned()
+                ui.allocate_ui_with_layout(
+                    ui.available_size(),
+                    egui::Layout::left_to_right(egui::Align::Center),
+                    |ui| {
+                        ui.spacing_mut().item_spacing.x = theme::SPACE_3;
+                        let (mark, _) =
+                            ui.allocate_exact_size(egui::vec2(24.0, 24.0), egui::Sense::hover());
+                        ui.painter().circle_stroke(
+                            mark.center(),
+                            11.5,
+                            theme::stroke(theme::ACCENT_DIM),
+                        );
+                        controls::paint_icon(
+                            ui.painter(),
+                            mark,
+                            controls::Icon::Aperture,
+                            theme::ACCENT,
+                        );
+                        if ctx.screen_rect().width() > theme::WIDTH_COMPACT_WORKSPACE {
+                            ui.label(
+                                egui::RichText::new("SPEKTRAFILM")
+                                    .strong()
+                                    .size(theme::SIZE_LABEL),
+                            );
+                        }
+                        let open_name = crate::i18n::text(ctx, "surfaces.action.open");
+                        if controls::action_button(ui, open_name.as_ref(), controls::Icon::Open)
+                            .on_hover_text(crate::i18n::text(ctx, "surfaces.action.open_help"))
+                            .clicked()
+                        {
+                            self.open_image_dialog();
+                        }
+                        self.photograph_toolbar(ui);
+                        ui.separator();
+                        let settings_name = crate::i18n::text(ctx, "surfaces.settings.title");
+                        let export_name = crate::i18n::text(
+                            ctx,
+                            if self.export_job.is_some() {
+                                "surfaces.export.cancel"
+                            } else {
+                                "surfaces.action.export"
                             },
                         );
-                        if ui
-                            .add_enabled(
-                                self.can_undo() && !self.input_transition_pending(),
-                                egui::Button::new(crate::i18n::text(
-                                    ui.ctx(),
-                                    "surfaces.action.undo",
-                                )),
-                            )
-                            .on_hover_text(undo_label)
-                            .clicked()
-                        {
-                            self.undo_adjustment();
-                        }
-                        let redo_label = self.redo_label_localized(ui.ctx()).map_or_else(
-                            || crate::i18n::text(ui.ctx(), "surfaces.history.no_redo").into_owned(),
-                            |label| {
-                                crate::tr!(ui.ctx(), "surfaces.history.redo", label = label)
-                                    .into_owned()
+                        let text_action_width = |label: &str| {
+                            let text = egui::WidgetText::from(label).into_galley(
+                                ui,
+                                Some(egui::TextWrapMode::Extend),
+                                f32::INFINITY,
+                                egui::TextStyle::Button,
+                            );
+                            text.size().x
+                                + 17.0
+                                + theme::SPACE_2
+                                + 2.0 * ui.spacing().button_padding.x
+                        };
+                        let right_width = text_action_width(&settings_name)
+                            + text_action_width(&export_name)
+                            + 2.0 * theme::HEIGHT_CONTROL
+                            + 3.0 * theme::SPACE_3;
+                        let context_width =
+                            (ui.available_width() - right_width - theme::SPACE_3).max(1.0);
+                        ui.allocate_ui_with_layout(
+                            egui::vec2(context_width, 36.0),
+                            egui::Layout::top_down(egui::Align::Min),
+                            |ui| {
+                                ui.set_min_width(context_width);
+                                ui.spacing_mut().item_spacing.y = 0.0;
+                                let source = self
+                                    .image_path
+                                    .as_deref()
+                                    .and_then(Path::file_name)
+                                    .map(|name| name.to_string_lossy())
+                                    .unwrap_or_else(|| {
+                                        crate::i18n::text(ctx, "surfaces.header.no_source")
+                                    });
+                                let source_label =
+                                    crate::tr!(ctx, "surfaces.header.source", source = source);
+                                let visible_source = if self.photograph_has_unsaved_changes() {
+                                    format!(
+                                        "{source} · {}",
+                                        crate::i18n::text(ctx, "photo.record.unsaved")
+                                    )
+                                } else {
+                                    source.into_owned()
+                                };
+                                let response = ui.add(
+                                    egui::Label::new(egui::RichText::new(visible_source).strong())
+                                        .truncate(),
+                                );
+                                response.widget_info(|| {
+                                    egui::WidgetInfo::labeled(
+                                        egui::WidgetType::Label,
+                                        true,
+                                        source_label.as_ref(),
+                                    )
+                                });
+                                ctx.accesskit_node_builder(response.id, |node| {
+                                    node.set_label(source_label.as_ref())
+                                });
+                                response.on_hover_text(self.image_path.as_ref().map_or_else(
+                                    || source_label.into_owned(),
+                                    |path| path.display().to_string(),
+                                ));
+                                let context = format!(
+                                    "{} · {} · {}",
+                                    profiles::selected_display(&self.films, &self.film_name),
+                                    profiles::selected_display(&self.papers, &self.print_name),
+                                    controls::localized(
+                                        ctx,
+                                        routes::vocabulary::route_description(
+                                            &self.params.workflow.route
+                                        )
+                                    ),
+                                );
+                                let status = self.status.localized(ctx);
+                                let routine = status.is_empty()
+                                    || matches!(
+                                        &self.status,
+                                        crate::app::Message::Text {
+                                            key: "operations.rendered"
+                                                | "operations.comparing_baseline"
+                                                | "surfaces.status.loaded"
+                                                | "surfaces.status.loaded_raw"
+                                                | "surfaces.status.preparing_input",
+                                            ..
+                                        }
+                                    );
+                                let text = if routine { &context } else { &status };
+                                ui.add(
+                                    egui::Label::new(
+                                        egui::RichText::new(text).small().color(theme::FG_MUTED),
+                                    )
+                                    .truncate(),
+                                )
+                                .on_hover_text(format!("{context}\n{status}"));
                             },
                         );
-                        if ui
-                            .add_enabled(
-                                self.can_redo() && !self.input_transition_pending(),
-                                egui::Button::new(crate::i18n::text(
-                                    ui.ctx(),
-                                    "surfaces.action.redo",
-                                )),
-                            )
-                            .on_hover_text(redo_label)
-                            .clicked()
-                        {
-                            self.redo_adjustment();
-                        }
-                    });
-                    ui.add_space(theme::SPACE_GROUP);
-                    let settings =
-                        ui.button(crate::i18n::text(ui.ctx(), "surfaces.settings.title"));
-                    if settings.is_pointer_button_down_on() {
-                        crate::numeric::suspend_numeric_draft(ui.ctx());
-                    }
-                    if settings.clicked() {
-                        crate::numeric::suspend_numeric_draft(ui.ctx());
-                        self.settings_return_focus = Some(settings.id);
-                        self.settings_open = true;
-                    }
-                    if self.export_job.is_some() {
-                        if ui
-                            .button(crate::i18n::text(ui.ctx(), "surfaces.export.cancel"))
-                            .on_hover_text(crate::i18n::text(
-                                ui.ctx(),
-                                "surfaces.export.cancel_help",
-                            ))
-                            .clicked()
-                        {
-                            self.cancel_export();
-                        }
-                    } else {
-                        let export = ui.add_enabled(
-                            self.image.is_some()
-                                && self.calibration_job.is_none()
-                                && !self.export_dialog.is_open(),
-                            egui::Button::new(
-                                egui::RichText::new(crate::i18n::text(
-                                    ui.ctx(),
-                                    "surfaces.action.export",
-                                ))
-                                .color(theme::CONTRAST_ON_ACCENT),
-                            )
-                            .fill(theme::ACCENT),
-                        );
-                        if export.clicked() {
-                            self.export_return_focus = Some(export.id);
-                            self.export_dialog.open(&self.export_options);
-                        }
-                    }
-                });
-                ui.horizontal(|ui| {
-                    let source = self
-                        .image_path
-                        .as_deref()
-                        .and_then(Path::file_name)
-                        .map(|name| name.to_string_lossy())
-                        .unwrap_or_else(|| {
-                            crate::i18n::text(ui.ctx(), "surfaces.header.no_source")
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if self.export_job.is_some() {
+                                if ui
+                                    .add_enabled_ui(true, |ui| {
+                                        controls::action_button(
+                                            ui,
+                                            export_name.as_ref(),
+                                            controls::Icon::Close,
+                                        )
+                                    })
+                                    .inner
+                                    .on_hover_text(crate::i18n::text(
+                                        ctx,
+                                        "surfaces.export.cancel_help",
+                                    ))
+                                    .clicked()
+                                {
+                                    self.cancel_export();
+                                }
+                            } else {
+                                let enabled = self.image.is_some()
+                                    && self.calibration_job.is_none()
+                                    && !self.export_dialog.is_open();
+                                let export = ui
+                                    .add_enabled_ui(enabled, |ui| {
+                                        let visuals = ui.visuals_mut();
+                                        for visual in [
+                                            &mut visuals.widgets.inactive,
+                                            &mut visuals.widgets.hovered,
+                                            &mut visuals.widgets.active,
+                                        ] {
+                                            visual.weak_bg_fill = theme::ACCENT;
+                                            visual.bg_fill = theme::ACCENT;
+                                            visual.fg_stroke =
+                                                theme::stroke(theme::CONTRAST_ON_ACCENT);
+                                        }
+                                        controls::action_button(
+                                            ui,
+                                            export_name.as_ref(),
+                                            controls::Icon::Export,
+                                        )
+                                    })
+                                    .inner;
+                                if export.clicked() {
+                                    self.export_return_focus = Some(export.id);
+                                    self.export_dialog.open(&self.export_options);
+                                }
+                            }
+                            let settings = controls::action_button(
+                                ui,
+                                settings_name.as_ref(),
+                                controls::Icon::Settings,
+                            );
+                            if settings.is_pointer_button_down_on() {
+                                crate::numeric::suspend_numeric_draft(ctx);
+                            }
+                            if settings.clicked() {
+                                crate::numeric::suspend_numeric_draft(ctx);
+                                self.settings_return_focus = Some(settings.id);
+                                self.settings_open = true;
+                            }
+                            let redo_help = self.redo_label_localized(ctx).map_or_else(
+                                || crate::i18n::text(ctx, "surfaces.history.no_redo").into_owned(),
+                                |label| {
+                                    crate::tr!(ctx, "surfaces.history.redo", label = label)
+                                        .into_owned()
+                                },
+                            );
+                            let redo_name = crate::i18n::text(ctx, "surfaces.action.redo");
+                            if ui
+                                .add_enabled_ui(
+                                    self.can_redo() && !self.input_transition_pending(),
+                                    |ui| {
+                                        controls::icon_button(
+                                            ui,
+                                            redo_name.as_ref(),
+                                            controls::Icon::Redo,
+                                        )
+                                    },
+                                )
+                                .inner
+                                .on_hover_text(redo_help)
+                                .clicked()
+                            {
+                                self.redo_adjustment();
+                            }
+                            let undo_help = self.undo_label_localized(ctx).map_or_else(
+                                || crate::i18n::text(ctx, "surfaces.history.no_undo").into_owned(),
+                                |label| {
+                                    crate::tr!(ctx, "surfaces.history.undo", label = label)
+                                        .into_owned()
+                                },
+                            );
+                            let undo_name = crate::i18n::text(ctx, "surfaces.action.undo");
+                            if ui
+                                .add_enabled_ui(
+                                    self.can_undo() && !self.input_transition_pending(),
+                                    |ui| {
+                                        controls::icon_button(
+                                            ui,
+                                            undo_name.as_ref(),
+                                            controls::Icon::Undo,
+                                        )
+                                    },
+                                )
+                                .inner
+                                .on_hover_text(undo_help)
+                                .clicked()
+                            {
+                                self.undo_adjustment();
+                            }
                         });
-                    let label = crate::tr!(ui.ctx(), "surfaces.header.source", source = source);
-                    ui.add_sized(
-                        [
-                            220.0_f32.min(ui.available_width() * 0.3),
-                            theme::HEIGHT_CONTROL,
-                        ],
-                        egui::Label::new(label.as_ref()).truncate(),
-                    )
-                    .on_hover_text(label);
-                    if self.photograph_has_unsaved_changes() {
-                        ui.label(crate::i18n::text(ui.ctx(), "photo.record.unsaved"));
-                    }
-                    ui.separator();
-                    let context = format!(
-                        "{} · {} · {}",
-                        profiles::selected_display(&self.films, &self.film_name),
-                        profiles::selected_display(&self.papers, &self.print_name),
-                        controls::localized(
-                            ui.ctx(),
-                            routes::vocabulary::route_description(&self.params.workflow.route)
-                        )
-                    );
-                    ui.add(egui::Label::new(&context).truncate())
-                        .on_hover_text(context);
-                });
-                ui.label(egui::RichText::new(self.status.localized(ui.ctx())).small());
+                    },
+                );
             });
     }
 }
@@ -1910,6 +2184,14 @@ impl eframe::App for App {
             .default_width(theme::WIDTH_CONTROL_PANEL)
             .min_width(300.0)
             .max_width((ctx.screen_rect().width() * 0.48).max(300.0))
+            .frame(
+                egui::Frame::NONE
+                    .fill(theme::SURFACE)
+                    .inner_margin(egui::Margin::symmetric(
+                        theme::SPACE_MODULE as i8,
+                        theme::SPACE_2 as i8,
+                    )),
+            )
             .show(ctx, |ui| {
                 if self.input_transition_pending() {
                     ui.disable();
@@ -1949,12 +2231,27 @@ impl eframe::App for App {
                     let clear_width = if self.filter.is_empty() {
                         0.0
                     } else {
-                        82.0 + ui.spacing().item_spacing.x
+                        theme::HEIGHT_CONTROL + theme::SPACE_2
                     };
-                    let search_width = (ui.available_width() - clear_width).max(1.0);
+                    let modified_label = crate::i18n::text(ui.ctx(), "surfaces.settings.modified");
+                    let label_width = egui::WidgetText::from(modified_label.as_ref())
+                        .into_galley(
+                            ui,
+                            Some(egui::TextWrapMode::Extend),
+                            f32::INFINITY,
+                            egui::TextStyle::Body,
+                        )
+                        .size()
+                        .x;
+                    let toggle_width =
+                        29.0 + ui.spacing().item_spacing.x + label_width + theme::SPACE_1;
+                    let search_width =
+                        (ui.available_width() - clear_width - toggle_width - theme::SPACE_2)
+                            .max(1.0);
                     let response = ui.add_sized(
                         [search_width, ui.spacing().interact_size.y],
                         egui::TextEdit::singleline(&mut self.filter)
+                            .margin(egui::vec2(theme::SPACE_2, 5.0))
                             .id(egui::Id::new("control-search"))
                             .hint_text(crate::i18n::text(ui.ctx(), "surfaces.search.label"))
                             .clip_text(true)
@@ -1964,35 +2261,52 @@ impl eframe::App for App {
                     ui.ctx().accesskit_node_builder(response.id, |node| {
                         node.set_label(accessible_name)
                     });
-                    if !self.filter.is_empty()
-                        && ui
-                            .button(crate::i18n::text(ui.ctx(), "surfaces.search.clear"))
+                    if !self.filter.is_empty() {
+                        let clear = crate::i18n::text(ui.ctx(), "surfaces.search.clear");
+                        if controls::icon_button(ui, clear.as_ref(), controls::Icon::Close)
                             .on_hover_text(crate::i18n::text(
                                 ui.ctx(),
                                 "surfaces.search.clear_help",
                             ))
                             .clicked()
-                    {
-                        self.filter.clear();
+                        {
+                            self.filter.clear();
+                        }
                     }
+                    ui.allocate_ui_with_layout(
+                        egui::vec2(toggle_width, theme::HEIGHT_CONTROL),
+                        egui::Layout::left_to_right(egui::Align::Center),
+                        |ui| {
+                            ui.set_min_width(toggle_width);
+                            let label = crate::i18n::text(ui.ctx(), "surfaces.settings.modified");
+                            let help = crate::i18n::text(ui.ctx(), "surfaces.search.modified_help");
+                            controls::toggle_row(
+                                ui,
+                                label.as_ref(),
+                                &mut self.only_modified,
+                                help.as_ref(),
+                            );
+                        },
+                    );
                 });
-                ui.checkbox(
-                    &mut self.only_modified,
-                    crate::i18n::text(ui.ctx(), "surfaces.settings.modified"),
-                )
-                .on_hover_text(crate::i18n::text(ui.ctx(), "surfaces.search.modified_help"));
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = theme::SPACE_1;
+                    let stage_width = (ui.available_width() - 4.0 * theme::SPACE_1) / 5.0;
                     for stage in controls::Stage::ALL {
                         let label = if stage == controls::Stage::Input {
                             crate::i18n::text(ui.ctx(), "surfaces.search.input_jump")
                         } else {
                             controls::localized(ui.ctx(), stage.label())
                         };
-                        let response = ui.button(label).on_hover_text(crate::i18n::text(
-                            ui.ctx(),
-                            "surfaces.search.stage_help",
-                        ));
+                        let response = ui
+                            .add_sized(
+                                [stage_width, theme::HEIGHT_CONTROL],
+                                egui::Button::new(egui::RichText::new(label).small()).frame(false),
+                            )
+                            .on_hover_text(crate::i18n::text(
+                                ui.ctx(),
+                                "surfaces.search.stage_help",
+                            ));
                         let accessible_name = controls::localized(ui.ctx(), stage.label());
                         ui.ctx().accesskit_node_builder(response.id, |node| {
                             node.set_label(accessible_name.as_ref())
@@ -2053,37 +2367,45 @@ impl eframe::App for App {
                 crate::app::Message::new("surfaces.status.publication_error").arg("error", error);
         }
         // Central viewer
-        egui::CentralPanel::default().show(ctx, |ui| {
-            egui::TopBottomPanel::bottom("viewer-footer").show_inside(ui, |ui| {
-                self.viewer.footer_controls(ui);
+        egui::CentralPanel::default()
+            .frame(egui::Frame::NONE)
+            .show(ctx, |ui| {
+                egui::TopBottomPanel::bottom("viewer-footer")
+                    .exact_height(theme::HEIGHT_VIEWER_FOOTER)
+                    .frame(
+                        egui::Frame::NONE
+                            .fill(theme::SURFACE)
+                            .inner_margin(egui::Margin::symmetric(theme::SPACE_3 as i8, 9)),
+                    )
+                    .show_inside(ui, |ui| self.viewer.footer_controls(ui));
+                // Reserve the strip before the canvas and populate it after the
+                // viewer accepts composition and transition work for this frame.
+                let status_rect = egui::TopBottomPanel::top("viewer-status")
+                    .exact_height(theme::HEIGHT_VIEWER_STATUS)
+                    .frame(
+                        egui::Frame::NONE
+                            .fill(theme::BG)
+                            .inner_margin(egui::Margin::symmetric(theme::SPACE_3 as i8, 3)),
+                    )
+                    .show_inside(ui, |ui| ui.available_rect_before_wrap())
+                    .inner;
+                self.viewer
+                    .set_display_max_size(self.params.settings.preview_max_size);
+                let displayed_output = self.operator_comparison.as_ref().map_or_else(
+                    || self.output_image.clone(),
+                    |comparison| comparison.image.host_image().cloned(),
+                );
+                self.viewer
+                    .show(ui, self.oriented_input.as_ref(), displayed_output.as_ref());
+                let mut status_ui = ui.new_child(
+                    egui::UiBuilder::new()
+                        .id_salt("viewer-status-content")
+                        .max_rect(status_rect)
+                        .layout(egui::Layout::top_down(egui::Align::Min)),
+                );
+                status_ui.set_clip_rect(status_rect);
+                self.viewer_status(&mut status_ui);
             });
-            // Reserve two stable text lines before allocating the canvas, then
-            // fill the strip after show accepts composition and transition work.
-            let status_height = ui.text_style_height(&egui::TextStyle::Body)
-                + ui.text_style_height(&egui::TextStyle::Small)
-                + ui.spacing().item_spacing.y
-                + 2.0 * theme::SPACE_2;
-            let status_rect = egui::TopBottomPanel::top("viewer-status")
-                .exact_height(status_height)
-                .show_inside(ui, |ui| ui.available_rect_before_wrap())
-                .inner;
-            self.viewer
-                .set_display_max_size(self.params.settings.preview_max_size);
-            let displayed_output = self.operator_comparison.as_ref().map_or_else(
-                || self.output_image.clone(),
-                |comparison| comparison.image.host_image().cloned(),
-            );
-            self.viewer
-                .show(ui, self.oriented_input.as_ref(), displayed_output.as_ref());
-            let mut status_ui = ui.new_child(
-                egui::UiBuilder::new()
-                    .id_salt("viewer-status-content")
-                    .max_rect(status_rect)
-                    .layout(egui::Layout::top_down(egui::Align::Min)),
-            );
-            status_ui.set_clip_rect(status_rect);
-            self.viewer_status(&mut status_ui);
-        });
         // Accept drag-and-dropped image files.
         let dropped: Vec<PathBuf> = ctx.input(|i| {
             i.raw
