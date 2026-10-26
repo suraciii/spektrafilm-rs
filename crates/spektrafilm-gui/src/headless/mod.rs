@@ -81,6 +81,24 @@ fn session() -> Session {
     session_fixture()
 }
 
+fn grain_session() -> Session {
+    let mut session = session_fixture();
+    session
+        .harness
+        .state_mut()
+        .params
+        .debug
+        .deactivate_stochastic_effects = false;
+    session
+        .harness
+        .state_mut()
+        .params
+        .debug
+        .deactivate_spatial_effects = false;
+    session.harness.run_steps(3);
+    session
+}
+
 /// Queue a chooser result and forbid falling back to a native dialog.
 /// A scripted action with no seeded result cancels instead, so a missing
 /// expectation fails the test rather than opening a desktop dialog.
@@ -490,9 +508,8 @@ fn import_file(h: &mut Harness<'_, App>, _raw: bool) {
 }
 /// Pick `option` from the combo labeled `label`.
 ///
-/// The option is looked up by button role: a grain engine group is a
-/// `CollapsingHeader` whose title carries the engine's label, so a plain
-/// label query would match both the header and the popup option.
+/// The option is looked up by button role so popup choices remain distinct
+/// from any matching labels already present in the inspector.
 fn choose(h: &mut Harness<'_, App>, label: &str, option: &str) {
     await_input(h);
     scroll_controls_into_view(h, label);
@@ -990,10 +1007,8 @@ fn fotufilm_engine_selection_reaches_the_native_app_runtime() {
         click(h, "Enable grain");
     }
     assert!(h.state().params.film_render.grain.active);
-    assert_eq!(
-        h.state().params.film_render.grain.engine,
-        GrainEngine::Spektra
-    );
+    assert_eq!(h.state().params.film_render.grain.engine, GrainEngine::Dye);
+    choose(h, "Engine", "Spektra");
     let spektra = preview(h);
     choose(h, "Engine", "Fotufilm Film");
     assert_eq!(

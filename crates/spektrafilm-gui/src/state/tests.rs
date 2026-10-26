@@ -1,4 +1,151 @@
 use super::*;
+
+#[test]
+fn sparse_startup_preferences_and_factory_reset_keep_the_authored_dye_default() {
+    use spektrafilm_core::params::GrainEngine;
+
+    let directory = tempfile::tempdir().unwrap();
+    std::fs::write(default_path(directory.path()), "{}").unwrap();
+    std::fs::write(directory.path().join("dialog_dirs.json"), "{}").unwrap();
+    let state = startup(directory.path()).unwrap();
+    assert_eq!(state.sections["rust"]["version"], CURRENT_STATE_VERSION);
+    state.save(&default_path(directory.path())).unwrap();
+    let reopened = startup(directory.path()).unwrap();
+    assert_eq!(
+        reopened.runtime_params().unwrap().film_render.grain.engine,
+        GrainEngine::Dye
+    );
+
+    let legacy = json!({"rust": {"version": 5}});
+    std::fs::write(default_path(directory.path()), legacy.to_string()).unwrap();
+    let state = startup(directory.path()).unwrap();
+    assert_eq!(
+        state.runtime_params().unwrap().film_render.grain.engine,
+        GrainEngine::Spektra
+    );
+    let reset = reset_factory(directory.path()).unwrap();
+    assert_eq!(
+        reset.runtime_params().unwrap().film_render.grain.engine,
+        GrainEngine::Dye
+    );
+    assert!(!default_path(directory.path()).exists());
+}
+
+#[test]
+fn grain_defaults_distinguish_authored_sparse_and_versioned_legacy_states() {
+    use spektrafilm_core::params::GrainEngine;
+
+    let factory = GuiState::factory();
+    assert_eq!(factory.sections["rust"]["version"], CURRENT_STATE_VERSION);
+    assert_eq!(
+        factory.runtime_params().unwrap().film_render.grain.engine,
+        GrainEngine::Dye
+    );
+    for source in [
+        json!({}),
+        json!({"grain": {"rms_granularity": [7.0, 8.0, 9.0]}}),
+        json!({"rust": {"version": CURRENT_STATE_VERSION}}),
+        json!({"rust": {"version": CURRENT_STATE_VERSION, "runtime": {"film_render": {"grain": {}}}}}),
+    ] {
+        let state = GuiState::from_value(source).unwrap();
+        assert_eq!(
+            state.runtime_params().unwrap().film_render.grain.engine,
+            GrainEngine::Dye
+        );
+    }
+    for version in 1..=5 {
+        for runtime in [
+            json!({}),
+            json!({"film_render": {}}),
+            json!({"film_render": {"grain": {"v3_event_area_um2": 2.25}}}),
+        ] {
+            let state =
+                GuiState::from_value(json!({"rust": {"version": version, "runtime": runtime}}))
+                    .unwrap();
+            let params = state.runtime_params().unwrap();
+            assert_eq!(params.film_render.grain.engine, GrainEngine::Spektra);
+            assert_eq!(state.sections["rust"]["version"], CURRENT_STATE_VERSION);
+            assert_eq!(
+                state.sections["rust"]["runtime"]["film_render"]["grain"]["engine"],
+                "spektra"
+            );
+            let reopened = GuiState::from_value(state.sections.clone()).unwrap();
+            assert_eq!(
+                reopened.runtime_params().unwrap().film_render.grain,
+                params.film_render.grain
+            );
+        }
+        let state = GuiState::from_value(json!({"rust": {"version": version}})).unwrap();
+        assert_eq!(
+            state.runtime_params().unwrap().film_render.grain.engine,
+            GrainEngine::Spektra
+        );
+    }
+}
+
+#[test]
+fn explicit_grain_engines_survive_every_state_boundary() {
+    use spektrafilm_core::params::GrainEngine;
+
+    for (name, engine) in [
+        ("spektra", GrainEngine::Spektra),
+        ("procedural", GrainEngine::Procedural),
+        ("dye", GrainEngine::Dye),
+        ("fotufilm", GrainEngine::Fotufilm),
+    ] {
+        for version in 1..=CURRENT_STATE_VERSION {
+            for source in [
+                json!({"rust": {"version": version, "runtime": {"film_render": {"grain": {"engine": name, "v3_event_area_um2": 2.25}}}}}),
+                json!({"rust": {"version": version}, "grain": {"engine": name}}),
+            ] {
+                let state = GuiState::from_value(source).unwrap();
+                let params = state.runtime_params().unwrap();
+                assert_eq!(params.film_render.grain.engine, engine);
+                let saved =
+                    GuiState::from_runtime(&params, state.film(), state.paper(), &state.sections)
+                        .unwrap();
+                let reopened = GuiState::from_value(saved.sections).unwrap();
+                assert_eq!(
+                    reopened.runtime_params().unwrap().film_render.grain,
+                    params.film_render.grain
+                );
+            }
+        }
+        let sparse = GuiState::from_value(json!({"grain": {"engine": name}})).unwrap();
+        assert_eq!(
+            sparse.runtime_params().unwrap().film_render.grain.engine,
+            engine
+        );
+    }
+}
+
+#[test]
+fn grain_engine_null_unknown_and_unknown_leaves_never_become_omission() {
+    for version in 1..=CURRENT_STATE_VERSION {
+        for grain in [
+            json!({"engine": null}),
+            json!({"engine": "unknown"}),
+            json!({"unknown": true}),
+        ] {
+            for source in [
+                json!({"rust": {"version": version}, "grain": grain}),
+                json!({"rust": {"version": version, "runtime": {"film_render": {"grain": grain}}}}),
+                json!({"rust": {"version": version, "runtime": {"film_render": {"grain": grain}}}, "grain": {"engine": "dye"}}),
+                json!({"rust": {"version": version, "runtime": {"film_render": {"grain": {"engine": "dye"}}}}, "grain": grain}),
+            ] {
+                assert!(GuiState::from_value(source).is_err());
+            }
+        }
+    }
+    for grain in [
+        json!({"engine": null}),
+        json!({"engine": "unknown"}),
+        json!({"unknown": true}),
+    ] {
+        assert!(GuiState::from_value(json!({"grain": grain})).is_err());
+    }
+}
+
 #[test]
 fn output_mix_state_roundtrip_and_legacy_retirement_are_atomic() {
     let factory = GuiState::factory();

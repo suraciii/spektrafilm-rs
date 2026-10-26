@@ -8,6 +8,30 @@ struct InspectorMaterials {
     print: profile::Profile,
 }
 
+pub(crate) fn grain_control_inactive_reason(
+    ctx: &egui::Context,
+    path: &str,
+    params: &RuntimeParams,
+    component: Option<usize>,
+) -> Option<&'static str> {
+    let materials = ctx.data(|data| {
+        data.get_temp::<Arc<InspectorMaterials>>(egui::Id::new("inspector-material-context"))
+    });
+    match materials {
+        Some(materials) => {
+            spektrafilm_core::params::sources::grain_control_inactive_reason_with_profile(
+                path,
+                params,
+                &materials.film,
+                component,
+            )
+        }
+        None => spektrafilm_core::params::sources::grain_control_inactive_reason(
+            path, params, component,
+        ),
+    }
+}
+
 fn section_summary(section: &str) -> Option<&'static str> {
     match section {
         "Film base" => Some("Base density: scale, tilt, and per-channel masks"),
@@ -366,7 +390,8 @@ impl App {
     pub(super) fn remember_dialog(&mut self, key: &str, path: &Path) {
         if let Some(parent) = path.parent() {
             if !self.gui_state.sections["rust"].is_object() {
-                self.gui_state.sections["rust"] = serde_json::json!({"version":1,"dialog_dirs":{}});
+                self.gui_state.sections["rust"] =
+                    serde_json::json!({"version":state::CURRENT_STATE_VERSION,"dialog_dirs":{}});
             }
             if !self.gui_state.sections["rust"]["dialog_dirs"].is_object() {
                 self.gui_state.sections["rust"]["dialog_dirs"] = serde_json::json!({});

@@ -718,6 +718,27 @@ pub(crate) fn module_applicability(
     film: &Profile,
     print: &Profile,
 ) -> Option<String> {
+    if section == "Grain" {
+        let mut first_reason = None;
+        for entry in inventory().iter().filter(|entry| {
+            entry.section == section
+                && entry.searchable()
+                && !matches!(
+                    entry.path.as_str(),
+                    "film_render.grain.active" | "film_render.grain.engine"
+                )
+        }) {
+            let reason =
+                spektrafilm_core::params::sources::grain_control_inactive_reason_with_profile(
+                    &entry.path,
+                    params,
+                    film,
+                    None,
+                )?;
+            first_reason.get_or_insert(reason);
+        }
+        return first_reason.map(str::to_owned);
+    }
     inventory()
         .iter()
         .filter(|entry| entry.section == section && entry.searchable())
@@ -750,6 +771,36 @@ mod acceptance;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn inactive_engine_requests_do_not_mark_the_active_grain_module_inactive() {
+        let factory = crate::state::GuiState::factory();
+        let data = crate::profiles::pick_data_dir();
+        let film = spektrafilm_core::profile::load_profile_by_name(&data, factory.film()).unwrap();
+        let print =
+            spektrafilm_core::profile::load_profile_by_name(&data, factory.paper()).unwrap();
+        let mut params = factory.runtime_params().unwrap();
+        for engine in [
+            GrainEngine::Dye,
+            GrainEngine::Spektra,
+            GrainEngine::Procedural,
+            GrainEngine::Fotufilm,
+        ] {
+            params.film_render.grain.engine = engine;
+            params.film_render.grain.active = true;
+            params.debug.deactivate_stochastic_effects = false;
+            assert_eq!(
+                module_applicability("Grain", &params, &film, &print),
+                None,
+                "{engine:?}"
+            );
+            params.film_render.grain.active = false;
+            assert!(module_applicability("Grain", &params, &film, &print).is_some());
+            params.film_render.grain.active = true;
+            params.debug.deactivate_stochastic_effects = true;
+            assert!(module_applicability("Grain", &params, &film, &print).is_some());
+        }
+    }
 
     fn has_text(output: &egui::FullOutput, text: &str) -> bool {
         output.shapes.iter().any(|shape| matches!(&shape.shape, egui::epaint::Shape::Text(shape) if shape.galley.job.text == text))
@@ -996,9 +1047,7 @@ mod tests {
     /// Position of an option inside an open combo popup.
     ///
     /// A popup paints in the foreground layer, after the panel that opened it,
-    /// so its option text is the last matching shape. Panel content can share
-    /// an option's label — a grain engine group header carries the engine's
-    /// name — and that label paints first, so the last match is the popup's.
+    /// so the last matching text belongs to the popup option.
     fn popup_text_position(output: &egui::FullOutput, text: &str) -> egui::Pos2 {
         output
             .shapes
@@ -1069,10 +1118,6 @@ mod tests {
             )
         };
         let (_, _, output) = frame(vec![]);
-        assert!(has_text(&output, "Fotufilm Film"));
-        assert!(has_text(&output, "Softness"));
-        assert!(has_text(&output, "Layer amounts"));
-        assert!(!has_text(&output, "Dye support (µm)"));
         let position = text_position(&output, "1.00");
         frame(click(position, true));
         frame(click(position, false));
@@ -1080,54 +1125,6 @@ mod tests {
         assert!(changed);
         assert_eq!(grain.fotufilm.amount, 2.25);
         assert_eq!(grain.v3_dye_support_um, old_dye_support);
-    }
-    #[test]
-    fn fotufilm_selector_switches_real_widget_and_replaces_dye_controls() {
-        let ctx = egui::Context::default();
-        let mut params = RuntimeParams::default();
-        params.film_render.grain.engine = GrainEngine::Dye;
-        let mut frame = |events| {
-            let mut flags = ChangeFlags::default();
-            let output = ctx.run(
-                egui::RawInput {
-                    screen_rect: Some(egui::Rect::from_min_size(
-                        egui::Pos2::ZERO,
-                        egui::vec2(900.0, 3000.0),
-                    )),
-                    events,
-                    ..Default::default()
-                },
-                |ctx| {
-                    egui::CentralPanel::default().show(ctx, |ui| {
-                        flags = show(
-                            ui,
-                            &mut params,
-                            &mut serde_json::json!({}),
-                            "Grain",
-                            ScanMedium::Negative,
-                            "",
-                            &mut Default::default(),
-                            "D55",
-                            &crate::profiles::pick_data_dir(),
-                        );
-                    });
-                },
-            );
-            (flags, output)
-        };
-
-        let (_, initial) = frame(vec![]);
-        assert!(has_text(&initial, "Dye support (µm)"));
-        assert!(!has_text(&initial, "Layer amounts"));
-        let selector = text_position(&initial, "Dye");
-        frame(click(selector, true));
-        frame(click(selector, false));
-        let (_, popup) = frame(vec![]);
-        assert!(has_text(&popup, "Fotufilm Film"));
-        let fotufilm = popup_text_position(&popup, "Fotufilm Film");
-        frame(click(fotufilm, true));
-        let (flags, _) = frame(click(fotufilm, false));
-        assert!(flags.runtime_changed);
     }
 
     #[test]

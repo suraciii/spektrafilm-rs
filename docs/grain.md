@@ -6,10 +6,12 @@ Use this page to select a grain engine and configure its controls. It also descr
 
 `film_render.grain.engine` accepts `spektra`, `procedural`, `dye`, or `fotufilm`. Replace explicit old selectors `v1`, `v2`, and `v3` with `spektra`, `procedural`, and `dye`, respectively. Old selectors are invalid. Existing `v2_*` and `v3_*` control keys, internal module paths, and diagnostic environment variable names remain unchanged.
 
-- Spektra is the default upstream experimental original.
+- Spektra is the upstream experimental original.
 - Procedural derives from Dehancer. It provides Analogue/Noise grain with twelve format/speed profiles. Its controls include Size, Amount, Shadows, Midtones, Highlights, Chroma, and Film Resolution. Pixel parity with Dehancer is not claimed.
-- Dye is a self-developed experimental film-coordinate dye field. It is opt-in. `v3_dye_support_um`, `v3_event_area_um2`, and `channel_correlation` control it.
+- Dye is the default self-developed experimental film-coordinate dye field. `v3_dye_support_um`, `v3_event_area_um2`, and `channel_correlation` control it.
 - Fotufilm Film is an adapted appearance population model fitted to resolved film curves. It is opt-in. `film_render.grain.fotufilm.*` controls it.
+
+Explicit engines in existing looks remain unchanged. To keep the historical engine in a sparse source, set `film_render.grain.engine = spektra`. See [default compatibility](../specs/film-grain/spec.md#defaults-and-compatibility) for omitted-engine and GUI state migration rules.
 
 ## Spektra
 
@@ -38,10 +40,11 @@ Presets supply the grain configuration. Amount remains adjustable through `v2_am
 
 Select `"custom"` to edit these controls:
 
-- `v2_film_type`: `"negative"` or `"positive"`.
 - `v2_mode`: `"analogue"` or `"noise"`.
 - `v2_size`: 1–48.
 - `v2_shadows`, `v2_midtones`, `v2_highlights`, `v2_chroma`, and `v2_resolution_factor`: all 0–100.
+
+`v2_film_type` retains `"negative"` or `"positive"` metadata. Rendering does not consume it, and the ordinary GUI does not expose it as a creative editor.
 
 Custom values omitted or null inherit `35mm250`. Switching to Custom in the GUI copies the current preset and Amount. Selecting a preset restores its Amount. All numeric controls must be finite and within their stated ranges.
 
@@ -53,7 +56,7 @@ Film Resolution 100 preserves detail. Lower values increase resolution blur.
 
 ### Encoded RGB and sampling
 
-Procedural consumes and returns native display-encoded RGB without an internal transfer curve or primaries conversion. This matches Dehancer's photo `by_pass` contract. The scanner encodes its generated RGB using the selected output color space before Grain. Encoded exports keep that result. Linear exports decode only the selected transfer afterward. Grain receives the same encoded image for both export choices. Spektra's density-domain sampling and defaults remain unchanged.
+Procedural consumes and returns native display-encoded RGB without an internal transfer curve or primaries conversion. This matches Dehancer's photo `by_pass` contract. The scanner encodes its generated RGB using the selected output color space before Grain. Encoded exports keep that result. Linear exports decode only the selected transfer afterward. Grain receives the same encoded image for both export choices. Spektra's density-domain sampling parameters remain unchanged.
 
 Procedural restores the recovered RGBA content hash, sine permutation, gradient noise, texture sampling, and half-storage boundaries. Positive/Negative Film Type remains profile metadata. It is separate from `resolution_type`. For Analogue, `resolution_type` selects folded Gaussian FastBlur (`1`) or OpticalResolution (`0`). Noise uses the direct image-resolution path.
 

@@ -849,6 +849,7 @@ fn grain_configuration_describes_effective_sampler_branches() {
     }))
     .unwrap();
     let mut params = params::RuntimeParams::default();
+    params.film_render.grain.engine = params::GrainEngine::Spektra;
     params.settings.use_fast_stats = true;
     assert!(
         RenderConfiguration::from_runtime(&params, &profile, &profile)

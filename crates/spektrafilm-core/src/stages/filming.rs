@@ -643,6 +643,7 @@ mod tests {
 
         fn base_params() -> RuntimeParams {
             let mut params = RuntimeParams::default();
+            params.film_render.grain.engine = crate::params::GrainEngine::Spektra;
             params.film_render.dir_couplers.active = false;
             params.film_render.halation.active = false;
             // The small test images would otherwise imply ~2 mm pixels and

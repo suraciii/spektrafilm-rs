@@ -325,7 +325,7 @@ fn enlarger_diffusion_print_fence_matches_cpu() {
     );
 }
 
-/// The default Spektra grain runs on the resident chain as an assembled
+/// Spektra grain runs on the resident chain as an assembled
 /// CPU fence on the film density buffer (pipe architecture, capability
 /// class). The fence readback narrows the grain's density conditioning
 /// to f32, which perturbs Poisson count decisions at their boundaries;
@@ -342,7 +342,7 @@ fn spektra_grain_resident_fence_matches_cpu() {
     let film = crate::profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();
     let print = crate::profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap();
     let mut params = RuntimeParams::default();
-    // Defaults keep Spektra grain active — the fence scenario.
+    params.film_render.grain.engine = crate::params::GrainEngine::Spektra;
     params.camera.auto_exposure = false;
     params.io.output_gamut_compress.algorithm = "off".into();
 
@@ -541,8 +541,7 @@ fn spatial_deactivation_bypasses_the_dye_density_fence() {
 /// Input transfer decoding no longer demotes to per-stage: the resident
 /// route decodes the input before upload with the same expression as
 /// `expose`, so a decoded-input render must match the CPU reference
-/// under the same Spektra-fence budget (the default engine still runs
-/// as the density fence).
+/// under the same Spektra-fence budget.
 #[test]
 fn input_transfer_decoding_resident_matches_cpu() {
     use spektrafilm_math::precision::from_f64;
@@ -552,6 +551,7 @@ fn input_transfer_decoding_resident_matches_cpu() {
     let film = crate::profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();
     let print = crate::profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap();
     let mut params = RuntimeParams::default();
+    params.film_render.grain.engine = crate::params::GrainEngine::Spektra;
     params.camera.auto_exposure = false;
     params.io.input_cctf_decoding = true;
     params.io.input_color_space = "sRGB".into();

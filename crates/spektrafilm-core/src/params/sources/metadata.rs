@@ -484,6 +484,18 @@ fn description(path: &str) -> Option<&'static str> {
         "film_render.grain.v2_size" => {
             Some("Grain Procedural Size; used only with engine procedural and profile custom.")
         }
+        "film_render.grain.v2_film_type" => Some(
+            "Preserved Procedural profile metadata; not passed to the rendering kernels and has no visual effect.",
+        ),
+        "film_render.grain.v2_resolution_factor" => Some(
+            "Film Resolution override for Custom Analogue mode; Noise does not execute the resolution stage.",
+        ),
+        "film_render.grain.v2_resolution_type" => Some(
+            "Film Resolution method for named profiles and Custom Analogue mode; inactive in Custom Noise mode.",
+        ),
+        "film_render.grain.particle_scale_sublayers" => Some(
+            "Three numerical-component scales, not RGB records; all three remain active for monochrome Dye. Spektra requires real film sublayers.",
+        ),
         "film_render.grain.v2_amount" => Some(
             "Grain Procedural Amount in percent; used with named and custom Procedural profiles, distinct from RMS granularity.",
         ),

@@ -49,7 +49,7 @@ pub fn startup(directory: &Path) -> Result<GuiState> {
             bail!(crate::app::Message::new("operations.state.dialog_object"));
         }
         if !state.sections["rust"].is_object() {
-            state.sections["rust"] = json!({"version":1});
+            state.sections["rust"] = json!({"version": super::CURRENT_STATE_VERSION});
         }
         state.sections["rust"]["dialog_dirs"] = value;
     }

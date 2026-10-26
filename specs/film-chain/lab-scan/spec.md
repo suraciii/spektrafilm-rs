@@ -197,7 +197,7 @@ Earlier film-density or exposure taps remain measurable.
 
 GUI state version 5 owns the cutover. Versions 1–4 MUST remove retired `lamp` keys from scanner sections during migration. A complete legacy capture MUST preserve the old light under `film_render.convert.scan_illuminant` unless it already declares an acquisition light.
 
-Scanner-only preset sections MUST NOT acquire a Convert section. Current version 5 and unversioned current documents MUST reject them. Style aliases normalize on load and save.
+Scanner-only preset sections MUST NOT acquire a Convert section. GUI state version 5 and later and unversioned current documents MUST reject retired `lamp` keys. Style aliases normalize on load and save.
 
 This migration intentionally changes scan appearance.
 
@@ -205,7 +205,9 @@ Preset schema 6 and recipe schema `spektrafilm-rs-params-6` own the same scanner
 
 Current schemas reject `lamp` and retain all unrelated retired-field rejection. Sparse sections MUST preserve omission when normalizing the style alias.
 
-The additive defaulted `scanner.operator` fields retain GUI state version 5, preset schema 6, and recipe schema `spektrafilm-rs-params-6`. Omitted operator fields MUST receive neutral defaults. Unknown and retired fields MUST remain rejected; operator correction MUST NOT revive `conversion_*`, `auto_setup`, or `finish` controls.
+The additive defaulted `scanner.operator` fields require no additional schema migration. Omitted operator fields MUST receive neutral defaults. Unknown and retired fields MUST remain rejected.
+
+Operator correction MUST NOT revive `conversion_*`, `auto_setup`, or `finish` controls.
 
 Presets, recipes, parameter discovery, CLI `--set`, GUI persistence, and effective render configuration MUST share the typed core model. Automatic offsets MUST NOT enter ordinary saved correction parameters.
 

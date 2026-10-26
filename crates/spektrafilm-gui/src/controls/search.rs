@@ -196,7 +196,10 @@ mod tests {
         let (params, extras) = factory();
         for (query, label) in [
             ("FILM_RENDER.GRAIN.FOTUFILM.SIZE", "Size"),
-            ("Dye support (µm)", "Dye support (µm)"),
+            (
+                "Dye support (spatial formation)",
+                "Dye support (spatial formation)",
+            ),
             ("film_render.grain.v2_resolution_factor", "Film Resolution"),
             ("halation spatial scale", "halation spatial scale"),
         ] {

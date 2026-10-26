@@ -1515,8 +1515,14 @@ const LABELS: &[(&str, &str)] = &[
     ("film_render.grain.v2_shadows", "Shadows"),
     ("film_render.grain.v2_size", "Size"),
     ("film_render.grain.v2_timer", "Timer"),
-    ("film_render.grain.v3_dye_support_um", "Dye support (µm)"),
-    ("film_render.grain.v3_event_area_um2", "Event area (µm²)"),
+    (
+        "film_render.grain.v3_dye_support_um",
+        "Dye support (spatial formation)",
+    ),
+    (
+        "film_render.grain.v3_event_area_um2",
+        "Event area (strength)",
+    ),
     ("film_render.halation.active", "Enable halation"),
     ("film_render.halation.boost_ev", "boost ev"),
     ("film_render.halation.boost_range", "boost range"),

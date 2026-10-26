@@ -4,6 +4,18 @@ use std::borrow::Cow;
 
 fn key(label: &str) -> Option<&'static str> {
     match label {
+        "Dye Advanced" => Some("controls.grain.dye_advanced"),
+        "Spektra Advanced" => Some("controls.grain.spektra_advanced"),
+        "Procedural Advanced" => Some("controls.grain.procedural_advanced"),
+        "Dye uses record 0 for black-and-white material; G/B values remain stored and inactive" => {
+            Some("controls.grain.inactive_bw_records")
+        }
+        "effective Procedural mode = analogue; Noise does not use Film Resolution or its method" => {
+            Some("controls.grain.inactive_noise_resolution")
+        }
+        "preserved Procedural Film Type metadata; not used by rendering kernels" => {
+            Some("controls.grain.film_type_metadata")
+        }
         "Photograph toolbar" => Some("controls.owner.photograph_toolbar"),
         "Result actions" => Some("controls.owner.result_actions"),
         "Work list" => Some("photo_work.list.title"),
@@ -60,9 +72,6 @@ fn key(label: &str) -> Option<&'static str> {
         }
         "%{kind} in flight · %{mode} (captured)" => Some("surfaces.diagnostics.in_flight"),
         "%{kind} queued · %{mode} (captured)" => Some("surfaces.diagnostics.queued"),
-        "%{label}: %{reason}; stored values retained." => {
-            Some("controls.grain.unavailable_profile")
-        }
         "%{percent}% fit" => Some("surfaces.viewer.zoom_fit"),
         "%{role}: %{name}" => Some("surfaces.presets.role"),
         "%{stage} stage" => Some("surfaces.section.stage"),
@@ -371,7 +380,7 @@ fn key(label: &str) -> Option<&'static str> {
         "Dye" => Some("controls.grain.dye"),
         "Dye negative" => Some("controls.grain.dye_negative"),
         "Dye reversal" => Some("controls.grain.dye_reversal"),
-        "Dye support (µm)" => Some("controls.grain.dye_support"),
+        "Dye support (spatial formation)" => Some("controls.grain.dye_support"),
         "Dye-cloud blur in micrometers." => Some("controls.grain.dye_cloud_blur_help"),
         "EXR uses linear color and ZIP compression; encoding is fixed off." => {
             Some("surfaces.export.exr_fixed")
@@ -430,7 +439,7 @@ fn key(label: &str) -> Option<&'static str> {
         "Estimated output size: ≈ %{size} before compression" => {
             Some("surfaces.export.size_compressed")
         }
-        "Event area (µm²)" => Some("controls.grain.event_area"),
+        "Event area (strength)" => Some("controls.grain.event_area"),
         "Experimental local source-response compression for halation only. Zero preserves the linear response; higher values make secondary bright sources contribute more nearly like the brightest source without changing the base film raw exposure." => {
             Some("controls.halation.source_compression_help")
         }
@@ -466,7 +475,9 @@ fn key(label: &str) -> Option<&'static str> {
         "Film base" => Some("controls.label.film_base"),
         "Film chemistry" => Some("controls.chemistry.film_section"),
         "Film material" => Some("controls.label.film_material"),
-        "Film polarity for procedural grain." => Some("controls.grain.film_type_help"),
+        "Retained Procedural Film Type metadata; rendering kernels do not consume it." => {
+            Some("controls.grain.film_type_help")
+        }
         "Film profile changed" => Some("surfaces.status.film_changed"),
         "Film stock to simulate" => Some("surfaces.profiles.film_help"),
         "Film: %{name}" => Some("surfaces.header.film"),
@@ -486,7 +497,7 @@ fn key(label: &str) -> Option<&'static str> {
         "Fog density" => Some("controls.grain.fog_density"),
         "Format" => Some("controls.label.format"),
         "Fotufilm Film" => Some("controls.grain.fotufilm"),
-        "Fotufilm advanced" => Some("controls.grain.fotufilm_advanced"),
+        "Fotufilm Advanced" => Some("controls.grain.fotufilm_advanced"),
         "Fraction of coupler diffusion energy assigned to the long tail. 0 = pure Gaussian spread, higher values add a longer-range inhibition shoulder." => {
             Some("controls.couplers.diffusion_tail_weight_help")
         }
@@ -509,7 +520,7 @@ fn key(label: &str) -> Option<&'static str> {
         "Gaussian sigma in pixels on linear transmitted or reflected readout light, before negative conversion, gamut processing, sharpening and encoding. Identity points retain this optical order." => {
             Some("controls.scanner.lens_blur_help")
         }
-        "Gaussian sigma of the dye support in film micrometers; it conditions the field, which is read in film coordinates." => {
+        "Dye support conditions the grain field and image detail in film micrometers; it is not a pure grain diameter control." => {
             Some("controls.grain.dye_support_help")
         }
         "General" => Some("surfaces.settings.general"),
@@ -567,9 +578,6 @@ fn key(label: &str) -> Option<&'static str> {
         "Inactive" => Some("controls.scanner.inactive"),
         "Inactive controls · %{reason} · stored values retained" => {
             Some("surfaces.section.inactive")
-        }
-        "Inactive until this engine is selected; stored values are retained." => {
-            Some("controls.grain.inactive_engine")
         }
         "Inactive: requires a negative film, an eligible negative-to-positive route and standard conversion style. Stored corrections are retained." => {
             Some("controls.scanner.operator_inactive")
@@ -883,9 +891,6 @@ fn key(label: &str) -> Option<&'static str> {
         "Real negative capture: exposure, base estimation, calibration, channel swaps" => {
             Some("surfaces.summary.convert")
         }
-        "Recommended: Spektra (material grain) · Procedural (post-scan, lightweight)" => {
-            Some("controls.grain.recommended_engines")
-        }
         "Red-minus-blue exposure difference in EV. Positive values are warmer; negative values are cooler. This is not Kelvin and does not change capture white balance." => {
             Some("controls.scanner.warmth_help")
         }
@@ -992,13 +997,9 @@ fn key(label: &str) -> Option<&'static str> {
         "Settings" => Some("surfaces.settings.title"),
         "Shadow grain amount." => Some("controls.grain.shadows_help"),
         "Shadows" => Some("controls.grain.shadows"),
-        "Shared by Spektra and Dye; inactive until either engine is selected, stored values are retained." => {
-            Some("controls.grain.inactive_shared_material")
-        }
         "Shared Poisson-event rate fraction among active records within each numerical component, not realized CMY or final RGB correlation. Preserves each record's marginal count distribution; correlation depends on record-rate ratios. Inactive for single-record black-and-white material; the requested value is retained for color film." => {
             Some("controls.grain.channel_correlation_help")
         }
-        "Shared material controls" => Some("controls.grain.shared_material"),
         "Show controls that differ from their factory baseline, independently of an applied preset." => {
             Some("surfaces.search.modified_help")
         }
@@ -1169,9 +1170,6 @@ fn key(label: &str) -> Option<&'static str> {
         "auto" => Some("controls.scanner.auto"),
         "auto exposure" => Some("controls.scanner.auto_exposure"),
         "auto exposure method" => Some("controls.scanner.metering_method"),
-        "available only when the Procedural engine is selected" => {
-            Some("controls.grain.procedural_profile_unavailable")
-        }
         "average" => Some("controls.scanner.metering_average"),
         "base percentile" => Some("controls.convert.base_percentile"),
         "blind calibration" => Some("controls.convert.blind_calibration"),

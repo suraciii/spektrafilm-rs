@@ -1,7 +1,9 @@
 mod discovery;
 mod effects;
 mod metadata;
-pub use effects::inactive_reason;
+pub use effects::{
+    grain_control_inactive_reason, grain_control_inactive_reason_with_profile, inactive_reason,
+};
 
 use discovery::schema_value;
 pub use discovery::{

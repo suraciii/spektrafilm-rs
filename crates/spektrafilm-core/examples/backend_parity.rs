@@ -209,6 +209,7 @@ fn main() -> Result<(), String> {
     for layered in [false, true] {
         let mut p = base.clone();
         p.film_render.grain.active = true;
+        p.film_render.grain.engine = spektrafilm_core::params::GrainEngine::Spektra;
         p.film_render.grain.sublayers_active = layered;
         let reference_pipeline =
             Pipeline::new_with_spectral(film.clone(), print.clone(), p.clone(), &dir)?;

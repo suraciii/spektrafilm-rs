@@ -1265,11 +1265,11 @@ mod tests {
     #[test]
     fn v3_engine_and_controls_round_trip() {
         let mut value = serde_json::to_value(super::RuntimeParams::default()).unwrap();
-        // Spektra stays the default for existing recipes.
+        // New runtime recipes author Dye explicitly.
         let default: super::RuntimeParams = serde_json::from_value(value.clone()).unwrap();
         assert_eq!(
             default.film_render.grain.engine,
-            super::grain::GrainEngine::Spektra
+            super::grain::GrainEngine::Dye
         );
         assert_eq!(default.film_render.grain.v3_dye_support_um, 3.5);
         assert_eq!(default.film_render.grain.v3_event_area_um2, 1.28);

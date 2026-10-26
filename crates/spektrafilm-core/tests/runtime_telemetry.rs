@@ -504,7 +504,8 @@ fn gpu_timing_collection_survives_a_host_fence() {
     params.workflow.route = "input > film > scan".to_owned();
     params.io.scan_film = true;
     params.io.output_gamut_compress.algorithm = "off".into();
-    // The default Spektra engine runs as the assembled density fence.
+    // Explicit Spektra keeps this scenario on the assembled density fence.
+    params.film_render.grain.engine = spektrafilm_core::params::GrainEngine::Spektra;
     let runtime = Runtime::new_with_backend(
         spektrafilm_core::profile::load_profile_by_name(&data, "kodak_portra_400").unwrap(),
         spektrafilm_core::profile::load_profile_by_name(&data, "kodak_portra_endura").unwrap(),
