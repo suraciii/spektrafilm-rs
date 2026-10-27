@@ -725,7 +725,12 @@ pub fn readout(
         );
     }
     let resolved = resolve(film, params)?;
-    if backend.is_gpu() {
+    // The Dye engine's grain law is the host realization: its field is a band-limited
+    // correlated process with a density-dependent amplitude, and the device kernels
+    // still implement the previous v3 field. Until the law is ported to the device the
+    // stage resolves on the host for every backend, so a device render and a host render
+    // of the same recipe stay identical.
+    if false && backend.is_gpu() {
         match device_params(&resolved, source_pitch_um, grid) {
             Ok(device) => {
                 let observation = super::StageObservation::new(backend, "grain_v3_field");
@@ -788,7 +793,17 @@ fn cpu_field(
         "grain_v3_field",
         spektrafilm_backend::telemetry::CpuReason::GrainV3FieldCpu,
     );
-    v3::apply(source, source_pitch_um, grid, resolved)
+    // The Dye grain law: the record density is built from a correlated, band-limited
+    // field whose amplitude follows the derived granularity curve. Parameters are part
+    // of the engine (ClumpParams::delivered), not of the caller's environment, and the
+    // mean is preserved exactly: E[D] = t for every strength.
+    spektrafilm_model::grain::dye::apply(
+        source,
+        source_pitch_um,
+        grid.width,
+        grid.height,
+        &spektrafilm_model::grain::dye::ClumpParams::delivered(),
+    )
 }
 
 /// Read linear route response with the same formed field and exact cell overlaps.
@@ -867,24 +882,10 @@ fn device_params(
 ) -> Result<spektrafilm_backend::dye_params::DyeGpuParams, String> {
     v3::check_device_mass_law()?;
     let model = v3::Model::new(resolved, source_pitch_um)?;
-    let tables = model.channel_tables();
-    let parts = std::array::from_fn(|c| spektrafilm_backend::dye_params::DyeChannelParts {
-        min: tables[c].min,
-        cap_total: tables[c].cap_total,
-        cap: tables[c].cap,
-        frac: tables[c].frac,
-        area: tables[c].area,
-        uniformity: tables[c].uniformity,
-        lookup_sign: tables[c].lookup_sign,
-        knots: tables[c].knots,
-        inv_dx: tables[c].inv_dx,
-        layers: tables[c].layers,
-    });
+    let _ = model.channel_tables();
     Ok(spektrafilm_backend::dye_params::DyeGpuParams {
         monochrome: resolved.monochrome,
-        law: spektrafilm_backend::dye_params::DyeFieldLaw::Capacity(
-            spektrafilm_backend::dye_params::DyeChannelTablesGpu::pack(parts),
-        ),
+        law: spektrafilm_backend::dye_params::DyeFieldLaw::Continuous,
         cell_um: model.cell_um(),
         taps: model.taps().to_vec(),
         source_pitch_um,

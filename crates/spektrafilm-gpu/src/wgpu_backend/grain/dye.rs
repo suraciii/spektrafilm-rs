@@ -54,7 +54,17 @@ impl WgpuBackend {
     /// Standalone materialization uses exactly the resident kernels. The full
     /// source remains available when a crop or fractional output grid is read.
     pub fn dye_field(&self, image: &ImageBuf, params: &DyeGpuParams) -> Result<ImageBuf, String> {
-        self.materialize_dye_paged(image, params, None)
+        match &params.law {
+            DyeFieldLaw::Continuous => self.dye_law_field(
+                image,
+                params.source_pitch_um,
+                params.grid.width,
+                params.grid.height,
+                params.seed,
+                params.expectation,
+            ),
+            _ => self.materialize_dye_paged(image, params, None),
+        }
     }
 
     pub fn dye_field_with_response(
@@ -128,6 +138,8 @@ impl WgpuBackend {
     ) -> Result<u64, String> {
         let plan = self.dye_plan(width, height, params)?;
         let (law_bytes, source_bytes, per_band) = match &params.law {
+            // Continuous is dispatched to its own pass before reaching the paged path.
+            DyeFieldLaw::Continuous => return Err("Dye grain law: continuous law runs its own pass".into()),
             DyeFieldLaw::Capacity(tables) => (
                 std::mem::size_of_val(tables.tables.as_slice()) as u64
                     + tables.curves.len() as u64 * 4,
@@ -190,6 +202,7 @@ impl WgpuBackend {
             .max_storage_buffer_binding_size
             .min(effective.min(u64::from(u32::MAX)) as u32);
         let storage_bindings = match params.law {
+            DyeFieldLaw::Continuous => return Err("Dye grain law: continuous law runs its own pass".into()),
             DyeFieldLaw::Capacity(_) => 5,
             DyeFieldLaw::ScalarRecord { .. } => 4,
         };
@@ -212,6 +225,7 @@ impl WgpuBackend {
                 (
                     "channel curves",
                     match &params.law {
+                        DyeFieldLaw::Continuous => 0,
                         DyeFieldLaw::Capacity(tables) => tables.curves.len() as u64 * 4,
                         DyeFieldLaw::ScalarRecord { .. } => 0,
                     },
@@ -243,6 +257,7 @@ impl WgpuBackend {
             return Err("film grain Dye: formation taps must be finite and nonnegative".into());
         }
         let tables = match &params.law {
+            DyeFieldLaw::Continuous => return Err("Dye grain law: continuous law runs its own pass".into()),
             DyeFieldLaw::Capacity(tables) => tables,
             DyeFieldLaw::ScalarRecord {
                 event_contribution_d_um2,

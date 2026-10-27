@@ -134,6 +134,10 @@ pub struct DyeReadoutGrid {
     reason = "One law per render; retain the existing inline capacity tables without another heap allocation"
 )]
 pub enum DyeFieldLaw {
+    /// The delivered continuous law: a band-limited correlated field with a
+    /// density-dependent amplitude. It needs no capacity tables; the model constants
+    /// live in the device pass.
+    Continuous,
     Capacity(DyeChannelTablesGpu),
     ScalarRecord { event_contribution_d_um2: f64 },
 }

@@ -79,6 +79,7 @@ impl ResponseSetup {
             controls: [0.0; 4],
             preflash: [0.0; 4],
             mins: match &params.law {
+                DyeFieldLaw::Continuous => [0.0, 0.0, 0.0, 0.0],
                 DyeFieldLaw::Capacity(tables) => [
                     tables.tables[0].min,
                     tables.tables[1].min,

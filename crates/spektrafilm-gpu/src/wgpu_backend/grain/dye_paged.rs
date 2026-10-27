@@ -145,6 +145,7 @@ impl WgpuBackend {
             certification_cache.get_or_init(|| certification).clone()?;
         }
         let capacity = match &params.law {
+            DyeFieldLaw::Continuous => None,
             DyeFieldLaw::Capacity(tables) => Some((
                 self.pipe.static_buffer(
                     "dye_channel_tables",
@@ -160,6 +161,7 @@ impl WgpuBackend {
             DyeFieldLaw::ScalarRecord { .. } => None,
         };
         let record = match &params.law {
+            DyeFieldLaw::Continuous => None,
             DyeFieldLaw::ScalarRecord {
                 event_contribution_d_um2,
             } => Some((

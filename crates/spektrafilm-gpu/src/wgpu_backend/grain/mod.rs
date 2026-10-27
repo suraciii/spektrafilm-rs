@@ -1,6 +1,7 @@
 use super::*;
 
 pub mod dye;
+mod dye_law;
 pub mod dye_decisions;
 pub mod dye_layers;
 mod dye_spatial;
