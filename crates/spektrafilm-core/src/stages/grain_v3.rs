@@ -12,7 +12,6 @@
 //! the readout region only, so field cells keep their global film positions
 //! and overlapping reads agree.
 use crate::WorkflowRoute;
-mod record_law;
 
 use rayon::prelude::*;
 use spektrafilm_math::image::ImageBuf;
@@ -38,104 +37,24 @@ const CELL_UM_ENV: &str = "SPEKTRAFILM_GRAIN_V3_CELL_UM";
 /// Diagnostic expected-value render: every Poisson count is replaced by its
 /// conditional mean. It never changes the recipe.
 const EXPECTATION_ENV: &str = "SPEKTRAFILM_GRAIN_V3_EXPECTATION";
-/// Experimental supersampling factor for route-specific spectral aperture probing.
-const APERTURE_FACTOR_ENV: &str = "SPEKTRAFILM_GRAIN_V3_APERTURE_FACTOR";
 /// Exact formed-cell optical response experiment.
+/// The exact-cell optical response experiment was retired with the cell field: the
+/// engine now has one continuous law whose readout is a density resample, so there is
+/// no per-cell optical integral left to drive. A request for the old mode must fail
+/// loudly rather than silently rendering without it.
 const CELL_SPECTRAL_ENV: &str = "SPEKTRAFILM_GRAIN_V3_CELL_SPECTRAL";
 
-pub fn cell_spectral_enabled() -> Result<bool, String> {
-    let record = record_law::contribution()?.is_some();
-    match std::env::var_os(CELL_SPECTRAL_ENV) {
-        None => Ok(record),
-        Some(value) if value == "1" => Ok(true),
-        Some(_) => Err(format!("{CELL_SPECTRAL_ENV} must be exactly 1 when set")),
-    }
-}
-
-/// Validate the initial exact-cell optical scope before field allocation.
 pub fn validate_cell_spectral(params: &RuntimeParams) -> Result<bool, String> {
     if !active(params) {
         return Ok(false);
     }
-    let enabled = cell_spectral_enabled()?;
-    if !enabled {
-        return Ok(false);
+    match std::env::var_os(CELL_SPECTRAL_ENV) {
+        None => Ok(false),
+        Some(_) => Err(format!(
+            "{CELL_SPECTRAL_ENV} was retired with the exact-cell Dye field; the engine's \
+             continuous law has no per-cell optical response"
+        )),
     }
-    let route = params.workflow.route_enum();
-    if !matches!(
-        route,
-        WorkflowRoute::FilmPrintScan | WorkflowRoute::FilmScan | WorkflowRoute::InputFilmPrint
-    ) {
-        return Err(format!(
-            "{CELL_SPECTRAL_ENV} supports only {PRINT_ROUTE:?} and {FILM_SCAN_ROUTE:?} routes"
-        ));
-    }
-    if params.settings.use_enlarger_lut || params.settings.use_scanner_lut {
-        return Err(format!(
-            "{CELL_SPECTRAL_ENV} does not support enlarger or scanner LUTs"
-        ));
-    }
-    if params.io.scan_film && params.scanner.scan_output != "direct_scan" {
-        return Err(format!(
-            "{CELL_SPECTRAL_ENV} supports only the direct_scan film readout; the exact-cell capture does not reinterpret a negative"
-        ));
-    }
-    if params.enlarger.diffusion_filter.active
-        || params.enlarger.lens_blur > 0.0
-        || params.scanner.lens_blur > 0.0
-        || params.scanner.unsharp_mask.iter().any(|&v| v > 0.0)
-        || (params.print_render.glare.active && params.print_render.glare.percent > 0.0)
-        || (params.cmyk.active && params.cmyk.strength > 0.0)
-    {
-        return Err(format!(
-            "{CELL_SPECTRAL_ENV} does not support spatial optics or finishing"
-        ));
-    }
-    Ok(true)
-}
-
-/// Resolve the optional spectral aperture probe factor.
-pub fn aperture_factor() -> Result<Option<u32>, String> {
-    let Some(value) = std::env::var_os(APERTURE_FACTOR_ENV) else {
-        return Ok(None);
-    };
-    let value = value.to_str().ok_or_else(|| {
-        format!("{APERTURE_FACTOR_ENV} must contain an ASCII integer from 2 through 24")
-    })?;
-    let factor = value.parse::<u32>().map_err(|_| {
-        format!("{APERTURE_FACTOR_ENV} must contain an integer from 2 through 24 (got {value:?})")
-    })?;
-    if !(2..=24).contains(&factor) {
-        return Err(format!(
-            "{APERTURE_FACTOR_ENV} must be from 2 through 24 (got {factor})"
-        ));
-    }
-    Ok(Some(factor))
-}
-
-/// Validate the first probe's deliberately narrow route and optical scope.
-pub fn validate_aperture(params: &RuntimeParams) -> Result<Option<u32>, String> {
-    if !active(params) {
-        return Ok(None);
-    }
-    let Some(factor) = aperture_factor()? else {
-        return Ok(None);
-    };
-    if params.io.scan_film || params.workflow.route_enum() != WorkflowRoute::FilmPrintScan {
-        return Err(format!(
-            "{APERTURE_FACTOR_ENV} supports only the {PRINT_ROUTE:?} route"
-        ));
-    }
-    if params.enlarger.diffusion_filter.active
-        || params.scanner.lens_blur > 0.0
-        || params.scanner.unsharp_mask.iter().any(|&v| v > 0.0)
-        || (params.print_render.glare.active && params.print_render.glare.percent > 0.0)
-    {
-        return Err(format!(
-            "{APERTURE_FACTOR_ENV} requires enlarger diffusion, scanner blur, unsharp mask, and print glare to be inactive"
-        ));
-    }
-    Ok(Some(factor))
 }
 
 /// Whether the resident chain can execute the field and its optical readout.
@@ -146,10 +65,7 @@ pub fn resident_fence_supported(film: &Profile, params: &RuntimeParams) -> bool 
     if !active(params) {
         return false;
     }
-    if validate_supported(film, params).is_err()
-        || validate_cell_spectral(params).is_err()
-        || validate_aperture(params).is_err()
-    {
+    if validate_supported(film, params).is_err() {
         return false;
     }
     if host_field_reason(true).is_none() {
@@ -157,10 +73,7 @@ pub fn resident_fence_supported(film: &Profile, params: &RuntimeParams) -> bool 
     }
     // A host-only law can use the assembled density fence only when no
     // optical interleave or raster switch is required.
-    !params.io.crop
-        && params.io.upscale_factor == 1.0
-        && !validate_cell_spectral(params).unwrap_or(true)
-        && validate_aperture(params).unwrap_or(None).is_none()
+    !params.io.crop && params.io.upscale_factor == 1.0
 }
 
 /// Integer rectangle, in source pixels or in the extended output grid.
@@ -319,20 +232,6 @@ pub fn log_response_on_backend(
     Ok(image)
 }
 
-/// Finish exact-cell linear print response at the requested paper-exposure
-/// raster. Both probes may be enabled: collapse before paper development.
-pub fn finish_print_response_on_backend(
-    image: ImageBuf,
-    aperture: Option<u32>,
-    backend: &dyn spektrafilm_backend::ComputeBackend,
-) -> Result<ImageBuf, String> {
-    let log = log_response_on_backend(image, backend)?;
-    match aperture {
-        Some(factor) => collapse_log_exposure_on_backend(&log, factor, backend),
-        None => Ok(log),
-    }
-}
-
 /// Whether an active Dye field must run.
 ///
 /// Preview mode, LUT mode and stochastic deactivation already clear
@@ -372,16 +271,26 @@ pub fn configuration_report(film: &Profile, params: &RuntimeParams) -> serde_jso
 
 /// Resolve the effective opt-in scalar-record controls for rendering and reports.
 pub fn resolve_record(
-    film: &Profile,
-    params: &RuntimeParams,
+    _film: &Profile,
+    _params: &RuntimeParams,
 ) -> Result<Option<crate::telemetry::RecordConfiguration>, String> {
-    record_law::resolve(film, params)
+    // The scalar fixed-contribution experiment was retired with the cell field. A
+    // request for it must fail loudly instead of rendering the default law silently.
+    if std::env::var_os("SPEKTRAFILM_GRAIN_RECORD_Q").is_some() {
+        return Err(
+            "SPEKTRAFILM_GRAIN_RECORD_Q was retired with the exact-cell Dye field; the \
+             engine's continuous law has no separate record contribution"
+                .into(),
+        );
+    }
+    Ok(None)
 }
 
 /// Fail before any work when Dye is selected outside its supported
 /// condition: color or monochrome filming stocks and film-scan or print routes
 /// (spec §Supported product boundary).
 pub fn validate_supported(film: &Profile, params: &RuntimeParams) -> Result<(), String> {
+    validate_cell_spectral(params)?;
     resolve_record(film, params)?;
     if !active(params) {
         return Ok(());
@@ -472,28 +381,6 @@ pub fn geometry_for_dims(
     })
 }
 /// Scale the resolved output lattice for the aperture probe.
-pub fn aperture_grid(geometry: &Geometry, factor: u32) -> Result<ReadoutGrid, String> {
-    let width = geometry
-        .width
-        .checked_mul(factor)
-        .ok_or_else(|| "film grain Dye aperture: fine output width overflows".to_owned())?;
-    let height = geometry
-        .height
-        .checked_mul(factor)
-        .ok_or_else(|| "film grain Dye aperture: fine output height overflows".to_owned())?;
-    Ok(ReadoutGrid {
-        origin_um: [
-            geometry.rect.x as f64 * geometry.source_pitch_um,
-            geometry.rect.y as f64 * geometry.source_pitch_um,
-        ],
-        pitch_um: [
-            geometry.output_pitch_um[0] / factor as f64,
-            geometry.output_pitch_um[1] / factor as f64,
-        ],
-        width,
-        height,
-    })
-}
 
 /// Resolved readout of one Dye field from the full developed source.
 ///
@@ -508,9 +395,6 @@ pub struct ReadoutPlan {
     /// Output rectangle to extract after downstream spatial optics when
     /// `grid` encloses the whole film instead of the requested crop.
     pub deferred_crop: Option<SourceRect>,
-    /// Fine-lattice aperture probe factor; the print exposure runs at
-    /// `grid` and is collapsed back to the requested output grid.
-    pub aperture: Option<u32>,
 }
 
 /// Resolve how the field reads the requested film region.
@@ -526,13 +410,10 @@ pub fn readout_plan(
     source_height: u32,
     params: &RuntimeParams,
     source_pitch_um: f64,
-    aperture: Option<u32>,
     spatial_context: bool,
 ) -> Result<ReadoutPlan, String> {
     let geometry = geometry_for_dims(source_width, source_height, params, source_pitch_um)?;
-    let (grid, deferred_crop) = if let Some(factor) = aperture {
-        (aperture_grid(&geometry, factor)?, None)
-    } else if params.io.crop && spatial_context {
+    let (grid, deferred_crop) = if params.io.crop && spatial_context {
         let (grid, crop) = geometry.full_film_grid_for_dims(source_width, source_height)?;
         (grid, Some(crop))
     } else {
@@ -542,7 +423,6 @@ pub fn readout_plan(
         geometry,
         grid,
         deferred_crop,
-        aperture,
     })
 }
 
@@ -570,65 +450,9 @@ pub fn full_route_spatial_context(params: &RuntimeParams) -> bool {
 }
 
 /// Average fine print log exposure in linear light, then return to log space.
-pub fn collapse_log_exposure(fine: &ImageBuf, factor: u32) -> Result<ImageBuf, String> {
-    let factor = factor as usize;
-    let width = fine.width as usize;
-    let height = fine.height as usize;
-    if factor == 0 || !width.is_multiple_of(factor) || !height.is_multiple_of(factor) {
-        return Err(
-            "film grain Dye aperture: fine image dimensions must be divisible by the factor"
-                .to_owned(),
-        );
-    }
-    let out_width = width / factor;
-    let out_height = height / factor;
-    let mut out = ImageBuf::new(out_width as u32, out_height as u32);
-    let block_area = (factor * factor) as f64;
-    out.data
-        .par_chunks_exact_mut(3)
-        .enumerate()
-        .for_each(|(index, dst)| {
-            let ox = index % out_width;
-            let oy = index / out_width;
-            let mut sum = [0.0; 3];
-            for dy in 0..factor {
-                let row = (oy * factor + dy) * width;
-                for dx in 0..factor {
-                    let src = (row + ox * factor + dx) * 3;
-                    for (c, value) in sum.iter_mut().enumerate() {
-                        *value +=
-                            10.0f64.powf(spektrafilm_math::precision::to_f64(fine.data[src + c]));
-                    }
-                }
-            }
-            for (value, sum) in dst.iter_mut().zip(sum) {
-                *value = spektrafilm_math::precision::from_f64((sum / block_area).log10());
-            }
-        });
-    Ok(out)
-}
 
 /// Run aperture reduction on the selected executor without host image
 /// arithmetic for an explicit device request.
-pub fn collapse_log_exposure_on_backend(
-    fine: &ImageBuf,
-    factor: u32,
-    backend: &dyn spektrafilm_backend::ComputeBackend,
-) -> Result<ImageBuf, String> {
-    if backend.is_gpu() {
-        match backend.dye_aperture_collapse(fine, factor) {
-            Some(result) => return result,
-            None if backend.explicit_gpu_request() => {
-                return Err(format!(
-                    "explicit GPU request cannot run film grain Dye aperture collapse: {} has no device reduction path",
-                    backend.name()
-                ));
-            }
-            None => {}
-        }
-    }
-    collapse_log_exposure(fine, factor)
-}
 
 /// Relative per-channel event-area scale `k_c = (G_c / 6)^2` resolved from
 /// `rms_granularity` (design §Resolved parameter contract).
@@ -736,7 +560,6 @@ pub fn readout(
                     output_pitch_um = ?grid.pitch_um,
                     output = format_args!("{}x{}", grid.width, grid.height),
                     support_um = resolved.support_um,
-                    cell_um = device.cell_um,
                     expectation = resolved.expectation,
                     "film grain Dye: field readout on GPU"
                 );
@@ -787,7 +610,29 @@ fn cpu_field(
         "grain_v3_field",
         spektrafilm_backend::telemetry::CpuReason::GrainV3FieldCpu,
     );
-    v3::apply(source, source_pitch_um, grid, resolved)
+    // The Dye grain law: the record density is built from a correlated, band-limited
+    // field whose amplitude follows the derived granularity curve. Parameters are part
+    // of the engine (ClumpParams::delivered), not of the caller's environment, and the
+    // mean is preserved exactly: E[D] = t for every strength.
+    // The law's amplitude, correlation lengths, event area and fog baseline are engine
+    // constants; the resolved seed selects the realization and the expectation
+    // diagnostic replaces every draw by its conditional mean. The device reads the same
+    // two resolved fields, so both executors realize the same law.
+    let mut params = spektrafilm_model::grain::dye::ClumpParams::delivered();
+    params.seed = resolved.seed;
+    params.expectation = resolved.expectation;
+    params.monochrome = resolved.monochrome;
+    spektrafilm_model::grain::dye::apply(
+        source,
+        source_pitch_um,
+        &spektrafilm_model::grain::dye::ReadoutGeometry {
+            origin_um: grid.origin_um,
+            pitch_um: grid.pitch_um,
+            width: grid.width,
+            height: grid.height,
+        },
+        &params,
+    )
 }
 
 /// Read linear route response with the same formed field and exact cell overlaps.
@@ -807,17 +652,6 @@ pub fn readout_with_response(
     response: impl Fn(&ImageBuf, &dyn spektrafilm_backend::ComputeBackend) -> Result<ImageBuf, String>
     + Sync,
 ) -> Result<ImageBuf, String> {
-    if let Some(record) = resolve_record(film, params)? {
-        return record_law::readout(
-            source,
-            record,
-            source_pitch_um,
-            grid,
-            backend,
-            device_response,
-            response,
-        );
-    }
     let resolved = resolve(film, params)?;
     if backend.is_gpu() {
         match device_params(&resolved, source_pitch_um, grid) {
@@ -860,32 +694,11 @@ pub fn readout_with_response(
 /// device count law and is rejected by name; expectation mode and the
 /// field-pitch override are part of the production law and map through.
 fn device_params(
-    resolved: &GrainV3Params,
+    _resolved: &GrainV3Params,
     source_pitch_um: f64,
     grid: ReadoutGrid,
 ) -> Result<spektrafilm_backend::dye_params::DyeGpuParams, String> {
-    v3::check_device_mass_law()?;
-    let model = v3::Model::new(resolved, source_pitch_um)?;
-    let tables = model.channel_tables();
-    let parts = std::array::from_fn(|c| spektrafilm_backend::dye_params::DyeChannelParts {
-        min: tables[c].min,
-        cap_total: tables[c].cap_total,
-        cap: tables[c].cap,
-        frac: tables[c].frac,
-        area: tables[c].area,
-        uniformity: tables[c].uniformity,
-        lookup_sign: tables[c].lookup_sign,
-        knots: tables[c].knots,
-        inv_dx: tables[c].inv_dx,
-        layers: tables[c].layers,
-    });
     Ok(spektrafilm_backend::dye_params::DyeGpuParams {
-        monochrome: resolved.monochrome,
-        law: spektrafilm_backend::dye_params::DyeFieldLaw::Capacity(
-            spektrafilm_backend::dye_params::DyeChannelTablesGpu::pack(parts),
-        ),
-        cell_um: model.cell_um(),
-        taps: model.taps().to_vec(),
         source_pitch_um,
         grid: spektrafilm_backend::dye_params::DyeReadoutGrid {
             origin_um: grid.origin_um,
@@ -893,9 +706,8 @@ fn device_params(
             width: grid.width,
             height: grid.height,
         },
-        seed: resolved.seed,
-        channel_correlation: resolved.channel_correlation as f32,
-        expectation: resolved.expectation,
+        seed: _resolved.seed,
+        expectation: _resolved.expectation,
     })
 }
 
@@ -933,9 +745,6 @@ pub(crate) fn resident_device_params_for_grid(
     source_pitch_um: f64,
     grid: ReadoutGrid,
 ) -> Result<spektrafilm_backend::dye_params::DyeGpuParams, String> {
-    if let Some(record) = resolve_record(film, params)? {
-        return record_law::device_params(record, source_pitch_um, grid);
-    }
     device_params(&resolve(film, params)?, source_pitch_um, grid)
 }
 
@@ -948,14 +757,11 @@ pub fn resident_readout_plan_for_dims(
     source_pitch_um: f64,
 ) -> Result<ReadoutPlan, String> {
     validate_supported(film, params)?;
-    validate_cell_spectral(params)?;
-    let aperture = validate_aperture(params)?;
     readout_plan(
         width,
         height,
         params,
         source_pitch_um,
-        aperture,
         full_route_spatial_context(params),
     )
 }
@@ -1037,268 +843,6 @@ fn expectation_requested() -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::params::RuntimeParams;
-    use crate::test_support::data_dir;
-    use spektrafilm_math::precision::from_f64;
-
-    #[test]
-    fn aperture_averages_linear_exposure_per_output_block() {
-        // Adjacent blocks contain exposures 1/100 and 10/1000. Averaging
-        // their logs would yield 1 and 2 instead of log10(50.5/505).
-        let fine = ImageBuf::from_data(
-            4,
-            2,
-            [0.0, 2.0, 1.0, 3.0, 0.0, 2.0, 1.0, 3.0]
-                .into_iter()
-                .flat_map(|v| [from_f64(v); 3])
-                .collect(),
-        );
-        let out = collapse_log_exposure(&fine, 2).unwrap();
-        assert_eq!((out.width, out.height), (2, 1));
-        for (pixel, expected) in out.data.as_chunks::<3>().0.iter().zip([50.5_f64, 505.0]) {
-            for &value in pixel {
-                assert!(
-                    (spektrafilm_math::precision::to_f64(value) - expected.log10()).abs()
-                        < read_tolerance()
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn aperture_rejects_partial_output_blocks() {
-        let fine = ImageBuf::new(3, 2);
-        assert!(
-            collapse_log_exposure(&fine, 2)
-                .unwrap_err()
-                .contains("divisible")
-        );
-        assert!(
-            collapse_log_exposure(&fine, 0)
-                .unwrap_err()
-                .contains("divisible")
-        );
-    }
-
-    // Independent CPU bug regression: the exact-cell branch previously
-    // continued at LogEPrint before the aperture arm, delivering a fine
-    // raster and developing paper before collapsing its exposure.
-    #[test]
-    fn combined_cell_spectral_aperture_collapses_before_paper_development() {
-        let params = supported_params();
-        let plan = readout_plan(2, 1, &params, 2.0, Some(2), false).unwrap();
-        let linear = ImageBuf::from_data(
-            4,
-            2,
-            [1.0, 100.0, 10.0, 1000.0, 1.0, 100.0, 10.0, 1000.0]
-                .into_iter()
-                .flat_map(|v| [from_f64(v); 3])
-                .collect(),
-        );
-        let backend = spektrafilm_backend::cpu_backend::CpuBackend;
-        let paper_log = finish_print_response_on_backend(linear, plan.aperture, &backend).unwrap();
-        assert_eq!(
-            (paper_log.width, paper_log.height),
-            (plan.geometry.width, plan.geometry.height)
-        );
-        for (pixel, exposure) in paper_log
-            .data
-            .as_chunks::<3>()
-            .0
-            .iter()
-            .zip([50.5_f64, 505.0])
-        {
-            for &value in pixel {
-                assert!((value as f64 - exposure.log10()).abs() < read_tolerance());
-            }
-        }
-    }
-
-    #[test]
-    fn device_aperture_and_crop_preserve_optical_boundaries() {
-        let backend = spektrafilm_gpu::test_support::adapter();
-        for factor in [2, 3, 24] {
-            let width = factor * 2;
-            let height = factor * 3;
-            let fine = ImageBuf::from_data(
-                width,
-                height,
-                (0..width * height * 3)
-                    .map(|i| from_f64(-8.0 + f64::from(i % 37) * 0.25))
-                    .collect(),
-            );
-            let expected = collapse_log_exposure(&fine, factor).unwrap();
-            let actual = backend.dye_aperture_collapse(&fine, factor).unwrap();
-            assert!(max_abs_diff(&expected, &actual) <= 1e-5);
-            let expected_crop = crop_output(
-                expected,
-                SourceRect {
-                    x: 1,
-                    y: 1,
-                    width: 1,
-                    height: 2,
-                },
-            );
-            let actual_crop = backend.dye_crop(&actual, [1, 1, 1, 2]).unwrap();
-            assert!(max_abs_diff(&expected_crop, &actual_crop) <= 1e-5);
-        }
-        for factor in [0, 2] {
-            assert!(
-                backend
-                    .dye_aperture_collapse(&ImageBuf::new(3, 2), factor)
-                    .unwrap_err()
-                    .contains("divisible")
-            );
-        }
-    }
-
-    #[test]
-    fn device_cell_response_preserves_domains_and_base_subtraction() {
-        let backend = spektrafilm_gpu::test_support::adapter();
-        let film = load("kodak_portra_800");
-        let mut resolved = resolve(&film, &supported_params()).unwrap();
-        resolved.expectation = true;
-        resolved.density_min = [0.12, 0.23, 0.34];
-        let source = density_target(9, 7);
-        let grid = ReadoutGrid {
-            origin_um: [-1.25, 0.75],
-            pitch_um: [2.125, 1.375],
-            width: 9,
-            height: 131,
-        };
-        let device = device_params(&resolved, 2.0, grid).unwrap();
-        let cd = [[0.8, 0.2, 0.1], [0.1, 0.9, 0.3]];
-        let bd = [0.1, 0.2];
-        let lamp = [0.7, 1.2];
-        let sensitivity = [[0.1, 0.2, 0.3], [0.3, 0.1, 0.2]];
-        let matrix = [[1.2, -0.3, 0.1], [-0.1, 0.8, 0.2], [0.1, -0.2, 1.0]];
-        for scan in [false, true] {
-            for scale in [0.0, 0.7] {
-                let response = if scan {
-                    spektrafilm_backend::DyeResponseGpuParams::Scan {
-                        channel_density: &cd,
-                        base_density: &bd,
-                        illuminant: &lamp,
-                        normalization: 0.8,
-                        xyz_to_rgb: &matrix,
-                    }
-                } else {
-                    spektrafilm_backend::DyeResponseGpuParams::Print {
-                        channel_density: &cd,
-                        base_density: &bd,
-                        illuminant: &lamp,
-                        sensitivity: &sensitivity,
-                        normalization_factor: 0.9,
-                        exposure_scale: scale,
-                        preflash: [0.0, 0.01, -1.0],
-                    }
-                };
-                let reference = v3::apply_with_response(&source, 2.0, grid, &resolved, |cells| {
-                    let mut out = ImageBuf::new(cells.width, cells.height);
-                    for (src, dst) in cells
-                        .data
-                        .as_chunks::<3>()
-                        .0
-                        .iter()
-                        .zip(out.data.as_chunks_mut::<3>().0)
-                    {
-                        let mut raw = [0.0; 3];
-                        for wl in 0..2 {
-                            let density =
-                                (0..3).map(|c| src[c] as f64 * cd[wl][c]).sum::<f64>() + bd[wl];
-                            let light = 10.0_f64.powf(-density) * lamp[wl];
-                            for c in 0..3 {
-                                let weight = if scan {
-                                    [
-                                        spektrafilm_math::spectral::CMF_X[wl],
-                                        spektrafilm_math::spectral::CMF_Y[wl],
-                                        spektrafilm_math::spectral::CMF_Z[wl],
-                                    ][c] as f64
-                                } else {
-                                    sensitivity[wl][c]
-                                };
-                                raw[c] += light * weight;
-                            }
-                        }
-                        for c in 0..3 {
-                            let value = if scan {
-                                (0..3).map(|j| matrix[c][j] * raw[j] / 0.8).sum()
-                            } else {
-                                let inner = ((raw[c] * 0.9 + [0.0, 0.01, -1.0][c]).max(0.0)
-                                    + 1e-10)
-                                    .log10();
-                                let outer = (10.0_f64.powf(inner) * scale).max(0.0) + 1e-10;
-                                10.0_f64.powf(outer.log10())
-                            };
-                            dst[c] = from_f64(value);
-                        }
-                    }
-                    Ok(out)
-                })
-                .unwrap();
-                let actual = backend
-                    .dye_field_with_response(&source, &device, &response)
-                    .unwrap();
-                let worst = max_abs_diff(&reference, &actual);
-                assert!(
-                    worst <= 1e-4,
-                    "cell response scan={scan} scale={scale}: {worst}"
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn device_cell_response_omits_whole_missing_spectral_rows() {
-        let backend = spektrafilm_gpu::test_support::adapter();
-        let film = load("kodak_portra_800");
-        let mut resolved = resolve(&film, &supported_params()).unwrap();
-        resolved.expectation = true;
-        let source = density_target(3, 2);
-        let grid = ReadoutGrid {
-            origin_um: [-0.25, 0.75],
-            pitch_um: [2.125, 1.375],
-            width: 3,
-            height: 2,
-        };
-        let device = device_params(&resolved, 2.0, grid).unwrap();
-        let cd = [[0.8, 0.2, 0.1], [f64::NAN, 0.9, 0.3], [0.1, 0.2, 0.8]];
-        let bd = [0.1, 0.2, f64::NAN];
-        let lamp = [0.7, 1.2, 1.5];
-        let sensitivity = [[0.1, 0.2, 0.3], [0.3, 0.1, 0.2], [0.2, 0.3, 0.1]];
-        let response = spektrafilm_backend::DyeResponseGpuParams::Print {
-            channel_density: &cd,
-            base_density: &bd,
-            illuminant: &lamp,
-            sensitivity: &sensitivity,
-            normalization_factor: 0.9,
-            exposure_scale: 0.7,
-            preflash: [0.0, 0.01, 0.02],
-        };
-        let reference = v3::apply_with_response(&source, 2.0, grid, &resolved, |cells| {
-            let mut linear = spektrafilm_backend::cpu_backend::print_spectral_cpu(
-                cells,
-                &cd,
-                &bd,
-                &lamp,
-                &sensitivity,
-                0.9,
-                [0.0, 0.01, 0.02],
-            );
-            for value in &mut linear.data {
-                let outer = (10.0_f64.powf(*value as f64) * 0.7).max(0.0) + 1e-10;
-                *value = from_f64(10.0_f64.powf(outer.log10()));
-            }
-            Ok(linear)
-        })
-        .unwrap();
-        let actual = backend
-            .dye_field_with_response(&source, &device, &response)
-            .unwrap();
-        let worst = max_abs_diff(&reference, &actual);
-        assert!(worst <= 1e-4, "missing spectral row response: {worst}");
-    }
-
     fn load(stock: &str) -> Profile {
         crate::profile::load_profile_by_name(&data_dir(), stock).unwrap()
     }
@@ -1311,21 +855,6 @@ mod tests {
         params.film_render.grain.engine = GrainEngine::Dye;
         params.film_render.grain.active = true;
         params
-    }
-
-    /// Smooth CMY density target both reads can integrate.
-    fn density_target(w: u32, h: u32) -> ImageBuf {
-        let mut data = Vec::with_capacity((w * h * 3) as usize);
-        for y in 0..h {
-            for x in 0..w {
-                let u = x as f64 / (w - 1) as f64;
-                let v = y as f64 / (h - 1) as f64;
-                data.push(from_f64(0.35 + 0.5 * u));
-                data.push(from_f64(0.45 + 0.4 * v));
-                data.push(from_f64(0.55 + 0.3 * (0.5 * u + 0.5 * v)));
-            }
-        }
-        ImageBuf::from_data(w, h, data)
     }
 
     /// Field identity tolerance from the design: f32 reads agree to 1e-5,
@@ -1384,79 +913,25 @@ mod tests {
         coarse
     }
 
-    #[test]
-    fn device_layer_targets_match_the_cpu_conditioning() {
-        // G2: the device evaluates the same conditioning from the same tables.
-        // Both sides read `Model::channel_tables`, so this compares two
-        // evaluations of one derivation instead of two derivations. The
-        // positive stock flips the composite lookup axis, so the device must
-        // apply the table's sign to the query exactly as the CPU does.
-        let backend = spektrafilm_gpu::test_support::adapter();
-        for stock in ["kodak_portra_800", "fujifilm_provia_100f"] {
-            let film = load(stock);
-            let params = supported_params();
-            let resolved = resolve(&film, &params).unwrap();
-            let model = v3::Model::new(&resolved, 2.0).unwrap();
-            let tables = model.channel_tables();
-            let parts = std::array::from_fn(|c| spektrafilm_backend::dye_params::DyeChannelParts {
-                min: tables[c].min,
-                cap_total: tables[c].cap_total,
-                cap: tables[c].cap,
-                frac: tables[c].frac,
-                area: tables[c].area,
-                uniformity: tables[c].uniformity,
-                lookup_sign: tables[c].lookup_sign,
-                knots: tables[c].knots,
-                inv_dx: tables[c].inv_dx,
-                layers: tables[c].layers,
-            });
-            let packed = spektrafilm_backend::dye_params::DyeChannelTablesGpu::pack(parts);
-            // Cover each channel's own interval, including both clamps and the
-            // region where a layer saturates and the split redistributes.
-            let mut densities = Vec::new();
-            for i in 0..24usize {
-                for j in 0..24usize {
-                    let x = i as f64 / 23.0;
-                    let y = j as f64 / 23.0;
-                    let z = (i + j) as f64 / 46.0;
-                    densities.push([
-                        (1.2 * x * tables[0].cap_total) as f32,
-                        (1.2 * y * tables[1].cap_total) as f32,
-                        (1.2 * z * tables[2].cap_total) as f32,
-                    ]);
-                }
+    /// Smooth CMY density target both reads can integrate.
+    fn density_target(w: u32, h: u32) -> ImageBuf {
+        let mut data = Vec::with_capacity((w * h * 3) as usize);
+        for y in 0..h {
+            for x in 0..w {
+                let u = x as f64 / (w - 1) as f64;
+                let v = y as f64 / (h - 1) as f64;
+                data.push(from_f64(0.35 + 0.5 * u));
+                data.push(from_f64(0.45 + 0.4 * v));
+                data.push(from_f64(0.55 + 0.3 * (0.5 * u + 0.5 * v)));
             }
-            let device = backend
-                .dye_layer_targets(&densities, &packed)
-                .expect("device layer-target diagnostic");
-            assert_eq!(device.len(), densities.len());
-            let mut worst = 0.0f64;
-            for (index, density) in densities.iter().enumerate() {
-                let cpu = model.layer_targets([
-                    f64::from(density[0]),
-                    f64::from(density[1]),
-                    f64::from(density[2]),
-                ]);
-                for channel in 0..3usize {
-                    for layer in 0..3usize {
-                        let want = cpu[channel][layer];
-                        let got = f64::from(device[index][channel * 3 + layer]);
-                        let scale = want.abs().max(tables[channel].cap[layer]).max(1e-6);
-                        worst = worst.max((got - want).abs() / scale);
-                        assert!(
-                            (got - want).abs() <= 1e-4 * scale,
-                            "{stock} channel {channel} layer {layer} at {density:?}: device {got} vs CPU {want}"
-                        );
-                    }
-                }
-            }
-            assert!(worst <= 1e-4, "{stock} worst relative error {worst}");
         }
+        ImageBuf::from_data(w, h, data)
     }
 
-    /// Deterministic conditional means isolate conditioning, remap, formation,
-    /// and readout from the CPU/device draw streams. Fractional footprints,
-    /// source-edge extension, and a band seam must preserve the same field.
+    use crate::params::RuntimeParams;
+    use crate::test_support::data_dir;
+    use spektrafilm_math::precision::from_f64;
+
     #[test]
     fn device_field_matches_the_cpu_reference_in_expectation() {
         use spektrafilm_backend::ComputeBackend as _;
@@ -1471,9 +946,7 @@ mod tests {
         cropped.io.crop_center = [0.4, 0.55];
         cropped.io.crop_size = [0.5, 0.4];
         cropped.io.upscale_factor = 1.5;
-        let planned = readout_plan(24, 129, &cropped, 2.0, None, false)
-            .unwrap()
-            .grid;
+        let planned = readout_plan(24, 129, &cropped, 2.0, false).unwrap().grid;
         let grids = [
             geometry(&source, &params, 2.0).unwrap().grid(),
             planned,
@@ -1498,7 +971,24 @@ mod tests {
                     spektrafilm_backend::ComputeBackend::dye_field(&*backend, &source, &device)
                         .expect("the backend exposes a device field path")
                         .expect("the device field runs");
-                let cpu_out = v3::apply(&source, 2.0, grid, &resolved).unwrap();
+                // The reference is the engine's law, not the retired v3 capacity
+                // field: the device must reproduce the host model exactly in
+                // expectation, for every readout grid.
+                let mut reference = spektrafilm_model::grain::dye::ClumpParams::delivered();
+                reference.expectation = resolved.expectation;
+                reference.seed = resolved.seed;
+                let cpu_out = spektrafilm_model::grain::dye::apply(
+                    &source,
+                    2.0,
+                    &spektrafilm_model::grain::dye::ReadoutGeometry {
+                        origin_um: grid.origin_um,
+                        pitch_um: grid.pitch_um,
+                        width: grid.width,
+                        height: grid.height,
+                    },
+                    &reference,
+                )
+                .unwrap();
                 assert_eq!(
                     (gpu_out.width, gpu_out.height),
                     (cpu_out.width, cpu_out.height)
@@ -1532,7 +1022,7 @@ mod tests {
         params.io.crop_center = [0.5, 0.5];
         params.io.crop_size = [0.1, 0.1];
         params.io.upscale_factor = 2.0;
-        let plan = readout_plan(200, 100, &params, 180.0, None, false).unwrap();
+        let plan = readout_plan(200, 100, &params, 180.0, false).unwrap();
         assert_eq!(
             plan.geometry.rect,
             SourceRect {
@@ -1555,7 +1045,7 @@ mod tests {
         // Upscale without a crop keeps the film origin and grows the grid.
         params.io.crop = false;
         params.io.upscale_factor = 1.5;
-        let plan = readout_plan(200, 100, &params, 180.0, None, false).unwrap();
+        let plan = readout_plan(200, 100, &params, 180.0, false).unwrap();
         assert_eq!((plan.grid.width, plan.grid.height), (300, 150));
         assert_eq!(plan.grid.origin_um, [0.0; 2]);
         assert_eq!(plan.grid.pitch_um, [120.0, 120.0]);
@@ -1569,7 +1059,7 @@ mod tests {
         params.scanner.unsharp_mask = [0.7, 0.7];
         assert!(full_route_spatial_context(&params));
         assert!(resident_fence_supported(&film, &params));
-        let plan = readout_plan(200, 100, &params, 180.0, None, true).unwrap();
+        let plan = readout_plan(200, 100, &params, 180.0, true).unwrap();
         assert!(plan.deferred_crop.is_some());
         assert!(plan.grid.width > plan.geometry.width);
         let resident = resident_readout_plan_for_dims(&film, &params, 200, 100, 180.0).unwrap();
@@ -1600,8 +1090,8 @@ mod tests {
         resolved.expectation = true;
         let source = density_target(64, 43);
         let pitch = 7.3;
-        let requested = readout_plan(64, 43, &params, pitch, None, false).unwrap();
-        let enclosing = readout_plan(64, 43, &params, pitch, None, true).unwrap();
+        let requested = readout_plan(64, 43, &params, pitch, false).unwrap();
+        let enclosing = readout_plan(64, 43, &params, pitch, true).unwrap();
         let keep = enclosing.deferred_crop.expect("enclosing plan defers");
         assert_eq!(
             (keep.width, keep.height),
@@ -1630,48 +1120,6 @@ mod tests {
             worst <= 1e-4,
             "requested crop diverged from the enclosing full-film field by {worst:.2e}"
         );
-    }
-
-    #[test]
-    fn aperture_plan_reads_the_fine_lattice_of_the_requested_region() {
-        let params = supported_params();
-        let plan = readout_plan(200, 100, &params, 180.0, Some(4), false).unwrap();
-        assert_eq!((plan.grid.width, plan.grid.height), (800, 400));
-        assert_eq!(plan.grid.pitch_um, [45.0, 45.0]);
-        assert_eq!(plan.grid.origin_um, [0.0; 2]);
-        assert_eq!(plan.aperture, Some(4));
-        assert!(plan.deferred_crop.is_none());
-    }
-
-    /// The production raster and a cropped/upscaled readout of it must both
-    /// plan within the bounded band policy: a field that does not fit is a
-    /// named failure, never a coarser lattice or a shorter support.
-    #[test]
-    fn production_scale_field_plan_fits_the_bounded_band_policy() {
-        let backend = spektrafilm_gpu::test_support::adapter();
-        let film = load("kodak_portra_800");
-        let params = supported_params();
-        let mut resolved = resolve(&film, &params).unwrap();
-        resolved.expectation = true;
-        let pitch = 36.0 * 1000.0 / 1600.0;
-        let plan = readout_plan(1600, 1200, &params, pitch, None, false).unwrap();
-        assert_eq!((plan.grid.width, plan.grid.height), (1600, 1200));
-        let device = device_params(&resolved, pitch, plan.grid).unwrap();
-        backend
-            .validate_dye_resources(1600, 1200, &device)
-            .expect("the production readout plans within the band budget");
-
-        let mut cropped = params.clone();
-        cropped.io.crop = true;
-        cropped.io.crop_center = [0.5, 0.5];
-        cropped.io.crop_size = [0.5, 0.5];
-        cropped.io.upscale_factor = 1.5;
-        let plan = readout_plan(1600, 1200, &cropped, pitch, None, false).unwrap();
-        assert_eq!((plan.grid.width, plan.grid.height), (1200, 1200));
-        let device = device_params(&resolved, pitch, plan.grid).unwrap();
-        backend
-            .validate_dye_resources(1600, 1200, &device)
-            .expect("the cropped production readout plans within the band budget");
     }
 
     #[test]

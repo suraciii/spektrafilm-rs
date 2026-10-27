@@ -28,21 +28,10 @@ pub fn validate_stage_params(film: &Profile, params: &RuntimeParams) -> Result<(
 
 pub(crate) fn validate_stage_model(
     params: &RuntimeParams,
-    kind: MaterialKind,
+    _kind: MaterialKind,
 ) -> Result<(), String> {
     if params.taps.inject.is_some() || params.taps.collect.is_some() {
         return Err("stage artifacts cannot use diagnostic taps.inject or taps.collect".into());
-    }
-    if crate::stages::grain_v3::active(params) {
-        if crate::stages::grain_v3::cell_spectral_enabled()? && kind == MaterialKind::Film {
-            return Err("Dye exact-cell optical readout fuses film development with acquisition: cmy_film is not a complete material state; choose the representable print boundary".into());
-        }
-        if crate::stages::grain_v3::aperture_factor()?.is_some() {
-            return Err(
-                "Dye aperture optical integration cannot be persisted at a material boundary"
-                    .into(),
-            );
-        }
     }
     Ok(())
 }

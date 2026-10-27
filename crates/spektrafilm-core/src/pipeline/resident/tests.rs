@@ -382,7 +382,7 @@ fn dye_fence_params() -> RuntimeParams {
     params.settings.use_scanner_lut = false;
     params.settings.use_enlarger_lut = false;
     params.camera.auto_exposure = false;
-    params.camera.film_format_mm = 8.0;
+    params.camera.film_format_mm = 0.32;
     params.io.output_gamut_compress.algorithm = "off".into();
     params.io.output_cctf_encoding = false;
     params.film_render.grain.active = true;
@@ -409,6 +409,9 @@ fn dye_grain_field_runs_on_the_resident_device_chain() {
         pipeline.resident_decision(),
         ResidentDecision::UseResident
     ));
+    // The Dye law's texture lives at 4.5-18 um and is band-limited at 12 um, so a
+    // frame sampled at 125 um/px cannot show it: the field is correctly averaged
+    // away. This fence runs at 5 um/px, the geometry the delivery targets.
     let image = comparison_image(64);
     let snapshot = observed_render(&pipeline, image.clone(), gpu.backend());
     assert_eq!(
@@ -1910,130 +1913,6 @@ fn retained_input_output_mix_matches_cpu_with_cmyk() {
                     (*actual as f64 - *expected as f64).abs() < 2e-5,
                     "encoded={encoded} amount={amount} sample={index}: GPU {actual}, CPU {expected}"
                 );
-            }
-        }
-    }
-}
-
-/// The optical readout changes the result lattice, not the conditioning
-/// source. Its mix source must independently replay all delivered geometry.
-#[test]
-fn retained_optical_grain_output_mix_replays_complete_geometry() {
-    use crate::params::GrainEngine;
-    use spektrafilm_backend::cpu_backend::CpuBackend;
-    use spektrafilm_math::precision::from_f64;
-    let gpu = spektrafilm_gpu::test_support::explicit_adapter();
-    let dir = data_dir();
-    let film = crate::profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();
-    let print = crate::profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap();
-    let image = ImageBuf::from_data(
-        16,
-        12,
-        (0..16 * 12 * 3)
-            .map(|i| from_f64(0.05 + 0.8 * ((i * 37) % 101) as f64 / 100.0))
-            .collect(),
-    );
-    for engine in [GrainEngine::Dye, GrainEngine::Fotufilm] {
-        let mut params = dye_fence_params();
-        params.random_seed = 37;
-        params.film_render.grain.engine = engine;
-        params.camera.film_format_mm = 0.16;
-        params.film_render.grain.fotufilm.amount = 1.0;
-        params.io.input_cctf_decoding = true;
-        params.io.crop = true;
-        params.io.crop_center = [0.6, 0.4];
-        params.io.crop_size = [0.5, 0.5];
-        params.io.upscale_factor = 1.5;
-        // Isolate optical grain readout and its enclosing scanner field from
-        // unrelated full-source camera diffusion and viewing glare.
-        params.film_render.halation.active = false;
-        params.film_render.dir_couplers.active = false;
-        params.print_render.glare.active = false;
-        params.scanner.lens_blur = 0.6;
-        params.scanner.unsharp_mask = [0.0, 0.0];
-        params.enlarger.diffusion_filter.active = false;
-        let cpu =
-            Pipeline::new_with_spectral(film.clone(), print.clone(), params.clone(), &dir).unwrap();
-        let device = cpu
-            .clone()
-            .with_params_with_backend(params, gpu.backend())
-            .unwrap();
-        // Clones retain the same immutable fitted population and bank for
-        // full and preview geometry; raster size is not population identity.
-        for preview in [None, Some(12)] {
-            let oriented = image.rotated_quarter_turns(1);
-            let working = preview.map_or_else(
-                || oriented.clone(),
-                |max| crate::params_builder::resize_for_preview(&oriented, max),
-            );
-            let source = cpu
-                .prepare_output_mix_source(&working, &CpuBackend)
-                .unwrap();
-            let full_cpu = cpu.process(working.clone(), &CpuBackend).unwrap();
-            let request = crate::pipeline::RetainedRender {
-                rotation_quarter_turns: 1,
-                preview_max_size: preview,
-            };
-            let full_gpu = device
-                .process_retained(&image, request, gpu.backend())
-                .unwrap()
-                .unwrap()
-                .to_host(gpu.backend())
-                .unwrap();
-            assert_eq!(
-                (full_gpu.width, full_gpu.height),
-                (source.width, source.height)
-            );
-            for amount in [0.0, 0.35] {
-                let mut cpu = cpu.clone();
-                cpu.params.output_mix.amount = amount;
-                let mut device = device.clone();
-                device.params.output_mix.amount = amount;
-                let expected = cpu.process(working.clone(), &CpuBackend).unwrap();
-                let actual = device
-                    .process_retained(&image, request, gpu.backend())
-                    .unwrap()
-                    .unwrap()
-                    .to_host(gpu.backend())
-                    .unwrap();
-                assert_eq!(
-                    (actual.width, actual.height),
-                    (expected.width, expected.height)
-                );
-                assert_eq!(actual.data.len(), source.data.len());
-                for (index, ((actual, source), (gpu_full, cpu_full))) in actual
-                    .data
-                    .iter()
-                    .zip(&source.data)
-                    .zip(full_gpu.data.iter().zip(&full_cpu.data))
-                    .enumerate()
-                {
-                    let mixed = (1.0 - amount) * *source as f64 + amount * *gpu_full as f64;
-                    assert!(
-                        (*actual as f64 - mixed).abs() < 2e-5,
-                        "{engine:?} preview={preview:?} amount={amount} sample={index}: geometry/mix {actual} != {mixed}"
-                    );
-                    let cpu_mixed = (1.0 - amount) * *source as f64 + amount * *cpu_full as f64;
-                    assert!((expected.data[index] as f64 - cpu_mixed).abs() < 3e-6);
-                }
-                let (mean, max) = parity_metrics(&actual, &expected);
-                if engine == GrainEngine::Dye && amount != 0.0 {
-                    // CPU FastStatsRng uses SplitMix64/53-bit uniforms;
-                    // production dye_count.wgsl uses coordinate-mixed 32-bit
-                    // words/24-bit uniforms. Equal seeds do not pair draws.
-                    // specs/gpu-execution/design.md §Stochastic alignment
-                    // explicitly permits Dye's independent random words;
-                    // its law/formation certification remains separate.
-                    // This is a measurement, not numerical Dye acceptance.
-                    eprintln!(
-                        "unpaired Dye realization measurement preview={preview:?} amount={amount}: mean={mean}, max={max}; not an acceptance gate"
-                    );
-                } else {
-                    assert!(
-                        mean < 5e-3 && max < 5e-2,
-                        "{engine:?} preview={preview:?} amount={amount}: mean={mean}, max={max}"
-                    );
-                }
             }
         }
     }

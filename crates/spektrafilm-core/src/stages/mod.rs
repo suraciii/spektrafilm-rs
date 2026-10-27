@@ -272,6 +272,9 @@ mod integration_tests {
         let print = film.clone();
 
         let mut params = RuntimeParams::default();
+        // A slide is scanned from the film, and the film-scan route is the one that
+        // declares it; the print route is not part of this readout.
+        params.workflow.route = "input > film > scan".into();
         params.io.scan_film = true;
         params.camera.auto_exposure = false;
         let params = crate::params_builder::digest_params(params, &film, &print, None, true);

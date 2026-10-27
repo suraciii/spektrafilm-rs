@@ -77,12 +77,7 @@ impl Pipeline {
             );
         }
         if crate::stages::grain_v3::active(&self.params) {
-            let cell_spectral = crate::stages::grain_v3::validate_cell_spectral(&self.params)?;
-            crate::stages::grain_v3::validate_aperture(&self.params)?;
-            if cell_spectral {
-                crate::stages::grain_v3::validate_supported(&self.film, &self.params)?;
-            }
-            Self::validate_grain_v3_taps(cell_spectral, inject, collect, self.params.io.scan_film)?;
+            crate::stages::grain_v3::validate_supported(&self.film, &self.params)?;
         }
         if backend.is_gpu() {
             // Diagnostic endpoints are not permission to enter the CPU

@@ -254,29 +254,6 @@ impl ComputeBackend for WgpuBackend {
         // bounded field footprint and coefficient limits can reject work.
         Some(WgpuBackend::dye_field(self, img, params))
     }
-    fn dye_field_with_response(
-        &self,
-        image: &ImageBuf,
-        params: &spektrafilm_backend::dye_params::DyeGpuParams,
-        response: &spektrafilm_backend::DyeResponseGpuParams<'_>,
-    ) -> Option<Result<ImageBuf, String>> {
-        Some(WgpuBackend::dye_field_with_response(
-            self, image, params, response,
-        ))
-    }
-    fn dye_aperture_collapse(
-        &self,
-        image: &ImageBuf,
-        factor: u32,
-    ) -> Option<Result<ImageBuf, String>> {
-        Some(WgpuBackend::dye_aperture_collapse(self, image, factor))
-    }
-    fn dye_log10(&self, image: &ImageBuf) -> Option<Result<ImageBuf, String>> {
-        Some(WgpuBackend::dye_log10(self, image))
-    }
-    fn dye_crop(&self, image: &ImageBuf, rect: [u32; 4]) -> Option<Result<ImageBuf, String>> {
-        Some(WgpuBackend::dye_crop(self, image, rect))
-    }
     fn gaussian_blur(&self, img: &ImageBuf, sigma: f32) -> Result<ImageBuf, String> {
         self.gaussian_blur_gpu(img, sigma)
     }

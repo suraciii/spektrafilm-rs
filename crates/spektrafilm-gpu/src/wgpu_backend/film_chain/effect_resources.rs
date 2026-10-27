@@ -112,7 +112,6 @@ impl WgpuBackend {
                 // bounded independently of hardware binding size by its owner.
                 mul(super::super::resources::WORKSPACE_BINDING_BYTES / 8, 21)?
             }
-            "dye_print_response_log" | "dye_aperture_collapse" => image,
             "grain_spektra_v1" => {
                 let gp = p
                     .grain_v1

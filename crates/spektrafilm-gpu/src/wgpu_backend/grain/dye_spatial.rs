@@ -565,6 +565,7 @@ fn spatial_uniform(
                 tables.tables[2].min,
                 0.0,
             ],
+            DyeFieldLaw::Continuous => [0.0; 4],
             DyeFieldLaw::ScalarRecord { .. } => [0.0; 4],
         },
     }

@@ -1098,10 +1098,10 @@ pub struct FilmChainParams<'a> {
     /// is published. A Dye request the device cannot realize keeps the host
     /// fence in `density_cpu_stage` instead.
     pub grain_dye: Option<DyeGpuParams>,
-    pub grain_fotufilm: Option<FotufilmGpuParams>,
-    pub grain_dye_cell_spectral: bool,
-    pub grain_dye_aperture: Option<u32>,
+    /// Publish only this rectangle of the field, when the readout was planned
+    /// around an enclosing extent.
     pub grain_dye_crop: Option<[u32; 4]>,
+    pub grain_fotufilm: Option<FotufilmGpuParams>,
     /// Optional CPU stage on the film density buffer after the film density
     /// curve and DIR, before printing — the assembled fence for the host
     /// grain engines (Spektra, and Dye whenever the field has no device

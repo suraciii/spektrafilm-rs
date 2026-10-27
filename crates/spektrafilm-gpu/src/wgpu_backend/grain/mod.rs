@@ -1,9 +1,8 @@
 use super::*;
 
 pub mod dye;
-pub mod dye_decisions;
-pub mod dye_layers;
-mod dye_spatial;
+mod dye_law;
+mod dye_law_paged;
 pub(in crate::wgpu_backend) mod fotufilm;
 pub(in crate::wgpu_backend) mod mt19937;
 pub(in crate::wgpu_backend) mod raster;
