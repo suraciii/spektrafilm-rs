@@ -124,7 +124,18 @@ impl WgpuBackend {
         height: u32,
         params: &DyeGpuParams,
     ) -> Result<(), String> {
-        self.dye_plan(width, height, params).map(|_| ())
+        match &params.law {
+            DyeFieldLaw::Continuous => {
+                crate::wgpu_backend::grain::dye_law_paged::law_workspace_bytes(
+                    self,
+                    width,
+                    height,
+                    params.source_pitch_um,
+                )
+                .map(|_| ())
+            }
+            _ => self.dye_plan(width, height, params).map(|_| ()),
+        }
     }
 
     /// Additional resident field output, shared band scratch, and retained
@@ -136,6 +147,14 @@ impl WgpuBackend {
         params: &DyeGpuParams,
         response_wavelengths: Option<usize>,
     ) -> Result<u64, String> {
+        if matches!(params.law, DyeFieldLaw::Continuous) {
+            return crate::wgpu_backend::grain::dye_law_paged::law_workspace_bytes(
+                self,
+                width,
+                height,
+                params.source_pitch_um,
+            );
+        }
         let plan = self.dye_plan(width, height, params)?;
         let (law_bytes, source_bytes, per_band) = match &params.law {
             // Continuous is dispatched to its own pass before reaching the paged path.

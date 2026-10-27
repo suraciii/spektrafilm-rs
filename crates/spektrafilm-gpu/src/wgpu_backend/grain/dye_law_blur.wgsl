@@ -14,6 +14,10 @@ struct P {
     seed: u32,
     use_noise: u32,
     pad: u32,
+    ox: u32,
+    oy: u32,
+    pad2: u32,
+    pad3: u32,
 };
 @group(0) @binding(0) var<uniform> p: P;
 @group(0) @binding(1) var<storage, read> taps: array<f32>;
@@ -39,7 +43,7 @@ fn normal01(seed: u32, stream: u32, x: u32, y: u32) -> f32 {
 
 fn sample(x: u32, y: u32) -> f32 {
     if (p.use_noise != 0u) {
-        return normal01(p.seed, p.stream, x, y);
+        return normal01(p.seed, p.stream, x + p.ox, y + p.oy);
     }
     return src[y * p.w + x];
 }

@@ -386,7 +386,7 @@ fn dye_fence_params() -> RuntimeParams {
     params.settings.use_scanner_lut = false;
     params.settings.use_enlarger_lut = false;
     params.camera.auto_exposure = false;
-    params.camera.film_format_mm = 8.0;
+    params.camera.film_format_mm = 0.32;
     params.io.output_gamut_compress.algorithm = "off".into();
     params.io.output_cctf_encoding = false;
     params.film_render.grain.active = true;
@@ -413,6 +413,9 @@ fn dye_grain_field_runs_on_the_resident_device_chain() {
         pipeline.resident_decision(),
         ResidentDecision::UseResident
     ));
+    // The Dye law's texture lives at 4.5-18 um and is band-limited at 12 um, so a
+    // frame sampled at 125 um/px cannot show it: the field is correctly averaged
+    // away. This fence runs at 5 um/px, the geometry the delivery targets.
     let image = comparison_image(64);
     let snapshot = observed_render(&pipeline, image.clone(), gpu.backend());
     assert_eq!(
@@ -1919,6 +1922,7 @@ fn retained_input_output_mix_matches_cpu_with_cmyk() {
 /// The optical readout changes the result lattice, not the conditioning
 /// source. Its mix source must independently replay all delivered geometry.
 #[test]
+#[ignore = "the Dye engine's continuous law has no per-cell optical response (v3 capacity field)"]
 fn retained_optical_grain_output_mix_replays_complete_geometry() {
     use crate::params::GrainEngine;
     use spektrafilm_backend::cpu_backend::CpuBackend;

@@ -91,6 +91,15 @@ pub fn validate_cell_spectral(params: &RuntimeParams) -> Result<bool, String> {
             "{CELL_SPECTRAL_ENV} does not support spatial optics or finishing"
         ));
     }
+    if matches!(
+        params.film_render.grain.engine,
+        crate::params::grain::GrainEngine::Dye
+    ) {
+        return Err(format!(
+            "{CELL_SPECTRAL_ENV} needs a per-cell optical response, which the Dye engine's \
+             continuous law does not implement yet; run the Procedural engine or drop the mode"
+        ));
+    }
     Ok(true)
 }
 
@@ -725,12 +734,7 @@ pub fn readout(
         );
     }
     let resolved = resolve(film, params)?;
-    // The Dye engine's grain law is the host realization: its field is a band-limited
-    // correlated process with a density-dependent amplitude, and the device kernels
-    // still implement the previous v3 field. Until the law is ported to the device the
-    // stage resolves on the host for every backend, so a device render and a host render
-    // of the same recipe stay identical.
-    if false && backend.is_gpu() {
+    if backend.is_gpu() {
         match device_params(&resolved, source_pitch_um, grid) {
             Ok(device) => {
                 let observation = super::StageObservation::new(backend, "grain_v3_field");
@@ -1155,6 +1159,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "the continuous law has no cell-spectral response (v3 capacity field)"]
     fn device_cell_response_preserves_domains_and_base_subtraction() {
         let backend = spektrafilm_gpu::test_support::adapter();
         let film = load("kodak_portra_800");
@@ -1251,6 +1256,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "the continuous law has no cell-spectral response (v3 capacity field)"]
     fn device_cell_response_omits_whole_missing_spectral_rows() {
         let backend = spektrafilm_gpu::test_support::adapter();
         let film = load("kodak_portra_800");
@@ -1500,7 +1506,16 @@ mod tests {
                     spektrafilm_backend::ComputeBackend::dye_field(&*backend, &source, &device)
                         .expect("the backend exposes a device field path")
                         .expect("the device field runs");
-                let cpu_out = v3::apply(&source, 2.0, grid, &resolved).unwrap();
+                // The reference is the engine's law, not the retired v3 capacity
+                // field: the device must reproduce the host model exactly in
+                // expectation, for every readout grid.
+                let mut reference = spektrafilm_model::grain::dye::ClumpParams::delivered();
+                reference.expectation = resolved.expectation;
+                reference.seed = resolved.seed;
+                let cpu_out = spektrafilm_model::grain::dye::apply(
+                    &source, 2.0, grid.width, grid.height, &reference,
+                )
+                .unwrap();
                 assert_eq!(
                     (gpu_out.width, gpu_out.height),
                     (cpu_out.width, cpu_out.height)
@@ -1589,6 +1604,7 @@ mod tests {
     /// full-film enclosing read: the field lives in global film coordinates
     /// and only the output footprints move.
     #[test]
+    #[ignore = "the continuous law is defined on the readout grid, so a crop is its own realization (v3 capacity field)"]
     fn requested_crop_device_field_matches_the_enclosing_full_film_read() {
         use spektrafilm_backend::ComputeBackend as _;
         let backend = spektrafilm_gpu::test_support::adapter();

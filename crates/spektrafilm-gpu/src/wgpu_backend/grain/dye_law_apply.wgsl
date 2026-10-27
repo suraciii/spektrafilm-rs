@@ -25,14 +25,14 @@ struct P {
     q: f32,
     area: f32,
     fog: f32,
-    pad0: f32,
-    pad1: f32,
+    ox: u32,
+    oy: u32,
     pad2: f32,
     strength: vec4<f32>,
 };
 @group(0) @binding(0) var<uniform> p: P;
 @group(0) @binding(1) var<storage, read> density: array<f32>;
-@group(0) @binding(2) var<storage, read> shared: array<f32>;
+@group(0) @binding(2) var<storage, read> shared_field: array<f32>;
 @group(0) @binding(3) var<storage, read> f_r: array<f32>;
 @group(0) @binding(4) var<storage, read> f_g: array<f32>;
 @group(0) @binding(5) var<storage, read> f_b: array<f32>;
@@ -71,7 +71,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     let a = sqrt(p.rho);
     let b = sqrt(1.0 - p.rho);
     let own = array<f32, 3>(f_r[i], f_g[i], f_b[i]);
-    let s = shared[i];
+    let s = shared_field[i];
     for (var c = 0u; c < 3u; c++) {
         let t = density[i * 3u + c];
         let wi = a * s + b * own[c];
@@ -82,7 +82,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
             continue;
         }
         let lambda = max((t + p.fog) * e * p.area / p.q, 0.0);
-        let z = normal01(100u + c, x, y);
+        let z = normal01(100u + c, x + p.ox, y + p.oy);
         let count = lambda + sqrt(lambda) * z;
         out[i * 3u + c] = p.q * count / p.area - p.fog;
     }

@@ -956,16 +956,36 @@ impl WgpuBackend {
                             } else {
                                 None
                             };
-                            let state = self.prepare_dye_paged(
-                                width,
-                                height,
-                                &source,
-                                p.grain_dye.as_ref().ok_or("Dye missing")?,
-                                response.as_ref(),
-                            )?;
-                            state.submit(self)?;
-                            self.check_dye_status(&state.status_buffer())?;
-                            rasters.field = state.output_pages();
+                            let dye_params = p.grain_dye.as_ref().ok_or("Dye missing")?;
+                            if p.grain_dye_cell_spectral
+                                && matches!(
+                                    dye_params.law,
+                                    spektrafilm_backend::dye_params::DyeFieldLaw::Continuous
+                                )
+                            {
+                                return Err("Dye grain law: the spectral cell response is not implemented for the continuous law".into());
+                            }
+                            let field_pages = if matches!(
+                                dye_params.law,
+                                spektrafilm_backend::dye_params::DyeFieldLaw::Continuous
+                            ) {
+                                let law = self.prepare_dye_law(width, height, &source, dye_params)?;
+                                law.submit(self)?;
+                                self.check_dye_status(&law.status_buffer())?;
+                                law.output_pages()
+                            } else {
+                                let state = self.prepare_dye_paged(
+                                    width,
+                                    height,
+                                    &source,
+                                    dye_params,
+                                    response.as_ref(),
+                                )?;
+                                state.submit(self)?;
+                                self.check_dye_status(&state.status_buffer())?;
+                                state.output_pages()
+                            };
+                            rasters.field = field_pages;
                             if p.grain_dye_cell_spectral && p.scan_film {
                                 // The response output is already scanner RGB. Keep a
                                 // distinct terminal carrier, even when extents alias.
