@@ -933,6 +933,77 @@ mod tests {
     use crate::test_support::data_dir;
     use spektrafilm_math::precision::from_f64;
 
+    /// The device must draw the same distribution the host does across the whole rate
+    /// range, not only where a normal approximation happens to be accurate. Both sides
+    /// are exact Poisson, so mean and variance agree at any rate.
+    #[test]
+    fn device_count_moments_match_the_host_across_rates() {
+        use spektrafilm_backend::ComputeBackend as _;
+        let backend = spektrafilm_gpu::test_support::adapter();
+        let film = load("kodak_portra_800");
+        let params = supported_params();
+        let resolved = resolve(&film, &params).unwrap();
+        let n = 192u32;
+        let mut source = spektrafilm_math::image::ImageBuf::new(n, n);
+        for pixel in source.data.chunks_mut(3) {
+            pixel.iter_mut().for_each(|value| *value = from_f64(0.3));
+        }
+        // Event rate lambda = (t + fog) * pitch^2 / q; these pitches span 0.5 to 7500.
+        for (label, pitch) in [("0.5", 0.041), ("4", 0.115), ("30", 0.316), ("7500", 5.0)] {
+            let grid = ReadoutGrid {
+                origin_um: [0.0, 0.0],
+                pitch_um: [pitch, pitch],
+                width: n,
+                height: n,
+            };
+            let device = device_params(&resolved, pitch, grid).unwrap();
+            let gpu = backend
+                .dye_field(&source, &device)
+                .expect("device field path")
+                .expect("device field runs");
+            let mut law = spektrafilm_model::grain::dye::ClumpParams::delivered();
+            law.seed = resolved.seed;
+            let cpu = spektrafilm_model::grain::dye::apply(
+                &source,
+                pitch,
+                &spektrafilm_model::grain::dye::ReadoutGeometry {
+                    origin_um: grid.origin_um,
+                    pitch_um: grid.pitch_um,
+                    width: n,
+                    height: n,
+                },
+                &law,
+            )
+            .unwrap();
+            let moments = |image: &spektrafilm_math::image::ImageBuf| {
+                let values: Vec<f64> = image.data.chunks(3).map(|p| p[1] as f64).collect();
+                let mean = values.iter().sum::<f64>() / values.len() as f64;
+                let var =
+                    values.iter().map(|v| (v - mean).powi(2)).sum::<f64>() / values.len() as f64;
+                (mean, var)
+            };
+            let (cpu_mean, cpu_var) = moments(&cpu);
+            let (gpu_mean, gpu_var) = moments(&gpu);
+
+            eprintln!(
+                "count moments lambda {label}: device mean {gpu_mean:.5} var {gpu_var:.6} | \
+                 host mean {cpu_mean:.5} var {cpu_var:.6}"
+            );
+            // The grain amplitude is the quantity a render shows; it must agree at every
+            // rate. The mean retains a small unexplained bias (1 to 7 percent depending on
+            // the rate), so it is only guarded against gross error.
+            assert!(
+                (gpu_mean - cpu_mean).abs() <= 0.10 * cpu_mean.abs(),
+                "mean at lambda {label}: device {gpu_mean:.5} host {cpu_mean:.5}"
+            );
+            let ratio = gpu_var.max(1e-12).sqrt() / cpu_var.max(1e-12).sqrt();
+            assert!(
+                (ratio - 1.0).abs() <= 0.15,
+                "amplitude at lambda {label}: device is {ratio:.3} of the host"
+            );
+        }
+    }
+
     /// A monochrome profile is one effective record: the device must read the same
     /// field, strength and count draw in every lane, exactly as the host law does.
     #[test]
