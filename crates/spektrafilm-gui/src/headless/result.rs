@@ -236,6 +236,9 @@ fn quiet_secondary_actions_keep_visible_keyboard_focus() {
     assert_painted_focus(h, "reset Crop and upscale");
     reveal_control(h, "extras.simulation.film_stock");
     assert_painted_focus(h, "reset Film material");
+    for label in ["Input and capture", "Film", "Print", "Scan", "Output"] {
+        assert_painted_focus(h, label);
+    }
     reveal_control(h, "action.save_state");
     for label in [
         "Save current to file",

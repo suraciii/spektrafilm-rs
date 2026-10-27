@@ -91,6 +91,33 @@ fn save_import_and_export_buttons_use_scripted_chooser_and_remember_directories(
     }
 }
 
+#[test]
+fn startup_save_status_does_not_replace_header_material_context() {
+    let mut s = session();
+    let h = &mut s.harness;
+    state_controls(h);
+    click(h, "Save current as default");
+    h.run_steps(3);
+    let context = format!(
+        "{} · {} · {}",
+        crate::profiles::selected_display(&h.state().films, &h.state().film_name),
+        crate::profiles::selected_display(&h.state().papers, &h.state().print_name),
+        crate::controls::localized(
+            &h.ctx,
+            crate::routes::vocabulary::route_description(&h.state().params.workflow.route)
+        )
+    );
+    assert!(
+        h.query_by_label(&context).is_some(),
+        "header must retain material and workflow context, not only {context}"
+    );
+    let status = h.state().status.to_string();
+    assert!(
+        h.query_by_label(&status).is_some(),
+        "header must retain the operation status separately"
+    );
+}
+
 // gui_acceptance.py:1825–1895, 2075–2085: startup persistence and factory restoration.
 #[test]
 fn startup_default_and_factory_restore_stay_in_session_directory() {

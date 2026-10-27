@@ -4,11 +4,19 @@ use std::borrow::Cow;
 
 fn key(label: &str) -> Option<&'static str> {
     match label {
+        "hoya_x0" => Some("controls.scanner.filter_x0"),
+        "hoya_x1" => Some("controls.scanner.filter_x1"),
+        "hoya_y2" => Some("controls.scanner.filter_y2"),
+        "hoya_ya3" => Some("controls.scanner.filter_ya3"),
+        "hoya_r1" => Some("controls.scanner.filter_r1"),
         "Dye Advanced" => Some("controls.grain.dye_advanced"),
         "Spektra Advanced" => Some("controls.grain.spektra_advanced"),
         "Procedural Advanced" => Some("controls.grain.procedural_advanced"),
         "Spektra and Dye use record 0 for black-and-white material; G/B values remain stored and inactive" => {
             Some("controls.grain.inactive_bw_records")
+        }
+        "selected film has color records; channel_correlation is retained but inactive for single-record black-and-white material" => {
+            Some("controls.grain.inactive_bw_correlation")
         }
         "effective Procedural mode = analogue; Noise does not use Film Resolution or its method" => {
             Some("controls.grain.inactive_noise_resolution")
@@ -1859,5 +1867,60 @@ pub(crate) fn localized_for<'a>(locale: crate::i18n::Locale, label: &'a str) -> 
         ),
         // Names supplied by profiles, standards and users retain their identity.
         _ => Cow::Borrowed(label),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::i18n::Locale;
+
+    #[test]
+    fn exposure_and_metering_labels_use_product_language_without_changing_values() {
+        for (locale, exposure, center, multizone, highlight) in [
+            (
+                Locale::English,
+                "Exposure compensation",
+                "Center-weighted",
+                "Multi-zone",
+                "Highlight-weighted",
+            ),
+            (
+                Locale::SimplifiedChinese,
+                "曝光补偿",
+                "中央重点",
+                "多区",
+                "亮部重点",
+            ),
+        ] {
+            assert_eq!(localized_for(locale, "exposure compensation ev"), exposure);
+            for (stored, display) in [
+                ("center_weighted", center),
+                ("multi_zone", multizone),
+                ("highlight_weighted", highlight),
+            ] {
+                assert_eq!(localized_for(locale, stored), display);
+            }
+        }
+    }
+
+    #[test]
+    fn inactive_conditions_localize_predicates_instead_of_exposing_paths() {
+        for locale in [Locale::English, Locale::SimplifiedChinese] {
+            for predicate in [
+                "film_render.grain.active = true; stochastic effects enabled",
+                "film_render.grain.engine = procedural",
+                "film_render.grain.v2_profile = custom; select custom to use this control",
+                "camera.diffusion_filter.active = true; strength and spatial_scale positive",
+                "film_render.chemistry.active = true; supported fitted density_curves_model required",
+                "print_render.density_curves_morph.active = true; supported fitted density_curves_model required",
+                "selected film has color records; channel_correlation is retained but inactive for single-record black-and-white material",
+            ] {
+                let display = localized_for(locale, predicate);
+                assert_ne!(display, predicate);
+                assert!(!display.contains('_'), "{display}");
+                assert!(!display.contains('='), "{display}");
+            }
+        }
     }
 }

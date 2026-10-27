@@ -3,7 +3,7 @@ use super::*;
 
 fn camera_edit(h: &mut Harness<'_, App>, text: &str) {
     reveal_control(h, "camera.exposure_compensation_ev");
-    edit(h, "exposure compensation ev", text);
+    edit(h, "Exposure compensation", text);
 }
 
 fn release_text_focus(h: &mut Harness<'_, App>) {
@@ -160,7 +160,7 @@ fn escape_cancels_a_drag_and_invalid_text_adds_no_adjustment() {
     pointer_frame(h, moved, Some(false));
     h.run_steps(3);
     assert_eq!(h.state().params.camera.exposure_compensation_ev, initial);
-    edit(h, "exposure compensation ev", "not-a-number");
+    edit(h, "Exposure compensation", "not-a-number");
     release_text_focus(h);
     assert_eq!(h.state().params.camera.exposure_compensation_ev, initial);
     click(h, "Undo");

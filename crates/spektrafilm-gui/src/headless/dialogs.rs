@@ -154,18 +154,31 @@ fn assert_codec_inactive(h: &Harness<'_, App>) {
         h.query_by_role_and_label(egui::accesskit::Role::ComboBox, "JPEG subsampling")
             .is_none()
     );
-    for expected in [
-        format!(
-            "JPEG quality: {} · not applicable",
-            h.state().export_options.jpeg_quality
+    let inactive = crate::i18n::text(&h.ctx, "surfaces.export.jpeg_inactive");
+    // The draft explicitly selected 4:2:0 while JPEG was active; changing the
+    // container must retain that uncommitted preference, not the committed 4:4:4.
+    let subsampling = "4:2:0";
+    for (label, value) in [
+        (
+            "JPEG quality",
+            h.state().export_options.jpeg_quality.to_string(),
         ),
-        "JPEG subsampling: 4:2:0 · not applicable".to_owned(),
+        ("JPEG subsampling", subsampling.to_owned()),
     ] {
         assert!(
-            h.query_by_label(&expected).is_some(),
-            "stored codec preference must remain readable: {expected}"
+            h.query_by_label(label).is_some(),
+            "{label} must remain an ordinary named row"
+        );
+        assert!(
+            h.query_by_label(value.as_str()).is_some(),
+            "{label} must keep its stored value visible: {value}"
         );
     }
+    assert_eq!(
+        h.query_all_by_label(inactive.as_ref()).count(),
+        2,
+        "each inapplicable row must present the reason as visible text"
+    );
 }
 fn assert_quality_controls(h: &Harness<'_, App>) {
     assert!(
@@ -874,7 +887,7 @@ fn diagnostics_gui_logs_previews_automatically_under_the_program_chosen_session_
     // The next accepted edit saves its report to the same folder automatically.
     close_settings(h);
     reveal_control(h, "camera.exposure_compensation_ev");
-    edit(h, "exposure compensation ev", "0.25");
+    edit(h, "Exposure compensation", "0.25");
     preview(h);
     let reports = wait_for_report_paths(h, &directory, 2);
     let second = reports
@@ -1012,7 +1025,7 @@ fn diagnostics_gui_modes_capture_reports_select_saved_reports_and_cancel_save() 
     choose_diagnostics_mode(h, "Summary");
     close_settings(h);
     reveal_control(h, "camera.exposure_compensation_ev");
-    edit(h, "exposure compensation ev", "0.25");
+    edit(h, "Exposure compensation", "0.25");
     preview(h);
     open_settings(h);
     let first_reports = wait_for_report_paths(h, &published, 1);
@@ -1040,7 +1053,7 @@ fn diagnostics_gui_modes_capture_reports_select_saved_reports_and_cancel_save() 
     choose_diagnostics_mode(h, "GPU timing");
     close_settings(h);
     reveal_control(h, "camera.exposure_compensation_ev");
-    edit(h, "exposure compensation ev", "0.5");
+    edit(h, "Exposure compensation", "0.5");
     preview(h);
     open_settings(h);
     let reports = wait_for_report_paths(h, &published, 2);
@@ -1080,7 +1093,7 @@ fn diagnostics_gui_modes_capture_reports_select_saved_reports_and_cancel_save() 
     choose_diagnostics_mode(h, "Off");
     close_settings(h);
     reveal_control(h, "camera.exposure_compensation_ev");
-    edit(h, "exposure compensation ev", "0.75");
+    edit(h, "Exposure compensation", "0.75");
     preview(h);
     open_settings(h);
     assert_eq!(
@@ -1114,7 +1127,7 @@ fn diagnostics_user_selected_report_survives_later_renders() {
     choose_diagnostics_mode(h, "Summary");
     close_settings(h);
     reveal_control(h, "camera.exposure_compensation_ev");
-    edit(h, "exposure compensation ev", "0.25");
+    edit(h, "Exposure compensation", "0.25");
     preview(h);
     open_settings(h);
 
@@ -1139,7 +1152,7 @@ fn diagnostics_user_selected_report_survives_later_renders() {
 
     // Trigger another render; the user's selection must survive.
     close_settings(h);
-    edit(h, "exposure compensation ev", "0.5");
+    edit(h, "Exposure compensation", "0.5");
     preview(h);
     open_settings(h);
     assert_eq!(

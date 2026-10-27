@@ -453,10 +453,10 @@ fn camera_enlarger_crop_upscale_and_cmyk_controls_edit_params_geometry_and_persi
     choose_control(
         h,
         "camera.auto_exposure_method",
-        "auto exposure method",
-        "matrix",
+        "Metering method",
+        "Matrix",
     );
-    choose_control(h, "camera.color_filter", "color filter", "hoya_y2");
+    choose_control(h, "camera.color_filter", "color filter", "Hoya Y2");
     assert_eq!(h.state().params.camera.film_format_mm, 56.0);
     assert_eq!(h.state().params.camera.auto_exposure_method, "matrix");
     assert_eq!(h.state().params.camera.color_filter, "hoya_y2");
@@ -555,7 +555,7 @@ fn film_format_specs_change_only_physical_scale_and_preserve_custom_values() {
     for query in ["Frame Long Edge", "long edge"] {
         search_controls(h, query);
         assert!(
-            h.query_by_label("Locate Input and capture: Camera")
+            h.query_by_label("Film Format · Camera → Input and capture stage")
                 .is_some()
         );
         assert!(h.query_by_label("Frame Long Edge").is_some());
@@ -948,7 +948,8 @@ fn canonical_search_reveals_unselected_grain_engines_without_mutating_values() {
             h.get_by_label(label).node().is_disabled(),
             "unselected engine control {path} must be read-only"
         );
-        click(h, "Locate Film: Grain");
+        let locator = locator_label(h, path);
+        click(h, &locator);
         assert!(h.get_by_label(label).node().is_disabled());
         assert_eq!(h.state().params, params);
         assert_eq!(h.state().gui_state.sections, sections);
@@ -1087,7 +1088,7 @@ fn hidden_grain_modified_locators_and_whole_reset_are_complete_scoped_and_revers
     edit_control(
         h,
         "camera.exposure_compensation_ev",
-        "exposure compensation ev",
+        "Exposure compensation",
         "0.5",
     );
     choose_control(h, "film_render.grain.engine", "Engine", "Fotufilm Film");
@@ -1131,7 +1132,7 @@ fn hidden_grain_modified_locators_and_whole_reset_are_complete_scoped_and_revers
     ] {
         reveal_control(h, path);
         assert!(h.get_by_label(label).node().is_disabled());
-        h.get_by_label("Locate Film: Grain").focus();
+        h.get_by_label(&locator_label(h, path)).focus();
         h.step();
         h.press_key(egui::Key::Enter);
         h.run_steps(3);
@@ -1335,7 +1336,8 @@ fn locating_another_export_control_preserves_the_open_draft() {
     choose(h, "Format", "TIFF");
     choose(h, "Saving color space", "ACES2065-1");
     search_controls(h, "extras.rust.export_saving_color_space");
-    click(h, "Locate Export: Export options");
+    let locator = locator_label(h, "extras.rust.export_saving_color_space");
+    click(h, &locator);
     choose(h, "Bit depth", "32 bit");
     let destination = s.directory.path().join("located-draft.tif");
     script(h, chooser::Chooser::chooser_path(&destination));
@@ -1373,7 +1375,8 @@ fn collapsed_grain_subsections_remain_accessible_and_shared_fields_have_one_acti
     let sections = h.state().gui_state.sections.clone();
     let revision = h.state().parameter_revision;
     reveal_control(h, "film_render.grain.rms_granularity");
-    h.get_by_label("Locate Film: Grain").focus();
+    h.get_by_label(&locator_label(h, "film_render.grain.rms_granularity"))
+        .focus();
     h.step();
     h.press_key(egui::Key::Enter);
     h.run_steps(3);
@@ -1425,21 +1428,30 @@ fn applied_look_materials_follow_factory_filtering_and_undo() {
     assert_eq!(h.state().film_name, "kodak_portra_400");
     search_controls(h, "extras.simulation.film_stock");
     click(h, "Only modified");
-    assert!(h.query_by_label("Locate Film: Film material").is_some());
+    assert!(
+        h.query_by_label("film profile · Film material → Film stage")
+            .is_some()
+    );
     assert!(
         h.query_by_role_and_label(egui::accesskit::Role::ComboBox, "film profile")
             .is_some()
     );
     click(h, "Undo");
     assert_eq!(h.state().film_name, state::GuiState::factory().film());
-    assert!(h.query_by_label("Locate Film: Film material").is_none());
+    assert!(
+        h.query_by_label("film profile · Film material → Film stage")
+            .is_none()
+    );
     assert!(
         h.query_by_role_and_label(egui::accesskit::Role::ComboBox, "film profile")
             .is_none()
     );
     click(h, "Redo");
     assert_eq!(h.state().film_name, "kodak_portra_400");
-    assert!(h.query_by_label("Locate Film: Film material").is_some());
+    assert!(
+        h.query_by_label("film profile · Film material → Film stage")
+            .is_some()
+    );
     assert!(
         h.query_by_role_and_label(egui::accesskit::Role::ComboBox, "film profile")
             .is_some()
@@ -1455,7 +1467,7 @@ fn camera_module_reset_retains_camera_diffusion_and_other_stage_edits() {
     edit_control(
         h,
         "camera.exposure_compensation_ev",
-        "exposure compensation ev",
+        "Exposure compensation",
         "0.75",
     );
     edit_control(h, "camera.diffusion_filter.strength", "strength", "0.5");
@@ -1488,7 +1500,7 @@ fn halation_feature_profile_retains_other_controls_and_rgb_edit_undo_restores_id
     edit_control(
         h,
         "camera.exposure_compensation_ev",
-        "exposure compensation ev",
+        "Exposure compensation",
         "0.75",
     );
     edit_control(

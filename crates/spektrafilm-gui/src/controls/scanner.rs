@@ -227,11 +227,15 @@ pub(crate) fn sections(
             if filter_matches(filter, "capture illuminant") {
                 ui.add_enabled_ui(capture_active, |ui| {
                     let help = crate::tr!(ui.ctx(), "controls.scanner.capture_illuminant_help", reference = capture_reference_illuminant);
+                    let inherited = params.camera.capture_illuminant.is_none().then(|| {
+                        crate::tr!(ui.ctx(), "controls.scanner.capture_inherit_effective", reference = capture_reference_illuminant)
+                    });
                     flags.runtime_changed |= optional_choice_tip(
                         ui,
                         "capture illuminant",
                         &mut params.camera.capture_illuminant,
                         "inherit (film profile)",
+                        inherited.as_deref(),
                         CAPTURE_ILLUMINANTS,
                         &help,
                     );

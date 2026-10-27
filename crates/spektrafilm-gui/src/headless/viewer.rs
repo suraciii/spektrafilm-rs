@@ -666,9 +666,21 @@ fn white_padding_modified_locator_and_display_reset_follow_live_and_persisted_vi
 
     close_settings(h);
     click(h, "Only modified");
-    let locator = "Locate Settings: Display";
+    let locator = "white padding · Display → Settings dialog";
     assert!(h.query_by_label(locator).is_some());
     click(h, locator);
+    let reset_bounds = h
+        .get_by_role_and_label(egui::accesskit::Role::Button, "reset Display")
+        .raw_bounds()
+        .expect("Display reset bounds");
+    assert!(
+        h.query_all_by_role_and_label(egui::accesskit::Role::Button, "Display")
+            .filter_map(|node| node.raw_bounds())
+            .any(|title| {
+                (title.y0 - reset_bounds.y0).abs() < 2.0 && reset_bounds.x0 >= title.x1
+            }),
+        "Settings reset must sit on the module header, not lead the body"
+    );
     click(h, "reset Display");
     assert!((h.state().viewer.settings.white_padding as f64 - factory).abs() < 1e-6);
     assert!(
@@ -769,7 +781,7 @@ fn first_output_and_scan_animate_but_automatic_parameter_update_does_not() {
     let time = finish_animation(h, 0.0);
     reveal_control(h, "camera.exposure_compensation_ev");
     let before = h.state().output_image.clone().unwrap();
-    edit(h, "exposure compensation ev", "0.75");
+    edit(h, "Exposure compensation", "0.75");
     develop(h, time);
     assert!(!Arc::ptr_eq(
         h.state().output_image.as_ref().unwrap(),
@@ -794,7 +806,7 @@ fn first_output_and_scan_animate_but_automatic_parameter_update_does_not() {
     let time = finish_animation(h, time + 1.0);
     reveal_control(h, "camera.exposure_compensation_ev");
     let before = h.state().output_image.clone().unwrap();
-    edit(h, "exposure compensation ev", "0.5");
+    edit(h, "Exposure compensation", "0.5");
     develop(h, time + 1.0);
     assert!(!Arc::ptr_eq(
         h.state().output_image.as_ref().unwrap(),
@@ -863,7 +875,7 @@ fn rendering_overlay_is_bilingual_and_settles_after_import_adjustment_and_failur
     h.step();
     reveal_control(&mut h, "camera.exposure_compensation_ev");
     let worker_guard = active.lock();
-    edit(&mut h, "exposure compensation ev", "0.5");
+    edit(&mut h, "Exposure compensation", "0.5");
     wait_until(&mut h, |app| app.render_job.is_some());
     assert!(h.state().viewer_render_pending());
     assert_rendering_indicator(&h);
