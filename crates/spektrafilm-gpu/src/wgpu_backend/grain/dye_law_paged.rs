@@ -1,38 +1,45 @@
 //! Bands of the Dye grain law transported through pages.
 //!
-//! The law needs a filter halo, so a page cannot be processed on its own: each
-//! band copies a window that includes the halo, runs the law, and writes back only
-//! the inner rows. The noise is keyed on global coordinates, so the halo overlap
-//! reproduces the same field and the bands join without a seam.
+//! The law lives on the film lattice, so a band is a window of the *source* raster
+//! with the halo its filter needs; the readout grid is applied afterwards, when the
+//! developed density is written out. That ordering is what makes a crop, a preview
+//! scale, or a render split into stages agree with a single full-frame pass.
+//!
+//! The noise is keyed on global source coordinates, so overlapping halos reproduce
+//! the same field and the bands join without a seam.
 
+use super::dye_law::{
+    LawBand, LawGeom, LawPipelines, LawTaps, READOUT_WGSL, band_bytes, halo_um, law_taps,
+};
 use super::*;
 use crate::wgpu_backend::film_chain::device_image::{BufferPayload, ImagePage};
-use super::dye_law::{
-    LawBand, LawGeom, LawPipelines, LawTaps, RESAMPLE_WGSL, band_bytes, halo_um, law_taps,
-};
 
 /// Band working set the plan is allowed to hold at once.
 const BAND_BUDGET_BYTES: u64 = 256 << 20;
 
 struct LawPiece {
+    /// Source window, in film-lattice pixels.
+    window: [u32; 4],
+    /// Grid rows this piece publishes.
+    grid_x: u32,
+    grid_y: u32,
+    grid_cols: u32,
+    grid_rows: u32,
     band: LawBand,
     geometry: LawGeom,
-    out_y: u32,
-    out_rows: u32,
+    readout: wgpu::Buffer,
 }
 
 pub(in crate::wgpu_backend) struct DyeLawState {
-    /// Flat copy of the full-source raster: the grid may crop or scale, and a
-    /// resampling pass needs random access that pages cannot give.
-    flat: wgpu::Buffer,
-    flat_source: bool,
-    resample: CachedPipelineRef,
-    grid: [u32; 4],
-    source_dims: [u32; 2],
-    border: Option<std::sync::Arc<BufferPayload>>,
+    source: std::sync::Arc<BufferPayload>,
     pieces: Vec<LawPiece>,
     pipes: LawPipelines,
     taps: LawTaps,
+    readout_pipe: CachedPipelineRef,
+    grid: [u32; 4],
+    grid_origin: [f64; 2],
+    grid_pitch: [f64; 2],
+    source_pitch: f64,
     width: u32,
     pub(in crate::wgpu_backend) output_pages: Vec<ImagePage>,
     status: wgpu::Buffer,
@@ -51,29 +58,15 @@ impl DyeLawState {
         for piece in &self.pieces {
             backend.check_cancelled()?;
             let mut encoder = backend.device.create_command_encoder(&Default::default());
-            if self.flat_source {
-                backend.encode_law_resample(
-                    &mut encoder,
-                    &self.resample,
-                    &self.flat,
-                    piece.band.buffer(),
-                    piece.band_cols(),
-                    piece.band_rows(),
-                    [0, piece.geometry.origin_y],
-                    self.source_dims,
-                    [self.grid[2], self.grid[3]],
-                );
-            } else {
-                backend.copy_window_to(
-                    &mut encoder,
-                    self.border.as_ref().expect("1:1 keeps its pages"),
-                    0,
-                    piece.geometry.origin_y,
-                    piece.band_cols(),
-                    piece.band_rows(),
-                    piece.band.buffer(),
-                )?;
-            }
+            backend.copy_window_to(
+                &mut encoder,
+                &self.source,
+                piece.window[0],
+                piece.window[1],
+                piece.window[2],
+                piece.window[3],
+                piece.band.buffer(),
+            )?;
             backend.encode_law_band(
                 &mut encoder,
                 &piece.band,
@@ -81,33 +74,34 @@ impl DyeLawState {
                 &self.pipes,
                 &self.taps,
             );
-            // Write back the inner rows only; the rest of the window is halo.
-            let inner = u64::from(piece.band_cols()) * 3;
-            let source_sample = u64::from(piece.out_y - piece.geometry.origin_y)
-                * u64::from(piece.band_cols())
-                * 3;
-            let destination_sample = u64::from(piece.out_y) * u64::from(self.width) * 3;
+            backend.encode_law_readout(
+                &mut encoder,
+                &self.readout_pipe,
+                piece.band.out_buffer(),
+                &piece.readout,
+                piece.window,
+                [piece.grid_cols, piece.grid_rows],
+                [piece.grid_x, piece.grid_y],
+                [self.grid[2], self.grid[3]],
+                self.source_pitch,
+                self.grid_pitch,
+                self.grid_origin,
+            );
+            let inner = u64::from(piece.grid_cols) * 3;
+            let destination_sample =
+                (u64::from(piece.grid_y) * u64::from(self.grid[2]) + u64::from(piece.grid_x)) * 3;
             backend.copy_samples_from(
                 &mut encoder,
-                piece.band.out_buffer(),
-                source_sample,
+                &piece.readout,
+                0,
                 &self.output_pages,
                 destination_sample,
-                inner * u64::from(piece.out_rows),
+                inner * u64::from(piece.grid_rows),
             )?;
             backend.submit_commands(Some(encoder.finish()))?;
         }
         backend.check_cancelled()?;
         Ok(())
-    }
-}
-
-impl LawPiece {
-    fn band_cols(&self) -> u32 {
-        self.band.cols()
-    }
-    fn band_rows(&self) -> u32 {
-        self.band.rows()
     }
 }
 
@@ -147,7 +141,8 @@ pub(in crate::wgpu_backend) fn law_workspace_bytes(
         .and_then(|v| v.checked_mul(12))
         .ok_or("Dye grain law: output pages overflow")?;
     band_bytes(window)
-        .checked_add(pages)
+        .checked_add(window * 12)
+        .and_then(|v| v.checked_add(pages))
         .ok_or_else(|| "Dye grain law: workspace overflow".to_owned())
 }
 
@@ -164,41 +159,67 @@ impl WgpuBackend {
                 "Dye grain law: the source raster does not match the declared geometry".into(),
             );
         }
-        let pitch_um = params.source_pitch_um;
-        if !(pitch_um.is_finite() && pitch_um > 0.0) {
+        let source_pitch = params.source_pitch_um;
+        if !(source_pitch.is_finite() && source_pitch > 0.0) {
             return Err("Dye grain law: the source pitch must be positive".into());
         }
         let grid = &params.grid;
-        let one_to_one = grid.width == width
-            && grid.height == height
-            && grid.origin_um == [0.0, 0.0]
-            && grid.pitch_um == [pitch_um, pitch_um];
-        let (rows_per_band, halo) = law_band_shape(self, grid.width, pitch_um)?;
+        let (rows_per_band, halo) = law_band_shape(self, width, source_pitch)?;
         let output_pages = self.allocate_image_pages(grid.width, grid.height, "dye_law_output")?;
         let pipes = self.dye_law_pipelines();
-        let taps = law_taps(pitch_um);
+        let taps = law_taps(source_pitch);
+        let readout_pipe = self.cached_pipeline_at(
+            READOUT_WGSL,
+            &[
+                wgpu::BufferBindingType::Uniform,
+                wgpu::BufferBindingType::Storage { read_only: true },
+                wgpu::BufferBindingType::Storage { read_only: false },
+            ],
+            "main",
+        );
         let mut pieces = Vec::new();
         let mut y = 0u32;
         while y < grid.height {
             self.check_cancelled()?;
-            let inner_rows = rows_per_band.min(grid.height - y);
-            let top = y.saturating_sub(halo);
-            let bottom = (y + inner_rows + halo).min(grid.height);
-            let window_rows = bottom - top;
-            let band = LawBand::new(self, grid.width, window_rows, "dye_law_band", None);
+            let grid_rows = rows_per_band.min(grid.height - y);
+            // Source rows this grid band needs, plus the filter halo.
+            let top_film = grid.origin_um[1] + y as f64 * grid.pitch_um[1];
+            let bottom_film = grid.origin_um[1] + (y + grid_rows) as f64 * grid.pitch_um[1];
+            let left_film = grid.origin_um[0];
+            let right_film = grid.origin_um[0] + grid.width as f64 * grid.pitch_um[0];
+            let to_px = |um: f64| um / source_pitch;
+            let window_y = (to_px(top_film).floor().max(0.0) as u32).saturating_sub(halo);
+            let window_bottom = ((to_px(bottom_film).ceil() as u32) + halo).min(height);
+            let window_x = (to_px(left_film).floor().max(0.0) as u32).saturating_sub(halo);
+            let window_right = ((to_px(right_film).ceil() as u32) + halo).min(width);
+            let window_w = window_right.saturating_sub(window_x).max(1);
+            let window_h = window_bottom.saturating_sub(window_y).max(1);
+            let band = LawBand::new(self, window_w, window_h, "dye_law_band", None);
+            let readout = self.device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("dye_law_readout_band"),
+                size: u64::from(grid.width) * u64::from(grid_rows) * 12,
+                usage: wgpu::BufferUsages::STORAGE
+                    | wgpu::BufferUsages::COPY_SRC
+                    | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
             pieces.push(LawPiece {
+                window: [window_x, window_y, window_w, window_h],
+                grid_x: 0,
+                grid_y: y,
+                grid_cols: grid.width,
+                grid_rows,
                 band,
                 geometry: LawGeom {
-                    origin_x: 0,
-                    origin_y: top,
-                    pitch_um,
+                    origin_x: window_x,
+                    origin_y: window_y,
+                    pitch_um: source_pitch,
                     seed: params.seed,
                     expectation: params.expectation,
                 },
-                out_y: y,
-                out_rows: inner_rows,
+                readout,
             });
-            y += inner_rows;
+            y += grid_rows;
         }
         let status = self.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("dye_law_status"),
@@ -209,61 +230,21 @@ impl WgpuBackend {
             mapped_at_creation: true,
         });
         status.unmap();
-        let flat_source = !one_to_one;
-        let (flat, border) = if flat_source {
-            let flat = self.device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("dye_law_source_flat"),
-                size: u64::from(width) * u64::from(height) * 12,
-                usage: wgpu::BufferUsages::STORAGE
-                    | wgpu::BufferUsages::COPY_SRC
-                    | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            });
-            let mut encoder = self.device.create_command_encoder(&Default::default());
-            self.copy_window_to(&mut encoder, input, 0, 0, width, height, &flat)?;
-            self.queue.submit(Some(encoder.finish()));
-            (flat, None)
-        } else {
-            let flat = self.device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("dye_law_source_flat_unused"),
-                size: 12,
-                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            });
-            (
-                flat,
-                Some(std::sync::Arc::new(BufferPayload::from_pages(
-                    self.backend_id(),
-                    input.pages.clone(),
-                    width,
-                    height,
-                ))),
-            )
-        };
-        let resample = self.cached_pipeline_at(
-            RESAMPLE_WGSL,
-            &[
-                wgpu::BufferBindingType::Uniform,
-                wgpu::BufferBindingType::Storage { read_only: true },
-                wgpu::BufferBindingType::Storage { read_only: false },
-            ],
-            "main",
-        );
         Ok(DyeLawState {
-            flat,
-            flat_source,
-            resample,
-            grid: [
-                grid.origin_um[0] as u32,
-                grid.origin_um[1] as u32,
-                grid.width,
-                grid.height,
-            ],
-            source_dims: [width, height],
-            border,
+            source: std::sync::Arc::new(BufferPayload::from_pages(
+                self.backend_id(),
+                input.pages.clone(),
+                width,
+                height,
+            )),
             pieces,
             pipes,
             taps,
+            readout_pipe,
+            grid: [grid.width, grid.height, grid.width, grid.height],
+            grid_origin: grid.origin_um,
+            grid_pitch: grid.pitch_um,
+            source_pitch,
             width,
             output_pages,
             status,

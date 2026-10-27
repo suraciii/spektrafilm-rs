@@ -23,7 +23,7 @@ const BLUR_WGSL: &str = include_str!("dye_law_blur.wgsl");
 const COMBINE_WGSL: &str = include_str!("dye_law_combine.wgsl");
 const SUBTRACT_WGSL: &str = include_str!("dye_law_subtract.wgsl");
 const APPLY_WGSL: &str = include_str!("dye_law_apply.wgsl");
-pub(super) const RESAMPLE_WGSL: &str = include_str!("dye_law_resample.wgsl");
+pub(super) const READOUT_WGSL: &str = include_str!("dye_law_readout.wgsl");
 
 /// Octave diameters in micrometres and their relative weights.
 const OCTAVES: [(f64, f64); 3] = [(4.5, 1.0), (9.0, 1.0), (18.0, 0.5)];
@@ -169,50 +169,188 @@ fn dot(a: &[f32], b: &[f32]) -> f64 {
         .sum()
 }
 
-/// Reciprocal L2 norm of the effective separable kernel of the whole field.
-fn field_scale(taps: [&[f32]; 3], hp: &[f32]) -> f64 {
-    let norm = OCTAVES.iter().map(|(_, w)| w * w).sum::<f64>().sqrt();
-    let mut var = 0.0;
-    for (i, (_, weight)) in OCTAVES.iter().enumerate() {
-        let k = taps[i];
-        let kh = convolve(k, hp);
-        let a = l2(k); // <K*K, K*K>
-        let b = dot(k, &kh); // <K*K, (K*K)*(H*H)>
-        let c = l2(&kh); // <(K*K)*(H*H), (K*K)*(H*H)>
-        let v = a * a - 2.0 * b * b + c * c;
-        let w = weight / norm;
-        var += w * w * v;
-    }
-    if var <= 0.0 { 1.0 } else { 1.0 / var.sqrt() }
+/// Per-octave gains and the band-limited scale.
+///
+/// The host law standardises every octave and then the band-limited field, so the
+/// device must land on the same amplitude mix. A Gaussian discretised below one pixel
+/// passes only a fraction of the variance, and that fraction differs per octave, so a
+/// single scale cannot reproduce the host spectrum. Filtering a white-noise patch here
+/// with the very taps the shader uses — same clamping, same discretisation — measures
+/// each fraction and the final scale without any device-side reduction.
+pub(super) struct LawNorm {
+    pub(super) gains: [f64; 3],
+    pub(super) scale: f64,
 }
 
-/// Bilinear readout of the developed density at the grid's cell centres.
-fn resample_density(src: &[f32], sw: usize, sh: usize, dw: usize, dh: usize) -> Vec<f32> {
+fn law_norm(taps: [&[f32]; 3], hp: &[f32]) -> LawNorm {
+    const N: usize = 128;
+    let norm = OCTAVES.iter().map(|(_, w)| w * w).sum::<f64>().sqrt();
+    let mut state = 0x5eed_1234_9abc_def0u64;
+    // One independent draw per octave, because that is what the shader has: reusing one
+    // draw would leave the octaves correlated and misprice the combined amplitude.
+    let mut noise: Vec<Vec<f32>> = Vec::with_capacity(OCTAVES.len());
+    for _ in 0..OCTAVES.len() {
+        let mut v: Vec<f32> = Vec::with_capacity(N * N);
+        for _ in 0..(N * N) {
+            state = state
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            let u1 = ((state >> 11) as f64 + 0.5) / 9007199254740992.0;
+            state = state
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            let u2 = ((state >> 11) as f64) / 9007199254740992.0;
+            v.push(((-2.0 * u1.ln()).sqrt() * (std::f64::consts::TAU * u2).cos()) as f32);
+        }
+        noise.push(v);
+    }
+    // Periodic filtering: the quantity being measured is the interior amplitude of a
+    // stationary field, and a clamped border would let the border dominate exactly when
+    // the filter is narrow enough that the interior answer is a small residual.
+    let blur = |field: &[f32], taps: &[f32]| -> Vec<f32> {
+        let radius = (taps.len() / 2) as i64;
+        let wrap = |i: i64| i.rem_euclid(N as i64) as usize;
+        let mut tmp = vec![0.0f32; N * N];
+        for y in 0..N {
+            for x in 0..N {
+                let mut acc = 0.0f32;
+                for (t, &k) in taps.iter().enumerate() {
+                    let sx = wrap(x as i64 + t as i64 - radius);
+                    acc += k * field[y * N + sx];
+                }
+                tmp[y * N + x] = acc;
+            }
+        }
+        let mut out = vec![0.0f32; N * N];
+        for y in 0..N {
+            for x in 0..N {
+                let mut acc = 0.0f32;
+                for (t, &k) in taps.iter().enumerate() {
+                    let sy = wrap(y as i64 + t as i64 - radius);
+                    acc += k * tmp[sy * N + x];
+                }
+                out[y * N + x] = acc;
+            }
+        }
+        out
+    };
+    // Interior only: the clamp at the patch border leaves the field weaker there, so
+    // averaging the border in would understate the amplitude a large render actually
+    // gets and would make the scale depend on the patch size.
+    let margin = 8usize;
+    let sd = |v: &[f32]| {
+        let mut sum = 0.0f64;
+        let mut count = 0.0f64;
+        for y in margin..(N - margin) {
+            for x in margin..(N - margin) {
+                sum += v[y * N + x] as f64;
+                count += 1.0;
+            }
+        }
+        let mean = sum / count;
+        let mut var = 0.0f64;
+        for y in margin..(N - margin) {
+            for x in margin..(N - margin) {
+                var += (v[y * N + x] as f64 - mean).powi(2);
+            }
+        }
+        (var / count).sqrt().max(1e-9)
+    };
+    // The shader blurs raw noise and never standardises an octave on the way, so the
+    // gain each octave needs is measured here rather than assumed.
+    let mut gains = [1.0f64; 3];
+    let mut field = vec![0.0f32; N * N];
+    for (i, (_, weight)) in OCTAVES.iter().enumerate() {
+        let v = blur(&noise[i], taps[i]);
+        gains[i] = 1.0 / sd(&v);
+        let k = ((weight / norm) * gains[i]) as f32;
+        for (a, b) in field.iter_mut().zip(v.iter()) {
+            *a += k * b;
+        }
+    }
+    let big = blur(&field, hp);
+    for (a, b) in field.iter_mut().zip(big.iter()) {
+        *a -= *b;
+    }
+    LawNorm {
+        gains,
+        scale: 1.0 / sd(&field),
+    }
+}
+
+/// Readout of the developed density at the grid's film-coordinate windows.
+///
+/// This is the same readout the host model uses: a cell finer than the lattice
+/// interpolates its centre, a coarser one integrates the lattice cells it covers, so
+/// a window and a full-frame read agree where they overlap.
+fn resample_readout(
+    film: &ImageBuf,
+    source_pitch_um: f64,
+    grid: &spektrafilm_backend::dye_params::DyeReadoutGrid,
+) -> ImageBuf {
+    let sw = film.width as usize;
+    let sh = film.height as usize;
+    let dw = grid.width as usize;
+    let dh = grid.height as usize;
     let mut out = vec![0.0f32; dw * dh * 3];
-    let fx = sw as f64 / dw as f64;
-    let fy = sh as f64 / dh as f64;
     for y in 0..dh {
-        let sy = ((y as f64 + 0.5) * fy - 0.5).clamp(0.0, (sh - 1) as f64);
-        let y0 = sy.floor() as usize;
-        let y1 = (y0 + 1).min(sh - 1);
-        let wy = (sy - y0 as f64) as f32;
+        let fy0 = (grid.origin_um[1] + y as f64 * grid.pitch_um[1]) / source_pitch_um;
+        let fy1 = fy0 + grid.pitch_um[1] / source_pitch_um;
         for x in 0..dw {
-            let sx = ((x as f64 + 0.5) * fx - 0.5).clamp(0.0, (sw - 1) as f64);
-            let x0 = sx.floor() as usize;
-            let x1 = (x0 + 1).min(sw - 1);
-            let wx = (sx - x0 as f64) as f32;
-            for c in 0..3 {
-                let p00 = src[(y0 * sw + x0) * 3 + c];
-                let p10 = src[(y0 * sw + x1) * 3 + c];
-                let p01 = src[(y1 * sw + x0) * 3 + c];
-                let p11 = src[(y1 * sw + x1) * 3 + c];
-                let top = p00 + (p10 - p00) * wx;
-                let bottom = p01 + (p11 - p01) * wx;
-                out[(y * dw + x) * 3 + c] = top + (bottom - top) * wy;
+            let fx0 = (grid.origin_um[0] + x as f64 * grid.pitch_um[0]) / source_pitch_um;
+            let fx1 = fx0 + grid.pitch_um[0] / source_pitch_um;
+            if fx1 - fx0 >= 1.0 || fy1 - fy0 >= 1.0 {
+                let mut acc = [0.0f64; 3];
+                let mut weight = 0.0f64;
+                let mut sy = fy0.floor() as i64;
+                while (sy as f64) < fy1 {
+                    let wy = (fy1.min(sy as f64 + 1.0) - fy0.max(sy as f64)).max(0.0);
+                    let mut sx = fx0.floor() as i64;
+                    while (sx as f64) < fx1 {
+                        let wx = (fx1.min(sx as f64 + 1.0) - fx0.max(sx as f64)).max(0.0);
+                        let w = wx * wy;
+                        if w > 0.0 {
+                            let syc = sy.clamp(0, sh as i64 - 1) as usize;
+                            let sxc = sx.clamp(0, sw as i64 - 1) as usize;
+                            for c in 0..3 {
+                                acc[c] += w * film.data[(syc * sw + sxc) * 3 + c] as f64;
+                            }
+                            weight += w;
+                        }
+                        sx += 1;
+                    }
+                    sy += 1;
+                }
+                let norm = if weight > 0.0 { weight } else { 1.0 };
+                for c in 0..3 {
+                    out[(y * dw + x) * 3 + c] = (acc[c] / norm) as f32;
+                }
+            } else {
+                let sx = ((fx0 + fx1) * 0.5 - 0.5).clamp(0.0, (sw - 1) as f64);
+                let sy = ((fy0 + fy1) * 0.5 - 0.5).clamp(0.0, (sh - 1) as f64);
+                let x0 = sx.floor() as usize;
+                let y0 = sy.floor() as usize;
+                let x1 = (x0 + 1).min(sw - 1);
+                let y1 = (y0 + 1).min(sh - 1);
+                let wx = (sx - x0 as f64) as f32;
+                let wy = (sy - y0 as f64) as f32;
+                for c in 0..3 {
+                    let p00 = film.data[(y0 * sw + x0) * 3 + c];
+                    let p10 = film.data[(y0 * sw + x1) * 3 + c];
+                    let p01 = film.data[(y1 * sw + x0) * 3 + c];
+                    let p11 = film.data[(y1 * sw + x1) * 3 + c];
+                    let top = p00 + (p10 - p00) * wx;
+                    let bottom = p01 + (p11 - p01) * wx;
+                    out[(y * dw + x) * 3 + c] = top + (bottom - top) * wy;
+                }
             }
         }
     }
-    out
+    ImageBuf {
+        data: out,
+        width: grid.width,
+        height: grid.height,
+    }
 }
 
 /// Taper peak of the derived granularity shape, as the host model normalises by.
@@ -380,7 +518,7 @@ pub(super) struct LawGeom {
 pub(super) struct LawTaps {
     pub(super) octaves: [(Vec<f32>, u32); 3],
     pub(super) highpass: (Vec<f32>, u32),
-    pub(super) scale: f64,
+    pub(super) norm: LawNorm,
 }
 
 pub(super) fn law_taps(pitch_um: f64) -> LawTaps {
@@ -389,14 +527,14 @@ pub(super) fn law_taps(pitch_um: f64) -> LawTaps {
         taps_for(sigma_px)
     });
     let highpass = taps_for(HIGHPASS_UM / pitch_um);
-    let scale = field_scale(
+    let norm = law_norm(
         [&octaves[0].0, &octaves[1].0, &octaves[2].0],
         &highpass.0,
     );
     LawTaps {
         octaves,
         highpass,
-        scale,
+        norm,
     }
 }
 
@@ -419,53 +557,64 @@ impl WgpuBackend {
             })
     }
 
-    /// Fill a band's density window from the flat source at the grid's mapping.
+    /// Read a band's developed density out to the readout grid.
     #[allow(clippy::too_many_arguments)]
-    pub(super) fn encode_law_resample(
+    pub(super) fn encode_law_readout(
         &self,
         encoder: &mut ObservedEncoder,
         pipe: &CachedPipelineRef,
         source: &wgpu::Buffer,
         destination: &wgpu::Buffer,
-        cols: u32,
-        rows: u32,
-        origin: [u32; 2],
-        source_dims: [u32; 2],
+        window: [u32; 4],
+        band: [u32; 2],
+        grid_origin: [u32; 2],
         grid_dims: [u32; 2],
+        source_pitch: f64,
+        grid_pitch: [f64; 2],
+        film_origin: [f64; 2],
     ) {
         #[repr(C)]
         #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
         struct P {
             cols: u32,
             rows: u32,
-            origin_x: u32,
-            origin_y: u32,
-            source_w: u32,
-            source_h: u32,
-            grid_w: u32,
-            grid_h: u32,
-            fx: f32,
-            fy: f32,
+            window_x: u32,
+            window_y: u32,
+            window_w: u32,
+            window_h: u32,
+            grid_x: u32,
+            grid_y: u32,
+            source_pitch: f32,
+            pitch_x: f32,
+            pitch_y: f32,
+            origin_x: f32,
+            origin_y: f32,
             pad0: f32,
             pad1: f32,
+            pad2: f32,
         }
         let params = P {
-            cols,
-            rows,
-            origin_x: origin[0],
-            origin_y: origin[1],
-            source_w: source_dims[0],
-            source_h: source_dims[1],
-            grid_w: grid_dims[0],
-            grid_h: grid_dims[1],
-            fx: source_dims[0] as f32 / grid_dims[0] as f32,
-            fy: source_dims[1] as f32 / grid_dims[1] as f32,
+            cols: band[0],
+            rows: band[1],
+            window_x: window[0],
+            window_y: window[1],
+            window_w: window[2],
+            window_h: window[3],
+            grid_x: grid_origin[0],
+            grid_y: grid_origin[1],
+            source_pitch: source_pitch as f32,
+            pitch_x: grid_pitch[0] as f32,
+            pitch_y: grid_pitch[1] as f32,
+            origin_x: film_origin[0] as f32,
+            origin_y: film_origin[1] as f32,
             pad0: 0.0,
             pad1: 0.0,
+            pad2: 0.0,
         };
-        let u = self.uniform("dye_law_resample", bytemuck::bytes_of(&params));
+        let _ = grid_dims;
+        let u = self.uniform("dye_law_readout", bytemuck::bytes_of(&params));
         let bind = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("dye_law_resample"),
+            label: Some("dye_law_readout"),
             layout: &pipe.layout,
             entries: &[
                 wgpu::BindGroupEntry {
@@ -483,12 +632,12 @@ impl WgpuBackend {
             ],
         });
         let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-            label: Some("dye_law_resample"),
+            label: Some("dye_law_readout"),
             timestamp_writes: None,
         });
         pass.set_pipeline(&pipe.pipeline);
         pass.set_bind_group(0, &bind, &[]);
-        pass.dispatch_workgroups(cols.div_ceil(64), rows, 1);
+        pass.dispatch_workgroups(band[0].div_ceil(64), band[1], 1);
     }
 
     /// Encode the whole law for one band.
@@ -564,9 +713,9 @@ impl WgpuBackend {
                 h,
                 pad0: 0,
                 pad1: 0,
-                w0: (OCTAVES[0].1 / norm) as f32,
-                w1: (OCTAVES[1].1 / norm) as f32,
-                w2: (OCTAVES[2].1 / norm) as f32,
+                w0: ((OCTAVES[0].1 / norm) * taps.norm.gains[0]) as f32,
+                w1: ((OCTAVES[1].1 / norm) * taps.norm.gains[1]) as f32,
+                w2: ((OCTAVES[2].1 / norm) * taps.norm.gains[2]) as f32,
                 pad2: 0.0,
             };
             let u = self.uniform("dye_law_combine", bytemuck::bytes_of(&params));
@@ -659,7 +808,7 @@ impl WgpuBackend {
                 h,
                 pad0: 0,
                 pad1: 0,
-                scale: taps.scale as f32,
+                scale: taps.norm.scale as f32,
                 pad2: 0.0,
                 pad3: 0.0,
                 pad4: 0.0,
@@ -768,46 +917,27 @@ impl WgpuBackend {
     }
 
     /// The whole law as one band, for the standalone `dye_field` entry point.
+    ///
+    /// The law is evaluated on the film lattice, exactly as the host model does, and
+    /// the readout resamples the developed density afterwards. Realizing the field on
+    /// the readout grid would make the draw depend on the crop or the preview scale.
     pub(in crate::wgpu_backend) fn dye_law_field(
         &self,
         image: &ImageBuf,
         pitch_um: f64,
-        grid_width: u32,
-        grid_height: u32,
+        grid: &spektrafilm_backend::dye_params::DyeReadoutGrid,
         seed: u64,
         expectation: bool,
     ) -> Result<ImageBuf, String> {
-        let pixels = (grid_width as u64) * (grid_height as u64);
+        let (width, height) = (image.width, image.height);
+        let pixels = u64::from(width) * u64::from(height);
         if pixels == 0 {
-            return Err("Dye grain law: the readout grid is empty".into());
-        }
-        if image.width == 0 || image.height == 0 {
             return Err("Dye grain law: the source density is empty".into());
         }
         if !(pitch_um.is_finite() && pitch_um > 0.0) {
             return Err("Dye grain law: the source pitch must be positive".into());
         }
-        // Readout geometry independent of the source grid, exactly as the host law
-        // resamples: bilinear at the cell centre, so a preview scale or a fractional
-        // cell is defined rather than only the 1:1 case.
-        let density = if (grid_width, grid_height) == (image.width, image.height) {
-            image.data.clone()
-        } else {
-            resample_density(
-                &image.data,
-                image.width as usize,
-                image.height as usize,
-                grid_width as usize,
-                grid_height as usize,
-            )
-        };
-        let band = LawBand::new(
-            self,
-            grid_width,
-            grid_height,
-            "dye_law_field",
-            Some(&density),
-        );
+        let band = LawBand::new(self, width, height, "dye_law_field", Some(&image.data));
         let geom = LawGeom {
             origin_x: 0,
             origin_y: 0,
@@ -831,10 +961,17 @@ impl WgpuBackend {
         encoder.copy_buffer_to_buffer(band.out_buffer(), 0, &staging, 0, bytes);
         self.queue.submit(Some(encoder.finish()));
         let data: Vec<f32> = self.pipe.read_mapped(&staging, bytes);
-        Ok(ImageBuf {
+        let film = ImageBuf {
             data,
-            width: grid_width,
-            height: grid_height,
-        })
+            width,
+            height,
+        };
+        let whole = (grid.width, grid.height) == (width, height)
+            && grid.origin_um == [0.0, 0.0]
+            && grid.pitch_um == [pitch_um, pitch_um];
+        if whole {
+            return Ok(film);
+        }
+        Ok(resample_readout(&film, pitch_um, grid))
     }
 }

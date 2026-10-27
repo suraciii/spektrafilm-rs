@@ -804,8 +804,12 @@ fn cpu_field(
     spektrafilm_model::grain::dye::apply(
         source,
         source_pitch_um,
-        grid.width,
-        grid.height,
+        &spektrafilm_model::grain::dye::ReadoutGeometry {
+            origin_um: grid.origin_um,
+            pitch_um: grid.pitch_um,
+            width: grid.width,
+            height: grid.height,
+        },
         &spektrafilm_model::grain::dye::ClumpParams::delivered(),
     )
 }
@@ -1039,6 +1043,7 @@ fn cell_um_override() -> Option<f64> {
 fn expectation_requested() -> bool {
     std::env::var(EXPECTATION_ENV).is_ok_and(|value| value == "1")
 }
+
 
 #[cfg(test)]
 mod tests {
@@ -1513,7 +1518,15 @@ mod tests {
                 reference.expectation = resolved.expectation;
                 reference.seed = resolved.seed;
                 let cpu_out = spektrafilm_model::grain::dye::apply(
-                    &source, 2.0, grid.width, grid.height, &reference,
+                    &source,
+                    2.0,
+                    &spektrafilm_model::grain::dye::ReadoutGeometry {
+                        origin_um: grid.origin_um,
+                        pitch_um: grid.pitch_um,
+                        width: grid.width,
+                        height: grid.height,
+                    },
+                    &reference,
                 )
                 .unwrap();
                 assert_eq!(
@@ -1604,7 +1617,6 @@ mod tests {
     /// full-film enclosing read: the field lives in global film coordinates
     /// and only the output footprints move.
     #[test]
-    #[ignore = "the continuous law is defined on the readout grid, so a crop is its own realization (v3 capacity field)"]
     fn requested_crop_device_field_matches_the_enclosing_full_film_read() {
         use spektrafilm_backend::ComputeBackend as _;
         let backend = spektrafilm_gpu::test_support::adapter();

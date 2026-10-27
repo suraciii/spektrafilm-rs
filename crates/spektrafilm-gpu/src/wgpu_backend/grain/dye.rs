@@ -58,8 +58,7 @@ impl WgpuBackend {
             DyeFieldLaw::Continuous => self.dye_law_field(
                 image,
                 params.source_pitch_um,
-                params.grid.width,
-                params.grid.height,
+                &params.grid,
                 params.seed,
                 params.expectation,
             ),

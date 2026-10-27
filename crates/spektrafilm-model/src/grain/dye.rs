@@ -90,6 +90,30 @@ fn texture_highpass_um() -> f64 {
 
 
 /// Resolved clump parameters.
+/// Where the readout samples the film. A window is a set of film coordinates, so a
+/// crop, a preview scale, or a full-frame read all address the same lattice.
+#[derive(Clone, Copy, Debug)]
+pub struct ReadoutGeometry {
+    /// Film coordinate of the first readout cell's corner, in micrometres.
+    pub origin_um: [f64; 2],
+    /// Readout pitch, in micrometres.
+    pub pitch_um: [f64; 2],
+    pub width: u32,
+    pub height: u32,
+}
+
+impl ReadoutGeometry {
+    /// The readout that covers the whole source raster at its own pitch.
+    pub fn whole(width: u32, height: u32, pitch_um: f64) -> Self {
+        Self {
+            origin_um: [0.0, 0.0],
+            pitch_um: [pitch_um, pitch_um],
+            width,
+            height,
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct ClumpParams {
     /// Relative per-record strength (`[1, 1, 1]` is neutral).
@@ -450,28 +474,71 @@ fn clump_params() -> Option<(f64, f64)> {
 /// Apply the clump law to a 1:1 source target.
 /// Bilinear read of the developed density at each readout cell centre. The law is
 /// defined on the source raster; the readout grid only changes where it is sampled.
-fn resample_density(src: &[f32], sw: usize, sh: usize, dw: usize, dh: usize) -> Vec<f32> {
+fn resample_density(
+    src: &[f32],
+    sw: usize,
+    sh: usize,
+    source_pitch_um: f64,
+    grid: &ReadoutGeometry,
+) -> Vec<f32> {
+    // Each readout cell names a film-coordinate window. Finer than the lattice, it
+    // interpolates that window's centre; coarser, it integrates the lattice cells the
+    // window covers. Integrating rather than point sampling is what makes a cropped
+    // readout and a full-frame readout agree where they overlap, and what keeps a
+    // render split into stages identical to the same render done in one pass.
+    let dw = grid.width as usize;
+    let dh = grid.height as usize;
     let mut out = vec![0.0f32; dw * dh * 3];
-    let fx = sw as f64 / dw as f64;
-    let fy = sh as f64 / dh as f64;
     for y in 0..dh {
-        let sy = ((y as f64 + 0.5) * fy - 0.5).clamp(0.0, (sh - 1) as f64);
-        let y0 = sy.floor() as usize;
-        let y1 = (y0 + 1).min(sh - 1);
-        let wy = (sy - y0 as f64) as f32;
+        let fy0 = (grid.origin_um[1] + y as f64 * grid.pitch_um[1]) / source_pitch_um;
+        let fy1 = fy0 + grid.pitch_um[1] / source_pitch_um;
         for x in 0..dw {
-            let sx = ((x as f64 + 0.5) * fx - 0.5).clamp(0.0, (sw - 1) as f64);
-            let x0 = sx.floor() as usize;
-            let x1 = (x0 + 1).min(sw - 1);
-            let wx = (sx - x0 as f64) as f32;
-            for c in 0..3 {
-                let p00 = src[(y0 * sw + x0) * 3 + c];
-                let p10 = src[(y0 * sw + x1) * 3 + c];
-                let p01 = src[(y1 * sw + x0) * 3 + c];
-                let p11 = src[(y1 * sw + x1) * 3 + c];
-                let top = p00 + (p10 - p00) * wx;
-                let bottom = p01 + (p11 - p01) * wx;
-                out[(y * dw + x) * 3 + c] = top + (bottom - top) * wy;
+            let fx0 = (grid.origin_um[0] + x as f64 * grid.pitch_um[0]) / source_pitch_um;
+            let fx1 = fx0 + grid.pitch_um[0] / source_pitch_um;
+            if fx1 - fx0 >= 1.0 || fy1 - fy0 >= 1.0 {
+                let mut acc = [0.0f64; 3];
+                let mut weight = 0.0f64;
+                let mut sy = fy0.floor() as i64;
+                while (sy as f64) < fy1 {
+                    let wy = (fy1.min(sy as f64 + 1.0) - fy0.max(sy as f64)).max(0.0);
+                    let mut sx = fx0.floor() as i64;
+                    while (sx as f64) < fx1 {
+                        let wx = (fx1.min(sx as f64 + 1.0) - fx0.max(sx as f64)).max(0.0);
+                        let w = wx * wy;
+                        if w > 0.0 {
+                            let syc = sy.clamp(0, sh as i64 - 1) as usize;
+                            let sxc = sx.clamp(0, sw as i64 - 1) as usize;
+                            for c in 0..3 {
+                                acc[c] += w * src[(syc * sw + sxc) * 3 + c] as f64;
+                            }
+                            weight += w;
+                        }
+                        sx += 1;
+                    }
+                    sy += 1;
+                }
+                let norm = if weight > 0.0 { weight } else { 1.0 };
+                for c in 0..3 {
+                    out[(y * dw + x) * 3 + c] = (acc[c] / norm) as f32;
+                }
+            } else {
+                let sx = ((fx0 + fx1) * 0.5 - 0.5).clamp(0.0, (sw - 1) as f64);
+                let sy = ((fy0 + fy1) * 0.5 - 0.5).clamp(0.0, (sh - 1) as f64);
+                let x0 = sx.floor() as usize;
+                let y0 = sy.floor() as usize;
+                let x1 = (x0 + 1).min(sw - 1);
+                let y1 = (y0 + 1).min(sh - 1);
+                let wx = (sx - x0 as f64) as f32;
+                let wy = (sy - y0 as f64) as f32;
+                for c in 0..3 {
+                    let p00 = src[(y0 * sw + x0) * 3 + c];
+                    let p10 = src[(y0 * sw + x1) * 3 + c];
+                    let p01 = src[(y1 * sw + x0) * 3 + c];
+                    let p11 = src[(y1 * sw + x1) * 3 + c];
+                    let top = p00 + (p10 - p00) * wx;
+                    let bottom = p01 + (p11 - p01) * wx;
+                    out[(y * dw + x) * 3 + c] = top + (bottom - top) * wy;
+                }
             }
         }
     }
@@ -481,8 +548,7 @@ fn resample_density(src: &[f32], sw: usize, sh: usize, dw: usize, dh: usize) -> 
 pub fn apply(
     target: &ImageBuf,
     pitch_um: f64,
-    grid_width: u32,
-    grid_height: u32,
+    grid: &ReadoutGeometry,
     params: &ClumpParams,
 ) -> Result<ImageBuf, String> {
     params.validate()?;
@@ -490,16 +556,11 @@ pub fn apply(
     if !pitch_um.is_finite() || pitch_um <= 0.0 {
         return Err("film grain V4: source pitch must be finite and positive".into());
     }
-    // Readout geometry independent of the source grid: a preview scale or a fractional
-    // cell reads the developed density at the cell centre with bilinear weights, so the
-    // law is defined for every grid rather than only for the 1:1 case.
-    let density = if (grid_width as usize, grid_height as usize) == (w, h) {
-        target.data.clone()
-    } else {
-        resample_density(&target.data, w, h, grid_width as usize, grid_height as usize)
-    };
-    let (w, h) = (grid_width as usize, grid_height as usize);
-    let target_data = &density;
+    // The law is evaluated on the film lattice, i.e. on the source raster, and the
+    // readout resamples the developed density afterwards. Realizing the field on the
+    // readout grid instead would make the draw depend on how the render was cropped,
+    // scaled, or split into stages, which no film does.
+    let target_data = &target.data;
     let _m_oct = octaves();
     let octs = octaves();
     let mut shared = Vec::with_capacity(octs.len());
@@ -529,7 +590,15 @@ pub fn apply(
             .zip(plane.par_iter())
             .for_each(|(px, v)| px[c] = *v);
     }
-    Ok(out)
+    let whole = (grid.width as usize, grid.height as usize) == (w, h)
+        && grid.origin_um == [0.0, 0.0]
+        && grid.pitch_um == [pitch_um, pitch_um];
+    if whole {
+        return Ok(out);
+    }
+    let mut readout = ImageBuf::new(grid.width, grid.height);
+    readout.data = resample_density(&out.data, w, h, pitch_um, grid);
+    Ok(readout)
 }
 
 #[cfg(test)]
