@@ -71,6 +71,8 @@ Stream numbering is fixed: the shared field uses streams `0 * 8 + octave`, and r
 
 The device evaluates the same law in passes: one Gaussian per octave axis, a weighted combine, a band-limit subtract, then the density law per record.
 
+The count is drawn by the same method on both executors: inversion below thirty events, PTRS above. A normal approximation would match the mean and the variance but not the distribution, and the difference shows once the rate is small.
+
 The normalize scale is measured on the host by filtering white noise with the very taps the shader uses. It measures each octave's gain and the band-limited scale together, because a Gaussian discretized below one pixel passes only part of the variance.
 
 Bands carry a filter halo and key their noise on global coordinates, so halo overlap reproduces the field and bands join without a seam. The pass MUST NOT require a device-side reduction or a synchronization point.
