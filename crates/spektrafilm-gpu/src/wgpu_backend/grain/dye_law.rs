@@ -772,7 +772,10 @@ impl WgpuBackend {
                     pad3: 0,
                 };
                 let u = self.uniform("dye_law_highpass", bytemuck::bytes_of(&params));
+                // The vertical pass must read the horizontal result, plane 3, or the
+                // band limit would only be one-dimensional.
                 let target = if axis == 0 { band.plane(3) } else { band.plane(10) };
+                let source = if axis == 0 { band.plane(9) } else { band.plane(3) };
                 let bind = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
                     label: Some("dye_law_highpass"),
                     layout: &pipes.blur.layout,
@@ -787,7 +790,7 @@ impl WgpuBackend {
                         },
                         wgpu::BindGroupEntry {
                             binding: 2,
-                            resource: band.plane(9),
+                            resource: source,
                         },
                         wgpu::BindGroupEntry {
                             binding: 3,
