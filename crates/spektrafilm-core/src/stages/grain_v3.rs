@@ -271,10 +271,18 @@ pub fn configuration_report(film: &Profile, params: &RuntimeParams) -> serde_jso
 
 /// Resolve the effective opt-in scalar-record controls for rendering and reports.
 pub fn resolve_record(
-    film: &Profile,
-    params: &RuntimeParams,
+    _film: &Profile,
+    _params: &RuntimeParams,
 ) -> Result<Option<crate::telemetry::RecordConfiguration>, String> {
-    let _ = (film, params);
+    // The scalar fixed-contribution experiment was retired with the cell field. A
+    // request for it must fail loudly instead of rendering the default law silently.
+    if std::env::var_os("SPEKTRAFILM_GRAIN_RECORD_Q").is_some() {
+        return Err(
+            "SPEKTRAFILM_GRAIN_RECORD_Q was retired with the exact-cell Dye field; the \
+             engine's continuous law has no separate record contribution"
+                .into(),
+        );
+    }
     Ok(None)
 }
 
@@ -613,6 +621,7 @@ fn cpu_field(
     let mut params = spektrafilm_model::grain::dye::ClumpParams::delivered();
     params.seed = resolved.seed;
     params.expectation = resolved.expectation;
+    params.monochrome = resolved.monochrome;
     spektrafilm_model::grain::dye::apply(
         source,
         source_pitch_um,

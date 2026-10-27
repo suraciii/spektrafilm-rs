@@ -135,6 +135,8 @@ pub struct ClumpParams {
     pub seed: u64,
     /// Replace every count by its conditional mean (diagnostic only).
     pub expectation: bool,
+    /// One effective record carried in three equal lanes.
+    pub monochrome: bool,
     /// Record density where the granularity taper peaks.
     pub taper_centre: f64,
     /// Record density at which the density scale saturates (profile Dmax).
@@ -185,6 +187,7 @@ impl ClumpParams {
             q: parts[5],
             seed: 7,
             expectation: false,
+            monochrome: false,
             shared_white: std::sync::Arc::new(Vec::new()),
             texture: true,
             dmax: 1.2,
@@ -352,15 +355,22 @@ fn channel(
     // Relative modulation is tapered where the record density is already high: the
     // emulsion cannot keep the same relative fluctuation once the record saturates,
     // and an untapered multiplicative field reads as large light/dark clouds there.
-    let sigma_base = p.base * p.strength[c];
+    let record_strength = if p.monochrome { 1.0 } else { p.strength[c] };
+    let sigma_base = p.base * record_strength;
     // Per-pixel component: unblurred, so the realised texture stays as sharp as the
     // readout grid allows. The octave field above only shapes the envelope.
-    let sigma_white = p.white * p.strength[c];
+    let sigma_white = p.white * record_strength;
     // The per-pixel component must be shared across records like the envelope: one
     // grain event affects the three layers together. Independent per-record white noise
     // would destroy the measured inter-record correlation (~0.9 in real scans).
     let white_independent = if p.texture {
-        correlated_field(w, h, pitch_um, p.seed, c as u32 + 1)
+        correlated_field(
+            w,
+            h,
+            pitch_um,
+            p.seed,
+            if p.monochrome { 1 } else { c as u32 + 1 },
+        )
     } else {
         let mut v = noise_field(w, h, p.seed, (c as u32 + 1) * 8);
         standardize(&mut v);
@@ -404,7 +414,10 @@ fn channel(
         mass.par_iter_mut().enumerate().for_each(|(i, m)| {
             let tv = target[i * 3 + c] as f64;
             let index = (((i / w) as u64) << 32) | (i % w) as u64;
-            let mut rng = FastStatsRng::stream(p.seed, 800 + c as u64, index);
+            // One effective record draws one count: a monochrome realization must be
+            // identical in all three lanes.
+            let stream = if p.monochrome { 800 } else { 800 + c as u64 };
+            let mut rng = FastStatsRng::stream(p.seed, stream, index);
             let lambda = (tv.max(0.0) * area / qc).min(1e12);
             let count = if p.expectation {
                 lambda
@@ -498,7 +511,8 @@ fn channel(
                 lambda
             } else {
                 let index = (((i / w) as u64) << 32) | (i % w) as u64;
-                let mut rng = FastStatsRng::stream(p.seed, 400 + c as u64, index);
+                let stream = if p.monochrome { 400 } else { 400 + c as u64 };
+                let mut rng = FastStatsRng::stream(p.seed, stream, index);
                 poisson_exact(&mut rng, lambda)? as f64
             };
             *o = from_f64(q * count / area - p.fog);

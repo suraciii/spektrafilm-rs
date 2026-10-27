@@ -471,6 +471,9 @@ fn selected_gpu_mix_source_rejects_host_preparation_before_color_resolution() {
 fn selected_automatic_gpu_conversion_decline_never_returns_host_pixels() {
     let mut pipeline = build();
     pipeline.params.workflow.route = "input".into();
+    // The route forms no film record, so Dye has nothing to condition on; this case
+    // exercises the conversion decline, not grain.
+    pipeline.params.film_render.grain.active = false;
     pipeline.params.io.crop = false;
     pipeline.params.io.upscale_factor = 1.0;
     let backend = DecliningSelectedGpu::default();
@@ -1688,7 +1691,9 @@ fn stage_capture_preserves_output_and_publishes_the_executed_boundaries() {
         serde_json::json!([8, 6])
     );
     assert_eq!(stage(&manifest, "rgb_in")["layout"]["width"], 8);
-    assert_ne!(stage(&manifest, "log_e_film")["layout"]["width"], 8);
+    // Dye realizes the field on the film lattice and crops at readout, so the film
+    // density boundary is the full frame rather than the cropped working raster.
+    assert_eq!(stage(&manifest, "log_e_film")["layout"]["width"], 8);
     assert_eq!(
         manifest["print_normalization"]["value"],
         pipeline.print_exposure_factor()
