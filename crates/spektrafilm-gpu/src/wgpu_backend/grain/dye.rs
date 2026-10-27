@@ -19,6 +19,7 @@ impl WgpuBackend {
             &params.grid,
             params.seed,
             params.expectation,
+            params.monochrome,
         )
     }
 

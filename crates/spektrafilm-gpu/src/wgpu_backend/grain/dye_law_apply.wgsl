@@ -4,12 +4,12 @@
 //   rel   = white * strength[c] * taper(t)          (relative density amplitude)
 //   wi    = sqrt(rho) * shared + sqrt(1-rho) * own  (record coupling)
 //   e     = 1 + rel * wi
-//   count = (t + fog) * e * area / q                (expected events)
-//   D     = q * (count + sqrt(count) * z) / area - fog
+//   lambda = (t + fog) * e * area / q               (expected events)
+//   count  = Poisson(lambda)                        (exact, as on the host)
+//   D      = q * count / area - fog
 //
-// The Poisson draw is the normal approximation: with q = 1.5e-3 um^2 and a 25 um^2
-// cell the expected count is in the thousands, where the two agree to well under a
-// part in a thousand.
+// The count is drawn exactly: inversion below thirty events, PTRS above, matching
+// the host sampler. A monochrome profile reads the first record in every lane.
 
 struct P {
     w: u32,
@@ -27,7 +27,7 @@ struct P {
     fog: f32,
     ox: u32,
     oy: u32,
-    pad2: f32,
+    monochrome: u32,
     strength: vec4<f32>,
 };
 @group(0) @binding(0) var<uniform> p: P;
@@ -44,15 +44,81 @@ fn hash_u32(x: u32) -> u32 {
     return (v >> 22u) ^ v;
 }
 
-fn uniform01(stream: u32, x: u32, y: u32) -> f32 {
-    let h = hash_u32(x ^ hash_u32(y ^ hash_u32(p.seed ^ hash_u32(stream))));
+
+
+// ln Gamma(z) for z >= 1 by the Lanczos approximation; WGSL has no lgamma.
+fn log_gamma(z: f32) -> f32 {
+    let g = 7.0;
+    let c = array<f32, 9>(
+        0.99999999999980993,
+        676.5203681218851,
+        -1259.1392167224028,
+        771.32342877765313,
+        -176.61502916214059,
+        12.507343278686905,
+        -0.13857109526572012,
+        9.9843695780195716e-6,
+        1.5056327351493116e-7,
+    );
+    var zz = z - 1.0;
+    var x = c[0];
+    for (var i = 1u; i < 9u; i++) {
+        x = x + c[i] / (zz + f32(i));
+    }
+    let tt = zz + g + 0.5;
+    return 0.5 * log(2.0 * 3.141592653589793) + (zz + 0.5) * log(tt) - tt + log(x);
+}
+
+fn poisson_uniform(seed: u32, stream: u32, x: u32, y: u32, n: u32) -> f32 {
+    let h = hash_u32(x ^ hash_u32(y ^ hash_u32(n ^ hash_u32(seed ^ hash_u32(stream)))));
     return f32(h >> 8u) * (1.0 / 16777216.0);
 }
 
-fn normal01(stream: u32, x: u32, y: u32) -> f32 {
-    let u1 = max(uniform01(stream, x, y), 1e-6);
-    let u2 = uniform01(stream ^ 0x9e3779b9u, y, x);
-    return sqrt(-2.0 * log(u1)) * cos(6.283185307 * u2);
+// Exact Poisson sampling, matching the host `poisson_exact`: inversion below 30,
+// PTRS above. A normal approximation keeps the mean and variance at large rates but
+// changes the distribution once the rate is small, which a heavily oversampled
+// geometry reaches.
+fn poisson_exact(lambda: f32, seed: u32, stream: u32, x: u32, y: u32) -> f32 {
+    if (lambda <= 0.0) { return 0.0; }
+    if (lambda < 30.0) {
+        let limit = exp(-lambda);
+        var product = 1.0;
+        var count = 0.0;
+        var n = 0u;
+        loop {
+            n = n + 1u;
+            product = product * poisson_uniform(seed, stream, x, y, n);
+            if (product <= limit) { return count; }
+            count = count + 1.0;
+            if (count > 4096.0) { return count; }
+        }
+        return count;
+    }
+    let slam = sqrt(lambda);
+    let loglam = log(lambda);
+    let b = 0.931 + 2.53 * slam;
+    let a = -0.059 + 0.02483 * b;
+    let inv_alpha = 1.1239 + 1.1328 / (b - 3.4);
+    let vr = 0.9277 - 3.6224 / (b - 2.0);
+    let log_inv_alpha = log(inv_alpha);
+    var n = 0u;
+    loop {
+        n = n + 1u;
+        let u = poisson_uniform(seed, stream, x, y, n) - 0.5;
+        n = n + 1u;
+        let v = poisson_uniform(seed, stream, x, y, n);
+        let us = 0.5 - abs(u);
+        if (us <= 0.0) { continue; }
+        let k = floor((2.0 * a / us + b) * u + lambda + 0.43);
+        if (k < 0.0) { continue; }
+        if (us < 0.013 && v > us) { continue; }
+        if (us >= 0.07 && v <= vr) { return k; }
+        let lhs = log(v) + log_inv_alpha - log(a / (us * us) + b);
+        let rhs = -lambda + k * loglam - log_gamma(k + 1.0);
+        if (lhs <= rhs) { return k; }
+        if (n > 512u) { return max(lambda, 0.0); }
+    }
+    return max(lambda, 0.0);
 }
 
 fn taper(t: f32) -> f32 {
@@ -74,16 +140,21 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     let s = shared_field[i];
     for (var c = 0u; c < 3u; c++) {
         let t = density[i * 3u + c];
-        let wi = a * s + b * own[c];
-        let rel = p.white * p.strength[c] * taper(t);
+        // One effective record: every lane reads the first record's field, strength
+        // and count draw, so a monochrome realization is identical in all three.
+        let mono = p.monochrome != 0u;
+        let own_c = select(own[c], own[0], mono);
+        let strength = select(p.strength[c], 1.0, mono);
+        let wi = a * s + b * own_c;
+        let rel = p.white * strength * taper(t);
         let e = 1.0 + rel * wi;
         if (p.expectation != 0u) {
             out[i * 3u + c] = t;
             continue;
         }
         let lambda = max((t + p.fog) * e * p.area / p.q, 0.0);
-        let z = normal01(100u + c, x + p.ox, y + p.oy);
-        let count = lambda + sqrt(lambda) * z;
+        let stream = select(100u + c, 100u, mono);
+        let count = poisson_exact(lambda, p.seed, stream, x + p.ox, y + p.oy);
         out[i * 3u + c] = p.q * count / p.area - p.fog;
     }
 }

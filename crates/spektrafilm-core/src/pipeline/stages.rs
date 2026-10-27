@@ -277,9 +277,7 @@ impl Pipeline {
                 output_crop = plan.deferred_crop;
                 let geometry = plan.geometry;
                 let grid = plan.grid;
-                let readout_space = if false {
-                    CoordinateSpace::GrainAperture
-                } else if plan.deferred_crop.is_some() {
+                let readout_space = if plan.deferred_crop.is_some() {
                     CoordinateSpace::FilmFrame
                 } else {
                     CoordinateSpace::Output
@@ -362,9 +360,4 @@ impl Pipeline {
             None => Ok(cur),
         }
     }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
 }
