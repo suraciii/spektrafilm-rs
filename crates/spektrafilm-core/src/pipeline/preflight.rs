@@ -145,34 +145,15 @@ impl Pipeline {
         // `expose`), so no host image arithmetic remains on this stage.
         let _ = p.camera.auto_exposure;
 
-        // Grain: Spektra resolves on the device in both sampling regimes
-        // whenever the film profile supplies the sublayer density curves the
-        // pass reads; Fotufilm population formation also runs on the device.
-        // Dye is covered unless its selected experimental mass law has no
-        // device field path; the published host-field reason names that gap.
-        let grain = &p.film_render.grain;
-        // The input route runs no film stage, so it has no grain to distribute.
+        // Spektra supports the profile's sublayers or its single-curve model
+        // on the device. Actual preparation errors are operation failures.
         let grain_reachable = route != crate::WorkflowRoute::Input;
         let dye_gap = crate::stages::grain_v3::active(p)
             && crate::stages::grain_v3::published_host_field_reason(p).is_some();
-        // Both Spektra sampling regimes are device passes; the request keeps
-        // the host fence only when the film profile cannot supply the sublayer
-        // density curves the pass reads (`stages::filming::spektra_device_gap`).
-        let spektra_gap =
-            if grain.active && grain.engine == crate::params::grain::GrainEngine::Spektra {
-                crate::stages::filming::spektra_device_gap(&self.film).map(str::to_owned)
-            } else {
-                None
-            };
-        if grain_reachable && (dye_gap || spektra_gap.is_some()) {
-            let reason = if dye_gap {
-                crate::stages::grain_v3::published_host_field_reason(p).unwrap_or_default()
-            } else {
-                spektra_gap.unwrap_or_default()
-            };
+        if grain_reachable && dye_gap {
             stages.push(UnsupportedStage {
                 name: "film grain distribution",
-                reason,
+                reason: crate::stages::grain_v3::published_host_field_reason(p).unwrap_or_default(),
             });
         }
         // A Fotufilm request is device-covered: the population formation and
@@ -358,6 +339,7 @@ mod tests {
             p.settings.use_fast_stats = use_fast_stats;
             p.film_render.grain.active = true;
             p.film_render.grain.engine = crate::params::grain::GrainEngine::Spektra;
+            p.film_render.grain.rms_granularity = [6.0, 8.0, 10.0];
             let pipeline = Pipeline::new_with_spectral(portra(), endura(), p, &data_dir()).unwrap();
             assert_eq!(
                 pipeline.preflight(&FakeExplicitGpu),

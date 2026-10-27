@@ -80,13 +80,6 @@ v3_dye_support_um = 3.5
 v3_event_area_um2 = 1.28
 mult_usm_sigma = 0.699999988079071
 mult_usm_amount = 1.5
-sublayers_active = true
-particle_area_um2 = 0.2
-particle_scale = [
-    1.6,
-    1.6,
-    3.2,
-]
 rms_granularity = [
     5.0,
     5.0,
@@ -108,7 +101,6 @@ micro_structure = [
     0.20000000298023224,
     30.0,
 ]
-n_sub_layers = 1
 
 [parameters.film_render.grain.fotufilm]
 amount = 1.0

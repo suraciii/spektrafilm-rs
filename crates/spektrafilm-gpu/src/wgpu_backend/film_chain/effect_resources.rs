@@ -119,39 +119,46 @@ impl WgpuBackend {
                     .ok_or("Spektra grain parameters missing")?;
                 let window_limit = super::super::grain::v1::transport_window_limit(limit);
                 let window = image.min(window_limit / 12 * 12);
-                let layers = if gp.sublayers_active {
-                    3
-                } else {
-                    gp.n_sub_layers
-                };
-                if layers == 0 {
-                    return Err("Spektra grain requires a nonzero layer count".into());
+                if !(1..=3).contains(&gp.layer_count) {
+                    return Err("Spektra grain requires 1..=3 active layers".into());
                 }
-                let layers = u64::from(layers);
+                let layers = u64::from(gp.layer_count);
+                // Clumping and its Gaussian intermediates retain binary64 HWC
+                // samples, while density and particle fields remain binary32.
+                let clump_image = mul(pixels, 24)?;
                 let layer_image = mul(image, layers)?;
-                let chunk = (window_limit / mul(12, layers)?).min(pixels);
+                let chunk = (window_limit / mul(12, layers.max(2))?).min(pixels);
                 if chunk == 0 {
                     return Err("Spektra layer window cannot hold one pixel".into());
                 }
-                let mut bytes = add(layer_image, image)?;
-                bytes = add(bytes, mul(mul(chunk, 12)?, add(layers, 2)?)?)?;
-                if gp.sublayers_active && gp.blur_dye_clouds > 0.0 {
-                    bytes = add(bytes, add(layer_image, mul(add(image, gaussian)?, 3)?)?)?;
+                let mut bytes = add(layer_image, clump_image)?;
+                bytes = add(bytes, mul(mul(chunk, 12)?, add(layers, 3)?)?)?;
+                if gp.blur_dye_clouds > 0.0 {
+                    bytes = add(
+                        bytes,
+                        add(layer_image, mul(add(image, gaussian)?, layers)?)?,
+                    )?;
                 }
-                if gp.sublayers_active && gp.micro_sigma > 0.05 && gp.micro_blur_px > 0.4 {
-                    bytes = add(bytes, add(mul(image, 2)?, gaussian)?)?;
+                if gp.micro_sigma > 0.05 && gp.micro_blur_px > 0.4 {
+                    let gaussian_f64 = super::super::grain::v1::blur::bounded::workspace_bytes_f64(
+                        width, height, limit,
+                    )?;
+                    bytes = add(bytes, add(mul(clump_image, 2)?, gaussian_f64)?)?;
                 }
                 // Finishing retains its windows, filtered/sharpened fields,
-                // filter intermediates and full-source mass-reduction pyramid.
+                // filter intermediates and full-source pairwise mass reduction.
                 bytes = add(bytes, mul(window, 4)?)?;
-                let blur = gp.grain_blur > if gp.sublayers_active { 0.0 } else { 0.4 };
-                if blur {
+                if gp.grain_blur > 0.0 {
                     bytes = add(bytes, add(mul(image, 2)?, gaussian)?)?;
                 }
-                if gp.sublayers_active && gp.usm_sigma > 0.0 && gp.usm_amount > 0.0 {
+                if gp.usm_sigma > 0.0 && gp.usm_amount > 0.0 {
                     bytes = add(bytes, add(mul(image, 3)?, gaussian)?)?;
-                    bytes = add(bytes, mul(pixels.div_ceil(8192), 256 * 48 * 2)?)?;
-                    bytes = add(bytes, mul((window / 12 / 32).max(1), 48)?)?;
+                    // One six-f32 mass pair, eight six-f32 accumulators, and
+                    // one retained left-child pair per recursion depth.
+                    bytes = add(
+                        bytes,
+                        add(24 + 192, mul(u64::from(pixels.ilog2() + 1), 24)?)?,
+                    )?;
                 }
                 // Every retained chunk uniform is below 2 KiB; include all
                 // formation/compose/finish/reduction command partitions.
@@ -162,13 +169,20 @@ impl WgpuBackend {
                         16 * 2048,
                     )?,
                 )?;
-                if gp.mt19937_regime {
-                    let planes = mul(layers, 3)?;
-                    bytes = add(bytes, mul(planes, add(mul(pixels, 8)?, 2512 + 1024)?)?)?;
-                    let mt_chunk = (limit / 12)
+                if gp.mt19937_regime || gp.micro_sigma > 0.05 {
+                    if gp.mt19937_regime {
+                        let planes = mul(layers, if gp.monochrome { 1 } else { 3 })?;
+                        bytes = add(bytes, mul(planes, add(mul(pixels, 8)?, 2520 + 1024)?)?)?;
+                    } else {
+                        // Fast particle draws do not advance NumPy's generator;
+                        // clumps still retain a fresh MT state and its uniform.
+                        bytes = add(bytes, 2520 + 1024)?;
+                    }
+                    let mt_chunk = (limit / 24)
                         .min(u64::from(super::super::grain::mt19937::CHUNK_ELEMENTS))
                         .max(1);
-                    bytes = add(bytes, mul(mt_chunk, 32)?)?;
+                    // Density/field/seed windows plus HWC binary64 clumps.
+                    bytes = add(bytes, mul(mt_chunk, 56)?)?;
                 }
                 bytes
             }

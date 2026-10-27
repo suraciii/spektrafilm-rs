@@ -234,7 +234,7 @@ impl ExportOptions {
     /// Export preferences live in the Rust extension; Save uses simulation settings.
     pub(crate) fn write_state(&self, state: &mut Value) {
         if !state["rust"].is_object() {
-            state["rust"] = json!({"version": 1});
+            state["rust"] = json!({"version": crate::state::CURRENT_STATE_VERSION});
         }
         let rust = &mut state["rust"];
         rust["save_bit_depth"] = json!(self.depth.bits());

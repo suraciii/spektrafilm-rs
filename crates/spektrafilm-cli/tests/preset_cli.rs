@@ -165,7 +165,7 @@ fn capture_illuminant_reports_inheritance_overrides_clearing_and_inactive_routes
         "--route",
         "input",
         "--set",
-        "camera.capture_illuminant=BB4000",
+        "camera.capture_illuminant=BB4000,film_render.grain.active=false",
         "--dry-run",
     ]);
     assert_eq!(inactive["capture_illuminant"]["status"], "inactive");
@@ -419,7 +419,7 @@ fn dry_run_legacy_baseline_matches_original_digest() {
         runtime::{self, DigestMode},
     };
     let f = Fixture::new();
-    // A present grain group has serde field defaults distinct from GrainParams::default().
+    // Compare the complete parameter-file consumer with the runtime digest.
     let path = f.root.join("legacy.json");
     let wire = json!({"film_render":{"grain":{"rms_granularity":[9,8,7]}},"settings":{"preview_mode":true}});
     std::fs::write(&path, serde_json::to_vec(&wire).unwrap()).unwrap();
@@ -447,11 +447,12 @@ fn dry_run_legacy_baseline_matches_original_digest() {
 }
 
 #[test]
-fn sparse_edits_preserve_legacy_group_defaults_and_protect_only_supplied_axes() {
+fn sparse_edits_protect_only_supplied_neutral_axes() {
     use spektrafilm_core::{neutral_filters::NeutralFilters, params::RuntimeParams, profile};
     let f = Fixture::new();
-    let path = f.root.join("legacy.json");
-    let wire = json!({"film_render":{"grain":{}},"enlarger":{"y_filter_neutral":9.0,"m_filter_neutral":8.0,"c_filter_neutral":7.0}});
+    let path = f.root.join("neutral.json");
+    let wire =
+        json!({"enlarger":{"y_filter_neutral":9.0,"m_filter_neutral":8.0,"c_filter_neutral":7.0}});
     std::fs::write(&path, serde_json::to_vec(&wire).unwrap()).unwrap();
     let baseline: RuntimeParams = serde_json::from_value(wire).unwrap();
     let report = f.report(&[
@@ -465,10 +466,6 @@ fn sparse_edits_preserve_legacy_group_defaults_and_protect_only_supplied_axes() 
         "enlarger.y_filter_neutral=9,camera.exposure_compensation_ev=0.5",
         "--dry-run",
     ]);
-    assert_eq!(
-        report["parameters"]["film_render"]["grain"]["blur"],
-        baseline.film_render.grain.blur
-    );
     assert_eq!(report["parameters"]["enlarger"]["y_filter_neutral"], 9.0);
     let neutral = NeutralFilters::load(&f.data).unwrap();
     let film = profile::load_profile_by_name(&f.data, "kodak_portra_400").unwrap();
@@ -504,7 +501,11 @@ fn invalid_sources_fail_even_when_later_replaced_and_publish_nothing() {
         "workflow.route=\"input\"",
         "io.scan_film=true",
         "film_render.grain.monochrome=true",
+        "film_render.grain.particle_area_um2=0.2",
+        "film_render.grain.particle_scale=[1.6,1.6,3.2]",
         "film_render.grain.particle_scale_layers=[1,1,1]",
+        "film_render.grain.sublayers_active=true",
+        "film_render.grain.n_sub_layers=1",
         "export.bit_depth=16",
         "camera.auto_exposure=\"true\"",
         "camera={}",
@@ -1055,7 +1056,7 @@ fn finished_input_dry_run_preserves_profiles_with_independent_cmyk() {
         "--route",
         "input",
         "--set",
-        "cmyk.active=true,cmyk.strength=0.75",
+        "cmyk.active=true,cmyk.strength=0.75,film_render.grain.active=false",
         "--dry-run",
     ]);
     assert_eq!(report["film_profile"], "kodak_portra_400");

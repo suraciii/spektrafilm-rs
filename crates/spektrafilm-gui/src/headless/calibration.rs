@@ -120,8 +120,6 @@ const BASE_CYAN: f64 = 1.227_020_666_902_410;
 const BASE_MAGENTA: f64 = 0.600_426_922_252_643;
 const BASE_YELLOW: f64 = 0.500_288_922_285_685;
 const BASE_EXPOSURE_EV: f64 = -0.902_427_051_824_104;
-const FILTER_M_SHIFT: f32 = 0.101_127_781;
-const FILTER_Y_SHIFT: f32 = -0.180_145_949;
 
 /// The applied `detect base` result: fitted base densities with the scan
 /// exposure, the untouched scale/tilt, and the status reporting that EV.
@@ -266,8 +264,38 @@ fn neutralize_print_filters_button_solves_neutral_m_and_y_filter_shifts() {
     wait_calibration(h, "neutralize print filters");
     let m = h.state().params.enlarger.m_filter_shift;
     let y = h.state().params.enlarger.y_filter_shift;
-    assert!((m - FILTER_M_SHIFT).abs() < 1e-5, "m shift {m}");
-    assert!((y - FILTER_Y_SHIFT).abs() < 1e-5, "y shift {y}");
+    // Check the applied controls against the calibration's real pointwise
+    // paper path: a grain realization is not the calibration target.
+    // This performs one render, not a second calibration fit.
+    let data = data_dir();
+    let film =
+        spektrafilm_core::profile::load_profile_by_name(&data, &h.state().film_name).unwrap();
+    let paper =
+        spektrafilm_core::profile::load_profile_by_name(&data, &h.state().print_name).unwrap();
+    let mut params = h.state().current_state().unwrap().runtime_params().unwrap();
+    params.workflow.route = "input > film > print > scan".into();
+    params.io.scan_film = false;
+    params.scanner.scan_output = "direct_scan".into();
+    params.io.output_cctf_encoding = false;
+    params.io.output_gamut_compress.algorithm = "off".into();
+    params.debug.lut_mode = true;
+    let mut params =
+        spektrafilm_core::params_builder::digest_params(params, &film, &paper, None, false);
+    params.enlarger.m_filter_shift = m;
+    params.enlarger.y_filter_shift = y;
+    let pipeline =
+        spektrafilm_core::pipeline::Pipeline::new_with_spectral(film, paper, params, &data)
+            .unwrap();
+    let gray = ImageBuf::from_data(2, 2, vec![spektrafilm_math::precision::from_f64(0.184); 12]);
+    let output = pipeline.process(gray, &CpuBackend).unwrap();
+    // The solver promises channel-neutrality residuals within 1%, not exact
+    // platform-independent filter coefficients. Reject a black trivial result.
+    for pixel in output.data.as_chunks::<3>().0 {
+        let [r, g, b] = pixel.map(spektrafilm_math::precision::to_f64);
+        assert!(g > 1e-6, "calibration gray must not be black: {pixel:?}");
+        assert!(((r - g) / g).abs() <= 0.01, "red neutrality: {pixel:?}");
+        assert!(((b - g) / g).abs() <= 0.01, "blue neutrality: {pixel:?}");
+    }
     let after = calibration_outputs(h.state());
     assert_ne!(
         (after.3, after.4),

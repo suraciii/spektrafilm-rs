@@ -487,7 +487,6 @@ impl RenderConfiguration {
                 },
                 spektra_fast_statistics_sampler: grain_active
                     && grain.engine == crate::params::GrainEngine::Spektra
-                    && grain.sublayers_active
                     && params.settings.use_fast_stats,
                 record: None,
             },

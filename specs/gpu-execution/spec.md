@@ -21,7 +21,7 @@ The scope MUST cover these production operations:
 - All supported base workflows, including the `input` workflow, film scan, film-print-scan, and every supported convert-film route.
 - Both RGB-to-raw methods, selected input and output gamut operations, spectral integration, selected spectral-LUT evaluation, material exposure and development, independently filtered preflash, chemistry, and channel mapping.
 - Camera and enlarger diffusion, highlight boost, per-channel halation, DIR including its exponential tails and non-default coefficients, scanner optics, print viewing glare, and unsharp masking.
-- All four grain engines in their declared domains, including Spektra composite and layered sampling, both Procedural modes and resolution models, Dye field readout, and Fotufilm population formation and readout.
+- All four grain engines in their declared domains, including Spektra's resolved layer model and single-curve case, both Procedural modes and resolution models, Dye field readout, and Fotufilm population formation and readout.
 - Every readout-illuminant category, direct scan, negative conversion, and scanner optics.
 - CMYK ink style, complete-result output mixing, output transfer encoding, and independent saving color and sample conversion.
 - GUI viewer resampling, display color and ICC transforms, and disposable viewer composition. These operations MUST NOT change retained or saved image samples.
@@ -110,7 +110,7 @@ A missing justified budget means that numerical acceptance is incomplete, not pa
 
 1. Exercise real GUI Preview, Scan, Export, Save, and viewer operations, CLI process and render, RAW ingestion, and pointwise LUT evaluation. Use the existing application entry points and readable published artifacts.
 2. Exercise every supported route, conversion style, grain engine and mode, color-space and gamut family, chemistry branch, spectral-LUT setting, and optical-effect family. Cover relevant combinations, not only isolated kernels.
-3. Default Spektra, active diffusion, standard full-frame negative-to-positive setup and operator correction, declared fixed per-channel styles, non-default DIR, scanner lens blur, and unsharp masking MUST complete without CPU image arithmetic.
+3. Spektra, active diffusion, standard full-frame negative-to-positive setup and operator correction, declared fixed per-channel styles, non-default DIR, scanner lens blur, and unsharp masking MUST complete without CPU image arithmetic.
 4. Compare paired CPU native-f32, CPU f64, and hardware-GPU outputs from identical declared inputs. Compare stage-domain samples and complete outputs.
    Include neutral and chromatic wedges, toe and shoulder, extreme headroom, signed inputs where supported, fractional geometry, edges, and photographic scenes.
    CPU native-f32 is a separate comparison, not the authority for reference-sensitive discrete decisions. A precision comparison MUST identify the exact conditioning values supplied to each sampler.

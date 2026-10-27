@@ -4,6 +4,18 @@ use std::borrow::Cow;
 
 fn key(label: &str) -> Option<&'static str> {
     match label {
+        "Dye Advanced" => Some("controls.grain.dye_advanced"),
+        "Spektra Advanced" => Some("controls.grain.spektra_advanced"),
+        "Procedural Advanced" => Some("controls.grain.procedural_advanced"),
+        "Spektra and Dye use record 0 for black-and-white material; G/B values remain stored and inactive" => {
+            Some("controls.grain.inactive_bw_records")
+        }
+        "effective Procedural mode = analogue; Noise does not use Film Resolution or its method" => {
+            Some("controls.grain.inactive_noise_resolution")
+        }
+        "preserved Procedural Film Type metadata; not used by rendering kernels" => {
+            Some("controls.grain.film_type_metadata")
+        }
         "Photograph toolbar" => Some("controls.owner.photograph_toolbar"),
         "Result actions" => Some("controls.owner.result_actions"),
         "Work list" => Some("photo_work.list.title"),
@@ -60,9 +72,6 @@ fn key(label: &str) -> Option<&'static str> {
         }
         "%{kind} in flight · %{mode} (captured)" => Some("surfaces.diagnostics.in_flight"),
         "%{kind} queued · %{mode} (captured)" => Some("surfaces.diagnostics.queued"),
-        "%{label}: %{reason}; stored values retained." => {
-            Some("controls.grain.unavailable_profile")
-        }
         "%{percent}% fit" => Some("surfaces.viewer.zoom_fit"),
         "%{role}: %{name}" => Some("surfaces.presets.role"),
         "%{stage} stage" => Some("surfaces.section.stage"),
@@ -149,9 +158,6 @@ fn key(label: &str) -> Option<&'static str> {
         "Base density: scale, tilt, and per-channel masks" => Some("surfaces.summary.base"),
         "Base statistical event area in square film micrometers; controls grain strength independently of dye support." => {
             Some("controls.grain.event_area_help")
-        }
-        "Base statistical particle area in square film micrometers; smaller values give finer grain. Spektra reads this value; Dye uses its own event area." => {
-            Some("controls.grain.particle_area_help")
         }
         "Bit depth" => Some("controls.label.bit_depth"),
         "Bit depth: 8 bit — required by JPEG and PNG" => Some("surfaces.export.depth_fixed"),
@@ -371,7 +377,7 @@ fn key(label: &str) -> Option<&'static str> {
         "Dye" => Some("controls.grain.dye"),
         "Dye negative" => Some("controls.grain.dye_negative"),
         "Dye reversal" => Some("controls.grain.dye_reversal"),
-        "Dye support (µm)" => Some("controls.grain.dye_support"),
+        "Dye support (spatial formation)" => Some("controls.grain.dye_support"),
         "Dye-cloud blur in micrometers." => Some("controls.grain.dye_cloud_blur_help"),
         "EXR uses linear color and ZIP compression; encoding is fixed off." => {
             Some("surfaces.export.exr_fixed")
@@ -430,7 +436,7 @@ fn key(label: &str) -> Option<&'static str> {
         "Estimated output size: ≈ %{size} before compression" => {
             Some("surfaces.export.size_compressed")
         }
-        "Event area (µm²)" => Some("controls.grain.event_area"),
+        "Event area (strength)" => Some("controls.grain.event_area"),
         "Experimental local source-response compression for halation only. Zero preserves the linear response; higher values make secondary bright sources contribute more nearly like the brightest source without changing the base film raw exposure." => {
             Some("controls.halation.source_compression_help")
         }
@@ -466,7 +472,9 @@ fn key(label: &str) -> Option<&'static str> {
         "Film base" => Some("controls.label.film_base"),
         "Film chemistry" => Some("controls.chemistry.film_section"),
         "Film material" => Some("controls.label.film_material"),
-        "Film polarity for procedural grain." => Some("controls.grain.film_type_help"),
+        "Retained Procedural Film Type metadata; rendering kernels do not consume it." => {
+            Some("controls.grain.film_type_help")
+        }
         "Film profile changed" => Some("surfaces.status.film_changed"),
         "Film stock to simulate" => Some("surfaces.profiles.film_help"),
         "Film: %{name}" => Some("surfaces.header.film"),
@@ -486,7 +494,7 @@ fn key(label: &str) -> Option<&'static str> {
         "Fog density" => Some("controls.grain.fog_density"),
         "Format" => Some("controls.label.format"),
         "Fotufilm Film" => Some("controls.grain.fotufilm"),
-        "Fotufilm advanced" => Some("controls.grain.fotufilm_advanced"),
+        "Fotufilm Advanced" => Some("controls.grain.fotufilm_advanced"),
         "Fraction of coupler diffusion energy assigned to the long tail. 0 = pure Gaussian spread, higher values add a longer-range inhibition shoulder." => {
             Some("controls.couplers.diffusion_tail_weight_help")
         }
@@ -509,7 +517,7 @@ fn key(label: &str) -> Option<&'static str> {
         "Gaussian sigma in pixels on linear transmitted or reflected readout light, before negative conversion, gamut processing, sharpening and encoding. Identity points retain this optical order." => {
             Some("controls.scanner.lens_blur_help")
         }
-        "Gaussian sigma of the dye support in film micrometers; it conditions the field, which is read in film coordinates." => {
+        "Dye support conditions the grain field and image detail in film micrometers; it is not a pure grain diameter control." => {
             Some("controls.grain.dye_support_help")
         }
         "General" => Some("surfaces.settings.general"),
@@ -567,9 +575,6 @@ fn key(label: &str) -> Option<&'static str> {
         "Inactive" => Some("controls.scanner.inactive"),
         "Inactive controls · %{reason} · stored values retained" => {
             Some("surfaces.section.inactive")
-        }
-        "Inactive until this engine is selected; stored values are retained." => {
-            Some("controls.grain.inactive_engine")
         }
         "Inactive: requires a negative film, an eligible negative-to-positive route and standard conversion style. Stored corrections are retained." => {
             Some("controls.scanner.operator_inactive")
@@ -731,9 +736,6 @@ fn key(label: &str) -> Option<&'static str> {
         "Normalized size of the crop region in x, y (0,1), as fraction of the long side." => {
             Some("controls.crop.size_help")
         }
-        "Number of emulsion sub-layers the composite density is split into when sublayers active is off; each sub-layer draws its own grain realization. Spektra-only." => {
-            Some("controls.grain.sublayer_count_help")
-        }
         "Number of multi-bounce Gaussians summed in the halation pass. Subsequent bounces use sqrt(k)-spaced widths. Typical: 2-3." => {
             Some("controls.halation.bounce_count_help")
         }
@@ -781,13 +783,10 @@ fn key(label: &str) -> Option<&'static str> {
         "Per-channel grain uniformity shared by Spektra and Dye." => {
             Some("controls.grain.uniformity_help")
         }
-        "Per-channel multiplier on the particle area; the default makes the blue record coarser. Spektra reads this value; Dye uses the granularity preset instead." => {
-            Some("controls.grain.particle_scale_help")
-        }
         "Per-channel same-layer DIR gamma (R, G, B). Effective gamma reduction of each layer's density curve." => {
             Some("controls.couplers.gamma_samelayer_help")
         }
-        "Per-channel relative Dye strength: event-area scale k = (G / 6)^2, not a certified optical RMS target. Zero retains the reference-scale fallback; upstream Spektra retains this value as a no-op. Distinct from Procedural Amount." => {
+        "Per-channel granularity G: Spektra derives statistical particle area from the film density curves using upstream granularity; Dye uses relative event-area strength k = (G / 6)^2, with zero retaining the reference-scale fallback. Neither is a certified optical RMS target. Distinct from Procedural Amount." => {
             Some("controls.grain.rms_granularity_help")
         }
         "Percentage of the glare light (typically 0.1-0.25)" => Some("controls.help.glare.percent"),
@@ -882,9 +881,6 @@ fn key(label: &str) -> Option<&'static str> {
         "Readout stray light: percent, roughness, blur" => Some("surfaces.summary.glare"),
         "Real negative capture: exposure, base estimation, calibration, channel swaps" => {
             Some("surfaces.summary.convert")
-        }
-        "Recommended: Spektra (material grain) · Procedural (post-scan, lightweight)" => {
-            Some("controls.grain.recommended_engines")
         }
         "Red-minus-blue exposure difference in EV. Positive values are warmer; negative values are cooler. This is not Kelvin and does not change capture white balance." => {
             Some("controls.scanner.warmth_help")
@@ -992,13 +988,9 @@ fn key(label: &str) -> Option<&'static str> {
         "Settings" => Some("surfaces.settings.title"),
         "Shadow grain amount." => Some("controls.grain.shadows_help"),
         "Shadows" => Some("controls.grain.shadows"),
-        "Shared by Spektra and Dye; inactive until either engine is selected, stored values are retained." => {
-            Some("controls.grain.inactive_shared_material")
-        }
         "Shared Poisson-event rate fraction among active records within each numerical component, not realized CMY or final RGB correlation. Preserves each record's marginal count distribution; correlation depends on record-rate ratios. Inactive for single-record black-and-white material; the requested value is retained for color film." => {
             Some("controls.grain.channel_correlation_help")
         }
-        "Shared material controls" => Some("controls.grain.shared_material"),
         "Show controls that differ from their factory baseline, independently of an applied preset." => {
             Some("surfaces.search.modified_help")
         }
@@ -1046,9 +1038,6 @@ fn key(label: &str) -> Option<&'static str> {
         }
         "Spectral upsampling" => Some("controls.upsampling.section"),
         "Spektra" => Some("controls.grain.spektra"),
-        "Split the developed density into the film profile's emulsion sublayers instead of applying grain to the composite density. Spektra-only; Dye always uses numerical curve components, and Procedural and Fotufilm ignore it." => {
-            Some("controls.grain.sublayers_active_help")
-        }
         "Stages and CPU reasons" => Some("surfaces.diagnostics.stages"),
         "Start an independent export: render the full-resolution input with the current runtime controls and these saving settings, then write the file. Export never reads or writes the retained output, so it is a different operation from Save." => {
             Some("surfaces.export.submit_help")
@@ -1169,9 +1158,6 @@ fn key(label: &str) -> Option<&'static str> {
         "auto" => Some("controls.scanner.auto"),
         "auto exposure" => Some("controls.scanner.auto_exposure"),
         "auto exposure method" => Some("controls.scanner.metering_method"),
-        "available only when the Procedural engine is selected" => {
-            Some("controls.grain.procedural_profile_unavailable")
-        }
         "average" => Some("controls.scanner.metering_average"),
         "base percentile" => Some("controls.convert.base_percentile"),
         "blind calibration" => Some("controls.convert.blind_calibration"),
@@ -1276,10 +1262,6 @@ fn key(label: &str) -> Option<&'static str> {
         "film_render.grain.engine = procedural" => Some("controls.condition.procedural"),
         "film_render.grain.engine = spektra" => Some("controls.condition.spektra"),
         "film_render.grain.engine = spektra or dye" => Some("controls.condition.spektra_dye"),
-        "film_render.grain.sublayers_active = false" => Some("controls.condition.no_sublayers"),
-        "film_render.grain.sublayers_active = true; film profile supplies sublayer density curves" => {
-            Some("controls.condition.sublayers")
-        }
         "film_render.grain.v2_profile = custom; select custom to use this control" => {
             Some("controls.condition.custom")
         }
@@ -1384,8 +1366,6 @@ fn key(label: &str) -> Option<&'static str> {
         "output color space" => Some("controls.output.output_color_space"),
         "output interpolation" => Some("surfaces.viewer.interpolation"),
         "partial" => Some("controls.scanner.metering_partial"),
-        "particle area (µm²)" => Some("controls.grain.particle_area"),
-        "particle scale" => Some("controls.grain.particle_scale"),
         "particle scale sublayers" => Some("controls.grain.particle_scale_sublayers"),
         "paste operator correction" => Some("controls.scanner.paste_correction"),
         "percent" => Some("controls.label.percent"),
@@ -1464,9 +1444,7 @@ fn key(label: &str) -> Option<&'static str> {
             Some("controls.condition.operator_retained")
         }
         "strength" => Some("controls.cmyk.strength"),
-        "sub-layers" => Some("controls.grain.sublayer_count"),
         "sublayer shares" => Some("controls.grain.sublayer_shares"),
-        "sublayers active" => Some("controls.grain.sublayers_active"),
         "temperature" => Some("controls.scanner.temperature"),
         "threshold" => Some("controls.label.threshold"),
         "tilt" => Some("controls.base.tilt"),
@@ -1485,9 +1463,6 @@ fn key(label: &str) -> Option<&'static str> {
         "viewer output layer only" => Some("controls.condition.viewer_output"),
         "viewer-only" => Some("controls.condition.viewer"),
         "warmth" => Some("controls.scanner.warmth"),
-        "when engine = spektra: film_render.grain.sublayers_active = true; film profile supplies sublayer density curves" => {
-            Some("controls.condition.spektra_sublayers")
-        }
         "white balance" => Some("controls.scanner.white_balance"),
         "white padding" => Some("controls.label.white_padding"),
         "workflow" => Some("controls.label.workflow"),
@@ -1773,24 +1748,6 @@ pub(crate) fn localized_for<'a>(locale: crate::i18n::Locale, label: &'a str) -> 
             locale = locale.as_str(),
             label = crate::i18n::text_for(locale, "controls.grain.micro_structure"),
             component = crate::i18n::text_for(locale, "controls.label.clump")
-        ),
-        "particle scale 0" => rust_i18n::t!(
-            "controls.component.name",
-            locale = locale.as_str(),
-            label = crate::i18n::text_for(locale, "controls.grain.particle_scale"),
-            component = Cow::Borrowed("0")
-        ),
-        "particle scale 1" => rust_i18n::t!(
-            "controls.component.name",
-            locale = locale.as_str(),
-            label = crate::i18n::text_for(locale, "controls.grain.particle_scale"),
-            component = Cow::Borrowed("1")
-        ),
-        "particle scale 2" => rust_i18n::t!(
-            "controls.component.name",
-            locale = locale.as_str(),
-            label = crate::i18n::text_for(locale, "controls.grain.particle_scale"),
-            component = Cow::Borrowed("2")
         ),
         "particle scale sublayers 0" => rust_i18n::t!(
             "controls.component.name",

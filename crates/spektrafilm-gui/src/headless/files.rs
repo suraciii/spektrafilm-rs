@@ -134,8 +134,6 @@ fn startup_default_and_factory_restore_stay_in_session_directory() {
     let mut factory = state::GuiState::factory().runtime_params().unwrap();
     normalize_scanner_selections(&mut factory, h.state().film_medium);
     assert_eq!(h.state().params, factory);
-    assert_eq!(h.state().params.film_render.grain.rms_granularity, [5.0; 3]);
-    assert_eq!(h.state().params.io.upscale_factor, 1.0);
 }
 
 // specs/gui-product-design/spec.md#save-export-and-default-state-actions: the

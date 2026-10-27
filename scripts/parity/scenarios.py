@@ -377,39 +377,6 @@ def build_scenarios():
         "camera.filter_uv/filter_ir never read by the Rust core.",
     ))
     sc.append(_scn(
-        "layered_grain",
-        "Default grain (sublayers_active=True) on a 32x32 frame — Python "
-        "develops through interp_density_cmy_layers + "
-        "apply_grain_to_density_layers.",
-        "kodak_portra_400", "kodak_portra_endura", "gradient32x32",
-        _bare_with({
-            "film_render.grain.active": True,
-            "film_render.grain.sublayers_active": True,
-            "film_render.halation.active": False,
-            "film_render.dir_couplers.active": False,
-            "print_render.glare.active": False,
-        }),
-        ["cmy_film"], "rng_stream", "expected_parity", None,
-        "Rust uses the same layered interpolation, per-layer particle scales, "
-        "and seeded legacy np.random stream as the Python implementation.",
-    ))
-    sc.append(_scn(
-        "grain_single_curve_seeded",
-        "Grain with sublayers_active=False (the ported path), deterministic "
-        "seeds 0/1/2 (grain.py:87).",
-        "kodak_portra_400", "kodak_portra_endura", "gradient32x32",
-        _bare_with({
-            "film_render.grain.active": True,
-            "film_render.grain.sublayers_active": False,
-            "film_render.halation.active": False,
-            "film_render.dir_couplers.active": False,
-            "print_render.glare.active": False,
-        }),
-        ["cmy_film"], "rng_stream", "expected_parity", None,
-        "Rust ports the legacy np.random stream (spektrafilm-math "
-        "numpy_rng) used by scipy.stats poisson/binomial rvs.",
-    ))
-    sc.append(_scn(
         "scan_film_glare",
         "Direct film scan with default glare flags — Python passes "
         "glare=None on the scan_film path (scanning.py:54-55); Rust applies "
@@ -583,10 +550,9 @@ def build_scenarios():
         },
         ["cmy_film", "cmy_print", "rgb_out"], "statistical_texture",
         "known_gap", 6,
-        "Layered grain (default sublayers_active=True) is unported, so "
-        "per-pixel parity is not expected; moments are recorded for the "
-        "statistical budget. Glare RNG streams also differ (Rust fixed "
-        "seed 42 vs Python's continued np.random stream).",
+        "This historical 3bb2c2d chain is a cross-version comparison, not "
+        "acceptance for Spektra's experimental 28bf883 RMS model. Grain "
+        "parameterization and glare random streams differ across these versions.",
     ))
 
     # ---- 28-profile sweep ----------------------------------------------------
@@ -611,7 +577,6 @@ def build_scenarios():
         ("debug_stochastic", {"debug.deactivate_stochastic_effects": True}, "arithmetic"),
         ("debug_lut_mode", {"debug.lut_mode": True}, "arithmetic"),
         ("lut_resolution_9", {"settings.use_enlarger_lut": True, "settings.use_scanner_lut": True, "settings.lut_resolution": 9}, "lut_reduction"),
-        ("layered_fast_stats", {"film_render.grain.active": True, "film_render.grain.sublayers_active": True, "settings.use_fast_stats": True}, "statistical_texture"),
     ]:
         sc.append(_scn(name, name, "kodak_portra_400", "kodak_portra_endura",
                        "gradient32x32", _bare_with(controls), PRINT_TAPS,

@@ -3,16 +3,16 @@
 //! Profile coefficients and curve tables are resolved without image sampling.
 //! Device stages interpolate layers, sample counts, filter particle and clump
 //! fields, compose density, and apply final blur and mass-conserving USM.
-//! Count decisions require binary64 conditioning and 64-bit random words.
+//! Count conditioning is f32; discrete samplers require binary64 and 64-bit words.
 //! Unsupported arithmetic and unrepresentable working sets return errors.
 
 pub(in crate::wgpu_backend) mod blur;
 mod post;
 
 use super::super::*;
-use super::mt19937::{SpektraMt19937State, build_spektra_mt19937_state};
+use super::mt19937::{SpektraMt19937State, build_spektra_mt19937_state_with_limit};
 use super::raster::{RasterCommands, RasterStorage, paged_transport, transport};
-use blur::{GrainBlurState, build_grain_blur_paged};
+use blur::{GrainBlurState, build_grain_blur_f64_paged, build_grain_blur_paged};
 use post::{GrainPostState, build_grain_post};
 use spektrafilm_backend::GrainV1GpuParams;
 
@@ -98,11 +98,10 @@ fn build_spektra_grain_state_with_limit(
         .checked_mul(u64::from(height))
         .and_then(|n| n.checked_mul(12))
         .ok_or("Spektra grain image byte size overflows")?;
-    let n_layers = if params.sublayers_active {
-        3
-    } else {
-        params.n_sub_layers
-    };
+    if !(1..=3).contains(&params.layer_count) {
+        return Err("Spektra grain layer_count must be in 1..=3".into());
+    }
+    let n_layers = params.layer_count;
     let layer_bytes = image_bytes
         .checked_mul(u64::from(n_layers))
         .ok_or("Spektra grain layer size overflows")?;
@@ -110,7 +109,7 @@ fn build_spektra_grain_state_with_limit(
         .checked_mul(height)
         .filter(|&n| n > 0 && n <= u32::MAX / 3)
         .ok_or("Spektra grain indexing overflows")?;
-    let chunk = (window_limit / (12 * u64::from(n_layers.max(1)))).min(u64::from(n_pixels)) as u32;
+    let chunk = (window_limit / (12 * u64::from(n_layers).max(2))).min(u64::from(n_pixels)) as u32;
     if chunk == 0 {
         return Err("Spektra grain minimum layer window exceeds storage binding limit".into());
     }
@@ -131,29 +130,23 @@ fn build_spektra_grain_state_with_limit(
         width: u32,
         height: u32,
         knots: u32,
-        pad0: u32,
+        layers: u32,
         base_seed: u64,
-        pixel_size_um: f64,
-        // Binary64 vec3 alignment is 32 bytes; rows include a padding lane.
-        particle_area: [f64; 4],
-        particle_scale_layers: [f64; 4],
-        density_min: [f64; 4],
+        pad_seed: u64,
         uniformity: [f64; 4],
         density_min_layers: [[f64; 4]; 3],
         density_max_adj: [[f64; 4]; 3],
         n_particles: [[f64; 4]; 3],
-        micro_sigma: f64,
-        micro_blur_px: f64,
-        grain_blur: f32,
-        usm_sigma: f32,
-        usm_amount: f32,
         lookup_sign: f32,
+        pad_flags: [u32; 3],
         flags: [u32; 4],
         tail_padding: [u32; 4],
+        pad_struct: [u32; 4],
     }
     let pipe = backend.cached_pipeline(
         concat!(
             include_str!("../../../../../spektrafilm-shaders/wgsl/f64_math.wgsl"),
+            include_str!("../work_f32.wgsl"),
             include_str!("grain_v1.wgsl")
         ),
         &[
@@ -161,7 +154,6 @@ fn build_spektra_grain_state_with_limit(
             wgpu::BufferBindingType::Storage { read_only: true },
             wgpu::BufferBindingType::Storage { read_only: true },
             wgpu::BufferBindingType::Storage { read_only: true },
-            wgpu::BufferBindingType::Storage { read_only: false },
             wgpu::BufferBindingType::Storage { read_only: false },
         ],
     );
@@ -172,29 +164,23 @@ fn build_spektra_grain_state_with_limit(
                 width,
                 height,
                 knots: knots as u32,
-                pad0: 0,
+                layers: n_layers,
                 base_seed: params.base_seed,
-                pixel_size_um: params.pixel_size_um,
-                particle_area: pad3(params.particle_area),
-                particle_scale_layers: pad3(params.particle_scale_layers),
-                density_min: pad3(params.density_min),
+                pad_seed: 0,
                 uniformity: pad3(params.uniformity),
                 density_min_layers: pad9(params.density_min_layers),
                 density_max_adj: pad9(params.density_max_adj),
                 n_particles: pad9(params.n_particles),
-                micro_sigma: params.micro_sigma,
-                micro_blur_px: params.micro_blur_px,
-                grain_blur: params.grain_blur,
-                usm_sigma: params.usm_sigma,
-                usm_amount: params.usm_amount,
                 lookup_sign: params.lookup_sign,
+                pad_flags: [0; 3],
                 flags: [
                     params.reference_f64 as u32,
                     params.monochrome as u32,
                     params.mt19937_regime as u32,
-                    params.sublayers_active as u32,
+                    0,
                 ],
                 tail_padding: [first, count, 0, 0],
+                pad_struct: [0; 4],
             }),
             usage: wgpu::BufferUsages::UNIFORM,
         })
@@ -210,16 +196,32 @@ fn build_spektra_grain_state_with_limit(
         usage: wgpu::BufferUsages::STORAGE,
     });
     let layers = paged_transport(backend, layer_bytes, "grain_particle_fields")?;
-    let clump = paged_transport(backend, image_bytes, "grain_clumping_field")?;
+    let micro_active = params.micro_sigma > 0.05;
+    let clump = paged_transport(
+        backend,
+        if micro_active { image_bytes * 2 } else { 24 },
+        "grain_clumping_field",
+    )?;
     let density_window = transport(backend, u64::from(chunk) * 12, "grain_density_window")?;
     let layers_window = transport(
         backend,
         u64::from(chunk) * 12 * u64::from(n_layers),
         "grain_layers_window",
     )?;
-    let clump_window = transport(backend, u64::from(chunk) * 12, "grain_clump_window")?;
+    let clump_window = transport(
+        backend,
+        if micro_active {
+            u64::from(chunk) * 24
+        } else {
+            24
+        },
+        "grain_clump_window",
+    )?;
     let mut dispatch = RasterCommands::default();
     for first in (0..n_pixels).step_by(chunk as usize) {
+        if params.mt19937_regime {
+            break;
+        }
         let count = chunk.min(n_pixels - first);
         let params_buf = make_params(first, count);
         dispatch.copy(
@@ -237,7 +239,6 @@ fn build_spektra_grain_state_with_limit(
                 &curve_x,
                 &curve_layers,
                 &layers_window,
-                &clump_window,
             ],
             count,
             false,
@@ -254,15 +255,8 @@ fn build_spektra_grain_state_with_limit(
                 );
             }
         }
-        dispatch.copy(
-            &clump_window,
-            0,
-            &clump,
-            u64::from(first) * 12,
-            u64::from(count) * 12,
-        );
     }
-    let filtered_layers = (params.sublayers_active && params.blur_dye_clouds > 0.0)
+    let filtered_layers = (params.blur_dye_clouds > 0.0)
         .then(|| paged_transport(backend, layer_bytes, "grain_filtered_particle_fields"))
         .transpose()?;
     let mut layer_blurs = Vec::new();
@@ -271,9 +265,10 @@ fn build_spektra_grain_state_with_limit(
             .checked_mul(height)
             .and_then(|n| n.checked_mul(3))
             .ok_or("Spektra grain layer indexing overflows")?;
-        for sl in 0..3 {
+        for sl in 0..n_layers as usize {
             let sigma = std::array::from_fn(|ch| {
-                f64::from(params.blur_dye_clouds)
+                let ch = if params.monochrome { 0 } else { ch };
+                params.blur_dye_clouds
                     * (params.density_max_adj[sl * 3 + ch] / params.n_particles[sl * 3 + ch]).sqrt()
             });
             let offset = sl as u64 * u64::from(layer_stride);
@@ -282,14 +277,13 @@ fn build_spektra_grain_state_with_limit(
             )?);
         }
     }
-    let filtered_clump =
-        (params.sublayers_active && params.micro_sigma > 0.05 && params.micro_blur_px > 0.4)
-            .then(|| paged_transport(backend, image_bytes, "grain_filtered_clumping"))
-            .transpose()?;
+    let filtered_clump = (params.micro_sigma > 0.05 && params.micro_blur_px > 0.4)
+        .then(|| paged_transport(backend, image_bytes * 2, "grain_filtered_clumping"))
+        .transpose()?;
     let clump_blur = filtered_clump
         .as_ref()
         .map(|filtered| {
-            build_grain_blur_paged(
+            build_grain_blur_f64_paged(
                 backend,
                 width,
                 height,
@@ -305,8 +299,6 @@ fn build_spektra_grain_state_with_limit(
     #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
     struct ComposeParams {
         dimensions: [u32; 4],
-        scale: f32,
-        pad: [u32; 3],
     }
     let compose_pipe = backend.cached_pipeline(
         include_str!("compose.wgsl"),
@@ -321,18 +313,7 @@ fn build_spektra_grain_state_with_limit(
         device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("grain_compose_params"),
             contents: bytemuck::bytes_of(&ComposeParams {
-                dimensions: [
-                    count,
-                    1,
-                    n_layers,
-                    (params.sublayers_active && params.micro_sigma > 0.05) as u32,
-                ],
-                scale: if params.sublayers_active {
-                    1.0
-                } else {
-                    (1.0 / f64::from(n_layers)) as f32
-                },
-                pad: [0; 3],
+                dimensions: [count, 1, n_layers, (params.micro_sigma > 0.05) as u32],
             }),
             usage: wgpu::BufferUsages::UNIFORM,
         })
@@ -349,13 +330,15 @@ fn build_spektra_grain_state_with_limit(
                 u64::from(count) * 12,
             );
         }
-        compose.copy(
-            filtered_clump.as_ref().unwrap_or(&clump),
-            u64::from(first) * 12,
-            &clump_window,
-            0,
-            u64::from(count) * 12,
-        );
+        if micro_active {
+            compose.copy(
+                filtered_clump.as_ref().unwrap_or(&clump),
+                u64::from(first) * 24,
+                &clump_window,
+                0,
+                u64::from(count) * 24,
+            );
+        }
         let params_buf = compose_params(count);
         compose.dispatch(
             &compose_pipe,
@@ -373,9 +356,17 @@ fn build_spektra_grain_state_with_limit(
         );
     }
     let post = build_grain_post(backend, width, height, density, params)?;
-    let mt19937 = if params.mt19937_regime {
-        Some(build_spektra_mt19937_state(
-            device, width, height, density, &layers, params, backend,
+    let mt19937 = if params.mt19937_regime || params.micro_sigma > 0.05 {
+        Some(build_spektra_mt19937_state_with_limit(
+            device,
+            width,
+            height,
+            density,
+            &layers,
+            &clump,
+            params,
+            backend,
+            window_limit,
         )?)
     } else {
         None

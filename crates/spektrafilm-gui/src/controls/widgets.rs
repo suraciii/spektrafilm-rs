@@ -415,37 +415,21 @@ pub(crate) fn param_tuple<T: egui::emath::Numeric, const N: usize>(
     path: &str,
     tooltip: &str,
 ) -> bool {
-    if !super::row_path_matches(ui.ctx(), path) {
-        return false;
-    }
-    let _identity = super::row_identity(ui.ctx(), path);
-    let (min, max, step, decimals) = editor_range_for(path);
-    let changed = tuple_marked(
-        ui,
-        label,
-        values,
-        min,
-        max,
-        step,
-        decimals,
-        tooltip,
-        tuple_identifiers(path),
-        false,
-        row_modified::RowMark::resolve(ui.ctx(), Some(path)),
-    );
-    if changed {
-        super::record_edited_path(ui.ctx(), path);
-    }
-    changed
+    param_tuple_applicable(ui, label, values, path, tooltip, &[None; N], false, false)
 }
 
-/// `param_tuple` on a row marked experimental.
-pub(crate) fn param_tuple_experimental<T: egui::emath::Numeric, const N: usize>(
+/// Component applicability comes from the core owner. Ordinary controls omit
+/// inactive records; discovery retains their requested values read-only.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn param_tuple_applicable<T: egui::emath::Numeric, const N: usize>(
     ui: &mut Ui,
     label: &str,
     values: &mut [T; N],
     path: &str,
     tooltip: &str,
+    component_reasons: &[Option<&str>; N],
+    discovery: bool,
+    experimental: bool,
 ) -> bool {
     if !super::row_path_matches(ui.ctx(), path) {
         return false;
@@ -462,8 +446,10 @@ pub(crate) fn param_tuple_experimental<T: egui::emath::Numeric, const N: usize>(
         decimals,
         tooltip,
         tuple_identifiers(path),
-        true,
+        experimental,
         row_modified::RowMark::resolve(ui.ctx(), Some(path)),
+        component_reasons,
+        discovery,
     );
     if changed {
         super::record_edited_path(ui.ctx(), path);
@@ -797,10 +783,11 @@ pub(crate) fn toggle_row(
                     .circle_filled(egui::pos2(knob_x, track.center().y), 5.5, knob);
                 super::focus_feedback(ui, &response);
                 let accessible_label = super::localized(ui.ctx(), label);
+                let enabled = ui.is_enabled();
                 response.widget_info(|| {
                     egui::WidgetInfo::selected(
                         egui::WidgetType::Checkbox,
-                        ui.is_enabled(),
+                        enabled,
                         *value,
                         accessible_label.as_ref(),
                     )
@@ -1225,6 +1212,8 @@ fn tuple_marked<T: egui::emath::Numeric, const N: usize>(
     identifiers: &[&str],
     experimental: bool,
     mark: row_modified::RowMark,
+    component_reasons: &[Option<&str>; N],
+    discovery: bool,
 ) -> bool {
     ui.push_id(label, |ui| {
         let label_response = row_label(ui, label, experimental)
@@ -1236,39 +1225,56 @@ fn tuple_marked<T: egui::emath::Numeric, const N: usize>(
                     .iter_mut()
                     .enumerate()
                     .map(|(index, value)| {
-                        let identifier = identifiers
-                            .get(index)
-                            .copied()
-                            .unwrap_or_else(|| index_identifier(index));
-                        let identifier_response = ui.label(
-                            egui::RichText::new(crate::controls::localized(ui.ctx(), identifier))
+                        let reason = component_reasons[index];
+                        if reason.is_some() && !discovery {
+                            return false;
+                        }
+                        ui.add_enabled_ui(reason.is_none(), |ui| {
+                            let identifier = identifiers
+                                .get(index)
+                                .copied()
+                                .unwrap_or_else(|| index_identifier(index));
+                            let identifier_response = ui.label(
+                                egui::RichText::new(crate::controls::localized(
+                                    ui.ctx(),
+                                    identifier,
+                                ))
                                 .color(theme::FG_MUTED)
                                 .size(theme::SIZE_HINT),
-                        );
-                        let changed = numeric_field(
-                            ui,
-                            &format!("{label} {identifier}"),
-                            (label, index),
-                            value,
-                            min,
-                            max,
-                            step,
-                            decimals,
-                            tooltip,
-                            None,
-                            Some(identifier_response.id),
-                        );
-                        let field_id = ui.make_persistent_id(("numeric-field", (label, index)));
-                        let accessible_label = crate::tr!(
-                            ui.ctx(),
-                            "controls.component.name",
-                            label = super::localized(ui.ctx(), label),
-                            component = super::localized(ui.ctx(), identifier)
-                        );
-                        ui.ctx().accesskit_node_builder(field_id, |node| {
-                            node.set_label(accessible_label.as_ref());
-                        });
-                        changed
+                            );
+                            let changed = numeric_field(
+                                ui,
+                                &format!("{label} {identifier}"),
+                                (label, index),
+                                value,
+                                min,
+                                max,
+                                step,
+                                decimals,
+                                tooltip,
+                                None,
+                                Some(identifier_response.id),
+                            );
+                            let field_id = ui.make_persistent_id(("numeric-field", (label, index)));
+                            let accessible_label = crate::tr!(
+                                ui.ctx(),
+                                "controls.component.name",
+                                label = super::localized(ui.ctx(), label),
+                                component = super::localized(ui.ctx(), identifier)
+                            );
+                            ui.ctx().accesskit_node_builder(field_id, |node| {
+                                node.set_label(accessible_label.as_ref());
+                            });
+                            if let Some(reason) = reason {
+                                ui.label(
+                                    egui::RichText::new(super::localized(ui.ctx(), reason))
+                                        .small()
+                                        .color(theme::FG_MUTED),
+                                );
+                            }
+                            changed
+                        })
+                        .inner
                     })
                     .fold(false, |changed, field_changed| changed | field_changed)
             })

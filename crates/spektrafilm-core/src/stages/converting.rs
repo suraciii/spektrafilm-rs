@@ -582,6 +582,10 @@ pub fn neutralize_filters(
     p.settings.use_enlarger_lut = false;
     p.settings.use_scanner_lut = false;
     p.debug.lut_mode = true;
+    // Pipeline construction consumes resolved runtime parameters; setting the
+    // LUT switch alone does not apply its deterministic calibration constraints.
+    // Resolve once before assigning the trial shifts, which LUT digestion resets.
+    crate::params_builder::apply_runtime_constraints(&mut p);
     let residual = |x: &[f64; 2]| {
         let mut trial = p.clone();
         trial.enlarger.m_filter_shift = x[0] as f32;
@@ -625,11 +629,12 @@ mod action_tests {
     use crate::test_support::data_dir;
 
     #[test]
-    fn print_neutralization_is_independent_of_negative_to_positive_mode() {
+    fn print_neutralization_is_independent_of_grain_and_negative_to_positive_mode() {
         let data = data_dir();
         let film = crate::profile::load_profile_by_name(&data, "kodak_portra_400").unwrap();
         let print = crate::profile::load_profile_by_name(&data, "kodak_portra_endura").unwrap();
         let mut params = RuntimeParams::default();
+        params.film_render.grain.rms_granularity = [6.0, 8.0, 10.0];
         params.workflow.route = "input > film > scan".into();
         params.io.scan_film = true;
         params.camera.auto_exposure = false;
@@ -639,6 +644,22 @@ mod action_tests {
         params.print_render.glare.active = false;
         let backend = spektrafilm_backend::cpu_backend::CpuBackend;
         let direct = neutralize_filters(&film, &print, &params, &data, &backend).unwrap();
+        for engine in [
+            crate::params::GrainEngine::Spektra,
+            crate::params::GrainEngine::Dye,
+        ] {
+            params.film_render.grain.engine = engine;
+            params.film_render.grain.active = true;
+            let enabled = neutralize_filters(&film, &print, &params, &data, &backend).unwrap();
+            assert_eq!(
+                enabled, direct,
+                "calibration must not sample {engine:?} grain"
+            );
+            assert!(
+                params.film_render.grain.active,
+                "caller grain state is preserved"
+            );
+        }
         params.scanner.scan_output = "negative_to_positive".into();
         let positive = neutralize_filters(&film, &print, &params, &data, &backend).unwrap();
         assert_eq!(positive, direct);

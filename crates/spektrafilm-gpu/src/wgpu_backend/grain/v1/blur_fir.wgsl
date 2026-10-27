@@ -19,7 +19,7 @@ struct Params {
 
 @group(0) @binding(0) var<uniform> p: Params;
 @group(0) @binding(1) var<storage, read> source: array<f32>;
-@group(0) @binding(2) var<storage, read> kernel: array<f32>;
+@group(0) @binding(2) var<storage, read> kernel: array<f64>;
 @group(0) @binding(3) var<storage, read_write> destination: array<f32>;
 
 fn reflect_index(index: i32, length: i32) -> u32 {
@@ -36,7 +36,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
   let y = pixel / p.width;
   let axis_length = select(i32(p.width), i32(p.height), p.vertical != 0u);
   let coordinate = select(i32(x), i32(y), p.vertical != 0u);
-  var sum = 0.0;
+  var sum: f64 = 0.0;
   let kernel_size = 2u * p.radius + 1u;
   for (var k = 0u; k < kernel_size; k = k + 1u) {
     let delta = i32(k) - i32(p.radius);
@@ -44,7 +44,10 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     let sx = select(reflected, x, p.vertical != 0u);
     let sy = select(y, reflected, p.vertical != 0u);
     let index = p.source_base + (sy * p.width + sx) * 3u + p.channel;
-    sum = sum + source[index] * kernel[k];
+    sum = sum + f64(source[index]) * kernel[k];
+    // Upstream's vertical tmp is f32 and narrows after every += tap.
+    // Its horizontal accumulator is f64 and narrows only at the final store.
+    if p.vertical != 0u { sum = f64(f32(sum)); }
   }
-  destination[p.destination_base + pixel * 3u + p.channel] = sum;
+  destination[p.destination_base + pixel * 3u + p.channel] = f32(sum);
 }

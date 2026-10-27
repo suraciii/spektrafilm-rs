@@ -132,9 +132,23 @@ The optional appearance applies to any supported base workflow, including the `i
 
 The `input` workflow color-manages an already rendered image to the output space. Film and print profile selections do not affect it. It skips film-exposure and print-calibration tables while retaining configuration validation and output color preparation. Switching to a film workflow prepares the selected materials. See the [film-chain specification](../specs/film-chain/spec.md) and [CMYK ink style specification](../specs/cmyk-style/spec.md) for the workflow contracts.
 
-### Grain profiles
+### Grain controls
 
-**Film → Grain** exposes **Procedural Grain Profiles** beside the engine selector. Spektra, Dye, and Fotufilm Film are material-grain engines; Procedural is a post-scan grain appearance. Switching engines retains the other engines' stored controls. Each engine keeps its own parameters and applicability rules rather than sharing a generic strength control. See the [feature profile contract](../specs/feature-profiles/spec.md) for the shared catalog and scope rules.
+**Film → Grain** starts with **Enable grain** and **Engine**. It shows only the selected engine's effective controls. Turning Grain off hides numerical controls without clearing stored values.
+
+Dye exposes **Event area (strength)** in µm² and **Dye support (spatial formation)** in µm. Open **Dye Advanced** for secondary controls. Support changes field formation and image detail, not just grain diameter.
+
+Black-and-white Spektra and Dye show only record 0 for RMS or relative strength, density minimum, and uniformity. Hidden G/B requests stay stored and reactivate for color material.
+
+Dye also retains hidden color-only channel correlation. The three numerical-component scales remain independently editable in both material models; they are not RGB lanes.
+
+**Procedural Grain Profiles** appears only for Procedural. Named profiles retain editable **Amount**; choose **Custom** to expose custom controls. Noise hides **Film Resolution** and **Resolution Type** without clearing their requests.
+
+Spektra's sublayer controls follow the selected film's actual capabilities. Fotufilm's fourth sublayer share remains a read-only remainder. Unsupported material requests retain their values and show a reason; the GUI does not choose another engine or material automatically.
+
+Use **Search controls** or **Only modified** to inspect hidden requests at their existing owners. Inactive matches remain readable with their reasons. Grain reset and Undo/Redo cover hidden controls as well as visible rows.
+
+For Dye inspection, use **SCAN**, then select exact **100%** zoom. [Preview and Scan](#preview-and-scan) explains the lightweight preview boundary. [Grain](grain.md) describes engine domains and default compatibility; [Feature profiles](../specs/feature-profiles/spec.md) owns catalog scope.
 
 ## Adjustment history
 

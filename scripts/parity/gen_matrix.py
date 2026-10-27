@@ -103,16 +103,16 @@ RUNTIME_FIELDS = {
     "film_render": {
         "density_curve_gamma": (S, None, ""),
         "grain.active": (S, None, ""),
-        "grain.sublayers_active": (S, None, "filming.rs:549-558"),
-        "grain.particle_area_um2": (S, None, "renamed agx_particle_area_um2 in Rust; f64 preserved"),
-        "grain.particle_scale": (S, None, "renamed agx_particle_scale"),
-        "grain.particle_scale_layers": (S, None, "filming.rs:549-558"),
+        "grain.sublayers_active": (RETIRED, None, "experimental 28bf883 always uses the resolved sublayer model"),
+        "grain.particle_area_um2": (RETIRED, None, "experimental Spektra derives area from RMS and actual density curves"),
+        "grain.particle_scale": (RETIRED, None, "experimental Spektra uses per-channel RMS, not a second channel-area scale"),
+        "grain.particle_scale_layers": (RETIRED, None, "use the upstream particle_scale_sublayers control"),
         "grain.density_min": (S, None, ""),
         "grain.uniformity": (S, None, ""),
         "grain.blur": (S, None, ""),
         "grain.blur_dye_clouds_um": (S, None, "filming.rs:549-558"),
         "grain.micro_structure": (S, None, "filming.rs:549-558"),
-        "grain.n_sub_layers": (S, None, ""),
+        "grain.n_sub_layers": (RETIRED, None, "layer count belongs to the resolved film curves"),
         "halation.active": (S, None, ""),
         "halation.scatter_amount": (S, None, ""),
         "halation.scatter_spatial_scale": (S, None, ""),
@@ -486,7 +486,7 @@ def integration_entry(status, owner, notes, source, audit_status=None):
         return {
             "rust_status": RETIRED,
             "owner_issue": owner,
-            "implementation_source": "specs/output-mix/spec.md#output-boundary-and-retirement",
+            "implementation_source": source,
             "verification": "Current model rejects this path; historical audit is not a current support or parity claim.",
             "audit_baseline": {
                 "rust_status": status if audit_status is None else audit_status,
@@ -696,7 +696,9 @@ def main() -> None:
         "runtime_fields": {
             group: {
                 field: integration_entry(status, owner, notes,
-                    "crates/spektrafilm-core/src/params/; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain/",
+                    ("specs/film-grain/v1/spec.md" if field.startswith("grain.")
+                     else "specs/output-mix/spec.md#output-boundary-and-retirement") if status == RETIRED
+                    else "crates/spektrafilm-core/src/params/; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain/",
                     audit_status=AUDIT_RUNTIME_STATUSES.get(f"{group}.{field}", status))
                 for field, (status, owner, notes) in fields.items()
             }

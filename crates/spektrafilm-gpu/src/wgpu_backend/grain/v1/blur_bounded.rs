@@ -1,7 +1,8 @@
 //! Bounded reference Gaussian with raw-u32 GPU gather/scatter. Physical image
 //! pages and layer offsets are byte-addressed on the host; kernels see only
-//! aligned, capped views and packed target-channel samples. The numerical
-//! shader and its FIR/IIR arithmetic order are unchanged.
+//! aligned, capped views and packed target-channel samples. Both sample widths
+//! retain f64 kernels and recursive state; f32 stores narrow at upstream's
+//! original tap/pass boundaries rather than at device-page seams.
 use super::*;
 use crate::wgpu_backend::paged::ImagePage;
 
@@ -17,13 +18,34 @@ pub(in crate::wgpu_backend) fn workspace_bytes(
     height: u32,
     limit: u64,
 ) -> Result<u64, String> {
+    workspace_bytes_for_samples(width, height, limit, 4)
+}
+
+/// Additional binary64 filter workspace, excluding the HWC24 intermediate.
+pub(in crate::wgpu_backend) fn workspace_bytes_f64(
+    width: u32,
+    height: u32,
+    limit: u64,
+) -> Result<u64, String> {
+    workspace_bytes_for_samples(width, height, limit, 8)
+}
+
+fn workspace_bytes_for_samples(
+    width: u32,
+    height: u32,
+    limit: u64,
+    sample_bytes: u64,
+) -> Result<u64, String> {
     let bytes = u64::from(width)
         .checked_mul(u64::from(height))
-        .and_then(|n| n.checked_mul(12))
+        .and_then(|n| n.checked_mul(3 * sample_bytes))
         .ok_or("Gaussian workspace geometry overflows")?;
-    let page = limit.min(u64::from(MAX_PAGE_VALUES) * 4).min(bytes.max(76));
-    // Input, output, adapter and three-lane line state; at most 19 FIR taps/channel.
-    Ok(page * 4 + 3 * 76 + u64::from(MAX_COMMANDS_PER_SUBMIT) * 3 * 80)
+    let taps = 19 * 8;
+    let page = limit
+        .min(u64::from(MAX_PAGE_VALUES) * sample_bytes)
+        .min(bytes.max(taps));
+    // Input, output, adapter, line state, three kernels and retained uniforms.
+    Ok(page * 4 + 3 * taps + u64::from(MAX_COMMANDS_PER_SUBMIT) * 3 * 96)
 }
 #[derive(Clone)]
 struct Store(Vec<BytePage>);
@@ -55,6 +77,18 @@ impl Store {
                 })
                 .collect(),
         )
+    }
+
+    fn raster(storage: &(impl super::super::super::raster::RasterStorage + ?Sized)) -> Self {
+        let mut pages = Vec::new();
+        storage.visit(&mut |first, buffer| {
+            pages.push(BytePage {
+                first,
+                bytes: buffer.size(),
+                buffer: buffer.clone(),
+            })
+        });
+        Self(pages)
     }
 
     fn allocate(backend: &WgpuBackend, bytes: u64, limit: u64) -> Self {
@@ -191,6 +225,8 @@ struct TransportParams {
     scratch_row_step: i32,
     scratch_col_step: i32,
     scatter: u32,
+    sample_words: u32,
+    _pad: [u32; 3],
 }
 
 #[repr(C)]
@@ -204,10 +240,10 @@ struct Params {
     mode: u32,
     initialize: u32,
     axis_major: u32,
-    a: f32,
-    b1: f32,
-    b2: f32,
-    b3: f32,
+    a: f64,
+    b1: f64,
+    b2: f64,
+    b3: f64,
 }
 
 struct Page {
@@ -231,6 +267,7 @@ pub(super) struct BoundedBlur {
     width: u32,
     height: u32,
     limit: u64,
+    sample_bytes: u64,
     pipeline: CachedPipelineRef,
     copy_pipeline: CachedPipelineRef,
     input: wgpu::Buffer,
@@ -323,6 +360,7 @@ impl BoundedBlur {
             u64::from(source_offset),
             u64::from(destination_offset),
             limit,
+            4,
         )
     }
 
@@ -350,6 +388,34 @@ impl BoundedBlur {
             source_offset,
             destination_offset,
             limit,
+            4,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn build_f64_paged(
+        backend: &WgpuBackend,
+        width: u32,
+        height: u32,
+        source: &(impl super::super::super::raster::RasterStorage + ?Sized),
+        destination: &(impl super::super::super::raster::RasterStorage + ?Sized),
+        sigma: [f64; 3],
+        source_offset: u64,
+        destination_offset: u64,
+        limit: u64,
+    ) -> Result<Self, String> {
+        Self::build_stores(
+            backend,
+            width,
+            height,
+            Store::raster(source),
+            Store::raster(destination),
+            None,
+            sigma,
+            source_offset,
+            destination_offset,
+            limit,
+            8,
         )
     }
 
@@ -365,7 +431,15 @@ impl BoundedBlur {
         source_offset: u64,
         destination_offset: u64,
         limit: u64,
+        sample_bytes: u64,
     ) -> Result<Self, String> {
+        if !backend
+            .device
+            .features()
+            .contains(wgpu::Features::SHADER_F64)
+        {
+            return Err("grain Gaussian requires native shader f64 arithmetic".into());
+        }
         if width == 0 || height == 0 {
             return Err("Gaussian blur dimensions must be nonzero".into());
         }
@@ -374,7 +448,7 @@ impl BoundedBlur {
         }
         let bytes = u64::from(width)
             .checked_mul(u64::from(height))
-            .and_then(|v| v.checked_mul(12))
+            .and_then(|v| v.checked_mul(3 * sample_bytes))
             .ok_or("Gaussian paged blur sample size overflows")?;
         let max = backend.device.limits().max_buffer_size;
         let limit = limit.min(max).min(u64::from(
@@ -384,10 +458,10 @@ impl BoundedBlur {
             return Err("Gaussian blur sigma values must be finite".into());
         }
         let source_byte = source_offset
-            .checked_mul(4)
+            .checked_mul(sample_bytes)
             .ok_or("Gaussian source sample offset overflows")?;
         let destination_byte = destination_offset
-            .checked_mul(4)
+            .checked_mul(sample_bytes)
             .ok_or("Gaussian destination sample offset overflows")?;
         source.validate(
             "source",
@@ -403,25 +477,26 @@ impl BoundedBlur {
             wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST,
             max,
         )?;
-        let minimum = sigma
-            .iter()
-            .try_fold(4u64, |minimum, &s| -> Result<u64, String> {
-                if s <= 0.0 {
-                    Ok(minimum)
-                } else if from_f64(s) < from_f64(3.0) {
-                    Ok(minimum.max(gaussian_kernel(s)?.1.len() as u64 * 4))
-                } else {
-                    Ok(minimum.max(12))
-                }
-            })?;
+        let minimum =
+            sigma
+                .iter()
+                .try_fold(sample_bytes, |minimum, &s| -> Result<u64, String> {
+                    if s <= 0.0 {
+                        Ok(minimum)
+                    } else if s < 3.0 {
+                        Ok(minimum.max(gaussian_kernel_f64(s)?.1.len() as u64 * 8))
+                    } else {
+                        Ok(minimum.max(24))
+                    }
+                })?;
         if limit < minimum {
             return Err(format!(
                 "Gaussian bounded blur minimum working set requires {minimum} bytes per storage binding; limit is {limit}"
             ));
         }
-        let limit = limit / 4 * 4;
+        let limit = limit / sample_bytes * sample_bytes;
         let page_bytes = limit
-            .min(u64::from(MAX_PAGE_VALUES) * 4)
+            .min(u64::from(MAX_PAGE_VALUES) * sample_bytes)
             .min(bytes.max(minimum));
         let input = transport(backend, "gaussian_page_input", page_bytes, true);
         let output = transport(backend, "gaussian_page_output", page_bytes, true);
@@ -431,7 +506,9 @@ impl BoundedBlur {
         let state = transport(
             backend,
             "gaussian_line_state",
-            page_bytes.min(u64::from(width.max(height)) * 12),
+            (page_bytes / 8 * 8)
+                .max(4)
+                .min(u64::from(width.max(height)) * 24),
             true,
         );
         let intermediate = if sigma.iter().all(|&s| s <= 0.0) {
@@ -451,7 +528,14 @@ impl BoundedBlur {
                 })
                 .unwrap_or_else(|| Store::allocate(backend, bytes, limit))
         };
-        let pipeline = backend.cached_pipeline(include_str!("blur_bounded.wgsl"), &LAYOUT);
+        let pipeline = backend.cached_pipeline(
+            if sample_bytes == 8 {
+                include_str!("blur_bounded_f64.wgsl")
+            } else {
+                include_str!("blur_bounded.wgsl")
+            },
+            &LAYOUT,
+        );
         let copy_pipeline =
             backend.cached_pipeline(include_str!("blur_bounded_copy.wgsl"), &COPY_LAYOUT);
         let mut directions = Vec::new();
@@ -468,16 +552,16 @@ impl BoundedBlur {
                 ));
                 continue;
             }
-            let fir = from_f64(s) < from_f64(3.0);
+            let fir = s < 3.0;
             let (radius, weights) = if fir {
-                gaussian_kernel(s)?
+                gaussian_kernel_f64(s)?
             } else {
                 (0, vec![0.0])
             };
             let coefficients = if fir {
                 (0.0, 0.0, 0.0, 0.0)
             } else {
-                iir_coefficients(s)
+                iir_coefficients_f64(s)
             };
             if ![
                 coefficients.0,
@@ -488,7 +572,7 @@ impl BoundedBlur {
             .iter()
             .all(|v| v.is_finite())
             {
-                return Err("Gaussian IIR coefficients exceed the f32 device range".into());
+                return Err("Gaussian IIR coefficients exceed the device scalar range".into());
             }
             let kernel = backend
                 .device
@@ -507,8 +591,8 @@ impl BoundedBlur {
                 let length = if vertical { height } else { width };
                 let line_count = if vertical { width } else { height };
                 let halo = 2 * radius;
-                let capacity = (page_bytes / 4) as u32;
-                let max_lines = (page_bytes / 12) as u32;
+                let capacity = (page_bytes / sample_bytes) as u32;
+                let max_lines = (page_bytes / 24) as u32;
                 // Fill the page from the available independent lines before
                 // splitting coordinates. This keeps full-fit rasters together
                 // and avoids tiny serial chunks when a raster has few lines.
@@ -573,6 +657,7 @@ impl BoundedBlur {
             width,
             height,
             limit,
+            sample_bytes,
             pipeline,
             copy_pipeline,
             input,
@@ -595,7 +680,7 @@ impl BoundedBlur {
         }
         // Identity uses bounded packed tiles too, with raw integer loads/stores.
         // It shares no filter arithmetic and preserves NaNs and signed zero.
-        let capacity = (self.input.size() / 4) as u32;
+        let capacity = (self.input.size() / self.sample_bytes) as u32;
         for (source, destination, source_offset, destination_offset, channel) in &self.identities {
             let columns = self.width.min(capacity);
             let rows = (capacity / columns).min(self.height).max(1);
@@ -709,6 +794,7 @@ impl BoundedBlur {
             j += run;
         }
         let backend = submission.backend;
+        // Both sample widths use f64 coefficients and recursive state.
         let uniform = backend
             .device
             .create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -790,7 +876,8 @@ impl BoundedBlur {
         rect: Rect,
         scatter: bool,
     ) -> Result<(), String> {
-        let row_stride = u64::from(self.width) * 3;
+        let words = self.sample_bytes / 4;
+        let row_stride = u64::from(self.width) * 3 * words;
         let alignment = u64::from(
             submission
                 .backend
@@ -798,39 +885,51 @@ impl BoundedBlur {
                 .limits()
                 .min_storage_buffer_offset_alignment,
         );
-        let mut row = 0;
-        let mut col = 0;
-        while row < rect.rows {
-            submission.backend.check_cancelled()?;
-            let sample = offset
-                + (u64::from(rect.y + row) * u64::from(self.width) + u64::from(rect.x + col)) * 3
-                + u64::from(channel);
-            let view = store.view(sample, self.limit, alignment, self.adapter.size());
-            let end = view.first + view.bytes / 4;
-            let columns = rect.columns.min(col + ((end - 1 - sample) / 3 + 1) as u32) - col;
-            let rows = if col == 0 && columns == rect.columns {
-                (1 + (end - 1 - sample - u64::from(columns - 1) * 3) / row_stride)
-                    .min(u64::from(rect.rows - row)) as u32
-            } else {
-                1
-            };
-            let params = TransportParams {
-                count: columns * rows,
-                columns,
-                image_start: (sample - view.first) as u32,
-                image_row_step: row_stride as u32,
-                scratch_start: rect.scratch
-                    + row as i32 * rect.row_step
-                    + col as i32 * rect.col_step,
-                scratch_row_step: rect.row_step,
-                scratch_col_step: rect.col_step,
-                scatter: u32::from(scatter),
-            };
-            self.encode_transfer(submission, &view, scratch, params)?;
-            col += columns;
-            if col == rect.columns {
-                col = 0;
-                row += rows;
+        for component in 0..words {
+            let mut row = 0;
+            let mut col = 0;
+            while row < rect.rows {
+                submission.backend.check_cancelled()?;
+                let sample = (offset
+                    + (u64::from(rect.y + row) * u64::from(self.width) + u64::from(rect.x + col))
+                        * 3
+                    + u64::from(channel))
+                    * words
+                    + component;
+                let view = store.view(sample, self.limit, alignment, self.adapter.size());
+                let end = view.first + view.bytes / 4;
+                let columns = rect
+                    .columns
+                    .min(col + ((end - 1 - sample) / (3 * words) + 1) as u32)
+                    - col;
+                let rows = if col == 0 && columns == rect.columns {
+                    (1 + (end - 1 - sample - u64::from(columns - 1) * 3 * words) / row_stride)
+                        .min(u64::from(rect.rows - row)) as u32
+                } else {
+                    1
+                };
+                let params = TransportParams {
+                    count: columns * rows,
+                    columns,
+                    image_start: (sample - view.first) as u32,
+                    image_row_step: row_stride as u32,
+                    scratch_start: (rect.scratch
+                        + row as i32 * rect.row_step
+                        + col as i32 * rect.col_step)
+                        * words as i32
+                        + component as i32,
+                    scratch_row_step: rect.row_step * words as i32,
+                    scratch_col_step: rect.col_step * words as i32,
+                    scatter: u32::from(scatter),
+                    sample_words: words as u32,
+                    _pad: [0; 3],
+                };
+                self.encode_transfer(submission, &view, scratch, params)?;
+                col += columns;
+                if col == rect.columns {
+                    col = 0;
+                    row += rows;
+                }
             }
         }
         Ok(())
@@ -942,9 +1041,9 @@ fn reflect(index: i64, length: u32) -> u32 {
 
 #[cfg(all(test, not(feature = "precision-f64")))]
 mod tests {
+    use super::super::reference::blur_channel;
     use super::*;
     use spektrafilm_backend::telemetry::{CollectionMode, ObservationContext};
-    use spektrafilm_math::gaussian::gaussian_blur_channel;
     use std::sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -1073,10 +1172,10 @@ mod tests {
         let actual = gpu.read_mapped_f32(&readback, bytes * 2);
         let (tiled, whole) = actual.split_at(sentinel.len());
         for channel in 0..3 {
-            let input_channel: Vec<Scalar> = (0..samples / 3)
+            let input_channel: Vec<f32> = (0..samples / 3)
                 .map(|pixel| source[source_offset as usize + pixel * 3 + channel])
                 .collect();
-            let expected = gaussian_blur_channel(&input_channel, width, height, sigma[channel]);
+            let expected = blur_channel(&input_channel, width, height, sigma[channel]);
             for (pixel, expected) in expected.into_iter().enumerate() {
                 let index = destination_offset as usize + pixel * 3 + channel;
                 assert!(
@@ -1105,15 +1204,15 @@ mod tests {
     #[test]
     fn paged_iir_preserves_both_true_endpoints_and_recursion_seams() {
         compare(71, 67, [3.0, 8.0, 20.0], 192);
-        compare(1, 39, [3.0, 8.0, 20.0], 12);
-        compare(39, 1, [3.0, 8.0, 20.0], 12);
+        compare(1, 39, [3.0, 8.0, 20.0], 24);
+        compare(39, 1, [3.0, 8.0, 20.0], 24);
     }
 
     #[test]
     fn paged_fir_reflects_true_support_and_keeps_mixed_channel_order() {
-        compare(29, 23, [2.99, 3.5, 0.0], 76);
-        compare(7, 3, [2.99, 0.4, 0.1667], 76);
-        compare(1, 1, [2.99, 3.0, 0.0], 76);
+        compare(29, 23, [2.99, 3.5, 0.0], 152);
+        compare(7, 3, [2.99, 0.4, 0.1667], 152);
+        compare(1, 1, [2.99, 3.0, 0.0], 152);
     }
 
     #[test]
@@ -1148,7 +1247,7 @@ mod working_set_tests {
         let gpu = crate::test_support::adapter();
         let source = transport(&gpu, "gaussian_minimum_source", 12, false);
         let destination = transport(&gpu, "gaussian_minimum_destination", 12, false);
-        for (sigma, limit, minimum) in [([2.99, 0.0, 0.0], 75, 76), ([3.0, 0.0, 0.0], 11, 12)] {
+        for (sigma, limit, minimum) in [([2.99, 0.0, 0.0], 151, 152), ([3.0, 0.0, 0.0], 23, 24)] {
             let error = match BoundedBlur::build(
                 &gpu,
                 1,
@@ -1175,8 +1274,8 @@ mod working_set_tests {
 
 #[cfg(all(test, not(feature = "precision-f64")))]
 mod physical_page_tests {
+    use super::super::reference::blur_channel;
     use super::*;
-    use spektrafilm_math::gaussian::gaussian_blur_channel;
 
     #[test]
     fn physical_pages_preserve_layer_offsets_axis_seams_and_neighbours() {
@@ -1221,11 +1320,11 @@ mod physical_page_tests {
             sigma,
             source_sample,
             destination_sample,
-            76,
+            152,
         )
         .unwrap();
         assert!(state._intermediate.0.len() > 1);
-        assert!(state._intermediate.0.iter().all(|p| p.bytes <= 76));
+        assert!(state._intermediate.0.iter().all(|p| p.bytes <= 152));
         let bytes = sentinel.len() as u64 * 4;
         let readback = gpu.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("gaussian_physical_test_readback"),
@@ -1239,10 +1338,10 @@ mod physical_page_tests {
         gpu.queue.submit(Some(encoder.finish()));
         let actual = gpu.read_mapped_f32(&readback, bytes);
         for channel in 0..3 {
-            let input: Vec<Scalar> = (0..pixels)
+            let input: Vec<f32> = (0..pixels)
                 .map(|pixel| values[source_sample as usize + pixel * 3 + channel])
                 .collect();
-            let expected = gaussian_blur_channel(&input, width, height, sigma[channel]);
+            let expected = blur_channel(&input, width, height, sigma[channel]);
             for (pixel, expected) in expected.into_iter().enumerate() {
                 let got = actual[destination_sample as usize + pixel * 3 + channel];
                 assert!(
@@ -1365,6 +1464,274 @@ mod physical_page_tests {
                     .zip(&values)
                     .all(|(a, b)| a.to_bits() == b.to_bits())
             );
+        }
+    }
+}
+
+#[cfg(test)]
+mod binary64_tests {
+    use super::*;
+    use crate::wgpu_backend::grain::raster::RasterStorage;
+
+    fn reference_axis(
+        input: &[f64],
+        width: usize,
+        height: usize,
+        sigma: f64,
+        vertical: bool,
+        f32_working: bool,
+    ) -> Vec<f64> {
+        let mut output = vec![0.0; input.len()];
+        let length = if vertical { height } else { width };
+        let lines = if vertical { width } else { height };
+        let at = |line: usize, coordinate: usize| {
+            if vertical {
+                coordinate * width + line
+            } else {
+                line * width + coordinate
+            }
+        };
+        for line in 0..lines {
+            if sigma < 3.0 {
+                let (radius, kernel) = gaussian_kernel_f64(sigma).unwrap();
+                for coordinate in 0..length {
+                    for (tap, &weight) in kernel.iter().enumerate() {
+                        let source = reflect(
+                            coordinate as i64 + tap as i64 - i64::from(radius),
+                            length as u32,
+                        );
+                        output[at(line, coordinate)] += input[at(line, source as usize)] * weight;
+                        if f32_working && vertical {
+                            output[at(line, coordinate)] =
+                                f64::from(output[at(line, coordinate)] as f32);
+                        }
+                    }
+                    if f32_working {
+                        output[at(line, coordinate)] =
+                            f64::from(output[at(line, coordinate)] as f32);
+                    }
+                }
+            } else {
+                let (a, b1, b2, b3) = iir_coefficients_f64(sigma);
+                let mut state = [input[at(line, 0)]; 3];
+                for coordinate in 0..length {
+                    let value = a * input[at(line, coordinate)]
+                        + b1 * state[0]
+                        + b2 * state[1]
+                        + b3 * state[2];
+                    output[at(line, coordinate)] = if f32_working {
+                        f64::from(value as f32)
+                    } else {
+                        value
+                    };
+                    state = [value, state[0], state[1]];
+                }
+                state = [output[at(line, length - 1)]; 3];
+                for coordinate in (0..length).rev() {
+                    let value = a * output[at(line, coordinate)]
+                        + b1 * state[0]
+                        + b2 * state[1]
+                        + b3 * state[2];
+                    output[at(line, coordinate)] = if f32_working {
+                        f64::from(value as f32)
+                    } else {
+                        value
+                    };
+                    state = [value, state[0], state[1]];
+                }
+            }
+        }
+        output
+    }
+
+    #[test]
+    fn binary64_pages_preserve_dispatch_true_endpoints_and_split_sample_bits() {
+        let gpu = crate::test_support::adapter();
+        let below_three = f64::from_bits(3.0f64.to_bits() - 1);
+        assert_eq!(below_three as f32, 3.0);
+        for (width, height) in [(137u32, 3u32), (1, 17), (17, 1)] {
+            let samples = (width * height * 3) as usize;
+            let values: Vec<f64> = (0..samples + 15)
+                .map(|index| {
+                    if index == 5 {
+                        7.0
+                    } else if index == samples + 4 {
+                        -3.0
+                    } else {
+                        ((index * 37 + index * index * 13) % 103) as f64 / 103.0 + 1e-12
+                    }
+                })
+                .collect();
+            let sentinel = vec![123.0f64; values.len()];
+            // Seven raw RGB12 units per source page split f64 samples. Different
+            // destination boundaries catch dropped high words and neighbour writes.
+            let split = |data: &[f64], page_bytes: usize| -> Vec<ImagePage> {
+                bytemuck::cast_slice::<f64, u8>(data)
+                    .chunks(page_bytes)
+                    .enumerate()
+                    .map(|(index, bytes)| ImagePage {
+                        first_pixel: (index * page_bytes / 12) as u32,
+                        n_pixels: (bytes.len() / 12) as u32,
+                        buffer: gpu
+                            .device
+                            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                                label: Some("binary64_gaussian_raw_page"),
+                                contents: bytes,
+                                usage: wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST,
+                            }),
+                    })
+                    .collect()
+            };
+            let source = split(&values, 84);
+            let destination = split(&sentinel, 132);
+            let sigma = [below_three, 3.0, 0.0];
+            let state = BoundedBlur::build_f64_paged(
+                &gpu,
+                width,
+                height,
+                &source,
+                &destination,
+                sigma,
+                5,
+                7,
+                192,
+            )
+            .unwrap();
+            assert!(
+                state.directions[0].vertical,
+                "original f64 sigma below 3 must use vertical-first FIR"
+            );
+            assert!(
+                !state.directions[2].vertical,
+                "sigma exactly 3 must use horizontal-first IIR"
+            );
+            assert!(state.input.size() <= 192 && state._state.size() <= 192);
+            state.submit(&gpu).unwrap();
+            let bytes = values.len() as u64 * 8;
+            let readback = gpu.device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("binary64_gaussian_readback"),
+                size: bytes,
+                usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+                mapped_at_creation: false,
+            });
+            let mut encoder = gpu.device.create_command_encoder(&Default::default());
+            destination.visit(&mut |first, buffer| {
+                encoder.copy_buffer_to_buffer(buffer, 0, &readback, first, buffer.size())
+            });
+            gpu.queue.submit(Some(encoder.finish()));
+            let actual: Vec<f64> = gpu.pipe.read_mapped(&readback, bytes);
+            assert_eq!(&actual[..7], &sentinel[..7]);
+            assert_eq!(&actual[7 + samples..], &sentinel[7 + samples..]);
+            for channel in 0..3 {
+                let input: Vec<f64> = (0..samples / 3)
+                    .map(|pixel| values[5 + pixel * 3 + channel])
+                    .collect();
+                let expected = if sigma[channel] <= 0.0 {
+                    input
+                } else {
+                    let vertical_first = sigma[channel] < 3.0;
+                    let tmp = reference_axis(
+                        &input,
+                        width as usize,
+                        height as usize,
+                        sigma[channel],
+                        vertical_first,
+                        false,
+                    );
+                    reference_axis(
+                        &tmp,
+                        width as usize,
+                        height as usize,
+                        sigma[channel],
+                        !vertical_first,
+                        false,
+                    )
+                };
+                for (pixel, want) in expected.into_iter().enumerate() {
+                    let got = actual[7 + pixel * 3 + channel];
+                    assert!(
+                        (got - want).abs() <= 2e-12 * want.abs().max(1.0),
+                        "{width}x{height}, channel {channel}, pixel {pixel}: {got} != {want}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn f32_storage_retains_f64_taps_accumulation_and_recursive_state_across_pages() {
+        let gpu = crate::test_support::adapter();
+        let (width, height) = (71u32, 9u32);
+        let samples = (width * height * 3) as usize;
+        let values: Vec<f32> = (0..samples)
+            .map(|index| {
+                if index < 3 {
+                    7.0
+                } else {
+                    ((index * 37 + index * index * 13) % 103) as f32 / 103.0
+                }
+            })
+            .collect();
+        let source = gpu
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("mixed_precision_gaussian_source"),
+                contents: bytemuck::cast_slice(&values),
+                usage: wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::STORAGE,
+            });
+        let bytes = samples as u64 * 4;
+        let output = transport(&gpu, "mixed_precision_gaussian_output", bytes, true);
+        let sigma = [0.5 - 1e-10, f64::from_bits(3.0f64.to_bits() - 1), 20.0];
+        let bounded = BoundedBlur::build(
+            &gpu, width, height, &source, &output, None, sigma, 0, 0, 192,
+        )
+        .unwrap();
+        let direct_output = transport(&gpu, "mixed_precision_gaussian_direct", bytes, true);
+        let direct =
+            build_grain_blur(&gpu, width, height, &source, &direct_output, sigma, 0, 0).unwrap();
+        bounded.submit(&gpu).unwrap();
+        direct.submit(&gpu).unwrap();
+        let readback = gpu.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("mixed_precision_gaussian_readback"),
+            size: bytes * 2,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        let mut encoder = gpu.device.create_command_encoder(&Default::default());
+        encoder.copy_buffer_to_buffer(&output, 0, &readback, 0, bytes);
+        encoder.copy_buffer_to_buffer(&direct_output, 0, &readback, bytes, bytes);
+        gpu.queue.submit(Some(encoder.finish()));
+        let actual: Vec<f32> = gpu.pipe.read_mapped(&readback, bytes * 2);
+        for channel in 0..3 {
+            let input: Vec<f64> = (0..samples / 3)
+                .map(|pixel| f64::from(values[pixel * 3 + channel]))
+                .collect();
+            let vertical_first = sigma[channel] < 3.0;
+            let tmp = reference_axis(
+                &input,
+                width as usize,
+                height as usize,
+                sigma[channel],
+                vertical_first,
+                true,
+            );
+            let expected = reference_axis(
+                &tmp,
+                width as usize,
+                height as usize,
+                sigma[channel],
+                !vertical_first,
+                true,
+            );
+            for (pixel, want) in expected.into_iter().enumerate() {
+                for base in [0, samples] {
+                    let got = f64::from(actual[base + pixel * 3 + channel]);
+                    assert!(
+                        (got - want).abs() <= 2e-7 * want.abs().max(1.0),
+                        "sample storage f32, base {base}, channel {channel}, pixel {pixel}: {got} != {want}"
+                    );
+                }
+            }
         }
     }
 }

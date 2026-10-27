@@ -325,16 +325,11 @@ fn enlarger_diffusion_print_fence_matches_cpu() {
     );
 }
 
-/// The default Spektra grain runs on the resident chain as an assembled
-/// CPU fence on the film density buffer (pipe architecture, capability
-/// class). The fence readback narrows the grain's density conditioning
-/// to f32, which perturbs Poisson count decisions at their boundaries;
-/// this re-frozen budget (GPU execution design, fence semantics) is
-/// one decade wider than the pure-resident budget for exactly that
-/// reason. Transfer accounting: 1 readback per fence plus the final
-/// readback — 2 + 2 × fence_count total.
+/// Active Spektra must execute through the resident film/print chain.
+/// This inherited whole-pipeline budget includes upstream film conditioning;
+/// sampler draw order and f32 storage boundaries have separate device checks.
 #[test]
-fn spektra_grain_resident_fence_matches_cpu() {
+fn spektra_grain_resident_matches_cpu() {
     use spektrafilm_math::precision::from_f64;
 
     let gpu = spektrafilm_gpu::test_support::adapter();
@@ -342,7 +337,8 @@ fn spektra_grain_resident_fence_matches_cpu() {
     let film = crate::profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();
     let print = crate::profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap();
     let mut params = RuntimeParams::default();
-    // Defaults keep Spektra grain active — the fence scenario.
+    params.film_render.grain.engine = crate::params::GrainEngine::Spektra;
+    params.film_render.grain.rms_granularity = [6.0, 8.0, 10.0];
     params.camera.auto_exposure = false;
     params.io.output_gamut_compress.algorithm = "off".into();
 
@@ -371,8 +367,8 @@ fn spektra_grain_resident_fence_matches_cpu() {
         sum += d;
     }
     let mean = sum / out_cpu.data.len() as f64;
-    assert!(mean < 5e-2, "fence mean divergence: {mean}");
-    assert!(max_diff < 5e-1, "fence max divergence: {max_diff}");
+    assert!(mean < 5e-2, "resident mean divergence: {mean}");
+    assert!(max_diff < 5e-1, "resident max divergence: {max_diff}");
 }
 
 /// Params for the Dye fence parity checks: the reference print route with
@@ -544,8 +540,7 @@ fn spatial_deactivation_bypasses_the_dye_density_fence() {
 /// Input transfer decoding no longer demotes to per-stage: the resident
 /// route decodes the input before upload with the same expression as
 /// `expose`, so a decoded-input render must match the CPU reference
-/// under the same Spektra-fence budget (the default engine still runs
-/// as the density fence).
+/// under the same Spektra-fence budget.
 #[test]
 fn input_transfer_decoding_resident_matches_cpu() {
     use spektrafilm_math::precision::from_f64;
@@ -555,6 +550,8 @@ fn input_transfer_decoding_resident_matches_cpu() {
     let film = crate::profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();
     let print = crate::profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap();
     let mut params = RuntimeParams::default();
+    params.film_render.grain.engine = crate::params::GrainEngine::Spektra;
+    params.film_render.grain.rms_granularity = [6.0, 8.0, 10.0];
     params.camera.auto_exposure = false;
     params.io.input_cctf_decoding = true;
     params.io.input_color_space = "sRGB".into();
@@ -1105,21 +1102,22 @@ fn explicit_gpu_request_runs_the_dye_field_on_the_device() {
     );
 }
 
-/// The scipy MT19937 regime is Spektra's default (`use_fast_stats` off) and
-/// the composite path never leaves it, so the resident chain must run grain
-/// on the device rather than fall back to the assembled host fence. The
-/// device sampler reproduces the reference draw order (all Poisson first,
-/// then all binomial) for both the layered and composite regimes, so the
-/// whole stage resolves on the device and agrees with the CPU reference.
+/// Both the profile's three-sublayer model and the single-curve model must
+/// execute on the selected device with the sequential NumPy draw order.
 #[test]
 fn spektra_mt19937_grain_runs_on_the_device() {
     use spektrafilm_math::precision::from_f64;
 
-    for sublayers_active in [true, false] {
-        let gpu = spektrafilm_gpu::test_support::adapter();
-        let dir = data_dir();
-        let film = crate::profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();
-        let print = crate::profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap();
+    let gpu = spektrafilm_gpu::test_support::adapter();
+    let dir = data_dir();
+    let source_film = crate::profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();
+    let print = crate::profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap();
+    for single_curve in [false, true] {
+        let mut film = source_film.clone();
+        if single_curve {
+            film.data.density_curves_layers.clear();
+            film.data.density_curves_model = None;
+        }
         let mut params = RuntimeParams::default();
         params.workflow.route = "input > film > scan".into();
         params.io.scan_film = true;
@@ -1130,9 +1128,9 @@ fn spektra_mt19937_grain_runs_on_the_device() {
         params.settings.use_fast_stats = false;
         params.film_render.grain.active = true;
         params.film_render.grain.engine = crate::params::grain::GrainEngine::Spektra;
-        params.film_render.grain.sublayers_active = sublayers_active;
+        params.film_render.grain.rms_granularity = [6.0, 8.0, 10.0];
 
-        let pipeline = Pipeline::new_with_spectral(film, print, params, &dir).unwrap();
+        let pipeline = Pipeline::new_with_spectral(film, print.clone(), params, &dir).unwrap();
         let (w, h) = (16u32, 16u32);
         let data: Vec<_> = (0..w * h * 3)
             .map(|i| from_f64(0.05 + 0.5 * ((i * 37) % 256) as f64 / 255.0))
@@ -1145,7 +1143,7 @@ fn spektra_mt19937_grain_runs_on_the_device() {
                 .observations
                 .iter()
                 .any(|stage| stage.name == "grain_v1"),
-            "the MT19937 regime fell back to the host fence (sublayers_active={sublayers_active}): {:?}",
+            "the MT19937 regime fell back to the host fence (single_curve={single_curve}): {:?}",
             snapshot
                 .observations
                 .iter()
@@ -1172,11 +1170,11 @@ fn spektra_mt19937_grain_runs_on_the_device() {
         let mean = sum / out_cpu.data.len() as f64;
         assert!(
             mean < 5e-2,
-            "MT19937 grain mean divergence (sublayers_active={sublayers_active}): {mean}"
+            "MT19937 grain mean divergence (single_curve={single_curve}): {mean}"
         );
         assert!(
             max_diff < 5e-1,
-            "MT19937 grain max divergence (sublayers_active={sublayers_active}): {max_diff}"
+            "MT19937 grain max divergence (single_curve={single_curve}): {max_diff}"
         );
     }
 }
@@ -1625,6 +1623,7 @@ fn grain_engine_controls_resident_fallback() {
     pipeline.params.settings.rgb_to_raw_method = "hanatos2025".into();
 
     pipeline.params.film_render.grain.engine = crate::params::grain::GrainEngine::Spektra;
+    pipeline.params.film_render.grain.rms_granularity = [6.0, 8.0, 10.0];
     // Spektra formation is a resident device stage.
     assert!(matches!(
         pipeline.resident_decision(),

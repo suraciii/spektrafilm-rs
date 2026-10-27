@@ -22,14 +22,7 @@ pub(super) fn normalize_grain_section(section: &mut Value) {
     let Some(object) = section.as_object_mut() else {
         return;
     };
-    if let Some(value) = object.get("particle_scale_layers").cloned() {
-        object.insert("particle_scale_sublayers".to_string(), value);
-    }
-    // These fields are now effective preset-owned controls. Keep them in the
-    // normalized GUI state; only the legacy derived/no-op fields are removed.
-    for key in ["particle_scale_layers", "monochrome"] {
-        object.remove(key);
-    }
+    object.remove("monochrome");
 }
 
 pub(super) fn validate_state_parameters(value: &mut Value, version: Option<u64>) -> Result<()> {
@@ -118,6 +111,18 @@ pub(super) fn validate_state_parameters(value: &mut Value, version: Option<u64>)
             value["cmyk"]["active"] = json!(true);
         }
     }
+    // Validate the mirror before canonicalization drops extension-only leaves.
+    // In particular, an explicit null or unknown engine is never omission.
+    if let Some(grain) = value.get("grain") {
+        let mut grain = grain.clone();
+        normalize_grain_section(&mut grain);
+        let _: spektrafilm_core::params::GrainParams =
+            serde_json::from_value(grain).map_err(|error| {
+                crate::app::Message::new("operations.state.invalid_parameters")
+                    .arg("path", "grain")
+                    .context(error)
+            })?;
+    }
     let mut explicit = value["rust"]["runtime"].clone();
     if explicit.is_null() {
         explicit = json!({});
@@ -195,6 +200,16 @@ pub(super) fn validate_state_parameters(value: &mut Value, version: Option<u64>)
             .arg("path", "rust.runtime")
             .context(error)
     })?;
+    if let Some(fields) = value.get("grain") {
+        let mut grain = fields.clone();
+        normalize_grain_section(&mut grain);
+        let projected = json!({"film_render": {"grain": grain}});
+        let _: RuntimeParams = serde_json::from_value(projected).map_err(|error| {
+            crate::app::Message::new("operations.state.invalid_parameters")
+                .arg("path", "grain")
+                .context(error)
+        })?;
+    }
     for (section, group, leaf) in [
         ("output_gamut_compress", "io", "output_gamut_compress"),
         ("preflashing", "enlarger", ""),

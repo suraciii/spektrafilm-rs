@@ -1,7 +1,9 @@
 mod discovery;
 mod effects;
 mod metadata;
-pub use effects::inactive_reason;
+pub use effects::{
+    grain_control_inactive_reason, grain_control_inactive_reason_with_profile, inactive_reason,
+};
 
 use discovery::schema_value;
 pub use discovery::{
@@ -432,7 +434,6 @@ impl ParameterEdits {
         // baseline before that conversion can erase an invalid Option value.
         validate_finite_detailed(params)?;
         let seed = params.random_seed;
-        let particle_layers = params.film_render.grain.particle_scale_layers;
         let explicit_section_paths = params.explicit_section_paths.clone();
         let mut root = serde_json::to_value(&*params).map_err(|error| {
             Error::new(
@@ -454,7 +455,6 @@ impl ParameterEdits {
             .arg("detail", error)
         })?;
         params.random_seed = seed;
-        params.film_render.grain.particle_scale_layers = particle_layers;
         params.explicit_section_paths = explicit_section_paths;
         validate_finite_detailed(params)
     }
@@ -1233,19 +1233,13 @@ pub fn validate_finite_detailed(params: &RuntimeParams) -> Result<(), Error> {
     if params
         .film_render
         .grain
-        .particle_scale_layers
+        .fotufilm
+        .layers
         .iter()
+        .chain(params.film_render.grain.fotufilm.layer_weights.iter())
+        .chain(params.film_render.grain.fotufilm.layer_size_ratio.iter())
+        .chain(params.film_render.grain.fotufilm.sublayer_shares.iter())
         .any(|x| !x.is_finite())
-        || params
-            .film_render
-            .grain
-            .fotufilm
-            .layers
-            .iter()
-            .chain(params.film_render.grain.fotufilm.layer_weights.iter())
-            .chain(params.film_render.grain.fotufilm.layer_size_ratio.iter())
-            .chain(params.film_render.grain.fotufilm.sublayer_shares.iter())
-            .any(|x| !x.is_finite())
         || [
             params.film_render.grain.fotufilm.amount,
             params.film_render.grain.fotufilm.size,
@@ -1557,12 +1551,10 @@ mod tests {
             neutral_print_filters_protected: Some([true, false, true]),
             ..Default::default()
         };
-        params.film_render.grain.particle_scale_layers = [9., 8., 7.];
         edits.apply(&mut params).unwrap();
         assert!(params.camera.auto_exposure);
         assert_eq!(params.camera.filter_uv, [1.0, 2.0, 3.0]);
         assert_eq!(params.random_seed, 7);
-        assert_eq!(params.film_render.grain.particle_scale_layers, [9., 8., 7.]);
         assert_eq!(
             params.neutral_print_filters_protected,
             Some([true, false, true])
@@ -2086,7 +2078,6 @@ mod tests {
         for path in [
             "film_render.grain.v3_dye_support_um",
             "film_render.grain.v3_event_area_um2",
-            "film_render.grain.rms_granularity",
             "film_render.grain.channel_correlation",
         ] {
             let found = conditions(path);
@@ -2104,6 +2095,30 @@ mod tests {
                 "a Dye-only control must not claim the Spektra engine: {path}: {described:?}"
             );
         }
+    }
+
+    #[test]
+    fn rms_granularity_is_effective_for_spektra_and_dye_without_layer_controls() {
+        let film: crate::profile::Profile =
+            serde_json::from_str(r#"{"metadata":{},"info":{},"data":{}}"#).unwrap();
+        let mut params = RuntimeParams::default();
+        ParameterEdits::parse("film_render.grain.rms_granularity=[4,5,6]")
+            .unwrap()
+            .apply(&mut params)
+            .unwrap();
+        let path = "film_render.grain.rms_granularity";
+        for engine in [
+            crate::params::GrainEngine::Spektra,
+            crate::params::GrainEngine::Dye,
+        ] {
+            params.film_render.grain.engine = engine;
+            assert_eq!(inactive_reason(path, &params, &film, &film), None);
+        }
+        params.film_render.grain.engine = crate::params::GrainEngine::Procedural;
+        assert_eq!(
+            inactive_reason(path, &params, &film, &film).as_deref(),
+            Some("film_render.grain.engine = spektra or dye")
+        );
     }
 
     #[test]
