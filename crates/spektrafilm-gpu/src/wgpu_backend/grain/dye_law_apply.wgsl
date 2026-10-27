@@ -27,7 +27,7 @@ struct P {
     fog: f32,
     ox: u32,
     oy: u32,
-    pad2: f32,
+    monochrome: u32,
     strength: vec4<f32>,
 };
 @group(0) @binding(0) var<uniform> p: P;
@@ -74,15 +74,21 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     let s = shared_field[i];
     for (var c = 0u; c < 3u; c++) {
         let t = density[i * 3u + c];
-        let wi = a * s + b * own[c];
-        let rel = p.white * p.strength[c] * taper(t);
+        // One effective record: every lane reads the first record's field, strength
+        // and count draw, so a monochrome realization is identical in all three.
+        let mono = p.monochrome != 0u;
+        let own_c = select(own[c], own[0], mono);
+        let strength = select(p.strength[c], 1.0, mono);
+        let wi = a * s + b * own_c;
+        let rel = p.white * strength * taper(t);
         let e = 1.0 + rel * wi;
         if (p.expectation != 0u) {
             out[i * 3u + c] = t;
             continue;
         }
         let lambda = max((t + p.fog) * e * p.area / p.q, 0.0);
-        let z = normal01(100u + c, x + p.ox, y + p.oy);
+        let stream = select(100u + c, 100u, mono);
+        let z = normal01(stream, x + p.ox, y + p.oy);
         let count = lambda + sqrt(lambda) * z;
         out[i * 3u + c] = p.q * count / p.area - p.fog;
     }

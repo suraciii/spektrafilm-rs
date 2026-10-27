@@ -20,4 +20,7 @@ pub struct DyeGpuParams {
     pub grid: DyeReadoutGrid,
     pub seed: u64,
     pub expectation: bool,
+    /// One effective record carried in three equal lanes: every record reads the
+    /// same field, the same strength and the same count draw.
+    pub monochrome: bool,
 }

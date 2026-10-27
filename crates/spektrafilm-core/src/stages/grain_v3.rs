@@ -694,7 +694,7 @@ pub fn readout_with_response(
 /// device count law and is rejected by name; expectation mode and the
 /// field-pitch override are part of the production law and map through.
 fn device_params(
-    _resolved: &GrainV3Params,
+    resolved: &GrainV3Params,
     source_pitch_um: f64,
     grid: ReadoutGrid,
 ) -> Result<spektrafilm_backend::dye_params::DyeGpuParams, String> {
@@ -706,8 +706,9 @@ fn device_params(
             width: grid.width,
             height: grid.height,
         },
-        seed: _resolved.seed,
-        expectation: _resolved.expectation,
+        seed: resolved.seed,
+        expectation: resolved.expectation,
+        monochrome: resolved.monochrome,
     })
 }
 
@@ -931,6 +932,42 @@ mod tests {
     use crate::params::RuntimeParams;
     use crate::test_support::data_dir;
     use spektrafilm_math::precision::from_f64;
+
+    /// A monochrome profile is one effective record: the device must read the same
+    /// field, strength and count draw in every lane, exactly as the host law does.
+    #[test]
+    fn device_monochrome_field_replicates_the_record_in_all_lanes() {
+        use spektrafilm_backend::ComputeBackend as _;
+        let backend = spektrafilm_gpu::test_support::adapter();
+        let film = load("kodak_doublex");
+        let mut params = supported_params();
+        params.film_render.grain.active = true;
+        crate::params_builder::apply_film_specifics(&mut params, &film);
+        let mut resolved = resolve(&film, &params).unwrap();
+        resolved.expectation = false;
+        // A monochrome profile carries one density in three equal lanes.
+        let mut source = density_target(32, 24);
+        for pixel in source.data.chunks_mut(3) {
+            pixel[1] = pixel[0];
+            pixel[2] = pixel[0];
+        }
+        let grid = ReadoutGrid {
+            origin_um: [0.0, 0.0],
+            pitch_um: [4.0, 4.0],
+            width: 32,
+            height: 24,
+        };
+        let device = device_params(&resolved, 4.0, grid).unwrap();
+        assert!(device.monochrome, "the profile resolves as one record");
+        let out = backend
+            .dye_field(&source, &device)
+            .expect("device field path")
+            .expect("device field runs");
+        for pixel in out.pixels() {
+            assert_eq!(pixel[0], pixel[1], "lanes differ at a monochrome sample");
+            assert_eq!(pixel[0], pixel[2], "lanes differ at a monochrome sample");
+        }
+    }
 
     #[test]
     fn device_field_matches_the_cpu_reference_in_expectation() {

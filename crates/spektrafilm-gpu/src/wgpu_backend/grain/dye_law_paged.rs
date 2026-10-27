@@ -215,6 +215,7 @@ impl WgpuBackend {
                     pitch_um: source_pitch,
                     seed: params.seed,
                     expectation: params.expectation,
+                    monochrome: params.monochrome,
                 },
                 readout,
             });

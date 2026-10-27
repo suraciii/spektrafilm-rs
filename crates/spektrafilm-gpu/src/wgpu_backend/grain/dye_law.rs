@@ -121,7 +121,7 @@ struct ApplyParams {
     fog: f32,
     ox: u32,
     oy: u32,
-    pad2: f32,
+    monochrome: u32,
     strength: [f32; 4],
 }
 
@@ -482,6 +482,7 @@ pub(super) struct LawGeom {
     pub pitch_um: f64,
     pub seed: u64,
     pub expectation: bool,
+    pub monochrome: bool,
 }
 
 pub(super) struct LawTaps {
@@ -839,7 +840,7 @@ impl WgpuBackend {
             fog: FOG as f32,
             ox: geom.origin_x,
             oy: geom.origin_y,
-            pad2: 0.0,
+            monochrome: u32::from(geom.monochrome),
             strength: [
                 STRENGTH[0] as f32,
                 STRENGTH[1] as f32,
@@ -905,6 +906,7 @@ impl WgpuBackend {
         grid: &spektrafilm_backend::dye_params::DyeReadoutGrid,
         seed: u64,
         expectation: bool,
+        monochrome: bool,
     ) -> Result<ImageBuf, String> {
         let (width, height) = (image.width, image.height);
         let pixels = u64::from(width) * u64::from(height);
@@ -921,6 +923,7 @@ impl WgpuBackend {
             pitch_um,
             seed,
             expectation,
+            monochrome,
         };
         let pipes = self.dye_law_pipelines();
         let taps = law_taps(pitch_um);
