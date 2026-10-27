@@ -510,7 +510,7 @@ impl Pipeline {
                     input.height(),
                     &self.params,
                     pixel_size_um,
-                    crate::stages::grain_v3::validate_aperture(&self.params)?,
+                    None,
                     spatial_context,
                 )?)
             } else {
@@ -829,16 +829,14 @@ impl Pipeline {
                     scatter_fraction: resolved.2,
                 }
             }),
-            grain_dye_cell_spectral: crate::stages::grain_v3::validate_cell_spectral(&self.params)?,
-            grain_dye_aperture: dye_readout.as_ref().and_then(|plan| plan.aperture),
+            scanner_lens_blur_px,
+            highlight_boost,
+            grain_dye,
             grain_dye_crop: dye_readout
                 .as_ref()
                 .or(fotufilm_readout.as_ref())
                 .and_then(|plan| plan.deferred_crop)
                 .map(|r| [r.x as u32, r.y as u32, r.width as u32, r.height as u32]),
-            scanner_lens_blur_px,
-            highlight_boost,
-            grain_dye,
             grain_fotufilm,
             grain_v1,
             density_cpu_stage,

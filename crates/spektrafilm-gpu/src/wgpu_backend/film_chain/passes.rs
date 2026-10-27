@@ -55,12 +55,10 @@ enum ChainStep {
     GrainV1,
     Dye,
     Fotufilm,
-    DyePrintLog,
     EnlargerLut,
     PrintRoundtrip,
     Print,
     EnlargerDiffusion,
-    Collapse,
     PrintDensity,
     Readout,
     ScannerLut,
@@ -125,12 +123,12 @@ impl ChainStep {
             Self::GrainV1 => super::super::grain::GRAIN_V1_STAGE_NAME,
             Self::Dye => "grain_dye",
             Self::Fotufilm => "grain_fotufilm",
-            Self::DyePrintLog => "dye_print_response_log",
+            // removed: dye_print_response_log",
             Self::EnlargerLut => "enlarger_lut",
             Self::PrintRoundtrip => "print_lut_roundtrip",
             Self::Print => "print_spectral",
             Self::EnlargerDiffusion => "enlarger_diffusion",
-            Self::Collapse => "dye_aperture_collapse",
+            // removed: dye_aperture_collapse",
             Self::PrintDensity => "print_density",
             Self::Readout => "scanner_density",
             Self::ScannerLut => "scanner_lut",
@@ -193,9 +191,7 @@ fn chain_steps(p: &spektrafilm_backend::FilmChainParams<'_>) -> Result<Vec<Chain
     }
     boundaries[tap_index(Tap::CmyFilm)] = steps.len();
     if !p.scan_film {
-        if p.grain_dye_cell_spectral {
-            steps.push(DyePrintLog);
-        } else if p.enlarger_lut.is_some() {
+        if p.enlarger_lut.is_some() {
             steps.push(EnlargerLut);
             if p.enlarger_diffusion.is_none() {
                 steps.push(PrintRoundtrip);
@@ -206,14 +202,11 @@ fn chain_steps(p: &spektrafilm_backend::FilmChainParams<'_>) -> Result<Vec<Chain
         if p.enlarger_diffusion.is_some() {
             steps.push(EnlargerDiffusion);
         }
-        if p.grain_dye_aperture.is_some() {
-            steps.push(Collapse);
-        }
         boundaries[tap_index(Tap::LogEPrint)] = steps.len();
         steps.push(PrintDensity);
     }
     boundaries[tap_index(Tap::CmyPrint)] = steps.len();
-    if !(p.grain_dye_cell_spectral && p.scan_film) {
+    if true {
         if p.scan_readout.is_some() {
             steps.push(Readout);
         } else if p.scanner_lut.is_some() {
@@ -291,15 +284,7 @@ impl ChainGeometry {
             source
         };
         raster_bytes(field)?;
-        let tail = if steps.contains(&ChainStep::Collapse) {
-            let factor = p.grain_dye_aperture.ok_or("Dye aperture missing")?;
-            if factor == 0 {
-                return Err("Dye aperture must be nonzero".into());
-            }
-            (field.0 / factor, field.1 / factor)
-        } else {
-            field
-        };
+        let tail = field;
         raster_bytes(tail)?;
         Ok(Self {
             source,
@@ -546,7 +531,7 @@ impl WgpuBackend {
             && steps.iter().any(|s| {
                 matches!(
                     s,
-                    ChainStep::DyePrintLog | ChainStep::Print | ChainStep::EnlargerLut
+                    ChainStep::Print | ChainStep::EnlargerLut
                 )
             })
         {
@@ -561,7 +546,6 @@ impl WgpuBackend {
                 geometry.source
             } else if matches!(
                 step,
-                ChainStep::DyePrintLog
                     | ChainStep::Print
                     | ChainStep::EnlargerLut
                     | ChainStep::PrintRoundtrip
@@ -590,24 +574,10 @@ impl WgpuBackend {
             }
             let stage = match step {
                 ChainStep::Dye => {
-                    let wavelengths = p.grain_dye_cell_spectral.then(|| {
-                        let weights = if p.scan_film {
-                            spektrafilm_math::spectral::N_WAVELENGTHS
-                        } else {
-                            p.print_sensitivity.len()
-                        };
-                        let illuminant = if p.scan_film {
-                            p.scan_illuminant.len()
-                        } else {
-                            p.print_illuminant.len()
-                        };
-                        p.film_channel_density.len().min(illuminant).min(weights)
-                    });
                     self.dye_workspace_bytes(
                         extent.0,
                         extent.1,
                         p.grain_dye.as_ref().ok_or("Dye parameters missing")?,
-                        wavelengths,
                     )?
                 }
                 ChainStep::Fotufilm => self.fotufilm_workspace_bytes(
@@ -641,14 +611,6 @@ impl WgpuBackend {
                 peak: stage_peak,
                 pending,
             });
-        }
-        if let Some(rect) = p.grain_dye_crop {
-            let selected = match p.collect {
-                Tap::LogEFilm => source_bytes,
-                Tap::CmyFilm => field_bytes,
-                _ => tail_bytes,
-            };
-            peak = peak.max(add(selected, raster_bytes((rect[2], rect[3]))?)?);
         }
         // The existing static cache's own cap bounds cold immutable uploads;
         // this is capacity headroom, not cumulative telemetry or VRAM residency.
@@ -933,79 +895,11 @@ impl WgpuBackend {
                                 width,
                                 height,
                             );
-                            let response = if p.grain_dye_cell_spectral {
-                                Some(if p.scan_film {
-                                    spektrafilm_backend::DyeResponseGpuParams::Scan {
-                                        channel_density: p.film_channel_density,
-                                        base_density: p.film_base_density,
-                                        illuminant: p.scan_illuminant,
-                                        normalization: p.scan_normalization,
-                                        xyz_to_rgb: p.scan_xyz_to_rgb,
-                                    }
-                                } else {
-                                    spektrafilm_backend::DyeResponseGpuParams::Print {
-                                        channel_density: p.film_channel_density,
-                                        base_density: p.film_base_density,
-                                        illuminant: p.print_illuminant,
-                                        sensitivity: p.print_sensitivity,
-                                        normalization_factor: p.print_normalization_factor,
-                                        exposure_scale: p.print_exposure_scale,
-                                        preflash: p.preflash,
-                                    }
-                                })
-                            } else {
-                                None
-                            };
                             let dye_params = p.grain_dye.as_ref().ok_or("Dye missing")?;
-                            if p.grain_dye_cell_spectral
-                                && matches!(
-                                    dye_params.law,
-                                    spektrafilm_backend::dye_params::DyeFieldLaw::Continuous
-                                )
-                            {
-                                return Err("Dye grain law: the spectral cell response is not implemented for the continuous law".into());
-                            }
-                            let field_pages = if matches!(
-                                dye_params.law,
-                                spektrafilm_backend::dye_params::DyeFieldLaw::Continuous
-                            ) {
-                                let law = self.prepare_dye_law(width, height, &source, dye_params)?;
-                                law.submit(self)?;
-                                self.check_dye_status(&law.status_buffer())?;
-                                law.output_pages()
-                            } else {
-                                let state = self.prepare_dye_paged(
-                                    width,
-                                    height,
-                                    &source,
-                                    dye_params,
-                                    response.as_ref(),
-                                )?;
-                                state.submit(self)?;
-                                self.check_dye_status(&state.status_buffer())?;
-                                state.output_pages()
-                            };
-                            rasters.field = field_pages;
-                            if p.grain_dye_cell_spectral && p.scan_film {
-                                // The response output is already scanner RGB. Keep a
-                                // distinct terminal carrier, even when extents alias.
-                                ensure_pages(
-                                    self,
-                                    &mut rasters.tail_b,
-                                    geometry.tail,
-                                    "field_tail_rgb",
-                                )?;
-                                let mut copy =
-                                    super::super::grain::raster::RasterCommands::default();
-                                copy.copy(
-                                    &rasters.field,
-                                    0,
-                                    &rasters.tail_b,
-                                    0,
-                                    raster_bytes(geometry.field)?,
-                                );
-                                copy.submit(self)?;
-                            }
+                            let law = self.prepare_dye_law(width, height, &source, dye_params)?;
+                            law.submit(self)?;
+                            self.check_dye_status(&law.status_buffer())?;
+                            rasters.field = law.output_pages();
                             Ok(())
                         }
                         Fotufilm => {
@@ -1024,19 +918,6 @@ impl WgpuBackend {
                             state.submit(self)?;
                             rasters.field = state.output_pages();
                             Ok(())
-                        }
-                        DyePrintLog => {
-                            rasters.fine_output(self, geometry)?;
-                            let source = super::device_image::BufferPayload::from_pages(
-                                self.backend_id(),
-                                rasters.field.clone(),
-                                geometry.field.0,
-                                geometry.field.1,
-                            );
-                            let pages = self.dye_log10_pages(&source)?;
-                            let mut copy = super::super::grain::raster::RasterCommands::default();
-                            copy.copy(&pages, 0, &rasters.fine, 0, raster_bytes(geometry.field)?);
-                            copy.submit(self)
                         }
                         EnlargerLut => {
                             rasters.fine_output(self, geometry)?;
@@ -1097,21 +978,6 @@ impl WgpuBackend {
                                 .ok_or("enlarger diffusion missing")?,
                             Some(p.print_exposure_scale),
                         ),
-                        Collapse => {
-                            let source = super::device_image::BufferPayload::from_pages(
-                                self.backend_id(),
-                                rasters.fine.clone(),
-                                geometry.field.0,
-                                geometry.field.1,
-                            );
-                            let (pages, _, _) = self.dye_aperture_collapse_pages(
-                                &source,
-                                p.grain_dye_aperture.ok_or("aperture missing")?,
-                            )?;
-                            let mut copy = super::super::grain::raster::RasterCommands::default();
-                            copy.copy(&pages, 0, &rasters.tail_b, 0, raster_bytes(geometry.tail)?);
-                            copy.submit(self)
-                        }
                         PrintDensity => {
                             ensure_pages(
                                 self,
@@ -1286,8 +1152,7 @@ impl WgpuBackend {
             if !remaining.iter().any(|s| {
                 matches!(
                     s,
-                    ChainStep::DyePrintLog
-                        | ChainStep::EnlargerLut
+                            | ChainStep::EnlargerLut
                         | ChainStep::Print
                         | ChainStep::Readout
                         | ChainStep::ScannerLut
@@ -1300,7 +1165,7 @@ impl WgpuBackend {
             if !remaining.iter().any(|s| {
                 matches!(
                     s,
-                    ChainStep::PrintRoundtrip | ChainStep::EnlargerDiffusion | ChainStep::Collapse
+                    ChainStep::PrintRoundtrip | ChainStep::EnlargerDiffusion
                 )
             }) {
                 rasters.fine.clear();
@@ -1347,7 +1212,7 @@ impl WgpuBackend {
             .filter(|_| tap_index(p.collect) >= tap_index(Tap::CmyFilm))
             .map_or(p.pixel_pitch_um, |dye| {
                 let axis = usize::from(p.image_height > p.image_width);
-                dye.grid.pitch_um[axis] * f64::from(p.grain_dye_aperture.unwrap_or(1))
+                dye.grid.pitch_um[axis]
             });
         let pixel_pitch_um = p
             .grain_fotufilm
@@ -1569,8 +1434,6 @@ mod tests {
             scanner_lens_blur_px: None,
             highlight_boost: None,
             grain_dye: None,
-            grain_dye_cell_spectral: false,
-            grain_dye_aperture: None,
             grain_dye_crop: None,
             density_cpu_stage: None,
             scan_acquisition_cpu_stage: None,
@@ -1596,7 +1459,6 @@ mod tests {
         // for a prefix tap. Empty density/spectral tables are intentionally
         // unusable downstream, so executing the tail would also fail.
         p.scanner_lens_blur_px = Some(8.0);
-        p.grain_dye_aperture = Some(0);
         let host = ImageBuf::from_data(256, 8, f32_to_scalars(vec![1.0; 256 * 8 * 3]));
         let input = gpu
             .retain_image(
@@ -1686,17 +1548,16 @@ mod tests {
         let mut p = params(8, 4);
         p.collect = Tap::LogEFilm;
         p.scanner_lens_blur_px = Some(3.0);
-        p.grain_dye_aperture = Some(0);
         let prefix = chain_steps(&p).unwrap();
         assert_eq!(prefix, [ChainStep::Front, ChainStep::Log]);
         assert_eq!(ChainGeometry::plan(&p, &prefix).unwrap().tail, (8, 4));
         p.collect = Tap::RgbOut;
-        assert!(
+        assert_eq!(
             ChainGeometry::plan(&p, &chain_steps(&p).unwrap())
-                .unwrap_err()
-                .contains("nonzero")
+                .unwrap()
+                .field,
+            (8, 4)
         );
-        p.grain_dye_aperture = None;
         p.inject = Tap::LogEPrint;
         p.collect = Tap::CmyPrint;
         assert_eq!(chain_steps(&p).unwrap(), [ChainStep::PrintDensity]);
@@ -1949,154 +1810,7 @@ mod tests {
         assert!(error.contains("CPU image-stage fence"), "{error}");
     }
 
-    #[test]
-    fn dye_carriers_preserve_segmented_routes_crops_and_prior_outputs() {
-        use spektrafilm_backend::dye_params::{
-            DyeChannelParts, DyeChannelTablesGpu, DyeGpuParams, DyeReadoutGrid,
-        };
-
-        let gpu = crate::test_support::adapter();
-        let knots = [-1.0, 0.0, 1.0];
-        let curves = [[0.0; 3], [1.0; 3], [2.0; 3]];
-        let spectral = [[0.1, 0.2, 0.3]; 81];
-        let base = [0.0; 81];
-        let light = [1.0; 81];
-        let sensitivity = [[0.01, 0.02, 0.03]; 81];
-        let identity = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
-        let chain_params = |width, height| {
-            let mut p = params(width, height);
-            p.film_log_exposure = &knots;
-            p.film_density_curves_normalized = &curves;
-            p.print_log_exposure = &knots;
-            p.print_density_curves = &curves;
-            p.film_channel_density = &spectral;
-            p.print_channel_density = &spectral;
-            p.film_base_density = &base;
-            p.print_base_density = &base;
-            p.print_illuminant = &light;
-            p.scan_illuminant = &light;
-            p.print_sensitivity = &sensitivity;
-            p.scan_xyz_to_rgb = &identity;
-            p.scan_cat = &identity;
-            p.scan_base_xyz_to_rgb = &identity;
-            p
-        };
-        let retain = |image: &ImageBuf, domain| {
-            gpu.retain_image(
-                image,
-                &RetainedImageMeta {
-                    width: image.width,
-                    height: image.height,
-                    domain,
-                    precision: Precision::host(),
-                    space: &colorspace::SRGB,
-                    pixel_pitch_um: Some(1.0),
-                },
-            )
-            .unwrap()
-        };
-        let host = ImageBuf::from_data(
-            9,
-            7,
-            (0..9 * 7 * 3)
-                .map(|i| spektrafilm_math::precision::from_f64(-0.75 + f64::from(i % 17) / 64.0))
-                .collect(),
-        );
-        let input = retain(&host, SampleDomain::LogExposure);
-        let mut p = chain_params(9, 7);
-        p.inject = Tap::LogEFilm;
-        p.collect = Tap::CmyFilm;
-        let density = gpu
-            .run_film_chain_retained(&input, &p)
-            .unwrap()
-            .to_host(gpu.backend())
-            .unwrap();
-        let dye_knots = [0.0, 1.0];
-        let inverse = [1.0];
-        let zero = [0.0; 2];
-        for (width, height) in [(9, 7), (11, 9)] {
-            let dye = DyeGpuParams {
-                monochrome: false,
-                law: spektrafilm_backend::dye_params::DyeFieldLaw::Capacity(
-                    DyeChannelTablesGpu::pack(std::array::from_fn(|_| DyeChannelParts {
-                        min: 0.1,
-                        cap_total: 1.0,
-                        cap: [1.0, 0.0, 0.0],
-                        frac: [1.0, 0.0, 0.0],
-                        area: [0.2; 3],
-                        uniformity: 0.0,
-                        lookup_sign: 1.0,
-                        knots: &dye_knots,
-                        inv_dx: &inverse,
-                        layers: [&dye_knots, &zero, &zero],
-                    })),
-                ),
-                cell_um: 1.0,
-                taps: vec![0.25, 0.5, 0.25],
-                source_pitch_um: 1.0,
-                grid: DyeReadoutGrid {
-                    origin_um: [-0.25, 0.375],
-                    pitch_um: [0.875, 1.125],
-                    width,
-                    height,
-                },
-                seed: 0x1234_5678_9abc_def0,
-                channel_correlation: 0.3,
-                expectation: false,
-            };
-            let expected_field = gpu.dye_field(&density, &dye).unwrap();
-            let mut downstream = chain_params(width, height);
-            downstream.inject = Tap::CmyFilm;
-            let field = retain(&expected_field, SampleDomain::Density);
-            let expected = gpu
-                .run_film_chain_retained(&field, &downstream)
-                .unwrap()
-                .to_host(gpu.backend())
-                .unwrap();
-            downstream.grain_dye = Some(dye.clone());
-            let resumed = gpu.run_film_chain_retained(&field, &downstream).unwrap();
-            assert_eq!(resumed.to_host(gpu.backend()).unwrap().data, expected.data);
-            p.grain_dye = Some(dye);
-            p.collect = Tap::RgbOut;
-            let result = gpu.run_film_chain_retained(&input, &p).unwrap();
-            assert_eq!(result.to_host(gpu.backend()).unwrap().data, expected.data);
-
-            p.collect = Tap::CmyFilm;
-            let field_result = gpu.run_film_chain_retained(&input, &p).unwrap();
-            assert_eq!(field_result.domain(), SampleDomain::Density);
-            assert_eq!(
-                field_result.to_host(gpu.backend()).unwrap().data,
-                expected_field.data
-            );
-            p.collect = Tap::RgbOut;
-            p.grain_dye_crop = Some([1, 1, width - 2, height - 2]);
-            let crop = gpu.run_film_chain_retained(&input, &p).unwrap();
-            let expected_crop: Vec<_> = (1..height - 1)
-                .flat_map(|y| {
-                    let first = (y * width + 1) as usize * 3;
-                    expected.data[first..first + (width - 2) as usize * 3]
-                        .iter()
-                        .copied()
-                })
-                .collect();
-            assert_eq!((crop.width(), crop.height()), (width - 2, height - 2));
-            assert_eq!(crop.to_host(gpu.backend()).unwrap().data, expected_crop);
-
-            p.grain_dye_crop = None;
-            p.grain_dye.as_mut().unwrap().seed += 1;
-            let next = gpu.run_film_chain_retained(&input, &p).unwrap();
-            assert_ne!(next.to_host(gpu.backend()).unwrap().data, expected.data);
-            assert_eq!(result.to_host(gpu.backend()).unwrap().data, expected.data);
-            assert_eq!(
-                field_result.to_host(gpu.backend()).unwrap().data,
-                expected_field.data
-            );
-            assert_eq!(crop.to_host(gpu.backend()).unwrap().data, expected_crop);
-            assert_eq!(input.to_host(gpu.backend()).unwrap().data, host.data);
-        }
-    }
-
-    #[test]
+        #[test]
     fn cancelled_identity_tap_discards_carrier_without_poisoning_reuse() {
         use spektrafilm_backend::ComputeBackend;
         use std::sync::{Arc, atomic::AtomicBool};

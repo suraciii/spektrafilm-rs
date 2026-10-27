@@ -443,9 +443,8 @@ mod glare;
 #[cfg(feature = "wgpu-backend")]
 pub mod grain;
 
-pub use grain::dye_decisions::{DYE_DECISION_FAILED, DyeDecisionCase};
 pub use spektrafilm_backend::dye_params::{
-    DyeChannelParts, DyeChannelTableGpu, DyeChannelTablesGpu, DyeGpuParams, DyeReadoutGrid,
+    DyeGpuParams, DyeReadoutGrid,
 };
 #[cfg(feature = "wgpu-backend")]
 mod halation;

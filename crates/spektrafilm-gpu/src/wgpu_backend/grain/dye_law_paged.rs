@@ -40,7 +40,6 @@ pub(in crate::wgpu_backend) struct DyeLawState {
     grid_origin: [f64; 2],
     grid_pitch: [f64; 2],
     source_pitch: f64,
-    width: u32,
     pub(in crate::wgpu_backend) output_pages: Vec<ImagePage>,
     status: wgpu::Buffer,
 }
@@ -245,7 +244,6 @@ impl WgpuBackend {
             grid_origin: grid.origin_um,
             grid_pitch: grid.pitch_um,
             source_pitch,
-            width,
             output_pages,
             status,
         })

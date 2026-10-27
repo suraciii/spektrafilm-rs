@@ -49,9 +49,6 @@ fn texture_octaves() -> Vec<(f64, f64)> {
 /// Off by default: `SPEKTRAFILM_GRAIN_V4_TEXTURE=1` swaps the per-pixel field for a
 /// correlated one, so the realised texture comes from aggregate scale rather than
 /// from per-pixel draws.
-fn texture_enabled() -> bool {
-    true
-}
 
 /// Build a zero-mean, unit-variance multi-octave field. Octave length is the
 /// Gaussian sigma in micrometres; weights are normalised here.
@@ -81,10 +78,9 @@ fn correlated_field(w: usize, h: usize, pitch_um: f64, seed: u64, tag: u64) -> V
     field
 }
 
-/// High-pass cut for the texture field, in micrometres. Default 12 µm.
+/// High-pass cut for the texture field, in micrometres. Constant: this is a property
+/// of the model, not a knob.
 fn texture_highpass_um() -> f64 {
-    // Aggregate grain must not move the local level over tens of microns, so the field
-    // is band-limited at 12 um. Constant: this is a property of the model, not a knob.
     TEXTURE_HIGHPASS_UM
 }
 
@@ -234,14 +230,6 @@ impl ClumpParams {
     }
 }
 
-fn hash64(mut x: u64) -> u64 {
-    x ^= x >> 33;
-    x = x.wrapping_mul(0xff51afd7_ed558ccd);
-    x ^= x >> 33;
-    x = x.wrapping_mul(0xc4ceb9fe_1a85ec53);
-    x ^= x >> 33;
-    x
-}
 
 /// Box blur: horizontal `src -> tmp`, then vertical `tmp -> src` (edge replicated).
 fn box_blur(src: &mut [f32], tmp: &mut [f32], w: usize, h: usize, half: usize) {
@@ -621,7 +609,7 @@ mod tests {
     #[test]
     fn expectation_mode_reproduces_the_target_exactly() {
         let src = flat(48, 0.7);
-        let out = apply(&src, 3.6676, 48, 48, &params([1.0, 1.0, 1.0], true)).unwrap();
+        let out = apply(&src, 3.6676, &ReadoutGeometry::whole(48, 48, 3.6676), &params([1.0, 1.0, 1.0], true)).unwrap();
         for (a, b) in src.data.iter().zip(out.data.iter()) {
             assert!((*a - *b).abs() < 1e-6, "{a} vs {b}");
         }
@@ -631,7 +619,7 @@ mod tests {
     fn mean_is_preserved_for_any_strength() {
         let src = flat(96, 0.7);
         for strength in [[1.0, 1.0, 1.0], [0.67, 1.0, 1.71], [0.0, 2.0, 0.5]] {
-            let out = apply(&src, 3.6676, 96, 96, &params(strength, false)).unwrap();
+            let out = apply(&src, 3.6676, &ReadoutGeometry::whole(96, 96, 3.6676), &params(strength, false)).unwrap();
             let mean = out.data.iter().map(|&v| v as f64).sum::<f64>() / out.data.len() as f64;
             let rel = (mean - 0.7).abs() / 0.7;
             assert!(rel < 0.01, "strength {strength:?} relative mean error {rel}");
@@ -646,8 +634,8 @@ mod tests {
             (out.data.iter().map(|&v| (v as f64 - m).powi(2)).sum::<f64>() / out.data.len() as f64)
                 .sqrt()
         };
-        let one = sd(&apply(&src, 3.6676, 96, 96, &params([1.0, 1.0, 1.0], false)).unwrap());
-        let two = sd(&apply(&src, 3.6676, 96, 96, &params([2.0, 2.0, 2.0], false)).unwrap());
+        let one = sd(&apply(&src, 3.6676, &ReadoutGeometry::whole(96, 96, 3.6676), &params([1.0, 1.0, 1.0], false)).unwrap());
+        let two = sd(&apply(&src, 3.6676, &ReadoutGeometry::whole(96, 96, 3.6676), &params([2.0, 2.0, 2.0], false)).unwrap());
         let ratio = two / one;
         assert!(ratio > 1.4 && ratio < 2.6, "variance ratio {ratio} not near 2");
     }

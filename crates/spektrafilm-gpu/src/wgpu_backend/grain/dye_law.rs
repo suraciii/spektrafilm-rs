@@ -143,32 +143,6 @@ fn taps_for(sigma_px: f64) -> (Vec<f32>, u32) {
     (taps.into_iter().map(|v| v as f32).collect(), radius)
 }
 
-fn l2(v: &[f32]) -> f64 {
-    v.iter().map(|&x| (x as f64) * (x as f64)).sum()
-}
-
-/// Convolve two centred one-dimensional kernels.
-fn convolve(a: &[f32], b: &[f32]) -> Vec<f32> {
-    let out = a.len() + b.len() - 1;
-    let mut v = vec![0.0f64; out];
-    for (i, &x) in a.iter().enumerate() {
-        for (j, &y) in b.iter().enumerate() {
-            v[i + j] += x as f64 * y as f64;
-        }
-    }
-    v.into_iter().map(|x| x as f32).collect()
-}
-
-/// Dot product of two centred kernels aligned on their centres.
-fn dot(a: &[f32], b: &[f32]) -> f64 {
-    let n = a.len().min(b.len());
-    let off_a = (a.len() - n) / 2;
-    let off_b = (b.len() - n) / 2;
-    (0..n)
-        .map(|i| a[off_a + i] as f64 * b[off_b + i] as f64)
-        .sum()
-}
-
 /// Per-octave gains and the band-limited scale.
 ///
 /// The host law standardises every octave and then the band-limited field, so the
@@ -479,14 +453,6 @@ impl LawBand {
     /// The interleaved output window.
     pub(super) fn out_buffer(&self) -> &wgpu::Buffer {
         &self.buffers[1]
-    }
-
-    pub(super) fn cols(&self) -> u32 {
-        self.cols
-    }
-
-    pub(super) fn rows(&self) -> u32 {
-        self.rows
     }
 
     fn plane(&self, index: u64) -> wgpu::BindingResource<'_> {

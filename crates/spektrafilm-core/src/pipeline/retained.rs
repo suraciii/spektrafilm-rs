@@ -220,18 +220,7 @@ impl Pipeline {
                     .into(),
             );
         }
-        let aperture = crate::stages::grain_v3::validate_aperture(&self.params)?;
-        Self::validate_grain_v3_taps(
-            crate::stages::grain_v3::validate_cell_spectral(&self.params)?,
-            inject,
-            collect,
-            self.params.io.scan_film,
-        )?;
-        if aperture.is_some()
-            && (collect != Tap::RgbOut || inject.position() > Tap::LogEFilm.position())
-        {
-            return Err("SPEKTRAFILM_GRAIN_V3_APERTURE_FACTOR requires injection at or before log_e_film and collect=rgb_out".into());
-        }
+        Self::validate_grain_v3_taps(false, inject, collect, self.params.io.scan_film)?;
         Ok((inject, collect))
     }
 
