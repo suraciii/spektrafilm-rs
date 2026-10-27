@@ -594,7 +594,7 @@ fn cpu_field(
     source: &ImageBuf,
     source_pitch_um: f64,
     grid: ReadoutGrid,
-    _resolved: &GrainV3Params,
+    resolved: &GrainV3Params,
     backend: &dyn spektrafilm_backend::ComputeBackend,
 ) -> Result<ImageBuf, String> {
     // The observation records the host executor and its published reason.
@@ -607,6 +607,13 @@ fn cpu_field(
     // field whose amplitude follows the derived granularity curve. Parameters are part
     // of the engine (ClumpParams::delivered), not of the caller's environment, and the
     // mean is preserved exactly: E[D] = t for every strength.
+    // The law's amplitude, correlation lengths, event area and fog baseline are engine
+    // constants; the resolved seed selects the realization and the expectation
+    // diagnostic replaces every draw by its conditional mean. The device reads the same
+    // two resolved fields, so both executors realize the same law.
+    let mut params = spektrafilm_model::grain::dye::ClumpParams::delivered();
+    params.seed = resolved.seed;
+    params.expectation = resolved.expectation;
     spektrafilm_model::grain::dye::apply(
         source,
         source_pitch_um,
@@ -616,7 +623,7 @@ fn cpu_field(
             width: grid.width,
             height: grid.height,
         },
-        &spektrafilm_model::grain::dye::ClumpParams::delivered(),
+        &params,
     )
 }
 

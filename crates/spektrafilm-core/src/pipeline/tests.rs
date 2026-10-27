@@ -1237,7 +1237,10 @@ fn fotufilm_dispatch_matrix_follows_development_boundary() {
             .map(|i| from_f64(-1.6 + (i % 17) as f64 * 0.11))
             .collect(),
     );
-    let base = Pipeline::new(film, print, RuntimeParams::default());
+    // The matrix changes the route for every case, and a route change rebuilds the
+    // spectral pipeline from the calibration data. A `Pipeline::new` base has no data
+    // directory and cannot rebuild, so this case table needs the prepared constructor.
+    let base = Pipeline::new_with_spectral(film, print, RuntimeParams::default(), &dir).unwrap();
 
     for case in cases {
         let mut params = RuntimeParams::default();

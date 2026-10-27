@@ -71,50 +71,21 @@ Grain Dye is selected with `film_render.grain.engine: "dye"`.
 
 ### Field controls
 
-Dye conditions a mixed film-coordinate dye field on `v3_dye_support_um`. This control gives the Gaussian sigma in micrometers. Its default is `3.5`. The field-cell pitch is `support / 2`.
+Dye's grain law is part of the engine: the relative amplitude, the three correlation lengths, the band limit, the event area, the fog baseline, and the development taper are constants, not controls. Recipes that carry `v3_dye_support_um`, `v3_event_area_um2`, `rms_granularity`, `density_min`, `uniformity`, or `channel_correlation` still load; those values do not change the field.
 
-Dye realizes film-space Poisson counts with event area `v3_event_area_um2 × k_c × particle_scale_sublayers`. `v3_event_area_um2` uses square micrometers and defaults to `1.28`. Dye uses the resolved `density_min` and `uniformity`. It allocates each channel across the profile's three numerical curve components; these components are not identified physical emulsion layers. Both `v3_dye_support_um` and `v3_event_area_um2` must be finite and strictly positive. Dye component scales must also be positive. They change statistical event mass and count rate, not separate component kernel widths. The components share Dye's spatial support.
+The seed selects the realization. `random_seed` is the only grain input that changes the image, and the same seed, geometry, and executor reproduce the same field.
 
-A profile may give an individual component zero capacity. That component contributes no events. Each record still needs positive total capacity; an all-zero record is rejected by the model.
+Dye realizes a band-limited correlated field on the film lattice and reads it out through the requested grid. A finer grid interpolates a lattice cell centre; a coarser grid integrates the cells it covers. Cropping, preview scaling, and stage splitting therefore sample one film rather than starting a second realization.
 
-The channel scale is `k_c = (rms_granularity_c / 6)²`. Here, `6` is the preset of the reference stock `kodak_portra_800`. The existing `rms_granularity` field is a relative Dye strength scale, not a certified optical RMS target. Entering `8` does not request a measured stock granularity of `8`. Zero or a missing stock value retains the existing fallback; use `active: false` to disable grain. Dye does not read Spektra's `particle_area_um2` or `particle_scale`.
-
-Some preset channel ratios come from measured outputs of a commercial film simulator. They remain appearance references, not measurements of film material. The reference stock and its event area define the existing relative scale; they do not establish an absolute material calibration.
-
-`channel_correlation` defaults to `0.0` and accepts `[0, 0.45]`. This is the historical supported and acceptance range, not an identified universal material limit. The public constant `MEASURED_CHANNEL_CORRELATION_CEILING` retains its historical name for compatibility. The parameter sets the shared Poisson-event rate fraction among active records within each numerical component. Each record retains its marginal Poisson count distribution. For positive-rate records `a` and `b` in one component, count correlation is `rho × min_c(lambda_c) / sqrt(lambda_a × lambda_b)`, which is at most `rho`. This is not a bound on final RGB correlation or a guarantee of identical measured variance in a finite realization. Zero retains independent record counts. Processed scans do not, by themselves, separate material correlation from receiver or scanner effects.
+Expectation mode (`SPEKTRAFILM_GRAIN_V3_EXPECTATION=1`) replaces every draw by its conditional mean and returns the target density. It is a diagnostic; it does not change the recipe and is not a production grain law.
 
 ### Black-and-white material
 
-A resolved `channel_model=bw` filming profile selects one effective material record. Dye uses record 0's `rms_granularity`, `density_min`, and `uniformity`. `particle_scale_sublayers` still supplies three numerical-component scales, not three record controls. One sampled density is carried in three equal lanes before formation and readout. This is not final-RGB desaturation or a calibrated silver-particle simulation.
+A resolved `channel_model=bw` filming profile uses one effective record: the realized density is carried in three equal lanes. This is not final-RGB desaturation or a calibrated silver-particle simulation.
 
-Both CPU and GPU validate the original BW samples across the full source, including samples outside the requested crop and its formation halo. Invalid samples there still reject the render. A BW profile may contain one or several development-time curves; negative-to-positive scanning accepts the single-time case without requiring three stored columns.
+Both CPU and GPU validate the original BW samples across the full source, including samples outside the requested crop. Invalid samples there still reject the render. A BW profile may contain one or several development-time curves; negative-to-positive scanning accepts the single-time case without requiring three stored columns.
 
-`channel_correlation` has no effect for this layout. Its requested value remains stored. CLI edit feedback and the GUI explain the inactive control; selecting a color profile restores its applicability. Dry-run `film_grain_dye` reports `record_layout`, `calibration_status`, and requested/effective correlation without claiming a checked compute device.
-
-Resetting Grain restores its editable controls to factory values, but keeps the profile-derived record layout. This derived layout does not mark the section as modified.
-
-The bundled initial BW profiles are `kodak_doublex` (5222 negative, with selectable development times) and `kodak_trix` (7266 reversal, not still-film 400TX). Existing controls and presets remain uncalibrated for this effective model. A profile's monochrome identity does not identify silver versus chromogenic chemistry. The BW printing profile `kodak_2302` is not a filming stock.
-
-CPU material export retains the formed field in the existing `.sfstage` representation. Continuation does not generate a second field. Material export and continuation remain CPU-only; the existing exact-cell and aperture persistence restrictions still apply. See the [record-layout design](../specs/film-grain/v3/design.md#record-layout) for validation and ordering.
-
-
-### Scalar-record reference
-
-Set `SPEKTRAFILM_GRAIN_RECORD_Q` to a finite positive record contribution in `D·µm²` to select the scalar fixed-contribution experiment. Select active Dye, a BW filming stock, `--backend cpu` or `--backend gpu`, `--route 'input > film > scan'`, and `--scan-output direct_scan`. Without this variable, Dye retains its existing capacity law. There is no calibrated default q; `0.2` and `0.6` are experimental values, not stock presets.
-
-The new law uses one scalar image-forming density target. It does not use `v3_event_area_um2`, `rms_granularity`, `particle_scale_sublayers`, `uniformity`, `density_min`, or `channel_correlation`. It retains `v3_dye_support_um`, the seed, and the explicit cell-pitch and expectation diagnostics. A record contribution is not a grain area. See the [scalar-record design](../specs/film-grain/v3/design.md#scalar-fixed-contribution-law) for the count law and memory limits.
-
-This route automatically enables exact-cell optical response: form density, convert each cell with the scanner's linear spectral response, then integrate the output footprint. It rejects scanner/enlarger LUTs, incompatible spatial finishing, and aperture or legacy mass-law experiments. `SPEKTRAFILM_GRAIN_V3_CELL_SPECTRAL` must be absent or `1`. An invalid q, cell pitch, or expectation flag fails instead of falling back.
-
-Actual `--diagnostics` reports retain the effective law, q, support, cell pitch, full seed, expectation flag, and optical order in `configuration.render.grain.record`. Preserve the input, profile data, command, binary identity, and report to reproduce a comparison. The q environment variable is not saved in a recipe. Color, print, material export, and GUI controls are not part of this experiment.
-
-CPU execution reuses scan preparation and bounded tile scratch. A proven scalar spectral basis avoids repeated wavelength integration; wavelength-dependent bases and unsafe exponent ranges retain generic integration. These optimizations do not change q, support, cell pitch, or optical ordering.
-
-GPU execution forms the record directly on the selected device. It uses one density lane until the RGB optical response, reuses bounded band buffers, and does not upload a CPU-generated field or download intermediate bands. The certified f32 count-law rate limit is `65536`; unsupported representation fails explicitly rather than changing the model.
-
-CPU and GPU share the conditional law but not individual stochastic draws under the Dye executor contract. Use expectation-mode comparisons and independent count/formation checks for numerical alignment, plus per-executor seed and crop repeatability. A software Vulkan adapter is portability evidence, not hardware speed evidence.
-
-Compare the legacy law with and without `SPEKTRAFILM_GRAIN_V3_CELL_SPECTRAL=1` to isolate optical ordering. Compare that exact-cell legacy result with the record law to isolate the event law. Keep all other settings and physical geometry fixed. Encoded-RGB differences do not establish optical-density calibration or physical stock fidelity.
+CPU material export retains the formed field in the existing `.sfstage` representation. Continuation does not generate a second field. Material export and continuation remain CPU-only. See the [Dye design](../specs/film-grain/v3/design.md#density-law) for the law.
 
 ### Film geometry and routes
 

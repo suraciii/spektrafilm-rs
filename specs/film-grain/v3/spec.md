@@ -1,6 +1,6 @@
 # Dye grain
 
-Dye is a film-coordinate conditional record-field engine. This specification defines its product boundary, observable behavior, and acceptance gates. It does not lock calibration values.
+Dye is a film-coordinate record-field engine. This specification defines its product boundary, observable behavior, and acceptance gates. It does not lock calibration values.
 
 ## Goal
 
@@ -12,15 +12,13 @@ Subject shape, tone, color, and fine detail MUST pass through the same field for
 
 ## Image-forming contract
 
-The default capacity law MUST consume the developed record-density target at the film-density boundary. It MUST allocate the target across the selected film profile's three numerical curve components, realize conditional mass in global film coordinates, form the complete realization with the declared support operator, and read it through exact output footprints.
+Dye MUST consume the developed record-density target `t` at the film-density boundary and produce a realized density `D` with `E[D] = t` exactly.
 
-Numerical components MUST NOT be described as measured silver populations. The [scalar-record experiment](#scalar-record-experiment) replaces this allocation and count law only within its declared scope.
+The realization MUST be a band-limited correlated field whose relative amplitude follows a granularity curve derived from development statistics. The amplitude MUST vanish at clear base and at saturation of the record.
 
-Dye MUST NOT retain an independent clean-detail image and add grain after it. A mean-plus-residual implementation is valid only when the mean and residual represent the same conditional field and pass through identical formation and readout.
+The field MUST be realized on the film lattice and read out through the requested output geometry. Cropping, preview scaling, tiling, and stage splitting MUST NOT change the realization of a film coordinate.
 
-A feature narrower than the effective support MUST condition the field. It MUST NOT bypass the field as separately preserved detail. The output pixel is a readout sample, not a grain-generation unit.
-
-Visible one-pixel impulses, repeated stamps, seams, square-cell grids, and crop-restarted texture fail acceptance.
+Dye MUST NOT retain an independent clean-detail image and add grain after it. A mean-plus-residual implementation is valid only when mean and residual describe the same conditional field.
 
 The film, print, and scan chain owns grain polarity and color. Dye MUST NOT force white grain, neutral grain, a fixed shadow-to-highlight trend, or a universal inter-record correlation. Scanner chroma reduction, display sharpening, JPEG tuning, and final-RGB noise remain outside Dye.
 
@@ -30,69 +28,41 @@ Dye supports color and monochrome filming profiles only when the loaded profile 
 
 The product resolver MUST reject an unsupported material, chemistry, route, or missing profile data before output publication. It MUST report the unsupported condition and the reason. Availability of a profile is not proof of stock calibration, optical-readout acceptance, or photographic acceptance.
 
-The implementation MUST run the same conditional law for negative and positive film profiles within each record layout. Polarity belongs to the resolved film-density curves and downstream interpretation. A negative/positive comparison is valid only when the interpretation, receiver, and output condition are recorded.
+The implementation MUST run the same conditional law for negative and positive film profiles. Polarity belongs to the resolved film-density curves and downstream interpretation. A negative/positive comparison is valid only when the interpretation, receiver, and output condition are recorded.
 
-Changing film geometry MUST preserve requested output raster dimensions while changing physical source and output footprint sizes. It MUST NOT silently rescale support, event area, stock strength, field resolution, or count addressing. A geometry or resource request that cannot be represented MUST fail before publication.
+Changing film geometry MUST preserve requested output raster dimensions while changing physical source and output footprint sizes. A geometry or resource request that cannot be represented MUST fail before publication.
 
 ## Controls and resolved inputs
 
-Dye exposes only algorithm inputs that have an explicit owner and evidence contract. Support, event area, stock strength, sublayer response, occupancy, channel coupling, and field resolution have distinct meanings. The product MUST NOT expose independent particle-count, particle-mass, sparsity, and RMS controls that can contradict one another.
+Dye's law parameters are engine constants: relative amplitude, correlation lengths, band limit, event area, fog baseline, saturation density, and development uniformity. They MUST NOT be exposed as grain controls that can contradict one another.
 
-The resolved film profile supplies its sublayer response and stock-relative strength. Dye consumes that result; it does not reinterpret unrelated Spektra or Procedural controls. A control owned by another engine MUST NOT silently affect Dye.
+The resolved seed selects the realization. The same seed, inputs, geometry, and implementation MUST reproduce the same field on the same executor.
 
-The resolved profile MUST determine record layout. A monochrome profile MUST NOT enable an editable layout switch, a different grain engine, or an implicit silver-chemistry claim.
+The expectation diagnostic replaces every draw by its conditional mean and MUST remain a diagnostic. It MUST NOT change the user's recipe or become a production bypass.
 
-`channel_correlation` MUST remain stored but inactive for a single-record material. CLI reports and GUI controls MUST explain its inactivity without discarding the requested value. Selecting a color profile MUST restore its applicability.
-
-Existing parameter names, ranges, defaults, and recipe syntax remain unchanged.
-
-RMS is not a per-image normalization target. The formation path MUST NOT inspect the current image, crop, ROI, or seed realization to retune event area or any other parameter. Fixed-reference RMS behavior, if later offered, MUST be an explicit calibration operation with a declared reference condition and an infeasibility error.
-
-It is not a hidden rendering step.
-
-The product MUST record effective algorithm inputs and their provenance in acceptance output. A parameter value without a stock/profile, algorithm revision, and evidence status is incomplete evidence.
+The resolved film profile determines record layout and per-record response. Dye consumes that result; it does not reinterpret unrelated Spektra or Procedural controls. A control owned by another engine MUST NOT silently affect Dye.
 
 ## Execution and repeatability
 
-Active Dye MUST use the formation, exact Poisson count law, global-coordinate random addressing, and rectangular readout defined by the [Dye design](design.md). CPU and GPU executors MUST implement the same model for their supported law.
+Active Dye MUST use the continuous law and rectangular readout defined by the [Dye design](design.md). CPU and GPU executors MUST implement the same law, the same seed and stream addressing, and the same film-coordinate geometry.
 
-A GPU implementation MUST NOT substitute a CPU-prepared image-sized field or a different count distribution.
+Executors MAY differ in sampling, arithmetic precision, and count-draw construction. Such differences MUST be bounded by the count term's amplitude and MUST NOT change the law.
 
-The pipeline MUST apply named inactive, preview, LUT, spatial-deactivation, and stochastic-deactivation bypasses before Dye field preparation. Active CLI Scan/Export and GUI Scan/Export MUST exercise Dye. The expectation diagnostic MUST NOT change the user's recipe or become a production bypass.
+The pipeline MUST apply named inactive, preview, LUT, spatial-deactivation, and stochastic-deactivation bypasses before field preparation. Active CLI Scan/Export and GUI Scan/Export MUST exercise Dye.
 
-The same source, resolved inputs, geometry, seed, precision, and implementation MUST reproduce the same result on the same executor. Global cell coordinates MUST remain stable under crop and tile partitioning. Different seeds MUST alter the realization without systematically changing its target mean or color.
+Global film coordinates MUST remain stable under crop and tile partitioning. Different seeds MUST alter the realization without systematically changing its target mean or color.
 
-Different output dimensions MAY produce different footprints and therefore different samples; that difference MUST be reported as readout sampling, not as random drift.
-
-## Scalar-record experiment
-
-`SPEKTRAFILM_GRAIN_RECORD_Q` explicitly selects the scalar fixed-contribution law. The value MUST be finite and strictly positive, in `D·µm²`.
-
-An absent variable MUST retain the default capacity law. The implementation MUST NOT supply a calibrated default contribution.
-
-This law MUST accept only active Dye on a resolved monochrome filming stock with `input > film > scan` and `direct_scan`. CPU and GPU execution MUST retain the same event law and optical order. The law MUST reject incompatible aperture or mass-law experiments.
-
-Exact-cell optical readout MUST be enabled; its LUT and spatial-optics restrictions still apply. A selected GPU backend MUST realize the record field on the device or fail rather than execute another law.
-
-The [scalar-record design](design.md#scalar-fixed-contribution-law) owns its target, count, formation, and readout semantics. Legacy event area, relative granularity, numerical-component scales, uniformity, statistical floors, and channel coupling MUST NOT enter this law. Existing recipes, controls, and production defaults MUST remain unchanged.
-
-Actual render diagnostics MUST retain the effective law, contribution, support, cell pitch, seed, expectation flag, and optical order. This experimental availability MUST NOT imply stock calibration, photographic acceptance, color support, material persistence, or GUI/recipe integration.
+Different output dimensions MAY produce different footprints and therefore different samples. That difference MUST be reported as readout sampling, not as random drift.
 
 ## Acceptance
 
 Acceptance is gated. A later gate MUST NOT compensate for an earlier gate that failed.
 
-1. **Contract and preparation:** Prove supported-condition resolution, full-film target preparation, source reconstruction, three-sublayer allocation, target conservation, endpoint behavior, duplicate-knot behavior, zero weights, zero-capacity layers, and unsupported targets.
-2. **Count law:** Prove the declared Poisson law, zero-rate behavior, rate boundaries, tail behavior, coordinate-addressed streams, and an explicit representability failure. A deliberately wrong-law control MUST fail predeclared statistical checks.
-3. **Formation and readout:** Prove support normalization, area-integrated cell averaging, constant preservation, impulse and edge response, fractional footprints, noninteger ratios, film boundaries, and convergence against an independent rectangle-integration oracle.
-4. **Partition invariance:** Prove same-canvas full-frame, crop, tile, band, and dispatch-shape invariance. Resource checks MUST reject oversized work before allocation.
-   The implementation MUST NOT silently coarsen sampling or change the law.
-5. **Optical boundary:** Run the independent spectral measurement oracle on constant, varying, edge, line, and representative stochastic fields. Declare receiver, aperture, density definition, wavelength range, source provenance, output footprint, and viewing condition.
-   Compare transmission-first optical readout with production density readout before any photographic claim.
-6. **Calibration:** Fit each stock/profile separately with fixed development and optical conditions. Use separate fit and holdout stimuli or seeds.
-   Evaluate mean density, optical RMS, covariance or spectrum, tone bias, and color bias together. Mark evidence as `measured`, `estimated`, `proxy`, `uncalibrated`, or `rejected`.
-7. **Executor and photographic validation:** Pair CPU f32/f64 with a usable hardware GPU where available. Exercise the real CLI and GUI Scan/Export paths.
-8. Use lossless outputs and a declared reference set containing portraits, smooth fields, dark and bright regions, saturated colors, fine detail, and a color chart. Record the intended viewing size and the limits of the comparison.
+1. **Law and mean:** Prove `E[D] = t` for uniform, graded, and saturated targets, and prove the amplitude follows the derived granularity curve. The expectation realization MUST equal the target.
+2. **Partition invariance:** Prove same-canvas full-frame, crop, tile, band, and stage-split agreement at fixed seed and geometry. Resource checks MUST reject oversized work before allocation.
+3. **Executor parity:** Prove the CPU and GPU realizations agree in expectation exactly, and that stochastic realizations agree within the declared count-term bound.
+4. **Optical measurement:** Run the independent spectral measurement oracle with a declared receiver, aperture, density definition, wavelength range, provenance, footprint, and viewing condition.
+5. **Photographic validation:** Use lossless outputs and a declared reference set containing portraits, smooth fields, dark and bright regions, saturated colors, fine detail, and a color chart. Record the intended viewing size and the limits of the comparison.
 
 Numerical proof and photographic proof are separate. A local synthetic probe, one seed, one crop, one stock, a software adapter, or a visually similar output MUST NOT be presented as universal algorithm or stock acceptance.
 
@@ -125,7 +95,7 @@ RMS values from different receivers, apertures, density definitions, wavelengths
 
 ## Photographic review
 
-The review set MUST compare grain-off, the current accepted baseline where applicable, Dye expectation, and stochastic Dye with identical non-Dye settings. The expectation MUST share target preparation, allocation, support, formation, readout, and downstream settings with stochastic Dye. Review MUST separate processing-order changes, deterministic detail transfer, and stochastic grain.
+The review set MUST compare grain-off, Dye expectation, and stochastic Dye with identical non-Dye settings. The expectation MUST share target, geometry, and downstream settings with stochastic Dye. Review MUST separate processing-order changes, deterministic detail transfer, and stochastic grain.
 
 Inspect uniform patches, gradients, slanted edges, narrow and broad lines, skin, saturated colors, and high-contrast detail at the intended viewing size and at 100%. Grain MUST be visible where the reference makes it visible, while broad smears, artificial halos, color blotches, grid locking, seams, and arbitrary detail removal fail review.
 

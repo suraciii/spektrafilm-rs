@@ -48,12 +48,12 @@ fn texture_octaves() -> Vec<(f64, f64)> {
 
 /// Build a zero-mean, unit-variance multi-octave field. Octave length is the
 /// Gaussian sigma in micrometres; weights are normalised here.
-fn correlated_field(w: usize, h: usize, pitch_um: f64, seed: u64, tag: u64) -> Vec<f32> {
+fn correlated_field(w: usize, h: usize, pitch_um: f64, seed: u64, field: u32) -> Vec<f32> {
     let octs = texture_octaves();
     let norm = octs.iter().map(|(_, v)| v * v).sum::<f64>().sqrt();
-    let mut field = vec![0.0f32; w * h];
+    let mut combined = vec![0.0f32; w * h];
     for (o, (length_um, weight)) in octs.iter().enumerate() {
-        let v0 = noise_field(w, h, seed, tag + o as u64);
+        let v0 = noise_field(w, h, seed, field * 8 + o as u32);
         // A real Gaussian, because the box approximation cannot resolve sigma < 1 px
         // and that is exactly the range the aggregate texture lives in.
         let mut v = gaussian::gaussian_blur_channel(
@@ -64,7 +64,7 @@ fn correlated_field(w: usize, h: usize, pitch_um: f64, seed: u64, tag: u64) -> V
         );
         standardize(&mut v);
         let k = (weight / norm) as f32;
-        field
+        combined
             .par_iter_mut()
             .zip(v.par_iter())
             .for_each(|(a, b)| *a += k * b);
@@ -76,14 +76,14 @@ fn correlated_field(w: usize, h: usize, pitch_um: f64, seed: u64, tag: u64) -> V
     let hp = texture_highpass_um();
     if hp > 0.0 {
         let big =
-            gaussian::gaussian_blur_channel(&field, w as u32, h as u32, (hp / pitch_um) as f32);
-        field
+            gaussian::gaussian_blur_channel(&combined, w as u32, h as u32, (hp / pitch_um) as f32);
+        combined
             .par_iter_mut()
             .zip(big.par_iter())
             .for_each(|(a, b)| *a -= *b);
     }
-    standardize(&mut field);
-    field
+    standardize(&mut combined);
+    combined
 }
 
 /// High-pass cut for the texture field, in micrometres. Constant: this is a property
@@ -286,14 +286,34 @@ fn box_blur_approx(field: &mut [f32], tmp: &mut [f32], w: usize, h: usize, sigma
 }
 
 /// Zero-mean unit-variance field addressed by global pixel coordinates.
-fn noise_field(w: usize, h: usize, seed: u64, tag: u64) -> Vec<f32> {
+/// The device's coordinate hash, replicated here so both executors draw the same
+/// realization from the same seed and stream. A CPU and a GPU render of one recipe
+/// must differ in sampling, never in the noise they start from.
+fn hash_u32(mut v: u32) -> u32 {
+    v = v.wrapping_mul(747_796_405).wrapping_add(2_891_336_453);
+    v = ((v >> ((v >> 28) + 4)) ^ v).wrapping_mul(277_803_737);
+    (v >> 22) ^ v
+}
+
+fn uniform01(seed: u32, stream: u32, x: u32, y: u32) -> f32 {
+    let h = hash_u32(x ^ hash_u32(y ^ hash_u32(seed ^ hash_u32(stream))));
+    (h >> 8) as f32 * (1.0 / 16_777_216.0)
+}
+
+fn normal01(seed: u32, stream: u32, x: u32, y: u32) -> f32 {
+    let u1 = uniform01(seed, stream, x, y).max(1e-6);
+    let u2 = uniform01(seed, stream ^ 0x9e37_79b9, y, x);
+    (-2.0 * u1.ln()).sqrt() * (std::f32::consts::TAU * u2).cos()
+}
+
+/// One field of coordinate-addressed noise. `stream` matches the device pass, so the
+/// same seed and stream produce the same field on both executors.
+fn noise_field(w: usize, h: usize, seed: u64, stream: u32) -> Vec<f32> {
     let mut v = vec![0.0f32; w * h];
+    let seed = seed as u32;
     v.par_chunks_mut(w).enumerate().for_each(|(y, row)| {
         for (x, cell) in row.iter_mut().enumerate() {
-            let index = ((y as u64) << 32) | x as u64;
-            let mut rng = FastStatsRng::stream(seed, tag, index);
-            let z = rng.randn();
-            *cell = z as f32;
+            *cell = normal01(seed, stream, x as u32, y as u32);
         }
     });
     v
@@ -340,14 +360,14 @@ fn channel(
     // grain event affects the three layers together. Independent per-record white noise
     // would destroy the measured inter-record correlation (~0.9 in real scans).
     let white_independent = if p.texture {
-        correlated_field(w, h, pitch_um, p.seed, 600 + (c as u64) * 8)
+        correlated_field(w, h, pitch_um, p.seed, c as u32 + 1)
     } else {
-        let mut v = noise_field(w, h, p.seed, 600 + c as u64);
+        let mut v = noise_field(w, h, p.seed, (c as u32 + 1) * 8);
         standardize(&mut v);
         v
     };
     for (o, (length_um, weight)) in octs.iter().enumerate() {
-        let mut independent = noise_field(w, h, p.seed, 200 + (c as u64) * 8 + o as u64);
+        let mut independent = noise_field(w, h, p.seed, (c as u32 + 1) * 8 + o as u32);
         box_blur_approx(
             &mut independent,
             &mut tmp,
@@ -587,15 +607,15 @@ pub fn apply(
     let mut shared = Vec::with_capacity(octs.len());
     let mut tmp = vec![0.0f32; w * h];
     for (o, (length_um, _)) in octs.iter().enumerate() {
-        let mut v = noise_field(w, h, params.seed, 100 + o as u64);
+        let mut v = noise_field(w, h, params.seed, o as u32);
         box_blur_approx(&mut v, &mut tmp, w, h, length_um / pitch_um);
         standardize(&mut v);
         shared.push(v);
     }
     let shared_white = if params.texture {
-        correlated_field(w, h, pitch_um, params.seed, 900)
+        correlated_field(w, h, pitch_um, params.seed, 0)
     } else {
-        let mut v = noise_field(w, h, params.seed, 600);
+        let mut v = noise_field(w, h, params.seed, 0);
         standardize(&mut v);
         v
     };
