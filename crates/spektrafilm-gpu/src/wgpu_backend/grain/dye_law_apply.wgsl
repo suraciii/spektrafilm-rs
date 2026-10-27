@@ -4,12 +4,12 @@
 //   rel   = white * strength[c] * taper(t)          (relative density amplitude)
 //   wi    = sqrt(rho) * shared + sqrt(1-rho) * own  (record coupling)
 //   e     = 1 + rel * wi
-//   count = (t + fog) * e * area / q                (expected events)
-//   D     = q * (count + sqrt(count) * z) / area - fog
+//   lambda = (t + fog) * e * area / q               (expected events)
+//   count  = Poisson(lambda)                        (exact, as on the host)
+//   D      = q * count / area - fog
 //
-// The Poisson draw is the normal approximation: with q = 1.5e-3 um^2 and a 25 um^2
-// cell the expected count is in the thousands, where the two agree to well under a
-// part in a thousand.
+// The count is drawn exactly: inversion below thirty events, PTRS above, matching
+// the host sampler. A monochrome profile reads the first record in every lane.
 
 struct P {
     w: u32,
@@ -44,16 +44,7 @@ fn hash_u32(x: u32) -> u32 {
     return (v >> 22u) ^ v;
 }
 
-fn uniform01(stream: u32, x: u32, y: u32) -> f32 {
-    let h = hash_u32(x ^ hash_u32(y ^ hash_u32(p.seed ^ hash_u32(stream))));
-    return f32(h >> 8u) * (1.0 / 16777216.0);
-}
 
-fn normal01(stream: u32, x: u32, y: u32) -> f32 {
-    let u1 = max(uniform01(stream, x, y), 1e-6);
-    let u2 = uniform01(stream ^ 0x9e3779b9u, y, x);
-    return sqrt(-2.0 * log(u1)) * cos(6.283185307 * u2);
-}
 
 // ln Gamma(z) for z >= 1 by the Lanczos approximation; WGSL has no lgamma.
 fn log_gamma(z: f32) -> f32 {
