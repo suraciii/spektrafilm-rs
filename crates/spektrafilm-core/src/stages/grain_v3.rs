@@ -380,8 +380,6 @@ pub fn geometry_for_dims(
         ],
     })
 }
-/// Scale the resolved output lattice for the aperture probe.
-
 /// Resolved readout of one Dye field from the full developed source.
 ///
 /// The per-stage route, the resident device field and the resident host fence
@@ -448,11 +446,6 @@ pub fn print_spatial_context(params: &RuntimeParams) -> bool {
 pub fn full_route_spatial_context(params: &RuntimeParams) -> bool {
     print_spatial_context(params) || scanner_spatial_context(params)
 }
-
-/// Average fine print log exposure in linear light, then return to log space.
-
-/// Run aperture reduction on the selected executor without host image
-/// arithmetic for an explicit device request.
 
 /// Relative per-channel event-area scale `k_c = (G_c / 6)^2` resolved from
 /// `rms_granularity` (design §Resolved parameter contract).

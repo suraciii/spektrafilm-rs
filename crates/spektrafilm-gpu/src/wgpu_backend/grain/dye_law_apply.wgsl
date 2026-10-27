@@ -55,10 +55,6 @@ fn normal01(stream: u32, x: u32, y: u32) -> f32 {
     return sqrt(-2.0 * log(u1)) * cos(6.283185307 * u2);
 }
 
-// Exact Poisson sampling, matching the host `poisson_exact`: inversion below 30,
-// PTRS above. A normal approximation would keep the mean and variance at large rates
-// but changes the distribution once the rate is small, which a heavily oversampled
-// geometry reaches.
 // ln Gamma(z) for z >= 1 by the Lanczos approximation; WGSL has no lgamma.
 fn log_gamma(z: f32) -> f32 {
     let g = 7.0;
@@ -87,6 +83,10 @@ fn poisson_uniform(seed: u32, stream: u32, x: u32, y: u32, n: u32) -> f32 {
     return f32(h >> 8u) * (1.0 / 16777216.0);
 }
 
+// Exact Poisson sampling, matching the host `poisson_exact`: inversion below 30,
+// PTRS above. A normal approximation keeps the mean and variance at large rates but
+// changes the distribution once the rate is small, which a heavily oversampled
+// geometry reaches.
 fn poisson_exact(lambda: f32, seed: u32, stream: u32, x: u32, y: u32) -> f32 {
     if (lambda <= 0.0) { return 0.0; }
     if (lambda < 30.0) {

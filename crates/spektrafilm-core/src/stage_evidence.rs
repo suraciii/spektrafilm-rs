@@ -146,8 +146,6 @@ pub(crate) enum CoordinateSpace {
     /// The full-film frame grid used while a delivered-region crop is still
     /// pending (spatial effects need the pixels around the crop).
     FilmFrame,
-    /// The supersampled grain-aperture grid before its exposure collapse.
-    GrainAperture,
     /// The delivered pipeline output grid.
     Output,
 }
@@ -158,7 +156,6 @@ impl CoordinateSpace {
             Self::Source => "source_pixels",
             Self::Working => "working_pixels",
             Self::FilmFrame => "film_frame_pixels",
-            Self::GrainAperture => "grain_aperture_pixels",
             Self::Output => "output_pixels",
         }
     }
