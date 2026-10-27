@@ -78,7 +78,6 @@ impl Pipeline {
         }
         if crate::stages::grain_v3::active(&self.params) {
             crate::stages::grain_v3::validate_supported(&self.film, &self.params)?;
-            Self::validate_grain_v3_taps(false, inject, collect, self.params.io.scan_film)?;
         }
         if backend.is_gpu() {
             // Diagnostic endpoints are not permission to enter the CPU

@@ -220,7 +220,6 @@ impl Pipeline {
                     .into(),
             );
         }
-        Self::validate_grain_v3_taps(false, inject, collect, self.params.io.scan_film)?;
         Ok((inject, collect))
     }
 

@@ -286,8 +286,9 @@ fn resample_readout(
                         if w > 0.0 {
                             let syc = sy.clamp(0, sh as i64 - 1) as usize;
                             let sxc = sx.clamp(0, sw as i64 - 1) as usize;
-                            for c in 0..3 {
-                                acc[c] += w * film.data[(syc * sw + sxc) * 3 + c] as f64;
+                            let base = (syc * sw + sxc) * 3;
+                            for (c, slot) in acc.iter_mut().enumerate() {
+                                *slot += w * film.data[base + c] as f64;
                             }
                             weight += w;
                         }
@@ -421,19 +422,17 @@ impl LawBand {
         let mut buffers = Vec::with_capacity(13);
         for index in 0..13u64 {
             let size = if index < 2 { pixels * 12 } else { pixels * 4 };
-            if index == 0 {
-                if let Some(data) = contents {
-                    buffers.push(
-                        backend
-                            .device
-                            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                                label: Some(label),
-                                contents: bytemuck::cast_slice(data),
-                                usage,
-                            }),
-                    );
-                    continue;
-                }
+            if index == 0
+                && let Some(data) = contents
+            {
+                buffers.push(backend.device.create_buffer_init(
+                    &wgpu::util::BufferInitDescriptor {
+                        label: Some(label),
+                        contents: bytemuck::cast_slice(data),
+                        usage,
+                    },
+                ));
+                continue;
             }
             buffers.push(backend.device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some(label),
@@ -442,7 +441,11 @@ impl LawBand {
                 mapped_at_creation: false,
             }));
         }
-        LawBand { buffers, cols, rows }
+        LawBand {
+            buffers,
+            cols,
+            rows,
+        }
     }
 
     /// The interleaved density window, also the copy destination of the band.
@@ -493,10 +496,7 @@ pub(super) fn law_taps(pitch_um: f64) -> LawTaps {
         taps_for(sigma_px)
     });
     let highpass = taps_for(HIGHPASS_UM / pitch_um);
-    let norm = law_norm(
-        [&octaves[0].0, &octaves[1].0, &octaves[2].0],
-        &highpass.0,
-    );
+    let norm = law_norm([&octaves[0].0, &octaves[1].0, &octaves[2].0], &highpass.0);
     LawTaps {
         octaves,
         highpass,
@@ -740,8 +740,16 @@ impl WgpuBackend {
                 let u = self.uniform("dye_law_highpass", bytemuck::bytes_of(&params));
                 // The vertical pass must read the horizontal result, plane 3, or the
                 // band limit would only be one-dimensional.
-                let target = if axis == 0 { band.plane(3) } else { band.plane(10) };
-                let source = if axis == 0 { band.plane(9) } else { band.plane(3) };
+                let target = if axis == 0 {
+                    band.plane(3)
+                } else {
+                    band.plane(10)
+                };
+                let source = if axis == 0 {
+                    band.plane(9)
+                } else {
+                    band.plane(3)
+                };
                 let bind = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
                     label: Some("dye_law_highpass"),
                     layout: &pipes.blur.layout,

@@ -510,7 +510,6 @@ impl Pipeline {
                     input.height(),
                     &self.params,
                     pixel_size_um,
-                    None,
                     spatial_context,
                 )?)
             } else {
@@ -538,7 +537,6 @@ impl Pipeline {
                     input.height(),
                     &self.params,
                     pixel_size_um,
-                    None,
                     spatial_context,
                 )?)
             } else {

@@ -123,12 +123,10 @@ impl ChainStep {
             Self::GrainV1 => super::super::grain::GRAIN_V1_STAGE_NAME,
             Self::Dye => "grain_dye",
             Self::Fotufilm => "grain_fotufilm",
-            // removed: dye_print_response_log",
             Self::EnlargerLut => "enlarger_lut",
             Self::PrintRoundtrip => "print_lut_roundtrip",
             Self::Print => "print_spectral",
             Self::EnlargerDiffusion => "enlarger_diffusion",
-            // removed: dye_aperture_collapse",
             Self::PrintDensity => "print_density",
             Self::Readout => "scanner_density",
             Self::ScannerLut => "scanner_lut",
@@ -528,12 +526,9 @@ impl WgpuBackend {
             tail_resident = add(tail_resident, field_bytes)?;
         }
         if geometry.field != geometry.tail
-            && steps.iter().any(|s| {
-                matches!(
-                    s,
-                    ChainStep::Print | ChainStep::EnlargerLut
-                )
-            })
+            && steps
+                .iter()
+                .any(|s| matches!(s, ChainStep::Print | ChainStep::EnlargerLut))
         {
             tail_resident = add(tail_resident, field_bytes)?;
         }
@@ -544,13 +539,10 @@ impl WgpuBackend {
         for (index, &step) in steps.iter().enumerate() {
             let extent = if step.source_stage() {
                 geometry.source
-            } else if matches!(
-                step,
-                    | ChainStep::Print
-                    | ChainStep::EnlargerLut
-                    | ChainStep::PrintRoundtrip
-                    | ChainStep::EnlargerDiffusion
-            ) {
+            } else if matches!(step, |ChainStep::Print| ChainStep::EnlargerLut
+                | ChainStep::PrintRoundtrip
+                | ChainStep::EnlargerDiffusion)
+            {
                 geometry.field
             } else {
                 geometry.tail
@@ -573,13 +565,11 @@ impl WgpuBackend {
                 entered_tail = true;
             }
             let stage = match step {
-                ChainStep::Dye => {
-                    self.dye_workspace_bytes(
-                        extent.0,
-                        extent.1,
-                        p.grain_dye.as_ref().ok_or("Dye parameters missing")?,
-                    )?
-                }
+                ChainStep::Dye => self.dye_workspace_bytes(
+                    extent.0,
+                    extent.1,
+                    p.grain_dye.as_ref().ok_or("Dye parameters missing")?,
+                )?,
                 ChainStep::Fotufilm => self.fotufilm_workspace_bytes(
                     extent.0,
                     extent.1,
@@ -1150,24 +1140,18 @@ impl WgpuBackend {
                 }
             }
             if !remaining.iter().any(|s| {
-                matches!(
-                    s,
-                            | ChainStep::EnlargerLut
-                        | ChainStep::Print
-                        | ChainStep::Readout
-                        | ChainStep::ScannerLut
-                        | ChainStep::Scan
-                )
+                matches!(s, |ChainStep::EnlargerLut| ChainStep::Print
+                    | ChainStep::Readout
+                    | ChainStep::ScannerLut
+                    | ChainStep::Scan)
             }) && p.collect != Tap::CmyFilm
             {
                 rasters.field.clear();
             }
-            if !remaining.iter().any(|s| {
-                matches!(
-                    s,
-                    ChainStep::PrintRoundtrip | ChainStep::EnlargerDiffusion
-                )
-            }) {
+            if !remaining
+                .iter()
+                .any(|s| matches!(s, ChainStep::PrintRoundtrip | ChainStep::EnlargerDiffusion))
+            {
                 rasters.fine.clear();
             }
             if !remaining.iter().any(|s| {
@@ -1810,7 +1794,7 @@ mod tests {
         assert!(error.contains("CPU image-stage fence"), "{error}");
     }
 
-        #[test]
+    #[test]
     fn cancelled_identity_tap_discards_carrier_without_poisoning_reuse() {
         use spektrafilm_backend::ComputeBackend;
         use std::sync::{Arc, atomic::AtomicBool};

@@ -151,23 +151,6 @@ impl Pipeline {
         }
     }
 
-    pub(super) fn validate_grain_v3_taps(
-        _cell_spectral: bool,
-        inject: Tap,
-        collect: Tap,
-        scan_film: bool,
-    ) -> Result<(), String> {
-        if true {
-            return Ok(());
-        }
-        let supported_collect = collect == Tap::RgbOut
-            || (!scan_film && matches!(collect, Tap::LogEPrint | Tap::CmyPrint));
-        if !matches!(inject, Tap::RgbIn | Tap::RgbPre | Tap::LogEFilm) || !supported_collect {
-            return Err("SPEKTRAFILM_GRAIN_V3_CELL_SPECTRAL requires injection at or before log_e_film and optical collection (print log_e_print/cmy_print/rgb_out, film rgb_out); cmy_film is a density diagnostic".to_owned());
-        }
-        Ok(())
-    }
-
     /// Run the topology from the value at `inject` to the value at
     /// `collect` (both inclusive bounds in [`Pipeline::tap_order`]).
     /// Mirrors upstream `run_topology`: unreachable pairs error with the
@@ -220,7 +203,6 @@ impl Pipeline {
         }
         let forms_film = matches!(inject, Tap::RgbIn | Tap::RgbPre | Tap::LogEFilm);
         let _ = forms_film;
-        Self::validate_grain_v3_taps(false, inject, collect, self.params.io.scan_film)?;
         if let Some(capture) = capture.as_deref_mut()
             && self.params.io.scan_film
         {
@@ -290,13 +272,12 @@ impl Pipeline {
                     cur.height,
                     &self.params,
                     pixel_size_um,
-                    None,
                     spatial_context,
                 )?;
                 output_crop = plan.deferred_crop;
                 let geometry = plan.geometry;
                 let grid = plan.grid;
-                let readout_space = if plan.aperture.is_some() {
+                let readout_space = if false {
                     CoordinateSpace::GrainAperture
                 } else if plan.deferred_crop.is_some() {
                     CoordinateSpace::FilmFrame
@@ -334,7 +315,6 @@ impl Pipeline {
                     cur.height,
                     &self.params,
                     pixel_size_um,
-                    None,
                     spatial_context,
                 )?;
                 output_crop = plan.deferred_crop;
@@ -387,5 +367,4 @@ impl Pipeline {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    }
+}

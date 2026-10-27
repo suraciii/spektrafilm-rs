@@ -19,9 +19,9 @@
 //! execution is not implemented here.
 
 use rayon::prelude::*;
+use spektrafilm_math::gaussian;
 use spektrafilm_math::image::ImageBuf;
 use spektrafilm_math::precision::from_f64;
-use spektrafilm_math::gaussian;
 use spektrafilm_math::stats::{FastStatsRng, poisson_exact};
 
 /// Octave centres (µm) and weights; weights are normalised by the caller.
@@ -46,10 +46,6 @@ fn texture_octaves() -> Vec<(f64, f64)> {
     TEXTURE_OCTAVES.to_vec()
 }
 
-/// Off by default: `SPEKTRAFILM_GRAIN_V4_TEXTURE=1` swaps the per-pixel field for a
-/// correlated one, so the realised texture comes from aggregate scale rather than
-/// from per-pixel draws.
-
 /// Build a zero-mean, unit-variance multi-octave field. Octave length is the
 /// Gaussian sigma in micrometres; weights are normalised here.
 fn correlated_field(w: usize, h: usize, pitch_um: f64, seed: u64, tag: u64) -> Vec<f32> {
@@ -60,10 +56,18 @@ fn correlated_field(w: usize, h: usize, pitch_um: f64, seed: u64, tag: u64) -> V
         let v0 = noise_field(w, h, seed, tag + o as u64);
         // A real Gaussian, because the box approximation cannot resolve sigma < 1 px
         // and that is exactly the range the aggregate texture lives in.
-        let mut v = gaussian::gaussian_blur_channel(&v0, w as u32, h as u32, (length_um / pitch_um / 2.0) as f32);
+        let mut v = gaussian::gaussian_blur_channel(
+            &v0,
+            w as u32,
+            h as u32,
+            (length_um / pitch_um / 2.0) as f32,
+        );
         standardize(&mut v);
         let k = (weight / norm) as f32;
-        field.par_iter_mut().zip(v.par_iter()).for_each(|(a, b)| *a += k * b);
+        field
+            .par_iter_mut()
+            .zip(v.par_iter())
+            .for_each(|(a, b)| *a += k * b);
     }
     // Band-limit: subtract the field's own large-scale component. Aggregate grain
     // should not move the local level over tens of microns, because that reads as a
@@ -71,8 +75,12 @@ fn correlated_field(w: usize, h: usize, pitch_um: f64, seed: u64, tag: u64) -> V
     // micrometres (0 disables it).
     let hp = texture_highpass_um();
     if hp > 0.0 {
-        let big = gaussian::gaussian_blur_channel(&field, w as u32, h as u32, (hp / pitch_um) as f32);
-        field.par_iter_mut().zip(big.par_iter()).for_each(|(a, b)| *a -= *b);
+        let big =
+            gaussian::gaussian_blur_channel(&field, w as u32, h as u32, (hp / pitch_um) as f32);
+        field
+            .par_iter_mut()
+            .zip(big.par_iter())
+            .for_each(|(a, b)| *a -= *b);
     }
     standardize(&mut field);
     field
@@ -83,7 +91,6 @@ fn correlated_field(w: usize, h: usize, pitch_um: f64, seed: u64, tag: u64) -> V
 fn texture_highpass_um() -> f64 {
     TEXTURE_HIGHPASS_UM
 }
-
 
 /// Resolved clump parameters.
 /// Where the readout samples the film. A window is a set of film coordinates, so a
@@ -164,7 +171,10 @@ impl ClumpParams {
     /// caller's environment: the model is the engine's grain, so there is nothing to
     /// switch on and nothing to fall back to.
     pub fn delivered() -> Self {
-        let parts: Vec<f64> = DEFAULT_V4.split(',').map(|v| v.trim().parse::<f64>().unwrap()).collect();
+        let parts: Vec<f64> = DEFAULT_V4
+            .split(',')
+            .map(|v| v.trim().parse::<f64>().unwrap())
+            .collect();
         let strength = [parts[0], parts[1], parts[2]];
         let mut params = Self {
             strength,
@@ -208,7 +218,11 @@ impl ClumpParams {
 
     /// Domain checks; an invalid value fails instead of being repaired.
     pub fn validate(&self) -> Result<(), String> {
-        if self.strength.iter().any(|s| !s.is_finite() || *s < 0.0 || *s > 4.0) {
+        if self
+            .strength
+            .iter()
+            .any(|s| !s.is_finite() || *s < 0.0 || *s > 4.0)
+        {
             return Err("film grain V4: strength must be finite and in [0, 4]".into());
         }
         if !self.white.is_finite() || self.white < 0.0 || self.white > 1.5 {
@@ -230,7 +244,6 @@ impl ClumpParams {
     }
 }
 
-
 /// Box blur: horizontal `src -> tmp`, then vertical `tmp -> src` (edge replicated).
 fn box_blur(src: &mut [f32], tmp: &mut [f32], w: usize, h: usize, half: usize) {
     if half == 0 {
@@ -239,13 +252,13 @@ fn box_blur(src: &mut [f32], tmp: &mut [f32], w: usize, h: usize, half: usize) {
     let n = (2 * half + 1) as f32;
     tmp.par_chunks_mut(w).enumerate().for_each(|(y, row)| {
         let base = y * w;
-        for x in 0..w {
+        for (x, value) in row.iter_mut().enumerate() {
             let mut acc = 0.0f32;
             for k in 0..=2 * half {
                 let xx = (x + k).saturating_sub(half).min(w - 1);
                 acc += src[base + xx];
             }
-            row[x] = acc / n;
+            *value = acc / n;
         }
     });
     src.par_chunks_mut(w).enumerate().for_each(|(y, row)| {
@@ -335,7 +348,13 @@ fn channel(
     };
     for (o, (length_um, weight)) in octs.iter().enumerate() {
         let mut independent = noise_field(w, h, p.seed, 200 + (c as u64) * 8 + o as u64);
-        box_blur_approx(&mut independent, &mut tmp, w, h, length_um * p.scales[c] / pitch_um);
+        box_blur_approx(
+            &mut independent,
+            &mut tmp,
+            w,
+            h,
+            length_um * p.scales[c] / pitch_um,
+        );
         standardize(&mut independent);
         let us = &shared[o];
         let a = p.rho.sqrt() as f32;
@@ -367,8 +386,20 @@ fn channel(
             let index = (((i / w) as u64) << 32) | (i % w) as u64;
             let mut rng = FastStatsRng::stream(p.seed, 800 + c as u64, index);
             let lambda = (tv.max(0.0) * area / qc).min(1e12);
-            let count = if p.expectation { lambda } else { poisson_exact(&mut rng, lambda).map(|v| v as f64).unwrap_or(0.0) };
-            let k = if p.expectation { kbar } else { 1.0 + poisson_exact(&mut rng, (kbar - 1.0).max(0.0)).map(|v| v as f64).unwrap_or(0.0) };
+            let count = if p.expectation {
+                lambda
+            } else {
+                poisson_exact(&mut rng, lambda)
+                    .map(|v| v as f64)
+                    .unwrap_or(0.0)
+            };
+            let k = if p.expectation {
+                kbar
+            } else {
+                1.0 + poisson_exact(&mut rng, (kbar - 1.0).max(0.0))
+                    .map(|v| v as f64)
+                    .unwrap_or(0.0)
+            };
             *m = (count * k) as f32;
         });
         box_blur_approx(&mut mass, &mut tmp, w, h, clump_um / pitch_um);
@@ -377,80 +408,82 @@ fn channel(
         });
         return Ok(());
     }
-    out.par_iter_mut().enumerate().try_for_each(|(i, o)| -> Result<(), String> {
-        let t = target[i * 3 + c] as f64;
-        // Grain-vs-density response is *derived*, not tuned: for n particles with
-        // development probability p, Var = n p (1-p); with the particle budget
-        // reduced by `saturation` the standard deviation follows
-        // sqrt(saturation * p * (1 - p)). It vanishes at clear base and at Dmax and
-        // peaks in the mid densities, which is what the measured curves do.
-        let p_dev = (t / p.dmax).clamp(0.0, 1.0);
-        let sat = 1.0 - p_dev * p.uniformity;
-        let shape = (sat * p_dev * (1.0 - p_dev)).max(0.0).sqrt();
-        // A fully developed record still has granularity: the binomial shape goes to
-        // zero at p -> 1, which makes deep shadows perfectly clean. A floor keeps the
-        // measured residual instead of inventing a grain-free black.
-        let taper = (shape / p.taper_peak).max(p.taper_floor);
-        let sigma = sigma_base * taper;
-        // Amplitude modulation instead of level modulation: the envelope scales the
-        // local grain *contrast*, the mean density stays exactly t. A multiplicative
-        // level term (what exp() used to do) darkens whole neighbourhoods and reads as
-        // large dark patches.
-        let e = if p.expectation {
-            1.0
-        } else {
-            let wi = {
-                let a = p.rho.sqrt() as f32;
-                let b = (1.0 - p.rho).sqrt() as f32;
-                a * p.shared_white[i] + b * white_independent[i]
-            };
-            if p.level_mode {
-                let dm = sigma * delta[i] as f64 + sigma_white * wi as f64
-                    - 0.5 * (sigma * sigma + sigma_white * sigma_white);
-                if dm > 40.0 { 40.0_f64.exp() } else { dm.exp() }
+    out.par_iter_mut()
+        .enumerate()
+        .try_for_each(|(i, o)| -> Result<(), String> {
+            let t = target[i * 3 + c] as f64;
+            // Grain-vs-density response is *derived*, not tuned: for n particles with
+            // development probability p, Var = n p (1-p); with the particle budget
+            // reduced by `saturation` the standard deviation follows
+            // sqrt(saturation * p * (1 - p)). It vanishes at clear base and at Dmax and
+            // peaks in the mid densities, which is what the measured curves do.
+            let p_dev = (t / p.dmax).clamp(0.0, 1.0);
+            let sat = 1.0 - p_dev * p.uniformity;
+            let shape = (sat * p_dev * (1.0 - p_dev)).max(0.0).sqrt();
+            // A fully developed record still has granularity: the binomial shape goes to
+            // zero at p -> 1, which makes deep shadows perfectly clean. A floor keeps the
+            // measured residual instead of inventing a grain-free black.
+            let taper = (shape / p.taper_peak).max(p.taper_floor);
+            let sigma = sigma_base * taper;
+            // Amplitude modulation instead of level modulation: the envelope scales the
+            // local grain *contrast*, the mean density stays exactly t. A multiplicative
+            // level term (what exp() used to do) darkens whole neighbourhoods and reads as
+            // large dark patches.
+            let e = if p.expectation {
+                1.0
             } else {
-                let m = if p.texture {
-                    1.0
-                } else {
-                    (1.0 + sigma * delta[i] as f64).clamp(0.05, 3.0)
+                let wi = {
+                    let a = p.rho.sqrt() as f32;
+                    let b = (1.0 - p.rho).sqrt() as f32;
+                    a * p.shared_white[i] + b * white_independent[i]
                 };
-                // Absolute density granularity saturates with density (Selwyn): a purely
-                // relative amplitude makes the densest (brightest) areas the grainiest,
-                // which reads as dirty highlights. Cap the absolute sigma instead.
-                // Amplitude exponent: sigma_D = t^amp_exp * taper. alpha = 1 keeps the
-                // purely relative form (sigma proportional to local density); alpha = 0
-                // makes the density noise absolute, so bright, thin areas keep granularity
-                // instead of fading to a clean white.
-                let amp = if p.amp_exp == 1.0 {
-                    1.0
+                if p.level_mode {
+                    let dm = sigma * delta[i] as f64 + sigma_white * wi as f64
+                        - 0.5 * (sigma * sigma + sigma_white * sigma_white);
+                    if dm > 40.0 { 40.0_f64.exp() } else { dm.exp() }
                 } else {
-                    let tref = (p.dmax * 0.5).max(1e-6);
-                    (t / tref).clamp(1e-4, 1e4).powf(p.amp_exp - 1.0)
-                };
-                // Fog granularity is bounded by the base density it lives in: the
-                // effective floor is sigma_fog * t/(t + 0.05), so it saturates at
-                // Dmin instead of blowing up where the record is nearly clear.
-                // Fog granularity lives at the base, so it decays over roughly one
-                // base density: w = 1 / (1 + (t / 0.1)^2).
-                let w = 1.0 / (1.0 + (t / 0.1) * (t / 0.1));
-                let rel = sigma_white * taper * amp + p.fog_grain * w / (t.max(0.0) + 0.02);
-                (1.0 + rel * wi as f64 * m).max(0.02)
-            }
-        };
-        // Fog baseline: a developed record still carries base density, so the event
-        // rate does not vanish at t -> 0. The baseline is removed again after the
-        // count, so E[D] = t is unchanged.
-        let lambda = ((t.max(0.0) + p.fog) * e * area / q).min(1e12);
-        let count = if p.expectation {
-            lambda
-        } else {
-            let index = (((i / w) as u64) << 32) | (i % w) as u64;
-            let mut rng = FastStatsRng::stream(p.seed, 400 + c as u64, index);
-            poisson_exact(&mut rng, lambda)? as f64
-        };
-        *o = from_f64(q * count / area - p.fog);
-        Ok(())
-    })?;
+                    let m = if p.texture {
+                        1.0
+                    } else {
+                        (1.0 + sigma * delta[i] as f64).clamp(0.05, 3.0)
+                    };
+                    // Absolute density granularity saturates with density (Selwyn): a purely
+                    // relative amplitude makes the densest (brightest) areas the grainiest,
+                    // which reads as dirty highlights. Cap the absolute sigma instead.
+                    // Amplitude exponent: sigma_D = t^amp_exp * taper. alpha = 1 keeps the
+                    // purely relative form (sigma proportional to local density); alpha = 0
+                    // makes the density noise absolute, so bright, thin areas keep granularity
+                    // instead of fading to a clean white.
+                    let amp = if p.amp_exp == 1.0 {
+                        1.0
+                    } else {
+                        let tref = (p.dmax * 0.5).max(1e-6);
+                        (t / tref).clamp(1e-4, 1e4).powf(p.amp_exp - 1.0)
+                    };
+                    // Fog granularity is bounded by the base density it lives in: the
+                    // effective floor is sigma_fog * t/(t + 0.05), so it saturates at
+                    // Dmin instead of blowing up where the record is nearly clear.
+                    // Fog granularity lives at the base, so it decays over roughly one
+                    // base density: w = 1 / (1 + (t / 0.1)^2).
+                    let w = 1.0 / (1.0 + (t / 0.1) * (t / 0.1));
+                    let rel = sigma_white * taper * amp + p.fog_grain * w / (t.max(0.0) + 0.02);
+                    (1.0 + rel * wi as f64 * m).max(0.02)
+                }
+            };
+            // Fog baseline: a developed record still carries base density, so the event
+            // rate does not vanish at t -> 0. The baseline is removed again after the
+            // count, so E[D] = t is unchanged.
+            let lambda = ((t.max(0.0) + p.fog) * e * area / q).min(1e12);
+            let count = if p.expectation {
+                lambda
+            } else {
+                let index = (((i / w) as u64) << 32) | (i % w) as u64;
+                let mut rng = FastStatsRng::stream(p.seed, 400 + c as u64, index);
+                poisson_exact(&mut rng, lambda)? as f64
+            };
+            *o = from_f64(q * count / area - p.fog);
+            Ok(())
+        })?;
     Ok(())
 }
 
@@ -609,7 +642,13 @@ mod tests {
     #[test]
     fn expectation_mode_reproduces_the_target_exactly() {
         let src = flat(48, 0.7);
-        let out = apply(&src, 3.6676, &ReadoutGeometry::whole(48, 48, 3.6676), &params([1.0, 1.0, 1.0], true)).unwrap();
+        let out = apply(
+            &src,
+            3.6676,
+            &ReadoutGeometry::whole(48, 48, 3.6676),
+            &params([1.0, 1.0, 1.0], true),
+        )
+        .unwrap();
         for (a, b) in src.data.iter().zip(out.data.iter()) {
             assert!((*a - *b).abs() < 1e-6, "{a} vs {b}");
         }
@@ -619,10 +658,19 @@ mod tests {
     fn mean_is_preserved_for_any_strength() {
         let src = flat(96, 0.7);
         for strength in [[1.0, 1.0, 1.0], [0.67, 1.0, 1.71], [0.0, 2.0, 0.5]] {
-            let out = apply(&src, 3.6676, &ReadoutGeometry::whole(96, 96, 3.6676), &params(strength, false)).unwrap();
+            let out = apply(
+                &src,
+                3.6676,
+                &ReadoutGeometry::whole(96, 96, 3.6676),
+                &params(strength, false),
+            )
+            .unwrap();
             let mean = out.data.iter().map(|&v| v as f64).sum::<f64>() / out.data.len() as f64;
             let rel = (mean - 0.7).abs() / 0.7;
-            assert!(rel < 0.01, "strength {strength:?} relative mean error {rel}");
+            assert!(
+                rel < 0.01,
+                "strength {strength:?} relative mean error {rel}"
+            );
         }
     }
 
@@ -631,12 +679,31 @@ mod tests {
         let src = flat(96, 0.7);
         let sd = |out: &ImageBuf| {
             let m = out.data.iter().map(|&v| v as f64).sum::<f64>() / out.data.len() as f64;
-            (out.data.iter().map(|&v| (v as f64 - m).powi(2)).sum::<f64>() / out.data.len() as f64)
+            (out.data
+                .iter()
+                .map(|&v| (v as f64 - m).powi(2))
+                .sum::<f64>()
+                / out.data.len() as f64)
                 .sqrt()
         };
-        let one = sd(&apply(&src, 3.6676, &ReadoutGeometry::whole(96, 96, 3.6676), &params([1.0, 1.0, 1.0], false)).unwrap());
-        let two = sd(&apply(&src, 3.6676, &ReadoutGeometry::whole(96, 96, 3.6676), &params([2.0, 2.0, 2.0], false)).unwrap());
+        let one = sd(&apply(
+            &src,
+            3.6676,
+            &ReadoutGeometry::whole(96, 96, 3.6676),
+            &params([1.0, 1.0, 1.0], false),
+        )
+        .unwrap());
+        let two = sd(&apply(
+            &src,
+            3.6676,
+            &ReadoutGeometry::whole(96, 96, 3.6676),
+            &params([2.0, 2.0, 2.0], false),
+        )
+        .unwrap());
         let ratio = two / one;
-        assert!(ratio > 1.4 && ratio < 2.6, "variance ratio {ratio} not near 2");
+        assert!(
+            ratio > 1.4 && ratio < 2.6,
+            "variance ratio {ratio} not near 2"
+        );
     }
 }

@@ -1919,9 +1919,6 @@ fn retained_input_output_mix_matches_cpu_with_cmyk() {
     }
 }
 
-/// The optical readout changes the result lattice, not the conditioning
-/// source. Its mix source must independently replay all delivered geometry.
-
 /// Inverse scan already recovers developed CMY. Fotufilm selection is inert
 /// there; active Dye rejects these routes before rendering on both executors.
 #[test]

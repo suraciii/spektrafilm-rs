@@ -33,8 +33,6 @@ pub(crate) fn validate_stage_model(
     if params.taps.inject.is_some() || params.taps.collect.is_some() {
         return Err("stage artifacts cannot use diagnostic taps.inject or taps.collect".into());
     }
-    if crate::stages::grain_v3::active(params) {
-    }
     Ok(())
 }
 
