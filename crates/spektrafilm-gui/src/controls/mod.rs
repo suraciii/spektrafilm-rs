@@ -930,7 +930,7 @@ mod tests {
         let mut params = RuntimeParams::default();
         // The control renders inside the Camera section, not Scanner/Convert.
         let (_, output) = camera_frame(&ctx, &mut params, vec![]);
-        assert!(has_text(&output, "inherit (film profile)"));
+        assert!(has_text(&output, "Inherit (film profile) · D55"));
         assert_eq!(params.camera.capture_illuminant, None);
         /// `option` inside the popup.
         fn select(
@@ -951,7 +951,7 @@ mod tests {
         }
 
         // An explicit illuminant writes Some and flags the runtime change.
-        let flags = select(&ctx, &mut params, "inherit (film profile)", "BB4000");
+        let flags = select(&ctx, &mut params, "Inherit (film profile) · D55", "BB4000");
         assert!(flags.runtime_changed);
         assert_eq!(params.camera.capture_illuminant.as_deref(), Some("BB4000"));
         // The selection is retained across frames.
@@ -961,6 +961,12 @@ mod tests {
         // Clearing returns to inherit (None), which is a real unset value.
         let flags = select(&ctx, &mut params, "BB4000", "inherit (film profile)");
         assert!(flags.runtime_changed);
+        assert_eq!(params.camera.capture_illuminant, None);
+        let (_, output) = camera_frame(&ctx, &mut params, vec![]);
+        assert!(has_text(&output, "Inherit (film profile) · D55"));
+        crate::i18n::Locale::SimplifiedChinese.install(&ctx);
+        let (_, output) = camera_frame(&ctx, &mut params, vec![]);
+        assert!(has_text(&output, "继承（胶片配置）· D55"));
         assert_eq!(params.camera.capture_illuminant, None);
     }
 

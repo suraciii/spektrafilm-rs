@@ -350,7 +350,8 @@ fn section_break(ui: &mut egui::Ui) {
 /// A read-only option row: product label and fixed value in the shared
 /// editor column, locatable at its canonical path. The value carries the
 /// row's accessible name like an editor does, so the row reads as the
-/// option's state rather than a disabled editor.
+/// option's state rather than a disabled editor. Its bounded reason line is
+/// visible rather than hover-only, and is also the accessible description.
 fn readonly_row(ui: &mut egui::Ui, label: &str, value: &str, help: &str, path: &str) {
     ui.horizontal(|ui| {
         ui.label(
@@ -359,24 +360,35 @@ fn readonly_row(ui: &mut egui::Ui, label: &str, value: &str, help: &str, path: &
         .on_hover_text(help);
         let cell = editor_width(ui);
         ui.add_space((ui.available_width() - cell).max(0.0));
-        let response = ui
-            .add_sized(
-                egui::vec2(cell, theme::HEIGHT_CONTROL),
-                egui::Label::new(
-                    egui::RichText::new(value)
-                        .color(theme::FG_SECONDARY)
-                        .size(theme::SIZE_LABEL),
+        ui.vertical(|ui| {
+            ui.set_min_width(cell);
+            ui.set_max_width(cell);
+            ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
+            let response = ui
+                .add_sized(
+                    egui::vec2(cell, theme::HEIGHT_CONTROL),
+                    egui::Label::new(
+                        egui::RichText::new(value)
+                            .color(theme::FG_SECONDARY)
+                            .size(theme::SIZE_LABEL),
+                    )
+                    .halign(egui::Align::Max)
+                    .sense(egui::Sense::focusable_noninteractive()),
                 )
-                .halign(egui::Align::Max)
-                .sense(egui::Sense::focusable_noninteractive()),
-            )
-            .on_hover_text(help);
-        let name = controls::localized(ui.ctx(), label);
-        ui.ctx().accesskit_node_builder(response.id, |node| {
-            node.set_label(name.as_ref());
-            node.set_value(value);
+                .on_hover_text(help);
+            let reason = ui.add(
+                egui::Label::new(egui::RichText::new(help).small().color(theme::FG_MUTED))
+                    .halign(egui::Align::Max),
+            );
+            reason.on_hover_text(help);
+            let name = controls::localized(ui.ctx(), label);
+            ui.ctx().accesskit_node_builder(response.id, |node| {
+                node.set_label(name.as_ref());
+                node.set_value(value);
+                node.set_description(help);
+            });
+            controls::locate_row(ui, path, &response);
         });
-        controls::locate_row(ui, path, &response);
     });
 }
 
@@ -565,39 +577,29 @@ impl ExportDialog {
                         (JpegSubsampling::Yuv420, "4:2:0"),
                     ], "Select the JPEG chroma subsampling.");
                 } else {
-                    // Another container's codec options are not editable
-                    // here. One short read-only row keeps both canonical
-                    // targets locatable and states the retained values,
-                    // instead of two full rows of disabled editors.
+                    // Another container's codec options are not editable here.
+                    // The two canonical targets keep ordinary read-only rows:
+                    // retained value, visible applicability reason, and the
+                    // same locator behavior as every other Export option.
                     let inactive = crate::i18n::text(ui.ctx(), "surfaces.export.jpeg_inactive");
-                    let not_applicable = controls::localized(ui.ctx(), "not applicable");
-                    let quality_name = controls::localized(ui.ctx(), "JPEG quality");
-                    let subsampling_name = controls::localized(ui.ctx(), "JPEG subsampling");
-                    let quality_value = draft.jpeg_quality.to_string();
-                    let subsampling_value = draft.jpeg_subsampling.as_str().to_owned();
-                    ui.horizontal_wrapped(|ui| {
-                        for (name, value, path) in [
-                            (quality_name, quality_value, "extras.rust.jpeg_quality"),
-                            (
-                                subsampling_name,
-                                subsampling_value,
-                                "extras.rust.jpeg_subsampling",
-                            ),
-                        ] {
-                            let text = format!("{name}: {value} · {not_applicable}");
-                            let response = ui
-                                .add(
-                                    egui::Label::new(
-                                        egui::RichText::new(text)
-                                            .small()
-                                            .color(theme::FG_SECONDARY),
-                                    )
-                                    .sense(egui::Sense::focusable_noninteractive()),
-                                )
-                                .on_hover_text(inactive.as_ref());
-                            controls::locate_row(ui, path, &response);
-                        }
-                    });
+                    let subsampling_value = match draft.jpeg_subsampling {
+                        JpegSubsampling::Yuv444 => "4:4:4",
+                        JpegSubsampling::Yuv420 => "4:2:0",
+                    };
+                    readonly_row(
+                        ui,
+                        "JPEG quality",
+                        &draft.jpeg_quality.to_string(),
+                        inactive.as_ref(),
+                        "extras.rust.jpeg_quality",
+                    );
+                    readonly_row(
+                        ui,
+                        "JPEG subsampling",
+                        subsampling_value,
+                        inactive.as_ref(),
+                        "extras.rust.jpeg_subsampling",
+                    );
                 }
                 match draft.format {
                     ExportFormat::Tiff => {

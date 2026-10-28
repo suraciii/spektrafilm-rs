@@ -684,6 +684,22 @@ fn browser_clear_collapse_and_reopen_preserve_controls_and_missing_context() {
             .query_by_label("Current look: My Presets / Absent look • missing")
             .is_some()
     );
+    let name_bounds = harness
+        .query_all_by_label("Absent look")
+        .next()
+        .and_then(|node| node.raw_bounds())
+        .expect("visible current-look name");
+    let group_bounds: Vec<_> = harness
+        .query_all_by_label("My Presets")
+        .filter_map(|node| node.raw_bounds())
+        .collect();
+    assert!(
+        group_bounds
+            .iter()
+            .any(|group| { (group.y0 - name_bounds.y0).abs() < 4.0 && group.x1 <= name_bounds.x0 }),
+        "the fixed current-look summary must show group identity beside the name: \
+         name={name_bounds:?} groups={group_bounds:?}"
+    );
     assert!(
         harness
             .query_by_label("No matching look presets. Clear preset search to show all looks.")

@@ -398,6 +398,23 @@ fn open_export(h: &mut Harness<'_, App>) {
     }
 }
 
+fn locator_label(h: &Harness<'_, App>, path: &str) -> String {
+    let app = h.state();
+    controls::SearchIndex::default()
+        .results_filtered(
+            path,
+            &app.params,
+            &app.gui_state.sections,
+            app.film_medium,
+            app.parameter_revision,
+            &app.data_dir,
+            false,
+        )
+        .first()
+        .unwrap_or_else(|| panic!("Missing control locator: {path}"))
+        .localized_locator_label(&h.ctx)
+}
+
 fn reveal_control(h: &mut Harness<'_, App>, path: &str) {
     h.ctx.style_mut(|style| style.animation_time = 0.0);
     h.run_steps(3);
@@ -407,13 +424,7 @@ fn reveal_control(h: &mut Harness<'_, App>, path: &str) {
     }
     let entry =
         controls::lookup(path).unwrap_or_else(|| panic!("Missing control inventory: {path}"));
-    let locator = crate::tr!(
-        &h.ctx,
-        "controls.search.locate",
-        owner = controls::localized(&h.ctx, entry.owner.label()),
-        section = controls::localized(&h.ctx, entry.section)
-    )
-    .into_owned();
+    let locator = locator_label(h, path);
     let separate = !matches!(entry.owner, controls::ControlOwner::Stage(_));
     search_controls(h, path);
     if separate {
@@ -1484,7 +1495,7 @@ fn american_reminiscence_browser_restores_virtual_exposure_and_render() {
     let initial = preview(h);
     assert!(edge_difference(&initial) > 0.01);
     reveal_control(h, "camera.exposure_compensation_ev");
-    edit(h, "exposure compensation ev", "-1.0");
+    edit(h, "Exposure compensation", "-1.0");
     assert!(
         h.query_by_label("American Reminiscence • modified")
             .is_some()

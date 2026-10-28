@@ -151,7 +151,7 @@ fn legacy_disabled_preview_state_still_renders_accepted_numeric_edits_automatica
     preview(h);
     assert!(h.query_by_label("PREVIEW").is_none());
     reveal_control(h, "camera.exposure_compensation_ev");
-    edit(h, "exposure compensation ev", "1.0");
+    edit(h, "Exposure compensation", "1.0");
     let revision = h.state().parameter_revision;
     let current = preview(h);
     assert_eq!(h.state().params.camera.exposure_compensation_ev, 1.0);

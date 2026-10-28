@@ -321,19 +321,29 @@ impl App {
                         } else {
                             "My Presets"
                         };
+                        let group_label = crate::controls::localized(ui.ctx(), group);
                         let summary = crate::tr!(
                             ui.ctx(),
                             "surfaces.presets.current",
-                            group = crate::controls::localized(ui.ctx(), group),
+                            group = group_label.clone(),
                             name = &applied.name,
                             state = crate::controls::localized(ui.ctx(), state)
                         );
+                        // Group identity stays visible even when search or a
+                        // discovery filter removes the applied row itself;
+                        // names may repeat across the two groups.
                         ui.horizontal(|ui| {
                             let (slot, _) = ui.allocate_exact_size(
                                 egui::vec2(CHECK_ICON, theme::SIZE_LABEL),
                                 egui::Sense::hover(),
                             );
                             paint_check(ui.painter(), slot);
+                            ui.label(
+                                egui::RichText::new(group_label.as_ref())
+                                    .small()
+                                    .color(theme::FG_MUTED),
+                            );
+                            ui.label(egui::RichText::new("/").small().color(theme::FG_MUTED));
                             ui.add(
                                 egui::Label::new(egui::RichText::new(&applied.name).strong())
                                     .truncate(),

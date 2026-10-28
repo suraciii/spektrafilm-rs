@@ -876,7 +876,9 @@ pub(crate) fn experimental_badge(ui: &mut Ui) {
 /// A row label with the experimental marker when the parameter is marked.
 ///
 /// The badge sits beside the label, so the row's accessible name and its
-/// search match stay the bare parameter name.
+/// search match stay the bare parameter name. The label is not an activation
+/// target: its editor is the row's one pointer and keyboard owner, so the
+/// label must not become a dead keyboard stop.
 pub(crate) fn row_label(ui: &mut Ui, label: &str, experimental: bool) -> egui::Response {
     let response = ui.add(
         egui::Label::new(
@@ -884,7 +886,7 @@ pub(crate) fn row_label(ui: &mut Ui, label: &str, experimental: bool) -> egui::R
                 .color(theme::FG_SECONDARY)
                 .size(theme::SIZE_LABEL),
         )
-        .sense(egui::Sense::click()),
+        .sense(egui::Sense::hover()),
     );
     if experimental {
         experimental_badge(ui);
@@ -895,11 +897,16 @@ pub(crate) fn row_label(ui: &mut Ui, label: &str, experimental: bool) -> egui::R
 /// Selector/editor for an optional `String` leaf whose unset state means
 /// "inherit". Catalog values are offered in the dropdown; a valid custom
 /// `BB<kelvin>` value is retained and can be entered through the text field.
+///
+/// `unset_selected` is an already-localized closed-selector display for the
+/// unset state. It can state the effective inherited value while the dropdown
+/// keeps the plain unset sentinel as its selectable identity.
 pub(crate) fn optional_choice_tip(
     ui: &mut Ui,
     label: &str,
     value: &mut Option<String>,
     unset: &str,
+    unset_selected: Option<&str>,
     choices: &[&str],
     tooltip: &str,
 ) -> bool {
@@ -908,10 +915,18 @@ pub(crate) fn optional_choice_tip(
     ui.vertical(|ui| {
         ui.label(crate::controls::localized(ui.ctx(), label))
             .on_hover_text(crate::controls::localized(ui.ctx(), tooltip));
+        let selected_display = if value.is_none() {
+            unset_selected.map_or_else(
+                || crate::controls::localized(ui.ctx(), unset),
+                std::borrow::Cow::Borrowed,
+            )
+        } else {
+            crate::controls::localized(ui.ctx(), selected.as_str())
+        };
         let selector = egui::ComboBox::from_id_salt(label)
             .width(ui.available_width().min(theme::WIDTH_COMBO_MAX))
             .wrap_mode(egui::TextWrapMode::Truncate)
-            .selected_text(crate::controls::localized(ui.ctx(), &selected))
+            .selected_text(selected_display)
             .show_ui(ui, |ui| {
                 let entries =
                     std::iter::once((unset, unset)).chain(choices.iter().map(|c| (*c, *c)));
@@ -1437,6 +1452,19 @@ mod layout_tests {
             harness.get_by_label("Enable diffusion").toggled(),
             Some(egui::accesskit::Toggled::True),
         );
+        let switch =
+            harness.get_by_role_and_label(egui::accesskit::Role::Switch, "Enable diffusion");
+        switch.focus();
+        harness.run();
+        harness.press_key_modifiers(egui::Modifiers::SHIFT, egui::Key::Tab);
+        harness.run();
+        assert!(
+            harness
+                .get_by_role_and_label(egui::accesskit::Role::Switch, "Enable diffusion")
+                .node()
+                .is_focused(),
+            "the visible label must not insert a dead keyboard stop before the switch"
+        );
         harness.get_by_label("Enable diffusion").simulate_click();
         harness.run();
         assert!(!*harness.state());
@@ -1501,6 +1529,7 @@ mod layout_tests {
                                 "capture illuminant",
                                 &mut value,
                                 "inherit (film profile)",
+                                Some("inherit (film profile) · D65"),
                                 &["D50", "D65"],
                                 "Effective inherited capture illuminant: D65",
                             );

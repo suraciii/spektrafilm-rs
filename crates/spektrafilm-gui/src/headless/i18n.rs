@@ -128,7 +128,7 @@ fn language_switch_retains_invalid_numeric_draft_and_control_focus() {
     let mut s = session();
     let h = &mut s.harness;
     reveal_control(h, "camera.exposure_compensation_ev");
-    h.get_by_label("exposure compensation ev").focus();
+    h.get_by_label("Exposure compensation").focus();
     h.step();
     h.press_key_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
     h.input_mut().events.push(egui::Event::Text("-".into()));
@@ -147,7 +147,7 @@ fn language_switch_retains_invalid_numeric_draft_and_control_focus() {
     assert_eq!(h.state().parameter_revision, revision);
     language(h, LanguagePreference::English);
     assert_eq!(
-        h.get_by_label("exposure compensation ev").value(),
+        h.get_by_label("Exposure compensation").value(),
         Some("-".into())
     );
     h.press_key(egui::Key::Escape);
@@ -300,7 +300,7 @@ fn language_switch_preserves_active_render_identity_and_accepts_its_result() {
     let active = h.state().render_worker.active.clone();
     let guard = active.lock();
     reveal_control(h, "camera.exposure_compensation_ev");
-    edit(h, "exposure compensation ev", "0.5");
+    edit(h, "Exposure compensation", "0.5");
     wait_until(h, |a| a.render_job.is_some());
     let revision = h.state().parameter_revision;
     let epoch = h.state().input_epoch;
@@ -389,7 +389,7 @@ fn real_language_selector_retains_invalid_and_deferred_numeric_drafts() {
         reveal_control(h, "camera.exposure_compensation_ev");
         let params = h.state().params.clone();
         let revision = h.state().parameter_revision;
-        h.get_by_label("exposure compensation ev").focus();
+        h.get_by_label("Exposure compensation").focus();
         h.step();
         h.press_key_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
         h.input_mut().events.push(egui::Event::Text(draft.into()));
@@ -517,7 +517,7 @@ fn language_selector_does_not_finalize_valid_pending_numeric_history() {
     reveal_control(h, "camera.exposure_compensation_ev");
     let params = h.state().params.clone();
     assert!(!h.state().can_undo());
-    h.get_by_label("exposure compensation ev").focus();
+    h.get_by_label("Exposure compensation").focus();
     h.step();
     h.press_key_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
     h.input_mut().events.push(egui::Event::Text("1".into()));
@@ -539,7 +539,7 @@ fn language_selector_does_not_finalize_valid_pending_numeric_history() {
     assert_eq!(h.state().parameter_revision, revision);
     h.get_by_label("关闭设置").click();
     h.run_steps(3);
-    h.get_by_label("曝光补偿 EV").focus();
+    h.get_by_label("曝光补偿").focus();
     h.step();
     h.press_key(egui::Key::Escape);
     h.run_steps(3);

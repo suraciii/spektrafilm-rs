@@ -18,11 +18,36 @@ pub(crate) struct SearchResult {
 }
 impl SearchResult {
     pub(crate) fn localized_locator_label(&self, ctx: &egui::Context) -> String {
+        let control = self.labels.first().map_or(self.section, String::as_str);
+        let additional = if self.labels.len() > 1 {
+            crate::tr!(
+                ctx,
+                "controls.search.additional",
+                count = self.labels.len() - 1
+            )
+        } else {
+            std::borrow::Cow::Borrowed("")
+        };
+        let destination = match self.owner {
+            ControlOwner::Stage(stage) => crate::tr!(
+                ctx,
+                "surfaces.section.stage",
+                stage = super::localized(ctx, stage.label())
+            ),
+            ControlOwner::Settings | ControlOwner::Export => crate::tr!(
+                ctx,
+                "controls.search.dialog",
+                owner = super::localized(ctx, self.owner.label())
+            ),
+            _ => super::localized(ctx, self.owner.label()),
+        };
         crate::tr!(
             ctx,
             "controls.search.locate",
-            owner = super::localized(ctx, self.owner.label()),
-            section = super::localized(ctx, self.section)
+            control = super::localized(ctx, control),
+            additional = additional,
+            section = super::localized(ctx, self.section),
+            destination = destination
         )
         .into_owned()
     }
@@ -169,6 +194,45 @@ mod tests {
     fn factory() -> (RuntimeParams, Value) {
         let state = GuiState::factory();
         (state.runtime_params().unwrap(), state.sections)
+    }
+
+    #[test]
+    fn locators_name_the_matched_control_module_and_destination_in_each_locale() {
+        let (params, extras) = factory();
+        let ctx = egui::Context::default();
+        for (locale, stage_label, dialog_label, grouped_label) in [
+            (
+                crate::i18n::Locale::English,
+                "Exposure compensation · Camera → Input and capture stage",
+                "Saving color space · Export options → Export dialog",
+                "Exposure compensation (+1 more) · Camera → Input and capture stage",
+            ),
+            (
+                crate::i18n::Locale::SimplifiedChinese,
+                "曝光补偿 · 相机 → 输入与拍摄阶段",
+                "保存色彩空间 · 导出选项 → 导出对话框",
+                "曝光补偿（另有 1 项） · 相机 → 输入与拍摄阶段",
+            ),
+        ] {
+            locale.install(&ctx);
+            let found = build_filtered("camera.exposure_compensation_ev", &params, &extras, false);
+            assert_eq!(found[0].localized_locator_label(&ctx), stage_label);
+            assert!(
+                found[0]
+                    .localized_details(&ctx)
+                    .contains("camera.exposure_compensation_ev")
+            );
+            let mut grouped = found[0].clone();
+            grouped.labels.push("auto exposure".to_owned());
+            assert_eq!(grouped.localized_locator_label(&ctx), grouped_label);
+            let found = build_filtered(
+                "extras.rust.export_saving_color_space",
+                &params,
+                &extras,
+                false,
+            );
+            assert_eq!(found[0].localized_locator_label(&ctx), dialog_label);
+        }
     }
 
     #[test]

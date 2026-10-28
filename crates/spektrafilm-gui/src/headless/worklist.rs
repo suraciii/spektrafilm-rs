@@ -13,7 +13,7 @@ fn work_list_navigation_cancel_discard_and_remove_use_production_controls() {
     script(h, chooser::ChooserResult::Scripted(second.clone()));
     click(h, "Add photographs…");
     reveal_control(h, "camera.exposure_compensation_ev");
-    edit(h, "exposure compensation ev", "1.25");
+    edit(h, "Exposure compensation", "1.25");
     h.get_by_label("Search controls").focus();
     h.run_steps(3);
     click(h, "Next photograph");
@@ -60,7 +60,7 @@ fn copied_inactive_session() -> (Session, PathBuf, PathBuf) {
     let h = &mut s.harness;
     h.state_mut().add_work_paths(vec![second.clone()]);
     reveal_control(h, "camera.exposure_compensation_ev");
-    edit(h, "exposure compensation ev", "1.25");
+    edit(h, "Exposure compensation", "1.25");
     h.get_by_label("Search controls").focus();
     h.run_steps(3);
     h.state_mut().select_work_destination(1, true);
@@ -149,7 +149,7 @@ fn close_guards_each_inactive_copy_cancel_failed_save_save_and_discard_through_m
     // The third entry starts with current settings; change source again so the
     // copied destination is genuinely dirty, then save only the active source.
     reveal_control(h, "camera.exposure_compensation_ev");
-    edit(h, "exposure compensation ev", "1.5");
+    edit(h, "Exposure compensation", "1.5");
     h.get_by_label("Search controls").focus();
     h.run_steps(3);
     h.state_mut()

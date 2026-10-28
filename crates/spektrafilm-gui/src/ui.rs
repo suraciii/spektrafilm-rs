@@ -1011,10 +1011,7 @@ impl App {
     ///
     /// Every resettable section presents these on its header, so the reset scope
     /// the section table declares is reachable from the surface rendering it.
-    fn section_reset_controls(&mut self, ui: &mut egui::Ui, section: &str) -> bool {
-        self.section_reset_controls_with_order(ui, section, false)
-    }
-
+    /// `trailing` places the action after the chip in a right-aligned header.
     fn section_reset_controls_with_order(
         &mut self,
         ui: &mut egui::Ui,
@@ -1561,12 +1558,62 @@ impl App {
                         } else {
                             controls::localized(ctx, section)
                         };
-                        let response = egui::CollapsingHeader::new(
-                            egui::RichText::new(label).size(theme::SIZE_TITLE).strong())
-                        .id_salt(section)
-                        .default_open(matches!(section, "Session" | "Display"))
-                        .open(reveal.then_some(true))
-                        .show(ui, |ui| {
+                        let mut state = egui::collapsing_header::CollapsingState::load_with_default_open(
+                            ui.ctx(),
+                            ui.make_persistent_id(section),
+                            matches!(section, "Session" | "Display"),
+                        );
+                        if reveal {
+                            state.set_open(true);
+                        }
+                        // The same module-header presentation as the inspector:
+                        // title on the left, modified chip and reset on the
+                        // right. Settings body rows never lead with a reset.
+                        let mut restore_display = false;
+                        let header = ui.horizontal(|ui| {
+                            let response =
+                                controls::disclosure_header(ui, label.as_ref(), state.is_open());
+                            if response.clicked() {
+                                state.toggle(ui);
+                            }
+                            ui.with_layout(
+                                egui::Layout::right_to_left(egui::Align::Center),
+                                |ui| {
+                                    if matches!(section, "Session" | "Display") {
+                                        let changed = if section == "Session" {
+                                            ui.add_enabled_ui(
+                                                !self.input_transition_pending(),
+                                                |ui| {
+                                                    self.section_reset_controls_with_order(
+                                                        ui, section, true,
+                                                    )
+                                                },
+                                            )
+                                            .inner
+                                        } else {
+                                            self.section_reset_controls_with_order(
+                                                ui, section, true,
+                                            )
+                                        };
+                                        if changed && section == "Display" {
+                                            restore_display = true;
+                                        }
+                                    }
+                                },
+                            );
+                            response
+                        });
+                        if restore_display {
+                            let restored = display::DisplaySettings::from_json(
+                                &self.gui_state.sections["display"],
+                            );
+                            self.viewer.settings.use_display_transform =
+                                restored.use_display_transform;
+                            self.viewer.settings.gray_18_canvas = restored.gray_18_canvas;
+                            self.viewer.settings.white_padding = restored.white_padding;
+                            self.viewer.settings.interpolation = restored.interpolation;
+                        }
+                        state.show_body_indented(&header.response, ui, |ui| {
                             let _scope = controls::row_modified::install(
                                 ctx, section, &self.params, &self.gui_state.sections,
                             );
@@ -1574,18 +1621,6 @@ impl App {
                                 && !matches!(section, "Display" | "Diagnostics")
                             {
                                 ui.disable();
-                            }
-                            if matches!(section, "Session" | "Display")
-                                && self.section_reset_controls(ui, section)
-                                && section == "Display"
-                            {
-                                let restored = display::DisplaySettings::from_json(
-                                    &self.gui_state.sections["display"],
-                                );
-                                self.viewer.settings.use_display_transform = restored.use_display_transform;
-                                self.viewer.settings.gray_18_canvas = restored.gray_18_canvas;
-                                self.viewer.settings.white_padding = restored.white_padding;
-                                self.viewer.settings.interpolation = restored.interpolation;
                             }
                             match section {
                                 "Session" => {
@@ -1620,10 +1655,13 @@ impl App {
                         });
                         if reveal {
                             if !canonical_target {
-                                response.header_response.request_focus();
-                                response.header_response.scroll_to_me(Some(egui::Align::TOP));
+                                header.response.request_focus();
+                                header.response.scroll_to_me(Some(egui::Align::TOP));
                             }
-                            if !canonical_target || ctx.data(|data| data.get_temp::<(String, String)>(egui::Id::new("control_focus_request")).is_none()) {
+                            if !canonical_target || ctx.data(|data| {
+                                data.get_temp::<(String, String)>(egui::Id::new("control_focus_request"))
+                                    .is_none()
+                            }) {
                                 self.pending_scroll = None;
                             }
                         }
@@ -1997,14 +2035,69 @@ impl App {
                                             ..
                                         }
                                     );
-                                let text = if routine { &context } else { &status };
-                                ui.add(
-                                    egui::Label::new(
-                                        egui::RichText::new(text).small().color(theme::FG_MUTED),
-                                    )
-                                    .truncate(),
-                                )
-                                .on_hover_text(format!("{context}\n{status}"));
+                                // Material and workflow identity is persistent context;
+                                // an operation outcome gets its own bounded segment
+                                // instead of replacing that identity.
+                                ui.horizontal(|ui| {
+                                    ui.spacing_mut().item_spacing.x = theme::SPACE_2;
+                                    let available = ui.available_width();
+                                    let status_width = if routine {
+                                        0.0
+                                    } else {
+                                        (available * 0.38).min(190.0)
+                                    };
+                                    let context_width = (available
+                                        - if routine {
+                                            0.0
+                                        } else {
+                                            status_width + ui.spacing().item_spacing.x
+                                        })
+                                    .max(1.0);
+                                    let context_response = ui.add_sized(
+                                        [context_width, ui.available_height().max(14.0)],
+                                        egui::Label::new(
+                                            egui::RichText::new(&context)
+                                                .small()
+                                                .color(theme::FG_MUTED),
+                                        )
+                                        .truncate(),
+                                    );
+                                    context_response.widget_info(|| {
+                                        egui::WidgetInfo::labeled(
+                                            egui::WidgetType::Label,
+                                            true,
+                                            context.as_str(),
+                                        )
+                                    });
+                                    ctx.accesskit_node_builder(context_response.id, |node| {
+                                        node.set_label(context.as_str())
+                                    });
+                                    context_response.on_hover_text(context.as_str());
+                                    if !routine {
+                                        ui.separator();
+                                        let status_response = ui.add_sized(
+                                            [status_width, ui.available_height().max(14.0)],
+                                            egui::Label::new(
+                                                egui::RichText::new(status.as_str())
+                                                    .small()
+                                                    .color(theme::FG_MUTED),
+                                            )
+                                            .halign(egui::Align::Max)
+                                            .truncate(),
+                                        );
+                                        status_response.widget_info(|| {
+                                            egui::WidgetInfo::labeled(
+                                                egui::WidgetType::Label,
+                                                true,
+                                                status.as_str(),
+                                            )
+                                        });
+                                        ctx.accesskit_node_builder(status_response.id, |node| {
+                                            node.set_label(status.as_str())
+                                        });
+                                        status_response.on_hover_text(status.as_str());
+                                    }
+                                });
                             },
                         );
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -2332,6 +2425,7 @@ impl eframe::App for App {
                                 ui.ctx(),
                                 "surfaces.search.stage_help",
                             ));
+                        controls::focus_feedback(ui, &response);
                         let accessible_name = controls::localized(ui.ctx(), stage.label());
                         ui.ctx().accesskit_node_builder(response.id, |node| {
                             node.set_label(accessible_name.as_ref())
