@@ -141,16 +141,16 @@ An accepted CPU algorithm MUST NOT be changed merely to make GPU results pass. I
 
 A stage whose law and discrete decisions the owning engine defines in f32 MAY run on a device without `SHADER_F64` under its frozen budget. Each such stage keeps the reference law, stage order, coefficients, tap order, kernel support, paging decomposition and coordinate identity; only the arithmetic precision changes. The measured device error and the frozen limit are:
 
-| Stage | Metric | Frozen limit |
-| --- | --- | --- |
-| Auto-exposure metering | EV against CPU f64 | 2e-4 |
-| Gaussian FIR/IIR below sigma 8 | sample against CPU f64 | 6e-6 |
-| Spline resize | scaled sample against CPU f64 | 4e-6 |
-| Direct scanner acquisition | RGB against CPU f64 | 1e-5 |
-| Negative readout and setup | log10 exposure / tone | 1e-5 / 1e-5 |
-| Output gamut, modes 0-3 | RGB against CPU reference | 5e-6 |
-| Optical diffusion | sample against CPU f64 | 5e-5 |
-| Enlarger/scanner spectral LUT | sample against CPU f64 | 2e-5 |
+| Stage | Metric | Measured | Frozen limit |
+| --- | --- | --- | --- |
+| Auto-exposure metering | EV against CPU f64 | 7.6e-5 | 2e-4 |
+| Gaussian on a restricted device, through blurred glare | model output | 3.0e-9 | 1e-8 |
+| Spline resize | scaled sample against CPU f64 | 1.9e-6 | 4e-6 |
+| Direct scanner acquisition | RGB against CPU f64 | 6.6e-7 | 1e-5 |
+| Negative readout and setup | log10 exposure / tone | 8.5e-7 / 3.6e-7 | 1e-5 / 1e-5 |
+| Output gamut, modes 0-3 | RGB against CPU reference | 1.2e-6 | 5e-6 |
+| Optical diffusion | sample against CPU f64 | 1.3e-6 | 5e-5 |
+| Enlarger/scanner spectral LUT | sample against CPU f64 | 3.8e-8 / 7.0e-7 | 2e-5 |
 
 `SPEKTRAFILM_GPU_DISABLE_F64=1` is an acceptance control, not a user-facing profile: it makes the adapter report no binary64 so the same device path is exercised. It MUST NOT select the CPU backend or change resolved controls.
 
