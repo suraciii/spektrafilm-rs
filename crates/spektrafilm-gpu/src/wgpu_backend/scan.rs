@@ -16,8 +16,7 @@ mod scan_setup;
 #[path = "scan_tests.rs"]
 mod tests;
 
-/// Immutable binary64 reconstruction. `exposure` pages contain 24 bytes per
-/// RGB pixel (not the ordinary f32 RasterStorage transport).
+/// Immutable binary32 reconstruction, with 12 bytes per RGB pixel.
 pub(super) struct PreparedScan {
     pub(super) exposure: Vec<super::paged::ImagePage>,
     pub(super) setup: wgpu::Buffer,
@@ -371,19 +370,16 @@ impl WgpuBackend {
         preparation_key: Option<&std::sync::Arc<dyn spektrafilm_backend::DeviceImagePayload>>,
     ) -> Result<ScanDensityState, String> {
         self.check_cancelled()?;
-        if !self
-            .device
-            .features()
-            .contains(wgpu::Features::SHADER_F64 | wgpu::Features::SHADER_INT64)
-        {
-            return Err(
-                "negative-to-positive acquisition requires native shader f64 and int64".into(),
-            );
-        }
         let pixels = width
             .checked_mul(height)
             .filter(|&n| n != 0)
             .ok_or("standard setup requires a nonempty RGB density frame")?;
+        if p.dmax
+            .iter()
+            .any(|&d| !d.is_finite() || d.abs() > f32::MAX as f64)
+        {
+            return Err("negative-to-positive dmax exceeds finite f32 range".into());
+        }
         if p.counts
             .iter()
             .enumerate()
@@ -408,17 +404,17 @@ impl WgpuBackend {
             offsets: [u32; 4],
             counts: [u32; 4],
             flags: [u32; 4],
-            contrast: [f64; 4],
-            dmax: [f64; 4],
-            brightness: [f64; 4],
-            denominator: [f64; 4],
-            camera: [f64; 4],
-            setup: [f64; 4],
-            operator: [f64; 4],
-            color: [f64; 4],
-            destination: [[f64; 4]; 3],
+            contrast: [f32; 4],
+            dmax: [f32; 4],
+            brightness: [f32; 4],
+            denominator: [f32; 4],
+            camera: [f32; 4],
+            setup: [f32; 4],
+            operator: [f32; 4],
+            color: [f32; 4],
+            destination: [[f32; 4]; 3],
         }
-        let row = |v: [f64; 3]| [v[0], v[1], v[2], 0.0];
+        let row = |v: [f64; 3]| [v[0] as f32, v[1] as f32, v[2] as f32, 0.0];
         let identity = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
         let operator_active = p.operator_contrast_delta != 0.0
             || p.operator_exposure_ev != 0.0
@@ -438,16 +434,20 @@ impl WgpuBackend {
             brightness: row(p.brightness_ev),
             denominator: row(p.denominator),
             camera: [
-                if p.standard_setup { 0.0 } else { p.camera_ev },
+                if p.standard_setup {
+                    0.0
+                } else {
+                    p.camera_ev as f32
+                },
                 0.0,
                 0.0,
                 0.0,
             ],
-            setup: [p.setup_aim_density, p.setup_gamma, 0.0, 0.0],
+            setup: [p.setup_aim_density as f32, p.setup_gamma as f32, 0.0, 0.0],
             operator: [
-                p.operator_pivot,
-                p.operator_contrast_delta,
-                p.operator_exposure_ev,
+                p.operator_pivot as f32,
+                p.operator_contrast_delta as f32,
+                p.operator_exposure_ev as f32,
                 0.0,
             ],
             color: row(p.operator_color),
@@ -465,20 +465,22 @@ impl WgpuBackend {
                 contents: bytemuck::bytes_of(&0u32),
                 usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
             });
-        let density = table("density_axes", bytemuck::cast_slice(&p.density));
-        let exposure = table("exposure_axes", bytemuck::cast_slice(&p.exposure));
+        let density_values: Vec<f32> = p.density.iter().map(|&v| v as f32).collect();
+        let exposure_values: Vec<f32> = p.exposure.iter().map(|&v| v as f32).collect();
+        let density = table("density_axes", bytemuck::cast_slice(&density_values));
+        let exposure = table("exposure_axes", bytemuck::cast_slice(&exposure_values));
         let limit = super::bounded::storage_binding_limit(self)?;
         if density.size() > limit || exposure.size() > limit {
             return Err(format!(
                 "scanner calibrated coefficient binding exceeds {limit} bytes"
             ));
         }
-        if limit < 112 {
+        if limit < 88 {
             return Err(format!(
-                "scanner setup working state needs 112 bytes per binding; limit is {limit}"
+                "scanner setup working state needs 88 bytes per binding; limit is {limit}"
             ));
         }
-        let capacity = (super::bounded::chunk_elements(limit, 24)? as u32).min(pixels);
+        let capacity = (super::bounded::chunk_elements(limit, 12)? as u32).min(pixels);
         let cached = preparation_key
             .and_then(|key| self.cached_prepared_scan(key, p, width, height))
             .filter(|prepared| {
@@ -498,7 +500,7 @@ impl WgpuBackend {
                 let n = capacity.min(pixels - first);
                 let buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
                     label: Some("scan_reconstructed_exposure"),
-                    size: u64::from(n) * 24,
+                    size: u64::from(n) * 12,
                     usage: wgpu::BufferUsages::STORAGE
                         | wgpu::BufferUsages::COPY_SRC
                         | wgpu::BufferUsages::COPY_DST,
@@ -513,8 +515,10 @@ impl WgpuBackend {
             }
             let setup = self.device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("scan_fullframe_setup"),
-                size: 112,
-                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                size: 88,
+                usage: wgpu::BufferUsages::STORAGE
+                    | wgpu::BufferUsages::COPY_DST
+                    | wgpu::BufferUsages::COPY_SRC,
                 mapped_at_creation: false,
             });
             std::sync::Arc::new(PreparedScan {
@@ -548,10 +552,9 @@ impl WgpuBackend {
         let optics = if p.lens_blur > 0.0 && !reuse {
             let make = |inverse: u32| {
                 self.scan_pass(
-                    concat!(
-                        include_str!("../../../spektrafilm-shaders/wgsl/f64_math.wgsl"),
-                        include_str!("../../../spektrafilm-shaders/wgsl/scan/transmission.wgsl")
-                    ),
+                    concat!(include_str!(
+                        "../../../spektrafilm-shaders/wgsl/scan/transmission.wgsl"
+                    )),
                     &[U, S { read_only: false }],
                     &[
                         &self.pipe.static_buffer(
@@ -584,7 +587,6 @@ impl WgpuBackend {
         };
         let render_pipeline = self.cached_pipeline(
             concat!(
-                include_str!("../../../spektrafilm-shaders/wgsl/f64_math.wgsl"),
                 include_str!("../../../spektrafilm-shaders/wgsl/scan/density_lib.wgsl"),
                 include_str!("../../../spektrafilm-shaders/wgsl/scan/scanner_density.wgsl")
             ),

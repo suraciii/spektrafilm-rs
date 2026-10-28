@@ -157,11 +157,30 @@ fn standard_fullframe_exact_percentile_neutral_locus_and_operator_destination() 
                 .unwrap();
             state.submit_optics(&gpu).unwrap();
             state.submit_setup(&gpu).unwrap();
+            let setup = gpu
+                .pipe
+                .readback_buffer_as::<f32>(&state.prepared.setup, 64);
+            let offset_error = (0..3)
+                .map(|c| (f64::from(setup[5 + c]) - offset[c]).abs())
+                .fold(0.0_f64, f64::max);
+            // 1e-5 log10 exposure is 3.33e-5 EV; this leaves margin for
+            // binary32 calibrated interpolation and whole-frame reduction.
+            assert!(offset_error < 1e-5, "setup offset error {offset_error}");
+            eprintln!(
+                "scan setup maximum error: {offset_error} log10 exposure ({} EV)",
+                offset_error / std::f64::consts::LOG10_2
+            );
             state.submit_inverse(&gpu).unwrap();
             state.check(&gpu, &p, None, 42, 1).unwrap();
             let actual = gpu
                 .pipe
                 .readback_buffer_as::<f32>(&output, data.len() as u64 * 4);
+            let tone_error = actual
+                .iter()
+                .zip(&expected)
+                .map(|(&a, &b)| (a - b).abs())
+                .fold(0.0_f32, f32::max);
+            eprintln!("scan tone maximum absolute error: {tone_error}");
             for (i, (&a, &b)) in actual.iter().zip(&expected).enumerate() {
                 assert!((a - b).abs() < 1e-5, "sample {i}: GPU {a}, CPU {b}");
             }
@@ -170,7 +189,67 @@ fn standard_fullframe_exact_percentile_neutral_locus_and_operator_destination() 
 }
 
 #[test]
-fn positive_tone_finite_huge_dmax_white_shoulder_matches_cpu_order() {
+fn standard_setup_large_frame_error_budget() {
+    let gpu = crate::test_support::adapter();
+    let p = parameters();
+    let pixels = 262_144u32;
+    let data: Vec<f32> = (0..pixels)
+        .flat_map(|i| {
+            let n = 0.2 + (i % 251) as f32 * 0.007;
+            [n * 0.91 + 0.03, n, n * 1.09 - 0.02]
+        })
+        .collect();
+    let (expected, offset, _) = reference(&data, &p);
+    let source = gpu
+        .device
+        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("scan_large_frame_source"),
+            contents: bytemuck::cast_slice(&data),
+            usage: wgpu::BufferUsages::STORAGE
+                | wgpu::BufferUsages::COPY_SRC
+                | wgpu::BufferUsages::COPY_DST,
+        });
+    let output = gpu.device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("scan_large_frame_output"),
+        size: data.len() as u64 * 4,
+        usage: wgpu::BufferUsages::STORAGE
+            | wgpu::BufferUsages::COPY_SRC
+            | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+    let state = gpu
+        .build_scan_density_state(&p, &source, &output, pixels, 1, None)
+        .unwrap();
+    state.submit_setup(&gpu).unwrap();
+    let setup = gpu
+        .pipe
+        .readback_buffer_as::<f32>(&state.prepared.setup, 64);
+    let offset_error = (0..3)
+        .map(|c| (f64::from(setup[5 + c]) - offset[c]).abs())
+        .fold(0.0_f64, f64::max);
+    assert!(
+        offset_error < 1e-5,
+        "large-frame setup offset error {offset_error}"
+    );
+    state.submit_inverse(&gpu).unwrap();
+    state.check(&gpu, &p, None, pixels, 1).unwrap();
+    let actual = gpu
+        .pipe
+        .readback_buffer_as::<f32>(&output, data.len() as u64 * 4);
+    let tone_error = actual
+        .iter()
+        .zip(&expected)
+        .map(|(&a, &b)| (a - b).abs())
+        .fold(0.0_f32, f32::max);
+    assert!(tone_error < 1e-5, "large-frame tone error {tone_error}");
+    eprintln!(
+        "scan large-frame max offset error {offset_error} log10 ({} EV), tone error {tone_error}",
+        offset_error / std::f64::consts::LOG10_2
+    );
+}
+
+#[test]
+fn positive_tone_rejects_dmax_outside_f32_range() {
     let gpu = crate::test_support::adapter();
     let mut p = parameters();
     p.standard_setup = false;
@@ -183,8 +262,7 @@ fn positive_tone_finite_huge_dmax_white_shoulder_matches_cpu_order() {
     p.operator_exposure_ev = 0.0;
     p.operator_color = [0.0; 3];
     p.tone_to_output = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
-    // Each calibrated axis reconstructs exposure zero. CPU forms a zero
-    // density at this white shoulder before multiplying by LN_10.
+    // Finite binary64 values outside the binary32 range are rejected.
     let values = [2.0f32, 2.2, 2.4];
     let source = gpu
         .device
@@ -203,18 +281,9 @@ fn positive_tone_finite_huge_dmax_white_shoulder_matches_cpu_order() {
             | wgpu::BufferUsages::COPY_SRC
             | wgpu::BufferUsages::COPY_DST,
     });
-    let state = gpu
-        .build_scan_density_state(&p, &source, &output, 1, 1, None)
-        .unwrap();
-    state.submit_optics(&gpu).unwrap();
-    state.submit_setup(&gpu).unwrap();
-    state.submit_inverse(&gpu).unwrap();
-    state.check(&gpu, &p, None, 1, 1).unwrap();
-    let actual = gpu.pipe.readback_buffer_as::<f32>(&output, 12);
-    let t = 1.0 / (1.0 + (-1000.0_f64).exp());
-    let density = p.dmax[0] * (1.0 - t);
-    let expected = (((-std::f64::consts::LN_10 * density).exp_m1() + p.denominator[0])
-        / p.denominator[0]) as f32;
-    assert_eq!(expected, 1.0);
-    assert_eq!(actual, vec![expected; 3]);
+    let error = match gpu.build_scan_density_state(&p, &source, &output, 1, 1, None) {
+        Ok(_) => panic!("unrepresentable dmax was accepted"),
+        Err(error) => error,
+    };
+    assert_eq!(error, "negative-to-positive dmax exceeds finite f32 range");
 }
