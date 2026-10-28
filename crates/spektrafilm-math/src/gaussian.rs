@@ -1,5 +1,5 @@
 use crate::image::ImageBuf;
-use crate::precision::{Scalar, ZERO, from_f64};
+use crate::precision::{Scalar, ZERO, from_f64, to_f64};
 use rayon::prelude::*;
 
 /// Separable Gaussian blur on an ImageBuf.
@@ -187,22 +187,27 @@ fn iir_blur_1d(
     sigma: Scalar,
     horizontal: bool,
 ) {
-    // Compute IIR coefficients (Young-van Vliet, 3rd order)
-    let q = if sigma >= from_f64(2.5) {
-        from_f64(0.98711) * sigma - from_f64(0.96330)
+    // Young-van Vliet coefficients stay binary64 in every build. Their DC gain
+    // is `a / (1 - b1 - b2 - b3)`, and at large sigma `a` is around 1e-6, so
+    // working-precision f32 arithmetic cannot separate `1 - b1 - b2 - b3` from
+    // 1.0: an f32 recurrence loses the gain and a constant field drifts (36 %
+    // at sigma = 147 px on a 1024-wide frame). The device kernel has always
+    // carried f64 coefficients and f64 state, so this also restores parity.
+    let sigma = to_f64(sigma);
+    let q = if sigma >= 2.5 {
+        0.98711 * sigma - 0.96330
     } else {
-        from_f64(3.97156) - from_f64(4.14554) * (from_f64(1.0) - from_f64(0.26891) * sigma).sqrt()
+        3.97156 - 4.14554 * (1.0 - 0.26891 * sigma).sqrt()
     };
 
     let q2 = q * q;
     let q3 = q2 * q;
 
-    let b0 =
-        from_f64(1.57825) + from_f64(2.44413) * q + from_f64(1.4281) * q2 + from_f64(0.422205) * q3;
-    let b1_raw = from_f64(2.44413) * q + from_f64(2.85619) * q2 + from_f64(1.26661) * q3;
-    let b2_raw = -(from_f64(1.4281) * q2 + from_f64(1.26661) * q3);
-    let b3_raw = from_f64(0.422205) * q3;
-    let a = from_f64(1.0) - (b1_raw + b2_raw + b3_raw) / b0;
+    let b0 = 1.57825 + 2.44413 * q + 1.4281 * q2 + 0.422205 * q3;
+    let b1_raw = 2.44413 * q + 2.85619 * q2 + 1.26661 * q3;
+    let b2_raw = -(1.4281 * q2 + 1.26661 * q3);
+    let b3_raw = 0.422205 * q3;
+    let a = 1.0 - (b1_raw + b2_raw + b3_raw) / b0;
     let b1 = b1_raw / b0;
     let b2 = b2_raw / b0;
     let b3 = b3_raw / b0;
@@ -237,14 +242,7 @@ fn iir_blur_1d(
 }
 
 /// Apply Young-van Vliet IIR filter to a 1D signal (forward + backward pass).
-fn iir_filter_row(
-    src: &[Scalar],
-    dst: &mut [Scalar],
-    a: Scalar,
-    b1: Scalar,
-    b2: Scalar,
-    b3: Scalar,
-) {
+fn iir_filter_row(src: &[Scalar], dst: &mut [Scalar], a: f64, b1: f64, b2: f64, b3: f64) {
     let n = src.len();
     if n == 0 {
         return;
@@ -270,24 +268,28 @@ fn iir_filter_row(
     // n-3..0). The previous Rust code zeroed the state and skipped the
     // last three positions in the backward pass — which produced a
     // small but visible edge bias vs. Python at every halation σ.
-    let x0 = src[0];
+    // The recurrence state and coefficients are binary64 even when samples are
+    // f32: the DC gain of this filter is a difference of nearly equal
+    // quantities, so a working-precision state loses it at large sigma. Only
+    // the stored samples are narrowed, which is what the device kernel does.
+    let x0 = f64::from(src[0]);
     let mut w1 = x0;
     let mut w2 = x0;
     let mut w3 = x0;
     for j in 0..n {
-        let w = a * src[j] + b1 * w1 + b2 * w2 + b3 * w3;
-        dst[j] = w;
+        let w = a * f64::from(src[j]) + b1 * w1 + b2 * w2 + b3 * w3;
+        dst[j] = from_f64(w);
         w3 = w2;
         w2 = w1;
         w1 = w;
     }
-    let xn = dst[n - 1];
+    let xn = f64::from(dst[n - 1]);
     w1 = xn;
     w2 = xn;
     w3 = xn;
     for j in (0..n).rev() {
-        let w = a * dst[j] + b1 * w1 + b2 * w2 + b3 * w3;
-        dst[j] = w;
+        let w = a * f64::from(dst[j]) + b1 * w1 + b2 * w2 + b3 * w3;
+        dst[j] = from_f64(w);
         w3 = w2;
         w2 = w1;
         w1 = w;
@@ -324,6 +326,45 @@ mod tests {
         let out = gaussian_blur(&img, 2.0);
         for (a, b) in img.data.iter().zip(out.data.iter()) {
             assert!((a - b).abs() < from_f64(1e-4), "expected {a}, got {b}");
+        }
+    }
+
+    /// A blur is mass-preserving, so a constant field must survive any sigma.
+    /// The recursive filter's DC gain is `a / (1 - b1 - b2 - b3)`, a difference
+    /// of nearly equal quantities: with f32 coefficients or f32 state this
+    /// drifted by 36 % at sigma = 147 px, which is inside the DIR coupler tail
+    /// and halation scatter range at small pixel pitches.
+    #[test]
+    fn iir_preserves_a_constant_field_at_large_sigma() {
+        let (w, h) = (256u32, 256u32);
+        let value = 0.75;
+        let field = vec![from_f64(value); (w as usize) * (h as usize)];
+        for sigma in [3.0_f64, 5.32, 28.5, 81.0, 147.0] {
+            let out = gaussian_blur_channel(&field, w, h, sigma);
+            let mean = out.iter().map(|v| to_f64(*v)).sum::<f64>() / out.len() as f64;
+            assert!(
+                (mean - value).abs() < 1e-6,
+                "sigma {sigma} changed a constant field: {mean} vs {value}"
+            );
+        }
+    }
+
+    /// The exponential tail is a weighted sum of Gaussians, so it inherits the
+    /// same requirement up to the declared fit's amplitude sum.
+    #[test]
+    fn exponential_tail_preserves_a_constant_field_at_large_decay() {
+        let (w, h) = (256u32, 256u32);
+        let value = 0.75;
+        let field = vec![from_f64(value); (w as usize) * (h as usize)];
+        let amp_sum: f64 = EXPONENTIAL_GAUSSIAN_FITS.iter().map(|(a, _)| a).sum();
+        for decay in [5.0_f64, 53.2, 147.0] {
+            let out = exponential_filter_channel(&field, w, h, decay);
+            let mean = out.iter().map(|v| to_f64(*v)).sum::<f64>() / out.len() as f64;
+            let expected = value * amp_sum;
+            assert!(
+                (mean - expected).abs() < 1e-6,
+                "decay {decay} changed a constant field: {mean} vs {expected}"
+            );
         }
     }
 
