@@ -159,9 +159,6 @@ impl WgpuBackend {
         width: u32,
         height: u32,
     ) -> Result<PointwisePass, String> {
-        if !self.device.features().contains(wgpu::Features::SHADER_F64) {
-            return Err("direct scanner acquisition requires native shader f64".into());
-        }
         let (density, base) = if p.scan_film {
             (p.film_channel_density, p.film_base_density)
         } else {
@@ -186,14 +183,14 @@ impl WgpuBackend {
         #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
         struct Params {
             header: [u32; 4],
-            normalization: [f64; 2],
-            cat: [[f64; 4]; 3],
-            rgb: [[f64; 4]; 3],
+            normalization: [f32; 4],
+            cat: [[f32; 4]; 3],
+            rgb: [[f32; 4]; 3],
         }
-        let row = |r: [f64; 3]| [r[0], r[1], r[2], 0.0];
+        let row = |r: [f64; 3]| [r[0] as f32, r[1] as f32, r[2] as f32, 0.0];
         let params = Params {
             header: [width * height, active.len() as u32, 0, 0],
-            normalization: [p.scan_normalization, 0.0],
+            normalization: [p.scan_normalization as f32, 0.0, 0.0, 0.0],
             cat: p.scan_cat.map(row),
             rgb: p.scan_base_xyz_to_rgb.map(row),
         };
@@ -201,19 +198,25 @@ impl WgpuBackend {
             self.pipe
                 .static_buffer(name, bytes, wgpu::BufferUsages::STORAGE)
         };
-        let dye: Vec<_> = active.iter().map(|&i| density[i]).collect();
+        let dye: Vec<_> = active
+            .iter()
+            .map(|&i| density[i].map(|v| v as f32))
+            .collect();
         let base: Vec<_> = active
             .iter()
-            .map(|&i| if has_base { base[i] } else { 0.0 })
+            .map(|&i| if has_base { base[i] as f32 } else { 0.0 })
             .collect();
-        let lamp: Vec<_> = active.iter().map(|&i| p.scan_illuminant[i]).collect();
+        let lamp: Vec<_> = active
+            .iter()
+            .map(|&i| p.scan_illuminant[i] as f32)
+            .collect();
         let cmfs: Vec<_> = active
             .iter()
             .map(|&i| {
                 [
-                    spektrafilm_math::spectral::CMF_X_F64[i],
-                    spektrafilm_math::spectral::CMF_Y_F64[i],
-                    spektrafilm_math::spectral::CMF_Z_F64[i],
+                    spektrafilm_math::spectral::CMF_X_F64[i] as f32,
+                    spektrafilm_math::spectral::CMF_Y_F64[i] as f32,
+                    spektrafilm_math::spectral::CMF_Z_F64[i] as f32,
                 ]
             })
             .collect();
@@ -230,10 +233,7 @@ impl WgpuBackend {
             [&uniform, source, &dye, &base, &lamp, &cmfs, output];
         use wgpu::BufferBindingType::{Storage as S, Uniform as U};
         self.scan_pass(
-            concat!(
-                include_str!("../../../spektrafilm-shaders/wgsl/f64_math.wgsl"),
-                include_str!("../../../spektrafilm-shaders/wgsl/scan/direct_spectral.wgsl")
-            ),
+            include_str!("../../../spektrafilm-shaders/wgsl/scan/direct_spectral.wgsl"),
             &[
                 U,
                 S { read_only: true },
@@ -677,5 +677,139 @@ impl WgpuBackend {
             status,
             prepared,
         })
+    }
+}
+
+#[cfg(test)]
+mod direct_tests {
+    use super::*;
+    use spektrafilm_backend::{FilmChainParams, FrontPass, Tap};
+    use spektrafilm_math::image::ImageBuf;
+    use wgpu::util::DeviceExt;
+
+    #[test]
+    fn scan_direct_restricted_device_matches_cpu() {
+        let _guard = crate::test_support::device_lock();
+        let previous = std::env::var_os("SPEKTRAFILM_GPU_DISABLE_F64");
+        unsafe {
+            std::env::set_var("SPEKTRAFILM_GPU_DISABLE_F64", "1");
+        }
+        let gpu = WgpuBackend::new().expect("WGPU adapter required for GPU tests");
+        unsafe {
+            match previous {
+                Some(value) => std::env::set_var("SPEKTRAFILM_GPU_DISABLE_F64", value),
+                None => std::env::remove_var("SPEKTRAFILM_GPU_DISABLE_F64"),
+            }
+        }
+        assert!(
+            !gpu.device
+                .features()
+                .intersects(wgpu::Features::SHADER_F64 | wgpu::Features::SHADER_INT64)
+        );
+        let matrix = [[1.05, -0.05, 0.0], [0.02, 0.98, 0.0], [0.0, -0.03, 1.03]];
+        let rgb = [[3.2, -1.5, -0.5], [-0.9, 1.9, 0.04], [0.05, -0.2, 1.1]];
+        let dyes: Vec<[f64; 3]> = (0..81)
+            .map(|i| {
+                let x = i as f64 / 80.0;
+                [0.1 + x, 0.2 + (x - 0.5).abs(), 1.1 - x]
+            })
+            .collect();
+        let base: Vec<f64> = (0..81).map(|i| 0.08 + i as f64 * 0.001).collect();
+        let lamp: Vec<f64> = (0..81).map(|i| 0.7 + i as f64 * 0.005).collect();
+        let norm: f64 = lamp
+            .iter()
+            .zip(spektrafilm_math::spectral::CMF_Y_F64.iter())
+            .map(|(a, b)| a * b)
+            .sum();
+        let values = [
+            0.0f32, 0.0, 0.0, 0.2, 0.5, 1.0, 1.5, 0.3, 0.7, 2.0, 2.5, 3.0, 0.7, 1.1, 0.4, 0.04,
+            0.1, 0.2,
+        ];
+        let p = FilmChainParams {
+            inject: Tap::RgbPre,
+            collect: Tap::RgbOut,
+            enlarger_lut: None,
+            scanner_lut: None,
+            image_width: 3,
+            image_height: 2,
+            pixel_pitch_um: 1.0,
+            front: FrontPass::Mallett2019 { matrix },
+            film_log_exposure: &[],
+            film_density_curves_normalized: &[],
+            film_gamma: 1.0,
+            film_channel_density: &dyes,
+            film_base_density: &base,
+            print_illuminant: &[],
+            print_sensitivity: &[],
+            print_normalization_factor: 1.0,
+            print_exposure_scale: 1.0,
+            print_log_exposure: &[],
+            print_density_curves: &[],
+            grain_fotufilm: None,
+            print_gamma: 1.0,
+            print_channel_density: &[],
+            print_base_density: &[],
+            preflash: [0.0; 3],
+            scan_illuminant: &lamp,
+            scan_normalization: norm,
+            scan_xyz_to_rgb: &rgb,
+            scan_cat: &matrix,
+            scan_base_xyz_to_rgb: &rgb,
+            scan_film: true,
+            halation: None,
+            dir_couplers: None,
+            glare: None,
+            gamut: None,
+            unsharp: None,
+            grain_v2: None,
+            grain_v1: None,
+            scan_output_space: &spektrafilm_math::colorspace::SRGB,
+            camera_lens_blur_px: None,
+            camera_diffusion: None,
+            enlarger_diffusion: None,
+            scanner_lens_blur_px: None,
+            highlight_boost: None,
+            grain_dye: None,
+            grain_dye_crop: None,
+            density_cpu_stage: None,
+            scan_acquisition_cpu_stage: None,
+            scan_readout: None,
+            scan_preparation_key: None,
+            output_transfer: None,
+            cmyk: None,
+            input_decode: None,
+        };
+        let source = gpu
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("direct_scan_test_source"),
+                contents: bytemuck::cast_slice(&values),
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+            });
+        let output = gpu.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("direct_scan_test_output"),
+            size: values.len() as u64 * 4,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
+        });
+        gpu.build_scan_direct_state(&p, &source, &output, 3, 2)
+            .unwrap()
+            .submit(&gpu)
+            .unwrap();
+        let actual = gpu
+            .pipe
+            .readback_buffer_as::<f32>(&output, values.len() as u64 * 4);
+        let image = ImageBuf::from_data(3, 2, values.to_vec());
+        let expected = spektrafilm_backend::cpu_backend::scan_spectral_cpu(
+            &image, &dyes, &base, &lamp, norm, &matrix, &rgb,
+        );
+        let worst = actual
+            .iter()
+            .zip(&expected.data)
+            .map(|(a, b)| (a - b).abs())
+            .fold(0.0f32, f32::max);
+        eprintln!("restricted direct scan max absolute error: {worst}");
+        // RGB budget is 1e-5; measured 6.56e-7, with a 2e-6 limit (>3x margin).
+        assert!(worst < 2e-6, "direct scanner error {worst}");
     }
 }
