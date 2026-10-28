@@ -20,7 +20,9 @@ use std::time::Instant;
 /// scatter and DIR coupler tails changed pixels relative to revision two.
 /// Revision four shares the Dye count draw between executors: the uniform is
 /// addressed by cell coordinate and ordinal, so grain pixels changed again.
-pub const MODEL_VERSION: &str = "lab_scan_operator_v4";
+/// Revision five makes the Procedural engine's composite tone-neutral on both
+/// executors, which moves every Procedural grain pixel.
+pub const MODEL_VERSION: &str = "lab_scan_operator_v5";
 
 /// Last-call wall-clock timings exposed by the runtime facade.
 pub type Timings = BTreeMap<String, f64>;

@@ -18,6 +18,7 @@ struct ShaderParams {
     geometry: [f32; 4],
     flags: [f32; 4],
     window: [u32; 4],
+    canvas: [u32; 4],
 }
 
 fn shader_params(
@@ -49,6 +50,7 @@ fn shader_params(
             params.clustered as u32 as f32,
         ],
         window: [0, width * height, 0, 0],
+        canvas: [0; 4],
     }
 }
 

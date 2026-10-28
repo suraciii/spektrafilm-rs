@@ -1,13 +1,19 @@
 // Grain V2: independent deterministic noise, native encoded RGB composition.
 // Uniform layout: dimensions [width,height,phase_bits,mode], controls [amount,shadows,
 // midtones,highlights], geometry [raw_scale,cluster_size,rotation,color], flags
-// [resolution_factor,resolution_type,colored,clustered], window [first,count,0,0].
-struct Params { dimensions:vec4<u32>, controls:vec4<f32>, geometry:vec4<f32>, flags:vec4<f32>, window:vec4<u32> }
+// [resolution_factor,resolution_type,colored,clustered], window [first,count,row_base,rows],
+// canvas [cells_wide,cells_high,chunk_cell_base,row_base].
+struct Params { dimensions:vec4<u32>, controls:vec4<f32>, geometry:vec4<f32>, flags:vec4<f32>, window:vec4<u32>, canvas:vec4<u32> }
 @group(0) @binding(0) var<uniform> p:Params;
-@group(0) @binding(1) var<storage,read> input_rgb:array<f32>;
-@group(0) @binding(2) var<storage,read_write> output_rgb:array<f32>;
-
+// A window of the unblurred encoded source rows, which the canvas pass samples.
+@group(0) @binding(1) var<storage,read> source_rgb:array<f32>;
+// Two packed half pairs per canvas cell: (r,g) then (b,0).
+@group(0) @binding(2) var<storage,read_write> canvas_cells:array<u32>;
+// The Film Resolution result the composition reads.
 @group(0) @binding(3) var<storage,read> working_rgb:array<f32>;
+// The scan's exact grain mean, written by the reduction pass.
+@group(0) @binding(4) var<storage,read> mean_rgb:array<f32>;
+@group(0) @binding(5) var<storage,read_write> output_rgb:array<f32>;
 // The local WGPU HAL uses this named function to select strict Metal math.
 fn spektrafilm_strict_float(v:f32)->f32{return v;}
 fn hash(x0:u32)->u32 {
@@ -190,16 +196,43 @@ fn generator(pos:vec2<f32>,size:vec2<f32>,luma:f32,rgb:vec3<f32>,digital:bool)->
 fn effective_control(v:f32)->f32 {let t=clamp(v,0.,1.);return 0.12*t*t+0.68*t+0.2;}
 fn overlay(b:f32,g:f32)->f32 {return clamp(select(1.-2.*(1.-b)*(1.-g),2.*b*g,b<0.5),0.,1.);}
 fn opacity(v:f32,c:f32)->f32 {let d=(v-c)*5.;return exp(-0.5*d*d);}
-fn gathered(local:u32,slot:u32,corner:u32)->vec3<f32>{
- let i=((local*9u+slot)*4u+corner)*3u;
- return vec3(input_rgb[i],input_rgb[i+1u],input_rgb[i+2u]);
+// Bilinear read of the source window at one canvas cell. The window holds whole
+// rows from `p.window.z`, so rows index with the full image width.
+fn source_corner(base:vec2<i32>,o:vec2<i32>)->vec3<f32>{
+ let xy=vec2<u32>(clamp(base+o,vec2<i32>(0),vec2<i32>(p.dimensions.xy)-1));
+ let i=((xy.y-p.window.z)*p.dimensions.x+xy.x)*3u;
+ return vec3(source_rgb[i],source_rgb[i+1u],source_rgb[i+2u]);
 }
-fn grain_source(local:u32,slot:u32,coord:vec2<i32>,size:vec2<f32>)->vec3<f32> {
- let dims=p.dimensions.xy;
- if(all(size==vec2<f32>(dims))){return gathered(local,slot,0u);}
- let pos=vec2<f32>(coord)/(size-1.)*(vec2<f32>(dims)-1.)-0.1;
- let f=fract(pos);
- return mix(mix(gathered(local,slot,0u),gathered(local,slot,1u),f.x),mix(gathered(local,slot,2u),gathered(local,slot,3u),f.x),f.y);
+fn source_at(coord:vec2<i32>,size:vec2<f32>)->vec3<f32>{
+ let dims=vec2<f32>(p.dimensions.xy);
+ let pos=select(vec2<f32>(coord)/(size-1.)*(dims-1.)-0.1,vec2<f32>(coord),all(size==dims));
+ let base=vec2<i32>(floor(pos));let f=fract(pos);
+ return mix(mix(source_corner(base,vec2<i32>(0,0)),source_corner(base,vec2<i32>(1,0)),f.x),
+            mix(source_corner(base,vec2<i32>(0,1)),source_corner(base,vec2<i32>(1,1)),f.x),f.y);
+}
+// `canvas.w` is the first row this buffer stores: the canvas is split into row
+// bands so it can exceed one binding, and a band keeps one row of overlap on
+// each side for the 3x3 average.
+fn cell_at(coord:vec2<i32>)->vec3<f32>{
+ let c=clamp(coord,vec2<i32>(0),vec2<i32>(p.canvas.xy)-1i);
+ let i=((u32(c.y)-p.canvas.w)*p.canvas.x+u32(c.x))*2u;
+ return vec3(unpack2x16float(canvas_cells[i]),unpack2x16float(canvas_cells[i+1u]).x);
+}
+// The canvas pass: one invocation per cell of the current row band.
+@compute @workgroup_size(256)
+fn canvas_main(@builtin(global_invocation_id) gid:vec3<u32>,@builtin(num_workgroups) grid:vec3<u32>){
+ let local=gid.x+gid.y*grid.x*256u;
+ if(local>=p.window.y){return;}
+ let cell=p.window.x+local;
+ let width=p.dimensions.x;let height=p.dimensions.y;
+ let gsf=max(5200./f32(width),3100./f32(height));let size=floor(vec2<f32>(f32(width),f32(height))*gsf);
+ let coord=vec2<i32>(i32(cell%p.canvas.x),i32(cell/p.canvas.x));
+ let rgb=source_at(coord,size);let luma=dot(rgb,vec3(0.2125,0.7154,0.0721));
+ let value=generator(vec2<f32>(coord),size,luma,rgb,false);
+ // `canvas.z` is this chunk's first cell inside the band buffer.
+ let write=local+p.canvas.z;
+ canvas_cells[write*2u]=pack2x16float(vec2(half_round(value.x),half_round(value.y)));
+ canvas_cells[write*2u+1u]=pack2x16float(vec2(half_round(value.z),0.));
 }
 @compute @workgroup_size(256)
 fn main(@builtin(global_invocation_id) gid:vec3<u32>,@builtin(num_workgroups) grid:vec3<u32>){
@@ -209,13 +242,17 @@ fn main(@builtin(global_invocation_id) gid:vec3<u32>,@builtin(num_workgroups) gr
  let uv=vec2<f32>(f32(x),f32(y))*vec2(1./f32(max(width-1u,1u)),1./f32(max(height-1u,1u)));let size=floor(vec2<f32>(f32(width),f32(height))*gsf);var g=vec3<f32>(0.);
  if(p.dimensions.w!=0u){g=generator(uv,vec2(f32(width),f32(height)),luma,rgb,true);}else{
   let at=vec2<i32>(uv*(size/(1.+(p.geometry.x-1.)/47.*1.5)));
-  for(var dy=-1;dy<=1;dy++){for(var dx=-1;dx<=1;dx++){
-   let coord=clamp(at+vec2<i32>(dx,dy),vec2<i32>(0),vec2<i32>(size)-1);
-   let grgb=grain_source(local,u32((dy+1)*3+dx+1),coord,size);let gluma=dot(grgb,vec3(0.2125,0.7154,0.0721));
-   let generated=generator(vec2<f32>(coord),size,gluma,grgb,false);
-   g+=vec3(half_round(generated.x),half_round(generated.y),half_round(generated.z));
-  }}g*=1./9.;
+  for(var dy=-1;dy<=1;dy++){for(var dx=-1;dx<=1;dx++){g+=cell_at(at+vec2<i32>(dx,dy));}}g*=1./9.;
  }
  let ws=effective_control(p.controls.y)*a*opacity(luma,0.)*2.;let wm=effective_control(p.controls.z)*a*opacity(luma,0.5);let wh=effective_control(p.controls.w)*a*opacity(luma,1.)*2.;
- for(var c=0u;c<3u;c++){let b=rgb[c];let s=mix(b,overlay(pow(max(b,0.),0.8),g[c]),ws);let m=mix(s,overlay(s,g[c]),wm);let h=mix(m,overlay(m-0.2,g[c]),wh);output_rgb[i+c]=half_round(clamp(h*0.5+b*0.5,0.,1.));}
+ for(var c=0u;c<3u;c++){
+  let b=rgb[c];
+  let s=mix(b,overlay(pow(max(b,0.),0.8),g[c]),ws);let m=mix(s,overlay(s,g[c]),wm);let h=mix(m,overlay(m-0.2,g[c]),wh);
+  let stored=half_round(clamp(h*0.5+b*0.5,0.,1.));
+  // Remove the displacement the zoned bases produce at the grain mean.
+  // Digital grain has no canvas, so its mean is the neutral half.
+  let mu=select(mean_rgb[c],0.5,p.dimensions.w!=0u);
+  let ds=mix(b,overlay(pow(max(b,0.),0.8),mu),ws);let dm=mix(ds,overlay(ds,mu),wm);let dh=mix(dm,overlay(dm-0.2,mu),wh);
+  output_rgb[i+c]=half_round(clamp(stored-(dh*0.5+b*0.5-b),0.,1.));
+ }
 }

@@ -434,6 +434,45 @@ fn sample_grain_source(source: &ImageBuf, size: [f32; 2], x: i32, y: i32) -> [f3
         )
     })
 }
+/// The vendor zoned composition for one channel at one grain value.
+///
+/// This is the kernel's arithmetic unchanged: it branches on the evolving
+/// composite, so it stays the reference the external fixture pins. The engine
+/// subtracts the displacement this chain produces at the grain mean.
+fn composed(b: f32, g: f32, weight: [f32; 3]) -> f32 {
+    let s = mix(b, overlay(b.max(0.).powf(0.8), g), weight[0]);
+    let m = mix(s, overlay(s, g), weight[1]);
+    let h = mix(m, overlay(m - 0.2, g), weight[2]);
+    h * 0.5 + b * 0.5
+}
+
+/// Exact mean of every grain value a scan of `width` x `height` composes.
+fn canvas_mean(
+    table: &CanvasTable,
+    size: [f32; 2],
+    p: GrainV2Params,
+    width: u32,
+    height: u32,
+) -> [f32; 3] {
+    let scale = p.resampler_scale();
+    let mut sum = [0f64; 3];
+    let mut count = 0f64;
+    for y in 0..height {
+        let uv1 = y as f32 * (1. / (height - 1).max(1) as f32);
+        let gy = (uv1 * (size[1] / scale)) as i32;
+        for x in 0..width {
+            let uv0 = x as f32 * (1. / (width - 1).max(1) as f32);
+            let gx = (uv0 * (size[0] / scale)) as i32;
+            let value = table.neighbourhood(gx, gy);
+            for c in 0..3 {
+                sum[c] += f64::from(value[c]);
+            }
+            count += 1.;
+        }
+    }
+    sum.map(|v| (v / count) as f32)
+}
+
 fn overlay(b: f32, g: f32) -> f32 {
     if b < 0.5 {
         2. * b * g
@@ -564,59 +603,59 @@ fn effective_control(value: f32) -> f32 {
     let t = value.clamp(0., 1.);
     0.12 * t * t + 0.68 * t + 0.2
 }
-/// Virtual-canvas rows, generated on demand.
+/// A materialized virtual canvas.
 ///
-/// The grain texture is a function of its canvas cell only, so every output
-/// pixel that lands on a cell would otherwise regenerate it. Analogue maps
-/// output rows monotonically onto canvas rows and each output row straddles at
-/// most three canvas rows, so a three-row window holds everything a scan needs
-/// while each used cell is generated once.
-struct CanvasRows<'a> {
-    source: &'a ImageBuf,
-    size: [f32; 2],
-    phase: f32,
-    params: GrainV2Params,
-    rows: [i32; 3],
-    cells: [Vec<Option<[f32; 3]>>; 3],
+/// The grain texture is a function of its canvas cell only and the scan reads
+/// every cell many times, so the cells are generated once and stored. Only the
+/// region the resampler addresses is materialized: `gx` never exceeds
+/// `size / resampler_scale`.
+struct CanvasTable {
+    width: i32,
+    height: i32,
+    /// Half-storage cells, three per entry, row major.
+    cells: Vec<[u16; 3]>,
 }
 
-impl<'a> CanvasRows<'a> {
-    fn new(source: &'a ImageBuf, size: [f32; 2], p: GrainV2Params, phase: f32) -> Self {
+impl CanvasTable {
+    fn build(source: &ImageBuf, size: [f32; 2], p: GrainV2Params, phase: f32) -> Self {
+        let used = |extent: f32| (extent / p.resampler_scale()).ceil() as i32 + 2;
+        let width = used(size[0]).clamp(1, size[0].max(1.) as i32);
+        let height = used(size[1]).clamp(1, size[1].max(1.) as i32);
+        let mut cells = Vec::with_capacity((width as usize) * (height as usize));
+        for row in 0..height {
+            for col in 0..width {
+                let rgb = sample_grain_source(source, size, col, row);
+                let luma = rgb[0] * 0.2125 + rgb[1] * 0.7154 + rgb[2] * 0.0721;
+                let value = generator([col as f32, row as f32], size, luma, rgb, p, false, phase);
+                cells.push(value.map(|v| half::f16::from_f32(v).to_bits()));
+            }
+        }
         Self {
-            source,
-            size,
-            phase,
-            params: p,
-            rows: [-1; 3],
-            cells: [Vec::new(), Vec::new(), Vec::new()],
+            width,
+            height,
+            cells,
         }
     }
 
-    fn cell(&mut self, row: i32, col: i32) -> [f32; 3] {
-        let slot = row.rem_euclid(3) as usize;
-        if self.rows[slot] != row {
-            self.rows[slot] = row;
-            let width = self.size[0] as usize;
-            self.cells[slot].clear();
-            self.cells[slot].resize(width, None);
+    fn cell(&self, col: i32, row: i32) -> [f32; 3] {
+        let col = col.clamp(0, self.width - 1);
+        let row = row.clamp(0, self.height - 1);
+        self.cells[(row * self.width + col) as usize]
+            .map(|bits| half::f16::from_bits(bits).to_f32())
+    }
+
+    /// The nine-tap clamped neighbourhood mean the scan composes.
+    fn neighbourhood(&self, gx: i32, gy: i32) -> [f32; 3] {
+        let mut sum = [0.; 3];
+        for dy in -1..=1 {
+            for dx in -1..=1 {
+                let cell = self.cell(gx + dx, gy + dy);
+                for c in 0..3 {
+                    sum[c] += cell[c];
+                }
+            }
         }
-        if let Some(value) = self.cells[slot][col as usize] {
-            return value;
-        }
-        let grain_rgb = sample_grain_source(self.source, self.size, col, row);
-        let grain_luma = grain_rgb[0] * 0.2125 + grain_rgb[1] * 0.7154 + grain_rgb[2] * 0.0721;
-        let value = generator(
-            [col as f32, row as f32],
-            self.size,
-            grain_luma,
-            grain_rgb,
-            self.params,
-            false,
-            self.phase,
-        )
-        .map(|v| half::f16::from_f32(v).to_f32());
-        self.cells[slot][col as usize] = Some(value);
-        value
+        sum.map(|v| v * (1. / 9.))
     }
 }
 
@@ -653,7 +692,15 @@ pub fn apply_cpu(input: &ImageBuf, p: GrainV2Params) -> ImageBuf {
         (input.width as f32 * gsf).floor(),
         (input.height as f32 * gsf).floor(),
     ];
-    let mut canvas = CanvasRows::new(original.as_ref().unwrap_or(&source), size, p, phase);
+    let canvas_source = original.as_ref().unwrap_or(&source);
+    let canvas = (p.mode == GrainV2Mode::Analogue)
+        .then(|| CanvasTable::build(canvas_source, size, p, phase));
+    // The exact mean of every grain value this scan composes. Digital grain has
+    // no canvas, so its displacement is measured at the neutral grain value.
+    let grain_mean = match &canvas {
+        Some(table) => canvas_mean(table, size, p, input.width, input.height),
+        None => [0.5; 3],
+    };
     let mut out = source.clone();
     for y in 0..input.height {
         for x in 0..input.width {
@@ -663,8 +710,8 @@ pub fn apply_cpu(input: &ImageBuf, p: GrainV2Params) -> ImageBuf {
                 x as f32 * (1. / (input.width - 1).max(1) as f32),
                 y as f32 * (1. / (input.height - 1).max(1) as f32),
             ];
-            let g = if p.mode == GrainV2Mode::Noise {
-                generator(
+            let g = match &canvas {
+                None => generator(
                     uv,
                     [input.width as f32, input.height as f32],
                     luma,
@@ -672,23 +719,12 @@ pub fn apply_cpu(input: &ImageBuf, p: GrainV2Params) -> ImageBuf {
                     p,
                     true,
                     phase,
-                )
-            } else {
-                let gx = (uv[0] * (size[0] / p.resampler_scale())) as i32;
-                let gy = (uv[1] * (size[1] / p.resampler_scale())) as i32;
-                let max_x = size[0] as i32 - 1;
-                let max_y = size[1] as i32 - 1;
-                let mut sum = [0.; 3];
-                for dy in -1..=1 {
-                    let row = (gy + dy).clamp(0, max_y);
-                    for dx in -1..=1 {
-                        let cell = canvas.cell(row, (gx + dx).clamp(0, max_x));
-                        for c in 0..3 {
-                            sum[c] += cell[c];
-                        }
-                    }
+                ),
+                Some(table) => {
+                    let gx = (uv[0] * (size[0] / p.resampler_scale())) as i32;
+                    let gy = (uv[1] * (size[1] / p.resampler_scale())) as i32;
+                    table.neighbourhood(gx, gy)
                 }
-                sum.map(|v| v * (1. / 9.))
             };
             let a_raw = p.amount.clamp(0., 1.);
             let a = effective_control(a_raw)
@@ -700,15 +736,19 @@ pub fn apply_cpu(input: &ImageBuf, p: GrainV2Params) -> ImageBuf {
             let ws = effective_control(p.shadows) * a * opacity(luma, 0.) * 2.;
             let wm = effective_control(p.midtones) * a * opacity(luma, 0.5);
             let wh = effective_control(p.highlights) * a * opacity(luma, 1.) * 2.;
+            let weight = [ws, wm, wh];
             let mut result = [0.; 3];
             for c in 0..3 {
                 let b = rgb[c];
-                let s = mix(b, overlay(b.max(0.).powf(0.8), g[c]), ws);
-                let m = mix(s, overlay(s, g[c]), wm);
-                let h = mix(m, overlay(m - 0.2, g[c]), wh);
-                // Composition remains in the native encoded domain.
-                let composed = half::f16::from_f32((h * 0.5 + b * 0.5).clamp(0., 1.)).to_f32();
-                result[c] = composed;
+                // The zoned bases move the expected composite away from the
+                // input level. Remove that displacement so the grain changes
+                // the texture and not the tone. The vendor's half-storage
+                // boundary stays in place, which also keeps the external
+                // fixture comparable sample by sample.
+                let stored = half::f16::from_f32(composed(b, g[c], weight).clamp(0., 1.)).to_f32();
+                let displaced = composed(b, grain_mean[c], weight);
+                let fixed = stored - (displaced - b);
+                result[c] = half::f16::from_f32(fixed.clamp(0., 1.)).to_f32();
             }
             out.set(x, y, result.map(from_f32));
         }
@@ -762,9 +802,53 @@ mod tests {
                 .map(|v| half::f16::from_bits(u16::from_str_radix(v, 16).unwrap()).to_f32())
                 .collect();
             assert_eq!(actual.data.len(), expected.len());
-            for (index, (&value, reference)) in actual.data.iter().zip(expected).enumerate() {
-                let delta = (to_f32(value) - reference).abs();
-                assert!(delta <= 1e-6, "{mode:?} sample {index}: delta={delta}");
+            // The vendor composite moves the mean with the zoned bases; the
+            // engine subtracts that displacement. Everything else must still
+            // match the external execution exactly, so add the displacement
+            // back before comparing.
+            let gsf = (5200. / 37.0f32).max(3100. / 19.0f32);
+            let canvas = [(37.0f32 * gsf).floor(), (19.0f32 * gsf).floor()];
+            // `apply_cpu` narrows the working image to half storage first.
+            let mut rounded = input.clone();
+            rounded
+                .data
+                .iter_mut()
+                .for_each(|value| *value = from_f32(half::f16::from_f32(to_f32(*value)).to_f32()));
+            let mean = if mode == GrainV2Mode::Analogue {
+                let table = CanvasTable::build(&rounded, canvas, params, params.resolved_timer());
+                canvas_mean(&table, canvas, params, 37, 19)
+            } else {
+                [0.5; 3]
+            };
+            let a = effective_control(params.amount.clamp(0., 1.))
+                * if params.mode == GrainV2Mode::Noise {
+                    0.5
+                } else {
+                    1.
+                };
+            let mut index = 0;
+            for y in 0..19u32 {
+                for x in 0..37u32 {
+                    let rgb = rounded.get(x, y).map(to_f32);
+                    let luma = rgb[0] * 0.2125 + rgb[1] * 0.7154 + rgb[2] * 0.0721;
+                    let weight = [
+                        effective_control(params.shadows) * a * opacity(luma, 0.) * 2.,
+                        effective_control(params.midtones) * a * opacity(luma, 0.5),
+                        effective_control(params.highlights) * a * opacity(luma, 1.) * 2.,
+                    ];
+                    for c in 0..3 {
+                        let b = rgb[c];
+                        let displacement = composed(b, mean[c], weight) - b;
+                        // The fixture stores half-storage samples, so quantize the
+                        // displaced reference the same way before comparing.
+                        let reference =
+                            half::f16::from_f32((expected[index] - displacement).clamp(0., 1.))
+                                .to_f32();
+                        let delta = (to_f32(actual.data[index]) - reference).abs();
+                        assert!(delta <= 1e-6, "{mode:?} sample {index}: delta={delta}");
+                        index += 1;
+                    }
+                }
             }
         }
     }
@@ -829,6 +913,8 @@ mod tests {
                 });
                 let gsf = (5200. / 37.0f32).max(3100. / 23.0f32);
                 let canvas = [(37.0f32 * gsf).floor(), (23.0f32 * gsf).floor()];
+                let table_ref = CanvasTable::build(&source, canvas, p, phase);
+                let mean = canvas_mean(&table_ref, canvas, p, 37, 23);
                 let mut expected = source.clone();
                 for y in 0..23u32 {
                     for x in 0..37u32 {
@@ -861,17 +947,20 @@ mod tests {
                         );
                         let a_raw = p.amount.clamp(0., 1.);
                         let a = effective_control(a_raw);
-                        let ws = effective_control(p.shadows) * a * opacity(luma, 0.) * 2.;
-                        let wm = effective_control(p.midtones) * a * opacity(luma, 0.5);
-                        let wh = effective_control(p.highlights) * a * opacity(luma, 1.) * 2.;
+                        let weight = [
+                            effective_control(p.shadows) * a * opacity(luma, 0.) * 2.,
+                            effective_control(p.midtones) * a * opacity(luma, 0.5),
+                            effective_control(p.highlights) * a * opacity(luma, 1.) * 2.,
+                        ];
                         let mut result = [0.; 3];
                         for c in 0..3 {
                             let b = rgb[c];
-                            let s = mix(b, overlay(b.max(0.).powf(0.8), g[c]), ws);
-                            let m = mix(s, overlay(s, g[c]), wm);
-                            let h = mix(m, overlay(m - 0.2, g[c]), wh);
-                            result[c] =
-                                half::f16::from_f32((h * 0.5 + b * 0.5).clamp(0., 1.)).to_f32();
+                            let stored =
+                                half::f16::from_f32(composed(b, g[c], weight).clamp(0., 1.))
+                                    .to_f32();
+                            let displaced = composed(b, mean[c], weight);
+                            let fixed = stored - (displaced - b);
+                            result[c] = half::f16::from_f32(fixed.clamp(0., 1.)).to_f32();
                         }
                         expected.set(x, y, result.map(from_f32));
                     }
