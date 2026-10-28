@@ -1120,6 +1120,86 @@ mod tests {
         assert_eq!(bands.last().unwrap().stored.1, ch);
     }
 
+    /// Every sample must be composed by exactly one band, and every band must
+    /// store the rows its pixels read. Brute force over the same mapping the
+    /// shader uses, across geometries that put the canvas on both sides of the
+    /// binding limit.
+    #[test]
+    fn canvas_bands_cover_every_sample_once() {
+        for (w, h) in [(37u32, 19u32), (1, 1), (2, 512), (512, 2), (97, 41)] {
+            let (cw, ch) = canvas_cells(
+                w,
+                h,
+                &spektrafilm_backend::GrainV2GpuParams {
+                    mode: 0,
+                    resolution_type: 0,
+                    amount: 1.0,
+                    shadows: 1.0,
+                    midtones: 1.0,
+                    highlights: 1.0,
+                    raw_scale: 1.0,
+                    cluster_size: 1.6,
+                    rotation: 0.0,
+                    color: 1.0,
+                    resolution_factor: 1.0,
+                    seed: 42,
+                    timer: None,
+                    colored: true,
+                    clustered: false,
+                },
+            );
+            for limit in [1 << 20, 4 << 20, 16 << 20, 1 << 40] {
+                let params = spektrafilm_backend::GrainV2GpuParams {
+                    mode: 0,
+                    resolution_type: 0,
+                    amount: 1.0,
+                    shadows: 1.0,
+                    midtones: 1.0,
+                    highlights: 1.0,
+                    raw_scale: 1.0,
+                    cluster_size: 1.6,
+                    rotation: 0.0,
+                    color: 1.0,
+                    resolution_factor: 1.0,
+                    seed: 42,
+                    timer: None,
+                    colored: true,
+                    clustered: false,
+                };
+                let Ok(bands) = canvas_bands(w, h, cw, ch, limit, &params) else {
+                    continue;
+                };
+                // Brute force: the same f32 mapping the shader resolves.
+                let gsf = (5200.0f32 / w as f32).max(3100.0f32 / h as f32);
+                let size_y = (h as f32 * gsf).floor().max(1.0);
+                let scale = 1.0 + (1.0 - 1.0) / 47.0 * 1.5;
+                let inv_h = 1.0 / h.saturating_sub(1).max(1) as f32;
+                let mut seen = vec![0u32; (w * h) as usize];
+                for band in &bands {
+                    for index in band.pixels.0..band.pixels.1 {
+                        let y = index / w;
+                        let centre = ((y as f32 * inv_h) * (size_y / scale)) as i32;
+                        let clamped = centre.clamp(0, ch as i32 - 1) as u32;
+                        for dy in -1i32..=1 {
+                            let row = (clamped as i32 + dy).clamp(0, ch as i32 - 1) as u32;
+                            assert!(
+                                row >= band.stored.0 && row < band.stored.1,
+                                "{w}x{h} limit {limit}: pixel row {y} reads row {row} \
+                                 outside band {:?}",
+                                band.stored
+                            );
+                        }
+                        seen[index as usize] += 1;
+                    }
+                }
+                assert!(
+                    seen.iter().all(|&count| count == 1),
+                    "{w}x{h} limit {limit}: every sample must be composed exactly once"
+                );
+            }
+        }
+    }
+
     #[test]
     fn procedural_windows_preserve_absolute_coordinates_and_resolution() {
         let gpu = crate::test_support::adapter();
