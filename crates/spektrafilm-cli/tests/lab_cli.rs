@@ -2476,7 +2476,7 @@ fn rejected_invocations_exit_two_and_failed_executions_exit_one() {
 }
 
 #[test]
-fn automatic_standard_is_not_a_point_wise_measurement_but_density_taps_remain_available() {
+fn experimental_frame_setup_is_not_a_point_wise_measurement_but_density_taps_remain_available() {
     let f = MeasureFixture::new();
     for read in ["rgb_out", "cmy_film"] {
         let out = f.root.join(format!("standard-{read}"));
@@ -2500,15 +2500,18 @@ fn automatic_standard_is_not_a_point_wise_measurement_but_density_taps_remain_av
             out.to_str().unwrap(),
         ];
         args.extend_from_slice(&POINT_WISE);
+        // The measurement is point-wise by default; the frame-dependent
+        // rejection only applies while the experimental setup is enabled.
+        args.extend_from_slice(&["--set", "scanner.experimental_setup=true"]);
         let result = f.lab(&args);
         if read == "rgb_out" {
             assert!(!result.status.success());
             let error = String::from_utf8_lossy(&result.stderr);
+            assert!(error.contains("scanner.experimental_setup"), "{error}");
             assert!(
-                error.contains("scanner.conversion_style=standard"),
+                error.contains("--set scanner.experimental_setup=false"),
                 "{error}"
             );
-            assert!(error.contains("<fixed-style-name>"), "{error}");
             assert!(!out.join("run.json").exists());
         } else {
             assert!(

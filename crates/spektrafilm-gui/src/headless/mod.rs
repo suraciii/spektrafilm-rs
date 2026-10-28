@@ -786,6 +786,10 @@ fn scanner_ui_real_preview_scan_persistence_save_and_export() {
     // select it through the real control rather than writing the parameter.
     choose(h, "scan output", "Negative to positive");
     assert_eq!(h.state().params.scanner.scan_output, "negative_to_positive");
+    // Negative conversion previews stay frame-independent until the
+    // experimental setup asks for the complete frame.
+    h.state_mut().params.scanner.experimental_setup = true;
+    h.run_steps(3);
     assert!(
         h.query_by_role_and_label(egui::accesskit::Role::ComboBox, "scanner lamp")
             .is_none()

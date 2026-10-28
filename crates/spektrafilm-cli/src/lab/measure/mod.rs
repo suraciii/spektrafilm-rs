@@ -399,12 +399,12 @@ pub fn point_wise_offenders(
     }
     if scan
         && params.scanner.scan_output == "negative_to_positive"
-        && params.scanner.uses_standard()
+        && params.scanner.experimental_setup
     {
         add(
-            "scanner.conversion_style",
-            "standard".to_owned(),
-            "<fixed-style-name>",
+            "scanner.experimental_setup",
+            "true".to_owned(),
+            "false",
             MeasureStage::RgbOut,
         );
     }

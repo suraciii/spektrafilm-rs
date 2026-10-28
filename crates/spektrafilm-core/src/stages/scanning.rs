@@ -41,7 +41,7 @@ pub fn conversion_styles(data_dir: &std::path::Path) -> Vec<String> {
 fn positive_tone(log_e: f64, tone: &ChannelTone, params: &RuntimeParams) -> f64 {
     let denominator = -(-std::f64::consts::LN_10 * tone.dmax).exp_m1();
     let e = log_e / std::f64::consts::LOG10_2
-        - if params.scanner.uses_standard() {
+        - if params.scanner.experimental_setup {
             0.0
         } else {
             interpretation::camera_ev(params)
@@ -67,7 +67,7 @@ pub(crate) fn density_reading_gpu_params(
     let calibration = interpretation::DensityCalibration::prepare(profile)?;
     let (density, exposure, offsets, counts) = calibration.gpu_axes();
     let operator = PreparedOperator::new(&params.scanner.operator);
-    let standard_setup = params.scanner.uses_standard();
+    let standard_setup = params.scanner.experimental_setup;
     let setup_aim_density = calibration
         .neutral_density(operator.pivot)
         .iter()
@@ -167,7 +167,7 @@ pub(crate) fn prepare_negative(
     } else {
         std::borrow::Cow::Borrowed(density)
     };
-    let offset = if params.scanner.uses_standard() {
+    let offset = if params.scanner.experimental_setup {
         let _setup = super::StageObservation::new(backend, "standard_setup");
         setup::FrameSetup::measure(&density, &calibration)?.offset
     } else {
@@ -295,7 +295,7 @@ pub(crate) fn render_prepared_negative(
             for channel in 0..3 {
                 let tone = &tones[channel];
                 let ev = exposure[channel] / std::f64::consts::LOG10_2
-                    - if params.scanner.uses_standard() { 0.0 } else { interpretation::camera_ev(params) }
+                    - if params.scanner.experimental_setup { 0.0 } else { interpretation::camera_ev(params) }
                     + tone.brightness_ev;
                 if !ev.is_finite() || !(tone.contrast * ev).is_finite() {
                     return Err("negative conversion combined tone coordinate overflow".into());
@@ -961,6 +961,7 @@ mod tests {
         let film = crate::profile::load_profile_by_name(&data_dir(), "kodak_portra_400").unwrap();
         let mut params = film_scan_params();
         params.scanner.scan_output = "negative_to_positive".into();
+        params.scanner.experimental_setup = true;
         params.io.output_color_space = "sRGB".into();
         let density = ImageBuf::from_data(
             2,

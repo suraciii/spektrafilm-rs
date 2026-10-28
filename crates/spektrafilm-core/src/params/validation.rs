@@ -888,7 +888,7 @@ pub(super) fn validate_detailed(params: &RuntimeParams) -> Result<(), Validation
     validate_enum_value_detailed("scanner.scan_output", &params.scanner.scan_output)?;
     params.scanner.operator.validate_detailed()?;
     if !params.scanner.operator.is_default() {
-        if params.scanner.scan_output != "negative_to_positive" || !params.scanner.uses_standard() {
+        if !params.scanner.operator_eligible() {
             return Err(ValidationError::new(
                 Reason::OperatorMode,
                 "scanner.operator",
@@ -899,12 +899,12 @@ pub(super) fn validate_detailed(params: &RuntimeParams) -> Result<(), Validation
     }
     if params.debug.lut_mode
         && params.scanner.scan_output == "negative_to_positive"
-        && params.scanner.uses_standard()
+        && params.scanner.experimental_setup
     {
         return Err(ValidationError::new(
             Reason::StandardLut,
-            "scanner.conversion_style",
-            "scanner.conversion_style=standard measures the whole frame and cannot be baked into a point-wise LUT; select a declared fixed conversion style",
+            "scanner.experimental_setup",
+            "scanner.experimental_setup measures the whole frame and cannot be baked into a point-wise LUT; disable it",
         ));
     }
     let style = &params.scanner.conversion_style;
@@ -921,7 +921,14 @@ pub(super) fn validate_detailed(params: &RuntimeParams) -> Result<(), Validation
         )
         .arg("value", format!("{style:?}")));
     }
-    if !params.scanner.uses_standard() && params.scanner.scan_output != "negative_to_positive" {
+    if params.scanner.experimental_setup && params.scanner.scan_output != "negative_to_positive" {
+        return Err(ValidationError::new(
+            Reason::StyleMode,
+            "scanner.experimental_setup",
+            "scanner.experimental_setup requires scanner.scan_output=negative_to_positive",
+        ));
+    }
+    if !params.scanner.uses_builtin_tone() && params.scanner.scan_output != "negative_to_positive" {
         return Err(ValidationError::new(
             Reason::StyleMode,
             "scanner.conversion_style",

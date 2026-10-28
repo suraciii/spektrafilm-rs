@@ -370,12 +370,12 @@ fn conditions(path: &str) -> Vec<String> {
     }
     if path == "scanner.conversion_style" {
         out.push(
-            "named positive-conversion tone for negative_to_positive; standard measures the frame before the frozen tone; neutral is an input-only alias; other names resolve to data/scan-styles/<name>.json (declared per-channel tone parameters, never fitted)"
+            "named positive-conversion tone for negative_to_positive; standard is the built-in frozen tone; neutral is an input-only alias; other names resolve to data/scan-styles/<name>.json (declared per-channel tone parameters, never fitted); a style never runs the experimental frame setup"
                 .into(),
         );
     }
     if path.starts_with("scanner.operator.") {
-        out.push("nondefault corrections require standard negative_to_positive on an eligible negative film route; applied after immutable full-frame setup and before fixed tone; never changes density or setup".into());
+        out.push("nondefault corrections require the built-in standard tone on negative_to_positive and an eligible negative film route; applied before the fixed tone, independent of the experimental setup; never changes density".into());
         out.push(if path == "scanner.operator.contrast" {
             "finite and strictly positive; no schema upper bound".into()
         } else {
@@ -430,7 +430,10 @@ fn description(path: &str) -> Option<&'static str> {
             "Illumination of the imported RGB acquisition; used only by convert-film inversion, independent of the product readout light.",
         ),
         "scanner.conversion_style" => Some(
-            "Named stylization of the negative-to-positive tone: standard applies automatic frame setup then the frozen tone; any other name applies the declared per-channel tone triple from data/scan-styles/<name>.json.",
+            "Named stylization of the negative-to-positive tone: standard is the built-in frozen tone; any other name applies the declared per-channel tone triple from data/scan-styles/<name>.json. A style never runs the frame setup.",
+        ),
+        "scanner.experimental_setup" => Some(
+            "Off-by-default experimental whole-frame measurement of the developed negative for exposure, cast and contrast placement. Declared heuristic, not a validated photographic model; makes the scan frame-dependent and unbakeable.",
         ),
         "scanner.unsharp_mask" => {
             Some("Digital scan sharpening after optical readout and output processing.")

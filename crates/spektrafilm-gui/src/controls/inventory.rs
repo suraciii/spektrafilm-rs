@@ -1625,6 +1625,7 @@ const LABELS: &[(&str, &str)] = &[
     ("print_render.glare.percent", "percent"),
     ("print_render.glare.roughness", "roughness"),
     ("scanner.conversion_style", "conversion style"),
+    ("scanner.experimental_setup", "experimental frame setup"),
     ("scanner.lens_blur", "Lens blur (readout optics)"),
     ("scanner.operator.exposure_ev", "Finished exposure"),
     ("scanner.operator.warmth_ev", "Warmth"),

@@ -4,11 +4,11 @@ This contract owns the readout of developed photographic material. It does not o
 
 ## Readout routes
 
-1. Negative-to-positive readout reconstructs relative log exposure from each record's density. It applies frame setup and operator correction when the conversion style is `standard`, then a positive tone.
+1. Negative-to-positive readout reconstructs relative log exposure from each record's density. It applies operator correction, then a positive tone; a separate opt-in frame setup MAY measure the frame first.
 2. Positive transmission readout integrates the material's spectral transmittance under the readout illuminant with the CIE 1931 2° observer.
 3. Paper reflection readout uses the same integration with spectral reflectance instead of transmittance.
 
-The negative-to-positive reconstruction MUST remain per-record. A change in one record MUST NOT change another record's reconstructed exposure. Frame setup is separate and MAY depend on all pixels and records.
+The negative-to-positive reconstruction MUST remain per-record. A change in one record MUST NOT change another record's reconstructed exposure. The opt-in frame setup is separate and MAY depend on all pixels and records.
 
 ## Readout illuminant
 
@@ -47,11 +47,15 @@ The inverse MUST use the density domain the film stage emits: each record over i
 
 Endpoints use finite tangent extrapolation. Setup MUST use the neutral locus and slope from these same regularized axes.
 
-## Standard frame setup
+## Experimental frame setup
 
-`standard` is the built-in automatic style. It MUST measure the complete frame delivered to the scan acquisition boundary, after transmission-domain scanner lens blur and before the positive tone. It MUST NOT measure separate tiles.
+`scanner.experimental_setup` is an off-by-default experiment, not a validated photographic model: it is a declared heuristic with no paired real minilab reference and no evidence that it matches Frontier or Noritsu. It stays off unless a caller asks for it, so the default readout is a fixed, frame-independent transform.
+
+When enabled it MUST measure the complete frame delivered to the scan acquisition boundary, after transmission-domain scanner lens blur and before the positive tone. It MUST NOT measure separate tiles.
 
 It MUST NOT cache offsets across frames.
+
+It MUST require `scan_output = negative_to_positive`. Enabling it on any other output MUST fail validation.
 
 The following constants are declared product choices. They are not calibrated Frontier or Noritsu settings.
 
@@ -109,7 +113,7 @@ Setup MUST accumulate statistics in f64 in raster order. It MUST reject empty fr
 
 The same setup implementation MUST serve per-stage CPU execution and the assembled resident scan acquisition fence. It MUST NOT silently switch a requested GPU render to a CPU render. The existing mixed execution fence remains visible in backend reporting.
 
-`standard` MUST NOT subtract camera exposure compensation again after automatic setup. Fixed styles retain the historical camera compensation on simulated film-scan routes. Real captures receive no virtual camera compensation.
+The enabled setup MUST NOT subtract camera exposure compensation again after measuring. Without it, every style retains the historical camera compensation on simulated film-scan routes. Real captures receive no virtual camera compensation.
 
 ## Operator correction
 
@@ -117,7 +121,7 @@ The same setup implementation MUST serve per-stage CPU execution and the assembl
 
 Contrast MUST be positive. Editor trial ranges of exposure ±3 EV, warmth/tint ±1 differential EV, and contrast 0.5–2 MUST NOT become schema clamps.
 
-Nondefault operator correction MUST require `standard`, `negative_to_positive`, and an eligible negative-film scan route. Direct scans, positive film, paper, scan-minus-base, and fixed styles MUST reject explicit nondefault correction. GUI state MUST retain valid inactive edits and expose their inactive status.
+Nondefault operator correction MUST require the built-in tone on `negative_to_positive` and an eligible negative-film scan route; it does not depend on the experimental setup. Declared fixed styles are complete tone definitions and MUST reject explicit nondefault correction, as MUST direct scans, positive film, paper, and scan-minus-base. GUI state MUST retain valid inactive edits and expose their inactive status.
 
 The GUI MUST pass neutral operator values to rendering while those edits are inactive.
 
@@ -151,7 +155,7 @@ Default correction MUST bypass the coordinate round trip exactly.
 
 ## Exact preview and prepared baseline
 
-Standard negative-to-positive previews MUST use the same complete working grid as export, including crop, upscale, lens blur, spatial effects, and stochastic sampling. Setup and tone MUST run on that grid even at default operator values. Only terminal RGB or the display raster MAY be reduced afterward.
+While the experimental setup is enabled, a negative-to-positive preview MUST use the same complete working grid as export, because a reduced grid would measure a different image. With the setup disabled the working grid MAY be reduced to the preview size, since the readout is then frame-independent. Only terminal RGB MAY be reduced afterward in either case.
 
 Diagnostic density and exposure taps MUST retain their actual grid and meaning. Pan, zoom, and display size MUST NOT remeasure setup.
 
@@ -173,25 +177,25 @@ The runtime model version MUST change; saved carrier versions need not change fo
 
 ## Tone and style names
 
-Apply the existing logistic family to the corrected coordinate `z_c`. Fixed styles use a zero setup offset and no operator correction. `standard` keeps the historical tone constants in all three channels:
+Apply the existing logistic family to the corrected coordinate `z_c`. Without the setup the offset is zero. `standard` keeps the historical tone constants in all three channels:
 
 | `brightness_ev` | `contrast` | `dmax` |
 | --- | --- | --- |
 | `0.8781766618` | `0.73551400058216643` | `1.5625841465572565` |
 
-The only built-in style name offered by discovery and the GUI is `standard`. Accept `neutral` as an input-only migration alias. Saved runtime snapshots and effective configuration MUST emit `standard`.
+`standard` is the built-in tone, not an automatic mode. Accept `neutral` as an input-only migration alias. Saved runtime snapshots and effective configuration MUST emit `standard`.
 
 The alias does not preserve the historical fixed-curve pixels.
 
-Any other valid name resolves to `<data-dir>/scan-styles/<name>.json`. A file declares three finite tone triples with positive `contrast` and `dmax`. It runs no frame setup.
+Any other valid name resolves to `<data-dir>/scan-styles/<name>.json`. A file declares three finite tone triples with positive `contrast` and `dmax`. Styles never run the frame setup; the setup is independent of the name.
 
 Invalid or missing style data MUST fail before output publication. Style names MUST NOT contain `/`, `\`, `..`, or `:`. A catalog MUST NOT offer files named `standard` or `neutral` as additional choices.
 
-`direct_scan` MUST NOT apply conversion setup or tone. It admits the built-in name without effect. Custom fixed styles remain valid only with `negative_to_positive`.
+`direct_scan` MUST NOT apply conversion setup or tone. It admits the built-in name without effect. Custom style names remain valid only with `negative_to_positive`.
 
 ## Point-wise consumers and migration
 
-A `negative_to_positive` render with `standard` MUST fail LUT baking. A point-wise measurement whose range reaches `rgb_out` through this setup MUST fail before writing measurement output. Both failures MUST identify frame dependence and direct the caller to a declared fixed style.
+A `negative_to_positive` render with the setup enabled MUST fail LUT baking. A point-wise measurement whose range reaches `rgb_out` through this setup MUST fail before writing measurement output. Both failures MUST identify frame dependence and direct the caller to disable `scanner.experimental_setup`.
 
 Earlier film-density or exposure taps remain measurable.
 
@@ -213,11 +217,11 @@ Presets, recipes, parameter discovery, CLI `--set`, GUI persistence, and effecti
 
 ## Acceptance and limits
 
-- A uniform 16% neutral patch has a setup offset of zero within precision tolerance.
+- With the setup enabled, a uniform 16% neutral patch has a setup offset of zero within precision tolerance.
 - Gray ramps remain neutral, monotone, and finite. Positive and negative exposure shifts remain distinguishable.
 - Exact residual `(1 - slope)` applies to linear response curves, not arbitrary toe/shoulder regions.
 - Repeated execution on the same frame produces identical setup and pixels at the same precision and backend.
-- Changing a frame's other pixels MAY change a pixel's output under `standard`. Fixed styles retain record independence before destination primary conversion.
+- Changing a frame's other pixels MAY change a pixel's output only while `scanner.experimental_setup` is enabled. With it disabled, every style retains record independence before destination primary conversion.
 - A dominant red field remains red after correction. A dark field MUST NOT be forced to the same result as the neutral aim.
 - A bright background MAY still darken a subject. Setup provides no face detection, subject classification, or local tone correction.
 - Do not weaken this limit into a claim that inverse-lighting scenes are rescued.

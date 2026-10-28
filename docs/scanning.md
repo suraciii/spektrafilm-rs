@@ -10,7 +10,7 @@ The readout light is a product constant selected by the material category: `BB58
 
 The white reference of a scan is the clear film base of the scanned medium. A clear area of that base reads as the output color space's white, and the scan chromatically adapts from that clear-film white to the output white. The scan matrix is the identity. The readout light is part of the final colour transform, not an acquisition control.
 
-The scanner controls include `scanner.scan_output`, `scanner.conversion_style`, `scanner.operator`, `scanner.lens_blur`, and `scanner.unsharp_mask`. Lens blur models readout optics on linear transmitted light and runs before any density interpretation. Unsharp mask is digital sharpening and runs after interpretation and output gamut processing. Legacy white/black correction, white/black levels, film-scan black and white points, receiver profiles, negative conversion methods, automatic setup controls, scanner finish, and Digital Reference remain removed; their field names fail validation at the current schema version.
+The scanner controls include `scanner.scan_output`, `scanner.conversion_style`, `scanner.experimental_setup`, `scanner.operator`, `scanner.lens_blur`, and `scanner.unsharp_mask`. Lens blur models readout optics on linear transmitted light and runs before any density interpretation. Unsharp mask is digital sharpening and runs after interpretation and output gamut processing. Legacy white/black correction, white/black levels, film-scan black and white points, receiver profiles, negative conversion methods, the retired `scanner.auto_setup` control, scanner finish, and Digital Reference remain removed; their field names fail validation at the current schema version.
 
 `settings.use_scanner_lut` selects a PCHIP lattice of normalized `log_xyz`, not a direct spectral scan or an RGB lattice. After interpolation, the scanner applies `10^log_xyz`, chromatic adaptation, and XYZ-to-RGB in that order. On the GPU route, lattice generation, slope and cell-hull preparation, interpolation, and the color transforms remain on the device. Storage limits split the lattice into overlapping source halos without changing its domain or resolution. A limit below the minimum halo or spectral coefficient binding returns an error; it does not select a CPU implementation.
 
@@ -53,17 +53,19 @@ Convert-film uses a bounded eight-iteration inverse scan under `film_render.conv
 
 ## Conversion styles
 
-`scanner.conversion_style` defaults to `standard`. It measures the whole developed frame for automatic exposure and color balance, then applies the existing positive tone. It needs no data directory. `neutral` is an input-only migration alias; saved parameters report `standard`. This rename changes pixels because setup is now automatic.
+`scanner.conversion_style` defaults to `standard`, the built-in frozen tone. It needs no data directory. `neutral` is an input-only migration alias; saved parameters report `standard`. Any other name resolves to `data/scan-styles/<name>.json`.
 
-Standard setup uses a weighted mean/minimum/maximum density estimate and a partial exposure correction. Color correction compares the frame to the stock's neutral locus and reduces correction for dominant colors. These are declared product choices, not measured Frontier/Noritsu settings. Bright backgrounds can still darken a subject. No scene classifier or local tone mapper rescues it.
+### Experimental frame setup
 
-Standard setup does not subtract simulated camera exposure compensation a second time. Fixed styles retain the historical camera compensation. Setup runs after scanner lens blur, before tone and output processing.
+`scanner.experimental_setup` defaults to `false`. When enabled it measures the whole developed frame for exposure and color balance before the tone. It is off by default because the algorithm is a declared heuristic that has not been validated against real minilab references, not a measured Frontier or Noritsu behavior: it uses a weighted mean/minimum/maximum density estimate and a partial exposure correction, compares the frame to the stock's neutral locus, and reduces correction for dominant colors. Bright backgrounds can still darken a subject; no scene classifier or local tone mapper rescues it.
 
-A frame-dependent scan cannot be represented by a point-wise LUT. LUT baking and point-wise measurements that reach this setup fail and request a fixed style. Upstream density and exposure taps remain measurable.
+With the setup disabled, the readout is a fixed, frame-independent transform and no measurement cost is paid. The setup does not subtract simulated camera exposure compensation a second time; without it every style retains the historical camera compensation. The setup runs after scanner lens blur, before tone and output processing.
+
+A frame-dependent scan cannot be represented by a point-wise LUT. While the setup is enabled, LUT baking and point-wise measurements that reach it fail and ask the caller to disable it. Upstream density and exposure taps remain measurable either way.
 
 ## Operator correction
 
-After `standard` prepares its full-frame automatic baseline, four controls adjust the positive image before the fixed tone:
+Four controls adjust the positive image before the fixed tone. They are exposure-coordinate shifts and work with or without the experimental setup:
 
 | Field under `scanner.operator` | Default | Positive direction |
 | --- | --- | --- |
@@ -72,7 +74,7 @@ After `standard` prepares its full-frame automatic baseline, four controls adjus
 | `tint_ev` | `0` | More magenta; mean(R,B)−G exposure difference in stops |
 | `contrast` | `1` | Values above one increase common-exposure contrast about the reference |
 
-Warmth and tint are differential EV, not Kelvin. These controls do not change negative density, camera exposure, Convert recovery, or the automatic setup. Contrast does not amplify channel differences before tone. The nonlinear tone can still change perceived hue and saturation. See the [equations and numerical contract](../specs/film-chain/lab-scan/spec.md#operator-correction).
+Warmth and tint are differential EV, not Kelvin. These controls do not change negative density, camera exposure, Convert recovery, or the experimental setup. Contrast does not amplify channel differences before tone. The nonlinear tone can still change perceived hue and saturation. See the [equations and numerical contract](../specs/film-chain/lab-scan/spec.md#operator-correction).
 
 ```bash
 ./target/release/spektrafilm-f64 process input.tif -o corrected.tif \
@@ -86,9 +88,9 @@ Warmth and tint are differential EV, not Kelvin. These controls do not change ne
 
 All four values must be finite, and contrast must be greater than zero. The GUI trial ranges are exposure ±3 EV, warmth/tint ±1 EV, and contrast 0.5–2. They are editor ranges, not document validation limits. Nondefault values require `standard`, `negative_to_positive`, and a supported negative-film route. CLI, recipes, and presets reject incompatible explicit combinations. The GUI retains inactive edits and renders with neutral operator values until the route and style support them. Reset restores `0, 0, 0, 1` without changing setup.
 
-Material-producing CLI routes may retain a valid pending negative-scan correction in their `.sfstage` baseline. They report it as inactive because no scanner ran. On `film > scan`, the correction becomes active and can be changed without developing the material again; automatic setup is measured from the retained complete material frame. See [material-stage continuation](../specs/cli/stage-artifacts.md).
+Material-producing CLI routes may retain a valid pending negative-scan correction in their `.sfstage` baseline. They report it as inactive because no scanner ran. On `film > scan`, the correction becomes active and can be changed without developing the material again; the experimental setup, when enabled, is measured from the retained complete material frame. See [material-stage continuation](../specs/cli/stage-artifacts.md).
 
-Standard negative-to-positive preview renders the complete crop/upscale working grid, including spatial effects, before reducing terminal RGB for preview. The GUI keeps full-grid output and reduces only the display raster. Pan, zoom, and preview size do not change the automatic baseline. Operator variants share core preparation when reusable; optical Dye/Fotufilm grain may require exact full-route recomputation. There is no separate approximate scan engine or hidden cross-frame setup lock. Full-grid preparation costs memory; it must not silently use reduced precision or sampled setup.
+With the experimental setup enabled, a negative-to-positive preview must render the complete crop/upscale working grid, including spatial effects, and reduce only the terminal RGB: the setup needs the whole frame, so preview size must not change its baseline. Without the setup, preview size caps the working resolution instead, which is the cheaper default. Operator variants share core preparation when reusable; optical Dye/Fotufilm grain may require exact full-route recomputation. There is no separate approximate scan engine or hidden cross-frame setup lock. Full-grid preparation costs memory; it must not silently use reduced precision or sampled setup while the setup is on.
 
 The retained GPU scan cache owns one complete acquisition: binary64 reconstructed record exposures, full-frame setup, and device status. It keys the immutable developed-film owner, device, geometry, calibrated axes, scanner lens blur, and setup constants—not mutable working buffers. Operator and tone variants reuse that acquisition and rerun the output tail without measuring setup again. A different frame or acquisition setting replaces the entry; cancellation or a failed device status check cannot publish one. Observation and cancellation wrappers share the same device-owned entry. Ordinary uncached processing runs the same acquisition algorithm, and no frame's automatic offsets are carried into another frame.
 
@@ -100,7 +102,7 @@ Neutral operator values bypass correction exactly. Pixel compatibility with PR #
 
 ## Fixed conversion styles
 
-Any other name resolves to `data/scan-styles/<name>.json` in your data directory. No extra fixed style ships with the product. With a stock data directory, only `standard` is listed. A fixed style runs no automatic setup.
+Any other name resolves to `data/scan-styles/<name>.json` in your data directory. No extra fixed style ships with the product. With a stock data directory, only `standard` is listed. A style selects the tone only; it never runs the frame setup, which is the separate experimental switch.
 
 A style file is user-authored declared data. It declares one tone triple per channel:
 

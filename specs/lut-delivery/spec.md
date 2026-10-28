@@ -6,7 +6,7 @@
 - Optional [CMYK ink style](../cmyk-style/spec.md) is a modeled RGB finishing behavior, not a photographic-print calibration claim.
 - A LUT bake contains no image-specific spatial effects or stochastic grain.
 - The bundle records any controls neutralized for baking.
-- Automatic negative setup with `scanner.conversion_style = standard` is frame-dependent and MUST fail before baking.
+- The negative frame setup (`scanner.experimental_setup`) is frame-dependent and MUST fail baking while enabled.
 - It MUST NOT be silently neutralized.
 - A declared fixed style is the point-wise alternative under the [lab scan contract](../film-chain/lab-scan/spec.md#point-wise-consumers-and-migration).
 - The bundle MAY contain canonical LUT stages, contiguous collapsed sub-chains, machine-readable metadata, OCIO wiring, and QA results.

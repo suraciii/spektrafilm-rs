@@ -234,7 +234,7 @@ impl RenderSnapshot {
         neutral: &spektrafilm_core::neutral_filters::NeutralFilters,
     ) -> RuntimeParams {
         let mut params = self.params.clone();
-        if !params.scanner.requires_full_frame() {
+        if !params.scanner.operator_eligible() {
             params.scanner.operator = Default::default();
         }
         params.settings.preview_mode = preview && !params.scanner.requires_full_frame();
@@ -524,6 +524,36 @@ mod tests {
                 .collect(),
         );
         (snapshot, input)
+    }
+
+    #[test]
+    fn operator_correction_survives_the_frame_independent_default() {
+        // The default readout runs no frame setup, so the render path must keep
+        // manual corrections; gating them on the setup flag silently zeroed
+        // every saved correction in the default configuration.
+        let (mut snapshot, image) = snapshot_and_input();
+        snapshot.params.scanner.operator.exposure_ev = 0.5;
+        assert!(!snapshot.params.scanner.experimental_setup);
+        assert!(snapshot.params.scanner.operator_eligible());
+        let corrected = RuntimeCache::default()
+            .prepare_observed(&snapshot, false, &ObservationContext::default())
+            .unwrap()
+            .params()
+            .scanner
+            .operator;
+        assert_eq!(corrected.exposure_ev, 0.5);
+
+        // An ineligible route rejects correction, so the path drops it.
+        let mut fixed = snapshot.clone();
+        fixed.params.scanner.scan_output = "direct_scan".into();
+        assert!(!fixed.params.scanner.operator_eligible());
+        let dropped = RuntimeCache::default()
+            .prepare_observed(&fixed, false, &ObservationContext::default())
+            .unwrap()
+            .params()
+            .scanner
+            .operator;
+        assert_eq!(dropped, Default::default());
     }
 
     #[test]

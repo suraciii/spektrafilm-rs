@@ -11,10 +11,12 @@ use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
-/// Numerical model revision shared by image, recipe and LUT provenance.
-/// Operator controls follow full-frame standard setup. Negative tone has fixed
-/// linear-sRGB primaries before conversion to the selected output space.
-pub const MODEL_VERSION: &str = "lab_scan_operator_v1";
+/// Numerical model revision shared by image, recipe, LUT and stage provenance.
+/// Negative-to-positive now defaults to the frame-independent readout: the
+/// experimental `scanner.experimental_setup` opt-in owns the whole-frame
+/// measurement. Negative tone has fixed linear-sRGB primaries before
+/// conversion to the selected output space.
+pub const MODEL_VERSION: &str = "lab_scan_operator_v2";
 
 /// Last-call wall-clock timings exposed by the runtime facade.
 pub type Timings = BTreeMap<String, f64>;
@@ -978,6 +980,7 @@ mod tests {
     fn cached_scan_matches_fresh_cpu_after_convert_geometry_mix_and_spatial_edits() {
         for route in ["input > film > scan", "input > convert-film > scan"] {
             let mut params = scanner_params();
+            params.scanner.experimental_setup = true;
             params.workflow.route = route.into();
             params.io.input_cctf_decoding = false;
             params.io.output_cctf_encoding = false;
@@ -1073,6 +1076,7 @@ mod tests {
         use spektrafilm_backend::telemetry::{CollectionMode, Executor};
 
         let mut params = scanner_params();
+        params.scanner.experimental_setup = true;
         params.scanner.lens_blur = 1.0;
         params.scanner.unsharp_mask = [0.0; 2];
         params.io.output_color_space = "Display P3".into();
@@ -1155,6 +1159,7 @@ mod tests {
         let backend = CpuBackend;
         for collect in ["rgb_in", "rgb_pre", "log_e_film", "cmy_film"] {
             let mut params = scanner_params();
+            params.scanner.experimental_setup = true;
             params.settings.preview_max_size = 2;
             params.io.crop = false;
             params.taps.collect = Some(collect.into());
@@ -1202,6 +1207,7 @@ mod tests {
     #[test]
     fn standard_preview_resamples_finished_full_workframe() {
         let mut params = scanner_params();
+        params.scanner.experimental_setup = true;
         params.taps.inject = Some("cmy_film".into());
         params.scanner.unsharp_mask = [0.0; 2];
         params.settings.preview_max_size = 2;
