@@ -42,36 +42,24 @@ fn build_bounded_grain_v2(
         .checked_mul(height)
         .filter(|&n| n > 0 && n <= u32::MAX / 3)
         .ok_or("procedural grain dimensions overflow")?;
+    // A caller may offer a budget larger than the device can bind; the band
+    // plan must respect the device either way.
+    let limit = limit.min(super::super::bounded::storage_binding_limit(backend)?);
     let n_bytes = u64::from(n) * 12;
     let page = (limit / 12).min(u64::from(n)) as u32;
-    let batch = (limit / 432)
-        .min(u64::from(n))
-        .min(u64::from(u32::MAX / 108)) as u32;
-    if batch == 0 {
-        return Err("procedural grain minimum gathered pixel needs 432 bytes".into());
-    }
     let original = paged_transport(backend, n_bytes, "grain_encoded_transport")?;
     let horizontal = paged_transport(backend, n_bytes, "grain_horizontal_transport")?;
     let filtered = paged_transport(backend, n_bytes, "grain_filtered_transport")?;
     let output = paged_transport(backend, n_bytes, "grain_output_transport")?;
     let source_window = transport(backend, u64::from(page) * 12, "grain_source_window")?;
     let target_window = transport(backend, u64::from(page) * 12, "grain_target_window")?;
-    let gathered = transport(backend, u64::from(batch) * 432, "grain_procedural_gather")?;
-    let working = transport(backend, u64::from(batch) * 12, "grain_working_window")?;
-    let grain_output = transport(backend, u64::from(batch) * 12, "grain_composed_window")?;
+    let working = transport(backend, u64::from(page) * 12, "grain_working_window")?;
+    let grain_output = transport(backend, u64::from(page) * 12, "grain_composed_window")?;
     let storage = wgpu::BufferBindingType::Storage { read_only: true };
     let writable = wgpu::BufferBindingType::Storage { read_only: false };
     let filter = backend.cached_pipeline(
         include_str!("film_resolution.wgsl"),
         &[wgpu::BufferBindingType::Uniform, storage, storage, writable],
-    );
-    let grain = backend.cached_pipeline(
-        include_str!("grain_v2.wgsl"),
-        &[wgpu::BufferBindingType::Uniform, storage, writable, storage],
-    );
-    let gather = backend.cached_pipeline(
-        include_str!("procedural_gather.wgsl"),
-        &[wgpu::BufferBindingType::Uniform, storage, writable],
     );
     #[repr(C)]
     #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
@@ -145,38 +133,166 @@ fn build_bounded_grain_v2(
             &weights,
         )?;
     }
-    for first in (0..n).step_by(batch as usize) {
-        let count = batch.min(n - first);
-        // Digital grain never resamples the source; the working sample is its
-        // complete conditioning input, so no analogue gather is needed.
-        if params.mode == 0 {
-            for page_first in (0..n).step_by(page as usize) {
-                let page_count = page.min(n - page_first);
+    let storage = wgpu::BufferBindingType::Storage { read_only: true };
+    let writable = wgpu::BufferBindingType::Storage { read_only: false };
+    let canvas_layout = [wgpu::BufferBindingType::Uniform, storage, writable];
+    let canvas_pass =
+        backend.cached_pipeline_at(include_str!("grain_v2.wgsl"), &canvas_layout, "canvas_main");
+    let grain = backend.cached_pipeline_at(
+        include_str!("grain_v2.wgsl"),
+        &[
+            wgpu::BufferBindingType::Uniform,
+            storage,
+            writable,
+            storage,
+            storage,
+            writable,
+        ],
+        "main",
+    );
+    let mean_pass = backend.cached_pipeline_at(
+        include_str!("procedural_mean.wgsl"),
+        &[wgpu::BufferBindingType::Uniform, storage, writable],
+        "mean_main",
+    );
+    let reduce_pass = backend.cached_pipeline_at(
+        include_str!("procedural_mean.wgsl"),
+        &[wgpu::BufferBindingType::Uniform, storage, writable],
+        "reduce_main",
+    );
+    let (cells_w, cells_h) = canvas_cells(width, height, params);
+    let cells = u64::from(cells_w) * u64::from(cells_h);
+    // Digital grain has no canvas, so its composition reads the neutral half.
+    let partials = backend
+        .device
+        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("grain_procedural_mean"),
+            contents: bytemuck::cast_slice(&[0.5f32, 0.5, 0.5, 0.0]),
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+        });
+    let scratch = transport(backend, 16, "grain_procedural_scratch")?;
+    let bands = if params.mode == 0 {
+        canvas_bands(width, height, cells_w, cells_h, limit, params)?
+    } else {
+        Vec::new()
+    };
+    // The mean pass walks the pixels once per canvas band and the reduction
+    // folds every partial, so size the buffer from the plan rather than the
+    // frame: a band's chunk count depends on the band, not on `n`.
+    let mut chunks = 0u64;
+    for band in &bands {
+        let mut first = band.pixels.0;
+        while first < band.pixels.1 {
+            let count = page.min(band.pixels.1 - first);
+            chunks += u64::from(count).div_ceil(256);
+            first += count;
+        }
+    }
+    let partials_bytes = (chunks as u32).max(1) as u64 * 16;
+    let partials = if chunks > 1 {
+        transport(backend, partials_bytes, "grain_procedural_partials")?
+    } else {
+        partials
+    };
+    let scale = 1.0 + (params.raw_scale - 1.0) / 47.0 * 1.5;
+    let resident = cells * 8 <= limit;
+    // A resident canvas is built, measured and composed once. A canvas that
+    // does not fit walks bands twice: the first pass measures the exact mean,
+    // the second regenerates the same cells and composes. Both passes generate
+    // identical cells, so the output does not depend on which path ran.
+    let canvas = if params.mode == 0 && resident {
+        Some(transport(backend, cells * 8, "grain_procedural_canvas")?)
+    } else {
+        None
+    };
+    let band_bytes = bands
+        .iter()
+        .map(|b| u64::from(b.stored.1 - b.stored.0) * u64::from(cells_w) * 8)
+        .max()
+        .unwrap_or(0);
+    // A resident canvas is composed from its own buffer, so the band buffer is
+    // only allocated when the canvas has to be split.
+    let scratch_canvas = if canvas_transport_needed(params, resident) {
+        transport(backend, band_bytes.max(16), "grain_procedural_band")?
+    } else {
+        transport(backend, 16, "grain_procedural_band")?
+    };
+    if params.mode == 0 {
+        let mut written = 0u32;
+        let buffer = match &canvas {
+            Some(canvas) => canvas,
+            None => &scratch_canvas,
+        };
+        for band in &bands {
+            build_canvas_band(
+                &mut commands,
+                backend,
+                width,
+                height,
+                params,
+                &original,
+                &source_window,
+                cells_w,
+                cells_h,
+                band,
+                buffer,
+                page as u64,
+                &canvas_pass,
+            );
+            let mut first = band.pixels.0;
+            let mut base = written;
+            while first < band.pixels.1 {
+                let count = page.min(band.pixels.1 - first);
                 let p = uniform(
                     backend,
-                    &GatherParams {
-                        dimensions: [width, height, first, count],
-                        page: [page_first, page_count, 0, 0],
-                        controls: [params.raw_scale, 0.0, 0.0, 0.0],
-                    },
+                    &[
+                        width,
+                        height,
+                        first,
+                        count,
+                        cells_w,
+                        cells_h,
+                        base,
+                        chunks as u32,
+                        scale.to_bits(),
+                        (band.stored.0 as f32).to_bits(),
+                        0,
+                        0,
+                    ],
                 );
-                commands.copy(
-                    &original,
-                    u64::from(page_first) * 12,
-                    &source_window,
-                    0,
-                    u64::from(page_count) * 12,
-                );
-                commands.dispatch(
-                    &gather,
-                    &[&p, &source_window, &gathered],
-                    count,
-                    false,
-                    backend,
-                );
+                commands.dispatch(&mean_pass, &[&p, buffer, &partials], count, false, backend);
+                base += u64::from(count).div_ceil(256) as u32;
+                written += u64::from(count).div_ceil(256) as u32;
+                first += count;
             }
         }
+        let p = uniform(
+            backend,
+            &[
+                width,
+                height,
+                0,
+                0,
+                cells_w,
+                cells_h,
+                0,
+                chunks as u32,
+                scale.to_bits(),
+                0,
+                0,
+                0,
+            ],
+        );
+        commands.dispatch(&reduce_pass, &[&p, &scratch, &partials], 1, true, backend);
+    }
+    let compose_pixel = |first: u32,
+                         count: u32,
+                         band_rows: (u32, u32),
+                         stored_rows: u32,
+                         buffer: &wgpu::Buffer,
+                         commands: &mut RasterCommands| {
         let mut p = shader_params(width, height, params);
+        p.canvas = [cells_w, cells_h, stored_rows, band_rows.0];
         p.window = [first, count, 0, 0];
         let p = uniform(backend, &p);
         commands.copy(
@@ -188,7 +304,14 @@ fn build_bounded_grain_v2(
         );
         commands.dispatch(
             &grain,
-            &[&p, &gathered, &grain_output, &working],
+            &[
+                &p,
+                &source_window,
+                buffer,
+                &working,
+                &partials,
+                &grain_output,
+            ],
             count,
             false,
             backend,
@@ -200,6 +323,50 @@ fn build_bounded_grain_v2(
             u64::from(first) * 12,
             u64::from(count) * 12,
         );
+    };
+    if params.mode != 0 {
+        for first in (0..n).step_by(page as usize) {
+            let count = page.min(n - first);
+            compose_pixel(first, count, (0, cells_h), cells_h, &scratch, &mut commands);
+        }
+    } else if let Some(canvas) = &canvas {
+        for first in (0..n).step_by(page as usize) {
+            let count = page.min(n - first);
+            compose_pixel(first, count, (0, cells_h), cells_h, canvas, &mut commands);
+        }
+    } else {
+        // Measure again per band and compose what was just generated.
+        for band in &bands {
+            let rows = band.stored.1 - band.stored.0;
+            build_canvas_band(
+                &mut commands,
+                backend,
+                width,
+                height,
+                params,
+                &original,
+                &source_window,
+                cells_w,
+                cells_h,
+                band,
+                &scratch_canvas,
+                page as u64,
+                &canvas_pass,
+            );
+            let mut first = band.pixels.0;
+            while first < band.pixels.1 {
+                let count = page.min(band.pixels.1 - first);
+                compose_pixel(
+                    first,
+                    count,
+                    band.stored,
+                    rows,
+                    &scratch_canvas,
+                    &mut commands,
+                );
+                first += count;
+            }
+        }
     }
     Ok(GrainV2State {
         output,
@@ -253,21 +420,17 @@ impl WgpuBackend {
             .ok_or("procedural grain dimensions overflow")?;
         let limit = super::super::bounded::storage_binding_limit(self)?;
         let page = (limit / 12).min(u64::from(n));
-        let batch = (limit / 432)
-            .min(u64::from(n))
-            .min(u64::from(u32::MAX / 108));
-        if batch == 0 {
-            return Err("procedural grain minimum gathered pixel needs 432 bytes".into());
-        }
         let (radius, optical, weights) = resolution_weights(width, height, params);
         let pages = u64::from(n).div_ceil(page);
-        let batches = u64::from(n).div_ceil(batch);
-        let mut bytes =
-            u128::from(n) * 48 + u128::from(page) * 24 + u128::from(batch) * (432 + 24) + 8;
-        bytes += u128::from(pages) * 96
-            + u128::from(batches) * std::mem::size_of::<ShaderParams>() as u128;
+        let mut bytes = u128::from(n) * 48 + u128::from(page) * 24 + 8;
+        bytes += u128::from(pages) * 96 + u128::from(pages) * 48;
         if params.mode == 0 {
-            bytes += u128::from(batches) * u128::from(pages) * 48;
+            let (cw, ch) = canvas_cells(width, height, params);
+            // A resident canvas costs its full extent; a banded one costs the
+            // band buffer, which the limit bounds.
+            let canvas_bytes = (u128::from(cw) * u128::from(ch) * 8).min(u128::from(limit));
+            bytes += canvas_bytes;
+            bytes += u128::from(n).div_ceil(256) * 16;
         }
         if radius > 0.0 {
             let reach = if optical {
@@ -313,6 +476,213 @@ impl WgpuBackend {
             }
         }
         u64::try_from(bytes).map_err(|_| "procedural grain resource plan overflows".into())
+    }
+}
+
+/// Canvas cells the scan addresses, matching the host model's table.
+fn canvas_cells(
+    width: u32,
+    height: u32,
+    params: &spektrafilm_backend::GrainV2GpuParams,
+) -> (u32, u32) {
+    let gsf = (5200.0 / width as f32).max(3100.0 / height as f32);
+    let size = [
+        (width as f32 * gsf).floor().max(1.0),
+        (height as f32 * gsf).floor().max(1.0),
+    ];
+    let scale = 1.0 + (params.raw_scale - 1.0) / 47.0 * 1.5;
+    let used = |extent: f32, limit: f32| {
+        ((extent / scale).ceil() as i64 + 2).clamp(1, limit.max(1.0) as i64) as u32
+    };
+    (used(size[0], size[0]), used(size[1], size[1]))
+}
+
+/// Whether the canvas needs its own band buffer rather than the resident one.
+fn canvas_transport_needed(params: &spektrafilm_backend::GrainV2GpuParams, resident: bool) -> bool {
+    // Digital grain has no table; analogue composes from the resident buffer.
+    params.mode == 0 && !resident
+}
+
+/// One canvas band: the rows a single canvas buffer holds and the pixels that
+/// read them.
+///
+/// The buffer stores `stored` rows, one more than the band on each side where
+/// the canvas allows it, because the composition averages a 3x3 neighbourhood.
+/// `pixels` is the pixel range whose canvas row falls inside the band; the
+/// mapping is monotone, so each pixel belongs to exactly one band.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct CanvasBand {
+    stored: (u32, u32),
+    pixels: (u32, u32),
+}
+
+/// Split the canvas into row bands that each fit one binding.
+///
+/// A canvas that fits stays whole. Otherwise every band stores one extra row
+/// above and below (clamped at the canvas edges) so a pixel in the band can
+/// still average its full neighbourhood.
+fn canvas_bands(
+    width: u32,
+    height: u32,
+    cells_w: u32,
+    cells_h: u32,
+    limit: u64,
+    params: &spektrafilm_backend::GrainV2GpuParams,
+) -> Result<Vec<CanvasBand>, String> {
+    let row_bytes = u64::from(cells_w) * 8;
+    // The canvas pass stages whole source rows, so a window narrower than the
+    // frame would silently drop the tail of every row.
+    if u64::from(width) * 12 > limit {
+        return Err(format!(
+            "procedural grain needs a {}-pixel source row in {limit} bytes of staging window",
+            width
+        ));
+    }
+    if row_bytes > limit {
+        return Err(format!(
+            "procedural grain canvas row needs {row_bytes} bytes; device binding limit is {limit}"
+        ));
+    }
+    let rows = u64::from(cells_h);
+    // Mirror the composition's cell mapping in binary32 so a band owns exactly
+    // the pixels the shader resolves into it.
+    let gsf = (5200.0f32 / width as f32).max(3100.0f32 / height as f32);
+    let size_y = (height as f32 * gsf).floor().max(1.0);
+    let scale = 1.0 + (params.raw_scale - 1.0) / 47.0 * 1.5;
+    let inv_h = 1.0 / height.saturating_sub(1).max(1) as f32;
+    let cell_row = |y: u32| -> i32 { ((y as f32 * inv_h) * (size_y / scale)) as i32 };
+    let first_pixel = |row: u32| -> u32 {
+        // `cell_row` is monotone, so the first pixel at or past `row` is a bound.
+        let (mut low, mut high) = (0u32, height);
+        while low < high {
+            let mid = low + (high - low) / 2;
+            if cell_row(mid) < row as i32 {
+                low = mid + 1;
+            } else {
+                high = mid;
+            }
+        }
+        low
+    };
+    let mut bands = Vec::new();
+    if rows * row_bytes <= limit {
+        bands.push(CanvasBand {
+            stored: (0, cells_h),
+            // Pixel ranges are linear sample indices, so a band of rows covers
+            // a multiple of the image width.
+            pixels: (0, height * width),
+        });
+        return Ok(bands);
+    }
+    let stored_rows = limit / row_bytes;
+    // The canvas pass bilinearly samples the source rows the band covers, and
+    // those rows must fit the staging window as well.
+    let source_rows_per_cell_row = u64::from(height).div_ceil(u64::from(cells_h)).max(1);
+    // Staging window: the largest whole-row window a binding of `limit` holds.
+    let window_rows = limit / (u64::from(width) * 12) / source_rows_per_cell_row;
+    let compose_rows = stored_rows
+        .saturating_sub(2)
+        .min(window_rows.saturating_sub(2))
+        .max(1) as u32;
+    if stored_rows < 3 {
+        return Err(format!(
+            "procedural grain canvas band needs 3 rows of {row_bytes} bytes; device binding limit \
+             is {limit}"
+        ));
+    }
+    let mut row = 0u32;
+    while row < cells_h {
+        let next = (row + compose_rows).min(cells_h);
+        let stored = (row.saturating_sub(1), (next + 1).min(cells_h));
+        // A pixel whose centre clamps to the last canvas row still needs
+        // composing, so the final band takes every remaining sample.
+        let end = if next == cells_h {
+            height * width
+        } else {
+            first_pixel(next) * width
+        };
+        let pixels = (first_pixel(row) * width, end);
+        if pixels.0 < pixels.1 {
+            bands.push(CanvasBand { stored, pixels });
+        }
+        row = next;
+    }
+    if bands.is_empty() {
+        return Err("procedural grain canvas has no reachable row".into());
+    }
+    Ok(bands)
+}
+
+/// Build one canvas band into `buffer`, staging the source rows it samples.
+#[allow(clippy::too_many_arguments)]
+fn build_canvas_band(
+    commands: &mut RasterCommands,
+    backend: &WgpuBackend,
+    width: u32,
+    height: u32,
+    params: &spektrafilm_backend::GrainV2GpuParams,
+    original: &[super::super::paged::ImagePage],
+    source_window: &wgpu::Buffer,
+    cells_w: u32,
+    cells_h: u32,
+    band: &CanvasBand,
+    buffer: &wgpu::Buffer,
+    page: u64,
+    canvas_pass: &super::super::CachedPipelineRef,
+) {
+    let (store_from, store_to) = band.stored;
+    // Cells address the full virtual canvas, not the stored table.
+    let canvas_rows =
+        ((height as f32 * (5200.0 / width as f32).max(3100.0 / height as f32)).floor()).max(1.0);
+    let to_source = |cell_row: f32| (cell_row / (canvas_rows - 1.0)) * (height as f32 - 1.0) - 0.1;
+    let source_rows = |from: u32, to: u32| {
+        let first = (to_source(from as f32).floor() as i64 - 1).max(0) as u32;
+        let last = ((to_source((to - 1) as f32).ceil() as i64 + 2).max(0) as u32).min(height);
+        (first, last)
+    };
+    // The staging window holds whole rows, so a band is generated in chunks
+    // sized to the source rows it samples. A canvas built from a single
+    // resident buffer would otherwise stage the whole frame at once.
+    let staging_rows = (page / u64::from(width)).max(1) as u32;
+    let mut chunk = store_to - store_from;
+    let mut row = store_from;
+    while row < store_to {
+        chunk = chunk.min(store_to - row).max(1);
+        let (first_row, last_row) = loop {
+            let (first, last) = source_rows(row, row + chunk);
+            if last - first <= staging_rows || chunk == 1 {
+                break (first, last);
+            }
+            chunk /= 2;
+        };
+        for source_row in first_row..last_row {
+            commands.copy(
+                original,
+                u64::from(source_row * width) * 12,
+                source_window,
+                u64::from((source_row - first_row) * width) * 12,
+                u64::from(width) * 12,
+            );
+        }
+        let mut p = shader_params(width, height, params);
+        // `canvas.z` is where this chunk starts inside the band buffer; the
+        // cell coordinates themselves stay global.
+        p.canvas = [cells_w, cells_h, (row - store_from) * cells_w, 0];
+        p.window = [
+            row * cells_w,
+            chunk * cells_w,
+            first_row,
+            last_row - first_row,
+        ];
+        let p = uniform(backend, &p);
+        commands.dispatch(
+            canvas_pass,
+            &[&p, source_window, buffer],
+            chunk * cells_w,
+            false,
+            backend,
+        );
+        row += chunk;
     }
 }
 
@@ -724,6 +1094,132 @@ mod tests {
         assert_eq!(rows, u64::from(band) + 16);
     }
 
+    /// Bands must tile the frame exactly and keep one row of overlap, or a
+    /// pixel reads a neighbour's buffer.
+    #[test]
+    fn canvas_bands_tile_the_frame_and_keep_their_margins() {
+        let params = spektrafilm_backend::GrainV2GpuParams {
+            mode: 0,
+            resolution_type: 0,
+            amount: 1.0,
+            shadows: 1.0,
+            midtones: 1.0,
+            highlights: 1.0,
+            raw_scale: 1.0,
+            cluster_size: 1.6,
+            rotation: 0.0,
+            color: 1.0,
+            resolution_factor: 1.0,
+            seed: 42,
+            timer: None,
+            colored: true,
+            clustered: false,
+        };
+        let (w, h) = (37u32, 19u32);
+        let (cw, ch) = canvas_cells(w, h, &params);
+        assert!(u64::from(cw) * u64::from(ch) * 8 > 8 << 20);
+        let bands = canvas_bands(w, h, cw, ch, 8 << 20, &params).unwrap();
+        assert!(bands.len() > 1);
+        assert_eq!(
+            bands[0].pixels.0, 0,
+            "first band starts at the first sample"
+        );
+        assert_eq!(
+            bands.last().unwrap().pixels.1,
+            w * h,
+            "last band reaches the last sample"
+        );
+        for pair in bands.windows(2) {
+            assert_eq!(pair[0].pixels.1, pair[1].pixels.0, "no gap or overlap");
+            assert!(
+                pair[1].stored.0 + 1 >= pair[0].stored.1 - 1,
+                "neighbouring bands keep their margins"
+            );
+        }
+        assert_eq!(bands[0].stored.0, 0);
+        assert_eq!(bands.last().unwrap().stored.1, ch);
+    }
+
+    /// Every sample must be composed by exactly one band, and every band must
+    /// store the rows its pixels read. Brute force over the same mapping the
+    /// shader uses, across geometries that put the canvas on both sides of the
+    /// binding limit.
+    #[test]
+    fn canvas_bands_cover_every_sample_once() {
+        for (w, h) in [(37u32, 19u32), (1, 1), (2, 512), (512, 2), (97, 41)] {
+            let (cw, ch) = canvas_cells(
+                w,
+                h,
+                &spektrafilm_backend::GrainV2GpuParams {
+                    mode: 0,
+                    resolution_type: 0,
+                    amount: 1.0,
+                    shadows: 1.0,
+                    midtones: 1.0,
+                    highlights: 1.0,
+                    raw_scale: 1.0,
+                    cluster_size: 1.6,
+                    rotation: 0.0,
+                    color: 1.0,
+                    resolution_factor: 1.0,
+                    seed: 42,
+                    timer: None,
+                    colored: true,
+                    clustered: false,
+                },
+            );
+            for limit in [1 << 20, 4 << 20, 16 << 20, 1 << 40] {
+                let params = spektrafilm_backend::GrainV2GpuParams {
+                    mode: 0,
+                    resolution_type: 0,
+                    amount: 1.0,
+                    shadows: 1.0,
+                    midtones: 1.0,
+                    highlights: 1.0,
+                    raw_scale: 1.0,
+                    cluster_size: 1.6,
+                    rotation: 0.0,
+                    color: 1.0,
+                    resolution_factor: 1.0,
+                    seed: 42,
+                    timer: None,
+                    colored: true,
+                    clustered: false,
+                };
+                let Ok(bands) = canvas_bands(w, h, cw, ch, limit, &params) else {
+                    continue;
+                };
+                // Brute force: the same f32 mapping the shader resolves.
+                let gsf = (5200.0f32 / w as f32).max(3100.0f32 / h as f32);
+                let size_y = (h as f32 * gsf).floor().max(1.0);
+                let scale = 1.0 + (1.0 - 1.0) / 47.0 * 1.5;
+                let inv_h = 1.0 / h.saturating_sub(1).max(1) as f32;
+                let mut seen = vec![0u32; (w * h) as usize];
+                for band in &bands {
+                    for index in band.pixels.0..band.pixels.1 {
+                        let y = index / w;
+                        let centre = ((y as f32 * inv_h) * (size_y / scale)) as i32;
+                        let clamped = centre.clamp(0, ch as i32 - 1) as u32;
+                        for dy in -1i32..=1 {
+                            let row = (clamped as i32 + dy).clamp(0, ch as i32 - 1) as u32;
+                            assert!(
+                                row >= band.stored.0 && row < band.stored.1,
+                                "{w}x{h} limit {limit}: pixel row {y} reads row {row} \
+                                 outside band {:?}",
+                                band.stored
+                            );
+                        }
+                        seen[index as usize] += 1;
+                    }
+                }
+                assert!(
+                    seen.iter().all(|&count| count == 1),
+                    "{w}x{h} limit {limit}: every sample must be composed exactly once"
+                );
+            }
+        }
+    }
+
     #[test]
     fn procedural_windows_preserve_absolute_coordinates_and_resolution() {
         let gpu = crate::test_support::adapter();
@@ -775,14 +1271,48 @@ mod tests {
             state.submit(&gpu, &readback).unwrap();
             gpu.read_mapped_f32(&readback, state.n_bytes)
         };
-        for (mode, resolution) in [(0, 0), (0, 1), (1, 0)] {
+        // Analogue composes over a canvas table that must fit one storage
+        // binding, so its limits start above the table. Digital grain has no
+        // table and keeps the small-limit sweep.
+        // A near-unit size keeps the canvas at the full virtual resolution,
+        // which for this 17x7 frame would exceed the binding limit by itself;
+        // production profiles sit near 1.35 and stay well inside it.
+        params.raw_scale = 12.0;
+        let (cells_w, cells_h) = canvas_cells(width, height, &params);
+        let canvas_bytes = u64::from(cells_w) * u64::from(cells_h) * 8;
+        for (mode, resolution) in [(0, 0), (0, 1)] {
             params.mode = mode;
             params.resolution_type = resolution;
             assert_eq!(
-                run(&params, 65536),
-                run(&params, 1728),
+                run(&params, canvas_bytes),
+                run(&params, canvas_bytes + 4096),
                 "mode {mode}, resolution {resolution}"
             );
         }
+        // A canvas that cannot fit one binding is banded, and a band must
+        // compose the same image as a resident canvas.
+        params.raw_scale = 1.1;
+        params.mode = 0;
+        params.resolution_type = 0;
+        let (cells_w, cells_h) = canvas_cells(width, height, &params);
+        let oversized = u64::from(cells_w) * u64::from(cells_h) * 8;
+        assert!(oversized > 128 << 20, "fixture must exceed one binding");
+        assert_eq!(
+            run(&params, oversized),
+            run(&params, 8 << 20),
+            "a banded canvas must compose the same image"
+        );
+        // Only a single canvas row that cannot fit one binding is refused.
+        assert!(
+            build_bounded_grain_v2(&params, width, height, &input, None, &gpu, 1024).is_err(),
+            "a canvas row wider than the window must be refused"
+        );
+        params.mode = 1;
+        params.resolution_type = 0;
+        assert_eq!(
+            run(&params, 65536),
+            run(&params, 1728),
+            "digital grain must not depend on the transport window"
+        );
     }
 }

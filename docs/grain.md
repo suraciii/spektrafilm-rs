@@ -37,6 +37,8 @@ Grain Procedural is selected with `film_render.grain.engine: "procedural"`.
 
 It runs on every scan-output mode. It consumes the display-encoded RGB that the scanner produces, so `direct_scan` and `negative_to_positive` differ only in the image it receives, not in the grain law.
 
+The composite is tone-neutral: it subtracts the displacement its zoned bases produce at the grain mean, so switching grain on does not shift the tone. Both executors take that mean from the same canvas cells. The canvas is a deterministic virtual table at a fixed 5200x3100 reference scale, so a frame whose canvas exceeds one storage binding is composed in row bands rather than refused; the band layout affects resources only, never the image.
+
 ### Profiles and controls
 
 `v2_profile` defaults to `"35mm250"`. Presets are:
