@@ -304,7 +304,9 @@ fn glare_large_fields_keep_reference_error_bounded() {
 }
 
 #[test]
-fn glare_executes_without_native_f64_or_int64_features() {
+fn glare_without_native_f64_runs_the_generator_and_rejects_the_gaussian() {
+    // The MT19937 normal transform stays f32-only; the Gaussian owns binary64
+    // coefficients and state, so a blurred glare request fails explicitly.
     // Acquire the common device guard before opening a second, restricted device.
     let gpu = crate::test_support::adapter();
     let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
@@ -366,8 +368,24 @@ fn glare_executes_without_native_f64_or_int64_features() {
             .allocate_image_pages(37, 19, "glare_f32_only_image")
             .unwrap();
         let mut scratch = GaussianScratch::new(37, 19);
-        let state = build_glare_state(&backend.device, &gp, 37, 19, &image, &mut scratch, &backend)
-            .unwrap();
+        let state = build_glare_state(&backend.device, &gp, 37, 19, &image, &mut scratch, &backend);
+        if blur > 0.0 {
+            // The Gaussian owns binary64 coefficients and state; a device without
+            // native f64 fails explicitly rather than approximating the law.
+            let Err(error) = state else {
+                panic!("blurred glare must not run without native f64");
+            };
+            assert_eq!(
+                error,
+                "glare Gaussian: grain Gaussian requires native shader f64 arithmetic"
+            );
+            eprintln!(
+                "f32-only glare features={:?} blur={blur} rejected",
+                backend.device.features()
+            );
+            continue;
+        }
+        let state = state.unwrap();
         state.submit(&backend).unwrap();
         let expected =
             spektrafilm_model::glare::compute_random_glare_amount(37, 19, 0.1, 0.5, blur, 42);

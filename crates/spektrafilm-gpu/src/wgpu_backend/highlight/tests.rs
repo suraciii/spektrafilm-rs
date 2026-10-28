@@ -160,6 +160,7 @@ fn optical_chunks_preserve_glare_rng_and_reference_blur_across_seams() {
                 )
                 .unwrap();
                 state.submit(&backend).unwrap();
+                return readback(&backend, state.destination());
             }
         }
         readback(&backend, &img)
@@ -242,10 +243,69 @@ fn optical_chunks_preserve_glare_rng_and_reference_blur_across_seams() {
         drop(shared);
         drop(glare_scratch);
         drop(unsharp_scratch);
+        let unsharp_destination = unsharp.destination().to_vec();
         halation.submit(&backend).unwrap();
         glare.submit(&backend).unwrap();
         unsharp.submit(&backend).unwrap();
-        readback(&backend, &img)
+        readback(&backend, &unsharp_destination)
     };
     assert_eq!(run_sequence(true), run_sequence(false));
+}
+
+#[test]
+fn unsharp_combine_chunks_at_binding_capacity_not_alias_cap() {
+    use spektrafilm_backend::telemetry::{CollectionMode, ObservationContext};
+
+    let backend = crate::test_support::adapter();
+    let mut backend = backend.derived_explicit();
+    let _restore = RestoreLimit(std::env::var_os("SPEKTRAFILM_GPU_BINDING_LIMIT_BYTES"));
+    // A 4 MiB binding cap holds 349,525 items, five times the 65,536-item
+    // alias-scratch cap the in-place combine used to chunk at.
+    const LIMIT: u64 = 4 << 20;
+    unsafe {
+        std::env::set_var("SPEKTRAFILM_GPU_BINDING_LIMIT_BYTES", LIMIT.to_string());
+    }
+    let width = 2048;
+    let height = 2000;
+    let pixels = u64::from(width) * u64::from(height);
+    let img = backend
+        .allocate_image_pages(width, height, "unsharp_no_alias_test")
+        .unwrap();
+    for page in &img {
+        let first = page.first_pixel as usize * 3;
+        let count = page.n_pixels as usize * 3;
+        let values: Vec<f32> = (0..count)
+            .map(|i| 0.05 + ((first + i) % 23) as f32 * 0.01)
+            .collect();
+        backend
+            .queue
+            .write_buffer(&page.buffer, 0, bytemuck::cast_slice(&values));
+    }
+    let up = spektrafilm_backend::UnsharpGpuParams {
+        sigma_px: 2.5,
+        amount: 0.8,
+    };
+    let mut scratch = super::super::blur::GaussianScratch::new(width, height);
+    let state = build_unsharp_state(
+        &backend.device,
+        &up,
+        width,
+        height,
+        &img,
+        &mut scratch,
+        &backend,
+    )
+    .unwrap();
+    let context = ObservationContext::new(CollectionMode::Summary);
+    backend.context_mut(context.clone());
+    state.submit(&backend).unwrap();
+    let submits = context.snapshot().totals.submit_count.unwrap();
+    let alias_chunks = pixels.div_ceil(65_536);
+    // Distinct source/blur/destination bindings raise the combine chunk size to
+    // the binding cap; the blur adds a few bounded batches. The in-place layout
+    // needed one submission per alias chunk, far above this.
+    assert!(
+        submits < alias_chunks,
+        "unsharp still chunks at the alias cap: {submits} >= {alias_chunks} submissions"
+    );
 }

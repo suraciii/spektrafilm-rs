@@ -1076,16 +1076,22 @@ impl WgpuBackend {
                             self,
                         )?
                         .submit(self),
-                        Unsharp => build_unsharp_state(
-                            &self.device,
-                            p.unsharp.as_ref().ok_or("unsharp missing")?,
-                            geometry.tail.0,
-                            geometry.tail.1,
-                            &rasters.tail_b,
-                            &mut scratch,
-                            self,
-                        )?
-                        .submit(self),
+                        Unsharp => {
+                            let state = build_unsharp_state(
+                                &self.device,
+                                p.unsharp.as_ref().ok_or("unsharp missing")?,
+                                geometry.tail.0,
+                                geometry.tail.1,
+                                &rasters.tail_b,
+                                &mut scratch,
+                                self,
+                            )?;
+                            state.submit(self)?;
+                            // The combine writes the idle Gaussian intermediate, so
+                            // every binding is distinct; later stages read that buffer.
+                            rasters.tail_b = state.destination().to_vec();
+                            Ok(())
+                        }
                         GrainV2 => build_grain_v2_state(
                             &self.device,
                             p.grain_v2.as_ref().ok_or("grain missing")?,
