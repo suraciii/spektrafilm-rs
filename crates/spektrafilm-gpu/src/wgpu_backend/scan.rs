@@ -789,14 +789,21 @@ mod direct_tests {
         let actual = gpu
             .pipe
             .readback_buffer_as::<f32>(&output, values.len() as u64 * 4);
-        let image = ImageBuf::from_data(3, 2, values.to_vec());
+        let image = ImageBuf::from_data(
+            3,
+            2,
+            values
+                .iter()
+                .map(|&v| spektrafilm_math::precision::from_f64(f64::from(v)))
+                .collect(),
+        );
         let expected = spektrafilm_backend::cpu_backend::scan_spectral_cpu(
             &image, &dyes, &base, &lamp, norm, &matrix, &rgb,
         );
         let worst = actual
             .iter()
             .zip(&expected.data)
-            .map(|(a, b)| (a - b).abs())
+            .map(|(a, b)| (a - spektrafilm_math::precision::to_f64(*b) as f32).abs())
             .fold(0.0f32, f32::max);
         eprintln!("restricted direct scan max absolute error: {worst}");
         // RGB budget is 1e-5; measured 6.56e-7, with a 2e-6 limit (>3x margin).
