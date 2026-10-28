@@ -1278,7 +1278,8 @@ fn key(label: &str) -> Option<&'static str> {
             Some("controls.condition.custom")
         }
         "film_render.halation.active = true" => Some("controls.condition.halation"),
-        "film_render.halation.boost_ev != 0; LUT mode disabled" => Some("controls.condition.boost"),
+        "film_render.halation.boost_ev != 0" => Some("controls.condition.boost"),
+        "debug.lut_mode = false" => Some("controls.condition.lut_mode_off"),
         "filter family" => Some("controls.label.filter_family"),
         "finished exposure" => Some("controls.scanner.finished_exposure"),
         "fit" => Some("surfaces.viewer.fit"),

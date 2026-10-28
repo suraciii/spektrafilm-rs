@@ -135,10 +135,11 @@ pub fn expose(
 
     // Order mirrors Python filming: boost → diffusion → lens_blur → halation.
 
-    // Highlight boost: reconstruct pre-clip highlight irradiance before the
-    // optical-scatter effects. No-op when boost_ev == 0.
+    // Highlight boost: reconstructs pre-clip highlight irradiance before the
+    // optical-scatter effects. It is a halation option, so it runs only while
+    // halation does; a zero boost is already a no-op.
     let hal_boost = &params.film_render.halation;
-    if hal_boost.boost_ev != 0.0 {
+    if hal_boost.active && hal_boost.boost_ev != 0.0 {
         let _boost = super::StageObservation::cpu(
             backend,
             "highlight_boost",

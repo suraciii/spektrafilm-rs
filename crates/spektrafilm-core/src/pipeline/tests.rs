@@ -2293,3 +2293,52 @@ fn continuing_print_reinitializes_replaced_material_and_retains_film_seed_lineag
             .contains("prepared-source")
     );
 }
+
+#[test]
+fn highlight_boost_requires_enabled_halation() {
+    let dir = data_dir();
+    let film = crate::profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();
+    let print = crate::profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap();
+    let backend = spektrafilm_backend::cpu_backend::CpuBackend;
+    let input = ImageBuf::from_data(
+        32,
+        24,
+        (0..32 * 24)
+            .flat_map(|i| {
+                let x = i % 32;
+                let v = if x >= 24 { 12.0 } else { 0.4 + x as f64 * 0.02 };
+                [from_f64(v), from_f64(v * 0.9), from_f64(v * 0.8)]
+            })
+            .collect(),
+    );
+    let render = |halation: bool, boost_ev: f32| {
+        let mut params = RuntimeParams::default();
+        params.workflow.route = "input > film > scan".into();
+        params.io.scan_film = true;
+        params.scanner.scan_output = "negative_to_positive".into();
+        params.camera.auto_exposure = false;
+        params.film_render.grain.active = false;
+        params.film_render.dir_couplers.active = false;
+        params.film_render.halation.active = halation;
+        params.film_render.halation.boost_ev = boost_ev;
+        params.random_seed = 4242;
+        Pipeline::new_with_spectral(film.clone(), print.clone(), params, &dir)
+            .unwrap()
+            .process(input.clone(), &backend)
+            .unwrap()
+    };
+
+    let disabled_zero = render(false, 0.0);
+    let disabled_boost = render(false, 2.0);
+    assert_eq!(
+        disabled_zero.data, disabled_boost.data,
+        "highlight boost must not run while halation is disabled"
+    );
+
+    let enabled_zero = render(true, 0.0);
+    let enabled_boost = render(true, 2.0);
+    assert_ne!(
+        enabled_zero.data, enabled_boost.data,
+        "highlight boost must change the render while halation is enabled"
+    );
+}

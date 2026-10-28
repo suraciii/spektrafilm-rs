@@ -118,6 +118,7 @@ fn main() -> Result<(), String> {
                         p.camera.lens_blur_um = 700.0;
                         p.scanner.lens_blur = 0.7;
                         p.scanner.unsharp_mask = [0.7, 0.3];
+                        p.film_render.halation.active = true;
                         p.film_render.halation.boost_ev = 0.5;
                         p.enlarger.preflash_exposure = 0.02;
                         p.enlarger.y_filter_shift = 8.0;
