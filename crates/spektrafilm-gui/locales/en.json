@@ -1178,7 +1178,6 @@
   "validation.profile.alpha_bounds": "Septic density-curve alpha must satisfy |alpha| < 1 (got %{value})",
   "validation.scan_negative_profile": "%{path}=negative_to_positive requires a negative filming-stage film profile; positive film and paper scans use direct_scan",
   "validation.scan_finite_density": "%{path}=negative_to_positive requires finite density curves (channel %{channel}; got %{value})",
-  "validation.scan_procedural_grain": "%{path}=negative_to_positive cannot be combined with active Grain Procedural",
   "validation.suggestions": "%{context}; did you mean %{suggestions}?",
   "validation.native_json": "Invalid JSON: %{detail}",
   "validation.native_toml": "Invalid TOML: %{detail}",

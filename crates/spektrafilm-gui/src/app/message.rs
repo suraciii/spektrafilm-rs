@@ -309,7 +309,6 @@ impl Message {
             R::UnknownGroup => "validation.unknown_group",
             R::ScanNegativeProfile => "validation.scan_negative_profile",
             R::ScanFiniteDensity => "validation.scan_finite_density",
-            R::ScanProceduralGrain => "validation.scan_procedural_grain",
             R::NullNotAllowed => "validation.null_not_allowed",
             R::NonFinite => "validation.non_finite",
             R::LeafRequired => "validation.leaf_required",

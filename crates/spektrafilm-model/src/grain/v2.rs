@@ -564,6 +564,62 @@ fn effective_control(value: f32) -> f32 {
     let t = value.clamp(0., 1.);
     0.12 * t * t + 0.68 * t + 0.2
 }
+/// Virtual-canvas rows, generated on demand.
+///
+/// The grain texture is a function of its canvas cell only, so every output
+/// pixel that lands on a cell would otherwise regenerate it. Analogue maps
+/// output rows monotonically onto canvas rows and each output row straddles at
+/// most three canvas rows, so a three-row window holds everything a scan needs
+/// while each used cell is generated once.
+struct CanvasRows<'a> {
+    source: &'a ImageBuf,
+    size: [f32; 2],
+    phase: f32,
+    params: GrainV2Params,
+    rows: [i32; 3],
+    cells: [Vec<Option<[f32; 3]>>; 3],
+}
+
+impl<'a> CanvasRows<'a> {
+    fn new(source: &'a ImageBuf, size: [f32; 2], p: GrainV2Params, phase: f32) -> Self {
+        Self {
+            source,
+            size,
+            phase,
+            params: p,
+            rows: [-1; 3],
+            cells: [Vec::new(), Vec::new(), Vec::new()],
+        }
+    }
+
+    fn cell(&mut self, row: i32, col: i32) -> [f32; 3] {
+        let slot = row.rem_euclid(3) as usize;
+        if self.rows[slot] != row {
+            self.rows[slot] = row;
+            let width = self.size[0] as usize;
+            self.cells[slot].clear();
+            self.cells[slot].resize(width, None);
+        }
+        if let Some(value) = self.cells[slot][col as usize] {
+            return value;
+        }
+        let grain_rgb = sample_grain_source(self.source, self.size, col, row);
+        let grain_luma = grain_rgb[0] * 0.2125 + grain_rgb[1] * 0.7154 + grain_rgb[2] * 0.0721;
+        let value = generator(
+            [col as f32, row as f32],
+            self.size,
+            grain_luma,
+            grain_rgb,
+            self.params,
+            false,
+            self.phase,
+        )
+        .map(|v| half::f16::from_f32(v).to_f32());
+        self.cells[slot][col as usize] = Some(value);
+        value
+    }
+}
+
 pub fn apply_cpu(input: &ImageBuf, p: GrainV2Params) -> ImageBuf {
     if input.width == 0 || input.height == 0 {
         return input.clone();
@@ -597,6 +653,7 @@ pub fn apply_cpu(input: &ImageBuf, p: GrainV2Params) -> ImageBuf {
         (input.width as f32 * gsf).floor(),
         (input.height as f32 * gsf).floor(),
     ];
+    let mut canvas = CanvasRows::new(original.as_ref().unwrap_or(&source), size, p, phase);
     let mut out = source.clone();
     for y in 0..input.height {
         for x in 0..input.width {
@@ -619,28 +676,19 @@ pub fn apply_cpu(input: &ImageBuf, p: GrainV2Params) -> ImageBuf {
             } else {
                 let gx = (uv[0] * (size[0] / p.resampler_scale())) as i32;
                 let gy = (uv[1] * (size[1] / p.resampler_scale())) as i32;
-                resample_3x3(
-                    |a, b| {
-                        let a = a.clamp(0, size[0] as i32 - 1);
-                        let b = b.clamp(0, size[1] as i32 - 1);
-                        let grain_rgb =
-                            sample_grain_source(original.as_ref().unwrap_or(&source), size, a, b);
-                        let grain_luma =
-                            grain_rgb[0] * 0.2125 + grain_rgb[1] * 0.7154 + grain_rgb[2] * 0.0721;
-                        generator(
-                            [a as f32, b as f32],
-                            size,
-                            grain_luma,
-                            grain_rgb,
-                            p,
-                            false,
-                            phase,
-                        )
-                        .map(|value| half::f16::from_f32(value).to_f32())
-                    },
-                    gx,
-                    gy,
-                )
+                let max_x = size[0] as i32 - 1;
+                let max_y = size[1] as i32 - 1;
+                let mut sum = [0.; 3];
+                for dy in -1..=1 {
+                    let row = (gy + dy).clamp(0, max_y);
+                    for dx in -1..=1 {
+                        let cell = canvas.cell(row, (gx + dx).clamp(0, max_x));
+                        for c in 0..3 {
+                            sum[c] += cell[c];
+                        }
+                    }
+                }
+                sum.map(|v| v * (1. / 9.))
             };
             let a_raw = p.amount.clamp(0., 1.);
             let a = effective_control(a_raw)
@@ -752,6 +800,88 @@ mod tests {
     fn grad4_matches_vendor_return_value() {
         assert_eq!(grad4(0.5, [0.25, 0.75, 0.5, 0.0]), [-1.0, 0.0, -0.5, 0.0]);
         assert_eq!(grad4(0.5, [0.75; 4]), [0.5, 0.5, 0.5, 0.0]);
+    }
+
+    /// The canvas cache must not change a single sample: every output pixel
+    /// still averages the nine cells it addresses, each generated from its own
+    /// cell coordinate. This recomputes them without the cache.
+    #[test]
+    fn canvas_cache_matches_per_tap_generation() {
+        let mut input = ImageBuf::new(37, 23);
+        for y in 0..23 {
+            for x in 0..37 {
+                let v = 0.1 + 0.02 * x as f32 + 0.03 * y as f32;
+                input.set(x, y, [v, v * 0.9, v * 0.8].map(from_f32));
+            }
+        }
+        for profile in [0usize, 7, 11] {
+            for size in [1.0f32, 12.0, 48.0] {
+                let mut p = GrainV2Params::for_profile(profile);
+                p.size = size;
+                // Radius zero keeps the reference free of the Film Resolution pass.
+                p.resolution_factor = 100.0;
+                let cached = apply_cpu(&input, p);
+
+                let phase = p.resolved_timer();
+                let mut source = input.clone();
+                source.data.iter_mut().for_each(|value| {
+                    *value = from_f32(half::f16::from_f32(to_f32(*value)).to_f32())
+                });
+                let gsf = (5200. / 37.0f32).max(3100. / 23.0f32);
+                let canvas = [(37.0f32 * gsf).floor(), (23.0f32 * gsf).floor()];
+                let mut expected = source.clone();
+                for y in 0..23u32 {
+                    for x in 0..37u32 {
+                        let rgb = source.get(x, y).map(to_f32);
+                        let luma = rgb[0] * 0.2125 + rgb[1] * 0.7154 + rgb[2] * 0.0721;
+                        let uv = [x as f32 * (1. / 36.0f32), y as f32 * (1. / 22.0f32)];
+                        let gx = (uv[0] * (canvas[0] / p.resampler_scale())) as i32;
+                        let gy = (uv[1] * (canvas[1] / p.resampler_scale())) as i32;
+                        let g = resample_3x3(
+                            |a, b| {
+                                let a = a.clamp(0, canvas[0] as i32 - 1);
+                                let b = b.clamp(0, canvas[1] as i32 - 1);
+                                let grain_rgb = sample_grain_source(&source, canvas, a, b);
+                                let grain_luma = grain_rgb[0] * 0.2125
+                                    + grain_rgb[1] * 0.7154
+                                    + grain_rgb[2] * 0.0721;
+                                generator(
+                                    [a as f32, b as f32],
+                                    canvas,
+                                    grain_luma,
+                                    grain_rgb,
+                                    p,
+                                    false,
+                                    phase,
+                                )
+                                .map(|value| half::f16::from_f32(value).to_f32())
+                            },
+                            gx,
+                            gy,
+                        );
+                        let a_raw = p.amount.clamp(0., 1.);
+                        let a = effective_control(a_raw);
+                        let ws = effective_control(p.shadows) * a * opacity(luma, 0.) * 2.;
+                        let wm = effective_control(p.midtones) * a * opacity(luma, 0.5);
+                        let wh = effective_control(p.highlights) * a * opacity(luma, 1.) * 2.;
+                        let mut result = [0.; 3];
+                        for c in 0..3 {
+                            let b = rgb[c];
+                            let s = mix(b, overlay(b.max(0.).powf(0.8), g[c]), ws);
+                            let m = mix(s, overlay(s, g[c]), wm);
+                            let h = mix(m, overlay(m - 0.2, g[c]), wh);
+                            result[c] =
+                                half::f16::from_f32((h * 0.5 + b * 0.5).clamp(0., 1.)).to_f32();
+                        }
+                        expected.set(x, y, result.map(from_f32));
+                    }
+                }
+                assert_eq!(
+                    cached.data, expected.data,
+                    "profile {profile} size {size}: cached canvas changed the samples"
+                );
+            }
+        }
     }
 
     #[test]

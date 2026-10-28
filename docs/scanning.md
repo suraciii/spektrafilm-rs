@@ -18,7 +18,7 @@ The scanner controls include `scanner.scan_output`, `scanner.conversion_style`, 
 
 The GUI exposes passthrough, film-scan, film-print-scan, and the three convert-film routes. The CLI also accepts material-producing and continuation routes described in [stage artifacts](../specs/cli/stage-artifacts.md). Direct negative-film scans expose `scanner.scan_output=direct_scan|negative_to_positive`.
 
-`direct_scan` preserves the medium's polarity. Calibrated `negative_to_positive` supports direct `input > film > scan`, resumed `film > scan`, and real negative-capture `input > convert-film > scan`. It rejects paper, positive-film, print-paper, scan-minus-base, and active-Grain-Procedural combinations.
+`direct_scan` preserves the medium's polarity. Calibrated `negative_to_positive` supports direct `input > film > scan`, resumed `film > scan`, and real negative-capture `input > convert-film > scan`. It rejects paper, positive-film, print-paper, and scan-minus-base combinations; every grain engine is accepted.
 
 `scanner.scan_output` accepts `direct_scan` and `negative_to_positive`. Replace the removed `positive_scan` value in CLI commands, parameter files, presets, recipes, and GUI states. Old values fail validation. The GUI displays **Preserve medium polarity** and **Negative to positive**. See [scanner language](../specs/film-chain/spec.md#scanner-language).
 

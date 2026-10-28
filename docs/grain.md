@@ -35,6 +35,8 @@ Remove the obsolete controls `particle_area_um2`, `particle_scale`, `particle_sc
 
 Grain Procedural is selected with `film_render.grain.engine: "procedural"`.
 
+It runs on every scan-output mode. It consumes the display-encoded RGB that the scanner produces, so `direct_scan` and `negative_to_positive` differ only in the image it receives, not in the grain law.
+
 ### Profiles and controls
 
 `v2_profile` defaults to `"35mm250"`. Presets are:
