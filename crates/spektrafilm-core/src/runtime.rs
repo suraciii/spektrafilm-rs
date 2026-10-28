@@ -18,7 +18,9 @@ use std::time::Instant;
 /// conversion to the selected output space. The recursive Gaussian carries
 /// binary64 coefficients and state in every build, so large-sigma halation
 /// scatter and DIR coupler tails changed pixels relative to revision two.
-pub const MODEL_VERSION: &str = "lab_scan_operator_v3";
+/// Revision four shares the Dye count draw between executors: the uniform is
+/// addressed by cell coordinate and ordinal, so grain pixels changed again.
+pub const MODEL_VERSION: &str = "lab_scan_operator_v4";
 
 /// Last-call wall-clock timings exposed by the runtime facade.
 pub type Timings = BTreeMap<String, f64>;
