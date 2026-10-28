@@ -703,6 +703,7 @@ fn n2p_device_density_reading_matches_cpu() {
     // The reading changes the image (a direct scan of the same negative
     // is the baseline), so the parity above is not vacuous.
     let mut direct = n2p_fence_params();
+    direct.scanner.experimental_setup = false;
     direct.scanner.scan_output = "direct_scan".into();
     let baseline = Pipeline::new_with_spectral(film, print, direct, &dir).unwrap();
     let out_direct = baseline
@@ -904,6 +905,7 @@ fn explicit_gpu_convert_routes_match_cpu() {
         params.workflow.route = route.into();
         params.io.scan_film = false;
         params.scanner.scan_output = "direct_scan".into();
+        params.scanner.experimental_setup = false;
         let reference_pipeline = Pipeline::new_with_spectral_backend(
             film.clone(),
             print.clone(),

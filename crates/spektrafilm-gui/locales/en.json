@@ -1244,7 +1244,7 @@
   "validation.color_filter": "%{path}: unsupported filter %{value}; supported: %{supported}",
   "validation.operator_mode": "%{path}: nondefault corrections require scanner.scan_output=negative_to_positive and scanner.conversion_style=standard",
   "validation.scan_route": "%{path}=negative_to_positive requires a direct film scan route (input > film > scan, film > scan, or input > convert-film > scan)",
-  "validation.standard_lut": "%{path}=standard measures the whole frame and cannot be baked into a point-wise LUT; select a declared fixed conversion style",
+  "validation.standard_lut": "%{path} measures the whole frame and cannot be baked into a point-wise LUT; set it to false",
   "validation.style_name": "%{path}: %{value} is not a valid style name",
   "validation.style_mode": "%{path} requires scanner.scan_output=negative_to_positive",
   "validation.source_compression": "%{path}: must be finite and in 0..=0.999999 (got %{value})",

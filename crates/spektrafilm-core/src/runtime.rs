@@ -11,10 +11,12 @@ use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
-/// Numerical model revision shared by image, recipe and LUT provenance.
-/// Operator controls follow full-frame standard setup. Negative tone has fixed
-/// linear-sRGB primaries before conversion to the selected output space.
-pub const MODEL_VERSION: &str = "lab_scan_operator_v1";
+/// Numerical model revision shared by image, recipe, LUT and stage provenance.
+/// Negative-to-positive now defaults to the frame-independent readout: the
+/// experimental `scanner.experimental_setup` opt-in owns the whole-frame
+/// measurement. Negative tone has fixed linear-sRGB primaries before
+/// conversion to the selected output space.
+pub const MODEL_VERSION: &str = "lab_scan_operator_v2";
 
 /// Last-call wall-clock timings exposed by the runtime facade.
 pub type Timings = BTreeMap<String, f64>;

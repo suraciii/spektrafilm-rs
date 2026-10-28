@@ -121,7 +121,7 @@ The enabled setup MUST NOT subtract camera exposure compensation again after mea
 
 Contrast MUST be positive. Editor trial ranges of exposure ±3 EV, warmth/tint ±1 differential EV, and contrast 0.5–2 MUST NOT become schema clamps.
 
-Nondefault operator correction MUST require `negative_to_positive` and an eligible negative-film scan route; the shifts do not depend on the frame setup, so a declared fixed style MAY carry them. Direct scans, positive film, paper, and scan-minus-base MUST reject explicit nondefault correction. GUI state MUST retain valid inactive edits and expose their inactive status.
+Nondefault operator correction MUST require the built-in tone on `negative_to_positive` and an eligible negative-film scan route; it does not depend on the experimental setup. Declared fixed styles are complete tone definitions and MUST reject explicit nondefault correction, as MUST direct scans, positive film, paper, and scan-minus-base. GUI state MUST retain valid inactive edits and expose their inactive status.
 
 The GUI MUST pass neutral operator values to rendering while those edits are inactive.
 
@@ -155,7 +155,7 @@ Default correction MUST bypass the coordinate round trip exactly.
 
 ## Exact preview and prepared baseline
 
-Standard negative-to-positive previews MUST use the same complete working grid as export, including crop, upscale, lens blur, spatial effects, and stochastic sampling. Setup and tone MUST run on that grid even at default operator values. Only terminal RGB or the display raster MAY be reduced afterward.
+While the experimental setup is enabled, a negative-to-positive preview MUST use the same complete working grid as export, because a reduced grid would measure a different image. With the setup disabled the working grid MAY be reduced to the preview size, since the readout is then frame-independent. Only terminal RGB MAY be reduced afterward in either case.
 
 Diagnostic density and exposure taps MUST retain their actual grid and meaning. Pan, zoom, and display size MUST NOT remeasure setup.
 

@@ -11,7 +11,7 @@ pub(crate) struct OperatorComparison {
 
 impl App {
     pub(crate) fn set_operator_compare(&mut self, comparing: bool) {
-        let comparing = comparing && self.params.scanner.requires_full_frame();
+        let comparing = comparing && self.params.scanner.operator_eligible();
         if self.operator_compare != comparing {
             self.operator_compare = comparing;
             self.operator_comparison = None;

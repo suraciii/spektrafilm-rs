@@ -487,7 +487,7 @@ fn key(label: &str) -> Option<&'static str> {
         "Film stock to simulate" => Some("surfaces.profiles.film_help"),
         "Film: %{name}" => Some("surfaces.header.film"),
         "Finished exposure" => Some("controls.scanner.finished_exposure"),
-        "Finished-positive exposure in stops. Positive values brighten the result after automatic setup, before the fixed tone curve; this does not change camera exposure or film density." => {
+        "Finished-positive exposure in stops. Positive values brighten the result before the fixed tone curve; this does not change camera exposure or film density." => {
             Some("controls.scanner.finished_exposure_help")
         }
         "Fit and recenter the viewer. Retained and written pixels are unchanged." => {
@@ -713,7 +713,7 @@ fn key(label: &str) -> Option<&'static str> {
             Some("controls.couplers.langmuir_donor_help")
         }
         "Name in My Presets" => Some("surfaces.presets.name_label"),
-        "Named positive-conversion tone of the negative-to-positive interpretation. `standard` measures the whole frame for automatic exposure and color balance before the frozen tone; any other name is a declared style you place in data/scan-styles/, never a fitted surface. The selector lists the styles found there. A style applies only with scan output set to Negative to positive." => {
+        "Named positive-conversion tone of the negative-to-positive interpretation. `standard` is the built-in frozen tone; any other name is a declared style you place in data/scan-styles/, never a fitted surface. The selector lists the styles found there. A style applies only with scan output set to Negative to positive." => {
             Some("controls.scanner.conversion_style_help")
         }
         "Negative" => Some("controls.scanner.negative"),
@@ -1202,6 +1202,9 @@ fn key(label: &str) -> Option<&'static str> {
         "contrast" => Some("controls.scanner.contrast"),
         "conversion style" => Some("controls.scanner.conversion_style"),
         "experimental frame setup" => Some("controls.scanner.experimental_setup"),
+        "Measure the whole developed frame for exposure, cast and contrast placement before the fixed tone. Off by default: the algorithm is a declared heuristic with no validated photographic model behind it, it makes the scan frame-dependent, and it cannot be baked into a point-wise LUT. Turning it off keeps the readout a fixed, frame-independent transform." => {
+            Some("controls.scanner.experimental_setup_help")
+        }
         "copy operator correction" => Some("controls.scanner.copy_correction"),
         "core Halation feature-profile scope; inactive values retained" => {
             Some("controls.condition.halation_scope")

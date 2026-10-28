@@ -610,7 +610,21 @@ mod tests {
                 "{error}"
             );
         }
+        // Disabling the experimental setup makes the built-in tone point-wise
+        // again: the default readout carries no frame measurement.
         params.scanner.experimental_setup = false;
+        params.scanner.conversion_style = "standard".into();
+        bake_params(
+            &spec,
+            input,
+            input,
+            &film,
+            &film,
+            &neutral,
+            Some(&params),
+            true,
+        )
+        .unwrap();
         params.scanner.conversion_style = "fixed-probe".into();
         bake_params(
             &spec,

@@ -921,6 +921,13 @@ pub(super) fn validate_detailed(params: &RuntimeParams) -> Result<(), Validation
         )
         .arg("value", format!("{style:?}")));
     }
+    if params.scanner.experimental_setup && params.scanner.scan_output != "negative_to_positive" {
+        return Err(ValidationError::new(
+            Reason::StyleMode,
+            "scanner.experimental_setup",
+            "scanner.experimental_setup requires scanner.scan_output=negative_to_positive",
+        ));
+    }
     if !params.scanner.uses_builtin_tone() && params.scanner.scan_output != "negative_to_positive" {
         return Err(ValidationError::new(
             Reason::StyleMode,

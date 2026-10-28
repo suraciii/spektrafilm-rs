@@ -1244,7 +1244,7 @@
   "validation.color_filter": "%{path}：不支持滤镜 %{value}；支持的滤镜：%{supported}",
   "validation.operator_mode": "%{path}：非默认校正要求 scanner.scan_output=negative_to_positive 且 scanner.conversion_style=standard",
   "validation.scan_route": "%{path}=negative_to_positive 要求直接扫描胶片的流程（input > film > scan、film > scan 或 input > convert-film > scan）",
-  "validation.standard_lut": "%{path}=standard 需要测量整个画面，无法烘焙为逐点 LUT；请选择已定义的固定转换风格",
+  "validation.standard_lut": "%{path} 需要测量整个画面，无法烘焙为逐点 LUT；请将其设为 false",
   "validation.style_name": "%{path}：%{value} 不是有效的风格名称",
   "validation.style_mode": "%{path} 要求 scanner.scan_output=negative_to_positive",
   "validation.source_compression": "%{path}：必须为有限数值，且位于 0..=0.999999 内（当前值为 %{value}）",

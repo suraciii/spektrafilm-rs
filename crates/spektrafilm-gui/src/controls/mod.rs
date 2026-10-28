@@ -146,10 +146,13 @@ pub(crate) fn normalize_scanner_selections(params: &mut RuntimeParams, film_medi
     // that interpretation resets it to the frozen reference tone. Resetting
     // keeps the transition actioned; a non-neutral style with a direct scan
     // is a validation error the render would otherwise surface.
-    if params.scanner.scan_output != "negative_to_positive"
-        && params.scanner.conversion_style != vocabulary::CONVERSION_STYLE_STANDARD
-    {
-        params.scanner.conversion_style = vocabulary::CONVERSION_STYLE_STANDARD.into();
+    if params.scanner.scan_output != "negative_to_positive" {
+        if params.scanner.conversion_style != vocabulary::CONVERSION_STYLE_STANDARD {
+            params.scanner.conversion_style = vocabulary::CONVERSION_STYLE_STANDARD.into();
+        }
+        // The experiment measures a negative readout; it is inapplicable, and
+        // invalid, on any other polarity.
+        params.scanner.experimental_setup = false;
     }
 }
 

@@ -607,7 +607,7 @@ pub(crate) fn dependencies(
                 }
             }
         }
-        if !params.scanner.requires_full_frame() {
+        if !params.scanner.operator_eligible() {
             params.scanner.operator = Default::default();
         }
         spektrafilm_core::runtime::Runtime::new(runtime_film, runtime_print, params, data_dir)

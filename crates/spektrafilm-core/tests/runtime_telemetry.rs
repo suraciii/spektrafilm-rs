@@ -157,6 +157,7 @@ fn negative_to_positive_cpu_override_preserves_stage_reports() {
     params.workflow.route = "input > film > scan".into();
     params.io.scan_film = true;
     params.scanner.scan_output = "negative_to_positive".into();
+    params.scanner.experimental_setup = true;
     params.camera.auto_exposure = false;
     params.debug.deactivate_spatial_effects = true;
     params.debug.deactivate_stochastic_effects = true;
@@ -779,6 +780,7 @@ fn standard_gpu_setup_report_persists_valid_hierarchy_and_actual_dispatches() {
     params.io.scan_film = true;
     params.scanner.scan_output = "negative_to_positive".into();
     params.scanner.conversion_style = "standard".into();
+    params.scanner.experimental_setup = true;
     params.scanner.operator.exposure_ev = 0.35;
     params.scanner.operator.warmth_ev = -0.2;
     params.scanner.operator.tint_ev = 0.1;
