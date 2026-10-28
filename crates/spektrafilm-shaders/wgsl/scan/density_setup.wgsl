@@ -9,6 +9,9 @@ struct SetupState {
 }
 @group(0) @binding(1) var<storage, read> input: array<f32>;
 @group(0) @binding(4) var<storage, read_write> s: SetupState;
+// One 256-bin digit histogram per rank. Counts are integers, so the result does
+// not depend on window order: eight 8-bit digits replace sixty-four 1-bit rounds.
+@group(0) @binding(6) var<storage, read_write> hist: array<u32, 131072>;
 
 fn order_key(value: f64) -> u64 {
     let bits = bitcast<u64>(value);
@@ -47,16 +50,22 @@ fn main() {
             }
         }
         case 1u: {
-            // Exact two order statistics by binary64 total-order radix selection.
-            // Counts and chosen prefixes never leave the device. Both ranks are
-            // processed together, including duplicate samples and signed zero.
-            let mask = u64(1u) << s.bit;
-            var prefix_mask = u64(0u);
-            if s.bit < 63u { prefix_mask = ~((mask << 1u) - u64(1u)); }
+            // Exact two order statistics by binary64 total-order radix selection,
+            // eight bits per round. Counts and chosen prefixes never leave the
+            // device. Both ranks are processed together, including duplicate
+            // samples and signed zero.
+            // Above the current digit the prefix must match; the first round has
+            // no prefix yet, so every pixel is counted.
+            let first = s.bit == 48u;
+            let shift = s.bit + 16u;
+            let hi0 = s.prefix0 >> shift;
+            let hi1 = s.prefix1 >> shift;
             for (var i = 0u; i < p.header.x; i++) {
                 let key = order_key(neutral(i));
-                if (key & prefix_mask) == s.prefix0 && (key & mask) == u64(0u) { s.zeros0++; }
-                if (key & prefix_mask) == s.prefix1 && (key & mask) == u64(0u) { s.zeros1++; }
+                let hi = key >> shift;
+                let digit = u32((key >> s.bit) & u64(65535u));
+                if first || hi == hi0 { hist[digit] = hist[digit] + 1u; }
+                if first || hi == hi1 { hist[65536u + digit] = hist[65536u + digit] + 1u; }
             }
         }
         case 2u: {
@@ -65,15 +74,27 @@ fn main() {
             // CPU reads the next tail value even when interpolation is zero.
             s.rank1 = min(s.rank0 + 1u, p.header.w - 1u);
             s.prefix0 = u64(0u); s.prefix1 = u64(0u);
-            s.zeros0 = 0u; s.zeros1 = 0u; s.bit = 63u;
+            s.zeros0 = 0u; s.zeros1 = 0u; s.bit = 48u;
+            for (var i = 0u; i < 131072u; i++) { hist[i] = 0u; }
             if !finite64(s.sum_n) || !finite64(s.sum_u) || !finite64(s.sum_v) { atomicOr(&status, 4u); }
         }
         case 3u: {
-            let mask = u64(1u) << s.bit;
-            if s.rank0 >= s.zeros0 { s.rank0 -= s.zeros0; s.prefix0 |= mask; }
-            if s.rank1 >= s.zeros1 { s.rank1 -= s.zeros1; s.prefix1 |= mask; }
-            s.zeros0 = 0u; s.zeros1 = 0u;
-            if s.bit > 0u { s.bit--; }
+            // Walk the digit bins in ascending order and stop at the bin that
+            // holds each rank, exactly as the one-bit form skipped zero groups.
+            var cum0 = 0u; var digit0 = 65535u;
+            for (var d = 0u; d < 65536u; d++) {
+                let c = hist[d];
+                if s.rank0 >= cum0 + c { cum0 += c; } else { digit0 = d; s.rank0 -= cum0; break; }
+            }
+            var cum1 = 0u; var digit1 = 65535u;
+            for (var d = 0u; d < 65536u; d++) {
+                let c = hist[65536u + d];
+                if s.rank1 >= cum1 + c { cum1 += c; } else { digit1 = d; s.rank1 -= cum1; break; }
+            }
+            s.prefix0 |= u64(digit0) << s.bit;
+            s.prefix1 |= u64(digit1) << s.bit;
+            for (var i = 0u; i < 131072u; i++) { hist[i] = 0u; }
+            if s.bit >= 16u { s.bit -= 16u; }
         }
         case 4u: {
             let position = f64(p.header.w - 1u) * 0.05;

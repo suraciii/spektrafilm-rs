@@ -15,7 +15,8 @@ impl FrameSetupState {
     pub(super) fn submit(&self, backend: &WgpuBackend) -> Result<(), String> {
         self.measure.submit(backend)?;
         self.initialize.submit(backend)?;
-        for _ in 0..64 {
+        // Four 16-bit digits cover the sixty-four bits of the order key.
+        for _ in 0..4 {
             self.count.submit(backend)?;
             self.select.submit(backend)?;
         }
@@ -63,8 +64,17 @@ pub(super) fn build(
             S { read_only: true },
             S { read_only: false },
             S { read_only: false },
+            S { read_only: false },
         ],
     );
+    // 256 bins per rank; integers, so window order cannot change the result.
+    let histogram = backend.device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("standard_setup_digit_histogram"),
+        size: 131072 * 4,
+        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+    backend.queue.write_buffer(&histogram, 0, &[0u8; 524288]);
     let params = |count: u32, operation: u32, first: u32| -> Result<wgpu::Buffer, String> {
         backend.check_cancelled()?;
         let result = backend.device.create_buffer(&wgpu::BufferDescriptor {
@@ -88,7 +98,7 @@ pub(super) fn build(
         // workgroup_size(1): exactly one invocation updates ordered state.
         commands.dispatch(
             &pipeline,
-            &[&p, &window, density, exposure, state, status],
+            &[&p, &window, density, exposure, state, status, &histogram],
             1,
             true,
             backend,
