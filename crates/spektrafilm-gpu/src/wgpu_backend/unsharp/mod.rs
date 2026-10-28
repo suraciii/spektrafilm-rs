@@ -5,12 +5,15 @@ use super::highlight::{PointwiseAccess, PointwiseJob, image_transport_bytes, poi
 use super::*;
 
 /// Reference blur is completed over the full source before bounded pointwise
-/// combine. Only the current chunk is copied back; no chunk becomes a blur
-/// endpoint. Live full-image transports are the blur output and reference
-/// filter intermediate, in addition to the caller's original image.
+/// combine. The combine writes the Gaussian's first-pass intermediate, which is
+/// idle after the blur, so every binding is a distinct buffer and no alias
+/// scratch chunking applies. Only the current chunk is copied back; no chunk
+/// becomes a blur endpoint. Live full-image transports are the blur output and
+/// that intermediate, in addition to the caller's original image.
 pub(super) struct UnsharpState {
     blur: BlurJob,
     combine: PointwiseJob,
+    destination: Vec<crate::wgpu_backend::paged::ImagePage>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -29,13 +32,14 @@ pub(super) fn build_unsharp_state(
     let buf_b = &source_pages;
     let buffers = gaussian_scratch.buffers(backend, width, height)?;
     let blur_dst = buffers.output;
+    let destination = buffers.intermediate;
     let blur = build_grain_blur_paged_with_scratch(
         backend,
         width,
         height,
         buf_b,
         &blur_dst,
-        Some(&buffers.intermediate),
+        Some(&destination),
         [up.sigma_px.max(0.01) as f64; 3],
         0,
         0,
@@ -61,17 +65,26 @@ pub(super) fn build_unsharp_state(
         &[
             (buf_b, PointwiseAccess::Read),
             (&blur_dst, PointwiseAccess::Read),
-            (buf_b, PointwiseAccess::Write),
+            (&destination, PointwiseAccess::Write),
         ],
         None,
         "unsharp_combine",
     )?;
-    Ok(UnsharpState { blur, combine })
+    Ok(UnsharpState {
+        blur,
+        combine,
+        destination,
+    })
 }
 
 impl UnsharpState {
     pub(super) fn submit(&self, backend: &WgpuBackend) -> Result<(), String> {
         self.blur.submit(backend)?;
         self.combine.execute(backend)
+    }
+
+    /// The combined output; the caller adopts it as its working raster.
+    pub(super) fn destination(&self) -> &[crate::wgpu_backend::paged::ImagePage] {
+        &self.destination
     }
 }
