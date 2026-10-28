@@ -327,18 +327,6 @@ pub fn validate_scan_output_detailed(
             }
         }
     }
-    if params.film_render.grain.active
-        && matches!(
-            params.film_render.grain.engine,
-            crate::params::grain::GrainEngine::Procedural
-        )
-    {
-        return Err(Error::new(
-            Reason::ScanProceduralGrain,
-            "scanner.scan_output",
-            "scanner.scan_output=negative_to_positive cannot be combined with active Grain Procedural",
-        ));
-    }
     Ok(())
 }
 
@@ -876,11 +864,29 @@ mod tests {
         assert!(validate_scan_output(&params, &profile("positive", "film", "filming")).is_err());
         assert!(validate_scan_output(&params, &profile("negative", "paper", "printing")).is_err());
         assert!(validate_scan_output(&params, &profile("negative", "film", "printing")).is_err());
+    }
 
+    #[test]
+    fn negative_to_positive_accepts_every_grain_engine() {
         let film = profile("negative", "film", "filming");
+        let mut params = RuntimeParams::default();
+        params.workflow.route = "input > film > scan".into();
+        params.io.scan_film = true;
+        params.scanner.scan_output = "negative_to_positive".into();
         params.film_render.grain.active = true;
-        params.film_render.grain.engine = GrainEngine::Procedural;
-        assert!(validate_scan_output(&params, &film).is_err());
+        for engine in [
+            GrainEngine::Spektra,
+            GrainEngine::Procedural,
+            GrainEngine::Dye,
+            GrainEngine::Fotufilm,
+        ] {
+            params.film_render.grain.engine = engine;
+            let outcome = super::validate_scan_output_detailed(&params, &film);
+            assert!(
+                outcome.is_ok(),
+                "negative_to_positive must accept {engine:?}: {outcome:?}"
+            );
+        }
     }
 
     #[test]

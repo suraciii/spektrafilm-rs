@@ -1178,7 +1178,6 @@
   "validation.profile.alpha_bounds": "七次密度曲线的 alpha 必须满足 |alpha| < 1（当前值为 %{value}）",
   "validation.scan_negative_profile": "%{path}=negative_to_positive 要求拍摄阶段的负片配置；正片与相纸扫描请使用 direct_scan",
   "validation.scan_finite_density": "%{path}=negative_to_positive 要求密度曲线为有限数值（通道 %{channel}，当前值为 %{value}）",
-  "validation.scan_procedural_grain": "%{path}=negative_to_positive 不能与已启用的程序颗粒同时使用",
   "validation.suggestions": "%{context}；您是否想使用 %{suggestions}？",
   "validation.native_json": "JSON 无效：%{detail}",
   "validation.native_toml": "TOML 无效：%{detail}",

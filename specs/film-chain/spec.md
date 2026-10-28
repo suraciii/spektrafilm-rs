@@ -171,7 +171,7 @@ The [Print exposure composition](../output-mix/design.md#print-exposure-composit
 - Film continuation reads the saved densities without repeating their formation.
 - The [lab scan contract](lab-scan/spec.md) owns the inverse, the opt-in frame setup, tone, the `standard` default, the `neutral` migration alias, and fixed file styles. Every style retains the frozen camera compensation on simulated film continuation; the enabled setup does not subtract it again.
 - Scanner lens blur acts on transmitted light before density reconstruction. Output gamut compression, unsharp mask, encoding, CMYK ink style, and output handoff run after conversion.
-- `negative_to_positive` rejects active Procedural grain. Backend selection follows [GPU execution](../gpu-execution/spec.md#backend-selection).
+- `negative_to_positive` accepts every grain engine, because Procedural composites on the encoded scanner output. Backend selection follows [GPU execution](../gpu-execution/spec.md#backend-selection).
 
 ## Print exposure mode
 

@@ -366,7 +366,7 @@ fn conditions(path: &str) -> Vec<String> {
         out.push("finite and strictly positive; exposed full-source long edge, not roll width or film-stock designation".into());
     }
     if path == "scanner.scan_output" {
-        out.push("negative_to_positive requires a negative film profile and direct input > film > scan or input > convert-film > scan route; active Grain Procedural is unsupported".into());
+        out.push("negative_to_positive requires a negative film profile and direct input > film > scan or input > convert-film > scan route; every grain engine is accepted".into());
     }
     if path == "scanner.conversion_style" {
         out.push(
