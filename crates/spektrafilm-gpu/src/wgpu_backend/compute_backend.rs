@@ -13,13 +13,40 @@ impl ComputeBackend for WgpuBackend {
         &self,
         p: &spektrafilm_backend::SpectralTcLutParams<'_>,
     ) -> Result<Option<spektrafilm_backend::PreparedTable>, String> {
+        if !self.device.features().contains(wgpu::Features::SHADER_F64) {
+            // The caller resolves the bounded, image-independent table on the
+            // host in reference precision and uploads it.
+            return Ok(None);
+        }
         self.prepare_spectral_table_device(p).map(Some)
+    }
+    fn prepare_spectral_tc_lut_from_host(
+        &self,
+        table: &[f64],
+        size: u32,
+        neutral: [f64; 3],
+    ) -> Result<Option<spektrafilm_backend::PreparedTable>, String> {
+        self.upload_spectral_table_host(table, size, neutral)
+            .map(Some)
     }
     fn prepare_gamut_table(
         &self,
         p: &spektrafilm_backend::GamutTableParams,
     ) -> Result<Option<spektrafilm_backend::PreparedTable>, String> {
+        if !self.device.features().contains(wgpu::Features::SHADER_F64) {
+            // The caller resolves the bounded destination boundary on the host
+            // in reference precision and uploads it.
+            return Ok(None);
+        }
         self.prepare_gamut_table_device(p).map(Some)
+    }
+    fn prepare_gamut_table_from_host(
+        &self,
+        table: &[f64],
+        n_l: u32,
+        n_h: u32,
+    ) -> Result<Option<spektrafilm_backend::PreparedTable>, String> {
+        self.upload_gamut_table_host(table, n_l, n_h).map(Some)
     }
     fn remap_input_gamut_table(
         &self,

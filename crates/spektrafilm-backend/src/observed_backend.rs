@@ -58,8 +58,25 @@ impl ComputeBackend for ObservedBackend<'_> {
     ) -> Result<Option<PreparedTable>, String> {
         self.backend.prepare_spectral_tc_lut(p)
     }
+    fn prepare_spectral_tc_lut_from_host(
+        &self,
+        table: &[f64],
+        size: u32,
+        neutral: [f64; 3],
+    ) -> Result<Option<PreparedTable>, String> {
+        self.backend
+            .prepare_spectral_tc_lut_from_host(table, size, neutral)
+    }
     fn prepare_gamut_table(&self, p: &GamutTableParams) -> Result<Option<PreparedTable>, String> {
         self.backend.prepare_gamut_table(p)
+    }
+    fn prepare_gamut_table_from_host(
+        &self,
+        table: &[f64],
+        n_l: u32,
+        n_h: u32,
+    ) -> Result<Option<PreparedTable>, String> {
+        self.backend.prepare_gamut_table_from_host(table, n_l, n_h)
     }
     fn remap_input_gamut_table(
         &self,

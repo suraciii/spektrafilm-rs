@@ -383,8 +383,9 @@ fn prepare_registered_tc_lut(
         Some(a) if a.apply_surface => a.surface_params,
         _ => &[],
     };
-    let mut prepared = backend
-        .prepare_spectral_tc_lut(&spektrafilm_backend::SpectralTcLutParams {
+    let mut host_table: Option<TcLut> = None;
+    let mut prepared =
+        match backend.prepare_spectral_tc_lut(&spektrafilm_backend::SpectralTcLutParams {
             spectra: &spectra.data,
             size: spectra.size as u32,
             n_wavelengths: spectra.n_wavelengths as u32,
@@ -396,8 +397,46 @@ fn prepare_registered_tc_lut(
             reference_tc: [reference_tc.0, reference_tc.1],
             reflectance,
             neutral_tc,
-        })?
-        .ok_or_else(|| "selected GPU cannot prepare the spectral exposure table".to_owned())?;
+        })? {
+            Some(table) => table,
+            None => {
+                // A device without native f64 resolves this bounded,
+                // image-independent table on the host in reference precision.
+                let host = compute_registered_tc_lut(
+                    data_dir,
+                    identifier,
+                    sensitivity,
+                    illuminant,
+                    adaptation,
+                )?;
+                // The reference sampler consumes narrowed storage; the runtime
+                // table is f32 on the device, so the neutral keeps that budget.
+                let narrowed: Vec<f32> = host.data.iter().map(|value| *value as f32).collect();
+                let neutral = spektrafilm_math::lut::bicubic_2d(
+                    &narrowed,
+                    host.size,
+                    host.size,
+                    host.channels,
+                    (neutral_tc[0] * (host.size - 1) as f64) as f32,
+                    (neutral_tc[1] * (host.size - 1) as f64) as f32,
+                );
+                let table = backend
+                    .prepare_spectral_tc_lut_from_host(
+                        &host.data,
+                        host.size as u32,
+                        [
+                            f64::from(neutral[0]),
+                            f64::from(neutral[1]),
+                            f64::from(neutral[2]),
+                        ],
+                    )?
+                    .ok_or_else(|| {
+                        "selected backend cannot upload the host spectral exposure table".to_owned()
+                    })?;
+                host_table = Some(host);
+                table
+            }
+        };
     let gamut = &params.io.input_gamut_compress;
     if gamut.active && gamut.algorithm != "off" {
         let algorithm = match gamut.algorithm.as_str() {
@@ -421,19 +460,49 @@ fn prepare_registered_tc_lut(
         };
         let white = spectral::illuminant_to_xy(&select_illuminant(remap_illuminant));
         let locus = crate::input_gamut::spectral_locus_xy();
-        prepared = backend.remap_input_gamut_table(
-            &prepared,
-            &spektrafilm_backend::InputGamutTableParams {
-                size: spectra.size as u32,
-                algorithm,
-                boundary,
-                hull_detail: gamut.hull_detail,
-                knee: gamut.knee.map(f64::from),
-                white_xy: [white.0, white.1],
-                neutral_tc,
-                locus: &locus,
-            },
-        )?;
+        prepared = if let Some(host_table) = host_table.as_ref() {
+            // Devices without native f64 remap the table with the CPU
+            // reference and upload the result; the neutral is resampled from
+            // the remapped table exactly as the device does.
+            let compressor = crate::input_gamut::InputGamutCompress::build(gamut)?;
+            let remapped = compressor.remap(host_table, [white.0, white.1]);
+            let narrowed: Vec<f32> = remapped.data.iter().map(|value| *value as f32).collect();
+            let neutral = spektrafilm_math::lut::bicubic_2d(
+                &narrowed,
+                remapped.size,
+                remapped.size,
+                remapped.channels,
+                (neutral_tc[0] * (remapped.size - 1) as f64) as f32,
+                (neutral_tc[1] * (remapped.size - 1) as f64) as f32,
+            );
+            backend
+                .prepare_spectral_tc_lut_from_host(
+                    &remapped.data,
+                    remapped.size as u32,
+                    [
+                        f64::from(neutral[0]),
+                        f64::from(neutral[1]),
+                        f64::from(neutral[2]),
+                    ],
+                )?
+                .ok_or_else(|| {
+                    "selected backend cannot upload the remapped spectral table".to_owned()
+                })?
+        } else {
+            backend.remap_input_gamut_table(
+                &prepared,
+                &spektrafilm_backend::InputGamutTableParams {
+                    size: spectra.size as u32,
+                    algorithm,
+                    boundary,
+                    hull_detail: gamut.hull_detail,
+                    knee: gamut.knee.map(f64::from),
+                    white_xy: [white.0, white.1],
+                    neutral_tc,
+                    locus: &locus,
+                },
+            )?
+        };
     }
     Ok((
         TcLut {

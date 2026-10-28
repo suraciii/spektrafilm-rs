@@ -138,6 +138,48 @@ impl WgpuBackend {
         })
     }
 
+    /// Upload a host-resolved output gamut boundary for devices without native
+    /// binary64. The table is `n_l * n_h` row-major `C_max` values narrowed to
+    /// f32, matching the device kernel output.
+    pub(in crate::wgpu_backend) fn upload_gamut_table_host(
+        &self,
+        table: &[f64],
+        n_l: u32,
+        n_h: u32,
+    ) -> Result<PreparedTable, String> {
+        use wgpu::util::DeviceExt;
+        let count = u64::from(n_l)
+            .checked_mul(u64::from(n_h))
+            .ok_or("output gamut table size overflows")?;
+        if n_l < 2 || n_h == 0 || table.len() as u64 != count {
+            return Err("host output gamut table does not match its dimensions".to_owned());
+        }
+        let bytes = count
+            .checked_mul(4)
+            .ok_or("output gamut table size overflows")?;
+        if bytes > bounded::storage_binding_limit(self)? {
+            return Err(format!(
+                "output gamut table needs a {bytes}-byte binding; limit is {}",
+                bounded::storage_binding_limit(self)?
+            ));
+        }
+        let narrowed: Vec<f32> = table.iter().map(|value| *value as f32).collect();
+        let buffer = self
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("gamut_cmax_host_upload"),
+                contents: bytemuck::cast_slice(&narrowed),
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+            });
+        Ok(PreparedTable {
+            values: Arc::new(GamutPreparationTable {
+                backend_id: self.backend_id,
+                buffer,
+            }),
+            neutral: [0.0; 3],
+        })
+    }
+
     /// Explicit diagnostic export for cold-table parity probes. Production
     /// compression binds this resource directly and never calls this method.
     pub fn diagnostic_gamut_table(&self, table: &PreparedTable) -> Result<Vec<f64>, String> {

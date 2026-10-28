@@ -325,24 +325,33 @@ impl OutputGamutCompress {
             result.l_min = l_min;
             result.l_max = l_max;
             result.prepared = Some(
-                backend
-                    .prepare_gamut_table(&spektrafilm_backend::GamutTableParams {
-                        mode,
-                        n_l: N_L as u32,
-                        n_h: N_H as u32,
-                        n_bisect: N_BISECT as u32,
-                        l_min,
-                        l_max,
-                        chroma_upper,
-                        xyz_to_rgb: destination.matrix_xyz_to_rgb,
-                        cam16: [cam.d_rgb[0], cam.d_rgb[1], cam.d_rgb[2], cam.a_w],
-                    })?
-                    .ok_or_else(|| {
-                        format!(
-                            "{} cannot prepare the selected output gamut boundary on the device",
-                            backend.name(),
-                        )
-                    })?,
+                match backend.prepare_gamut_table(&spektrafilm_backend::GamutTableParams {
+                    mode,
+                    n_l: N_L as u32,
+                    n_h: N_H as u32,
+                    n_bisect: N_BISECT as u32,
+                    l_min,
+                    l_max,
+                    chroma_upper,
+                    xyz_to_rgb: destination.matrix_xyz_to_rgb,
+                    cam16: [cam.d_rgb[0], cam.d_rgb[1], cam.d_rgb[2], cam.a_w],
+                })? {
+                    Some(table) => table,
+                    None => {
+                        // Devices without native binary64 resolve this bounded,
+                        // image-independent table on the host in reference
+                        // precision and upload it.
+                        let host = build_cmax_table(space, destination, &cam);
+                        backend
+                            .prepare_gamut_table_from_host(&host, N_L as u32, N_H as u32)?
+                            .ok_or_else(|| {
+                                format!(
+                                    "{} cannot upload the host output gamut boundary",
+                                    backend.name(),
+                                )
+                            })?
+                    }
+                },
             );
         }
         Ok(result)
