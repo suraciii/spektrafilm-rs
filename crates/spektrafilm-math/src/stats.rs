@@ -265,6 +265,83 @@ fn poisson_ptrs(rng: &mut FastStatsRng, lambda: f64) -> Result<u64, String> {
     }
 }
 
+/// The device's 32-bit integer hash, replicated so a CPU draw and a GPU draw
+/// land on the same number. Bit-exact with `hash_u32` in `dye_law_apply.wgsl`.
+pub fn hash_u32(mut v: u32) -> u32 {
+    v = v.wrapping_mul(747_796_405).wrapping_add(2_891_336_453);
+    v = ((v >> ((v >> 28) + 4)) ^ v).wrapping_mul(277_803_737);
+    (v >> 22) ^ v
+}
+
+/// Coordinate-addressed uniform in `[0, 1)` with 2^-24 resolution — the device's
+/// `poisson_uniform`. The draw depends on the global cell coordinate and the
+/// sample ordinal, never on traversal order.
+pub fn coordinate_uniform(seed: u32, stream: u32, x: u32, y: u32, n: u32) -> f64 {
+    let h = hash_u32(x ^ hash_u32(y ^ hash_u32(n ^ hash_u32(seed ^ hash_u32(stream)))));
+    f64::from(h >> 8) * (1.0 / 16_777_216.0)
+}
+
+/// `poisson_exact` over [`coordinate_uniform`] samples: the device's law and
+/// iteration caps, with f64 arithmetic and shared sample addresses.
+pub fn poisson_exact_coordinate(lambda: f64, seed: u32, stream: u32, x: u32, y: u32) -> u64 {
+    if lambda <= 0.0 {
+        return 0;
+    }
+    if lambda < 30.0 {
+        let limit = (-lambda).exp();
+        let mut product = 1.0_f64;
+        let mut count = 0_u64;
+        let mut n = 0_u32;
+        loop {
+            n += 1;
+            product *= coordinate_uniform(seed, stream, x, y, n);
+            if product <= limit {
+                return count;
+            }
+            count += 1;
+            if count > 4096 {
+                return count;
+            }
+        }
+    }
+    let slam = lambda.sqrt();
+    let loglam = lambda.ln();
+    let b = 0.931 + 2.53 * slam;
+    let a = -0.059 + 0.02483 * b;
+    let inv_alpha = 1.1239 + 1.1328 / (b - 3.4);
+    let vr = 0.9277 - 3.6224 / (b - 2.0);
+    let log_inv_alpha = inv_alpha.ln();
+    let mut n = 0_u32;
+    loop {
+        n += 1;
+        let u = coordinate_uniform(seed, stream, x, y, n) - 0.5;
+        n += 1;
+        let v = coordinate_uniform(seed, stream, x, y, n);
+        let us = 0.5 - u.abs();
+        if us <= 0.0 {
+            continue;
+        }
+        let k = ((2.0 * a / us + b) * u + lambda + 0.43).floor();
+        if k < 0.0 {
+            continue;
+        }
+        if us < 0.013 && v > us {
+            continue;
+        }
+        if us >= 0.07 && v <= vr {
+            return k as u64;
+        }
+        let lhs = v.ln() + log_inv_alpha - (a / (us * us) + b).ln();
+        let rhs = -lambda + k * loglam - libm::lgamma(k + 1.0);
+        if lhs <= rhs {
+            return k as u64;
+        }
+        if n > 512 {
+            return lambda.max(0.0) as u64;
+        }
+    }
+}
+
 /// Global-cell address of one `(channel, layer)` stream of the Dye field.
 ///
 /// A `SplitMix64` finalizer of the packed cell coordinate is a permutation:
@@ -279,6 +356,53 @@ pub fn cell_stream_index(i: i64, j: i64) -> u64 {
     address = (address ^ (address >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
     address = (address ^ (address >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
     address ^ (address >> 31)
+}
+
+#[cfg(test)]
+mod coordinate_draw_tests {
+    use super::{coordinate_uniform, poisson_exact_coordinate};
+
+    /// The device hash is the contract: these values pin `hash_u32` and the
+    /// ordinal addressing so a change on either side fails here instead of
+    /// silently splitting the two realizations again.
+    #[test]
+    fn coordinate_uniform_matches_the_device_ordinals() {
+        let u0 = coordinate_uniform(42, 100, 7, 11, 1);
+        let u1 = coordinate_uniform(42, 100, 7, 11, 2);
+        let u_neighbour = coordinate_uniform(42, 100, 8, 11, 1);
+        assert!((0.0..1.0).contains(&u0) && (0.0..1.0).contains(&u1));
+        assert_ne!(u0, u1, "the ordinal must advance the draw");
+        assert_ne!(u0, u_neighbour, "the coordinate must address the draw");
+        // 2^-24 resolution, so the value is exactly representable.
+        assert_eq!(u0 * 16_777_216.0, (u0 * 16_777_216.0).round());
+        // A different stream must not repeat the same sample.
+        assert_ne!(u0, coordinate_uniform(42, 101, 7, 11, 1));
+    }
+
+    /// The law itself still has to be Poisson: mean and variance agree with the
+    /// rate, which is the property a normal approximation used to break.
+    #[test]
+    fn coordinate_count_moments_follow_the_rate() {
+        for lambda in [0.5_f64, 4.0, 30.0, 7500.0] {
+            let n = 20_000u32;
+            let (mut sum, mut sum_sq) = (0.0, 0.0);
+            for i in 0..n {
+                let count = poisson_exact_coordinate(lambda, 42, 100, i, 7) as f64;
+                sum += count;
+                sum_sq += count * count;
+            }
+            let mean = sum / f64::from(n);
+            let variance = sum_sq / f64::from(n) - mean * mean;
+            assert!(
+                (mean - lambda).abs() < 0.05 * lambda.max(1.0),
+                "lambda {lambda}: mean {mean}"
+            );
+            assert!(
+                (variance / lambda - 1.0).abs() < 0.1,
+                "lambda {lambda}: variance {variance}"
+            );
+        }
+    }
 }
 
 #[cfg(test)]

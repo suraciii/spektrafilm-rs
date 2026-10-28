@@ -46,7 +46,9 @@ The resolved film profile determines record layout and per-record response. Dye 
 
 Active Dye MUST use the continuous law and rectangular readout defined by the [Dye design](design.md). CPU and GPU executors MUST implement the same law, the same seed and stream addressing, and the same film-coordinate geometry.
 
-Both executors MUST draw the count from the same Poisson law: inversion below thirty events, the PTRS rejection method above it. A normal approximation keeps the mean and variance at large rates but changes the distribution once the rate is small, and a heavily oversampled geometry reaches that regime. Executors MAY differ only in arithmetic precision.
+Both executors MUST draw the count from the same Poisson law: inversion below thirty events, the PTRS rejection method above it. A normal approximation keeps the mean and variance at large rates but changes the distribution once the rate is small, and a heavily oversampled geometry reaches that regime.
+
+Both executors MUST also address the underlying uniform by global cell coordinate and sample ordinal, never by traversal order, so one seed selects one realization on either backend. A sequential stream is not admissible: a device runs its invocations in an order it does not control. Executors MAY differ only in arithmetic precision.
 
 The pipeline MUST apply named inactive, preview, LUT, spatial-deactivation, and stochastic-deactivation bypasses before field preparation. Active CLI Scan/Export and GUI Scan/Export MUST exercise Dye.
 

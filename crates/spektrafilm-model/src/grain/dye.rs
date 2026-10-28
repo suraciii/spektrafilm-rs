@@ -22,7 +22,7 @@ use rayon::prelude::*;
 use spektrafilm_math::gaussian;
 use spektrafilm_math::image::ImageBuf;
 use spektrafilm_math::precision::{Scalar, ZERO, from_f32, from_f64, to_f64};
-use spektrafilm_math::stats::{FastStatsRng, poisson_exact};
+use spektrafilm_math::stats::{FastStatsRng, poisson_exact, poisson_exact_coordinate};
 
 /// Octave centres (µm) and weights; weights are normalised by the caller.
 const OCTAVES: [(f64, f64); 3] = [(4.0, 0.35), (2.0, 1.0), (1.2, 0.9)];
@@ -513,10 +513,19 @@ fn channel(
             let count = if p.expectation {
                 lambda
             } else {
-                let index = (((i / w) as u64) << 32) | (i % w) as u64;
-                let stream = if p.monochrome { 400 } else { 400 + c as u64 };
-                let mut rng = FastStatsRng::stream(p.seed, stream, index);
-                poisson_exact(&mut rng, lambda)? as f64
+                // One count from the draw the device kernel also uses: the
+                // uniform is addressed by global cell coordinate and sample
+                // ordinal, so one seed selects one realization on either
+                // executor. A sequential stream cannot be replayed on a device
+                // whose invocations run in an order it does not control.
+                let stream = if p.monochrome { 100 } else { 100 + c as u32 };
+                poisson_exact_coordinate(
+                    lambda,
+                    p.seed as u32,
+                    stream,
+                    (i % w) as u32,
+                    (i / w) as u32,
+                ) as f64
             };
             *o = from_f64(q * count / area - p.fog);
             Ok(())
