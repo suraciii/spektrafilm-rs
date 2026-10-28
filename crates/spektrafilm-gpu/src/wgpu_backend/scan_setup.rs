@@ -74,9 +74,7 @@ pub(super) fn build(
         usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     });
-    backend
-        .queue
-        .write_buffer(&histogram, 0, &[0u8; 524288]);
+    backend.queue.write_buffer(&histogram, 0, &[0u8; 524288]);
     let params = |count: u32, operation: u32, first: u32| -> Result<wgpu::Buffer, String> {
         backend.check_cancelled()?;
         let result = backend.device.create_buffer(&wgpu::BufferDescriptor {

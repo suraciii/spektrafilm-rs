@@ -54,13 +54,18 @@ fn main() {
             // eight bits per round. Counts and chosen prefixes never leave the
             // device. Both ranks are processed together, including duplicate
             // samples and signed zero.
-            let hi0 = s.prefix0 >> s.bit;
-            let hi1 = s.prefix1 >> s.bit;
+            // Above the current digit the prefix must match; the first round has
+            // no prefix yet, so every pixel is counted.
+            let first = s.bit == 48u;
+            let shift = s.bit + 16u;
+            let hi0 = s.prefix0 >> shift;
+            let hi1 = s.prefix1 >> shift;
             for (var i = 0u; i < p.header.x; i++) {
                 let key = order_key(neutral(i));
-                let hi = key >> s.bit;
-                if hi == hi0 { hist[u32((key >> s.bit) & u64(65535u))] = hist[u32((key >> s.bit) & u64(65535u))] + 1u; }
-                if hi == hi1 { hist[65536u + u32((key >> s.bit) & u64(65535u))] = hist[65536u + u32((key >> s.bit) & u64(65535u))] + 1u; }
+                let hi = key >> shift;
+                let digit = u32((key >> s.bit) & u64(65535u));
+                if first || hi == hi0 { hist[digit] = hist[digit] + 1u; }
+                if first || hi == hi1 { hist[65536u + digit] = hist[65536u + digit] + 1u; }
             }
         }
         case 2u: {
