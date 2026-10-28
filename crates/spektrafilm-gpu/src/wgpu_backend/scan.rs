@@ -802,4 +802,40 @@ mod direct_tests {
         // RGB budget is 1e-5; measured 6.56e-7, with a 2e-6 limit (>3x margin).
         assert!(worst < 2e-6, "direct scanner error {worst}");
     }
+
+    #[test]
+    fn convert_inverse_reports_the_missing_f64_capability() {
+        let gpu = crate::test_support::restricted_adapter();
+        let p = ConvertSolverGpuParams {
+            dye: &[],
+            base: &[],
+            illuminant: &[],
+            cmfs: &[],
+            normalization: 1.0,
+            xyz_to_rgb: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+            cmy_max: [1.0; 3],
+            calibration: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+            gain: 1.0,
+            seed_log_rgb: [0.0; 3],
+            seed_inverse: [[0.0; 3]; 3],
+            cctf_kind: 0,
+            decode_input: false,
+            n_wl: 0,
+        };
+        let raster = gpu
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("convert_inverse_restricted_raster"),
+                contents: bytemuck::cast_slice(&[0.0f32; 3]),
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+            });
+        let error = match gpu.build_convert_inverse_state(&p, &raster, &raster, 1) {
+            Ok(_) => panic!("restricted device must not build the inverse solver"),
+            Err(error) => error,
+        };
+        assert_eq!(
+            error,
+            "convert-film inverse scan requires native shader f64"
+        );
+    }
 }

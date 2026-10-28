@@ -219,3 +219,44 @@ fn active_layers_fast_stats_match_reference_across_workgroups() {
         }
     }
 }
+
+#[test]
+fn spektra_reports_the_missing_f64_and_int64_capability() {
+    let gpu = crate::test_support::restricted_adapter();
+    let params = GrainV1GpuParams {
+        base_seed: 0,
+        layer_count: 1,
+        density_min: [0.0; 3],
+        uniformity: [0.0; 3],
+        density_min_layers: [0.0; 9],
+        density_max_adj: [0.0; 9],
+        n_particles: [0.0; 9],
+        monochrome: false,
+        lookup_sign: 1.0,
+        blur_dye_clouds: 0.0,
+        reference_f64: true,
+        micro_sigma: 0.0,
+        micro_blur_px: 0.0,
+        grain_blur: 0.0,
+        usm_sigma: 0.0,
+        usm_amount: 0.0,
+        curve_x: Vec::new(),
+        curve_layers: Vec::new(),
+        mt19937_regime: false,
+    };
+    let density = gpu
+        .device
+        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("restricted_spektra_density"),
+            contents: bytemuck::cast_slice(&[0.0f32; 3]),
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+        });
+    let error = match build_spektra_grain_state(&gpu.device, 1, 1, &density, &params, &gpu) {
+        Ok(_) => panic!("restricted device must not build the Spektra grain state"),
+        Err(error) => error,
+    };
+    assert_eq!(
+        error,
+        "Spektra grain requires device binary64 arithmetic and 64-bit integers"
+    );
+}
