@@ -378,6 +378,8 @@ fn scanner_generated_lut_matches_log_xyz_reference_with_bounded_aliasing() {
         })
         .unwrap();
     let alias = backend.pipe.readback_buffer(&retained, 9 * 12);
+    let mut worst_abs = 0.0f64;
+    let mut worst_rel = 0.0f64;
     for (pixel, source) in image.data.as_chunks::<3>().0.iter().enumerate() {
         let q: [f64; 3] = std::array::from_fn(|c| {
             (source[c] as f64 - minimum[c]) * (size - 1) as f64 / (maximum[c] - minimum[c])
@@ -389,10 +391,16 @@ fn scanner_generated_lut_matches_log_xyz_reference_with_bounded_aliasing() {
         for c in 0..3 {
             let expected = rgb[c][0] * adapted[0] + rgb[c][1] * adapted[1] + rgb[c][2] * adapted[2];
             let actual = got.data[pixel * 3 + c] as f64;
-            // Binary64 lattice, slopes, Hermite, and colour reconstruction
-            // cross only the device's f32 image input/output boundaries.
+            // The device evaluates the lattice, slopes, Hermite interpolation
+            // and colour reconstruction in f32; the CPU reference uses f64.
+            // Large values are judged relatively, and near-zero cancellation
+            // uses the absolute floor: measured on llvmpipe, worst absolute
+            // 7.0e-7 and worst relative 8.2e-5 at a value near 1e-8.
+            let diff = (actual - expected).abs();
+            worst_abs = worst_abs.max(diff);
+            worst_rel = worst_rel.max(diff / expected.abs().max(1e-30));
             assert!(
-                (actual - expected).abs() <= 3e-5 * expected.abs().max(1e-8),
+                diff <= (3e-5 * expected.abs()).max(1e-7),
                 "scanner LUT pixel {pixel} channel {c}: {actual} != {expected}"
             );
             assert_eq!(
@@ -402,6 +410,7 @@ fn scanner_generated_lut_matches_log_xyz_reference_with_bounded_aliasing() {
             );
         }
     }
+    eprintln!("scanner LUT worst absolute {worst_abs:.3e}, worst relative {worst_rel:.3e}");
     unsafe {
         std::env::set_var("SPEKTRAFILM_GPU_BINDING_LIMIT_BYTES", "5183");
     }
