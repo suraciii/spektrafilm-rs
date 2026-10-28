@@ -1,12 +1,9 @@
-//! Independent f32-buffer oracle for Spektra's pinned Gaussian implementation.
+//! Independent f32-buffer oracle for the Gaussian filter.
 //!
-//! Ported from `src/spektrafilm/utils/fast_gaussian_filter.py` at upstream
-//! experimental commit 28bf883: `_fir_2d_fused`, `_yvv_coeffs`,
-//! `_iir_horizontal`, and `_iir_vertical`. Do not use production GPU coefficient,
-//! kernel, reflection, or paging helpers here: these comparisons must detect
-//! shared mistakes in direct and paged execution. The shared math Gaussian is
-//! not an oracle for Spektra: its f32 coefficients and recurrence state differ
-//! from upstream's f64 arithmetic over f32 working buffers.
+//! FIR and IIR are ported from `fast_gaussian_filter.py` at upstream commit
+//! 28bf883. The large-sigma model is three reflected unit-sum boxes per axis.
+//! No production GPU coefficient, kernel, reflection, or paging helpers are
+//! used here, so these comparisons can detect shared implementation mistakes.
 
 pub(super) fn blur_channel(input: &[f32], width: u32, height: u32, sigma: f64) -> Vec<f32> {
     let (width, height) = (width as usize, height as usize);
@@ -15,8 +12,10 @@ pub(super) fn blur_channel(input: &[f32], width: u32, height: u32, sigma: f64) -
     }
     if sigma < 3.0 {
         fir(input, width, height, sigma)
-    } else {
+    } else if sigma < 8.0 {
         iir(input, width, height, sigma)
+    } else {
+        boxes(input, width, height, sigma)
     }
 }
 
@@ -28,6 +27,74 @@ fn reflected(index: isize, length: usize) -> usize {
     } else {
         (period - 1 - folded) as usize
     }
+}
+
+// Independently construct candidate box kernels by convolution, then choose
+// the one closest to the normalized truncated Gaussian in squared error.
+fn box_width(sigma: f64) -> usize {
+    let center = ((4.0 * sigma * sigma + 1.0).sqrt() + 0.5).floor() as usize;
+    let radius = (3.0 * sigma + 0.5) as usize;
+    let gaussian: Vec<f64> = (0..=radius)
+        .map(|i| (-0.5 * (i as f64 / sigma).powi(2)).exp())
+        .collect();
+    let norm = gaussian[0] + 2.0 * gaussian[1..].iter().sum::<f64>();
+    let mut best = (f64::INFINITY, 1);
+    for width in center.saturating_sub(12).max(1)..=center.saturating_add(12) {
+        if width % 2 == 0 {
+            continue;
+        }
+        let mut kernel = vec![1.0];
+        for _ in 0..3 {
+            let mut next = vec![0.0; kernel.len() + width - 1];
+            for (i, &value) in kernel.iter().enumerate() {
+                for tap in &mut next[i..i + width] {
+                    *tap += value / width as f64;
+                }
+            }
+            kernel = next;
+        }
+        let middle = kernel.len() / 2;
+        let extent = radius.max(middle);
+        let error = (0..=extent)
+            .map(|i| {
+                let actual = kernel.get(middle + i).copied().unwrap_or(0.0);
+                let expected = gaussian.get(i).copied().unwrap_or(0.0) / norm;
+                let d = actual - expected;
+                d * d * if i == 0 { 1.0 } else { 2.0 }
+            })
+            .sum::<f64>();
+        if error < best.0 {
+            best = (error, width);
+        }
+    }
+    best.1
+}
+
+fn boxes(input: &[f32], width: usize, height: usize, sigma: f64) -> Vec<f32> {
+    let box_width = box_width(sigma);
+    let radius = (box_width / 2) as isize;
+    let mut source = input.to_vec();
+    let mut destination = vec![0.0; input.len()];
+    for horizontal in [true, false] {
+        for _ in 0..3 {
+            for y in 0..height {
+                for x in 0..width {
+                    let mut sum = 0.0f64;
+                    for offset in -radius..=radius {
+                        let (sx, sy) = if horizontal {
+                            (reflected(x as isize + offset, width), y)
+                        } else {
+                            (x, reflected(y as isize + offset, height))
+                        };
+                        sum += f64::from(source[sy * width + sx]);
+                    }
+                    destination[y * width + x] = (sum / box_width as f64) as f32;
+                }
+            }
+            std::mem::swap(&mut source, &mut destination);
+        }
+    }
+    source
 }
 
 fn fir(input: &[f32], width: usize, height: usize, sigma: f64) -> Vec<f32> {
