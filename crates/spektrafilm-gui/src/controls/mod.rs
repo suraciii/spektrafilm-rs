@@ -721,33 +721,30 @@ pub(crate) fn module_applicability(
     film: &Profile,
     print: &Profile,
 ) -> Option<String> {
-    if section == "Grain" {
-        let mut first_reason = None;
-        for entry in inventory().iter().filter(|entry| {
-            entry.section == section
-                && entry.searchable()
-                && !matches!(
-                    entry.path.as_str(),
-                    "film_render.grain.active" | "film_render.grain.engine"
-                )
-        }) {
-            let reason =
-                spektrafilm_core::params::sources::grain_control_inactive_reason_with_profile(
-                    &entry.path,
-                    params,
-                    film,
-                    None,
-                )?;
-            first_reason.get_or_insert(reason);
-        }
-        return first_reason.map(str::to_owned);
-    }
-    inventory()
-        .iter()
-        .filter(|entry| entry.section == section && entry.searchable())
-        .find_map(|entry| {
+    // A module banner states that the whole module has no effect. Reporting
+    // the first inactive control would promote an optional subfeature (the
+    // halation boost group, camera auto exposure, crop) to a module-wide
+    // failure, so only a section whose every dependent control is inactive
+    // qualifies. Switch rows own their module and are not evidence against it.
+    let mut first_reason = None;
+    let mut considered = false;
+    for entry in inventory().iter().filter(|entry| {
+        entry.section == section
+            && entry.searchable()
+            && entry.validation.is_some()
+            && !entry.path.ends_with(".active")
+            && !entry.path.ends_with(".engine")
+    }) {
+        considered = true;
+        let Some(reason) =
             spektrafilm_core::params::sources::inactive_reason(&entry.path, params, film, print)
-        })
+        else {
+            // One effective control means the module still has an effect.
+            return None;
+        };
+        first_reason.get_or_insert(reason);
+    }
+    if considered { first_reason } else { None }
 }
 mod cmyk;
 mod gamut;
@@ -803,6 +800,44 @@ mod tests {
             params.debug.deactivate_stochastic_effects = true;
             assert!(module_applicability("Grain", &params, &film, &print).is_some());
         }
+    }
+
+    #[test]
+    fn module_banners_require_the_whole_module_to_be_inactive() {
+        let data = crate::profiles::pick_data_dir();
+        let factory = crate::state::GuiState::factory();
+        let film = spektrafilm_core::profile::load_profile_by_name(&data, factory.film()).unwrap();
+        let print =
+            spektrafilm_core::profile::load_profile_by_name(&data, factory.paper()).unwrap();
+        let mut params = RuntimeParams::default();
+
+        // Default halation has a zero boost: only the boost sub-group is
+        // inactive, so the module keeps no banner.
+        assert_eq!(
+            module_applicability("Halation", &params, &film, &print),
+            None
+        );
+        assert_eq!(module_applicability("Camera", &params, &film, &print), None);
+
+        // A disabled module still explains itself.
+        params.film_render.halation.active = false;
+        assert_eq!(
+            module_applicability("Halation", &params, &film, &print).as_deref(),
+            Some("film_render.halation.active = true")
+        );
+        params.film_render.halation.active = true;
+        params.film_render.halation.boost_ev = 1.0;
+        assert_eq!(
+            module_applicability("Halation", &params, &film, &print),
+            None
+        );
+
+        // A whole-module switch still reports when every dependent row is
+        // inactive.
+        assert!(
+            module_applicability("Camera diffusion", &params, &film, &print).is_some(),
+            "disabled diffusion must keep its module banner"
+        );
     }
 
     fn has_text(output: &egui::FullOutput, text: &str) -> bool {

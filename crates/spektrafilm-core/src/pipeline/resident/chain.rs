@@ -467,7 +467,7 @@ impl Pipeline {
             };
 
         let hboost = &self.params.film_render.halation;
-        let highlight_boost = if expose && hboost.boost_ev != 0.0 {
+        let highlight_boost = if expose && hboost.active && hboost.boost_ev != 0.0 {
             Some(spektrafilm_backend::HighlightBoostGpuParams {
                 boost_ev: hboost.boost_ev,
                 boost_range: hboost.boost_range,

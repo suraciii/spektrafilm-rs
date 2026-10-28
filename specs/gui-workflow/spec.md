@@ -196,6 +196,8 @@ Calibration baselines, prepared values, no-op leaves, removed parameters, and in
 
 Halation MUST expose `active`, `scatter_amount`, `scatter_spatial_scale`, `halation_amount`, `halation_spatial_scale`, `source_compression`, `boost_ev`, `protect_ev`, `boost_range`, `scatter_core_um`, `scatter_tail_um`, `scatter_tail_weight`, `halation_strength`, `halation_first_sigma_um`, `halation_n_bounces`, `halation_bounce_decay`, and `halation_renormalize` under `film_render.halation`. Each editable RGB component MUST remain available. Its feature-profile selector follows [Feature profiles](../feature-profiles/spec.md#halation-profile-family); it MUST NOT add a persisted Halation profile identity or replace the individual controls.
 
+`boost_ev`, `boost_range`, and `protect_ev` are the highlight-reconstruction option of Halation: they remain stored but apply only while Halation is enabled, and `boost_range` and `protect_ev` further require a nonzero boost.
+
 Preflash MUST expose exactly its existing `enlarger.preflash_exposure`, `enlarger.preflash_y_filter_shift`, and `enlarger.preflash_m_filter_shift` controls. Main enlarger M/Y controls remain independent. A visual off state MUST derive from zero exposure rather than a new enable parameter.
 
 All supported Grain engines MUST retain their independent control sets and shared selector. Shared material parameters MUST have one editing location. A named Procedural profile and Custom MUST obey [Feature profiles](../feature-profiles/spec.md#procedural-grain-profile-family), including inherited optional values.
@@ -203,6 +205,8 @@ All supported Grain engines MUST retain their independent control sets and share
 The interface MUST NOT impose a blanket Custom-only restriction on a parameter whose owning contract allows a named-profile override.
 
 Module disable, unsupported material capability, source type, route, and selected engine are different applicability reasons. The GUI MUST name the actual reason and retain readable values. Expanding an inactive group MUST NOT activate it.
+
+An inactive optional subfeature MUST NOT mark its whole module inactive. A module-level notice appears only when every dependent control in that module is inactive; the module's own enable switch is not evidence of its inactivity.
 
 A route or material change MUST NOT erase inactive values except for normalizations explicitly required by the owning contract, such as scanner-output eligibility; the header MUST report those normalizations.
 

@@ -1609,3 +1609,37 @@ fn halation_feature_profile_retains_other_controls_and_rgb_edit_undo_restores_id
         name
     );
 }
+
+#[test]
+fn halation_boost_subgroup_keeps_the_module_banner_quiet() {
+    let mut s = grain_session();
+    let h = &mut s.harness;
+    assert!(h.state().params.film_render.halation.active);
+    assert_eq!(h.state().params.film_render.halation.boost_ev, 0.0);
+
+    let halation_reason = controls::localized(&h.ctx, "film_render.halation.active = true");
+    let banner = format!("Inactive controls · {halation_reason} · stored values retained");
+
+    reveal_control(h, "film_render.halation.boost_ev");
+    assert_eq!(
+        h.query_all_by_label(banner.as_str()).count(),
+        0,
+        "a zero boost must not mark the enabled Halation module inactive"
+    );
+
+    toggle_control(h, "film_render.halation.active", "Enable halation");
+    assert!(!h.state().params.film_render.halation.active);
+    assert_eq!(
+        h.query_all_by_label(banner.as_str()).count(),
+        1,
+        "a disabled Halation module must explain itself"
+    );
+
+    toggle_control(h, "film_render.halation.active", "Enable halation");
+    assert!(h.state().params.film_render.halation.active);
+    assert_eq!(
+        h.query_all_by_label(banner.as_str()).count(),
+        0,
+        "re-enabling Halation must remove the module banner"
+    );
+}

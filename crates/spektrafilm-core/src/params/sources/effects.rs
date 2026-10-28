@@ -20,6 +20,7 @@ pub(super) enum Condition {
     Diffusion(bool),
     Halation,
     Boost,
+    LutModeOff,
     Glare,
     Couplers,
     AutoExposure,
@@ -69,7 +70,8 @@ impl Condition {
                 "enlarger.diffusion_filter.active = true; strength and spatial_scale positive; io.scan_film = false"
             }
             Self::Halation => "film_render.halation.active = true",
-            Self::Boost => "film_render.halation.boost_ev != 0; LUT mode disabled",
+            Self::Boost => "film_render.halation.boost_ev != 0",
+            Self::LutModeOff => "debug.lut_mode = false",
             Self::Glare => {
                 "io.scan_film = false; print_render.glare.active = true; percent > 0; stochastic effects enabled"
             }
@@ -138,7 +140,8 @@ impl Condition {
                 d.active && d.strength > 0.0 && d.spatial_scale > 0.0 && (!print || !p.io.scan_film)
             }
             Self::Halation => p.film_render.halation.active,
-            Self::Boost => p.film_render.halation.boost_ev != 0.0 && !p.debug.lut_mode,
+            Self::Boost => p.film_render.halation.boost_ev != 0.0,
+            Self::LutModeOff => !p.debug.lut_mode,
             Self::Glare => {
                 !p.io.scan_film
                     && p.print_render.glare.active
@@ -296,14 +299,14 @@ pub(super) fn conditions(path: &str) -> Vec<Condition> {
     }
     if path.contains("diffusion_filter.") {
         out.extend([Spatial, Diffusion(path.starts_with("enlarger."))]);
+    } else if path == "film_render.halation.boost_ev" {
+        out.extend([Halation, LutModeOff]);
     } else if matches!(
         path,
-        "film_render.halation.boost_ev"
-            | "film_render.halation.boost_range"
-            | "film_render.halation.protect_ev"
+        "film_render.halation.boost_range" | "film_render.halation.protect_ev"
     ) {
-        out.push(Boost);
-    } else if path.contains(".halation.") {
+        out.extend([Halation, Boost, LutModeOff]);
+    } else if path.contains(".halation.") && !path.ends_with(".active") {
         out.extend([Halation, Spatial]);
     } else if path.starts_with("print_render.glare.") {
         out.push(Glare);
@@ -595,6 +598,67 @@ mod tests {
         );
         for path in ["film_render.grain.active", "film_render.grain.engine"] {
             assert_eq!(grain_control_inactive_reason(path, &params, None), None);
+        }
+    }
+
+    #[test]
+    fn halation_boost_depends_on_halation_and_its_own_switch() {
+        let material = film(true, true);
+        let reason = |path: &str, params: &RuntimeParams| {
+            inactive_reason(path, params, &material, &material)
+        };
+        let mut params = RuntimeParams::default();
+
+        // The switch owns the module and is never inactive.
+        assert_eq!(reason("film_render.halation.active", &params), None);
+        // A zero boost is a normal off state for the switch itself.
+        assert_eq!(reason("film_render.halation.boost_ev", &params), None);
+        // The shape parameters need a nonzero boost.
+        for path in [
+            "film_render.halation.boost_range",
+            "film_render.halation.protect_ev",
+        ] {
+            assert_eq!(
+                reason(path, &params).as_deref(),
+                Some(Condition::Boost.description()),
+                "{path}"
+            );
+        }
+
+        params.film_render.halation.boost_ev = 1.0;
+        for path in [
+            "film_render.halation.boost_ev",
+            "film_render.halation.boost_range",
+            "film_render.halation.protect_ev",
+        ] {
+            assert_eq!(reason(path, &params), None, "{path}");
+        }
+
+        params.debug.lut_mode = true;
+        for path in [
+            "film_render.halation.boost_ev",
+            "film_render.halation.boost_range",
+            "film_render.halation.protect_ev",
+        ] {
+            assert_eq!(
+                reason(path, &params).as_deref(),
+                Some(Condition::LutModeOff.description()),
+                "{path}"
+            );
+        }
+
+        params.debug.lut_mode = false;
+        params.film_render.halation.active = false;
+        for path in [
+            "film_render.halation.boost_ev",
+            "film_render.halation.boost_range",
+            "film_render.halation.protect_ev",
+        ] {
+            assert_eq!(
+                reason(path, &params).as_deref(),
+                Some(Condition::Halation.description()),
+                "{path}"
+            );
         }
     }
 }
