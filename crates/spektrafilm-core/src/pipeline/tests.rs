@@ -2205,10 +2205,10 @@ fn negative_to_positive_renders_procedural_grain() {
         params.film_render.grain.active = active;
         params.film_render.grain.engine = crate::params::GrainEngine::Procedural;
         params.random_seed = 4242;
-        let mut pipeline = Pipeline::new_with_spectral(film.clone(), print.clone(), params, &dir)
-            .expect("negative_to_positive must accept Procedural");
-        let output = pipeline.process(input.clone(), &backend).unwrap();
-        output
+        Pipeline::new_with_spectral(film.clone(), print.clone(), params, &dir)
+            .expect("negative_to_positive must accept Procedural")
+            .process(input.clone(), &backend)
+            .unwrap()
     };
     let with_grain = render(true);
     let without_grain = render(false);

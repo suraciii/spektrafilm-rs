@@ -272,23 +272,23 @@ fn iir_filter_row(src: &[Scalar], dst: &mut [Scalar], a: f64, b1: f64, b2: f64, 
     // f32: the DC gain of this filter is a difference of nearly equal
     // quantities, so a working-precision state loses it at large sigma. Only
     // the stored samples are narrowed, which is what the device kernel does.
-    let x0 = f64::from(src[0]);
+    let x0 = to_f64(src[0]);
     let mut w1 = x0;
     let mut w2 = x0;
     let mut w3 = x0;
     for j in 0..n {
-        let w = a * f64::from(src[j]) + b1 * w1 + b2 * w2 + b3 * w3;
+        let w = a * to_f64(src[j]) + b1 * w1 + b2 * w2 + b3 * w3;
         dst[j] = from_f64(w);
         w3 = w2;
         w2 = w1;
         w1 = w;
     }
-    let xn = f64::from(dst[n - 1]);
+    let xn = to_f64(dst[n - 1]);
     w1 = xn;
     w2 = xn;
     w3 = xn;
     for j in (0..n).rev() {
-        let w = a * f64::from(dst[j]) + b1 * w1 + b2 * w2 + b3 * w3;
+        let w = a * to_f64(dst[j]) + b1 * w1 + b2 * w2 + b3 * w3;
         dst[j] = from_f64(w);
         w3 = w2;
         w2 = w1;

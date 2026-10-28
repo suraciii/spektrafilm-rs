@@ -531,7 +531,7 @@ mod tests {
         // The default readout runs no frame setup, so the render path must keep
         // manual corrections; gating them on the setup flag silently zeroed
         // every saved correction in the default configuration.
-        let (mut snapshot, image) = snapshot_and_input();
+        let (mut snapshot, _image) = snapshot_and_input();
         snapshot.params.scanner.operator.exposure_ev = 0.5;
         assert!(!snapshot.params.scanner.experimental_setup);
         assert!(snapshot.params.scanner.operator_eligible());
