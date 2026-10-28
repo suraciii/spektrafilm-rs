@@ -12,11 +12,13 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 /// Numerical model revision shared by image, recipe, LUT and stage provenance.
-/// Negative-to-positive now defaults to the frame-independent readout: the
+/// Negative-to-positive defaults to the frame-independent readout: the
 /// experimental `scanner.experimental_setup` opt-in owns the whole-frame
 /// measurement. Negative tone has fixed linear-sRGB primaries before
-/// conversion to the selected output space.
-pub const MODEL_VERSION: &str = "lab_scan_operator_v2";
+/// conversion to the selected output space. The recursive Gaussian carries
+/// binary64 coefficients and state in every build, so large-sigma halation
+/// scatter and DIR coupler tails changed pixels relative to revision two.
+pub const MODEL_VERSION: &str = "lab_scan_operator_v3";
 
 /// Last-call wall-clock timings exposed by the runtime facade.
 pub type Timings = BTreeMap<String, f64>;
