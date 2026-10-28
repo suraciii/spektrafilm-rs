@@ -51,13 +51,16 @@ fn main() {
         }
         case 1u: {
             // Exact two order statistics by binary64 total-order radix selection,
-            // eight bits per round. Counts and chosen prefixes never leave the
+            // sixteen bits per round. Counts and chosen prefixes never leave the
             // device. Both ranks are processed together, including duplicate
             // samples and signed zero.
             // Above the current digit the prefix must match; the first round has
-            // no prefix yet, so every pixel is counted.
+            // no prefix yet, so every pixel is counted. The shift is pinned to 48
+            // there: `s.bit + 16` would be 64, which is not a defined shift of a
+            // u64 and would leave undefined behaviour to the backend even though
+            // the comparison is short-circuited.
             let first = s.bit == 48u;
-            let shift = s.bit + 16u;
+            let shift = select(s.bit + 16u, 48u, first);
             let hi0 = s.prefix0 >> shift;
             let hi1 = s.prefix1 >> shift;
             for (var i = 0u; i < p.header.x; i++) {
