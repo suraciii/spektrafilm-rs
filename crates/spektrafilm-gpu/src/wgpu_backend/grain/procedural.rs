@@ -210,7 +210,13 @@ fn build_bounded_grain_v2(
         .map(|b| u64::from(b.stored.1 - b.stored.0) * u64::from(cells_w) * 8)
         .max()
         .unwrap_or(0);
-    let scratch_canvas = transport(backend, band_bytes.max(16), "grain_procedural_band")?;
+    // A resident canvas is composed from its own buffer, so the band buffer is
+    // only allocated when the canvas has to be split.
+    let scratch_canvas = if canvas_transport_needed(params, resident) {
+        transport(backend, band_bytes.max(16), "grain_procedural_band")?
+    } else {
+        transport(backend, 16, "grain_procedural_band")?
+    };
     if params.mode == 0 {
         let mut written = 0u32;
         let buffer = match &canvas {
@@ -491,6 +497,12 @@ fn canvas_cells(
     (used(size[0], size[0]), used(size[1], size[1]))
 }
 
+/// Whether the canvas needs its own band buffer rather than the resident one.
+fn canvas_transport_needed(params: &spektrafilm_backend::GrainV2GpuParams, resident: bool) -> bool {
+    // Digital grain has no table; analogue composes from the resident buffer.
+    params.mode == 0 && !resident
+}
+
 /// One canvas band: the rows a single canvas buffer holds and the pixels that
 /// read them.
 ///
@@ -518,6 +530,14 @@ fn canvas_bands(
     params: &spektrafilm_backend::GrainV2GpuParams,
 ) -> Result<Vec<CanvasBand>, String> {
     let row_bytes = u64::from(cells_w) * 8;
+    // The canvas pass stages whole source rows, so a window narrower than the
+    // frame would silently drop the tail of every row.
+    if u64::from(width) * 12 > limit {
+        return Err(format!(
+            "procedural grain needs a {}-pixel source row in {limit} bytes of staging window",
+            width
+        ));
+    }
     if row_bytes > limit {
         return Err(format!(
             "procedural grain canvas row needs {row_bytes} bytes; device binding limit is {limit}"
