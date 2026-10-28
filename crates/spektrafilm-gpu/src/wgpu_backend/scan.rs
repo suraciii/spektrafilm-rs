@@ -687,7 +687,6 @@ mod direct_tests {
     use super::*;
     use spektrafilm_backend::{FilmChainParams, FrontPass, Tap};
     use spektrafilm_math::image::ImageBuf;
-    use wgpu::util::DeviceExt;
 
     #[test]
     fn scan_direct_restricted_device_matches_cpu() {

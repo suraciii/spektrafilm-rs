@@ -519,11 +519,16 @@ mod tests {
         let image = ImageBuf::from_data(4, 1, values.iter().map(|&x| x as _).collect());
         let result = backend.enlarger_resident(&image, &p).unwrap();
         let mut worst = 0.0f64;
-        for (pixel, actual) in values.chunks_exact(3).zip(result.data.chunks_exact(3)) {
+        for (pixel, actual) in values
+            .as_chunks::<3>()
+            .0
+            .iter()
+            .zip(result.data.as_chunks::<3>().0)
+        {
             let density = 0.02 + pixel[0] * 0.1 + pixel[1] * 0.2 + pixel[2] * 0.3;
-            for c in 0..3 {
+            for (c, &a) in actual.iter().enumerate() {
                 let expected = (10f64.powf(-density) * p.sensitivity[0][c] + 1e-10).log10();
-                worst = worst.max((actual[c] as f64 - expected).abs());
+                worst = worst.max((a as f64 - expected).abs());
             }
         }
         eprintln!("enlarger spectral LUT max absolute error: {worst:.9e}");

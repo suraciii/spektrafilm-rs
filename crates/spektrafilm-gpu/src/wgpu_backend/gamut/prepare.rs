@@ -147,7 +147,6 @@ impl WgpuBackend {
         n_l: u32,
         n_h: u32,
     ) -> Result<PreparedTable, String> {
-        use wgpu::util::DeviceExt;
         let count = u64::from(n_l)
             .checked_mul(u64::from(n_h))
             .ok_or("output gamut table size overflows")?;

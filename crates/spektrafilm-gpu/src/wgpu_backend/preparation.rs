@@ -363,7 +363,6 @@ impl WgpuBackend {
         size: u32,
         neutral: [f64; 3],
     ) -> Result<PreparedTable, String> {
-        use wgpu::util::DeviceExt;
         let cells = u64::from(size)
             .checked_mul(u64::from(size))
             .ok_or("spectral dimensions overflow")?;

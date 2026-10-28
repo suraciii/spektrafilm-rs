@@ -143,7 +143,7 @@ pub fn gaussian_box_width(sigma: f64) -> usize {
             let box_value = (triangle(x) - 3.0 * triangle(x - w) + 3.0 * triangle(x - 2 * w)
                 - triangle(x - 3 * w))
                 / denom;
-            let reference = if i <= radius { gaussian[i] / norm } else { 0.0 };
+            let reference = gaussian.get(i).map_or(0.0, |&g| g / norm);
             let delta = box_value - reference;
             error += delta * delta * if i == 0 { 1.0 } else { 2.0 };
         }
