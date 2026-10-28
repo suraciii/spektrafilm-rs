@@ -591,6 +591,7 @@ mod tests {
         let mut params = RuntimeParams::default();
         params.workflow.route = "input > film > scan".into();
         params.scanner.scan_output = "negative_to_positive".into();
+        params.scanner.experimental_setup = true;
         for name in ["standard", "neutral"] {
             params.scanner.conversion_style = name.into();
             let error = bake_params(
@@ -605,10 +606,11 @@ mod tests {
             )
             .unwrap_err();
             assert!(
-                error.contains("whole frame") && error.contains("fixed conversion style"),
+                error.contains("whole frame") && error.contains("scanner.experimental_setup"),
                 "{error}"
             );
         }
+        params.scanner.experimental_setup = false;
         params.scanner.conversion_style = "fixed-probe".into();
         bake_params(
             &spec,

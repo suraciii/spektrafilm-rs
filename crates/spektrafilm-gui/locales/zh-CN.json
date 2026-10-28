@@ -180,7 +180,7 @@
   "controls.condition.capture_illuminant": "须为将场景 RGB 转换为胶片曝光的胶片曝光路径",
   "controls.condition.print_chemistry": "需要启用印相化学模拟，且材料具有受支持的拟合密度曲线模型",
   "controls.condition.missing_model": "所选材料没有受支持的拟合密度曲线模型；化学参数已保留但不生效",
-  "controls.condition.operator_route": "须为负片、符合条件的负片转正片路径，以及 standard 转换风格",
+  "controls.condition.operator_route": "负片、可用的负片转正片路径且为 standard 转换风格",
   "controls.condition.operator_retained": "不生效时保留已存储的校正；剪贴板与对比仅在当前会话中有效",
   "controls.condition.halation_scope": "核心光晕功能配置文件范围；保留不生效的值",
   "controls.condition.captured_negative": "须为拍摄负片的转换路径",
@@ -529,7 +529,7 @@
   "controls.scanner.negative_to_positive": "负片转正片",
   "controls.scanner.scan_output_help": "保留介质极性会保持被扫描介质原有的扫描极性：负片扫描读取胶片上的负像，而相纸或反转片扫描读取的已经是正像。负片转正片通过反转胶片自身各记录层的密度，并应用固定正像色调响应，将显影后的负片解释为正像。",
   "controls.scanner.conversion_style": "转换风格",
-  "controls.scanner.conversion_style_help": "负片转正片解释所用的命名正像转换色调。standard 在固定色调之前测量整帧，以自动设定曝光和色彩平衡；其他名称均为放置在 data/scan-styles/ 中的已声明风格，而不是拟合曲面。选择器列出该目录中的风格。仅当扫描输出设为负片转正片时才应用风格。",
+  "controls.scanner.conversion_style_help": "负片转正片解释所用的命名正像转换色调。standard 是内置的固定色调；其他名称均为放置在 data/scan-styles/ 中的已声明风格，而不是拟合曲面。选择器列出该目录中的风格。仅当扫描输出设为负片转正片时才应用风格。",
   "controls.scanner.conversion_inactive": "选择负片转正片之前，转换风格不生效；已存储的值会保留。",
   "controls.scanner.lens_blur": "镜头模糊（读出光学）",
   "controls.scanner.lens_blur_help": "作用于线性透射或反射读出光的高斯 sigma，单位为像素，位于负片转换、色域处理、锐化和编码之前。恒等设置也保持此光学顺序。",
@@ -1403,5 +1403,7 @@
   "controls.condition.preset_favorites": "收藏保留内置或用户预设的分组身份",
   "controls.condition.preset_empty": "没有匹配的预设",
   "photo_work.list.scope_feature_grain": "特征配置：程序化颗粒（已接受的配置及覆盖值）",
-  "photo_work.list.scope_feature_halation": "特征配置：光晕（已接受的配置及覆盖值）"
+  "photo_work.list.scope_feature_halation": "特征配置：光晕（已接受的配置及覆盖值）",
+  "controls.scanner.experimental_setup": "实验性整帧设置",
+  "controls.scanner.experimental_setup_help": "在固定色调之前测量整帧显影密度，用于设定曝光、色偏和对比位置。默认关闭：该算法只是声明的启发式规则，没有经过验证的摄影模型支撑；它使扫描结果依赖整帧内容，也无法烘焙成逐点 LUT。关闭后读数是固定、与帧无关的变换。"
 }

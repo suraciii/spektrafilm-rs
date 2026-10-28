@@ -183,6 +183,7 @@ mod tests {
 
         let mut params = crate::params::RuntimeParams::default();
         params.scanner.scan_output = "negative_to_positive".into();
+        params.scanner.experimental_setup = true;
         params.workflow.route = "input > film > scan".into();
         params.io.scan_film = true;
         params.io.output_color_space = "sRGB".into();

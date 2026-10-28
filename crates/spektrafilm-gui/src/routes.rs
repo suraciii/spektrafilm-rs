@@ -36,10 +36,19 @@ pub(crate) mod vocabulary {
     /// selector lists only what the user has installed, and that it applies
     /// only to the negative interpretation.
     pub(crate) const CONVERSION_STYLE_HELP: &str = "Named positive-conversion tone of the \
-         negative-to-positive interpretation. `standard` measures the whole frame for automatic exposure and color balance before the frozen tone; any other \
+         negative-to-positive interpretation. `standard` is the built-in frozen tone; any other \
          name is a declared style you place in data/scan-styles/, never a fitted surface. The \
          selector lists the styles found there. A style applies only with scan output set to \
          Negative to positive.";
+
+    /// `experimental frame setup`: the off-by-default whole-frame measurement.
+    pub(crate) const EXPERIMENTAL_SETUP: &str = "experimental frame setup";
+
+    pub(crate) const EXPERIMENTAL_SETUP_HELP: &str = "Measure the whole developed frame \
+         for exposure, cast and contrast placement before the fixed tone. Off by default: the \
+         algorithm is a declared heuristic with no validated photographic model behind it, it \
+         makes the scan frame-dependent, and it cannot be baked into a point-wise LUT. Turning \
+         it off keeps the readout a fixed, frame-independent transform.";
 
     /// The automatic built-in style; aliases are never offered as choices.
     pub(crate) const CONVERSION_STYLE_STANDARD: &str = "standard";

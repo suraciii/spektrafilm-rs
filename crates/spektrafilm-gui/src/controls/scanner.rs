@@ -66,7 +66,7 @@ fn operator_controls(
         if filter_matches(filter, "Finished exposure") {
             param_numeric(ui, "Finished exposure", &mut operator.exposure_ev,
                 "scanner.operator.exposure_ev",
-                "Finished-positive exposure in stops. Positive values brighten the result after automatic setup, before the fixed tone curve; this does not change camera exposure or film density.");
+                "Finished-positive exposure in stops. Positive values brighten the result before the fixed tone curve; this does not change camera exposure or film density.");
         }
         if filter_matches(filter, "Warmth") {
             param_numeric(ui, "Warmth", &mut operator.warmth_ev,
@@ -348,6 +348,21 @@ pub(crate) fn sections(
                     flags.runtime_changed = true;
                 }
             }
+            // The whole-frame measurement is an off-by-default experiment, so it
+            // is offered next to the style it modifies rather than as a mode.
+            let negative_route =
+                positive_route && params.scanner.scan_output == "negative_to_positive";
+            if filter_matches(filter, vocabulary::EXPERIMENTAL_SETUP) {
+                ui.add_enabled_ui(negative_route, |ui| {
+                    let changed = toggle(
+                        ui,
+                        vocabulary::EXPERIMENTAL_SETUP,
+                        &mut params.scanner.experimental_setup,
+                        vocabulary::EXPERIMENTAL_SETUP_HELP,
+                    );
+                    flags.runtime_changed |= changed;
+                });
+            }
             if filter_matches(filter, "lens blur (readout optics)") {
                 flags.runtime_changed |= param_numeric(ui, "Lens blur (readout optics)", &mut params.scanner.lens_blur, "scanner.lens_blur", "Gaussian sigma in pixels on linear transmitted or reflected readout light, before negative conversion, gamut processing, sharpening and encoding. Identity points retain this optical order.");
             }
@@ -355,9 +370,7 @@ pub(crate) fn sections(
                 flags.runtime_changed |= param_tuple(ui, "Unsharp mask (digital sharpening)", &mut params.scanner.unsharp_mask, "scanner.unsharp_mask", "Digital scan sharpening after interpretation and output gamut processing: [sigma in pixels, amount].");
             }
             });
-            let operator_active = positive_route
-                && params.scanner.scan_output == "negative_to_positive"
-                && params.scanner.conversion_style == vocabulary::CONVERSION_STYLE_STANDARD;
+            let operator_active = positive_route && params.scanner.operator_eligible();
             operator_controls(ui, params, operator_active, flags, filter);
         });
     }

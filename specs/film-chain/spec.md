@@ -84,7 +84,7 @@ Scanner terms follow the [Film simulation language](../../CONTEXT.md). A reversa
 - The scan is one colorimetric capture made through the readout illuminant. The readout illuminant is a product constant selected by the material category; it is not a control.
 - It MUST NOT be derived from the capture illuminant, the enlarger illuminant, or image content. A document that carries `scanner.lamp` fails validation at the current schema version.
 - The scan output value `negative_to_positive` selects negative conversion. Negative conversion has one interpretation: it reads each dye record's density through the selected film's response and applies a positive tone response from one curve family, whose constants a declared conversion style selects.
-- The built-in `standard` style uses automatic frame setup. It has no setup control and no scanner finish.
+- The built-in `standard` style is the frozen tone. The experimental full-frame setup is a separate off-by-default control and has no scanner finish.
 
 Image correction and digital output MUST NOT select a different scanned medium or a photographic print route.
 
@@ -169,7 +169,7 @@ The [Print exposure composition](../output-mix/design.md#print-exposure-composit
 - `negative_to_positive` accepts a negative film on `input > film > scan`, `film > scan`, or `input > convert-film > scan`. Paper, positive film, print-paper, and scan-minus-base routes remain ineligible.
 - The negative reconstruction reads developed record density over each record's own minimum. It inserts no synthetic scanner capture.
 - Film continuation reads the saved densities without repeating their formation.
-- The [lab scan contract](lab-scan/spec.md) owns the inverse, frame setup, tone, `standard` default, `neutral` migration alias, and fixed file styles. Fixed styles on simulated film continuation retain the frozen camera compensation; automatic `standard` setup does not subtract it again.
+- The [lab scan contract](lab-scan/spec.md) owns the inverse, the opt-in frame setup, tone, the `standard` default, the `neutral` migration alias, and fixed file styles. Every style retains the frozen camera compensation on simulated film continuation; the enabled setup does not subtract it again.
 - Scanner lens blur acts on transmitted light before density reconstruction. Output gamut compression, unsharp mask, encoding, CMYK ink style, and output handoff run after conversion.
 - `negative_to_positive` rejects active Procedural grain. Backend selection follows [GPU execution](../gpu-execution/spec.md#backend-selection).
 
@@ -221,7 +221,7 @@ The [Print exposure composition](../output-mix/design.md#print-exposure-composit
 - `direct_scan` MUST preserve the native polarity of the selected medium.
 - Negative reconstruction MUST read each record independently and acquire no receiver capture. Frame setup MAY depend on all records and pixels.
 - Negative conversion MUST produce finite, continuous output across the calibration range and finite tangent extrapolation outside it.
-- `standard` MUST run the frame setup and fixed tone in the [lab scan contract](lab-scan/spec.md). `neutral` MUST act as an input-only alias, not a historical fixed-render mode.
+- `standard` MUST run the fixed tone in the [lab scan contract](lab-scan/spec.md) and MUST NOT enable the experimental frame setup. `neutral` MUST act as an input-only alias, not a historical fixed-render mode.
 - A fixed file style MUST change the source tone only through the per-channel constants of the same logistic curve family. Its inverse and source tone remain record-independent and monotone.
 - Destination primary conversion MAY mix those source channels.
 - A `direct_scan` MUST produce identical pixels for the built-in style and any fixed style, because the style slot is inert on a direct scan.

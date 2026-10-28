@@ -529,7 +529,7 @@
   "controls.scanner.negative_to_positive": "Negative to positive",
   "controls.scanner.scan_output_help": "Preserve medium polarity keeps the scanned medium's native scan polarity: a negative film scan reads the negative image on the film, and a photographic-paper or slide scan already reads a positive image. Negative to positive interprets a developed negative as a positive image by inverting the film's own density records and applying the fixed positive tone response.",
   "controls.scanner.conversion_style": "conversion style",
-  "controls.scanner.conversion_style_help": "Named positive-conversion tone of the negative-to-positive interpretation. `standard` measures the whole frame for automatic exposure and color balance before the frozen tone; any other name is a declared style you place in data/scan-styles/, never a fitted surface. The selector lists the styles found there. A style applies only with scan output set to Negative to positive.",
+  "controls.scanner.conversion_style_help": "Named positive-conversion tone of the negative-to-positive interpretation. standard is the built-in frozen tone; any other name is a declared style you place in data/scan-styles/, never a fitted surface. The selector lists the styles found there. A style applies only with scan output set to Negative to positive.",
   "controls.scanner.conversion_inactive": "Conversion style inactive until Negative to positive is selected; stored values are retained.",
   "controls.scanner.lens_blur": "Lens blur (readout optics)",
   "controls.scanner.lens_blur_help": "Gaussian sigma in pixels on linear transmitted or reflected readout light, before negative conversion, gamut processing, sharpening and encoding. Identity points retain this optical order.",
@@ -1403,5 +1403,7 @@
   "controls.condition.preset_favorites": "Favorites retain built-in or user group identity",
   "controls.condition.preset_empty": "No matching presets",
   "photo_work.list.scope_feature_grain": "Feature profile: procedural grain (accepted profile and overrides)",
-  "photo_work.list.scope_feature_halation": "Feature profile: halation (accepted profile and overrides)"
+  "photo_work.list.scope_feature_halation": "Feature profile: halation (accepted profile and overrides)",
+  "controls.scanner.experimental_setup": "experimental frame setup",
+  "controls.scanner.experimental_setup_help": "Measure the whole developed frame for exposure, cast and contrast placement before the fixed tone. Off by default: the algorithm is a declared heuristic with no validated photographic model behind it, it makes the scan frame-dependent, and it cannot be baked into a point-wise LUT. Turning it off keeps the readout a fixed, frame-independent transform."
 }

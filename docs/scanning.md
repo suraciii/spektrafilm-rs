@@ -53,17 +53,19 @@ Convert-film uses a bounded eight-iteration inverse scan under `film_render.conv
 
 ## Conversion styles
 
-`scanner.conversion_style` defaults to `standard`. It measures the whole developed frame for automatic exposure and color balance, then applies the existing positive tone. It needs no data directory. `neutral` is an input-only migration alias; saved parameters report `standard`. This rename changes pixels because setup is now automatic.
+`scanner.conversion_style` defaults to `standard`, the built-in frozen tone. It needs no data directory. `neutral` is an input-only migration alias; saved parameters report `standard`. Any other name resolves to `data/scan-styles/<name>.json`.
 
-Standard setup uses a weighted mean/minimum/maximum density estimate and a partial exposure correction. Color correction compares the frame to the stock's neutral locus and reduces correction for dominant colors. These are declared product choices, not measured Frontier/Noritsu settings. Bright backgrounds can still darken a subject. No scene classifier or local tone mapper rescues it.
+### Experimental frame setup
 
-Standard setup does not subtract simulated camera exposure compensation a second time. Fixed styles retain the historical camera compensation. Setup runs after scanner lens blur, before tone and output processing.
+`scanner.experimental_setup` defaults to `false`. When enabled it measures the whole developed frame for exposure and color balance before the tone. It is off by default because the algorithm is a declared heuristic that has not been validated against real minilab references, not a measured Frontier or Noritsu behavior: it uses a weighted mean/minimum/maximum density estimate and a partial exposure correction, compares the frame to the stock's neutral locus, and reduces correction for dominant colors. Bright backgrounds can still darken a subject; no scene classifier or local tone mapper rescues it.
 
-A frame-dependent scan cannot be represented by a point-wise LUT. LUT baking and point-wise measurements that reach this setup fail and request a fixed style. Upstream density and exposure taps remain measurable.
+With the setup disabled, the readout is a fixed, frame-independent transform and no measurement cost is paid. The setup does not subtract simulated camera exposure compensation a second time; without it every style retains the historical camera compensation. The setup runs after scanner lens blur, before tone and output processing.
+
+A frame-dependent scan cannot be represented by a point-wise LUT. While the setup is enabled, LUT baking and point-wise measurements that reach it fail and ask the caller to disable it. Upstream density and exposure taps remain measurable either way.
 
 ## Operator correction
 
-After `standard` prepares its full-frame automatic baseline, four controls adjust the positive image before the fixed tone:
+Four controls adjust the positive image before the fixed tone. They are exposure-coordinate shifts and work with or without the experimental setup:
 
 | Field under `scanner.operator` | Default | Positive direction |
 | --- | --- | --- |
@@ -72,7 +74,7 @@ After `standard` prepares its full-frame automatic baseline, four controls adjus
 | `tint_ev` | `0` | More magenta; mean(R,B)−G exposure difference in stops |
 | `contrast` | `1` | Values above one increase common-exposure contrast about the reference |
 
-Warmth and tint are differential EV, not Kelvin. These controls do not change negative density, camera exposure, Convert recovery, or the automatic setup. Contrast does not amplify channel differences before tone. The nonlinear tone can still change perceived hue and saturation. See the [equations and numerical contract](../specs/film-chain/lab-scan/spec.md#operator-correction).
+Warmth and tint are differential EV, not Kelvin. These controls do not change negative density, camera exposure, Convert recovery, or the experimental setup. Contrast does not amplify channel differences before tone. The nonlinear tone can still change perceived hue and saturation. See the [equations and numerical contract](../specs/film-chain/lab-scan/spec.md#operator-correction).
 
 ```bash
 ./target/release/spektrafilm-f64 process input.tif -o corrected.tif \

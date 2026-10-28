@@ -1201,6 +1201,7 @@ fn key(label: &str) -> Option<&'static str> {
         "confirmation required" => Some("controls.condition.confirm"),
         "contrast" => Some("controls.scanner.contrast"),
         "conversion style" => Some("controls.scanner.conversion_style"),
+        "experimental frame setup" => Some("controls.scanner.experimental_setup"),
         "copy operator correction" => Some("controls.scanner.copy_correction"),
         "core Halation feature-profile scope; inactive values retained" => {
             Some("controls.condition.halation_scope")

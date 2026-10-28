@@ -203,7 +203,7 @@ pub struct ScannerParams {
     #[serde(default = "default_direct_scan")]
     pub scan_output: String,
     /// Named positive-conversion style applied by the negative-to-positive
-    /// interpretation: `standard` is the automatic built-in; any other
+    /// interpretation: `standard` is the built-in frozen tone; any other
     /// name resolves to `data/scan-styles/<name>.json` (declared
     /// per-channel tone parameters, never fitted). Meaningful only with
     /// `scan_output = negative_to_positive`.
@@ -213,6 +213,13 @@ pub struct ScannerParams {
         serialize_with = "serialize_conversion_style"
     )]
     pub conversion_style: String,
+    /// Experimental full-frame setup for the negative-to-positive
+    /// interpretation: it measures the developed frame for exposure, cast and
+    /// contrast placement before the fixed tone. The algorithm is not a
+    /// validated photographic model, so it is off unless a caller asks for it.
+    /// It makes the scan frame-dependent and therefore unbakeable.
+    #[serde(default)]
+    pub experimental_setup: bool,
     /// Standard negative-to-positive corrections; inactive routes require defaults.
     #[serde(default)]
     pub operator: ScanOperatorParams,
@@ -227,6 +234,7 @@ impl Default for ScannerParams {
         Self {
             scan_output: default_direct_scan(),
             conversion_style: default_conversion_style(),
+            experimental_setup: false,
             operator: ScanOperatorParams::default(),
             lens_blur: 0.0,
             unsharp_mask: default_unsharp(),
@@ -239,18 +247,26 @@ fn default_conversion_style() -> String {
 }
 
 impl ScannerParams {
-    /// Automatic standard setup must observe the complete working frame.
+    /// Experimental automatic setup must observe the complete working frame.
     pub fn requires_full_frame(&self) -> bool {
-        self.scan_output == "negative_to_positive" && self.uses_standard()
+        self.scan_output == "negative_to_positive" && self.experimental_setup
     }
 
-    /// The built-in automatic style. `neutral` is an input-only migration alias.
-    pub fn uses_standard(&self) -> bool {
+    /// Whether manual operator corrections reach the render: the built-in tone
+    /// on the negative interpretation. Declared fixed styles are complete tone
+    /// definitions and reject correction.
+    pub fn operator_eligible(&self) -> bool {
+        self.scan_output == "negative_to_positive" && self.uses_builtin_tone()
+    }
+
+    /// Whether the style resolves to the built-in frozen tone. `neutral` is an
+    /// input-only migration alias for it.
+    pub fn uses_builtin_tone(&self) -> bool {
         matches!(self.conversion_style.as_str(), "standard" | "neutral")
     }
 
     pub fn conversion_style_name(&self) -> &str {
-        if self.uses_standard() {
+        if self.uses_builtin_tone() {
             "standard"
         } else {
             &self.conversion_style
@@ -1003,7 +1019,7 @@ mod tests {
         params.scanner.operator.exposure_ev = 0.5;
         assert!(params.validate().unwrap_err().contains("scanner.operator"));
         params.scanner.scan_output = "negative_to_positive".into();
-        assert!(params.scanner.requires_full_frame());
+        assert!(!params.scanner.requires_full_frame());
         assert!(
             params
                 .validate()
@@ -1071,9 +1087,13 @@ mod tests {
             serde_json::to_value(&params).unwrap()["scanner"]["conversion_style"],
             "standard"
         );
+        assert!(!params.scanner.experimental_setup);
         params.debug.lut_mode = true;
         params.scanner.scan_output = "negative_to_positive".into();
+        params.validate().unwrap();
+        params.scanner.experimental_setup = true;
         assert!(params.validate().unwrap_err().contains("point-wise LUT"));
+        params.scanner.experimental_setup = false;
         params.scanner.conversion_style = "fixed-probe".into();
         params.validate().unwrap();
         assert!(

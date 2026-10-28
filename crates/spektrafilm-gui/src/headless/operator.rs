@@ -11,6 +11,10 @@ fn standard_operator(h: &mut Harness<'_, App>) {
     reveal_control(h, "scanner.scan_output");
     choose(h, "scan output", "Negative to positive");
     assert_eq!(h.state().params.scanner.conversion_style, "standard");
+    // The full-frame preview contract belongs to the experimental setup: only
+    // the setup needs the complete frame, so opt in where a test asserts it.
+    h.state_mut().params.scanner.experimental_setup = true;
+    h.run_steps(3);
     operator_controls(h);
 }
 

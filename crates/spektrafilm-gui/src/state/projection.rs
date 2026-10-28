@@ -357,7 +357,7 @@ impl GuiState {
     /// Resolve retained editing intent into the core render contract.
     pub fn effective_runtime_params(&self) -> Result<RuntimeParams> {
         let mut params = self.runtime_params()?;
-        if !params.scanner.requires_full_frame() {
+        if !params.scanner.operator_eligible() {
             params.scanner.operator = Default::default();
         }
         params.validate_detailed().map_err(anyhow::Error::new)?;

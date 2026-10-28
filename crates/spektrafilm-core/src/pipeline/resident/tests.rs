@@ -19,6 +19,7 @@ fn n2p_fence_params() -> RuntimeParams {
     params.io.output_cctf_encoding = false;
     params.film_render.grain.active = false;
     params.scanner.scan_output = "negative_to_positive".into();
+    params.scanner.experimental_setup = true;
     params.scanner.lens_blur = 1.0;
     params.scanner.unsharp_mask = [0.0, 0.0];
     params
