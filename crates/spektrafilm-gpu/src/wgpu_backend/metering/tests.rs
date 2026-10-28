@@ -25,9 +25,9 @@ fn metering_matches_reference_patterns_and_black_boundary() {
         method: String::new(),
         mid_grey: 0.184,
     };
-    // Frozen upstream float64 fixture also used by core's meter regression.
-    // A 1e-5 EV bound is that fixture's existing reference budget; native-f32
-    // source rounding is below this bound, not a different sampling law.
+    // Frozen CPU f64 fixture. The former device-f64 budget was 1e-5 EV.
+    // On llvmpipe the device-f32 maximum was 7.627e-5 EV (highlight-weighted);
+    // 2e-4 EV leaves over 2.6x margin for device arithmetic differences.
     for (method, expected) in [
         ("average", -1.427705567203),
         ("median", -1.308011314552),
@@ -43,7 +43,7 @@ fn metering_matches_reference_patterns_and_black_boundary() {
             .meter(&gpu.pipe)
             .unwrap();
         assert!(
-            (actual - expected).abs() < 1e-5,
+            (actual - expected).abs() < 2e-4,
             "{method}: device {actual}, reference {expected}"
         );
     }
@@ -79,8 +79,9 @@ fn metering_matches_reference_patterns_and_black_boundary() {
         .unwrap()
         .meter(&gpu.pipe)
         .unwrap();
+    // Former f64 budget: 1e-12 EV; llvmpipe f32 error: 3.728e-7 EV.
     assert!(
-        (actual - expected).abs() < 1e-12,
+        (actual - expected).abs() < 1e-6,
         "decoded gray EV {actual} != {expected}"
     );
 }
@@ -193,12 +194,14 @@ fn paged_metering_keeps_frozen_full_source_preview_budget() {
     };
     // Source (720000 bytes) and old vertical scratch exceed this limit;
     // the unchanged full preview luminance grid still fits it.
+    // Former f64 budget: 1e-5 EV; llvmpipe f32 error: 1.614e-5 EV.
+    // The 4e-5 EV budget retains over 2.4x margin.
     let actual = build_meter_state_with_limit(&gpu, &params, &source, 400_000)
         .unwrap()
         .meter(&gpu.pipe)
         .unwrap();
     assert!(
-        (actual - -1.427705567203).abs() < 1e-5,
+        (actual - -1.427705567203).abs() < 4e-5,
         "paged full-source EV {actual}"
     );
 }
