@@ -690,18 +690,7 @@ mod direct_tests {
 
     #[test]
     fn scan_direct_restricted_device_matches_cpu() {
-        let _guard = crate::test_support::device_lock();
-        let previous = std::env::var_os("SPEKTRAFILM_GPU_DISABLE_F64");
-        unsafe {
-            std::env::set_var("SPEKTRAFILM_GPU_DISABLE_F64", "1");
-        }
-        let gpu = WgpuBackend::new().expect("WGPU adapter required for GPU tests");
-        unsafe {
-            match previous {
-                Some(value) => std::env::set_var("SPEKTRAFILM_GPU_DISABLE_F64", value),
-                None => std::env::remove_var("SPEKTRAFILM_GPU_DISABLE_F64"),
-            }
-        }
+        let gpu = crate::test_support::restricted_adapter();
         assert!(
             !gpu.device
                 .features()
