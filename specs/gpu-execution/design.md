@@ -131,7 +131,9 @@ DIR exponential tails and channel-specific halation MUST NOT be approximated awa
 
 Floating tolerances MUST be frozen per stage and complete scenario using the [acceptance rules](spec.md#acceptance). They MUST protect endpoints, dark-region behavior, signed samples, neutral preservation, continuity, optical profiles, and spatial correlation, not only average final RGB error. File-encoding tolerance MUST remain separate from floating computation tolerance.
 
-A device without native f64 does not waive reference-sensitive arithmetic. The GPU implementation MUST retain the decisions its owning engine requires, in that engine's declared arithmetic (native binary64, a stage-declared f32 kernel under its frozen budget, or validated integer or extended-precision arithmetic), or fail explicitly. A capability limitation is not permission for a CPU image-stage fallback or an approximate model. [Devices without native f64](#devices-without-native-f64) owns which stages may declare f32.
+A device without native f64 does not waive reference-sensitive arithmetic. The GPU implementation MUST retain the decisions its owning engine requires, or fail explicitly.
+
+The declared arithmetic is native binary64, a stage-declared f32 kernel under its frozen budget, or validated integer or extended-precision arithmetic. A capability limitation is not permission for a CPU image-stage fallback or an approximate model. [Devices without native f64](#devices-without-native-f64) owns which stages MAY declare f32.
 
 No universal f64 shader-support requirement is added to WGPU.
 
@@ -214,7 +216,9 @@ Partial resource retirement MUST NOT mark a complete image batch ready.
 
 Gaussian gathering and scattering MUST address target-channel samples on the device without changing sample bits. Copy-only or binding-incompatible storage MAY use bounded contiguous device copies for adaptation, but host commands MUST NOT be generated for individual pixels or filter taps.
 
-Gaussian transport MUST preserve the reference support, endpoint policy, and axis order. Recursive filter state MUST continue through forward and backward page boundaries without restarting. Above sigma 8, CPU and device both use the reflected unit-sum box cascade with the same width selection; the frozen kernel error against the truncated Gaussian is 1.68e-3 at sigma 8, 3.33e-4 at 32, and 7.10e-5 at 147 of unit kernel mass, and no smaller-sigma branch changes.
+Gaussian transport MUST preserve the reference support, endpoint policy, and axis order. Recursive filter state MUST continue through forward and backward page boundaries without restarting. Above sigma 8, CPU and device both use the reflected unit-sum box cascade with the same width selection.
+
+Its frozen kernel error against the truncated Gaussian is 1.68e-3 at sigma 8, 3.33e-4 at 32, and 7.10e-5 at 147 of unit kernel mass. No smaller-sigma branch changes.
 
 Gaussian page planning SHOULD balance serial coordinate work against independent lines. A complete supported raster that fits binding, coordinate, and line-state limits SHOULD remain one page.
 
