@@ -126,7 +126,6 @@ pub enum ValidationReason {
     TomlDatetime,
     ScanNegativeProfile,
     ScanFiniteDensity,
-    ScanProceduralGrain,
 }
 
 use ValidationReason as Reason;

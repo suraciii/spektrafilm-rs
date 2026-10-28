@@ -1129,9 +1129,7 @@ impl Preset {
     ) -> Result<RuntimeParams, PresetDocumentError> {
         let params = self.overlay_section_detailed(current)?;
         params.validate_detailed()?;
-        let scan_changed = params.scanner.scan_output != current.scanner.scan_output
-            || params.film_render.grain.active != current.film_render.grain.active
-            || params.film_render.grain.engine != current.film_render.grain.engine;
+        let scan_changed = params.scanner.scan_output != current.scanner.scan_output;
         if scan_changed
             || !params.scanner.operator.is_default()
             || crate::pipeline_calibration::validate_scan_output(current, film).is_ok()

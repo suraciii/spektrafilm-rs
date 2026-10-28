@@ -815,17 +815,20 @@ fn section_application_rejects_new_invalid_scan_route_but_allows_legacy_state() 
 }
 
 #[test]
-fn section_application_checks_grain_before_commit() {
+fn section_application_checks_validation_before_commit() {
     let film = test_film();
     let mut current = RuntimeParams::default();
     current.workflow.route = "input > film > scan".into();
     current.io.scan_film = true;
     current.scanner.scan_output = "negative_to_positive".into();
-    current.film_render.grain.active = false;
+    // A contextual rejection: the section is valid against the default
+    // parameters, and invalid against this workflow, whose frame setup needs
+    // `negative_to_positive`.
+    current.scanner.experimental_setup = true;
     let section = Preset::from_json_str(
         &serde_json::json!({
-            "schema_version":2,"name":"Invalid scan combination",
-            "parameters":{"film_render":{"grain":{"active":true,"engine":"procedural"}}},
+            "schema_version":2,"name":"Invalid scan output",
+            "parameters":{"scanner":{"scan_output":"direct_scan"}},
             "provenance":provenance()
         })
         .to_string(),

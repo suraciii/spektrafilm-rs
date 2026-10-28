@@ -2175,6 +2175,49 @@ fn completed_density_rejects_camera_reinterpretation_but_allows_future_procedura
     );
 }
 
+/// Procedural composites in the scanner's encoded output, so the negative
+/// route must render it, not merely accept the parameters. Comparing against a
+/// grain-free render catches a route that silently skips the stage.
+#[test]
+fn negative_to_positive_renders_procedural_grain() {
+    let backend = spektrafilm_backend::cpu_backend::CpuBackend;
+    let dir = data_dir();
+    let film = crate::profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();
+    let print = crate::profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap();
+    let input = ImageBuf::from_data(
+        48,
+        32,
+        (0..48 * 32)
+            .flat_map(|i| {
+                let v = 0.30 + 0.004 * f64::from(i % 48);
+                [from_f64(v), from_f64(v * 0.95), from_f64(v * 0.9)]
+            })
+            .collect(),
+    );
+    let render = |active: bool| {
+        let mut params = RuntimeParams::default();
+        params.workflow.route = "input > film > scan".into();
+        params.io.scan_film = true;
+        params.scanner.scan_output = "negative_to_positive".into();
+        params.camera.auto_exposure = false;
+        params.film_render.halation.active = false;
+        params.film_render.dir_couplers.active = false;
+        params.film_render.grain.active = active;
+        params.film_render.grain.engine = crate::params::GrainEngine::Procedural;
+        params.random_seed = 4242;
+        let mut pipeline = Pipeline::new_with_spectral(film.clone(), print.clone(), params, &dir)
+            .expect("negative_to_positive must accept Procedural");
+        let output = pipeline.process(input.clone(), &backend).unwrap();
+        output
+    };
+    let with_grain = render(true);
+    let without_grain = render(false);
+    assert_ne!(
+        with_grain.data, without_grain.data,
+        "Procedural must change the rendered samples on the negative route"
+    );
+}
+
 #[test]
 fn continuing_print_reinitializes_replaced_material_and_retains_film_seed_lineage() {
     use crate::stage_execution::{StageResult, continue_stage};
