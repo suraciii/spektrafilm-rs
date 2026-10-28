@@ -1,7 +1,14 @@
 // Grain V2 working-domain resolution passes.
 // dimensions: width, height, axis (0/1; 2 = native encoded input), optical.
 // taps: weight count, CCTF wire code (`Cctf::code()` in colorspace.rs),
-// reserved, reserved.
+// along-axis base, across-axis base.
+//
+// `window.w` selects how the input is addressed:
+//   0  resident frame, global row-major.
+//   1  strided single segment: `window.x` starts along the axis and `window.z`
+//      is the stride between the two sides; used to stage one line.
+//   2  full-width row band: `window.x` is the first sample, `window.y` the
+//      sample count, `window.z` the row span and `taps.w` the first row.
 struct Params { dimensions:vec4<u32>, taps:vec4<u32>, matrix:array<vec4<f32>,3>, window:vec4<u32> }
 @group(0) @binding(0) var<uniform> p:Params;
 @group(0) @binding(1) var<storage,read> input:array<f32>;
@@ -43,8 +50,11 @@ fn at(pos:vec2<i32>)->vec3<f32> {
  var i=(xy.y*p.dimensions.x+xy.x)*3u;
  if(p.window.w==2u){
   // Row window: whole image rows, strided by the full width, so a column pass
-  // reads them without transposing the frame.
-  i=((xy.y-p.taps.w)*p.dimensions.x+xy.x)*3u;
+  // reads them without transposing the frame. `taps.w` is the window's first
+  // row and `window.z` its row count; clamping into the window keeps a host
+  // that under-sizes the margin from wrapping the row index.
+  let row=clamp(i32(xy.y)-i32(p.taps.w),0,max(i32(p.window.z)-1,0));
+  i=(u32(row)*p.dimensions.x+xy.x)*3u;
  } else if(p.window.w==1u){
   let along=select(xy.x,xy.y,p.dimensions.z==1u);
   let across=select(xy.y,xy.x,p.dimensions.z==1u);

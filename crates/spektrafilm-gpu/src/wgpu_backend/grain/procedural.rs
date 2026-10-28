@@ -281,8 +281,19 @@ impl WgpuBackend {
             } as u64;
             if (2 * reach + 1) * 24 <= limit && weights.len() as u64 * 8 <= limit {
                 let count = (page / 2).saturating_sub(2 * reach).max(1);
+                // Axis 0 keeps one job per row segment; axis 1 emits one job per
+                // band (or a command pair per pixel on the fallback) plus the
+                // band's row copies.
+                let (band, banded, window_rows) =
+                    column_band_plan(page, width, height, reach as u32);
+                let _ = window_rows;
                 let jobs = u64::from(height) * u64::from(width).div_ceil(count)
-                    + u64::from(width) * u64::from(height).div_ceil(count);
+                    + if banded {
+                        u64::from(height).div_ceil(u64::from(band)) * 2
+                            + u64::from(height).div_ceil(u64::from(band)) * 2 * reach
+                    } else {
+                        u64::from(width) * u64::from(height).div_ceil(count)
+                    };
                 bytes += u128::from(page) * 12 + weights.len() as u128 * 8 + u128::from(jobs) * 96;
             } else {
                 let taps = if optical {
@@ -303,6 +314,33 @@ impl WgpuBackend {
         }
         u64::try_from(bytes).map_err(|_| "procedural grain resource plan overflows".into())
     }
+}
+
+/// Row-band plan for the vertical Film Resolution pass.
+///
+/// Returns the band height, whether bands are usable at all, and how many
+/// source rows the window must hold.
+fn column_band_plan(page: u64, width: u32, height: u32, reach: u32) -> (u32, bool, u64) {
+    // A frame that fits the window is one band: its margins clamp to the frame
+    // itself, so it needs only `height` rows however thin it is.
+    let whole = u64::from(width) * u64::from(height) <= page;
+    let band = if whole {
+        height
+    } else {
+        (page / u64::from(width))
+            .saturating_sub(2 * u64::from(reach) + 1)
+            .max(1) as u32
+    };
+    // Otherwise the window must hold the band plus both tap margins. Frames too
+    // thin or too wide for either keep the per-column path, which costs one
+    // command pair per pixel.
+    let banded = whole || (u64::from(band) + 2 * u64::from(reach)) * u64::from(width) <= page;
+    let window_rows = if whole {
+        u64::from(height)
+    } else {
+        u64::from(band) + 2 * u64::from(reach)
+    };
+    (band, banded, window_rows)
 }
 
 #[repr(C)]
@@ -366,10 +404,7 @@ fn build_resolution(
         // result back, which is 122 million commands on a 61 MP frame and the
         // reason that frame peaked at 21 GB. Copy a band of whole rows instead
         // and address them with the image width in the shader.
-        let band = (page / width).saturating_sub(2 * reach as u32 + 1).max(1);
-        // A device whose window cannot hold one row plus its margins keeps the
-        // per-column path; that case only arises for test-sized limits.
-        let banded = (band + 2 * reach as u32) * width <= page;
+        let (band, banded, _) = column_band_plan(u64::from(page), width, height, reach as u32);
         for axis in 0..2 {
             let source = if axis == 0 { original } else { horizontal };
             let destination = if axis == 0 { horizontal } else { filtered };
@@ -670,6 +705,24 @@ impl GrainV2State {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The band plan decides between one bulk pass and a command per pixel, so
+    /// pin the geometries that used to fall to the slow side.
+    #[test]
+    fn column_band_plan_covers_thin_and_wide_frames() {
+        // A whole frame fits the window: one band, even though it is thinner
+        // than the tap margins.
+        let (_, banded, rows) = column_band_plan(20_000 * 2, 20_000, 2, 8);
+        assert!(banded, "a frame that fits the window must band");
+        assert_eq!(rows, 2);
+        // Fewer columns than one window: no band can hold a row plus margins.
+        let (_, banded, _) = column_band_plan(1_728, 20_000, 2, 8);
+        assert!(!banded, "a row wider than the window cannot band");
+        // An ordinary 61 MP frame bands with full margins.
+        let (band, banded, rows) = column_band_plan(11_000_000, 9_568, 6_376, 8);
+        assert!(banded);
+        assert_eq!(rows, u64::from(band) + 16);
+    }
 
     #[test]
     fn procedural_windows_preserve_absolute_coordinates_and_resolution() {
