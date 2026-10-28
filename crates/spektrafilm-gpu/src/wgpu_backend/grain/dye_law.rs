@@ -18,6 +18,8 @@
 //! and bands join without seams.
 
 use super::*;
+use crate::gpu_helpers::{f32_to_scalars, scalars_to_f32};
+use spektrafilm_math::precision::{ZERO, from_f64, to_f64};
 
 const BLUR_WGSL: &str = include_str!("dye_law_blur.wgsl");
 const COMBINE_WGSL: &str = include_str!("dye_law_combine.wgsl");
@@ -266,7 +268,7 @@ fn resample_readout(
     let sh = film.height as usize;
     let dw = grid.width as usize;
     let dh = grid.height as usize;
-    let mut out = vec![0.0f32; dw * dh * 3];
+    let mut out = vec![ZERO; dw * dh * 3];
     for y in 0..dh {
         let fy0 = (grid.origin_um[1] + y as f64 * grid.pitch_um[1]) / source_pitch_um;
         let fy1 = fy0 + grid.pitch_um[1] / source_pitch_um;
@@ -288,7 +290,7 @@ fn resample_readout(
                             let sxc = sx.clamp(0, sw as i64 - 1) as usize;
                             let base = (syc * sw + sxc) * 3;
                             for (c, slot) in acc.iter_mut().enumerate() {
-                                *slot += w * film.data[base + c] as f64;
+                                *slot += w * to_f64(film.data[base + c]);
                             }
                             weight += w;
                         }
@@ -298,7 +300,7 @@ fn resample_readout(
                 }
                 let norm = if weight > 0.0 { weight } else { 1.0 };
                 for c in 0..3 {
-                    out[(y * dw + x) * 3 + c] = (acc[c] / norm) as f32;
+                    out[(y * dw + x) * 3 + c] = from_f64(acc[c] / norm);
                 }
             } else {
                 let sx = ((fx0 + fx1) * 0.5 - 0.5).clamp(0.0, (sw - 1) as f64);
@@ -307,8 +309,8 @@ fn resample_readout(
                 let y0 = sy.floor() as usize;
                 let x1 = (x0 + 1).min(sw - 1);
                 let y1 = (y0 + 1).min(sh - 1);
-                let wx = (sx - x0 as f64) as f32;
-                let wy = (sy - y0 as f64) as f32;
+                let wx = from_f64(sx - x0 as f64);
+                let wy = from_f64(sy - y0 as f64);
                 for c in 0..3 {
                     let p00 = film.data[(y0 * sw + x0) * 3 + c];
                     let p10 = film.data[(y0 * sw + x1) * 3 + c];
@@ -916,7 +918,8 @@ impl WgpuBackend {
         if !(pitch_um.is_finite() && pitch_um > 0.0) {
             return Err("Dye grain law: the source pitch must be positive".into());
         }
-        let band = LawBand::new(self, width, height, "dye_law_field", Some(&image.data));
+        let upload = scalars_to_f32(&image.data);
+        let band = LawBand::new(self, width, height, "dye_law_field", Some(&upload));
         let geom = LawGeom {
             origin_x: 0,
             origin_y: 0,
@@ -942,7 +945,7 @@ impl WgpuBackend {
         self.queue.submit(Some(encoder.finish()));
         let data: Vec<f32> = self.pipe.read_mapped(&staging, bytes);
         let film = ImageBuf {
-            data,
+            data: f32_to_scalars(data),
             width,
             height,
         };

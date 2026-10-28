@@ -21,7 +21,7 @@
 use rayon::prelude::*;
 use spektrafilm_math::gaussian;
 use spektrafilm_math::image::ImageBuf;
-use spektrafilm_math::precision::from_f64;
+use spektrafilm_math::precision::{Scalar, ZERO, from_f32, from_f64, to_f64};
 use spektrafilm_math::stats::{FastStatsRng, poisson_exact};
 
 /// Octave centres (µm) and weights; weights are normalised by the caller.
@@ -48,10 +48,10 @@ fn texture_octaves() -> Vec<(f64, f64)> {
 
 /// Build a zero-mean, unit-variance multi-octave field. Octave length is the
 /// Gaussian sigma in micrometres; weights are normalised here.
-fn correlated_field(w: usize, h: usize, pitch_um: f64, seed: u64, field: u32) -> Vec<f32> {
+fn correlated_field(w: usize, h: usize, pitch_um: f64, seed: u64, field: u32) -> Vec<Scalar> {
     let octs = texture_octaves();
     let norm = octs.iter().map(|(_, v)| v * v).sum::<f64>().sqrt();
-    let mut combined = vec![0.0f32; w * h];
+    let mut combined = vec![ZERO; w * h];
     for (o, (length_um, weight)) in octs.iter().enumerate() {
         let v0 = noise_field(w, h, seed, field * 8 + o as u32);
         // A real Gaussian, because the box approximation cannot resolve sigma < 1 px
@@ -63,7 +63,7 @@ fn correlated_field(w: usize, h: usize, pitch_um: f64, seed: u64, field: u32) ->
             (length_um / pitch_um / 2.0) as f32,
         );
         standardize(&mut v);
-        let k = (weight / norm) as f32;
+        let k = from_f64(weight / norm);
         combined
             .par_iter_mut()
             .zip(v.par_iter())
@@ -162,7 +162,7 @@ pub struct ClumpParams {
     /// large-scale dark patches; the octave list decides which of the two dominates.
     pub level_mode: bool,
     /// Shared field, installed by [`apply`] before the records are realised.
-    pub shared_white: std::sync::Arc<Vec<f32>>,
+    pub shared_white: std::sync::Arc<Vec<Scalar>>,
     /// Correlated field instead of per-pixel noise (texture from aggregate scale).
     pub texture: bool,
 }
@@ -248,15 +248,15 @@ impl ClumpParams {
 }
 
 /// Box blur: horizontal `src -> tmp`, then vertical `tmp -> src` (edge replicated).
-fn box_blur(src: &mut [f32], tmp: &mut [f32], w: usize, h: usize, half: usize) {
+fn box_blur(src: &mut [Scalar], tmp: &mut [Scalar], w: usize, h: usize, half: usize) {
     if half == 0 {
         return;
     }
-    let n = (2 * half + 1) as f32;
+    let n = from_f64((2 * half + 1) as f64);
     tmp.par_chunks_mut(w).enumerate().for_each(|(y, row)| {
         let base = y * w;
         for (x, value) in row.iter_mut().enumerate() {
-            let mut acc = 0.0f32;
+            let mut acc = ZERO;
             for k in 0..=2 * half {
                 let xx = (x + k).saturating_sub(half).min(w - 1);
                 acc += src[base + xx];
@@ -266,7 +266,7 @@ fn box_blur(src: &mut [f32], tmp: &mut [f32], w: usize, h: usize, half: usize) {
     });
     src.par_chunks_mut(w).enumerate().for_each(|(y, row)| {
         for x in 0..w {
-            let mut acc = 0.0f32;
+            let mut acc = ZERO;
             for k in 0..=2 * half {
                 let yy = (y + k).saturating_sub(half).min(h - 1);
                 acc += tmp[yy * w + x];
@@ -276,7 +276,7 @@ fn box_blur(src: &mut [f32], tmp: &mut [f32], w: usize, h: usize, half: usize) {
     });
 }
 
-fn box_blur_approx(field: &mut [f32], tmp: &mut [f32], w: usize, h: usize, sigma_px: f64) {
+fn box_blur_approx(field: &mut [Scalar], tmp: &mut [Scalar], w: usize, h: usize, sigma_px: f64) {
     if sigma_px <= 0.35 {
         return;
     }
@@ -311,45 +311,48 @@ fn normal01(seed: u32, stream: u32, x: u32, y: u32) -> f32 {
 
 /// One field of coordinate-addressed noise. `stream` matches the device pass, so the
 /// same seed and stream produce the same field on both executors.
-fn noise_field(w: usize, h: usize, seed: u64, stream: u32) -> Vec<f32> {
-    let mut v = vec![0.0f32; w * h];
+fn noise_field(w: usize, h: usize, seed: u64, stream: u32) -> Vec<Scalar> {
+    let mut v = vec![ZERO; w * h];
     let seed = seed as u32;
     v.par_chunks_mut(w).enumerate().for_each(|(y, row)| {
         for (x, cell) in row.iter_mut().enumerate() {
-            *cell = normal01(seed, stream, x as u32, y as u32);
+            *cell = from_f32(normal01(seed, stream, x as u32, y as u32));
         }
     });
     v
 }
 
-fn standardize(v: &mut [f32]) {
-    let mean = v.par_iter().map(|&x| x as f64).sum::<f64>() / v.len() as f64;
+fn standardize(v: &mut [Scalar]) {
+    let mean = v.par_iter().map(|&x| to_f64(x)).sum::<f64>() / v.len() as f64;
     let var = v
         .par_iter()
         .map(|&x| {
-            let d = x as f64 - mean;
+            let d = to_f64(x) - mean;
             d * d
         })
         .sum::<f64>()
         / v.len() as f64;
     let sd = var.sqrt().max(1e-12);
-    let (scale, shift) = ((1.0 / sd) as f32, mean as f32);
+    let (scale, shift) = (from_f64(1.0 / sd), from_f64(mean));
     v.par_iter_mut().for_each(|x| *x = (*x - shift) * scale);
 }
 
 /// Realize one channel of the clump law on a 1:1 field.
+// Field buffers, geometry, law parameters, and shared fields stay explicit at this
+// realization boundary; grouping them would obscure the executor parity contract.
+#[allow(clippy::too_many_arguments)]
 fn channel(
-    target: &[f32],
-    out: &mut [f32],
+    target: &[Scalar],
+    out: &mut [Scalar],
     w: usize,
     h: usize,
     pitch_um: f64,
     p: &ClumpParams,
     c: usize,
-    shared: &[Vec<f32>],
+    shared: &[Vec<Scalar>],
 ) -> Result<(), String> {
-    let mut tmp = vec![0.0f32; w * h];
-    let mut delta = vec![0.0f32; w * h];
+    let mut tmp = vec![ZERO; w * h];
+    let mut delta = vec![ZERO; w * h];
     let octs = octaves();
     let norm = octs.iter().map(|(_, v)| v * v).sum::<f64>().sqrt();
     // Relative modulation is tapered where the record density is already high: the
@@ -387,9 +390,9 @@ fn channel(
         );
         standardize(&mut independent);
         let us = &shared[o];
-        let a = p.rho.sqrt() as f32;
-        let b = (1.0 - p.rho).sqrt() as f32;
-        let k = (weight / norm) as f32;
+        let a = from_f64(p.rho.sqrt());
+        let b = from_f64((1.0 - p.rho).sqrt());
+        let k = from_f64(weight / norm);
         delta.par_iter_mut().enumerate().for_each(|(i, d)| {
             *d += k * (a * us[i] + b * independent[i]);
         });
@@ -410,9 +413,9 @@ fn channel(
     // texture comes from the clump *extent*, not from a level modulation.
     if let Some((kbar, clump_um)) = clump_params() {
         let qc = q * kbar;
-        let mut mass = vec![0.0f32; w * h];
+        let mut mass = vec![ZERO; w * h];
         mass.par_iter_mut().enumerate().for_each(|(i, m)| {
-            let tv = target[i * 3 + c] as f64;
+            let tv = to_f64(target[i * 3 + c]);
             let index = (((i / w) as u64) << 32) | (i % w) as u64;
             // One effective record draws one count: a monochrome realization must be
             // identical in all three lanes.
@@ -433,18 +436,18 @@ fn channel(
                     .map(|v| v as f64)
                     .unwrap_or(0.0)
             };
-            *m = (count * k) as f32;
+            *m = from_f64(count * k);
         });
         box_blur_approx(&mut mass, &mut tmp, w, h, clump_um / pitch_um);
         out.par_iter_mut().enumerate().for_each(|(i, o)| {
-            *o = from_f64(q * mass[i] as f64 / area);
+            *o = from_f64(q * to_f64(mass[i]) / area);
         });
         return Ok(());
     }
     out.par_iter_mut()
         .enumerate()
         .try_for_each(|(i, o)| -> Result<(), String> {
-            let t = target[i * 3 + c] as f64;
+            let t = to_f64(target[i * 3 + c]);
             // Grain-vs-density response is *derived*, not tuned: for n particles with
             // development probability p, Var = n p (1-p); with the particle budget
             // reduced by `saturation` the standard deviation follows
@@ -466,19 +469,19 @@ fn channel(
                 1.0
             } else {
                 let wi = {
-                    let a = p.rho.sqrt() as f32;
-                    let b = (1.0 - p.rho).sqrt() as f32;
+                    let a = from_f64(p.rho.sqrt());
+                    let b = from_f64((1.0 - p.rho).sqrt());
                     a * p.shared_white[i] + b * white_independent[i]
                 };
                 if p.level_mode {
-                    let dm = sigma * delta[i] as f64 + sigma_white * wi as f64
+                    let dm = sigma * to_f64(delta[i]) + sigma_white * to_f64(wi)
                         - 0.5 * (sigma * sigma + sigma_white * sigma_white);
                     if dm > 40.0 { 40.0_f64.exp() } else { dm.exp() }
                 } else {
                     let m = if p.texture {
                         1.0
                     } else {
-                        (1.0 + sigma * delta[i] as f64).clamp(0.05, 3.0)
+                        (1.0 + sigma * to_f64(delta[i])).clamp(0.05, 3.0)
                     };
                     // Absolute density granularity saturates with density (Selwyn): a purely
                     // relative amplitude makes the densest (brightest) areas the grainiest,
@@ -500,7 +503,7 @@ fn channel(
                     // base density: w = 1 / (1 + (t / 0.1)^2).
                     let w = 1.0 / (1.0 + (t / 0.1) * (t / 0.1));
                     let rel = sigma_white * taper * amp + p.fog_grain * w / (t.max(0.0) + 0.02);
-                    (1.0 + rel * wi as f64 * m).max(0.02)
+                    (1.0 + rel * to_f64(wi) * m).max(0.02)
                 }
             };
             // Fog baseline: a developed record still carries base density, so the event
@@ -530,12 +533,12 @@ fn clump_params() -> Option<(f64, f64)> {
 /// Bilinear read of the developed density at each readout cell centre. The law is
 /// defined on the source raster; the readout grid only changes where it is sampled.
 fn resample_density(
-    src: &[f32],
+    src: &[Scalar],
     sw: usize,
     sh: usize,
     source_pitch_um: f64,
     grid: &ReadoutGeometry,
-) -> Vec<f32> {
+) -> Vec<Scalar> {
     // Each readout cell names a film-coordinate window. Finer than the lattice, it
     // interpolates that window's centre; coarser, it integrates the lattice cells the
     // window covers. Integrating rather than point sampling is what makes a cropped
@@ -543,7 +546,7 @@ fn resample_density(
     // render split into stages identical to the same render done in one pass.
     let dw = grid.width as usize;
     let dh = grid.height as usize;
-    let mut out = vec![0.0f32; dw * dh * 3];
+    let mut out = vec![ZERO; dw * dh * 3];
     for y in 0..dh {
         let fy0 = (grid.origin_um[1] + y as f64 * grid.pitch_um[1]) / source_pitch_um;
         let fy1 = fy0 + grid.pitch_um[1] / source_pitch_um;
@@ -564,7 +567,7 @@ fn resample_density(
                             let syc = sy.clamp(0, sh as i64 - 1) as usize;
                             let sxc = sx.clamp(0, sw as i64 - 1) as usize;
                             for c in 0..3 {
-                                acc[c] += w * src[(syc * sw + sxc) * 3 + c] as f64;
+                                acc[c] += w * to_f64(src[(syc * sw + sxc) * 3 + c]);
                             }
                             weight += w;
                         }
@@ -574,7 +577,7 @@ fn resample_density(
                 }
                 let norm = if weight > 0.0 { weight } else { 1.0 };
                 for c in 0..3 {
-                    out[(y * dw + x) * 3 + c] = (acc[c] / norm) as f32;
+                    out[(y * dw + x) * 3 + c] = from_f64(acc[c] / norm);
                 }
             } else {
                 let sx = ((fx0 + fx1) * 0.5 - 0.5).clamp(0.0, (sw - 1) as f64);
@@ -583,8 +586,8 @@ fn resample_density(
                 let y0 = sy.floor() as usize;
                 let x1 = (x0 + 1).min(sw - 1);
                 let y1 = (y0 + 1).min(sh - 1);
-                let wx = (sx - x0 as f64) as f32;
-                let wy = (sy - y0 as f64) as f32;
+                let wx = from_f64(sx - x0 as f64);
+                let wy = from_f64(sy - y0 as f64);
                 for c in 0..3 {
                     let p00 = src[(y0 * sw + x0) * 3 + c];
                     let p10 = src[(y0 * sw + x1) * 3 + c];
@@ -619,7 +622,7 @@ pub fn apply(
     let _m_oct = octaves();
     let octs = octaves();
     let mut shared = Vec::with_capacity(octs.len());
-    let mut tmp = vec![0.0f32; w * h];
+    let mut tmp = vec![ZERO; w * h];
     for (o, (length_um, _)) in octs.iter().enumerate() {
         let mut v = noise_field(w, h, params.seed, o as u32);
         box_blur_approx(&mut v, &mut tmp, w, h, length_um / pitch_um);
@@ -638,7 +641,7 @@ pub fn apply(
     let params = &params;
     let mut out = ImageBuf::new(w as u32, h as u32);
     for c in 0..3 {
-        let mut plane = vec![0.0f32; w * h];
+        let mut plane = vec![ZERO; w * h];
         channel(target_data, &mut plane, w, h, pitch_um, params, c, &shared)?;
         out.data
             .par_chunks_mut(3)
@@ -660,7 +663,7 @@ pub fn apply(
 mod tests {
     use super::*;
 
-    fn flat(n: u32, d: f32) -> ImageBuf {
+    fn flat(n: u32, d: Scalar) -> ImageBuf {
         let mut b = ImageBuf::new(n, n);
         b.data.iter_mut().for_each(|v| *v = d);
         b
@@ -699,7 +702,7 @@ mod tests {
                 &params(strength, false),
             )
             .unwrap();
-            let mean = out.data.iter().map(|&v| v as f64).sum::<f64>() / out.data.len() as f64;
+            let mean = out.data.iter().map(|&v| to_f64(v)).sum::<f64>() / out.data.len() as f64;
             let rel = (mean - 0.7).abs() / 0.7;
             assert!(
                 rel < 0.01,
@@ -712,10 +715,10 @@ mod tests {
     fn variance_grows_with_strength() {
         let src = flat(96, 0.7);
         let sd = |out: &ImageBuf| {
-            let m = out.data.iter().map(|&v| v as f64).sum::<f64>() / out.data.len() as f64;
+            let m = out.data.iter().map(|&v| to_f64(v)).sum::<f64>() / out.data.len() as f64;
             (out.data
                 .iter()
-                .map(|&v| (v as f64 - m).powi(2))
+                .map(|&v| (to_f64(v) - m).powi(2))
                 .sum::<f64>()
                 / out.data.len() as f64)
                 .sqrt()
