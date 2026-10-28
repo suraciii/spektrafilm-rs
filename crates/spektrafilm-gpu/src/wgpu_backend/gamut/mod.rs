@@ -32,8 +32,13 @@ pub(super) fn build_gamut_state(
                 .into(),
         );
     }
+    let shader = if device.features().contains(wgpu::Features::SHADER_F64) {
+        GAMUT_SHADER_F64
+    } else {
+        GAMUT_SHADER_F32
+    };
     let pipe = backend.cached_pointwise_pipeline(
-        GAMUT_SHADER,
+        shader,
         &[
             wgpu::BufferBindingType::Uniform,
             wgpu::BufferBindingType::Storage { read_only: true },
@@ -126,15 +131,17 @@ pub(super) fn build_gamut_state(
     Ok(GamutState { dispatch })
 }
 
-/// The gamut pass source: the shared explicit binary64 helpers, the JzAzBz
-/// f64 transforms, then the f32 kernel. `f64_math.wgsl` is required for the
-/// JzAzBz powers (`sf64_log`/`sf64_exp`) — the driver's native f64
-/// transcendentals return wrong values on some devices — and `jzazbz.wgsl`
-/// supplies the JzAzBz matrices and the local atan2/cos/sin series.
-const GAMUT_SHADER: &str = concat!(
+/// JzAzBz requires explicit binary64 helpers: native f64 transcendentals
+/// return wrong values on some devices.
+const GAMUT_SHADER_F64: &str = concat!(
     include_str!("../../../../spektrafilm-shaders/wgsl/f64_math.wgsl"),
     include_str!("jzazbz.wgsl"),
+    include_str!("gamut_common.wgsl"),
     include_str!("gamut_compress.wgsl"),
+);
+const GAMUT_SHADER_F32: &str = concat!(
+    include_str!("gamut_common.wgsl"),
+    include_str!("gamut_compress_f32.wgsl"),
 );
 
 impl GamutState {
@@ -184,5 +191,112 @@ impl WgpuBackend {
             img.height,
             f32_to_scalars(out),
         ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use spektrafilm_math::precision::{from_f64, to_f64};
+
+    // CPU OkLab reference with an identity destination and constant C_max.
+    fn reference(rgb: [f64; 3]) -> [f64; 3] {
+        fn mv(m: [[f64; 3]; 3], v: [f64; 3]) -> [f64; 3] {
+            m.map(|r| r[0] * v[0] + r[1] * v[1] + r[2] * v[2])
+        }
+        let lms = mv(
+            [
+                [0.8189330101, 0.3618667424, -0.1288597137],
+                [0.0329845436, 0.9293118715, 0.0361456387],
+                [0.0482003018, 0.2643662691, 0.633851707],
+            ],
+            rgb,
+        )
+        .map(f64::cbrt);
+        let lab = mv(
+            [
+                [0.2104542553, 0.793617785, -0.0040720468],
+                [1.9779984951, -2.428592205, 0.4505937099],
+                [0.0259040371, 0.7827717662, -0.808675766],
+            ],
+            lms,
+        );
+        let c = lab[1].hypot(lab[2]);
+        let h = lab[2].atan2(lab[1]);
+        let d = c / 0.3;
+        let compressed = d / (1.0 + d.powf(2.0)).powf(0.5) * 0.3;
+        let lab = [lab[0], compressed * h.cos(), compressed * h.sin()];
+        let lms = mv(
+            [
+                [1.0, 0.3963377922, 0.2158037581],
+                [1.0, -0.1055613423, -0.0638541748],
+                [1.0, -0.0894841821, -1.2914855379],
+            ],
+            lab,
+        )
+        .map(|v| v * v * v);
+        mv(
+            [
+                [1.2270138511, -0.5577999807, 0.2812561490],
+                [-0.0405801784, 1.1122568696, -0.0716766787],
+                [-0.0763812845, -0.4214819784, 1.5861632204],
+            ],
+            lms,
+        )
+    }
+
+    #[test]
+    fn gamut_oklch_restricted_device_matches_cpu() {
+        let _guard = crate::test_support::device_lock();
+        let previous = std::env::var_os("SPEKTRAFILM_GPU_DISABLE_F64");
+        unsafe {
+            std::env::set_var("SPEKTRAFILM_GPU_DISABLE_F64", "1");
+        }
+        let gpu = WgpuBackend::new().expect("WGPU adapter required for GPU tests");
+        unsafe {
+            match previous {
+                Some(value) => std::env::set_var("SPEKTRAFILM_GPU_DISABLE_F64", value),
+                None => std::env::remove_var("SPEKTRAFILM_GPU_DISABLE_F64"),
+            }
+        }
+        assert!(!gpu.device.features().contains(wgpu::Features::SHADER_F64));
+        let pixels = [
+            [0.4, 0.2, 0.1],
+            [1.2, 0.4, 0.05],
+            [0.1, 0.7, 1.3],
+            [0.2, 0.5, 0.3],
+        ];
+        let image = ImageBuf::from_data(
+            4,
+            1,
+            pixels.iter().flatten().copied().map(from_f64).collect(),
+        );
+        let identity = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
+        let table = [0.3; 4];
+        let gp = spektrafilm_backend::GamutGpuParams {
+            mode: 1,
+            knee: [0.0, 1.0, 2.0],
+            l_min: 0.0,
+            l_max: 1.0,
+            rgb_to_xyz: identity,
+            xyz_to_rgb: identity,
+            cam16: [0.0; 4],
+            cmax: &table,
+            prepared: None,
+            n_l: 2,
+            n_h: 2,
+        };
+        let out = gpu
+            .gamut_compress_gpu(&image, &gp)
+            .expect("restricted gamut pass");
+        let mut worst = 0.0f64;
+        for (i, rgb) in pixels.iter().enumerate() {
+            let expected = reference(rgb.map(|v| to_f64(from_f64(v))));
+            for (channel, value) in expected.iter().enumerate() {
+                worst = worst.max((value - to_f64(out.data[i * 3 + channel])).abs());
+            }
+        }
+        // Measured max error: 1.165e-6; retain over fourfold device margin.
+        assert!(worst < 5e-6, "maximum error: {worst}");
     }
 }
