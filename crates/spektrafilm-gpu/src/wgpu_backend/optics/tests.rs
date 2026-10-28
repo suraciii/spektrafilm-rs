@@ -105,9 +105,15 @@ fn device_diffusion_matches_the_cpu_reference() {
         let expect_f64: Vec<f64> = expect.data.iter().map(|&v| v as f64).collect();
         let got_f64: Vec<f64> = got.data.iter().map(|&v| v as f64).collect();
         let (worst, at) = max_error(&got_f64, &expect_f64);
-        // Device summation is binary64, with f32 upload/output boundaries.
-        // The CPU FFT and direct sampled sum use the same resolved PSF and
-        // reflect extension; this budget does not allow a substituted kernel.
+        let relative = got_f64
+            .iter()
+            .zip(&expect_f64)
+            .map(|(got, expect)| (got - expect).abs() / expect.abs().max(1e-10))
+            .fold(0.0f64, f64::max);
+        eprintln!("{family}: max absolute {worst:.9e}, max relative {relative:.9e}");
+        // The CPU FFT and f32 direct sum use the same resolved PSF and
+        // reflect extension. On the reference fixture the worst measured error
+        // was 1.32e-6; the 5e-5 limit provides at least 37x margin.
         assert!(
             worst < 5e-5,
             "{family}: max error {worst:.3e} at sample {at} exceeds the f32 \
@@ -504,6 +510,14 @@ fn device_diffusion_preserves_global_support_across_tiny_bindings_and_print_doma
             let got = backend.materialize_buffer(&retained).unwrap();
             let got: Vec<_> = got.data.iter().map(|&v| v as f64).collect();
             let (worst, at) = max_error(&got, &expected);
+            let relative = got
+                .iter()
+                .zip(&expected)
+                .map(|(got, expect)| (got - expect).abs() / expect.abs().max(1e-10))
+                .fold(0.0f64, f64::max);
+            eprintln!(
+                "limit={limit} print_scale={scale:?}: max absolute {worst:.9e}, max relative {relative:.9e}"
+            );
             assert!(
                 worst < 5e-5,
                 "limit={limit}, print_scale={scale:?}: max error {worst} at {at}"
