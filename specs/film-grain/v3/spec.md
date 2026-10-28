@@ -61,7 +61,7 @@ Different output dimensions MAY produce different footprints and therefore diffe
 Acceptance is gated. A later gate MUST NOT compensate for an earlier gate that failed.
 
 1. **Law and mean:** Prove `E[D] = t` for uniform, graded, and saturated targets, and prove the amplitude follows the derived granularity curve. The expectation realization MUST equal the target.
-2. **Partition invariance:** Prove same-canvas full-frame, crop, tile, band, and stage-split agreement at fixed seed and geometry. Resource checks MUST reject oversized work before allocation.
+2. **Partition invariance:** Prove same-canvas full-frame, crop, tile, band, and stage-split agreement at fixed seed and geometry. Resource checks MUST reject oversized work before allocation. A table that exceeds one binding MUST be partitioned by rows with the overlapped margins its read footprint requires; partition layout MUST NOT change the composed image.
 3. **Executor parity:** Prove the CPU and GPU realizations agree in expectation exactly, and that stochastic realizations agree within the declared count-term bound.
 4. **Optical measurement:** Run the independent spectral measurement oracle with a declared receiver, aperture, density definition, wavelength range, provenance, footprint, and viewing condition.
 5. **Photographic validation:** Use lossless outputs and a declared reference set containing portraits, smooth fields, dark and bright regions, saturated colors, fine detail, and a color chart. Record the intended viewing size and the limits of the comparison.
