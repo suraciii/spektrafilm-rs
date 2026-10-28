@@ -360,11 +360,128 @@ fn build_resolution(
             u64::from(page) * 12,
             "grain_resolution_axis_result",
         )?;
+        // Axis 0 blurs along a row, so each row segment is contiguous. Axis 1
+        // blurs down a column, where a column is strided: copying column by
+        // column emitted one command per pixel and a second one to write the
+        // result back, which is 122 million commands on a 61 MP frame and the
+        // reason that frame peaked at 21 GB. Copy a band of whole rows instead
+        // and address them with the image width in the shader.
+        let band = (page / width).saturating_sub(2 * reach as u32 + 1).max(1);
+        // A device whose window cannot hold one row plus its margins keeps the
+        // per-column path; that case only arises for test-sized limits.
+        let banded = (band + 2 * reach as u32) * width <= page;
         for axis in 0..2 {
             let source = if axis == 0 { original } else { horizontal };
             let destination = if axis == 0 { horizontal } else { filtered };
-            let span = if axis == 0 { width } else { height };
-            let lines = if axis == 0 { height } else { width };
+            if axis == 1 && banded {
+                let mut first_row = 0u32;
+                while first_row < height {
+                    let rows = band.min(height - first_row);
+                    let low = first_row.saturating_sub(reach as u32);
+                    let high = height.min(first_row + rows + reach as u32);
+                    for row in low..high {
+                        commands.copy(
+                            source,
+                            u64::from(row * width) * 12,
+                            source_window,
+                            u64::from((row - low) * width) * 12,
+                            u64::from(width) * 12,
+                        );
+                    }
+                    let mut data = [0u32; 24];
+                    data[..8].copy_from_slice(&[
+                        width,
+                        height,
+                        1,
+                        optical as u32,
+                        weights.len() as u32,
+                        0,
+                        0,
+                        low,
+                    ]);
+                    data[20..].copy_from_slice(&[first_row * width, rows * width, high - low, 2]);
+                    let p = uniform(backend, &data);
+                    commands.dispatch(
+                        &pipe,
+                        &[&p, source_window, &weights_buf, &result],
+                        rows * width,
+                        false,
+                        backend,
+                    );
+                    commands.copy(
+                        &result,
+                        0,
+                        destination,
+                        u64::from(first_row * width) * 12,
+                        u64::from(rows * width) * 12,
+                    );
+                    first_row += rows;
+                }
+                continue;
+            }
+            if axis == 1 {
+                for line in 0..width {
+                    let mut first = 0u32;
+                    while first < height {
+                        let count = (page / 2)
+                            .saturating_sub(2 * reach as u32)
+                            .max(1)
+                            .min(height - first);
+                        let low = first.saturating_sub(reach as u32);
+                        let high = height.min(first + count + reach as u32);
+                        for side in 0..2 {
+                            let across = if side == 0 {
+                                line.saturating_sub(1)
+                            } else {
+                                line
+                            };
+                            let offset = u64::from(side * (high - low)) * 12;
+                            for position in low..high {
+                                commands.copy(
+                                    source,
+                                    u64::from(position * width + across) * 12,
+                                    source_window,
+                                    offset + u64::from(position - low) * 12,
+                                    12,
+                                );
+                            }
+                        }
+                        let mut data = [0u32; 24];
+                        data[..8].copy_from_slice(&[
+                            width,
+                            height,
+                            1,
+                            optical as u32,
+                            weights.len() as u32,
+                            0,
+                            line,
+                            low,
+                        ]);
+                        data[20..].copy_from_slice(&[first, count, high - low, 1]);
+                        let p = uniform(backend, &data);
+                        commands.dispatch(
+                            &pipe,
+                            &[&p, source_window, &weights_buf, &result],
+                            count,
+                            false,
+                            backend,
+                        );
+                        for position in 0..count {
+                            commands.copy(
+                                &result,
+                                u64::from(position) * 12,
+                                destination,
+                                u64::from((first + position) * width + line) * 12,
+                                12,
+                            );
+                        }
+                        first += count;
+                    }
+                }
+                continue;
+            }
+            let span = width;
+            let lines = height;
             for line in 0..lines {
                 let mut first = 0u32;
                 while first < span {
@@ -381,31 +498,19 @@ fn build_resolution(
                             line
                         };
                         let offset = u64::from(side * (high - low)) * 12;
-                        if axis == 0 {
-                            commands.copy(
-                                source,
-                                u64::from(across * width + low) * 12,
-                                source_window,
-                                offset,
-                                u64::from(high - low) * 12,
-                            );
-                        } else {
-                            for position in low..high {
-                                commands.copy(
-                                    source,
-                                    u64::from(position * width + across) * 12,
-                                    source_window,
-                                    offset + u64::from(position - low) * 12,
-                                    12,
-                                );
-                            }
-                        }
+                        commands.copy(
+                            source,
+                            u64::from(across * width + low) * 12,
+                            source_window,
+                            offset,
+                            u64::from(high - low) * 12,
+                        );
                     }
                     let mut data = [0u32; 24];
                     data[..8].copy_from_slice(&[
                         width,
                         height,
-                        axis,
+                        0,
                         optical as u32,
                         weights.len() as u32,
                         0,
@@ -421,25 +526,13 @@ fn build_resolution(
                         false,
                         backend,
                     );
-                    if axis == 0 {
-                        commands.copy(
-                            &result,
-                            0,
-                            destination,
-                            u64::from(line * width + first) * 12,
-                            u64::from(count) * 12,
-                        );
-                    } else {
-                        for position in 0..count {
-                            commands.copy(
-                                &result,
-                                u64::from(position) * 12,
-                                destination,
-                                u64::from((first + position) * width + line) * 12,
-                                12,
-                            );
-                        }
-                    }
+                    commands.copy(
+                        &result,
+                        0,
+                        destination,
+                        u64::from(line * width + first) * 12,
+                        u64::from(count) * 12,
+                    );
                     first += count;
                 }
             }

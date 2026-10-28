@@ -41,7 +41,11 @@ fn half_round(v:f32)->f32 {
 fn at(pos:vec2<i32>)->vec3<f32> {
  let xy=vec2<u32>(clamp(pos,vec2<i32>(0),vec2<i32>(p.dimensions.xy)-1));
  var i=(xy.y*p.dimensions.x+xy.x)*3u;
- if(p.window.w==1u){
+ if(p.window.w==2u){
+  // Row window: whole image rows, strided by the full width, so a column pass
+  // reads them without transposing the frame.
+  i=((xy.y-p.taps.w)*p.dimensions.x+xy.x)*3u;
+ } else if(p.window.w==1u){
   let along=select(xy.x,xy.y,p.dimensions.z==1u);
   let across=select(xy.y,xy.x,p.dimensions.z==1u);
   let side=select(0u,1u,across>=p.taps.z);
