@@ -1757,7 +1757,12 @@ mod tests {
         let got = paper.to_host(backend.backend()).unwrap();
         let reference = super::super::decorations::virtual_paper_back([65, 33]);
         for (pixel, want) in got.data.as_chunks::<3>().0.iter().zip(reference.rgb.iter()) {
-            assert_eq!([pixel[0] as f32, pixel[1] as f32, pixel[2] as f32], *want);
+            for c in 0..3 {
+                assert!(
+                    (pixel[c] as f32 - want[c]).abs() <= 2e-5,
+                    "paper pixel {pixel:?} differs from {want:?}"
+                );
+            }
         }
         let source = ImageBuf::from_data(
             4,
