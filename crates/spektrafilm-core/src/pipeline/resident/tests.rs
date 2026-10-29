@@ -1095,13 +1095,9 @@ fn explicit_gpu_request_runs_the_dye_field_on_the_device() {
         !snapshot
             .observations
             .iter()
-            .any(|stage| stage.name == "grain_dye_field"),
-        "the explicit GPU Dye field recorded a host stage: {:?}",
-        snapshot
-            .observations
-            .iter()
-            .map(|stage| stage.name.as_str())
-            .collect::<Vec<_>>()
+            .any(|stage| stage.executor == Some(spektrafilm_backend::telemetry::Executor::Cpu)),
+        "the explicit GPU Dye render executed CPU image arithmetic: {:?}",
+        snapshot.observations
     );
 }
 
@@ -1145,13 +1141,9 @@ fn spektra_mt19937_grain_runs_on_the_device() {
             !snapshot
                 .observations
                 .iter()
-                .any(|stage| stage.name == "grain_spektra"),
-            "the MT19937 regime fell back to the host fence (single_curve={single_curve}): {:?}",
-            snapshot
-                .observations
-                .iter()
-                .map(|stage| stage.name.as_str())
-                .collect::<Vec<_>>()
+                .any(|stage| stage.executor == Some(spektrafilm_backend::telemetry::Executor::Cpu)),
+            "the MT19937 regime executed CPU image arithmetic (single_curve={single_curve}): {:?}",
+            snapshot.observations
         );
 
         let out_gpu = pipeline
@@ -1739,13 +1731,9 @@ fn explicit_gpu_request_runs_mallett_on_the_resident_device_chain() {
         !snapshot
             .observations
             .iter()
-            .any(|stage| stage.name == "grain_procedural"),
-        "the explicit GPU Mallett render recorded a host grain stage: {:?}",
-        snapshot
-            .observations
-            .iter()
-            .map(|stage| stage.name.as_str())
-            .collect::<Vec<_>>()
+            .any(|stage| stage.executor == Some(spektrafilm_backend::telemetry::Executor::Cpu)),
+        "the explicit GPU Mallett render executed CPU image arithmetic: {:?}",
+        snapshot.observations
     );
 }
 
