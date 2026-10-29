@@ -61,6 +61,56 @@ pub struct PixelInspection {
     pub rgb: [f64; 3],
 }
 
+/// Viewer-only correspondence in the selected native image.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct ViewerAnalysisSample {
+    pub layer: ViewLayer,
+    pub x: u32,
+    pub y: u32,
+    pub keyboard: bool,
+}
+
+#[derive(Default)]
+pub(crate) struct ViewerAnalysis {
+    pub enabled: bool,
+    pub armed: bool,
+    /// Normalized image rectangle; the caller maps its source-area identity.
+    pub selection: Option<[f64; 4]>,
+    /// Normalized image rectangle for plot-to-image inspection.
+    pub band: Option<[f64; 4]>,
+    pub sample: Option<ViewerAnalysisSample>,
+    pub suspended: bool,
+    /// Completed normalized image rectangle, consumed by the caller after show.
+    pub completed: Option<[f64; 4]>,
+    draft: Option<[f64; 4]>,
+    drag_start: Option<[f64; 2]>,
+    suppress_drag: bool,
+    draft_subject: Option<(ViewLayer, [usize; 2])>,
+    cursor: Option<[u32; 2]>,
+}
+
+fn image_point(rect: Rect, pos: Pos2) -> [f64; 2] {
+    let uv = (pos - rect.min) / rect.size();
+    [uv.x.clamp(0.0, 1.0) as f64, uv.y.clamp(0.0, 1.0) as f64]
+}
+
+fn image_overlay(rect: Rect, bounds: [f64; 4]) -> Rect {
+    Rect::from_min_max(
+        rect.min + rect.size() * Vec2::new(bounds[0] as f32, bounds[1] as f32),
+        rect.min + rect.size() * Vec2::new(bounds[2] as f32, bounds[3] as f32),
+    )
+}
+
+fn nonempty_image_area(bounds: [f64; 4], size: [usize; 2]) -> bool {
+    (0..2).all(|axis| {
+        let lo = (bounds[axis] * size[axis] as f64 - 0.5).ceil().max(0.0);
+        let hi = (bounds[axis + 2] * size[axis] as f64 - 0.5)
+            .ceil()
+            .min(size[axis] as f64);
+        hi > lo
+    })
+}
+
 struct InspectionTarget {
     image: spektrafilm_backend::DeviceImage,
     layer: ViewLayer,
@@ -150,12 +200,14 @@ pub struct Viewer {
     prepared_output: Option<PreparedDisplay>,
     retained_output: Option<spektrafilm_backend::DeviceImage>,
     retained_input: Option<spektrafilm_backend::DeviceImage>,
+    uploaded_input: Option<spektrafilm_backend::DeviceImage>,
     /// Active marquee selection in view coordinates `(start, current)`; a
     /// Shift or secondary-button drag sets it and its release zooms to it.
     marquee: Option<(Pos2, Pos2)>,
     revision: u64,
     worker: DisplayWorker,
     inspection: InspectionState,
+    pub(crate) analysis: ViewerAnalysis,
     /// Compute backend for the viewer's resample and display transform.
     /// `None` keeps the host reference implementation, which is the same
     /// fallback a backend reports when it has no device path.
@@ -179,6 +231,38 @@ pub(crate) struct ViewerObservation {
 }
 
 impl Viewer {
+    pub(crate) fn arm_analysis_selection(&mut self) {
+        self.analysis.armed = true;
+        self.analysis.completed = None;
+        self.analysis.draft = self.analysis.selection;
+        self.analysis.drag_start = None;
+        self.analysis.draft_subject = None;
+        self.analysis.sample = None;
+    }
+
+    pub(crate) fn cancel_analysis_selection(&mut self) {
+        self.analysis.suppress_drag |= self.analysis.drag_start.is_some();
+        self.analysis.armed = false;
+        self.analysis.draft = None;
+        self.analysis.drag_start = None;
+        self.analysis.draft_subject = None;
+        self.analysis.completed = None;
+    }
+
+    pub(crate) fn analysis_retained(
+        &self,
+        layer: ViewLayer,
+    ) -> Option<spektrafilm_backend::DeviceImage> {
+        match layer {
+            ViewLayer::Input => self
+                .retained_input
+                .clone()
+                .or_else(|| self.uploaded_input.clone()),
+            ViewLayer::Output => self.retained_output.clone(),
+            ViewLayer::PaperBack => None,
+        }
+    }
+
     fn inspect_retained(
         &mut self,
         target: Option<InspectionTarget>,
@@ -265,12 +349,18 @@ impl Viewer {
         }
     }
     pub fn set_input(&mut self, raster: DisplayRaster, original_size: [usize; 2]) {
+        self.cancel_analysis_selection();
+        self.analysis.selection = None;
+        self.analysis.band = None;
+        self.analysis.sample = None;
+        self.analysis.cursor = None;
         self.input_size = Some(original_size);
         self.input = Some(raster);
         self.output = None;
         self.prepared_input = None;
         self.prepared_output = None;
         self.retained_input = None;
+        self.uploaded_input = None;
         self.retained_output = None;
         self.output_size = None;
         self.transition = None;
@@ -281,10 +371,12 @@ impl Viewer {
     /// Refresh this source's presentation without discarding its accepted
     /// output. Adjustment history can leave that output intentionally stale.
     pub(crate) fn refresh_input(&mut self, raster: DisplayRaster, original_size: [usize; 2]) {
+        self.cancel_analysis_selection();
         self.input_size = Some(original_size);
         self.input = Some(raster);
         self.prepared_input = None;
         self.retained_input = None;
+        self.uploaded_input = None;
         self.revision = self.revision.wrapping_add(1);
     }
     /// Call only after accepting the latest asynchronous job. Retains the old
@@ -297,6 +389,7 @@ impl Viewer {
         now: f64,
         animate: bool,
     ) {
+        self.cancel_analysis_selection();
         let supported = original_size[0].saturating_mul(original_size[1]) <= ANIMATION_MAX_PIXELS;
         let reveal = self.settings.layer != ViewLayer::Output || self.output.is_none();
         let previous = if animate && !reveal && self.settings.crossfade && supported {
@@ -327,6 +420,10 @@ impl Viewer {
         self.revision += 1;
     }
     pub fn set_input_display_source(&mut self, space: &str, encoded: bool) {
+        if self.input_source_space.as_deref() != Some(space) || self.input_source_encoded != encoded
+        {
+            self.uploaded_input = None;
+        }
         self.input_source_space = Some(space.to_owned());
         self.input_source_encoded = encoded;
         self.revision = self.revision.wrapping_add(1);
@@ -357,11 +454,13 @@ impl Viewer {
         _max_size: u32,
     ) {
         self.retained_input = Some(source);
+        self.uploaded_input = None;
         self.prepared_input = None;
         self.revision = self.revision.wrapping_add(1);
     }
     pub fn seed_prepared_input(&mut self, source: Arc<ImageBuf>, max_size: u32) {
         self.retained_input = None;
+        self.uploaded_input = None;
         let Some(raster) = self.input.clone() else {
             return;
         };
@@ -579,7 +678,7 @@ impl Viewer {
     /// on the left, with the retained-view controls aligned to the right.
     /// Transitions stay independent; all actions affect viewing only, never
     /// retained, saved or exported pixels.
-    pub fn footer_controls(&mut self, ui: &mut egui::Ui) {
+    pub fn footer_controls(&mut self, ui: &mut egui::Ui, analysis_visible: &mut bool) {
         ui.allocate_ui_with_layout(
             ui.available_size(),
             egui::Layout::left_to_right(egui::Align::Center),
@@ -589,6 +688,14 @@ impl Viewer {
                 self.transition_menu(ui);
                 ui.add_space(theme::SPACE_GROUP);
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let analysis_label = crate::i18n::text(ui.ctx(), "surfaces.analysis.title");
+                    if ui
+                        .selectable_label(*analysis_visible, analysis_label)
+                        .clicked()
+                    {
+                        *analysis_visible = !*analysis_visible;
+                    }
+                    ui.separator();
                     let reset_label = crate::i18n::text(ui.ctx(), "surfaces.viewer.reset");
                     let reset = crate::controls::icon_button(
                         ui,
@@ -859,6 +966,85 @@ impl Viewer {
         if self.zoom <= 0.0 {
             self.zoom = 1.0;
         }
+        let gesture_layer = self.settings.layer;
+        let gesture_size = match gesture_layer {
+            ViewLayer::Input => self.input_size,
+            ViewLayer::Output => self.output_size,
+            ViewLayer::PaperBack => None,
+        };
+        let gesture_bounds =
+            normalized_world_size(self.input_size.or(self.output_size).unwrap_or([3, 2]));
+        let gesture_world = if gesture_layer == ViewLayer::Output {
+            fitted_world_size(gesture_size.unwrap_or([1, 1]), gesture_bounds)
+        } else {
+            gesture_bounds
+        };
+        let gesture_scale = if let Some(percent) = self.zoom_percent {
+            let size = gesture_size.unwrap_or([3, 2]);
+            let px_world = (gesture_world.x / size[0].max(1) as f32)
+                .min(gesture_world.y / size[1].max(1) as f32);
+            (percent / 100.0) / (ui.ctx().pixels_per_point().max(0.01) * px_world)
+        } else {
+            let padded = gesture_bounds + Vec2::splat(2.0 * self.settings.white_padding.max(0.0));
+            (rect.width() / padded.x).min(rect.height() / padded.y) * self.zoom
+        };
+        let gesture_image =
+            Rect::from_center_size(rect.center() + self.pan, gesture_world * gesture_scale);
+        if !self.analysis.enabled || gesture_size.is_none() {
+            self.cancel_analysis_selection();
+        } else if self.analysis.armed
+            && let Some(size) = gesture_size
+        {
+            let subject = (gesture_layer, size);
+            if self
+                .analysis
+                .draft_subject
+                .is_some_and(|previous| previous != subject)
+            {
+                self.cancel_analysis_selection();
+            } else {
+                self.analysis.draft_subject = Some(subject);
+            }
+        }
+        if self.analysis.armed && ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+            self.cancel_analysis_selection();
+        }
+        let mut analysis_drag = self.analysis.drag_start.is_some() || self.analysis.suppress_drag;
+        if self.analysis.armed
+            && response.drag_started_by(egui::PointerButton::Primary)
+            && !ui.input(|i| i.modifiers.shift)
+            && let Some(start) = ui.input(|i| i.pointer.press_origin())
+            && super::worker::contains_half_open(gesture_image, start)
+        {
+            self.analysis.drag_start = Some(image_point(gesture_image, start));
+            analysis_drag = true;
+        }
+        if let Some(start) = self.analysis.drag_start
+            && let Some(pos) = response
+                .interact_pointer_pos()
+                .or_else(|| ui.input(|i| i.pointer.latest_pos()))
+        {
+            let end = image_point(gesture_image, pos);
+            self.analysis.draft = Some([
+                start[0].min(end[0]),
+                start[1].min(end[1]),
+                start[0].max(end[0]),
+                start[1].max(end[1]),
+            ]);
+        }
+        if analysis_drag && response.drag_stopped_by(egui::PointerButton::Primary) {
+            let draft = self.analysis.draft;
+            self.analysis.drag_start = None;
+            if let (Some(bounds), Some(size)) = (draft, gesture_size)
+                && nonempty_image_area(bounds, size)
+            {
+                self.cancel_analysis_selection();
+                self.analysis.completed = Some(bounds);
+            }
+        }
+        if !ui.input(|i| i.pointer.primary_down()) {
+            self.analysis.suppress_drag = false;
+        }
         // Viewer gestures change the retained view only. Wheel and pinch zoom
         // at the pointer; the primary button pans; a Shift or secondary-button
         // drag selects a region that fills the view on release; one click
@@ -867,6 +1053,7 @@ impl Viewer {
             .input(|i| i.modifiers.shift || i.pointer.button_down(egui::PointerButton::Secondary));
         if response.drag_started()
             && selecting
+            && !analysis_drag
             && let Some(pos) = response.interact_pointer_pos()
         {
             // The drag starts a frame after the press, so the selection
@@ -874,7 +1061,7 @@ impl Viewer {
             let start = ui.input(|i| i.pointer.press_origin()).unwrap_or(pos);
             self.marquee = Some((start, pos));
         }
-        let marquee_drag = response.dragged() && selecting;
+        let marquee_drag = response.dragged() && selecting && !analysis_drag;
         if marquee_drag
             && let Some(pos) = response.interact_pointer_pos()
             && let Some((start, _)) = self.marquee
@@ -886,7 +1073,7 @@ impl Viewer {
         } else {
             None
         };
-        if response.hovered() {
+        if response.hovered() && !analysis_drag {
             let (pinch, scroll, cursor) = ui.input(|i| {
                 (
                     i.zoom_delta(),
@@ -904,14 +1091,15 @@ impl Viewer {
                 self.zoom_at(at, rect, factor);
             }
         }
-        if response.dragged() && !marquee_drag && self.marquee.is_none() {
+        if response.dragged() && !marquee_drag && !analysis_drag && self.marquee.is_none() {
             self.pan += response.drag_delta();
         }
-        if response.double_clicked() {
+        if response.double_clicked() && !analysis_drag {
             self.reset_view();
             self.marquee = None;
         } else if response.clicked()
             && selection.is_none()
+            && !analysis_drag
             && let Some(at) = response.interact_pointer_pos()
         {
             self.zoom_at(at, rect, 2.0);
@@ -1068,7 +1256,9 @@ impl Viewer {
                 retained_source: if layer == ViewLayer::Output {
                     self.retained_output.clone()
                 } else if layer == ViewLayer::Input {
-                    self.retained_input.clone()
+                    self.retained_input
+                        .clone()
+                        .or_else(|| self.uploaded_input.clone())
                 } else {
                     None
                 },
@@ -1101,6 +1291,11 @@ impl Viewer {
                 self.transition = None;
             } else {
                 self.accepted_generation = response.generation;
+                if layer == ViewLayer::Input
+                    && let Some(uploaded) = response.uploaded_input
+                {
+                    self.uploaded_input = Some(uploaded);
+                }
                 if let Some(t) = self.transition.as_mut() {
                     t.start = now;
                     ui.ctx().request_repaint_after(Duration::from_millis(32));
@@ -1143,6 +1338,197 @@ impl Viewer {
                 Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
                 Color32::WHITE,
             );
+        }
+        self.analysis.sample = None;
+        self.analysis.suspended = self.analysis.enabled
+            && (self.analysis.armed
+                || analysis_drag
+                || response.dragged()
+                || self.transition.is_some()
+                || (response.hovered()
+                    && ui.input(|i| i.zoom_delta() != 1.0 || i.smooth_scroll_delta.y != 0.0)));
+        let mut keyboard_cursor_focused = false;
+        if self.analysis.enabled
+            && layer != ViewLayer::PaperBack
+            && let Some(size) = source_size
+        {
+            if let Some(band) = self.analysis.band {
+                let band_rect = image_overlay(image_rect, band);
+                let painter = ui.painter_at(rect.intersect(image_rect));
+                painter.rect_filled(band_rect, 0.0, theme::FG.gamma_multiply(0.12));
+                painter.rect_stroke(
+                    band_rect,
+                    0.0,
+                    theme::stroke(theme::FG),
+                    egui::StrokeKind::Inside,
+                );
+            }
+            if let Some(area) = self
+                .analysis
+                .draft
+                .filter(|_| self.analysis.armed)
+                .or(self.analysis.selection)
+            {
+                let painter = ui.painter_at(rect.intersect(image_rect));
+                let area = image_overlay(image_rect, area);
+                painter.rect_filled(area, 0.0, theme::FG.gamma_multiply(0.08));
+                painter.rect_stroke(
+                    area,
+                    0.0,
+                    theme::stroke(theme::FG),
+                    egui::StrokeKind::Inside,
+                );
+            }
+            let controls_rect = Rect::from_min_size(
+                rect.min + Vec2::splat(theme::SPACE_2),
+                Vec2::new(rect.width().max(1.0), theme::HEIGHT_CONTROL * 2.0),
+            );
+            let mut controls = ui.new_child(egui::UiBuilder::new().max_rect(controls_rect));
+            controls.set_clip_rect(rect);
+            controls.horizontal(|ui| {
+                if self.analysis.armed {
+                    let move_handle =
+                        ui.button(crate::i18n::text(ui.ctx(), "surfaces.viewer.analysis_move"));
+                    let resize_handle = ui.button(crate::i18n::text(
+                        ui.ctx(),
+                        "surfaces.viewer.analysis_resize",
+                    ));
+                    for handle in [&move_handle, &resize_handle] {
+                        if handle.clicked() {
+                            handle.request_focus();
+                        }
+                        if handle.has_focus() {
+                            ui.memory_mut(|memory| {
+                                memory.set_focus_lock_filter(
+                                    handle.id,
+                                    egui::EventFilter {
+                                        horizontal_arrows: true,
+                                        vertical_arrows: true,
+                                        ..Default::default()
+                                    },
+                                );
+                            });
+                        }
+                    }
+                    let focused = move_handle.has_focus() || resize_handle.has_focus();
+                    if focused {
+                        let area = self.analysis.draft.get_or_insert([0.25, 0.25, 0.75, 0.75]);
+                        let (dx, dy, confirm) = ui.input(|i| {
+                            (
+                                i.key_pressed(egui::Key::ArrowRight) as i32
+                                    - i.key_pressed(egui::Key::ArrowLeft) as i32,
+                                i.key_pressed(egui::Key::ArrowDown) as i32
+                                    - i.key_pressed(egui::Key::ArrowUp) as i32,
+                                i.key_pressed(egui::Key::Enter),
+                            )
+                        });
+                        for (axis, delta) in [(0, dx), (1, dy)] {
+                            let step = delta as f64 / size[axis].max(1) as f64;
+                            if move_handle.has_focus() {
+                                let step = step.clamp(-area[axis], 1.0 - area[axis + 2]);
+                                area[axis] += step;
+                                area[axis + 2] += step;
+                            } else {
+                                area[axis + 2] = (area[axis + 2] + step).clamp(
+                                    (area[axis] + 1.0 / size[axis].max(1) as f64).min(1.0),
+                                    1.0,
+                                );
+                            }
+                        }
+                        if confirm && nonempty_image_area(*area, size) {
+                            let completed = *area;
+                            self.cancel_analysis_selection();
+                            self.analysis.completed = Some(completed);
+                        }
+                    }
+                } else {
+                    let cursor = ui.button(crate::i18n::text(
+                        ui.ctx(),
+                        "surfaces.viewer.analysis_cursor",
+                    ));
+                    if cursor.clicked() {
+                        cursor.request_focus();
+                    }
+                    if cursor.has_focus() {
+                        ui.memory_mut(|memory| {
+                            memory.set_focus_lock_filter(
+                                cursor.id,
+                                egui::EventFilter {
+                                    horizontal_arrows: true,
+                                    vertical_arrows: true,
+                                    ..Default::default()
+                                },
+                            );
+                        });
+                    }
+                    if cursor.has_focus()
+                        && !cursor.hovered()
+                        && response
+                            .hover_pos()
+                            .is_some_and(|p| super::worker::contains_half_open(image_rect, p))
+                        && ui.input(|i| i.pointer.delta() != Vec2::ZERO)
+                    {
+                        cursor.surrender_focus();
+                    }
+                    keyboard_cursor_focused = cursor.has_focus();
+                    if keyboard_cursor_focused {
+                        let point = self
+                            .analysis
+                            .cursor
+                            .get_or_insert([size[0] as u32 / 2, size[1] as u32 / 2]);
+                        let (dx, dy) = ui.input(|i| {
+                            (
+                                i.key_pressed(egui::Key::ArrowRight) as i64
+                                    - i.key_pressed(egui::Key::ArrowLeft) as i64,
+                                i.key_pressed(egui::Key::ArrowDown) as i64
+                                    - i.key_pressed(egui::Key::ArrowUp) as i64,
+                            )
+                        });
+                        point[0] = (point[0] as i64 + dx).clamp(0, size[0].saturating_sub(1) as i64)
+                            as u32;
+                        point[1] = (point[1] as i64 + dy).clamp(0, size[1].saturating_sub(1) as i64)
+                            as u32;
+                        let position = image_rect.min
+                            + image_rect.size()
+                                * Vec2::new(
+                                    (point[0] as f32 + 0.5) / size[0].max(1) as f32,
+                                    (point[1] as f32 + 0.5) / size[1].max(1) as f32,
+                                );
+                        ui.painter_at(rect.intersect(image_rect)).circle_stroke(
+                            position,
+                            5.0,
+                            theme::stroke(theme::FG),
+                        );
+                    }
+                }
+            });
+            if !self.analysis.suspended {
+                let pixel = if keyboard_cursor_focused {
+                    self.analysis.cursor.map(|p| (p, true))
+                } else {
+                    response
+                        .hover_pos()
+                        .filter(|p| super::worker::contains_half_open(image_rect, *p))
+                        .map(|p| {
+                            let uv = image_point(image_rect, p);
+                            (
+                                [
+                                    ((uv[0] * size[0] as f64) as u32)
+                                        .min(size[0].saturating_sub(1) as u32),
+                                    ((uv[1] * size[1] as f64) as u32)
+                                        .min(size[1].saturating_sub(1) as u32),
+                                ],
+                                false,
+                            )
+                        })
+                };
+                self.analysis.sample = pixel.map(|(point, keyboard)| ViewerAnalysisSample {
+                    layer,
+                    x: point[0],
+                    y: point[1],
+                    keyboard,
+                });
+            }
         }
         if let Some((start, end)) = self.marquee {
             let selection = Rect::from_two_pos(start, end).intersect(rect);
@@ -1272,6 +1658,30 @@ mod tests {
     use super::super::raster::capped_raster;
     use super::*;
     use spektrafilm_backend::cpu_backend::CpuBackend;
+
+    #[test]
+    fn selection_requires_native_pixel_centers() {
+        assert!(!nonempty_image_area([0.0, 0.0, 0.1, 1.0], [4, 2]));
+        assert!(nonempty_image_area([0.0, 0.0, 0.1251, 1.0], [4, 2]));
+        assert!(!nonempty_image_area([0.125, 0.0, 0.125, 1.0], [4, 2]));
+        assert!(nonempty_image_area([0.0, 0.0, 1.0, 1.0], [1, 1]));
+    }
+
+    #[test]
+    fn cancel_preserves_committed_selection_and_consumes_ongoing_drag() {
+        let mut viewer = Viewer::new();
+        let selection = [0.1, 0.2, 0.7, 0.8];
+        viewer.analysis.selection = Some(selection);
+        viewer.arm_analysis_selection();
+        viewer.analysis.drag_start = Some([0.2, 0.3]);
+        viewer.analysis.draft = Some([0.2, 0.3, 0.4, 0.5]);
+        viewer.cancel_analysis_selection();
+        assert_eq!(viewer.analysis.selection, Some(selection));
+        assert!(!viewer.analysis.armed);
+        assert!(viewer.analysis.draft.is_none());
+        assert!(viewer.analysis.suppress_drag);
+        assert!(viewer.analysis.completed.is_none());
+    }
 
     #[test]
     fn retained_hover_reuses_raw_values_and_rejects_stale_movement_layer_and_source() {

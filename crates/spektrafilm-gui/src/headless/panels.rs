@@ -190,62 +190,444 @@ fn scan_selects_modified_and_original_remains_available() {
 }
 
 #[test]
-fn empty_histogram_shows_its_no_output_paint_branch_without_a_retained_render() {
-    let mut s = super::calibration::session_without_image();
+fn analysis_follows_accepted_output_without_changing_the_photograph() {
+    use spektrafilm_backend::analysis::{self, AnalysisMode, AnalysisRequest};
+    use spektrafilm_backend::{Precision, RetainedImageMeta, SampleDomain};
+
+    let mut s = session();
     let h = &mut s.harness;
-    h.run_steps(1);
-    assert!(h.state().output_image.is_none());
-    assert!(
-        !h.state().histogram.visible,
-        "fresh sessions leave room for adjustments"
+    let output = preview(h);
+    settle_animation(h);
+    let render_id = h.state().source_render.as_ref().unwrap().operation_id;
+    let request_id = h.state().render_worker.next_request_id;
+    let params = h.state().params.clone();
+    let revision = h.state().parameter_revision;
+
+    click(h, "Image analysis");
+    wait_until(h, analysis_output_ready);
+    let result = h.state().analysis.result.as_ref().unwrap();
+    assert_eq!(result.identity.modified_generation, Some(render_id));
+    let actual = result.data[1]
+        .as_ref()
+        .unwrap()
+        .as_ref()
+        .expect("output analysis");
+    let meta = RetainedImageMeta {
+        width: output.width,
+        height: output.height,
+        space: spektrafilm_math::colorspace::resolve(&h.state().output_color_space).unwrap(),
+        domain: if h.state().output_cctf_encoding {
+            SampleDomain::Encoded
+        } else {
+            SampleDomain::Linear
+        },
+        precision: Precision::host(),
+        pixel_pitch_um: None,
+    };
+    let expected = analysis::analyze_host(
+        &output,
+        meta,
+        &AnalysisRequest {
+            region: [0, 0, output.width, output.height],
+            mode: AnalysisMode::Histogram,
+            chroma_zoom: 1,
+        },
+        None,
+    )
+    .unwrap();
+    assert_eq!(actual.histogram, expected.histogram);
+    assert_eq!(
+        (actual.total, actual.finite, actual.invalid),
+        (expected.total, expected.finite, expected.invalid)
     );
-    click(h, "Tonal distribution");
-    assert!(
-        h.state().histogram.visible,
-        "the empty readout can be revealed"
+
+    click(h, "Analysis mode");
+    click(h, "Waveform");
+    wait_until(h, |app| {
+        analysis_output_ready(app)
+            && app.analysis.result.as_ref().unwrap().identity.mode == AnalysisMode::Waveform
+    });
+    let waveform = h.state().analysis.result.as_ref().unwrap().data[1]
+        .as_ref()
+        .unwrap()
+        .as_ref()
+        .unwrap();
+    assert_eq!(waveform.waveform.iter().sum::<u64>(), waveform.finite * 4);
+    assert_eq!(waveform.total, expected.total);
+    let spatial_counts = waveform.waveform.clone();
+
+    choose(h, "Waveform display", "RGB parade");
+    wait_until(h, |app| {
+        analysis_output_ready(app)
+            && app.analysis.result.as_ref().unwrap().identity.mode == AnalysisMode::Parade
+    });
+    let parade = h.state().analysis.result.as_ref().unwrap().data[1]
+        .as_ref()
+        .unwrap()
+        .as_ref()
+        .unwrap();
+    assert_eq!(parade.waveform, spatial_counts);
+
+    click(h, "Analysis mode");
+    click(h, "Advanced");
+    click(h, "Vectorscope");
+    wait_until(h, |app| {
+        analysis_output_ready(app)
+            && app.analysis.result.as_ref().unwrap().identity.mode == AnalysisMode::Vectorscope
+    });
+    let colors = h.state().analysis.result.as_ref().unwrap().data[1]
+        .as_ref()
+        .unwrap()
+        .as_ref()
+        .unwrap();
+    assert_eq!(colors.total, expected.total);
+    assert_eq!(
+        colors.vectorscope.iter().sum::<u64>() + colors.outside_window,
+        colors.finite
     );
-    // The painter's `data == None` branch is the real `No output` empty state.
-    assert!(h.state().histogram.cached_data().is_none());
+
+    click(h, "Analysis mode");
+    click(h, "Waveform");
+    wait_until(h, |app| {
+        analysis_output_ready(app)
+            && app.analysis.result.as_ref().unwrap().identity.mode == AnalysisMode::Parade
+    });
+    choose(h, "Waveform display", "Tone");
+    wait_until(h, |app| {
+        analysis_output_ready(app)
+            && app.analysis.result.as_ref().unwrap().identity.mode == AnalysisMode::Waveform
+    });
+
+    let viewer_zoom = h.state().viewer.zoom_percent;
+    let viewer_pan = h.state().viewer.pan;
+    click(h, "Image analysis");
+    assert!(!h.state().analysis.visible);
+    assert!(h.state().analysis.result.is_none());
+    assert!(!h.state().viewer.analysis.enabled);
+    assert_eq!(h.state().viewer.zoom_percent, viewer_zoom);
+    assert_eq!(h.state().viewer.pan, viewer_pan);
+    click(h, "Image analysis");
+    wait_until(h, |app| {
+        analysis_output_ready(app)
+            && app.analysis.result.as_ref().unwrap().identity.mode == AnalysisMode::Waveform
+    });
+
+    settle_animation(h);
+    let after = h.state().viewer.observation();
+    assert_eq!(after.generation, after.accepted_generation);
+    assert!(
+        composed(h, h.ctx.input(|input| input.time) + 1.0)
+            .pixels
+            .is_some()
+    );
+    assert!(Arc::ptr_eq(
+        h.state().output_image.as_ref().unwrap(),
+        &output
+    ));
+    assert_eq!(
+        h.state().source_render.as_ref().unwrap().operation_id,
+        render_id
+    );
+    assert_eq!(h.state().render_worker.next_request_id, request_id);
+    assert_eq!(h.state().params, params);
+    assert_eq!(h.state().parameter_revision, revision);
+    assert!(h.state().render_job.is_none());
+    assert!(!h.state().dirty);
 }
 
 #[test]
-fn histogram_draws_retained_output_without_advancing_viewer_or_render_generations() {
+fn keyboard_analysis_selects_and_inspects_without_photographic_edits() {
     let mut s = session();
     let h = &mut s.harness;
-    let _ = preview(h);
+    let output = preview(h);
     settle_animation(h);
-    // Binning runs on the worker thread, so the strip adopts the finished
-    // distribution a frame or more after the output is retained.
-    wait_until(h, |a| a.histogram.cached_data().is_some());
-    let observation = h.state().viewer.observation();
-    let output = h.state().output_image.as_ref().unwrap().clone();
-    let expected = histogram::HistogramData::compute(&output);
-    let cached = h
-        .state()
-        .histogram
-        .cached_data()
-        .expect("retained output histogram");
-    assert_eq!(cached.r, expected.r);
-    assert_eq!(cached.g, expected.g);
-    assert_eq!(cached.b, expected.b);
-    let generation = observation.generation;
-    let status = h.state().status.clone();
-    assert!(!h.state().dirty);
-    assert!(h.state().render_job.is_none());
-
+    let params = h.state().params.clone();
+    click(h, "Image analysis");
+    wait_until(h, analysis_output_ready);
+    click(h, "Select area");
+    h.get_by_label("Move selection (arrow keys; Enter commits, Escape cancels)")
+        .focus();
     h.run_steps(3);
-    let after = h.state().viewer.observation();
-    assert_eq!(after.generation, generation);
-    assert_eq!(after.accepted_generation, generation);
+    h.press_key(egui::Key::ArrowRight);
+    h.run_steps(3);
+    h.press_key(egui::Key::Enter);
+    wait_until(h, |app| {
+        analysis_output_ready(app) && app.analysis.selection.is_some()
+    });
+    let moved = h.state().analysis.selection.unwrap();
+    assert!((moved[0] - (0.25 + 1.0 / f64::from(output.width))).abs() < 1e-12);
+
+    click(h, "Select area");
+    h.get_by_label("Resize selection (arrow keys; Enter commits, Escape cancels)")
+        .focus();
+    h.run_steps(3);
+    h.press_key(egui::Key::ArrowRight);
+    h.press_key(egui::Key::Escape);
+    h.run_steps(3);
+    assert_eq!(h.state().analysis.selection, Some(moved));
+    assert!(!h.state().viewer.analysis.armed);
+
+    click(h, "Select area");
+    h.get_by_label("Resize selection (arrow keys; Enter commits, Escape cancels)")
+        .focus();
+    h.run_steps(3);
+    h.press_key(egui::Key::ArrowRight);
+    h.run_steps(3);
     assert!(
-        h.state()
-            .output_image
-            .as_ref()
-            .is_some_and(|current| Arc::ptr_eq(current, &output))
+        h.get_by_label("Resize selection (arrow keys; Enter commits, Escape cancels)")
+            .is_focused(),
+        "arrow keys must retain resize-handle focus"
     );
-    assert!(h.state().render_job.is_none());
-    assert!(!h.state().dirty);
-    assert_eq!(h.state().status, status);
+    h.press_key(egui::Key::Enter);
+    h.run_steps(3);
+    assert!(
+        !h.state().viewer.analysis.armed,
+        "Enter must commit the selection"
+    );
+    wait_until(h, |app| {
+        analysis_output_ready(app)
+            && !app.viewer.analysis.armed
+            && app.analysis.selection != Some(moved)
+    });
+    let data = h.state().analysis.result.as_ref().unwrap().data[1]
+        .as_ref()
+        .unwrap()
+        .as_ref()
+        .unwrap();
+    assert_eq!(
+        data.total,
+        u64::from(output.width / 2 + 1) * u64::from(output.height / 2)
+    );
+    assert!(!h.state().viewer.analysis.armed);
+
+    h.get_by_label("Analysis pixel cursor (arrow keys to move)")
+        .focus();
+    h.run_steps(3);
+    h.press_key(egui::Key::ArrowRight);
+    h.press_key(egui::Key::ArrowDown);
+    h.run_steps(3);
+    wait_until(h, |app| app.analysis.sample.is_some());
+    let sample = h.state().viewer.analysis.sample.unwrap();
+    assert!(sample.keyboard);
+    assert_eq!(
+        [sample.x, sample.y],
+        [output.width / 2 + 1, output.height / 2 + 1]
+    );
+    click(h, "Analysis mode");
+    click(h, "Waveform");
+    wait_until(h, analysis_output_ready);
+    h.get_by_label("Analysis plot (arrow keys to inspect)")
+        .focus();
+    h.run_steps(3);
+    let before = h.state().viewer.analysis.band.unwrap();
+    h.press_key(egui::Key::ArrowRight);
+    h.run_steps(3);
+    let after = h.state().viewer.analysis.band.unwrap();
+    assert!((after[0] - before[0] - 1.0 / f64::from(output.width)).abs() < 1e-6);
+    assert_eq!([after[1], after[3]], [before[1], before[3]]);
+    assert!(h.state().analysis.sample.is_none());
+
+    let time = h.ctx.input(|input| input.time) + 1.0;
+    let image = composed(h, time).image_rect;
+    h.input_mut()
+        .events
+        .push(egui::Event::PointerMoved(image.center()));
+    wait_until(h, |app| app.analysis.sample.is_some());
+    assert!(h.state().viewer.analysis.band.is_none());
+    assert_eq!(h.state().params, params);
+}
+
+#[test]
+fn expanded_analysis_keeps_inspector_and_delivery_actions_available() {
+    let mut s = session();
+    let h = &mut s.harness;
+    h.set_size(egui::vec2(1460.0, 980.0));
+    h.run_steps(3);
+    preview(h);
+    settle_animation(h);
+    h.state_mut().analysis.preferences.height = 400.0;
+    click(h, "Image analysis");
+    wait_until(h, analysis_output_ready);
+    let image = composed(h, 30.0).image_rect;
+    h.input_mut()
+        .events
+        .push(egui::Event::PointerMoved(image.center()));
+    wait_until(h, |app| app.analysis.sample.is_some());
+    let large = h
+        .get_by_label("Analysis plot (arrow keys to inspect)")
+        .raw_bounds()
+        .unwrap();
+    h.state_mut().analysis.preferences.height = 100.0;
+    h.run_steps(3);
+    let small = h
+        .get_by_label("Analysis plot (arrow keys to inspect)")
+        .raw_bounds()
+        .unwrap();
+    assert!(
+        large.y1 - large.y0 > small.y1 - small.y0,
+        "plot must respond to requested height: {large:?} vs {small:?}"
+    );
+    h.state_mut().analysis.preferences.height = 400.0;
+
+    for height in [980.0, 720.0] {
+        h.set_size(egui::vec2(1460.0, height));
+        h.run_steps(6);
+        let screen = h.ctx.screen_rect();
+        for label in ["SCAN", "SAVE", "Search controls"] {
+            let bounds = h.get_by_label(label).raw_bounds().unwrap();
+            assert!(bounds.y0 >= f64::from(screen.top()), "{label} above window");
+            assert!(
+                bounds.y1 <= f64::from(screen.bottom()),
+                "{label} below window"
+            );
+        }
+        let controls = h
+            .get_by_role_and_label(egui::accesskit::Role::ScrollView, "Inspector controls")
+            .raw_bounds()
+            .unwrap();
+        assert!(controls.y1 - controls.y0 >= 100.0);
+        assert_eq!(h.state().analysis.preferences.height, 400.0);
+    }
+}
+
+/// Compare the published distributions against independently chosen native
+/// rectangles in the accepted carriers, not against geometry helper output.
+fn assert_selected_native_populations(
+    app: &App,
+    original_region: [u32; 4],
+    modified_region: [u32; 4],
+) {
+    use spektrafilm_backend::analysis::{self, AnalysisMode, AnalysisRequest};
+
+    let result = app
+        .analysis
+        .result
+        .as_ref()
+        .expect("accepted selection analysis");
+    assert_eq!(result.identity.original_region, Some(original_region));
+    assert_eq!(result.identity.modified_region, Some(modified_region));
+    for (index, region) in [original_region, modified_region].into_iter().enumerate() {
+        let crate::analysis::Source::Host(image, meta) = result.sources[index].as_ref().unwrap()
+        else {
+            panic!("CPU fixture must analyze its accepted host carrier");
+        };
+        let expected = analysis::analyze_host(
+            image,
+            *meta,
+            &AnalysisRequest {
+                region,
+                mode: AnalysisMode::Histogram,
+                chroma_zoom: 1,
+            },
+            None,
+        )
+        .unwrap();
+        let actual = result.data[index].as_ref().unwrap().as_ref().unwrap();
+        assert_eq!(
+            actual.total,
+            u64::from(region[2] - region[0]) * u64::from(region[3] - region[1])
+        );
+        assert_eq!(actual.histogram, expected.histogram);
+        assert_eq!(
+            (actual.finite, actual.invalid),
+            (expected.finite, expected.invalid)
+        );
+    }
+}
+
+#[test]
+fn selection_tracks_the_same_source_pixels_across_rotated_cropped_preview_and_scan() {
+    let mut s = session();
+    let h = &mut s.harness;
+    preview(h);
+    reveal_control(h, "workflow.route");
+    choose(h, "workflow", "input");
+    reveal_control(h, "action.rotate_cw");
+    click(h, "cw rotate");
+    assert_eq!(h.state().input_rotation, 3);
+    for (path, label, value) in [
+        ("io.crop_center", "crop center x", "0.5"),
+        ("io.crop_center", "crop center y", "0.5"),
+        ("io.crop_size", "crop size x", "0.5"),
+        ("io.crop_size", "crop size y", "0.5"),
+    ] {
+        reveal_control(h, path);
+        edit(h, label, value);
+    }
+    reveal_control(h, "io.crop");
+    click(h, "crop");
+    assert!(h.state().params.io.crop);
+    let preview_image = preview(h);
+    assert_eq!((preview_image.width, preview_image.height), (64, 64));
+    let cropped_params = h.state().params.clone();
+    settle_animation(h);
+    click(h, "Image analysis");
+    wait_until(h, analysis_output_ready);
+
+    // Clockwise source orientation is 80×160. The centered crop covers
+    // oriented y=40..120 at Scan and y=32..96 in the 64×128 Preview.
+    // Dragging the central half therefore selects oriented source pixels
+    // x=20..60, y=60..100, and Preview pixels x/y=16..48.
+    click(h, "Select area");
+    let time = h.ctx.input(|input| input.time) + 1.0;
+    let rect = composed(h, time).image_rect;
+    let start = rect.min + rect.size() * Vec2::splat(0.25);
+    let end = rect.min + rect.size() * Vec2::splat(0.75);
+    pointer(h, start, true, time + 0.1);
+    h.input_mut().events.push(egui::Event::PointerMoved(end));
+    frame(h, time + 0.2);
+    pointer(h, end, false, time + 0.3);
+    wait_until(h, |app| {
+        analysis_output_ready(app)
+            && app
+                .analysis
+                .result
+                .as_ref()
+                .unwrap()
+                .identity
+                .region
+                .is_some()
+    });
+    assert_selected_native_populations(h.state(), [20, 60, 60, 100], [16, 16, 48, 48]);
+    assert_eq!(
+        h.state().params,
+        cropped_params,
+        "inspection must not change crop or photographic controls"
+    );
+    let selection = h.state().analysis.selection.expect("committed selection");
+
+    let scan_image = scan(h);
+    assert_eq!((scan_image.width, scan_image.height), (80, 80));
+    wait_until(h, |app| {
+        analysis_output_ready(app)
+            && app.analysis.result.as_ref().unwrap().identity.region == Some(selection)
+    });
+    assert_eq!(h.state().analysis.selection, Some(selection));
+    assert_selected_native_populations(h.state(), [20, 60, 60, 100], [20, 20, 60, 60]);
+    let result = h.state().analysis.result.as_ref().unwrap();
+    let crate::analysis::Source::Host(original, original_meta) =
+        result.sources[0].as_ref().unwrap()
+    else {
+        panic!("CPU original carrier");
+    };
+    let crate::analysis::Source::Host(modified, modified_meta) =
+        result.sources[1].as_ref().unwrap()
+    else {
+        panic!("CPU scan carrier");
+    };
+    for (x, y) in [(20, 20), (40, 40), (59, 59)] {
+        let source =
+            spektrafilm_backend::analysis::inspect_host(original, *original_meta, x, y + 40)
+                .unwrap();
+        let output =
+            spektrafilm_backend::analysis::inspect_host(modified, *modified_meta, x, y).unwrap();
+        for (source, output) in source.rgb.into_iter().zip(output.rgb) {
+            assert!(
+                (source - output).abs() < 1e-4,
+                "rotated crop sampled a different source pixel"
+            );
+        }
+    }
 }
 
 #[test]

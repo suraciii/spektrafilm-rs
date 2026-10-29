@@ -735,7 +735,6 @@ fn key(label: &str) -> Option<&'static str> {
         "No matching looks in this group." => Some("surfaces.presets.group_no_matches"),
         "No modified controls match “%{query}”." => Some("surfaces.search.no_modified_match"),
         "No observations in this scope." => Some("surfaces.diagnostics.no_observations"),
-        "No output" => Some("surfaces.histogram.empty"),
         "No saved looks. Use Save preset to save the current look." => {
             Some("surfaces.presets.empty")
         }
@@ -1081,7 +1080,6 @@ fn key(label: &str) -> Option<&'static str> {
         }
         "Toggle" => Some("controls.metadata.toggle"),
         "Toggle the diffusion filter (Pro-Mist family)." => Some("controls.help.diffusion.enable"),
-        "Tonal distribution" => Some("surfaces.histogram.title"),
         "Total back-reflection halation amplitude per channel [R,G,B] (0-1). Typical red channel: weak AH 0.02-0.08, no AH 0.08-0.25. The blue channel is usually near zero." => {
             Some("controls.halation.halation_strength_help")
         }

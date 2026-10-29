@@ -1371,10 +1371,6 @@ fn gpu_gui_scan_view_transition_and_save_keep_the_accepted_device_samples() {
         h.state().output_image.is_none(),
         "GPU Scan must not retain a compatibility host raster"
     );
-    assert!(
-        h.state().output_histogram.is_some(),
-        "GPU histogram belongs to accepted render"
-    );
     let accepted = h.state().output_retained.clone().unwrap();
     let samples = accepted.to_host(h.state().backend.as_ref()).unwrap();
     assert_eq!(
@@ -1402,16 +1398,16 @@ fn gpu_gui_scan_view_transition_and_save_keep_the_accepted_device_samples() {
         Some(0),
         "Preview-to-Scan reuse must not upload the same host samples again"
     );
-    let display = report
-        .phases
-        .iter()
-        .find(|phase| phase.name == "display_prepare")
-        .unwrap();
-    assert!(
-        report
-            .stages
-            .iter()
-            .any(|stage| stage.name == "retained_histogram" && stage.parent_id == display.id)
+    super::click(&mut h, "Image analysis");
+    wait_until(&mut h, analysis_output_ready);
+    let analysis = h.state().analysis.result.as_ref().unwrap().data[1]
+        .as_ref()
+        .unwrap()
+        .as_ref()
+        .expect("retained output analysis");
+    assert_eq!(
+        analysis.total,
+        u64::from(original.width) * u64::from(original.height)
     );
     h.state().render_worker.invalidate_runtime_cache();
     super::click(&mut h, "SCAN");
@@ -1444,9 +1440,12 @@ fn gpu_gui_scan_view_transition_and_save_keep_the_accepted_device_samples() {
     let time = h.ctx.input(|input| input.time) + 1.0;
     let fit = composed(&mut h, time);
     assert!(fit.pixels.is_some());
+    wait_until(&mut h, analysis_output_ready);
     assert!(
-        h.state().histogram.cached_data().is_some(),
-        "accepted device histogram is visible"
+        h.state().analysis.result.as_ref().unwrap().data[1]
+            .as_ref()
+            .unwrap()
+            .is_ok()
     );
     h.state_mut().viewer.set_zoom_percent(200.0);
     let magnified = composed(&mut h, time + 1.0);
@@ -1475,7 +1474,14 @@ fn gpu_gui_scan_view_transition_and_save_keep_the_accepted_device_samples() {
     // keeps the unturned import for Scan: orientation must apply exactly once.
     super::reveal_control(&mut h, "action.rotate_cw");
     super::click(&mut h, "cw rotate");
-    assert_eq!(h.state().input_rotation, 3);
+    assert_eq!(
+        h.state().input_rotation,
+        3,
+        "rotation control {:?}, viewport {:?}",
+        h.get_by_label("cw rotate").raw_bounds(),
+        h.get_by_role_and_label(egui::accesskit::Role::ScrollView, "Inspector controls")
+            .raw_bounds()
+    );
     assert!(h.state().image.as_ref().unwrap().same_source(&source));
     let oriented = h.state().oriented_input.clone().unwrap();
     let crate::render::InputImage::Device(presentation) = &oriented else {

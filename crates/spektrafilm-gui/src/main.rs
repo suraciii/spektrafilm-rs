@@ -21,6 +21,10 @@ use spektrafilm_core::profile;
 use spektrafilm_core::telemetry::{IssueBoundary, IssueCategory};
 use spektrafilm_core::telemetry::{OperationKind, Outcome, SourceRender};
 use spektrafilm_math::image::ImageBuf;
+mod analysis;
+mod analysis_geometry;
+mod analysis_plot;
+mod analysis_preferences;
 mod app;
 mod backend;
 mod calibration;
@@ -34,7 +38,6 @@ mod export;
 mod export_job;
 #[cfg(test)]
 mod headless;
-mod histogram;
 mod i18n;
 mod input_worker;
 rust_i18n::i18n!("locales", fallback = "en");

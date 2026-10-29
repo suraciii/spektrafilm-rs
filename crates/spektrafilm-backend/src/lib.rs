@@ -6,6 +6,7 @@
 //! depends on no device toolkit, so domain code can reach the CPU reference
 //! implementation without compiling device code.
 
+pub mod analysis;
 pub mod dye_params;
 use dye_params::DyeGpuParams;
 pub mod raw_params;
@@ -758,10 +759,28 @@ pub trait ComputeBackend: Send + Sync {
     ) -> Result<[f32; 3], String> {
         Err("backend has no retained pixel inspection".into())
     }
-    /// Display-referred sRGB tonal bins, normalized together to a peak of one.
-    /// Only these 192 reduced values cross the retained-image boundary.
-    fn retained_histogram(&self, _image: &DeviceImage) -> Result<[[f32; 64]; 3], String> {
-        Err("backend has no retained histogram reduction".into())
+    /// Reduce native samples in the selected analysis region.
+    fn analyze_retained(
+        &self,
+        image: &DeviceImage,
+        request: &analysis::AnalysisRequest,
+    ) -> Result<analysis::AnalysisData, String> {
+        let host = image
+            .host_image()
+            .ok_or_else(|| "backend has no retained analysis reduction".to_owned())?;
+        analysis::analyze_host(host, image.meta(), request, None)
+    }
+    /// Inspect one native pixel in the analysis color interpretation.
+    fn inspect_analysis_pixel(
+        &self,
+        image: &DeviceImage,
+        x: u32,
+        y: u32,
+    ) -> Result<analysis::AnalysisPixel, String> {
+        let host = image
+            .host_image()
+            .ok_or_else(|| "backend has no retained analysis inspection".to_owned())?;
+        analysis::inspect_host(host, image.meta(), x, y)
     }
     /// Resample `image` to the viewer's capped size on the compute device,
     /// returning the separable-bilinear display raster as flat `f32` RGB.

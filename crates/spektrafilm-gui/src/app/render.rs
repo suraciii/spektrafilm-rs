@@ -260,7 +260,8 @@ impl App {
                     self.viewer.set_retained_output(r.retained.clone());
                     self.output_retained = r.retained;
                     self.output_image = output;
-                    self.output_histogram = r.histogram;
+                    self.viewer.cancel_analysis_selection();
+                    self.output_geometry = r.geometry;
                     self.retained_kind = Some(kind);
                     drop(handoff);
                     self.diagnostics.finish(operation, Outcome::Succeeded);

@@ -38,7 +38,7 @@ The [GUI language design](../gui-language/design.md) owns localized presentation
 - It retains the existing calibration and modal guards.
 - A render request, the pending UI job, and the worker result share one captured render identity. The worker MUST preserve its collection mode and animation intent.
 - Preview, Scan, and Export MUST bind their actual retained backend to the operation's observation context. Host-only geometry preparation belongs to `input_prepare`.
-- Device input upload, device geometry, and the retained film chain belong to `simulation`. Histogram reduction and display conversion belong to `display_prepare`; export conversion and its final readback belong to `saving_convert`.
+- Device input upload, device geometry, and the retained film chain belong to `simulation`. Display conversion belongs to `display_prepare`; export conversion and its final readback belong to `saving_convert`.
 - Workers MUST NOT infer backend, executor, or adapter fields from the selected controls.
 - The UI accepts pipeline output only when request, input, and parameter revisions match. It accepts composed frames only when the generation and viewport key match.
 - Viewer pending status is derived from the accepted dirty state, current render job, and composition worker lifecycle. It MUST NOT create a parallel status machine or depend on telemetry collection.
@@ -56,10 +56,10 @@ The [GUI language design](../gui-language/design.md) owns localized presentation
 - Numeric editing and validation share one control implementation under [numeric editor ranges](spec.md#numeric-editor-ranges); an editor cannot accept a value the validator rejects.
 - The editor range table follows [numeric editor ranges](spec.md#numeric-editor-ranges) and lives alongside the existing `unit()` and `leaf_numeric_bounds()` declarations in core, so the editor range, the validator range, and the discovery output cannot drift apart.
 - Channel-swap validation follows the [experimental controls](spec.md#experimental-controls) permutation rule and rejects a non-permutation before rendering in both the GUI state loader and the CLI.
-- The viewer tonal-distribution readout is presentation state. It reads the retained output and MUST NOT allocate a second render, a retained source copy, or a pipeline stage.
-- Normal GPU Preview and Scan publish a retained device output with carrier-owned dimensions, not a compulsory host float raster. Their tonal distribution is reduced and normalized on the device before publication; only 192 bins return to the host.
-- Binning preserves the CPU readout's 64 bins, clamped sRGB OETF range, nearest-bin rule, global peak normalization, and NaN-to-first-bin behavior. A histogram failure rejects the render transaction and leaves the previous accepted output intact.
+- Image analysis MUST follow the [analysis execution and publication boundary](../gui-product-design/image-analysis/design.md#execution-and-publication).
+- Normal GPU Preview and Scan MUST publish retained device output with carrier-owned dimensions rather than a compulsory host float raster.
 - Pixel inspection MAY request one original RGB triplet through a bounded readback; it never substitutes viewer pixels or edits retained samples. Explicit non-RGB diagnostic taps retain their intentional final materialization boundary.
+- Image-to-plot sample linking MUST follow [linked pixel sampling](../gui-product-design/image-analysis/design.md#linked-pixel-sampling) rather than create another pixel-readback or coordinate-mapping owner.
 - A GUI surface has one owner. Duplicated rendering of one value from two surfaces is a defect, not a convenience.
 - Region, action, and editor ownership follow [Window layout](spec.md#window-layout) and [Stage and surface ownership](spec.md#stage-and-surface-ownership). The stage inspector replaces page tabs; neither application settings nor independent Export MAY create a second photographic editor.
 
