@@ -8,6 +8,13 @@
 - `core::runtime` is the production entry point. `Pipeline` owns stage topology and state.
 - Pipeline entry points share optical diagnostic tap admission and selector-conflict rules. Each entry point retains its validation order and topology-specific guards.
 - Stage preparation derives film curves, spectral data, scan settings, color transforms, and working pixel pitch once for the selected execution.
+- Runtime parameter updates MUST derive changed film and print materials from their original source profiles, not from previously tuned profiles.
+- Material preparation invalidation MUST include film chemistry, base tuning, and development time for the materials that preparation consumes. Film curve gamma MUST invalidate its middle-gray references and exposure calibration.
+- Material-only and exposure-calibration updates MUST retain compatible spectral tables. A spectral-input, route, or preparation-device change MUST rebuild the affected spectral preparation.
+- Runtime MUST prepare all changed state before committing a parameter update. A failed in-place update MUST retain the previous parameters, prepared state, and render behavior.
+- Prepared material updates MUST retain both original profile identities so scan caches, grain references, and material-artifact provenance continue to identify the untuned sources.
+- Updates on `input > film` MUST NOT validate unused print density-curve models.
+- The `convert-film` inverse MUST refresh its captured illumination, calibration, exposure, input color space, and transfer-decoding state when those controls change.
 - `ComputeBackend` separates stage orchestration from CPU and WGPU execution. Both MUST implement the [target optical order](spec.md#scan-optics-and-print-viewing-glare) and [GPU numerical alignment](../gpu-execution/design.md#numerical-alignment).
 - WGPU owns validated device representations, resources, and dispatch.
 - Scan preparation resolves one colorimetric sensor: the CIE 1931 color-matching functions over the production wavelength grid. No receiver profile is selectable, and no receiver calibration matrix is applied.

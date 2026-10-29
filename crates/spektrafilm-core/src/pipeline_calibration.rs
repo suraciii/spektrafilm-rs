@@ -27,10 +27,36 @@ struct SpectralControlsKey {
     input_gamut_hull_detail: f64,
 }
 
+/// Profile controls that require rebuilding resolved material from its source.
+#[derive(PartialEq)]
+struct MaterialControlsKey<'a> {
+    film_base: &'a crate::params::FilmBaseParams,
+    film_chemistry: &'a crate::params::PrintCurvesMorphParams,
+    film_development_time: &'a Option<f64>,
+    print_base: Option<&'a crate::params::PrintBaseParams>,
+    print_development_time: Option<&'a Option<f64>>,
+}
+
+fn material_controls_key(params: &RuntimeParams) -> MaterialControlsKey<'_> {
+    let prepare_print = params.workflow.route_enum() != WorkflowRoute::InputFilm;
+    MaterialControlsKey {
+        film_base: &params.film_render.base,
+        film_chemistry: &params.film_render.chemistry,
+        film_development_time: &params.film_render.development_time,
+        print_base: prepare_print.then_some(&params.print_render.base),
+        print_development_time: prepare_print.then_some(&params.print_render.development_time),
+    }
+}
+
+pub(crate) fn material_changed(old: &RuntimeParams, new: &RuntimeParams) -> bool {
+    material_controls_key(old) != material_controls_key(new)
+}
+
 /// Runtime controls that invalidate print/front-end calibration data.
 #[derive(Debug, Clone, PartialEq)]
 struct CalibrationControlsKey {
     exposure_compensation_ev: f32,
+    film_density_curve_gamma: f32,
     print_exposure_mode: PrintExposureMode,
     print_exposure_ev_tracking: PrintExposureEvTracking,
     illuminant: String,
@@ -57,6 +83,7 @@ pub(crate) fn calibration_changed(old: &RuntimeParams, new: &RuntimeParams) -> b
 fn calibration_controls_key(params: &RuntimeParams) -> CalibrationControlsKey {
     CalibrationControlsKey {
         exposure_compensation_ev: params.camera.exposure_compensation_ev,
+        film_density_curve_gamma: params.film_render.density_curve_gamma,
         print_exposure_mode: params.enlarger.print_exposure_mode,
         print_exposure_ev_tracking: params.settings.print_exposure_ev_tracking,
         illuminant: params.enlarger.illuminant.clone(),
@@ -94,24 +121,38 @@ fn spectral_controls_key(params: &RuntimeParams) -> SpectralControlsKey {
     }
 }
 pub(crate) struct CalibrationResult {
+    pub params: RuntimeParams,
+    pub material: MaterialCalibration,
+    pub output_gamut: crate::gamut_compression::OutputGamutCompress,
+}
+
+pub(crate) struct MaterialCalibration {
     pub film: Profile,
     pub print: Profile,
-    pub params: RuntimeParams,
-    pub tc_lut: Option<TcLut>,
-    pub prepared_tc_lut: Option<spektrafilm_backend::PreparedTable>,
-    pub mallett_core: Option<[[f64; 3]; 3]>,
-    pub front_illuminant: String,
-    /// Resolved inverse-scan converter for a convert-film route. `None` on
-    /// every other route, which resolves an rgb→raw front pass instead; the
-    /// three are alternative chain heads.
+    /// Resolved inverse-scan converter for a convert-film route.
     pub convert_converter: Option<crate::stages::converting::Converter>,
     pub print_exposure_factor: f64,
     pub print_illuminant: Vec<f64>,
     pub preflash_raw: [f64; 3],
     pub midgray_density: Vec<f64>,
     pub compensated_midgray_density: Vec<f64>,
-    pub output_gamut: crate::gamut_compression::OutputGamutCompress,
-    pub data_dir: Option<std::path::PathBuf>,
+    /// None retains the compatible frontend; Some replaces it.
+    pub spectral: Option<SpectralPreparation>,
+}
+
+pub(crate) struct SpectralPreparation {
+    pub tc_lut: Option<TcLut>,
+    pub prepared_tc_lut: Option<spektrafilm_backend::PreparedTable>,
+    pub mallett_core: Option<[[f64; 3]; 3]>,
+    pub front_illuminant: String,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct SpectralPreparationRef<'a> {
+    pub tc_lut: Option<&'a TcLut>,
+    pub prepared_tc_lut: Option<&'a spektrafilm_backend::PreparedTable>,
+    pub mallett_core: Option<&'a [[f64; 3]; 3]>,
+    pub front_illuminant: &'a str,
 }
 fn interpolate(values: &[f64], wavelengths: &[f64], wavelength: f64) -> f64 {
     if values.is_empty() {
@@ -333,9 +374,20 @@ pub fn validate_scan_output_detailed(
 pub(crate) fn build_with_backend(
     film: Profile,
     print: Profile,
+    params: RuntimeParams,
+    data_dir: &Path,
+    backend: &dyn spektrafilm_backend::ComputeBackend,
+) -> Result<CalibrationResult, String> {
+    build_with_frontend(film, print, params, data_dir, backend, None)
+}
+
+pub(crate) fn build_with_frontend(
+    film: Profile,
+    print: Profile,
     mut params: RuntimeParams,
     data_dir: &Path,
     backend: &dyn spektrafilm_backend::ComputeBackend,
+    retained: Option<SpectralPreparationRef<'_>>,
 ) -> Result<CalibrationResult, String> {
     // Reject malformed params (e.g. an unknown diffusion-filter family)
     // up front — Python raises ValueError mid-run, which also aborts
@@ -417,21 +469,24 @@ pub(crate) fn build_with_backend(
             backend,
         )?;
         return Ok(CalibrationResult {
-            front_illuminant: film.info.reference_illuminant.clone(),
-            film,
-            print,
+            material: MaterialCalibration {
+                spectral: Some(SpectralPreparation {
+                    front_illuminant: film.info.reference_illuminant.clone(),
+                    tc_lut: None,
+                    prepared_tc_lut: None,
+                    mallett_core: None,
+                }),
+                film,
+                print,
+                convert_converter: None,
+                print_exposure_factor: 1.0,
+                print_illuminant: Vec::new(),
+                preflash_raw: [0.0; 3],
+                midgray_density: Vec::new(),
+                compensated_midgray_density: Vec::new(),
+            },
             params,
-            tc_lut: None,
-            prepared_tc_lut: None,
-            mallett_core: None,
-            convert_converter: None,
-            print_exposure_factor: 1.0,
-            print_illuminant: Vec::new(),
-            preflash_raw: [0.0; 3],
-            midgray_density: Vec::new(),
-            compensated_midgray_density: Vec::new(),
             output_gamut,
-            data_dir: Some(data_dir.to_path_buf()),
         });
     }
     let cmy_f64 = neutral_cmy_f64.unwrap_or([
@@ -441,29 +496,46 @@ pub(crate) fn build_with_backend(
     ]);
     let (c_neutral_f64, m_neutral_f64, y_neutral_f64) = (cmy_f64[0], cmy_f64[1], cmy_f64[2]);
 
-    // Capture illuminant is a filming-context input only for direct film-exposure
-    // routes. Keep the user value in the runtime params for reporting/persistence,
-    // but remove it from calibration on input and convert-film routes so inactive
-    // controls cannot change midgray or auto print-exposure artifacts.
-    let spectral_params = if params.workflow.route_enum().exposes_film() {
-        params.clone()
+    let spectral = if retained.is_none() {
+        // Capture illuminant is a filming-context input only for direct
+        // film-exposure routes; preserve the inactive control in params.
+        let spectral_params = if params.workflow.route_enum().exposes_film() {
+            params.clone()
+        } else {
+            let mut inactive_params = params.clone();
+            inactive_params.camera.capture_illuminant = None;
+            inactive_params
+        };
+        let spectral_service::FilmingUpsampler {
+            tc_lut,
+            prepared_tc_lut,
+            mallett_core,
+            front_illuminant,
+            ..
+        } = spectral_service::build_filming_upsampler_with_backend(
+            &film,
+            &spectral_params,
+            data_dir,
+            backend,
+        )?;
+        Some(SpectralPreparation {
+            tc_lut,
+            prepared_tc_lut,
+            mallett_core,
+            front_illuminant,
+        })
     } else {
-        let mut inactive_params = params.clone();
-        inactive_params.camera.capture_illuminant = None;
-        inactive_params
+        None
     };
-    let spectral_service::FilmingUpsampler {
-        tc_lut,
-        prepared_tc_lut,
-        mallett_core,
-        front_illuminant,
-        ..
-    } = spectral_service::build_filming_upsampler_with_backend(
-        &film,
-        &spectral_params,
-        data_dir,
-        backend,
-    )?;
+    let frontend = retained.unwrap_or_else(|| {
+        let built = spectral.as_ref().expect("frontend was built");
+        SpectralPreparationRef {
+            tc_lut: built.tc_lut.as_ref(),
+            prepared_tc_lut: built.prepared_tc_lut.as_ref(),
+            mallett_core: built.mallett_core.as_ref(),
+            front_illuminant: &built.front_illuminant,
+        }
+    });
 
     // Python parity: sensitivities are pre-balanced in the profile so midgray ≈ 1.0.
     // The TC LUT is used unnormalized — Python's `rgb_to_raw_hanatos2025` does NOT scale it.
@@ -482,9 +554,9 @@ pub(crate) fn build_with_backend(
     // sRGB (Python `_rgb_to_film_raw` default), through whichever upsampler
     // is active. `scale` folds the EV compensation for the `_comp` branch.
     let midgray_raw = |scale: f64| -> [f64; 3] {
-        if let Some(prepared) = &prepared_tc_lut {
+        if let Some(prepared) = frontend.prepared_tc_lut {
             let xyz = spectral_service::calibration_neutral_xyz(
-                &front_illuminant,
+                frontend.front_illuminant,
                 params.settings.use_cat16,
                 scale,
             );
@@ -494,16 +566,16 @@ pub(crate) fn build_with_backend(
                     value * brightness,
                 ))
             })
-        } else if let Some(lut) = &tc_lut {
+        } else if let Some(lut) = frontend.tc_lut {
             enlarger::midgray_raw_hanatos(
                 lut,
-                &select_illuminant(&front_illuminant),
+                &select_illuminant(frontend.front_illuminant),
                 params.settings.use_cat16,
                 scale,
             )
         } else {
-            let core = mallett_core
-                .as_ref()
+            let core = frontend
+                .mallett_core
                 .expect("one upsampler is always built");
             let m = crate::mallett::film_matrix(core, "sRGB");
             let g = 0.184 * scale;
@@ -598,7 +670,7 @@ pub(crate) fn build_with_backend(
 
     tracing::info!(
         method = params.settings.rgb_to_raw_method,
-        lut_size = tc_lut.as_ref().map_or(0, |l| l.size),
+        lut_size = frontend.tc_lut.map_or(0, |l| l.size),
         film = film.info.stock.as_deref().unwrap_or("unknown"),
         print_exposure_factor = print_exposure_factor,
         "pipeline calibrated"
@@ -615,20 +687,18 @@ pub(crate) fn build_with_backend(
     // and before the result consumes the film and the params.
     let convert_converter = crate::stages::converting::resolve_converter(&film, &params)?;
     Ok(CalibrationResult {
-        film,
-        print,
+        material: MaterialCalibration {
+            film,
+            print,
+            convert_converter,
+            print_exposure_factor,
+            print_illuminant,
+            preflash_raw,
+            midgray_density: density_spectral_midgray,
+            compensated_midgray_density,
+            spectral,
+        },
         params,
-        convert_converter,
-        tc_lut,
-        prepared_tc_lut,
-        mallett_core,
-        front_illuminant,
-        print_exposure_factor,
-        print_illuminant,
-        preflash_raw,
-        midgray_density: density_spectral_midgray,
-        compensated_midgray_density,
-        data_dir: Some(data_dir.to_path_buf()),
         output_gamut,
     })
 }
@@ -782,6 +852,7 @@ mod tests {
                 &spektrafilm_backend::cpu_backend::CpuBackend,
             )
             .unwrap()
+            .material
             .print_exposure_factor
         };
         let auto_follow = factor(Auto, FollowMode);

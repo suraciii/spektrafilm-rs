@@ -295,6 +295,16 @@ impl Converter {
     }
 }
 
+/// Whether a non-profile input captured by `Converter::new` has changed.
+pub(crate) fn converter_changed(old: &RuntimeParams, new: &RuntimeParams) -> bool {
+    old.film_render.convert.scan_illuminant != new.film_render.convert.scan_illuminant
+        || old.film_render.convert.calibration != new.film_render.convert.calibration
+        || old.film_render.convert.exposure_compensation_ev
+            != new.film_render.convert.exposure_compensation_ev
+        || old.io.input_color_space != new.io.input_color_space
+        || old.io.input_cctf_decoding != new.io.input_cctf_decoding
+}
+
 pub(crate) fn resolve_converter(
     profile: &Profile,
     params: &RuntimeParams,

@@ -12,6 +12,7 @@ The [GUI language design](../gui-language/design.md) owns localized presentation
 - Cached preview preparation and independent export preparation MUST share parameter digestion, scanned-medium selection, and channel-swap rules. Cache reuse and operation observation scopes remain separate.
 - The private render preparation module owns captured render inputs and runtime construction without depending on the App or GUI widgets. The application owns source-revision tracking, worker scheduling, and result publication.
 - The render worker's runtime cache owns its entry, preparation, and setup attachment. A present entry contains a valid runtime.
+- Cached Preview and Scan parameter updates MUST use the core [material preparation invariants](../film-chain/design.md). The GUI MUST NOT maintain a separate material-control invalidation key.
 - Setup failure leaves the entry unchanged; parameter-update failure clears it; failed preparation for a different key retains the previous entry.
 - The input worker owns source decoding, device orientation, and initial-view preparation. Presentation refreshes MUST NOT supersede source transactions.
 - The application MUST retain accepted contexts, histories, and drafts until all preparation succeeds. Only a commit that replaces the active input MAY invalidate its pending presentation refresh.

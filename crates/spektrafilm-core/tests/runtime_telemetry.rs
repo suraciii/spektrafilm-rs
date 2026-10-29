@@ -492,6 +492,108 @@ fn retained_input_route_reports_actual_colorspace_gpu_work() {
 }
 
 #[test]
+fn cpu_converter_updates_survive_gpu_migration() {
+    use spektrafilm_backend::ComputeBackend as _;
+
+    // Keep the explicit-adapter lock alive until every runtime and image is dropped.
+    let gpu = spektrafilm_gpu::test_support::explicit_adapter();
+    let data = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data");
+    let film = spektrafilm_core::profile::load_profile_by_name(&data, "kodak_portra_400").unwrap();
+    let print =
+        spektrafilm_core::profile::load_profile_by_name(&data, "kodak_portra_endura").unwrap();
+    let mut params = RuntimeParams::default();
+    params.workflow.route = "input > convert-film > scan".into();
+    params.settings.rgb_to_raw_method = "mallett2019".into();
+    params.settings.use_scanner_lut = false;
+    params.settings.use_enlarger_lut = false;
+    params.camera.auto_exposure = false;
+    params.camera.diffusion_filter.active = false;
+    params.enlarger.diffusion_filter.active = false;
+    params.film_render.grain.active = false;
+    params.print_render.glare.active = false;
+    params.io.scan_film = false;
+    params.io.input_color_space = "sRGB".into();
+    params.io.input_cctf_decoding = true;
+    params.io.output_cctf_encoding = false;
+    params.io.output_gamut_compress.algorithm = "off".into();
+    params.io.crop = false;
+    params.io.upscale_factor = 1.0;
+    params.scanner.scan_output = "direct_scan".into();
+    params.scanner.experimental_setup = false;
+    params.scanner.lens_blur = 0.0;
+    params.scanner.unsharp_mask = [0.0, 0.0];
+    let baseline = Runtime::new(film.clone(), print.clone(), params, &data).unwrap();
+    let image = ImageBuf::from_data(
+        8,
+        4,
+        (0..8 * 4 * 3)
+            .map(|i| from_f64(0.08 + 0.8 * ((i * 37) % 97) as f64 / 96.0))
+            .collect(),
+    );
+    let render = |runtime: &Runtime| {
+        let retained = runtime
+            .process_retained(&image, gpu.backend())
+            .unwrap()
+            .expect("convert-film must render on the selected GPU");
+        gpu.backend().materialize_retained(&retained).unwrap()
+    };
+    let fresh = |params: RuntimeParams| {
+        Runtime::new_with_backend(film.clone(), print.clone(), params, &data, gpu.backend())
+            .unwrap()
+    };
+    let baseline_output = render(&fresh(baseline.params().clone()));
+
+    type Edit = fn(&mut RuntimeParams);
+    let edits: [(&str, Edit); 5] = [
+        ("scan illuminant", |p| {
+            p.film_render.convert.scan_illuminant = "A".into()
+        }),
+        ("calibration", |p| {
+            p.film_render.convert.calibration = "1.2 0 0 0 0.85 0 0 0 1.1".into()
+        }),
+        ("exposure", |p| {
+            p.film_render.convert.exposure_compensation_ev = 0.75
+        }),
+        ("input color space", |p| {
+            p.io.input_color_space = "Display P3".into()
+        }),
+        ("input decoding", |p| p.io.input_cctf_decoding = false),
+    ];
+    for (name, edit) in edits {
+        let mut updated = baseline.clone();
+        let mut changed = updated.params().clone();
+        edit(&mut changed);
+        updated.update(changed).unwrap();
+        let accepted = updated.params().clone();
+        let migrated = updated
+            .with_params_with_backend(accepted.clone(), gpu.backend())
+            .unwrap();
+        let expected = render(&fresh(accepted));
+        let actual = render(&migrated);
+        assert_eq!((actual.width, actual.height), (8, 4), "{name}");
+        assert_eq!(actual.data.len(), expected.data.len(), "{name}");
+        for (index, (actual, expected)) in actual.data.iter().zip(&expected.data).enumerate() {
+            assert!(
+                actual.is_finite() && expected.is_finite(),
+                "{name} sample {index}"
+            );
+            assert!(
+                (*actual as f64 - *expected as f64).abs() < 1e-6,
+                "{name} sample {index}: migrated {actual}, fresh {expected}"
+            );
+        }
+        assert!(
+            expected
+                .data
+                .iter()
+                .zip(&baseline_output.data)
+                .any(|(a, b)| (*a as f64 - *b as f64).abs() > 1e-6),
+            "{name} must change the rendered pixels"
+        );
+    }
+}
+
+#[test]
 fn gpu_timing_collection_survives_a_host_fence() {
     // A host fence splits the resident chain into several submissions inside
     // one batch. The timestamp readback is mapped at the batch boundary, so
