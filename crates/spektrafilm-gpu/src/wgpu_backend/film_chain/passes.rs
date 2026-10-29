@@ -1466,18 +1466,41 @@ mod tests {
 
         #[test]
         fn diagnostic_taps_reject_absent_or_reversed_topology_boundaries() {
-            let mut p = params(1, 1);
-            p.inject = Tap::CmyFilm;
-            p.collect = Tap::LogEFilm;
-            assert!(validate_tap_span(&p).unwrap_err().contains("no node path"));
-            p.scan_film = true;
-            p.inject = Tap::LogEPrint;
-            p.collect = Tap::LogEPrint;
-            assert!(
-                validate_tap_span(&p)
-                    .unwrap_err()
-                    .contains("not part of this topology")
-            );
+            let taps = [
+                Tap::RgbIn,
+                Tap::RgbPre,
+                Tap::LogEFilm,
+                Tap::CmyFilm,
+                Tap::LogEPrint,
+                Tap::CmyPrint,
+                Tap::RgbOut,
+            ];
+            for scan_film in [false, true] {
+                for (from_index, &inject) in taps.iter().enumerate() {
+                    for (to_index, &collect) in taps.iter().enumerate() {
+                        let mut p = params(1, 1);
+                        p.scan_film = scan_film;
+                        p.inject = inject;
+                        p.collect = collect;
+                        let absent_paper = scan_film
+                            && [inject, collect]
+                                .iter()
+                                .any(|tap| matches!(tap, Tap::LogEPrint | Tap::CmyPrint));
+                        let requires_preprocessing = inject == Tap::RgbIn && inject != collect;
+                        let rejected =
+                            absent_paper || to_index < from_index || requires_preprocessing;
+                        let path = chain_steps(&p);
+                        assert_eq!(
+                            path.is_err(),
+                            rejected,
+                            "scan_film={scan_film}: {inject:?} -> {collect:?}"
+                        );
+                        if !rejected && inject == collect {
+                            assert_eq!(path.unwrap(), []);
+                        }
+                    }
+                }
+            }
         }
 
         #[test]
@@ -1514,6 +1537,60 @@ mod tests {
             // Resource planning follows declared lattice geometry even when a
             // generated retained table has no host sample vector.
             assert_eq!(required.static_bytes, MAX_FIXED_AUX_BYTES);
+        }
+
+        #[test]
+        fn inactive_tables_cannot_inflate_a_diagnostic_spans_binding_requirement() {
+            let tc_lut = spektrafilm_math::spectral::TcLut {
+                size: 1000,
+                channels: 3,
+                data: Vec::new(),
+            };
+            let film_exposure = [0.0; 6000];
+            let film_spectra = [[0.0; 3]; 500];
+            let print_exposure = [0.0; 7000];
+            let print_spectra = [[0.0; 3]; 800];
+            let mut p = FilmChainParams {
+                front: FrontPass::Hanatos2025 {
+                    tc_lut: &tc_lut,
+                    generated: None,
+                    rgb_to_adapted_xyz: MAT3,
+                },
+                film_log_exposure: &film_exposure,
+                film_channel_density: &film_spectra,
+                print_log_exposure: &print_exposure,
+                print_channel_density: &print_spectra,
+                ..params(8, 4)
+            };
+            for (inject, collect, required_bytes) in [
+                (Tap::RgbPre, Tap::LogEFilm, 12_000_000),
+                (Tap::LogEFilm, Tap::CmyFilm, 24_000),
+                (Tap::CmyFilm, Tap::LogEPrint, 6_000),
+                (Tap::LogEPrint, Tap::CmyPrint, 28_000),
+                (Tap::CmyPrint, Tap::RgbOut, 9_600),
+            ] {
+                p.inject = inject;
+                p.collect = collect;
+                assert_eq!(
+                    required_chain_buffers(&p).static_bytes,
+                    required_bytes,
+                    "{inject:?} -> {collect:?} reserved an inactive table"
+                );
+            }
+        }
+
+        #[test]
+        fn immutable_binding_accepts_exact_capacity_and_checks_each_independent_limit() {
+            for (buffer_limit, binding_limit) in [(64, 128), (128, 64)] {
+                let limits = wgpu::Limits {
+                    max_buffer_size: buffer_limit,
+                    max_storage_buffer_binding_size: binding_limit,
+                    ..wgpu::Limits::default()
+                };
+                assert!(required_buffer_exceeds_limits(64, &limits).is_none());
+                assert!(required_buffer_exceeds_limits(65, &limits).is_some());
+                assert!(required_buffer_exceeds_limits(u64::MAX, &limits).is_some());
+            }
         }
     }
 

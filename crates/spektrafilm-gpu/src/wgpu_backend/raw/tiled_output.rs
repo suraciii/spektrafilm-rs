@@ -142,6 +142,28 @@ fn scatter_raw(
         }
     }
 }
+
+fn output_capacity(
+    limit: u64,
+    lens: bool,
+    fuji: bool,
+    rotated: (u32, u32),
+    output: (u32, u32),
+) -> Result<u32, String> {
+    let bytes = if lens {
+        192
+    } else if fuji {
+        64
+    } else {
+        48
+    };
+    Ok(
+        (super::super::bounded::chunk_elements(limit, bytes)? as u32)
+            .min(65536)
+            .min((output.0 * output.1).max(rotated.0 * rotated.1)),
+    )
+}
+
 impl WgpuBackend {
     /// Gather a device-selected footprint. Readback is fixed-size control data,
     /// not a correction raster; arbitrarily disconnected TCA footprints work.
@@ -286,18 +308,13 @@ impl WgpuBackend {
         if input.width != sensor.width || input.height != sensor.height {
             return Err("RAW output input dimensions disagree with sensor".into());
         }
-        let capacity = (super::super::bounded::chunk_elements(
+        let capacity = output_capacity(
             limit,
-            if params.lens.is_some() {
-                192
-            } else if sensor.fuji_width != 0 {
-                64
-            } else {
-                48
-            },
-        )? as u32)
-            .min(65536)
-            .min((ow * oh).max(rw * rh));
+            params.lens.is_some(),
+            sensor.fuji_width != 0,
+            (rw, rh),
+            (ow, oh),
+        )?;
         let scratch = Scratch::new(
             self,
             capacity,
@@ -663,6 +680,47 @@ impl WgpuBackend {
             self.raw_submit(encoder)?;
         }
         Ok(output)
+    }
+}
+
+#[cfg(test)]
+mod logic_tests {
+    use super::*;
+
+    #[test]
+    fn output_capacity_requires_mode_specific_minimum_binding() {
+        for (lens, fuji, bytes) in [
+            (false, false, 48),
+            (false, true, 64),
+            (true, false, 192),
+            (true, true, 192),
+        ] {
+            assert!(output_capacity(bytes - 1, lens, fuji, (10, 10), (10, 10)).is_err());
+            assert_eq!(
+                output_capacity(bytes, lens, fuji, (10, 10), (10, 10)).unwrap(),
+                1
+            );
+            assert_eq!(
+                output_capacity(bytes * 3 - 1, lens, fuji, (10, 10), (10, 10)).unwrap(),
+                2
+            );
+        }
+    }
+
+    #[test]
+    fn output_capacity_is_capped_by_larger_geometry_and_dispatch_limit() {
+        assert_eq!(
+            output_capacity(48 * 1000, false, false, (7, 9), (3, 4)).unwrap(),
+            63
+        );
+        assert_eq!(
+            output_capacity(48 * 1000, false, false, (3, 4), (7, 9)).unwrap(),
+            63
+        );
+        assert_eq!(
+            output_capacity(48 * 100_000, false, false, (500, 500), (500, 500)).unwrap(),
+            65_536
+        );
     }
 }
 

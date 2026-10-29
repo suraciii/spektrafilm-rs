@@ -9,6 +9,21 @@ struct PageParams {
     region: [u32; 4],
     control: [u32; 4],
 }
+
+fn block_cfa(sensor: &RawSensor, y: u32, x: u32) -> Vec<u32> {
+    (0..sensor.cfa_rows)
+        .flat_map(|r| (0..sensor.cfa_columns).map(move |c| u32::from(sensor.cfa_at(y + r, x + c))))
+        .collect()
+}
+
+fn missing_site_capacity(limit: u64) -> Result<u32, String> {
+    let capacity = (limit / (5 * 16)).saturating_sub(4) as u32;
+    if capacity == 0 {
+        return Err("Device cannot bind the native missing-site 5x5 neighborhood".into());
+    }
+    Ok(capacity)
+}
+
 impl WgpuBackend {
     pub(super) fn raw_sensor_paged_gpu(
         &self,
@@ -121,12 +136,7 @@ impl WgpuBackend {
                         bytemuck::bytes_of(&local),
                         wgpu::BufferUsages::UNIFORM,
                     );
-                    let tile: Vec<u32> = (0..sensor.cfa_rows)
-                        .flat_map(|r| {
-                            (0..sensor.cfa_columns)
-                                .map(move |c| u32::from(sensor.cfa_at(y + r, x + c)))
-                        })
-                        .collect();
+                    let tile = block_cfa(sensor, y, x);
                     let tile = RawBuffer::upload(
                         &self.device,
                         "raw_wb_local_cfa",
@@ -240,10 +250,7 @@ impl WgpuBackend {
         maximum: &RawBuffer,
         limit: u64,
     ) -> Result<(), String> {
-        let capacity = (limit / (5 * 16)).saturating_sub(4) as u32;
-        if capacity == 0 {
-            return Err("Device cannot bind the native missing-site 5x5 neighborhood".into());
-        }
+        let capacity = missing_site_capacity(limit)?;
         for y in 0..sensor.height {
             for x in (0..sensor.width).step_by(capacity as usize) {
                 self.check_cancelled()?;
@@ -320,6 +327,7 @@ impl WgpuBackend {
         Ok(())
     }
 }
+
 const PROCESS: &str = concat!(
     include_str!("../../../../spektrafilm-shaders/wgsl/raw/raw_common.wgsl"),
     include_str!("../../../../spektrafilm-shaders/wgsl/raw/raw_page_process.wgsl")
@@ -334,3 +342,27 @@ const WB_TOTALS: &str = concat!(
     include_str!("../../../../spektrafilm-shaders/wgsl/raw/raw_scale_helpers.wgsl"),
     include_str!("../../../../spektrafilm-shaders/wgsl/raw/raw_wb_totals.wgsl")
 );
+
+#[cfg(test)]
+mod logic_tests {
+    use super::*;
+
+    #[test]
+    fn missing_site_capacity_accounts_for_five_rows_and_two_sided_halo() {
+        assert!(missing_site_capacity(399).is_err());
+        assert_eq!(missing_site_capacity(400).unwrap(), 1);
+        assert_eq!(missing_site_capacity(479).unwrap(), 1);
+        assert_eq!(missing_site_capacity(480).unwrap(), 2);
+    }
+
+    #[test]
+    fn white_balance_blocks_use_cfa_at_native_origin() {
+        let mut sensor = super::super::tests::synthetic_sensor(2);
+        sensor.cfa_rows = 2;
+        sensor.cfa_columns = 3;
+        sensor.cfa = vec![0, 1, 2, 3, 2, 1];
+        assert_eq!(block_cfa(&sensor, 0, 0), [0, 1, 2, 3, 2, 1]);
+        assert_eq!(block_cfa(&sensor, 1, 2), [1, 3, 2, 2, 0, 1]);
+        assert_eq!(block_cfa(&sensor, 8, 8), [2, 0, 1, 1, 3, 2]);
+    }
+}

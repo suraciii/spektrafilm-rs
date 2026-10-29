@@ -32,6 +32,33 @@ mod logic_tests {
         assert!(wider > large);
         assert!(wider < 1 << 20);
     }
+
+    #[test]
+    fn diffusion_reservation_checks_minimum_and_geometry_overflow() {
+        let plan = super::super::bounded::workspace_plan;
+        for (width, height, k, limit) in
+            [(0, 1, 1, 12), (1, 0, 1, 12), (1, 1, 0, 12), (1, 1, 1, 11)]
+        {
+            assert!(plan(width, height, k, limit, false).is_err());
+        }
+        assert!(plan(1, 1, 1, 12, false).is_ok());
+        assert!(plan(u32::MAX, u32::MAX, 1, 12, false).is_err());
+    }
+
+    #[test]
+    fn diffusion_print_reservation_adds_images_and_bounded_domain_adapters() {
+        let plan = super::super::bounded::workspace_plan;
+        let image = 4 * 3 * 12;
+        // Exercise both the streamed-tap and full-kernel workspace paths.
+        assert_eq!(plan(4, 3, 3, 107, false).unwrap(), 708);
+        assert_eq!(plan(4, 3, 3, 108, false).unwrap(), 708);
+        assert_eq!(plan(4, 3, 3, 1024, false).unwrap(), 1860);
+        for limit in [107, 108, 1024] {
+            let base = plan(4, 3, 3, limit, false).unwrap();
+            let print = plan(4, 3, 3, limit, true).unwrap();
+            assert_eq!(print - base, 2 * image + 3 * image.min(limit));
+        }
+    }
 }
 
 /// A deterministic RGB image with a bright corner block, exercising the

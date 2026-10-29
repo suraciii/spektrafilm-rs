@@ -1690,6 +1690,24 @@ mod logic_tests {
             (row_bytes, 2)
         );
         assert!(formation_band_layout(&layer, row_bytes - 1).is_err());
+        assert_eq!(
+            formation_band_layout(&layer, row_bytes).unwrap(),
+            (row_bytes, 1)
+        );
+        assert_eq!(
+            formation_band_layout(&layer, u64::MAX).unwrap(),
+            (row_bytes, BAND_ROWS)
+        );
+        for invalid in [-1.0, f64::NAN, f64::INFINITY] {
+            layer.reach_texels = invalid;
+            assert!(formation_band_layout(&layer, u64::MAX).is_err());
+        }
+        layer.reach_texels = 1.01;
+        let (larger_row, _) = formation_band_layout(&layer, u64::MAX).unwrap();
+        assert!(
+            larger_row > row_bytes,
+            "fractional reach rounds its margin upward"
+        );
         layer.reach_texels = f64::MAX;
         assert!(
             formation_band_layout(&layer, u64::MAX)

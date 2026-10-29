@@ -20,6 +20,48 @@ struct Window {
     height: u32,
 }
 
+fn demosaic_step(limit: u64, halo: u32, cfa_rows: u32, cfa_columns: u32) -> Result<u32, String> {
+    let side = ((limit / 16) as f64)
+        .sqrt()
+        .floor()
+        .min(f64::from(u32::MAX)) as u32;
+    let margin = 2 * halo + cfa_rows.max(cfa_columns) - 1;
+    if side <= margin {
+        return Err(format!(
+            "RAW demosaic minimum dependency window exceeds {limit} bytes"
+        ));
+    }
+    Ok(side - margin)
+}
+
+fn demosaic_window(
+    image: (u32, u32),
+    origin: (u32, u32),
+    core: (u32, u32),
+    cfa: (u32, u32),
+    halo: u32,
+    vng: bool,
+) -> Window {
+    let (x, y) = origin;
+    let (rows, columns) = cfa;
+    // Align the gathered origin, not the core, to the global CFA.
+    let mut left = x.saturating_sub(halo) / columns * columns;
+    let mut top = y.saturating_sub(halo) / rows * rows;
+    let right = (x + core.0).saturating_add(halo).min(image.0);
+    let bottom = (y + core.1).saturating_add(halo).min(image.1);
+    // VNG's tiny-image early return describes the source, not a final partition.
+    if vng {
+        left = left.min(right.saturating_sub(8) / columns * columns);
+        top = top.min(bottom.saturating_sub(8) / rows * rows);
+    }
+    Window {
+        x: left,
+        y: top,
+        width: right - left,
+        height: bottom - top,
+    }
+}
+
 impl WgpuBackend {
     pub(super) fn raw_demosaic_paged_gpu(
         &self,
@@ -91,41 +133,23 @@ impl WgpuBackend {
             RawDemosaic::FujiPpg => 5,
             _ => unreachable!(),
         };
-        let side = ((limit / 16) as f64)
-            .sqrt()
-            .floor()
-            .min(f64::from(u32::MAX)) as u32;
-        let margin = 2 * halo + sensor.cfa_rows.max(sensor.cfa_columns) - 1;
-        if side <= margin {
-            return Err(format!(
-                "RAW demosaic minimum dependency window exceeds {limit} bytes"
-            ));
-        }
-        let step = side - margin;
+        let step = demosaic_step(limit, halo, sensor.cfa_rows, sensor.cfa_columns)?;
         let output = self.raw_allocate_plane(plane.width, plane.height, "raw_demosaic_pages")?;
         for y in (0..plane.height).step_by(step as usize) {
             for x in (0..plane.width).step_by(step as usize) {
                 self.check_cancelled()?;
                 let core_w = step.min(plane.width - x);
                 let core_h = step.min(plane.height - y);
-                // Align the gathered origin, not the core, to the global CFA.
-                let mut left = x.saturating_sub(halo) / sensor.cfa_columns * sensor.cfa_columns;
-                let mut top = y.saturating_sub(halo) / sensor.cfa_rows * sensor.cfa_rows;
-                let right = (x + core_w).saturating_add(halo).min(plane.width);
-                let bottom = (y + core_h).saturating_add(halo).min(plane.height);
-                // VNG's native tiny-image early return describes the source,
-                // not a short final partition. Keep that local precondition.
-                if params.demosaic == RawDemosaic::Vng {
-                    left =
-                        left.min(right.saturating_sub(8) / sensor.cfa_columns * sensor.cfa_columns);
-                    top = top.min(bottom.saturating_sub(8) / sensor.cfa_rows * sensor.cfa_rows);
-                }
-                let window = Window {
-                    x: left,
-                    y: top,
-                    width: right - left,
-                    height: bottom - top,
-                };
+                let window = demosaic_window(
+                    (plane.width, plane.height),
+                    (x, y),
+                    (core_w, core_h),
+                    (sensor.cfa_rows, sensor.cfa_columns),
+                    halo,
+                    params.demosaic == RawDemosaic::Vng,
+                );
+                let left = window.x;
+                let top = window.y;
                 let image = self.raw_window_buffer(window, "raw_demosaic_window");
                 let local = RawFrame {
                     width: window.width,
@@ -551,6 +575,74 @@ impl WgpuBackend {
             }
         }
         Ok(plane)
+    }
+}
+
+#[cfg(test)]
+mod logic_tests {
+    use super::*;
+
+    #[test]
+    fn demosaic_step_requires_room_for_halo_and_cfa_alignment() {
+        assert!(demosaic_step(12 * 12 * 16 - 1, 5, 2, 2).is_err());
+        assert_eq!(demosaic_step(12 * 12 * 16, 5, 2, 2).unwrap(), 1);
+        assert_eq!(demosaic_step(16 * 16 * 16, 3, 4, 2).unwrap(), 7);
+    }
+
+    #[test]
+    fn demosaic_windows_preserve_global_cfa_phase_and_clip_halos() {
+        let interior = demosaic_window((31, 23), (13, 9), (7, 7), (2, 2), 5, false);
+        assert_eq!(
+            (interior.x, interior.y, interior.width, interior.height),
+            (8, 4, 17, 17)
+        );
+        let edge = demosaic_window((31, 23), (28, 21), (3, 2), (2, 2), 5, false);
+        assert_eq!((edge.x, edge.y, edge.width, edge.height), (22, 16, 9, 7));
+        let first = demosaic_window((31, 23), (0, 0), (7, 7), (2, 2), 5, false);
+        assert_eq!(
+            (first.x, first.y, first.width, first.height),
+            (0, 0, 12, 12)
+        );
+    }
+
+    #[test]
+    fn vng_final_partition_keeps_native_eight_pixel_precondition() {
+        let window = demosaic_window((15, 15), (14, 14), (1, 1), (2, 2), 3, true);
+        assert_eq!(
+            (window.x, window.y, window.width, window.height),
+            (6, 6, 9, 9)
+        );
+        let ordinary = demosaic_window((15, 15), (14, 14), (1, 1), (2, 2), 3, false);
+        assert_eq!(
+            (ordinary.x, ordinary.y, ordinary.width, ordinary.height),
+            (10, 10, 5, 5)
+        );
+    }
+
+    #[test]
+    fn demosaic_partition_cores_cover_image_and_windows_fit_limit() {
+        let limit = 16 * 16 * 16;
+        let step = demosaic_step(limit, 5, 2, 2).unwrap();
+        let (width, height) = (23, 19);
+        let mut covered = vec![0u8; (width * height) as usize];
+        for y in (0..height).step_by(step as usize) {
+            for x in (0..width).step_by(step as usize) {
+                let core = (step.min(width - x), step.min(height - y));
+                let window = demosaic_window((width, height), (x, y), core, (2, 2), 5, false);
+                assert_eq!(window.x % 2, 0);
+                assert_eq!(window.y % 2, 0);
+                assert!(u64::from(window.width) * u64::from(window.height) * 16 <= limit);
+                assert!(window.x <= x && window.y <= y);
+                assert!(window.x + window.width >= x + core.0);
+                assert!(window.y + window.height >= y + core.1);
+                for row in y..y + core.1 {
+                    for col in x..x + core.0 {
+                        covered[(row * width + col) as usize] += 1;
+                    }
+                }
+            }
+        }
+        assert!(covered.iter().all(|&count| count == 1));
     }
 }
 

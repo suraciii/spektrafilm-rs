@@ -18,6 +18,10 @@ The recipe sets `SPEKTRAFILM_TEST_NO_DEVICE=1`. In GPU unit tests, this flag mak
 
 This lane still compiles the GPU unit-test binary and its dependencies. It does not replace shader, device, numerical-parity, or full-render acceptance. `cargo test -p spektrafilm-gpu --lib`, `test`, and main CI retain the complete test set without ignored or feature-gated device cases.
 
-Logic tests must use small deterministic in-memory inputs instead of unnecessary stock loading or environment setup. Persistence tests must use real IO in isolated temporary directories. Rendering and device tests must retain real execution.
+Prefer device-free tests of production logic. Parameter validation, geometry, index ranges, resource budgets, execution plans, and small numerical boundaries should not require an adapter. Before adding a device test, check whether the regression belongs in an existing host calculation or a small private calculation shared with the production path.
+
+Logic tests must use small deterministic in-memory inputs instead of unnecessary stock loading or environment setup. Inspect helper calls before placing a test in `logic_tests::`; the absence of device code in the test body is not enough. Test accepted and rejected boundaries, not incidental error wording, struct copies, or source-text markers.
+
+Persistence tests must use real IO in isolated temporary directories. Shader numerics, actual bindings, queue synchronization, and device ownership require real execution. Keep those device assertions and full-render acceptance; a mock dispatch or a duplicate host implementation of a shader is not equivalent coverage.
 
 The [Justfile](../Justfile) defines test selection. The [README](../README.md#build) documents dependencies and verification commands.

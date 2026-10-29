@@ -507,3 +507,32 @@ impl WgpuBackend {
         Ok(output)
     }
 }
+
+#[cfg(test)]
+mod logic_tests {
+    use super::*;
+
+    #[test]
+    fn diffusion_window_holds_the_full_halo_and_obeys_tile_caps() {
+        assert_eq!(window_geometry(10, 10, 3, 108), (1, 1));
+        assert_eq!(window_geometry(10, 10, 3, 180), (3, 1));
+        assert_eq!(window_geometry(500, 500, 1, 1_000_000), (256, 64));
+        for (width, height, k, limit) in [(17, 13, 3, 180), (4, 8, 5, 600), (1, 1, 9, 972)] {
+            let (tw, th) = window_geometry(width, height, k, limit);
+            assert!(tw >= 1 && tw <= width && th >= 1 && th <= height);
+            assert!(u64::from(tw + k - 1) * u64::from(th + k - 1) * 12 <= limit);
+        }
+    }
+
+    #[test]
+    fn diffusion_reflection_excludes_endpoints_and_repeats_periodically() {
+        for index in -12..=12 {
+            assert_eq!(reflect(index, 1), 0);
+            assert_eq!(reflect(index, 3), reflect(index + 4, 3));
+        }
+        assert_eq!(
+            (-1..=5).map(|i| reflect(i, 3)).collect::<Vec<_>>(),
+            [1, 0, 1, 2, 1, 0, 1]
+        );
+    }
+}
