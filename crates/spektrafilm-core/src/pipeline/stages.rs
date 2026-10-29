@@ -64,9 +64,9 @@ impl Pipeline {
                     &self.film,
                     &self.params,
                     backend,
-                    self.tc_lut.as_ref(),
-                    self.mallett_core.as_ref(),
-                    &select_illuminant(&self.front_illuminant),
+                    self.host_tc_lut()?,
+                    self.mallett_core(),
+                    &select_illuminant(self.front_illuminant()),
                     pixel_size_um,
                     ae_ev,
                 )?;
@@ -92,13 +92,15 @@ impl Pipeline {
             Tap::CmyFilm => {
                 if self.params.io.scan_film {
                     let t = Instant::now();
-                    let out = crate::stages::scanning::process(
+                    let out = crate::stages::scanning::scan_with_options(
                         &image,
                         &self.film,
                         &self.conversion_tones,
                         &self.params,
                         backend,
                         &self.output_gamut,
+                        self.params.workflow.route_enum()
+                            != crate::WorkflowRoute::ConvertFilmScanMinusBase,
                     )?;
                     record_stage_timing(stage_timings, "scanning", t);
                     tracing::info!("pipeline: scanning complete (film scan)");
@@ -111,9 +113,9 @@ impl Pipeline {
                         &self.print,
                         &self.params,
                         backend,
-                        &self.print_illuminant,
-                        self.print_exposure_factor,
-                        self.preflash_raw,
+                        self.print_illuminant_slice(),
+                        self.print_exposure_factor(),
+                        self.preflash_raw(),
                         pixel_size_um,
                     )?;
                     record_stage_timing(stage_timings, "printing", t);
@@ -358,6 +360,106 @@ impl Pipeline {
         match output_crop {
             Some(rect) => crate::stages::grain_v3::crop_output_on_backend(cur, rect, backend),
             None => Ok(cur),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn convert_film_diagnostic_taps_preserve_exposure_and_density_boundaries() {
+        let data = crate::test_support::data_dir();
+        let film = crate::profile::load_profile_by_name(&data, "kodak_portra_400").unwrap();
+        let print = crate::profile::load_profile_by_name(&data, "kodak_portra_endura").unwrap();
+        let backend = spektrafilm_backend::cpu_backend::CpuBackend;
+        let image = ImageBuf::from_data(
+            2,
+            2,
+            [
+                0.24, 0.37, 0.51, 0.66, 0.42, 0.18, 0.3, 0.5, 0.6, 0.75, 0.6, 0.4,
+            ]
+            .into_iter()
+            .map(from_f64)
+            .collect(),
+        );
+        for route in [
+            "input > convert-film > scan",
+            "input > convert-film > scan-minus-base",
+            "input > convert-film > print > scan",
+        ] {
+            let mut params = RuntimeParams::default();
+            params.workflow.route = route.into();
+            params.io.scan_film = !route.contains("print");
+            params.camera.auto_exposure = false;
+            params.camera.lens_blur_um = 0.0;
+            params.camera.diffusion_filter.active = false;
+            params.film_render.halation.active = false;
+            params.film_render.grain.active = false;
+            params.film_render.dir_couplers.active = false;
+            let pipeline =
+                Pipeline::new_with_spectral(film.clone(), print.clone(), params, &data).unwrap();
+            let pitch = pipeline.params.camera.film_format_mm as f64 * 1000.0 / 2.0;
+            let exposure = crate::stages::filming::expose(
+                &image,
+                &pipeline.film,
+                &pipeline.params,
+                &backend,
+                pipeline.host_tc_lut().unwrap(),
+                pipeline.mallett_core(),
+                &select_illuminant(pipeline.front_illuminant()),
+                pitch,
+                0.0,
+            )
+            .unwrap();
+            let density = crate::stages::filming::develop(
+                &exposure,
+                &pipeline.film,
+                &pipeline.params,
+                &backend,
+                pitch,
+            )
+            .unwrap();
+            for inject in [Tap::RgbIn, Tap::RgbPre] {
+                for (collect, expected) in [(Tap::LogEFilm, &exposure), (Tap::CmyFilm, &density)] {
+                    let bundle = tempfile::tempdir().unwrap();
+                    let mut capture = crate::stage_evidence::StageCapture::new(bundle.path());
+                    let actual = pipeline
+                        .process_with_taps_timed(
+                            image.clone(),
+                            &backend,
+                            Some(inject),
+                            Some(collect),
+                            None,
+                            Some(&mut capture),
+                        )
+                        .unwrap();
+                    assert_eq!(
+                        actual.data, expected.data,
+                        "{route}: {inject:?} -> {collect:?}"
+                    );
+                    capture.publish().unwrap();
+                    let bytes =
+                        std::fs::read(bundle.path().join(format!("{}.f64", collect.name())))
+                            .unwrap();
+                    let persisted: Vec<f64> = bytes
+                        .as_chunks::<8>()
+                        .0
+                        .iter()
+                        .map(|value| f64::from_le_bytes(*value))
+                        .collect();
+                    assert_eq!(
+                        persisted,
+                        expected
+                            .data
+                            .iter()
+                            .copied()
+                            .map(to_f64)
+                            .collect::<Vec<_>>()
+                    );
+                }
+            }
         }
     }
 }

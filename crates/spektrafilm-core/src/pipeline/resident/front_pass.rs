@@ -47,8 +47,8 @@ impl Pipeline {
         }
         // Front pass: hanatos TC LUT lookup, or the mallett 3×3 matmul
         // (`core · M_cs`, same fold as the CPU `expose` dispatch).
-        let front = if let Some(tc_lut) = self.tc_lut.as_ref() {
-            let ref_illuminant = select_illuminant(&self.front_illuminant);
+        let front = if let Some(tc_lut) = self.tc_lut() {
+            let ref_illuminant = select_illuminant(self.front_illuminant());
             let mut rgb_to_adapted = spektrafilm_math::spectral::build_rgb_to_adapted_xyz(
                 &self.params.io.input_color_space,
                 &ref_illuminant,
@@ -57,11 +57,11 @@ impl Pipeline {
             fold_exposure(&mut rgb_to_adapted);
             spektrafilm_backend::FrontPass::Hanatos2025 {
                 tc_lut,
-                generated: self.prepared_tc_lut.as_ref(),
+                generated: self.prepared_tc_lut(),
                 rgb_to_adapted_xyz: rgb_to_adapted,
             }
         } else {
-            let core = self.mallett_core.as_ref()?;
+            let core = self.mallett_core()?;
             let mut matrix = crate::mallett::film_matrix(core, &self.params.io.input_color_space);
             fold_exposure(&mut matrix);
             spektrafilm_backend::FrontPass::Mallett2019 { matrix }

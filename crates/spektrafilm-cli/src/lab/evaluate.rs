@@ -94,11 +94,18 @@ pub fn run_with_result(args: &EvaluateArgs, matches: &ArgMatches) -> Result<(Val
     let reference_f64 = spectral_service::select_illuminant_f64(&condition.reference);
     let target_f64 = spectral_service::select_illuminant_f64(&condition.target);
     let film = profile::resolve_for_render(film_profile, params.film_render.development_time);
-    let front = spectral_service::build_filming_upsampler(&film, &params, &data_dir)
-        .map_err(anyhow::Error::msg)?;
+    let front = spectral_service::build_filming_upsampler(
+        spectral_service::SpectralInputs::new(
+            &film,
+            &params,
+            &spektrafilm_backend::cpu_backend::CpuBackend,
+        ),
+        &data_dir,
+    )
+    .map_err(anyhow::Error::msg)?;
     let tc_lut = front
-        .tc_lut
-        .as_ref()
+        .preparation
+        .tc_lut()
         .ok_or_else(|| anyhow!("hanatos2025 resolved no TC LUT"))?;
 
     // Conditional truth anchor: `gray · (E_ref @ S)`.
@@ -123,7 +130,7 @@ pub fn run_with_result(args: &EvaluateArgs, matches: &ArgMatches) -> Result<(Val
         .map_err(anyhow::Error::msg)?;
     pixels.extend_from_slice(&anchor_rgb);
     let image = ImageBuf::from_data((sample_count + 1) as u32, 1, pixels);
-    let front_illuminant = spectral_service::select_illuminant(&front.front_illuminant);
+    let front_illuminant = spectral_service::select_illuminant(&front.preparation.front_illuminant);
     let response = math_spectral::hanatos2025_rgb_to_raw(
         &image,
         tc_lut,
@@ -216,7 +223,7 @@ pub fn run_with_result(args: &EvaluateArgs, matches: &ArgMatches) -> Result<(Val
                 "reference_illuminant": film.info.reference_illuminant,
             },
             "rgb_to_raw_method": front.method,
-            "front_illuminant": front.front_illuminant,
+            "front_illuminant": front.preparation.front_illuminant,
             "scene_rgb_space": SCENE_RGB_SPACE,
             "use_cat16": params.settings.use_cat16,
             "spectral_gaussian_blur": params.settings.spectral_gaussian_blur,

@@ -303,7 +303,7 @@ impl Pipeline {
         // before the inner floor/log, while print exposure multiplies the
         // recovered linear raw before the outer floor/log.
         let print_exposure_scale = self.params.enlarger.print_exposure as f64;
-        let print_norm_factor = self.print_exposure_factor;
+        let print_norm_factor = self.print_exposure_factor();
 
         // Halation in the resident chain — only built when the halation
         // stage is active. Preserve channel-specific profile controls.
@@ -635,10 +635,10 @@ impl Pipeline {
                 spektrafilm_backend::EnlargerSpectralLutGpuParams {
                     channel_density: &film_channel_density,
                     base_density: film_base_density,
-                    illuminant: &self.print_illuminant,
+                    illuminant: self.print_illuminant_slice(),
                     sensitivity: &print_sens,
                     normalization: print_norm_factor,
-                    preflash: self.preflash_raw,
+                    preflash: self.preflash_raw(),
                     minimum,
                     maximum,
                     size: self.params.settings.lut_resolution as u32,
@@ -778,7 +778,7 @@ impl Pipeline {
             } else {
                 &scan_base_zero
             },
-            print_illuminant: &self.print_illuminant,
+            print_illuminant: self.print_illuminant_slice(),
             print_sensitivity: &print_sens,
             print_normalization_factor: print_norm_factor,
             print_exposure_scale,
@@ -787,7 +787,7 @@ impl Pipeline {
             print_gamma: print_curves.gamma,
             print_channel_density: &print_channel_density,
             print_base_density,
-            preflash: self.preflash_raw,
+            preflash: self.preflash_raw(),
             enlarger_lut,
             scanner_lut,
             scan_illuminant: scan_illu,

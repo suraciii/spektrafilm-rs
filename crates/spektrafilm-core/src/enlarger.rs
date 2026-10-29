@@ -241,21 +241,23 @@ pub fn enlarger_filtered_illuminant_f64(
 /// sensitivity, and scaled by `preflash_exposure`. Returns `[0; 3]` when
 /// preflash is off, so the runtime path stays inert by default.
 pub fn compute_preflash_raw(
-    enlarger: &crate::params::EnlargerParams,
-    c_neutral: f64,
-    m_neutral: f64,
-    y_neutral: f64,
+    illuminant: &str,
+    exposure: f32,
+    m_filter_shift: f32,
+    y_filter_shift: f32,
+    neutral_cmy: [f64; 3],
     base_density: &[f64],
     print_sensitivity: &[[f64; 3]],
 ) -> [f64; 3] {
-    if enlarger.preflash_exposure <= 0.0 {
+    if exposure <= 0.0 {
         return [0.0; 3];
     }
+    let [c_neutral, m_neutral, y_neutral] = neutral_cmy;
     let preflash_illuminant = enlarger_filtered_illuminant_f64(
-        &enlarger.illuminant,
+        illuminant,
         c_neutral,
-        m_neutral + enlarger.preflash_m_filter_shift as f64,
-        y_neutral + enlarger.preflash_y_filter_shift as f64,
+        m_neutral + m_filter_shift as f64,
+        y_neutral + y_filter_shift as f64,
     );
     let n_wl = preflash_illuminant
         .len()
@@ -271,7 +273,7 @@ pub fn compute_preflash_raw(
             raw[c] += light * print_sensitivity[wl][c];
         }
     }
-    let e = enlarger.preflash_exposure as f64;
+    let e = exposure as f64;
     [raw[0] * e, raw[1] * e, raw[2] * e]
 }
 
@@ -337,7 +339,7 @@ pub fn midgray_raw_hanatos(
 pub fn midgray_density_spectral_from_raw(
     raw: [f64; 3],
     film: &crate::profile::Profile,
-    params: &crate::params::RuntimeParams,
+    density_curve_gamma: f32,
 ) -> Vec<f64> {
     // Python: log_raw = np.log10(raw + 1e-10)
     let log_raw: [f64; 3] = [
@@ -352,7 +354,7 @@ pub fn midgray_density_spectral_from_raw(
     // - x-axis per channel = log_exposure / gamma_factor[c]
     let log_exposure = film.log_exposure_f64();
     let density_curves = film.density_curves_f64();
-    let g = params.film_render.density_curve_gamma as f64;
+    let g = density_curve_gamma as f64;
     let gamma = [g, g, g];
 
     let density_cmy =

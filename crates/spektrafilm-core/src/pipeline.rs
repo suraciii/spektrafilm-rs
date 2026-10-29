@@ -86,34 +86,16 @@ use crate::profile::Profile;
 
 #[derive(Clone)]
 pub struct Pipeline {
-    pub film: Profile,
-    pub print: Profile,
+    pub film: Arc<Profile>,
+    pub print: Arc<Profile>,
     pub params: RuntimeParams,
-    tc_lut: Option<TcLut>,
-    prepared_tc_lut: Option<spektrafilm_backend::PreparedTable>,
-    /// Mallett2019 reflectance-basis core matrix (linear-sRGB → raw), when that
-    /// upsampler is selected instead of the hanatos2025 tc LUT. Mutually
-    /// exclusive with `tc_lut`; neither is prepared for the input-only route.
-    mallett_core: Option<[[f64; 3]; 3]>,
-    convert_converter: Option<crate::stages::converting::Converter>,
-    /// Illuminant used by the RGB→tc projection before TC LUT lookup.
-    /// Most methods use the film reference illuminant; arctic2026alpha02
-    /// recovers reflectance in D65 coordinates and relights separately.
-    front_illuminant: String,
-    /// Print exposure normalization factor (1/geomean of midgray raw through enlarger).
-    print_exposure_factor: f64,
-    /// Filtered enlarger illuminant for printing stage (f64 for Python parity).
-    print_illuminant: Vec<f64>,
-    /// Constant preflash raw 3-vector added to the print exposure before the
-    /// inner log10. `[0; 3]` unless the enlarger preflash is active.
-    preflash_raw: [f64; 3],
-    midgray_density: Vec<f64>,
-    compensated_midgray_density: Vec<f64>,
-    /// Resolved positive-conversion tone triple for the negative-to-positive
-    /// interpretation (`scanner.conversion_style`).
+    spectral: Option<Arc<crate::spectral_service::SpectralPreparation>>,
+    gray: Option<Arc<crate::pipeline_calibration::GrayReferences>>,
+    print_calibration: Option<Arc<crate::pipeline_calibration::PrintCalibration>>,
+    convert_converter: Option<Arc<crate::stages::converting::Converter>>,
     pub(crate) conversion_tones: [crate::stages::scanning::ChannelTone; 3],
-    /// Output gamut compressor (built once; identity unless oklch is enabled).
-    output_gamut: crate::gamut_compression::OutputGamutCompress,
+    output_gamut: Arc<crate::gamut_compression::OutputGamutCompress>,
+    preparation_device: Option<u64>,
     /// Data directory the spectral front-end was built from. Present on
     /// `new_with_spectral` pipelines; lets `with_params` rebuild the TC LUT
     /// when a sensitivity-affecting control changes instead of reusing a
@@ -129,28 +111,87 @@ pub struct Pipeline {
 /// Fully prepared candidate; committing it performs no fallible work.
 pub(crate) struct ParameterUpdate {
     pub params: RuntimeParams,
-    pub material: Option<crate::pipeline_calibration::MaterialCalibration>,
-    convert_converter: Option<crate::stages::converting::Converter>,
+    pub film: Arc<Profile>,
+    print: Arc<Profile>,
+    spectral: Option<Arc<crate::spectral_service::SpectralPreparation>>,
+    gray: Option<Arc<crate::pipeline_calibration::GrayReferences>>,
+    print_calibration: Option<Arc<crate::pipeline_calibration::PrintCalibration>>,
+    convert_converter: Option<Arc<crate::stages::converting::Converter>>,
     conversion_tones: [crate::stages::scanning::ChannelTone; 3],
-    output_gamut: crate::gamut_compression::OutputGamutCompress,
+    output_gamut: Arc<crate::gamut_compression::OutputGamutCompress>,
+    preparation_device: Option<u64>,
+}
+
+#[derive(PartialEq)]
+struct OutputInputs<'a> {
+    controls: &'a crate::params::OutputGamutCompressParams,
+    color_space: &'a str,
+    device: Option<u64>,
+}
+
+impl<'a> OutputInputs<'a> {
+    fn new(params: &'a RuntimeParams, device: Option<u64>) -> Self {
+        Self {
+            controls: &params.io.output_gamut_compress,
+            color_space: &params.io.output_color_space,
+            device,
+        }
+    }
+
+    fn build(
+        &self,
+        backend: &dyn ComputeBackend,
+    ) -> Result<crate::gamut_compression::OutputGamutCompress, String> {
+        crate::gamut_compression::OutputGamutCompress::build_with_backend(
+            self.controls,
+            self.color_space,
+            backend,
+        )
+    }
 }
 
 impl Pipeline {
     /// Accessor for the pre-computed TC LUT (used by parity tests).
     pub fn tc_lut(&self) -> Option<&TcLut> {
-        self.tc_lut.as_ref()
+        self.spectral.as_deref().and_then(|s| s.tc_lut())
     }
-    /// Accessor for the print exposure factor (parity tests).
+    fn prepared_tc_lut(&self) -> Option<&spektrafilm_backend::PreparedTable> {
+        self.spectral.as_deref().and_then(|s| s.prepared_tc_lut())
+    }
+    fn mallett_core(&self) -> Option<&[[f64; 3]; 3]> {
+        self.spectral.as_deref().and_then(|s| s.mallett_core())
+    }
+    fn front_illuminant(&self) -> &str {
+        self.spectral
+            .as_deref()
+            .map_or(&self.film.info.reference_illuminant, |s| {
+                &s.front_illuminant
+            })
+    }
     pub fn print_exposure_factor(&self) -> f64 {
-        self.print_exposure_factor
+        self.print_calibration
+            .as_ref()
+            .map_or(1.0, |p| p.exposure_factor)
     }
-    /// Accessor for the filtered print illuminant (parity tests).
     pub fn print_illuminant_slice(&self) -> &[f64] {
-        &self.print_illuminant
+        self.print_calibration
+            .as_ref()
+            .map_or(&[], |p| p.illuminant.as_slice())
     }
-    /// Accessor for the constant preflash raw vector (parity tests / debug).
     pub fn preflash_raw(&self) -> [f64; 3] {
-        self.preflash_raw
+        self.print_calibration
+            .as_ref()
+            .map_or([0.0; 3], |p| p.preflash_raw)
+    }
+    fn midgray_density(&self) -> &[f64] {
+        self.gray
+            .as_ref()
+            .map_or(&[], |g| g.midgray_density.as_slice())
+    }
+    fn compensated_midgray_density(&self) -> &[f64] {
+        self.gray
+            .as_ref()
+            .map_or(&[], |g| g.compensated_midgray_density.as_slice())
     }
 
     /// Update parameters, deriving changed materials from their original sources.
@@ -171,124 +212,248 @@ impl Pipeline {
 
     pub(crate) fn prepare_parameter_update(
         &self,
-        mut params: RuntimeParams,
+        params: RuntimeParams,
         backend: &dyn ComputeBackend,
     ) -> Result<ParameterUpdate, String> {
-        crate::params_builder::normalize_runtime_topology(&self.original_film, &mut params);
-        params.validate()?;
-        params.validate_color()?;
-        crate::pipeline_calibration::validate_scan_output(&params, &self.film)?;
-        let preparation_changed = match (&self.prepared_tc_lut, backend.preparation_device_id()) {
-            (Some(table), Some(device)) => table.values.backend_id() != device,
-            (Some(_), None) => true,
-            (None, Some(_)) => self.tc_lut.is_some(),
-            (None, None) => false,
+        Self::prepare_state(
+            &self.original_film,
+            &self.original_print,
+            params,
+            self.data_dir.as_deref(),
+            backend,
+            Some(self),
+        )
+    }
+
+    fn prepare_state(
+        original_film: &Arc<Profile>,
+        original_print: &Arc<Profile>,
+        mut params: RuntimeParams,
+        data_dir: Option<&Path>,
+        backend: &dyn ComputeBackend,
+        previous: Option<&Pipeline>,
+    ) -> Result<ParameterUpdate, String> {
+        use crate::pipeline_calibration::{
+            FilmMaterialInputs, GrayInputs, PrintInputs, PrintMaterialInputs,
         };
-        let route_changed = self.params.workflow.route_enum() != params.workflow.route_enum();
-        let prepares_film = params.workflow.route_enum() != crate::WorkflowRoute::Input;
-        let spectral_changed = route_changed
-            || (prepares_film
-                && (crate::pipeline_calibration::spectral_changed(&self.params, &params)
-                    || preparation_changed));
-        let recalibrate = spectral_changed
-            || crate::pipeline_calibration::material_changed(&self.params, &params)
-            || (prepares_film
-                && crate::pipeline_calibration::calibration_changed(&self.params, &params));
-        if !recalibrate
-            && params.workflow.route_enum() != crate::WorkflowRoute::InputFilm
-            && let Some(model) = self.print.data.density_curves_model.as_ref()
-        {
-            crate::print_morph::morph_density_curves(
-                &self.print.log_exposure_f64(),
-                model,
-                &params.print_render.density_curves_morph,
-                self.print.is_positive(),
-            )
-            .map_err(|error| format!("invalid print density-curve model: {error}"))?;
-        }
-        let conversion_tones = if recalibrate
-            || params.scanner.conversion_style != self.params.scanner.conversion_style
-        {
-            crate::stages::scanning::style::resolve(
+        let cold_tones = if previous.is_none() {
+            Some(crate::stages::scanning::style::resolve(
                 &params.scanner.conversion_style,
-                self.data_dir.as_deref(),
-            )?
-        } else {
-            self.conversion_tones
-        };
-        if recalibrate {
-            let data_dir = self
-                .data_dir
-                .as_deref()
-                .ok_or_else(|| "pipeline lacks data_dir for calibration rebuild".to_owned())?;
-            let retained = (!spectral_changed).then_some(
-                crate::pipeline_calibration::SpectralPreparationRef {
-                    tc_lut: self.tc_lut.as_ref(),
-                    prepared_tc_lut: self.prepared_tc_lut.as_ref(),
-                    mallett_core: self.mallett_core.as_ref(),
-                    front_illuminant: &self.front_illuminant,
-                },
-            );
-            let calibrated = crate::pipeline_calibration::build_with_frontend(
-                (*self.original_film).clone(),
-                (*self.original_print).clone(),
-                params,
                 data_dir,
-                backend,
-                retained,
-            )?;
-            return Ok(ParameterUpdate {
-                params: calibrated.params,
-                material: Some(calibrated.material),
-                convert_converter: None,
-                conversion_tones,
-                output_gamut: calibrated.output_gamut,
-            });
-        }
-        let convert_converter = if params.workflow.route_enum().is_convert_film()
-            && crate::stages::converting::converter_changed(&self.params, &params)
-        {
-            crate::stages::converting::resolve_converter(&self.film, &params)?
+            )?)
         } else {
             None
         };
-        let output_gamut = crate::gamut_compression::OutputGamutCompress::build_with_backend(
-            &params.io.output_gamut_compress,
-            &params.io.output_color_space,
-            backend,
-        )?;
+        if previous.is_none() {
+            params.validate()?;
+        }
+        crate::params_builder::normalize_runtime_topology(original_film, &mut params);
+        if previous.is_some() {
+            params.validate()?;
+        }
+        params.validate_color()?;
+        let film_inputs = FilmMaterialInputs::new(original_film, &params);
+        let film = if let Some(old) = previous
+            .filter(|old| film_inputs == FilmMaterialInputs::new(original_film, &old.params))
+        {
+            if params.scanner.scan_output == "negative_to_positive"
+                && params.workflow.route_enum().artifact_output().is_none()
+            {
+                if old.params.scanner.scan_output == "negative_to_positive"
+                    && old.params.workflow.route_enum().artifact_output().is_none()
+                {
+                    crate::pipeline_calibration::validate_scan_output_route_detailed(&params)
+                        .map_err(|error| error.to_string())?;
+                } else {
+                    crate::pipeline_calibration::validate_scan_output(
+                        &params,
+                        &film_inputs.resolve(),
+                    )?;
+                }
+            } else {
+                crate::pipeline_calibration::validate_scan_output(&params, &old.film)?;
+            }
+            Arc::clone(&old.film)
+        } else {
+            let resolved = film_inputs.resolve();
+            crate::pipeline_calibration::validate_scan_output(&params, &resolved)?;
+            Arc::new(film_inputs.build(resolved)?)
+        };
+        let conversion_tones = if let Some(tones) = cold_tones {
+            tones
+        } else if let Some(old) = previous
+            .filter(|old| old.params.scanner.conversion_style == params.scanner.conversion_style)
+        {
+            old.conversion_tones
+        } else {
+            crate::stages::scanning::style::resolve(&params.scanner.conversion_style, data_dir)?
+        };
+        let print_inputs = PrintMaterialInputs::new(original_print, &params);
+        let print = if let Some(old) = previous
+            .filter(|old| print_inputs == PrintMaterialInputs::new(original_print, &old.params))
+        {
+            Arc::clone(&old.print)
+        } else if let Some(inputs) = &print_inputs {
+            Arc::new(inputs.build())
+        } else {
+            Arc::clone(original_print)
+        };
+        let prepare_print = print_inputs.is_some();
+        if prepare_print {
+            crate::pipeline_calibration::validate_print_morph(
+                &print,
+                &params.print_render.density_curves_morph,
+            )?;
+        }
+        let neutral_inputs =
+            crate::pipeline_calibration::NeutralInputs::new(&film, &print, &params, prepare_print);
+        let neutral = if let Some(old) = previous.filter(|old| {
+            old.print_calibration.is_some()
+                && neutral_inputs
+                    == crate::pipeline_calibration::NeutralInputs::new(
+                        &old.film,
+                        &old.print,
+                        &old.params,
+                        prepare_print,
+                    )
+        }) {
+            old.print_calibration
+                .as_ref()
+                .expect("checked above")
+                .neutral_cmy
+        } else {
+            neutral_inputs.build(data_dir)?
+        };
+        params.enlarger.c_filter_neutral = neutral[0] as f32;
+        params.enlarger.m_filter_neutral = neutral[1] as f32;
+        params.enlarger.y_filter_neutral = neutral[2] as f32;
+        let spectral = if params.workflow.route_enum() == crate::WorkflowRoute::Input {
+            None
+        } else {
+            let inputs =
+                crate::spectral_service::SpectralInputs::new(original_film, &params, backend);
+            if let Some(old) = previous.filter(|old| {
+                old.spectral
+                    .as_ref()
+                    .is_some_and(|s| s.compatible_with(backend))
+                    && inputs
+                        == crate::spectral_service::SpectralInputs::new(
+                            original_film,
+                            &old.params,
+                            backend,
+                        )
+            }) {
+                old.spectral.clone()
+            } else if let Some(data_dir) = data_dir {
+                Some(Arc::new(
+                    crate::spectral_service::build_filming_upsampler_with_backend(
+                        inputs, data_dir, backend,
+                    )?
+                    .preparation,
+                ))
+            } else if !backend.is_gpu()
+                && previous.is_some_and(|old| {
+                    old.spectral.is_none()
+                        && inputs
+                            == crate::spectral_service::SpectralInputs::new(
+                                original_film,
+                                &old.params,
+                                backend,
+                            )
+                })
+            {
+                None
+            } else {
+                return Err("pipeline lacks data_dir for spectral preparation".to_owned());
+            }
+        };
+        let gray = if let Some(front) = spectral.as_deref() {
+            let inputs = GrayInputs::new(&film, front, &params);
+            if let Some(old) =
+                previous.filter(|old| match (old.spectral.as_deref(), old.gray.as_ref()) {
+                    (Some(front), Some(_)) => {
+                        inputs == GrayInputs::new(&old.film, front, &old.params)
+                    }
+                    _ => false,
+                })
+            {
+                old.gray.clone()
+            } else {
+                Some(Arc::new(inputs.build()))
+            }
+        } else {
+            None
+        };
+        let print_calibration =
+            if prepare_print && params.workflow.route_enum() != crate::WorkflowRoute::Input {
+                if let Some(gray) = gray.as_deref() {
+                    let inputs = PrintInputs::new(&film, &print, gray, &params, neutral);
+                    if let Some(old) = previous.filter(|old| {
+                        match (old.gray.as_deref(), old.print_calibration.as_deref()) {
+                            (Some(gray), Some(calibration)) => {
+                                inputs
+                                    == PrintInputs::new(
+                                        &old.film,
+                                        &old.print,
+                                        gray,
+                                        &old.params,
+                                        calibration.neutral_cmy,
+                                    )
+                            }
+                            _ => false,
+                        }
+                    }) {
+                        old.print_calibration.clone()
+                    } else {
+                        Some(Arc::new(inputs.build()))
+                    }
+                } else {
+                    previous.and_then(|old| old.print_calibration.clone())
+                }
+            } else {
+                None
+            };
+        let previous_converter = previous.and_then(|old| {
+            old.convert_converter
+                .as_ref()
+                .map(|c| (&*old.film, &old.params, c))
+        });
+        let convert_converter =
+            crate::stages::converting::prepare_converter(&film, &params, previous_converter)?;
+        let device = backend.preparation_device_id();
+        let output_inputs = OutputInputs::new(&params, device);
+        let output_gamut = if let Some(old) = previous
+            .filter(|old| output_inputs == OutputInputs::new(&old.params, old.preparation_device))
+        {
+            Arc::clone(&old.output_gamut)
+        } else {
+            Arc::new(output_inputs.build(backend)?)
+        };
         Ok(ParameterUpdate {
             params,
-            material: None,
+            film,
+            print,
+            spectral,
+            gray,
+            print_calibration,
             convert_converter,
             conversion_tones,
             output_gamut,
+            preparation_device: device,
         })
     }
 
     pub(crate) fn apply_parameter_update(&mut self, update: ParameterUpdate) {
-        if let Some(material) = update.material {
-            self.film = material.film;
-            self.print = material.print;
-            self.convert_converter = material.convert_converter;
-            self.print_exposure_factor = material.print_exposure_factor;
-            self.print_illuminant = material.print_illuminant;
-            self.preflash_raw = material.preflash_raw;
-            self.midgray_density = material.midgray_density;
-            self.compensated_midgray_density = material.compensated_midgray_density;
-            if let Some(spectral) = material.spectral {
-                self.tc_lut = spectral.tc_lut;
-                self.prepared_tc_lut = spectral.prepared_tc_lut;
-                self.mallett_core = spectral.mallett_core;
-                self.front_illuminant = spectral.front_illuminant;
-            }
-        }
-        if let Some(converter) = update.convert_converter {
-            self.convert_converter = Some(converter);
-        }
         self.params = update.params;
-        self.output_gamut = update.output_gamut;
+        self.film = update.film;
+        self.print = update.print;
+        self.spectral = update.spectral;
+        self.gray = update.gray;
+        self.print_calibration = update.print_calibration;
+        self.convert_converter = update.convert_converter;
         self.conversion_tones = update.conversion_tones;
+        self.output_gamut = update.output_gamut;
+        self.preparation_device = update.preparation_device;
     }
     #[cfg(test)]
     pub(crate) fn fotufilm_bank_identity(&self) -> Option<usize> {
@@ -364,25 +529,29 @@ impl Pipeline {
             &params.io.output_color_space,
         )
         .expect("validated output gamut configuration");
-        let front_illuminant = film.info.reference_illuminant.clone();
-        let convert_converter = crate::stages::converting::resolve_converter(&film, &params)
+        let convert_converter = crate::stages::converting::prepare_converter(&film, &params, None)
             .expect("validated film conversion");
+        let neutral_cmy = [
+            params.enlarger.c_filter_neutral as f64,
+            params.enlarger.m_filter_neutral as f64,
+            params.enlarger.y_filter_neutral as f64,
+        ];
         Self {
-            film,
-            print,
+            film: Arc::new(film),
+            print: Arc::new(print),
             params,
-            tc_lut: None,
-            prepared_tc_lut: None,
-            mallett_core: None,
+            spectral: None,
+            gray: None,
+            print_calibration: Some(Arc::new(crate::pipeline_calibration::PrintCalibration {
+                exposure_factor: 1.0,
+                illuminant: print_illuminant,
+                preflash_raw: [0.0; 3],
+                neutral_cmy,
+            })),
             convert_converter,
-            front_illuminant,
-            print_exposure_factor: 1.0,
-            print_illuminant,
-            preflash_raw: [0.0; 3],
-            midgray_density: Vec::new(),
-            compensated_midgray_density: Vec::new(),
             conversion_tones,
-            output_gamut,
+            output_gamut: Arc::new(output_gamut),
+            preparation_device: None,
             data_dir: None,
             original_film,
             original_print,
@@ -416,39 +585,31 @@ impl Pipeline {
         data_dir: &Path,
         backend: &dyn ComputeBackend,
     ) -> Result<Self, String> {
-        let original_print = Arc::new(print.clone());
-        let original_film = Arc::new(film.clone());
+        let original_print = Arc::new(print);
+        let original_film = Arc::new(film);
         let fotufilm_prepared = crate::stages::grain_fotufilm::Prepared::new(
             &original_film,
             params.film_render.development_time,
         );
-        let conversion_tones = crate::stages::scanning::style::resolve(
-            &params.scanner.conversion_style,
+        let prepared = Self::prepare_state(
+            &original_film,
+            &original_print,
+            params,
             Some(data_dir),
+            backend,
+            None,
         )?;
-        let calibrated = crate::pipeline_calibration::build_with_backend(
-            film, print, params, data_dir, backend,
-        )?;
-        let material = calibrated.material;
-        let spectral = material
-            .spectral
-            .expect("cold preparation owns its front end");
         Ok(Self {
-            film: material.film,
-            print: material.print,
-            params: calibrated.params,
-            tc_lut: spectral.tc_lut,
-            prepared_tc_lut: spectral.prepared_tc_lut,
-            mallett_core: spectral.mallett_core,
-            convert_converter: material.convert_converter,
-            front_illuminant: spectral.front_illuminant,
-            print_exposure_factor: material.print_exposure_factor,
-            print_illuminant: material.print_illuminant,
-            preflash_raw: material.preflash_raw,
-            midgray_density: material.midgray_density,
-            compensated_midgray_density: material.compensated_midgray_density,
-            conversion_tones,
-            output_gamut: calibrated.output_gamut,
+            film: prepared.film,
+            print: prepared.print,
+            params: prepared.params,
+            spectral: prepared.spectral,
+            gray: prepared.gray,
+            print_calibration: prepared.print_calibration,
+            convert_converter: prepared.convert_converter,
+            conversion_tones: prepared.conversion_tones,
+            output_gamut: prepared.output_gamut,
+            preparation_device: prepared.preparation_device,
             data_dir: Some(data_dir.to_owned()),
             original_film,
             original_print,

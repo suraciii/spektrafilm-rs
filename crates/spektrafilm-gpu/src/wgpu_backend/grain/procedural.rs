@@ -195,6 +195,7 @@ fn build_bounded_grain_v2(
         partials
     };
     let scale = 1.0 + (params.raw_scale - 1.0) / 47.0 * 1.5;
+    let size = canvas_size(width, height);
     let resident = cells * 8 <= limit;
     // A resident canvas is built, measured and composed once. A canvas that
     // does not fit walks bands twice: the first pass measures the exact mean,
@@ -256,8 +257,8 @@ fn build_bounded_grain_v2(
                         chunks as u32,
                         scale.to_bits(),
                         (band.stored.0 as f32).to_bits(),
-                        0,
-                        0,
+                        size[0].to_bits(),
+                        size[1].to_bits(),
                     ],
                 );
                 commands.dispatch(&mean_pass, &[&p, buffer, &partials], count, false, backend);
@@ -279,8 +280,8 @@ fn build_bounded_grain_v2(
                 chunks as u32,
                 scale.to_bits(),
                 0,
-                0,
-                0,
+                size[0].to_bits(),
+                size[1].to_bits(),
             ],
         );
         commands.dispatch(&reduce_pass, &[&p, &scratch, &partials], 1, true, backend);
@@ -485,11 +486,7 @@ fn canvas_cells(
     height: u32,
     params: &spektrafilm_backend::GrainV2GpuParams,
 ) -> (u32, u32) {
-    let gsf = (5200.0 / width as f32).max(3100.0 / height as f32);
-    let size = [
-        (width as f32 * gsf).floor().max(1.0),
-        (height as f32 * gsf).floor().max(1.0),
-    ];
+    let size = canvas_size(width, height);
     let scale = 1.0 + (params.raw_scale - 1.0) / 47.0 * 1.5;
     let used = |extent: f32, limit: f32| {
         ((extent / scale).ceil() as i64 + 2).clamp(1, limit.max(1.0) as i64) as u32
@@ -546,8 +543,7 @@ fn canvas_bands(
     let rows = u64::from(cells_h);
     // Mirror the composition's cell mapping in binary32 so a band owns exactly
     // the pixels the shader resolves into it.
-    let gsf = (5200.0f32 / width as f32).max(3100.0f32 / height as f32);
-    let size_y = (height as f32 * gsf).floor().max(1.0);
+    let size_y = canvas_size(width, height)[1];
     let scale = 1.0 + (params.raw_scale - 1.0) / 47.0 * 1.5;
     let inv_h = 1.0 / height.saturating_sub(1).max(1) as f32;
     let cell_row = |y: u32| -> i32 { ((y as f32 * inv_h) * (size_y / scale)) as i32 };
@@ -632,8 +628,7 @@ fn build_canvas_band(
 ) {
     let (store_from, store_to) = band.stored;
     // Cells address the full virtual canvas, not the stored table.
-    let canvas_rows =
-        ((height as f32 * (5200.0 / width as f32).max(3100.0 / height as f32)).floor()).max(1.0);
+    let canvas_rows = canvas_size(width, height)[1];
     let to_source = |cell_row: f32| (cell_row / (canvas_rows - 1.0)) * (height as f32 - 1.0) - 0.1;
     let source_rows = |from: u32, to: u32| {
         let first = (to_source(from as f32).floor() as i64 - 1).max(0) as u32;

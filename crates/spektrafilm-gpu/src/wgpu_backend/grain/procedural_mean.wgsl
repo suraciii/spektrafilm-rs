@@ -7,7 +7,7 @@
 //
 // Uniform layout: dimensions [pixel_width,pixel_height,first_pixel,count],
 // canvas [cells_wide,cells_high,first_partial,workgroups],
-// scale [resampler_scale,first_canvas_row,0,0].
+// scale [resampler_scale,first_canvas_row,canvas_width,canvas_height].
 struct Params { dimensions:vec4<u32>, canvas:vec4<u32>, scale:vec4<f32> }
 @group(0) @binding(0) var<uniform> p:Params;
 @group(0) @binding(1) var<storage,read> canvas_cells:array<u32>;
@@ -31,8 +31,7 @@ fn mean_main(@builtin(global_invocation_id) gid:vec3<u32>,@builtin(num_workgroup
  if(local<p.dimensions.w){
   let idx=p.dimensions.z+local;
   let x=idx%width;let y=idx/width;
-  let gsf=max(5200./f32(width),3100./f32(height));
-  let size=floor(vec2<f32>(f32(width),f32(height))*gsf);
+  let size=p.scale.zw;
   let uv=vec2<f32>(f32(x),f32(y))*vec2(1./f32(max(width-1u,1u)),1./f32(max(height-1u,1u)));
   let centre=vec2<i32>(uv*(size/p.scale.x));
   var sum=vec3<f32>(0.);

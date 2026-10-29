@@ -158,8 +158,8 @@ impl Pipeline {
     }
 
     fn validate_retained_request(&self, backend: &dyn ComputeBackend) -> Result<(), String> {
-        if self.tc_lut.is_some() {
-            let prepared = self.prepared_tc_lut.as_ref().ok_or_else(|| {
+        if self.tc_lut().is_some() {
+            let prepared = self.prepared_tc_lut().ok_or_else(|| {
                 "selected GPU requires device-prepared spectral calibration; construct with Runtime::new_with_backend or Pipeline::new_with_spectral_backend, or rebuild with with_params_with_backend using the selected backend".to_owned()
             })?;
             if backend.preparation_device_id() != Some(prepared.values.backend_id()) {
@@ -481,8 +481,8 @@ impl Pipeline {
             // Auto-exposure already ran above. Convert-film instead starts
             // at the scanner inverse solve, with no RGB-to-raw front pass.
             if inject.position() <= Tap::RgbPre.position()
-                && self.tc_lut.is_none()
-                && self.mallett_core.is_none()
+                && self.tc_lut().is_none()
+                && self.mallett_core().is_none()
                 && !route.is_convert_film()
             {
                 return self.declines_or_fails(

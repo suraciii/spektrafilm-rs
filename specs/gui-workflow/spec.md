@@ -32,6 +32,9 @@ A route or film profile change that makes the selected mode ineligible resets it
 - Preview computation and viewer composition run outside the UI thread. Queued requests retain only the latest snapshot.
 - Results from older requests, input images, or parameter revisions MUST NOT replace current output.
 - The viewer retains the last completed frame while new composition runs. The development animation is fixed viewer behaviour under [Viewer presentation](#viewer-presentation).
+- Failed adjustment preparation MUST retain the last valid runtime and completed image.
+- Returning to the last accepted settings MUST remain usable without discarding compatible preparation.
+- The retained image MUST report its own identity rather than appear to represent the rejected request.
 - Base workflow selection and optional CMYK ink style controls MUST follow the [CMYK ink style enablement contract](../cmyk-style/spec.md#enablement).
 - The workflow selector MUST offer exactly the routes the workflow validator supports.
 - Input and capture → Camera exposes `camera.capture_illuminant` as a single optional text or selector control that writes the canonical runtime leaf. Its semantics, inheritance, and validation follow the [capture illuminant contract](../image-input/spec.md#capture-illuminant).

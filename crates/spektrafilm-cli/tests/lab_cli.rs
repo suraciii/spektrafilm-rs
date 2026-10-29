@@ -1560,6 +1560,8 @@ fn measure_reads_back_identities_that_carry_separators() {
 #[test]
 fn measure_gates_a_narrower_range_by_the_path_it_executes() {
     let f = MeasureFixture::new();
+    // Select a route-compatible engine so Dye's independent route validation
+    // does not replace the point-wise operation guard under test.
     // A narrower range walks the tap topology from the entry to the last
     // reading, and the nodes on that path fire whatever the route says: the
     // `input` route skips the film stage only when the whole chain runs.
@@ -1578,6 +1580,8 @@ fn measure_gates_a_narrower_range_by_the_path_it_executes() {
         "kodak_portra_400",
         "--data-dir",
         f.data.to_str().unwrap(),
+        "--set",
+        "film_render.grain.engine=procedural",
         "--out",
         short.to_str().unwrap(),
     ]);
@@ -1611,6 +1615,8 @@ fn measure_gates_a_narrower_range_by_the_path_it_executes() {
         "camera.auto_exposure=false",
         "--set",
         "film_render.halation.active=false",
+        "--set",
+        "film_render.grain.engine=procedural",
     ]);
     assert!(
         result.status.success(),
@@ -1638,6 +1644,8 @@ fn measure_gates_a_narrower_range_by_the_path_it_executes() {
         f.data.to_str().unwrap(),
         "--out",
         converted.to_str().unwrap(),
+        "--set",
+        "film_render.grain.engine=procedural",
     ]);
     assert!(!result.status.success());
     let error = String::from_utf8_lossy(&result.stderr);
@@ -1799,6 +1807,8 @@ fn measure_gates_the_operations_the_route_executes() {
             f.data.display().to_string(),
             "--out".to_owned(),
             out.display().to_string(),
+            "--set".to_owned(),
+            "film_render.grain.engine=procedural".to_owned(),
         ];
         if let Some(route) = route {
             args.push("--route".to_owned());

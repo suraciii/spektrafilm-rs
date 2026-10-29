@@ -72,7 +72,7 @@ Procedural consumes and returns native display-encoded RGB without an internal t
 
 Procedural restores the recovered RGBA content hash, sine permutation, gradient noise, texture sampling, and half-storage boundaries. Positive/Negative Film Type remains profile metadata. It is separate from `resolution_type`. For Analogue, `resolution_type` selects folded Gaussian FastBlur (`1`) or OpticalResolution (`0`). Noise uses the direct image-resolution path.
 
-CPU/WGSL share portable trigonometry. Random realizations can differ from vendor device arithmetic. Amount and tone controls use the reference effective-control polynomial. This includes its nonzero intercept at zero. Disable Grain with `active: false` for an exact bypass.
+CPU/WGSL share portable trigonometry, host-resolved canvas dimensions, and binary32 coordinate rounding before the clustered-noise hash. Random realizations can differ from vendor device arithmetic. Amount and tone controls use the reference effective-control polynomial. This includes its nonzero intercept at zero. Disable Grain with `active: false` for an exact bypass.
 
 The unmasked photo path implements no overscan/damage-mask input or device-specific virtual-texture cap.
 

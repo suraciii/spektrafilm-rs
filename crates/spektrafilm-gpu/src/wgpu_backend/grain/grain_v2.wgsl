@@ -1,7 +1,7 @@
 // Grain V2: independent deterministic noise, native encoded RGB composition.
 // Uniform layout: dimensions [width,height,phase_bits,mode], controls [amount,shadows,
 // midtones,highlights], geometry [raw_scale,cluster_size,rotation,color], flags
-// [resolution_factor,resolution_type,colored,clustered], window [first,count,row_base,rows],
+// [canvas_width,canvas_height,colored,clustered], window [first,count,row_base,rows],
 // canvas [cells_wide,cells_high,chunk_cell_base,row_base].
 struct Params { dimensions:vec4<u32>, controls:vec4<f32>, geometry:vec4<f32>, flags:vec4<f32>, window:vec4<u32>, canvas:vec4<u32> }
 @group(0) @binding(0) var<uniform> p:Params;
@@ -174,10 +174,37 @@ fn half_round(v:f32)->f32 {
  let rounded=truncated+select(0u,1u,remainder>midpoint || (remainder==midpoint && (truncated&1u)!=0u));
  return bitcast<f32>(sign|bitcast<u32>(f32(rounded)*0.000000059604644775390625));
 }
+// Canvas positions are finite integers; extents are positive normal floats and
+// every nonzero coordinate quotient is normal. Generate its 24-bit significand
+// with bounded integer division: native divide may use a reciprocal, while WGSL
+// fma need not fuse, so neither guarantees the bits consumed by the noise hash.
+fn canvas_coordinate(position:f32,extent:f32)->f32 {
+ let a=bitcast<u32>(position);let b=bitcast<u32>(extent);
+ if((a&0x7fffffffu)==0u){return position;}
+ var exponent=i32((a>>23u)&255u)-i32((b>>23u)&255u)+127;
+ var numerator=(a&0x7fffffu)|0x800000u;
+ let denominator=(b&0x7fffffu)|0x800000u;
+ if(numerator<denominator){numerator<<=1u;exponent-=1;}
+ var remainder=numerator-denominator;var quotient=1u;
+ // remainder < 2^24, so eight more bits always fit one u32.
+ for(var part=0u;part<3u;part++){
+  let bits=select(8u,7u,part==2u);
+  let word=remainder<<bits;let digit=word/denominator;
+  remainder=word-digit*denominator;quotient=(quotient<<bits)|digit;
+ }
+ let twice=remainder<<1u;
+ quotient+=select(0u,1u,twice>denominator || (twice==denominator && (quotient&1u)!=0u));
+ // Addition also carries a rounded significand into the next exponent.
+ let magnitude=(u32(exponent)<<23u)+(quotient-0x800000u);
+ return bitcast<f32>((a&0x80000000u)|magnitude);
+}
 fn generator(pos:vec2<f32>,size:vec2<f32>,luma:f32,rgb:vec3<f32>,digital:bool)->vec3<f32>{
  var timer=bitcast<f32>(p.dimensions.z);let scale=clamp(p.geometry.x,0.5,1.4);
  let scaled_size=size*scale;var coords=pos;var mult=size;var aspect=size.x/size.y;
- if(!digital){coords=pos/scaled_size;mult=scaled_size/p.geometry.y/scale;aspect=scaled_size.x/scaled_size.y;}
+ if(!digital){
+  coords=vec2(canvas_coordinate(pos.x,scaled_size.x),canvas_coordinate(pos.y,scaled_size.y));
+  mult=scaled_size/p.geometry.y/scale;aspect=scaled_size.x/scaled_size.y;
+ }
  var angles=vec3<f32>(1.425,3.892,5.835)*p.geometry.z*scale;
  if(p.flags.w!=0. && !digital){angles=snoise(timer,vec4(coords.x,timer,coords.y,timer)).xyz*p.geometry.z;}
  if(digital){
@@ -224,8 +251,7 @@ fn canvas_main(@builtin(global_invocation_id) gid:vec3<u32>,@builtin(num_workgro
  let local=gid.x+gid.y*grid.x*256u;
  if(local>=p.window.y){return;}
  let cell=p.window.x+local;
- let width=p.dimensions.x;let height=p.dimensions.y;
- let gsf=max(5200./f32(width),3100./f32(height));let size=floor(vec2<f32>(f32(width),f32(height))*gsf);
+ let size=p.flags.xy;
  let coord=vec2<i32>(i32(cell%p.canvas.x),i32(cell/p.canvas.x));
  let rgb=source_at(coord,size);let luma=dot(rgb,vec3(0.2125,0.7154,0.0721));
  let value=generator(vec2<f32>(coord),size,luma,rgb,false);
@@ -237,9 +263,9 @@ fn canvas_main(@builtin(global_invocation_id) gid:vec3<u32>,@builtin(num_workgro
 @compute @workgroup_size(256)
 fn main(@builtin(global_invocation_id) gid:vec3<u32>,@builtin(num_workgroups) grid:vec3<u32>){
  let local=gid.x+gid.y*grid.x*256u;let width=p.dimensions.x;let height=p.dimensions.y;if(local>=p.window.y){return;}let idx=p.window.x+local;let i=local*3u;
- let x=idx%width;let y=idx/width;let raw_a=clamp(p.controls.x,0.,1.);let effective_a=effective_control(raw_a);let a=effective_a*select(1.,0.5,p.dimensions.w!=0u);let gsf=max(5200./f32(width),3100./f32(height));
+ let x=idx%width;let y=idx/width;let raw_a=clamp(p.controls.x,0.,1.);let effective_a=effective_control(raw_a);let a=effective_a*select(1.,0.5,p.dimensions.w!=0u);
  let rgb=vec3(working_rgb[i],working_rgb[i+1u],working_rgb[i+2u]);let luma=rgb.x*0.2125+rgb.y*0.7154+rgb.z*0.0721;
- let uv=vec2<f32>(f32(x),f32(y))*vec2(1./f32(max(width-1u,1u)),1./f32(max(height-1u,1u)));let size=floor(vec2<f32>(f32(width),f32(height))*gsf);var g=vec3<f32>(0.);
+ let uv=vec2<f32>(f32(x),f32(y))*vec2(1./f32(max(width-1u,1u)),1./f32(max(height-1u,1u)));let size=p.flags.xy;var g=vec3<f32>(0.);
  if(p.dimensions.w!=0u){g=generator(uv,vec2(f32(width),f32(height)),luma,rgb,true);}else{
   let at=vec2<i32>(uv*(size/(1.+(p.geometry.x-1.)/47.*1.5)));
   for(var dy=-1;dy<=1;dy++){for(var dx=-1;dx<=1;dx++){g+=cell_at(at+vec2<i32>(dx,dy));}}g*=1./9.;

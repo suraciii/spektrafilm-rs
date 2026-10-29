@@ -174,6 +174,8 @@ Opening an image, applying a preset, moving a slider, or accepting numeric text 
 
 New edits replace queued work. Stale results cannot replace the latest output. The viewer retains its last frame until the current frame is ready. Automatic parameter updates after the first output skip the development animation; the first output and explicit Scan retain it.
 
+If adjustment preparation fails, the viewer keeps the last completed image and its original Preview or Scan identity. Correct the controls or use Undo to return to the last working settings. A rejected adjustment does not discard compatible runtime preparation.
+
 The viewer status strip identifies the retained **Preview** or **Scan**, pixel dimensions, and whether it matches the current adjustments. This identity stays visible while another operation runs. Preview has an explicit detail-effects caveat; independent Export is the file-delivery action.
 
 **SCAN** renders the full-resolution input with spatial and stochastic effects. Automatic backend selection chooses CPU only when a usable GPU is unavailable. A selected GPU computation failure fails the operation without substituting host arithmetic. The resulting full-resolution output is retained for Save and inspection in the viewport.

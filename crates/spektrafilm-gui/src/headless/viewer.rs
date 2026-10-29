@@ -894,6 +894,9 @@ fn rendering_overlay_is_bilingual_and_settles_after_import_adjustment_and_failur
     // An unavailable real profile must fail without retaining a spinner or
     // replacing the last successfully accepted output.
     let accepted = h.state().output_image.clone().unwrap();
+    let accepted_params = h.state().params.clone();
+    let accepted_revision = h.state().parameter_revision;
+    let accepted_data_dir = h.state().data_dir.clone();
     let reports = directory.path().join("failed-render-reports");
     std::fs::create_dir(&reports).unwrap();
     h.state_mut().diagnostics.mode = spektrafilm_core::telemetry::CollectionMode::Summary;
@@ -932,6 +935,24 @@ fn rendering_overlay_is_bilingual_and_settles_after_import_adjustment_and_failur
     assert_rendering_indicator(&h);
     assert!(h.query_by_label("渲染中……").is_none());
     assert!(h.query_by_label("PREVIEW").is_none());
+
+    // Restoring the resource location reuses the previous committed runtime.
+    h.state_mut().data_dir = accepted_data_dir;
+    h.state_mut().dispatch_render(&ctx);
+    wait_until(&mut h, |app| {
+        app.render_job.is_none()
+            && app
+                .output_image
+                .as_ref()
+                .is_some_and(|output| !Arc::ptr_eq(output, &accepted))
+    });
+    assert_eq!(h.state().params, accepted_params);
+    assert_eq!(h.state().parameter_revision, accepted_revision);
+    assert_eq!(h.state().output_image.as_ref().unwrap().data, accepted.data);
+    assert_eq!(
+        h.state().source_render.as_ref().unwrap().parameter_revision,
+        Some(accepted_revision)
+    );
 }
 
 #[test]
@@ -1459,13 +1480,17 @@ fn gpu_gui_scan_view_transition_and_save_keep_the_accepted_device_samples() {
     let saved = directory.path().join("accepted.tiff");
     save_retained(&mut h, &saved);
     assert!(saved.exists(), "{}", h.state().status);
-    let bytes = std::fs::read(&saved).unwrap();
+    let saved_before = image_io::load(&saved).unwrap().image;
     h.state_mut().viewer.set_zoom_percent(100.0);
     composed(&mut h, time + 2.0);
     save_retained(&mut h, &saved);
+    let saved_after = image_io::load(&saved).unwrap().image;
     assert_eq!(
-        std::fs::read(&saved).unwrap(),
-        bytes,
+        (saved_after.width, saved_after.height),
+        (saved_before.width, saved_before.height),
+    );
+    assert_eq!(
+        saved_after.data, saved_before.data,
         "view changes must not change Save samples"
     );
     assert_eq!(

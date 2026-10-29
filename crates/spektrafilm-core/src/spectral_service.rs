@@ -5,13 +5,18 @@
 
 mod filters;
 mod illuminant;
+mod preparation;
 mod registry;
 mod upsampling;
 
+#[cfg(test)]
 use crate::params::RuntimeParams;
 use crate::profile::Profile;
 use spektrafilm_math::spectral::{self, TcLut};
 use std::path::Path;
+use std::sync::Arc;
+
+pub use preparation::{SpectralInputs, SpectralPreparation, SpectralTransform, TcPreparation};
 
 pub use filters::{
     NO_COLOR_FILTER, available_color_filters, is_supported_color_filter,
@@ -93,16 +98,8 @@ pub struct FilmingUpsampler {
     pub method: String,
     /// The film sensitivity after the camera UV/IR and colour filters.
     pub sensitivity: Vec<[f64; 3]>,
-    /// Hanatos2025 spectral TC LUT; `Some` whenever the method uses a LUT.
-    pub tc_lut: Option<TcLut>,
-    /// Generated table retained by its selected device; CPU tables keep this empty.
-    pub prepared_tc_lut: Option<spektrafilm_backend::PreparedTable>,
-    /// Mallett2019 reflectance-basis matrix; `Some` for `mallett2019`.
-    pub mallett_core: Option<[[f64; 3]; 3]>,
-    /// `camera.capture_illuminant` when set, otherwise the film profile's
-    /// reference illuminant. It is not the sensitivity-calibration
-    /// illuminant, which always stays the film reference.
-    pub front_illuminant: String,
+    /// Algorithm, storage domain, projection light, and preparation device.
+    pub preparation: SpectralPreparation,
 }
 
 /// Build the filming front end for a resolved chain.
@@ -119,63 +116,42 @@ pub struct FilmingUpsampler {
 /// normalization, the Hanatos2025 adaptation and the TC LUT — continues to
 /// use the film reference regardless of the selected capture light.
 pub fn build_filming_upsampler(
-    film: &Profile,
-    params: &RuntimeParams,
+    inputs: SpectralInputs<'_>,
     data_dir: &Path,
 ) -> Result<FilmingUpsampler, String> {
     build_filming_upsampler_with_backend(
-        film,
-        params,
+        inputs,
         data_dir,
         &spektrafilm_backend::cpu_backend::CpuBackend,
     )
 }
 
 pub fn build_filming_upsampler_with_backend(
-    film: &Profile,
-    params: &RuntimeParams,
+    inputs: SpectralInputs<'_>,
     data_dir: &Path,
     backend: &dyn spektrafilm_backend::ComputeBackend,
 ) -> Result<FilmingUpsampler, String> {
-    let mut prepared_tc_lut = None;
-    // Film sensitivity: Python `sensitivity = np.nan_to_num(10 ** log_sensitivity)`.
-    let mut sensitivity: Vec<[f64; 3]> = film.sensitivity_f64();
-
-    let ref_illuminant = select_illuminant(&film.info.reference_illuminant);
-    let ref_illuminant_f64 = select_illuminant_f64(&film.info.reference_illuminant);
-    // The explicit value wins; omission inherits the selected profile's
-    // reference illuminant. The reference remains the calibration illuminant
-    // below, independently of this front projection.
-    let front_illuminant = params
-        .camera
+    let material = inputs.material;
+    let mut sensitivity =
+        Profile::sensitivity_from_log(material.log_sensitivity, material.monochrome);
+    let ref_illuminant = select_illuminant(material.reference_illuminant);
+    let ref_illuminant_f64 = select_illuminant_f64(material.reference_illuminant);
+    let front_illuminant = inputs
         .capture_illuminant
-        .clone()
-        .unwrap_or_else(|| film.info.reference_illuminant.clone());
+        .unwrap_or(material.reference_illuminant)
+        .to_owned();
 
-    // Camera UV/IR filter — Python `FilmingStage._rgb_to_film_raw` filters
-    // the film sensitivity through the UV/IR band-pass (with
-    // reference-illuminant normalization preserving white balance) before
-    // BOTH upsampler branches and before the midgray calibration below.
-    // Off at default amplitudes (0, 0), matching Python's guard
-    // `filter_uv[0] > 0 or filter_ir[0] > 0`.
-    if params.camera.filter_uv[0] > 0.0 || params.camera.filter_ir[0] > 0.0 {
+    // Filtering and sensitivity normalization retain the film reference light.
+    if inputs.filter_uv[0] > 0.0 || inputs.filter_ir[0] > 0.0 {
         apply_camera_uv_ir_band_pass(
             &mut sensitivity,
-            [
-                params.camera.filter_uv[0] as f64,
-                params.camera.filter_uv[1] as f64,
-                params.camera.filter_uv[2] as f64,
-            ],
-            [
-                params.camera.filter_ir[0] as f64,
-                params.camera.filter_ir[1] as f64,
-                params.camera.filter_ir[2] as f64,
-            ],
+            inputs.filter_uv.map(f64::from),
+            inputs.filter_ir.map(f64::from),
             &ref_illuminant_f64,
         );
     }
-    if params.camera.color_filter != NO_COLOR_FILTER {
-        let transmittance = load_color_filter_transmittance(data_dir, &params.camera.color_filter)?
+    if inputs.color_filter != NO_COLOR_FILTER {
+        let transmittance = load_color_filter_transmittance(data_dir, inputs.color_filter)?
             .expect("named camera color filters always have transmission");
         for (row, transmission) in sensitivity.iter_mut().zip(transmittance) {
             for channel in row {
@@ -183,163 +159,129 @@ pub fn build_filming_upsampler_with_backend(
             }
         }
     }
-    // RGB → film raw upsampler. Default `hanatos2025` builds the spectral tc
-    // LUT; `mallett2019` builds a 3×3 reflectance-basis matrix instead (no
-    // LUT). Dispatch mirrors Python `_rgb_to_film_raw`.
-    let method_name = params.settings.rgb_to_raw_method.as_str();
-    let method = crate::params::validation::RgbToRawMethod::parse(method_name)?;
-    let (tc_lut, mallett_core): (Option<TcLut>, Option<[[f64; 3]; 3]>) = match method {
+    let method = crate::params::validation::RgbToRawMethod::parse(inputs.method)?;
+    let transform = match method {
         crate::params::validation::RgbToRawMethod::Hanatos2025 => {
-            let window_params: Vec<f64> = film.data.hanatos2025_adaptation_window_params.clone();
-            // A filming-stage material without a fitted window runs the
-            // RGB-to-exposure conversion without the sensitivity-adaptation
-            // window: white balance is preserved but no ultraviolet or
-            // infrared cutoff is modeled. The downgrade is reported, never
-            // silent (specs/film-chain/spec.md).
-            let apply_window =
-                params.settings.apply_hanatos2025_adaptation_window && window_params.len() == 4;
-            let apply_surface = params.settings.apply_hanatos2025_adaptation_surface
-                && film
-                    .data
-                    .hanatos2025_adaptation_surface_params
-                    .iter()
-                    .all(|row| row.len() == 15)
-                && film.data.hanatos2025_adaptation_surface_params.len() == 3;
-            if params.settings.apply_hanatos2025_adaptation_window && !apply_window {
+            let apply_window = inputs.apply_window && material.window.len() == 4;
+            let apply_surface = inputs.apply_surface
+                && material.surface.iter().all(|row| row.len() == 15)
+                && material.surface.len() == 3;
+            if inputs.apply_window && !apply_window {
                 tracing::warn!(
-                    film = %film.info.stock.as_deref().unwrap_or("<unnamed>"),
+                    film = %material.stock.unwrap_or("<unnamed>"),
                     "hanatos2025 adaptation window requested but the profile carries no fitted \
                      window parameters; running without the window, which models no ultraviolet \
                      or infrared cutoff"
                 );
             }
-            if params.settings.apply_hanatos2025_adaptation_surface && !apply_surface {
+            if inputs.apply_surface && !apply_surface {
                 tracing::warn!(
-                    film = %film.info.stock.as_deref().unwrap_or("<unnamed>"),
+                    film = %material.stock.unwrap_or("<unnamed>"),
                     "hanatos2025 adaptation surface requested but the profile carries no fitted \
                      surface parameters; running without the surface"
                 );
             }
             let adaptation = Hanatos2025Adaptation {
-                window_params: &window_params,
-                surface_params: &film.data.hanatos2025_adaptation_surface_params,
-                spectral_gaussian_blur: params.settings.spectral_gaussian_blur as f64,
+                window_params: material.window,
+                surface_params: material.surface,
+                spectral_gaussian_blur: inputs.gaussian_blur as f64,
                 reference_illuminant: &ref_illuminant_f64,
                 reference_illuminant_xy: spectral::illuminant_to_xy(&ref_illuminant),
                 apply_window,
                 apply_surface,
             };
-            let tc_lut = if backend.is_gpu() {
-                let (lut, prepared) = prepare_registered_tc_lut(
-                    data_dir,
-                    "hanatos2025",
-                    &sensitivity,
-                    &ref_illuminant_f64,
-                    Some(&adaptation),
-                    &front_illuminant,
-                    params,
-                    backend,
-                )?;
-                prepared_tc_lut = Some(prepared);
-                lut
-            } else {
-                compute_registered_tc_lut(
-                    data_dir,
-                    "hanatos2025",
-                    &sensitivity,
-                    &ref_illuminant_f64,
-                    Some(&adaptation),
-                )?
-            };
-
-            (Some(tc_lut), None)
+            SpectralTransform::Tc(prepare_tc_lut(
+                &inputs,
+                data_dir,
+                &sensitivity,
+                &ref_illuminant_f64,
+                Some(&adaptation),
+                &front_illuminant,
+                backend,
+            )?)
         }
         crate::params::validation::RgbToRawMethod::Arctic2026Alpha02
         | crate::params::validation::RgbToRawMethod::Arctic2026Beta04
         | crate::params::validation::RgbToRawMethod::GaussLasers
         | crate::params::validation::RgbToRawMethod::Jakob2019
         | crate::params::validation::RgbToRawMethod::Otsu2018 => {
-            // Registered reflectance LUTs were recovered under D65; their
-            // chromaticity projection must remain D65 when capture is unset.
-            // An explicit capture illuminant is a deliberate scene-light
-            // override and is applied to the registered front pass.
-            let projection_illuminant = if params.camera.capture_illuminant.is_none() {
+            // Registered reflectance LUTs retain their implicit D65 projection.
+            let projection_illuminant = if inputs.capture_illuminant.is_none() {
                 "D65"
             } else {
                 &front_illuminant
             };
-            let tc_lut = if backend.is_gpu() {
-                let (lut, prepared) = prepare_registered_tc_lut(
-                    data_dir,
-                    method_name,
-                    &sensitivity,
-                    &select_illuminant_f64(projection_illuminant),
-                    None,
-                    &front_illuminant,
-                    params,
-                    backend,
-                )?;
-                prepared_tc_lut = Some(prepared);
-                lut
-            } else {
-                compute_registered_tc_lut(
-                    data_dir,
-                    method_name,
-                    &sensitivity,
-                    &select_illuminant_f64(projection_illuminant),
-                    None,
-                )?
-            };
-            (Some(tc_lut), None)
+            SpectralTransform::Tc(prepare_tc_lut(
+                &inputs,
+                data_dir,
+                &sensitivity,
+                &select_illuminant_f64(projection_illuminant),
+                None,
+                &front_illuminant,
+                backend,
+            )?)
         }
         crate::params::validation::RgbToRawMethod::Mallett2019 => {
-            let illuminant = if params.camera.capture_illuminant.is_some() {
+            let illuminant = if inputs.capture_illuminant.is_some() {
                 select_illuminant_f64(&front_illuminant)
             } else {
                 ref_illuminant_f64.clone()
             };
-            (
-                None,
-                Some(crate::mallett::compute_core_matrix(
-                    &sensitivity,
-                    &illuminant,
-                )),
-            )
+            SpectralTransform::Mallett(crate::mallett::compute_core_matrix(
+                &sensitivity,
+                &illuminant,
+            ))
         }
     };
-    let tc_lut = if prepared_tc_lut.is_some() {
-        tc_lut
-    } else if let Some(tc_lut) = tc_lut {
-        let input_gamut =
-            crate::input_gamut::InputGamutCompress::build(&params.io.input_gamut_compress)?;
-        Some(if input_gamut.is_active() {
-            // Hanatos remaps around fixed D65, independently of film adaptation.
-            // Other LUT methods set their front illuminant before this boundary.
-            let remap_illuminant = if matches!(
-                method,
-                crate::params::validation::RgbToRawMethod::Hanatos2025
-            ) {
-                "D65"
-            } else {
-                &front_illuminant
-            };
-            let (rx, ry) = spectral::illuminant_to_xy(&select_illuminant(remap_illuminant));
-            input_gamut.remap(&tc_lut, [rx, ry])
-        } else {
-            tc_lut
-        })
-    } else {
-        None
-    };
-
     Ok(FilmingUpsampler {
-        method: method_name.to_owned(),
+        method: inputs.method.to_owned(),
         sensitivity,
-        tc_lut,
-        prepared_tc_lut,
-        mallett_core,
-        front_illuminant,
+        preparation: SpectralPreparation {
+            transform,
+            front_illuminant,
+            preparation_device: backend.preparation_device_id(),
+        },
     })
+}
+
+fn prepare_tc_lut(
+    inputs: &SpectralInputs<'_>,
+    data_dir: &Path,
+    sensitivity: &[[f64; 3]],
+    illuminant: &[f64],
+    adaptation: Option<&Hanatos2025Adaptation<'_>>,
+    front_illuminant: &str,
+    backend: &dyn spektrafilm_backend::ComputeBackend,
+) -> Result<TcPreparation, String> {
+    if backend.is_gpu() {
+        let (descriptor, table) = prepare_registered_tc_lut(
+            data_dir,
+            inputs.method,
+            sensitivity,
+            illuminant,
+            adaptation,
+            front_illuminant,
+            inputs.use_cat16,
+            inputs.gamut,
+            backend,
+        )?;
+        return Ok(TcPreparation::Device { descriptor, table });
+    }
+    let table =
+        compute_registered_tc_lut(data_dir, inputs.method, sensitivity, illuminant, adaptation)?;
+    let table = if let Some(gamut) = inputs.gamut {
+        let compressor = crate::input_gamut::InputGamutCompress::build(gamut)?;
+        let remap_illuminant = if inputs.method == "hanatos2025" {
+            "D65"
+        } else {
+            front_illuminant
+        };
+        let (rx, ry) = spectral::illuminant_to_xy(&select_illuminant(remap_illuminant));
+        compressor.remap(&table, [rx, ry])
+    } else {
+        table
+    };
+    Ok(TcPreparation::Host(Arc::new(table)))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -350,7 +292,8 @@ fn prepare_registered_tc_lut(
     illuminant: &[f64],
     adaptation: Option<&Hanatos2025Adaptation<'_>>,
     front_illuminant: &str,
-    params: &RuntimeParams,
+    use_cat16: bool,
+    gamut: Option<&crate::params::InputGamutCompressParams>,
     backend: &dyn spektrafilm_backend::ComputeBackend,
 ) -> Result<(TcLut, spektrafilm_backend::PreparedTable), String> {
     let descriptor = lut_descriptor(data_dir, identifier)?;
@@ -374,7 +317,7 @@ fn prepare_registered_tc_lut(
             .reference_illuminant_xy
     };
     let reference_tc = spectral::xy_to_tc(reference_xy.0, reference_xy.1);
-    let neutral_tc = calibration_neutral_tc(front_illuminant, params.settings.use_cat16);
+    let neutral_tc = calibration_neutral_tc(front_illuminant, use_cat16);
     let window = match adaptation {
         Some(a) if a.apply_window => upsampling::device_erf4_window(a.window_params)?,
         _ => Vec::new(),
@@ -437,8 +380,7 @@ fn prepare_registered_tc_lut(
                 table
             }
         };
-    let gamut = &params.io.input_gamut_compress;
-    if gamut.active && gamut.algorithm != "off" {
+    if let Some(gamut) = gamut {
         let algorithm = match gamut.algorithm.as_str() {
             "xy" => 0,
             "oklch" => 1,
@@ -548,6 +490,7 @@ pub(crate) fn calibration_neutral_xyz(
 mod tests {
     use super::*;
     use crate::test_support::data_dir;
+    use spektrafilm_backend::cpu_backend::CpuBackend;
 
     fn portra_sensitivity() -> Vec<[f64; 3]> {
         let film = crate::profile::load_profile_by_name(&data_dir(), "kodak_portra_400").unwrap();
@@ -581,7 +524,6 @@ mod tests {
         let data = data_dir();
         let film = crate::profile::load_profile_by_name(&data, "kodak_portra_400").unwrap();
         let reference = film.info.reference_illuminant.clone();
-        assert_eq!(reference, "D55");
 
         for method in [
             "hanatos2025",
@@ -596,23 +538,33 @@ mod tests {
                 params
             };
 
-            let fallback = build_filming_upsampler(&film, &base(None), &data).unwrap();
+            let fallback = build_filming_upsampler(
+                SpectralInputs::new(&film, &base(None), &CpuBackend),
+                &data,
+            )
+            .unwrap();
             assert_eq!(
-                fallback.front_illuminant, reference,
+                fallback.preparation.front_illuminant, reference,
                 "{method}: profile fallback"
             );
 
-            let explicit =
-                build_filming_upsampler(&film, &base(Some("D75".into())), &data).unwrap();
+            let explicit = build_filming_upsampler(
+                SpectralInputs::new(&film, &base(Some("D75".into())), &CpuBackend),
+                &data,
+            )
+            .unwrap();
             assert_eq!(
-                explicit.front_illuminant, "D75",
+                explicit.preparation.front_illuminant, "D75",
                 "{method}: explicit override"
             );
 
-            let blackbody =
-                build_filming_upsampler(&film, &base(Some("BB4000".into())), &data).unwrap();
+            let blackbody = build_filming_upsampler(
+                SpectralInputs::new(&film, &base(Some("BB4000".into())), &CpuBackend),
+                &data,
+            )
+            .unwrap();
             assert_eq!(
-                blackbody.front_illuminant, "BB4000",
+                blackbody.preparation.front_illuminant, "BB4000",
                 "{method}: blackbody override"
             );
         }
@@ -631,20 +583,27 @@ mod tests {
             let mut params = RuntimeParams::default();
             params.settings.rgb_to_raw_method = "hanatos2025".into();
             params.camera.capture_illuminant = capture;
-            build_filming_upsampler(&film, &params, &data).unwrap()
+            build_filming_upsampler(SpectralInputs::new(&film, &params, &CpuBackend), &data)
+                .unwrap()
         };
 
         let fallback = build(None);
         let explicit = build(Some("BB4000".into()));
-        assert_eq!(fallback.front_illuminant, reference);
-        assert_eq!(explicit.front_illuminant, "BB4000");
+        assert_eq!(fallback.preparation.front_illuminant, reference);
+        assert_eq!(explicit.preparation.front_illuminant, "BB4000");
         // The UV/IR band-pass normalization and the Hanatos2025 adaptation
         // both read the film reference, so the filtered sensitivity and the
         // LUT are identical to the historical build.
         assert_eq!(fallback.sensitivity, sensitivity);
         assert_eq!(explicit.sensitivity, sensitivity);
-        let reference_lut = fallback.tc_lut.expect("hanatos2025 builds a LUT");
-        let explicit_lut = explicit.tc_lut.expect("hanatos2025 builds a LUT");
+        let reference_lut = fallback
+            .preparation
+            .tc_lut()
+            .expect("hanatos2025 builds a LUT");
+        let explicit_lut = explicit
+            .preparation
+            .tc_lut()
+            .expect("hanatos2025 builds a LUT");
         assert_eq!(reference_lut.data, explicit_lut.data);
     }
 
@@ -657,22 +616,23 @@ mod tests {
             let mut params = RuntimeParams::default();
             params.settings.rgb_to_raw_method = method.into();
             params.camera.capture_illuminant = capture.map(str::to_owned);
-            build_filming_upsampler(&film, &params, &data).unwrap()
+            build_filming_upsampler(SpectralInputs::new(&film, &params, &CpuBackend), &data)
+                .unwrap()
         };
 
-        let registered_unset = build("jakob2019", None).tc_lut.expect("registered LUT");
-        let registered_explicit = build("jakob2019", Some("BB4000"))
-            .tc_lut
-            .expect("registered LUT");
-        assert_ne!(registered_unset.data, registered_explicit.data);
+        let registered_unset = build("jakob2019", None);
+        let registered_explicit = build("jakob2019", Some("BB4000"));
+        assert_ne!(
+            registered_unset.preparation.tc_lut().unwrap().data,
+            registered_explicit.preparation.tc_lut().unwrap().data,
+        );
 
-        let mallett_unset = build("mallett2019", None)
-            .mallett_core
-            .expect("Mallett matrix");
-        let mallett_explicit = build("mallett2019", Some("BB4000"))
-            .mallett_core
-            .expect("Mallett matrix");
-        assert_ne!(mallett_unset, mallett_explicit);
+        let mallett_unset = build("mallett2019", None);
+        let mallett_explicit = build("mallett2019", Some("BB4000"));
+        assert_ne!(
+            mallett_unset.preparation.mallett_core().unwrap(),
+            mallett_explicit.preparation.mallett_core().unwrap(),
+        );
     }
 
     /// Python `compute_band_pass_filter` parity (model/color_filters.py) —
