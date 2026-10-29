@@ -493,8 +493,6 @@ fn retained_input_route_reports_actual_colorspace_gpu_work() {
 
 #[test]
 fn cpu_converter_updates_survive_gpu_migration() {
-    use spektrafilm_backend::ComputeBackend as _;
-
     // Keep the explicit-adapter lock alive until every runtime and image is dropped.
     let gpu = spektrafilm_gpu::test_support::explicit_adapter();
     let data = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data");
