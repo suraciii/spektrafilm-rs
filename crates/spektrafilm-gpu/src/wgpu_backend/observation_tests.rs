@@ -20,15 +20,12 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
 // in one process: parallel test threads crash with SIGSEGV (observed in ~4 of 10
 // runs at four threads, 0 of 12 serial). The guard is returned first so that
 // pattern bindings (dropped in reverse declaration order) destroy the backend
-// before releasing DEVICE_IN_USE; every caller holds it for the whole test.
-use super::TEST_DEVICE_LOCK as DEVICE_IN_USE;
+// before releasing the guard; every caller holds it for the whole test.
 
 fn fresh_backend(
     features: wgpu::Features,
 ) -> Option<(std::sync::MutexGuard<'static, ()>, WgpuBackend)> {
-    let device_guard = DEVICE_IN_USE
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let device_guard = crate::test_support::device_lock();
     let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
         backends: if cfg!(target_os = "linux") {
             wgpu::Backends::VULKAN

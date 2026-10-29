@@ -46,6 +46,72 @@ struct AdmissionState {
     exclusive_waiters: usize,
 }
 
+#[derive(Debug, PartialEq, Eq)]
+enum AdmissionDecision {
+    RetirePrior,
+    Admit { exclusive: bool },
+    Wait { exclusive: bool },
+}
+
+impl AdmissionState {
+    fn decide(
+        &self,
+        planned_peak: u64,
+        retained: u64,
+        overlap_target: u64,
+        exclusive_waiter: bool,
+        retired_prior: bool,
+    ) -> Result<AdmissionDecision, String> {
+        let footprint = retained
+            .checked_add(planned_peak)
+            .ok_or("GPU operation planned footprint overflows")?;
+        // The target controls overlap, not whether a finite workload is valid.
+        let exclusive = footprint > overlap_target || exclusive_waiter;
+        if exclusive {
+            return Ok(if self.owners != 0 {
+                AdmissionDecision::Wait { exclusive: true }
+            } else if !retired_prior {
+                AdmissionDecision::RetirePrior
+            } else {
+                AdmissionDecision::Admit { exclusive: true }
+            });
+        }
+        let fits = !self.exclusive
+            && self.exclusive_waiters == 0
+            && footprint
+                .checked_add(self.bytes)
+                .is_some_and(|bytes| bytes <= overlap_target);
+        Ok(if fits {
+            AdmissionDecision::Admit { exclusive: false }
+        } else {
+            AdmissionDecision::Wait { exclusive: false }
+        })
+    }
+
+    fn reserve(&mut self, planned_peak: u64, exclusive: bool) -> Result<(), String> {
+        let bytes = self
+            .bytes
+            .checked_add(planned_peak)
+            .ok_or("GPU operation reservations overflow")?;
+        let owners = self
+            .owners
+            .checked_add(1)
+            .ok_or("GPU operation owner count overflows")?;
+        self.bytes = bytes;
+        self.owners = owners;
+        self.exclusive = exclusive;
+        Ok(())
+    }
+
+    fn release(&mut self, bytes: u64, exclusive: bool) {
+        self.bytes -= bytes;
+        self.owners -= 1;
+        if exclusive {
+            self.exclusive = false;
+        }
+    }
+}
+
 struct AdmissionWaiter<'a> {
     resources: &'a DeviceResources,
     registered: bool,
@@ -243,52 +309,39 @@ impl DeviceResources {
                     .checked_add(cache_bytes)
                     .ok_or("retained GPU owner capacity overflows")?,
             };
-            let footprint = retained
-                .checked_add(planned_peak_bytes)
-                .ok_or("GPU operation planned footprint overflows")?;
-            // A finite checked peak above the scheduling target is supported:
-            // serialize it instead of imposing an invented device-memory limit.
-            let exclusive = footprint > self.overlap_target || waiter.exclusive;
-            let fits_overlap = !reserved.exclusive
-                && reserved.exclusive_waiters == 0
-                && footprint
-                    .checked_add(reserved.bytes)
-                    .is_some_and(|bytes| bytes <= self.overlap_target);
-            if exclusive {
-                waiter.register(&mut reserved, true);
-                if reserved.owners == 0 && !retired_prior {
+            match reserved.decide(
+                planned_peak_bytes,
+                retained,
+                self.overlap_target,
+                waiter.exclusive,
+                retired_prior,
+            )? {
+                AdmissionDecision::RetirePrior => {
+                    waiter.register(&mut reserved, true);
                     drop(reserved);
                     // Retire unowned/prior queue work outside all ledger locks.
                     self.retire_all(context);
                     retired_prior = true;
                     continue;
                 }
+                AdmissionDecision::Admit { exclusive } => {
+                    if exclusive {
+                        waiter.register(&mut reserved, true);
+                    }
+                    reserved.reserve(planned_peak_bytes, exclusive)?;
+                    waiter.unregister(&mut reserved);
+                    return Ok(OperationGuard {
+                        state: Arc::new(OperationState {
+                            resources: self.clone(),
+                            bytes: planned_peak_bytes,
+                            exclusive,
+                            context: context.clone(),
+                            pending: Mutex::new(OperationSubmissions::default()),
+                        }),
+                    });
+                }
+                AdmissionDecision::Wait { exclusive } => waiter.register(&mut reserved, exclusive),
             }
-            if (exclusive && reserved.owners == 0 && retired_prior) || (!exclusive && fits_overlap)
-            {
-                let bytes = reserved
-                    .bytes
-                    .checked_add(planned_peak_bytes)
-                    .ok_or("GPU operation reservations overflow")?;
-                let owners = reserved
-                    .owners
-                    .checked_add(1)
-                    .ok_or("GPU operation owner count overflows")?;
-                waiter.unregister(&mut reserved);
-                reserved.bytes = bytes;
-                reserved.owners = owners;
-                reserved.exclusive = exclusive;
-                return Ok(OperationGuard {
-                    state: Arc::new(OperationState {
-                        resources: self.clone(),
-                        bytes: planned_peak_bytes,
-                        exclusive,
-                        context: context.clone(),
-                        pending: Mutex::new(OperationSubmissions::default()),
-                    }),
-                });
-            }
-            waiter.register(&mut reserved, exclusive);
             // Releasing submissions alone cannot free a live owner's credit.
             // Timed condition waits also observe cancellation without a helper
             // thread or requiring the cancellation producer to know our ledger.
@@ -423,11 +476,7 @@ impl Drop for OperationState {
             self.resources.retire(pending, &self.context);
         }
         let mut reserved = self.resources.reserved.lock();
-        reserved.bytes -= self.bytes;
-        reserved.owners -= 1;
-        if self.exclusive {
-            reserved.exclusive = false;
-        }
+        reserved.release(self.bytes, self.exclusive);
         drop(reserved);
         self.resources.released.notify_all();
     }
