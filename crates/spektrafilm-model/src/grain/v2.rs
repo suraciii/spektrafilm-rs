@@ -1,6 +1,7 @@
 //! Grain Procedural accepts and returns native encoded RGB. Working-domain images and
 //! generated grain use half storage boundaries. The noise arithmetic is shared
 //! with WGSL; original OpenCL device transcendental results can still differ.
+use rayon::prelude::*;
 use spektrafilm_math::{
     grain::{fast_blur_weights, optical_weights},
     image::ImageBuf,
@@ -621,15 +622,23 @@ impl CanvasTable {
         let used = |extent: f32| (extent / p.resampler_scale()).ceil() as i32 + 2;
         let width = used(size[0]).clamp(1, size[0].max(1.) as i32);
         let height = used(size[1]).clamp(1, size[1].max(1.) as i32);
-        let mut cells = Vec::with_capacity((width as usize) * (height as usize));
-        for row in 0..height {
-            for col in 0..width {
-                let rgb = sample_grain_source(source, size, col, row);
-                let luma = rgb[0] * 0.2125 + rgb[1] * 0.7154 + rgb[2] * 0.0721;
-                let value = generator([col as f32, row as f32], size, luma, rgb, p, false, phase);
-                cells.push(value.map(|v| half::f16::from_f32(v).to_bits()));
-            }
-        }
+        // A cell is a pure function of its coordinates, so building rows in
+        // parallel cannot reorder or perturb a single value. The virtual canvas
+        // is ~5200x3100 regardless of frame size, which makes this the dominant
+        // CPU cost of the engine.
+        let mut cells = vec![[0u16; 3]; (width as usize) * (height as usize)];
+        cells
+            .par_chunks_mut(width as usize)
+            .enumerate()
+            .for_each(|(row, out)| {
+                for (col, slot) in out.iter_mut().enumerate() {
+                    let rgb = sample_grain_source(source, size, col as i32, row as i32);
+                    let luma = rgb[0] * 0.2125 + rgb[1] * 0.7154 + rgb[2] * 0.0721;
+                    let value =
+                        generator([col as f32, row as f32], size, luma, rgb, p, false, phase);
+                    *slot = value.map(|v| half::f16::from_f32(v).to_bits());
+                }
+            });
         Self {
             width,
             height,
@@ -701,63 +710,199 @@ pub fn apply_cpu(input: &ImageBuf, p: GrainV2Params) -> ImageBuf {
         Some(table) => canvas_mean(table, size, p, input.width, input.height),
         None => [0.5; 3],
     };
+    // The composition is per pixel, so rows are independent: `out` starts as a
+    // copy of `source` and each row is overwritten from its own inputs.
     let mut out = source.clone();
-    for y in 0..input.height {
-        for x in 0..input.width {
-            let rgb = source.get(x, y).map(to_f32);
-            let luma = rgb[0] * 0.2125 + rgb[1] * 0.7154 + rgb[2] * 0.0721;
-            let uv = [
-                x as f32 * (1. / (input.width - 1).max(1) as f32),
-                y as f32 * (1. / (input.height - 1).max(1) as f32),
-            ];
-            let g = match &canvas {
-                None => generator(
-                    uv,
-                    [input.width as f32, input.height as f32],
-                    luma,
-                    rgb,
-                    p,
-                    true,
-                    phase,
-                ),
-                Some(table) => {
-                    let gx = (uv[0] * (size[0] / p.resampler_scale())) as i32;
-                    let gy = (uv[1] * (size[1] / p.resampler_scale())) as i32;
-                    table.neighbourhood(gx, gy)
-                }
-            };
-            let a_raw = p.amount.clamp(0., 1.);
-            let a = effective_control(a_raw)
-                * if p.mode == GrainV2Mode::Noise {
-                    0.5
-                } else {
-                    1.
+    let width = input.width as usize;
+    out.data
+        .par_chunks_mut(width * 3)
+        .enumerate()
+        .for_each(|(y, row)| {
+            for x in 0..input.width {
+                let rgb = source.get(x, y as u32).map(to_f32);
+                let luma = rgb[0] * 0.2125 + rgb[1] * 0.7154 + rgb[2] * 0.0721;
+                let uv = [
+                    x as f32 * (1. / (input.width - 1).max(1) as f32),
+                    y as f32 * (1. / (input.height - 1).max(1) as f32),
+                ];
+                let g = match &canvas {
+                    None => generator(
+                        uv,
+                        [input.width as f32, input.height as f32],
+                        luma,
+                        rgb,
+                        p,
+                        true,
+                        phase,
+                    ),
+                    Some(table) => {
+                        let gx = (uv[0] * (size[0] / p.resampler_scale())) as i32;
+                        let gy = (uv[1] * (size[1] / p.resampler_scale())) as i32;
+                        table.neighbourhood(gx, gy)
+                    }
                 };
-            let ws = effective_control(p.shadows) * a * opacity(luma, 0.) * 2.;
-            let wm = effective_control(p.midtones) * a * opacity(luma, 0.5);
-            let wh = effective_control(p.highlights) * a * opacity(luma, 1.) * 2.;
-            let weight = [ws, wm, wh];
-            let mut result = [0.; 3];
-            for c in 0..3 {
-                let b = rgb[c];
-                // The zoned bases move the expected composite away from the
-                // input level. Remove that displacement so the grain changes
-                // the texture and not the tone. The vendor's half-storage
-                // boundary stays in place, which also keeps the external
-                // fixture comparable sample by sample.
-                let stored = half::f16::from_f32(composed(b, g[c], weight).clamp(0., 1.)).to_f32();
-                let displaced = composed(b, grain_mean[c], weight);
-                let fixed = stored - (displaced - b);
-                result[c] = half::f16::from_f32(fixed.clamp(0., 1.)).to_f32();
+                let a_raw = p.amount.clamp(0., 1.);
+                let a = effective_control(a_raw)
+                    * if p.mode == GrainV2Mode::Noise {
+                        0.5
+                    } else {
+                        1.
+                    };
+                let ws = effective_control(p.shadows) * a * opacity(luma, 0.) * 2.;
+                let wm = effective_control(p.midtones) * a * opacity(luma, 0.5);
+                let wh = effective_control(p.highlights) * a * opacity(luma, 1.) * 2.;
+                let weight = [ws, wm, wh];
+                let mut result = [0.; 3];
+                for c in 0..3 {
+                    let b = rgb[c];
+                    // The zoned bases move the expected composite away from the
+                    // input level. Remove that displacement so the grain changes
+                    // the texture and not the tone. The vendor's half-storage
+                    // boundary stays in place, which also keeps the external
+                    // fixture comparable sample by sample.
+                    let stored =
+                        half::f16::from_f32(composed(b, g[c], weight).clamp(0., 1.)).to_f32();
+                    let displaced = composed(b, grain_mean[c], weight);
+                    let fixed = stored - (displaced - b);
+                    result[c] = half::f16::from_f32(fixed.clamp(0., 1.)).to_f32();
+                }
+                row[x as usize * 3..x as usize * 3 + 3].copy_from_slice(&result.map(from_f32));
             }
-            out.set(x, y, result.map(from_f32));
-        }
-    }
+        });
     out
 }
 #[cfg(test)]
 mod tests {
     use super::*;
+    /// Exercise the production row scheduler on a small virtual canvas. The
+    /// oracle generates each cell serially without calling the table builder.
+    #[test]
+    fn parallel_canvas_cells_match_serial_generation() {
+        let source = ImageBuf::from_data(
+            9,
+            7,
+            (0..9 * 7 * 3)
+                .map(|i| from_f32((i % 29) as f32 / 28.))
+                .collect(),
+        );
+        let size = [23., 19.];
+        for profile in [0, 7, 9] {
+            let mut p = GrainV2Params::for_profile(profile);
+            p.seed = 42;
+            let phase = p.resolved_timer();
+            let used = |extent: f32| {
+                ((extent / p.resampler_scale()).ceil() as i32 + 2).clamp(1, extent as i32)
+            };
+            let (width, height) = (used(size[0]), used(size[1]));
+            let mut expected = Vec::new();
+            for row in 0..height {
+                for col in 0..width {
+                    let rgb = sample_grain_source(&source, size, col, row);
+                    let luma = rgb[0] * 0.2125 + rgb[1] * 0.7154 + rgb[2] * 0.0721;
+                    let value =
+                        generator([col as f32, row as f32], size, luma, rgb, p, false, phase);
+                    expected.push(value.map(|v| half::f16::from_f32(v).to_bits()));
+                }
+            }
+            for threads in [1, 4] {
+                let pool = rayon::ThreadPoolBuilder::new()
+                    .num_threads(threads)
+                    .build()
+                    .unwrap();
+                let actual = pool.install(|| CanvasTable::build(&source, size, p, phase));
+                assert_eq!((actual.width, actual.height), (width, height));
+                assert_eq!(
+                    actual.cells, expected,
+                    "profile={profile}, threads={threads}"
+                );
+            }
+        }
+    }
+
+    /// The composition overwrites every output row independently. Pin all
+    /// stored samples against a serial copy of the pre-parallel digital loop.
+    #[test]
+    fn parallel_composition_matches_serial_digital_reference() {
+        for (width, height) in [(1, 1), (1, 11), (13, 1), (13, 11)] {
+            let input = ImageBuf::from_data(
+                width,
+                height,
+                (0..width * height * 3)
+                    .map(|i| from_f32((i % 31) as f32 / 30.))
+                    .collect(),
+            );
+            for resolution_type in [0, 1] {
+                let mut p = GrainV2Params::for_profile(7);
+                p.mode = GrainV2Mode::Noise;
+                p.seed = 42;
+                p.resolution_type = resolution_type;
+                let mut source = input.clone();
+                for value in &mut source.data {
+                    *value = from_f32(half::f16::from_f32(to_f32(*value)).to_f32());
+                }
+                let radius = p.resolution_radius(width, height);
+                if radius > 0. {
+                    source = if resolution_type == 0 {
+                        optical_pass(
+                            &optical_pass(&source, radius, true, false),
+                            radius,
+                            false,
+                            true,
+                        )
+                    } else {
+                        fast_blur_pass(&fast_blur_pass(&source, radius, true), radius, false)
+                    };
+                }
+                let mut expected = source.clone();
+                for y in 0..height {
+                    for x in 0..width {
+                        let rgb = source.get(x, y).map(to_f32);
+                        let luma = rgb[0] * 0.2125 + rgb[1] * 0.7154 + rgb[2] * 0.0721;
+                        let uv = [
+                            x as f32 * (1. / (width - 1).max(1) as f32),
+                            y as f32 * (1. / (height - 1).max(1) as f32),
+                        ];
+                        let g = generator(
+                            uv,
+                            [width as f32, height as f32],
+                            luma,
+                            rgb,
+                            p,
+                            true,
+                            p.resolved_timer(),
+                        );
+                        let a = effective_control(p.amount.clamp(0., 1.)) * 0.5;
+                        let weight = [
+                            effective_control(p.shadows) * a * opacity(luma, 0.) * 2.,
+                            effective_control(p.midtones) * a * opacity(luma, 0.5),
+                            effective_control(p.highlights) * a * opacity(luma, 1.) * 2.,
+                        ];
+                        let result = std::array::from_fn(|c| {
+                            let b = rgb[c];
+                            let stored =
+                                half::f16::from_f32(composed(b, g[c], weight).clamp(0., 1.))
+                                    .to_f32();
+                            let fixed = stored - (composed(b, 0.5, weight) - b);
+                            from_f32(half::f16::from_f32(fixed.clamp(0., 1.)).to_f32())
+                        });
+                        expected.set(x, y, result);
+                    }
+                }
+                for threads in [1, 4] {
+                    let pool = rayon::ThreadPoolBuilder::new()
+                        .num_threads(threads)
+                        .build()
+                        .unwrap();
+                    let actual = pool.install(|| apply_cpu(&input, p));
+                    assert_eq!(
+                        actual.data, expected.data,
+                        "{width}x{height}, resolution={resolution_type}, threads={threads}"
+                    );
+                }
+            }
+        }
+    }
+
     #[test]
     fn matches_normalized_external_kernel_outputs() {
         // External 7.4.1 OpenCL execution, with only trigonometry, phase
