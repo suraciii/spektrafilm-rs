@@ -127,8 +127,7 @@ mod tests {
             mapping: [1.0, 1.0, 1.0, 1.0],
         }
     }
-    fn apply(params: &RawLensParams, source: &[f32]) -> Vec<f32> {
-        let gpu = crate::test_support::adapter();
+    fn apply(gpu: &WgpuBackend, params: &RawLensParams, source: &[f32]) -> Vec<f32> {
         let input = RawBuffer::upload(
             &gpu.device,
             "lens_test_input",
@@ -151,6 +150,7 @@ mod tests {
     }
     #[test]
     fn channel_tca_precedes_nearest_edge_bilinear_resampling() {
+        let gpu = crate::test_support::adapter();
         let mut params = plan(3, 2);
         params.dimensions[3] = 1;
         params.tca = [0.5, 2.0, 0.0, 0.0];
@@ -158,7 +158,7 @@ mod tests {
             0.0, 10.0, 20.0, 2.0, 12.0, 22.0, 4.0, 14.0, 24.0, 6.0, 16.0, 26.0, 8.0, 18.0, 28.0,
             10.0, 20.0, 30.0,
         ];
-        let result = apply(&params, &source);
+        let result = apply(&gpu, &params, &source);
         let expected = [
             0.0, 10.0, 20.0, 1.0, 12.0, 24.0, 2.0, 14.0, 24.0, 3.0, 16.0, 26.0, 4.0, 18.0, 30.0,
             5.0, 20.0, 30.0,
@@ -167,24 +167,26 @@ mod tests {
     }
     #[test]
     fn vignette_runs_on_source_pixels_before_geometry() {
+        let gpu = crate::test_support::adapter();
         let mut params = plan(3, 1);
         params.flags[2] = 1;
         params.vignette = [1.0, 0.0, 0.0, 1.0];
         params.mapping[3] = 0.5;
-        let result = apply(&params, &[1.0; 9]);
+        let result = apply(&gpu, &params, &[1.0; 9]);
         // De-vignetting source is [1, 1/2, 1/5]; sampling x=[0,.5,1].
         let expected = [1.0, 1.0, 1.0, 0.75, 0.75, 0.75, 0.5, 0.5, 0.5];
         assert_eq!(result, expected);
     }
     #[test]
     fn full_frame_axes_round_every_addition_instead_of_multiplying_index() {
+        let gpu = crate::test_support::adapter();
         let mut params = plan(4096, 1);
         let step = 0.000_491_314_271_9_f64;
         params.normalization[0] = step as f32;
         params.normalization[1] = (step - f64::from(step as f32)) as f32;
         params.normalization[2] = 1000.0;
         let source: Vec<f32> = (0..4096).flat_map(|x| [x as f32; 3]).collect();
-        let result = apply(&params, &source);
+        let result = apply(&gpu, &params, &source);
         let mut x = 0.0f32;
         for i in 0..4096 {
             let expected = (f64::from(x) * 1000.0) as f32;
@@ -196,6 +198,7 @@ mod tests {
 
     #[test]
     fn forward_distortion_models_follow_lensfun_polynomials() {
+        let gpu = crate::test_support::adapter();
         let source: Vec<f32> = (0..64).flat_map(|x| [x as f32; 3]).collect();
         for model in 1..=3 {
             let mut params = plan(64, 1);
@@ -203,7 +206,7 @@ mod tests {
             params.distortion = [0.002, 0.00003, 0.0004, 0.0];
             params.normalization[0] = 0.125;
             params.normalization[2] = 8.0;
-            let result = apply(&params, &source);
+            let result = apply(&gpu, &params, &source);
             for i in 0..64 {
                 let x = i as f32 * 0.125;
                 let r2 = x * x;
@@ -227,6 +230,7 @@ mod tests {
 
     #[test]
     fn combined_native_simd_preserves_channel_lanes_unaligned_rows_and_scalar_tails() {
+        let gpu = crate::test_support::adapter();
         // a=c=0 in PTLens makes native SSE's approximate sqrt irrelevant.
         // An affine source makes each sampled coordinate observable, including
         // independent x/y lane scales, through the real resampling consumer.
@@ -240,7 +244,7 @@ mod tests {
                 let source: Vec<f32> = (0..3)
                     .flat_map(|y| (0..width).flat_map(move |x| [x as f32 + 10.0 * y as f32; 3]))
                     .collect();
-                let result = apply(&params, &source);
+                let result = apply(&gpu, &params, &source);
                 for row in 0..3u32 {
                     for col in 0..width {
                         for channel in 0..3u32 {
@@ -270,6 +274,7 @@ mod tests {
 
     #[test]
     fn every_lensfun_projection_has_the_rectilinear_inverse_mapping() {
+        let gpu = crate::test_support::adapter();
         let width = 5;
         let height = 3;
         let source: Vec<f32> = (0..height)
@@ -280,7 +285,7 @@ mod tests {
             params.flags = [kind, 1, 0, 0];
             params.normalization = [0.25, 0.0, 4.0, 0.0];
             params.center = [0.5, 0.0, 0.25, 0.0];
-            let result = apply(&params, &source);
+            let result = apply(&gpu, &params, &source);
             for y in 0..height {
                 for x in 0..width {
                     let px = f64::from(x) * 0.25 - 0.5;
@@ -348,12 +353,13 @@ mod tests {
 
     #[test]
     fn poly3_tca_uses_separate_channel_terms_including_the_radius_term() {
+        let gpu = crate::test_support::adapter();
         let mut params = plan(5, 1);
         params.dimensions[3] = 2;
         params.tca = [0.5, 0.75, 0.125, 0.25];
         params.tca_tail = [0.0625, 0.03125, 0.0, 0.0];
         let source: Vec<f32> = (0..5).flat_map(|x| [x as f32; 3]).collect();
-        let result = apply(&params, &source);
+        let result = apply(&gpu, &params, &source);
         for i in 0..5 {
             let x = i as f32;
             let red = (x * (0.0625 * x * x + 0.125 * x + 0.5)).min(4.0);

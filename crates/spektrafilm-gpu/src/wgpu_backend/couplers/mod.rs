@@ -691,24 +691,6 @@ mod tests {
     }
 
     #[test]
-    fn langmuir_uniforms_masks_absent_and_non_finite_knees() {
-        // No knee on this side (the caller passes `None`): the shader must
-        // not apply the saturation, so every channel is masked off.
-        let (k, mask) = langmuir_uniforms(None);
-        assert_eq!(mask, [0.0, 0.0, 0.0, 0.0]);
-        assert_eq!(k, [1.0, 1.0, 1.0, 1.0]);
-        // `K = inf` means "linear" on the CPU (`k.is_infinite()`); the
-        // channel is masked off and the uniform stays finite so the
-        // unconditionally-evaluated ratio cannot divide by infinity.
-        let (k, mask) = langmuir_uniforms(Some([f64::INFINITY as f32, 1.5, 3.0]));
-        assert_eq!(mask, [0.0, 1.0, 1.0, 0.0]);
-        assert_eq!(k, [1.0, 1.5, 3.0, 1.0]);
-        let (k, mask) = langmuir_uniforms(Some([0.0, 2.0, 4.0]));
-        assert_eq!(mask, [1.0, 1.0, 1.0, 0.0]);
-        assert_eq!(k, [0.0, 2.0, 4.0, 1.0]);
-    }
-
-    #[test]
     fn dir_matmul_shader_applies_donor_langmuir_on_masked_channels() {
         let b = crate::test_support::adapter();
         // Negative film at the acceptor, where the donor langmuir runs.
@@ -943,5 +925,28 @@ mod tests {
                 }
             }
         }
+    }
+}
+
+#[cfg(all(test, feature = "wgpu-backend"))]
+mod logic_tests {
+    use super::*;
+
+    #[test]
+    fn langmuir_uniforms_masks_absent_and_non_finite_knees() {
+        // No knee on this side (the caller passes `None`): the shader must
+        // not apply the saturation, so every channel is masked off.
+        let (k, mask) = langmuir_uniforms(None);
+        assert_eq!(mask, [0.0, 0.0, 0.0, 0.0]);
+        assert_eq!(k, [1.0, 1.0, 1.0, 1.0]);
+        // `K = inf` means "linear" on the CPU (`k.is_infinite()`); the
+        // channel is masked off and the uniform stays finite so the
+        // unconditionally-evaluated ratio cannot divide by infinity.
+        let (k, mask) = langmuir_uniforms(Some([f64::INFINITY as f32, 1.5, 3.0]));
+        assert_eq!(mask, [0.0, 1.0, 1.0, 0.0]);
+        assert_eq!(k, [1.0, 1.5, 3.0, 1.0]);
+        let (k, mask) = langmuir_uniforms(Some([0.0, 2.0, 4.0]));
+        assert_eq!(mask, [1.0, 1.0, 1.0, 0.0]);
+        assert_eq!(k, [0.0, 2.0, 4.0, 1.0]);
     }
 }

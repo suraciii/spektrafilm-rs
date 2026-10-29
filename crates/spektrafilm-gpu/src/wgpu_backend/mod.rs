@@ -107,6 +107,10 @@ pub struct WgpuBackend {
 #[cfg(feature = "wgpu-backend")]
 impl WgpuBackend {
     pub fn new() -> Option<Self> {
+        #[cfg(test)]
+        {
+            crate::test_support::assert_device_allowed();
+        }
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
             backends: wgpu::Backends::PRIMARY,
             ..Default::default()

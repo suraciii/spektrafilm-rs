@@ -1266,7 +1266,7 @@ mod tests {
 }
 
 #[cfg(test)]
-mod sigma_boundary_tests {
+mod logic_tests {
     use super::*;
 
     #[test]
@@ -1277,5 +1277,35 @@ mod sigma_boundary_tests {
         let (at_radius, at_weights) = gaussian_kernel_f64(0.5).unwrap();
         assert_eq!((below_radius, below_weights.len()), (1, 3));
         assert_eq!((at_radius, at_weights.len()), (2, 5));
+    }
+
+    #[test]
+    fn region_validation_enforces_coordinate_and_sample_limits() {
+        assert!(region_bytes(0, 1).is_err());
+        assert!(region_bytes(1, 0).is_err());
+        let coordinate_limit = i32::MAX as u32 / 2;
+        assert_eq!(
+            region_bytes(coordinate_limit, 1).unwrap(),
+            u64::from(coordinate_limit) * 12
+        );
+        assert!(region_bytes(coordinate_limit + 1, 1).is_err());
+        let max_pixels = u32::MAX / 3;
+        let width = max_pixels / 2;
+        assert_eq!(region_bytes(width, 2).unwrap(), u64::from(width) * 2 * 12);
+        assert!(region_bytes(width + 1, 2).is_err());
+    }
+
+    #[test]
+    fn gaussian_kernel_rejects_unrepresentable_or_unnormalizable_support() {
+        for sigma in [f64::NAN, f64::INFINITY, -1.0, f64::MAX] {
+            assert!(gaussian_kernel_f64(sigma).is_err());
+        }
+        assert!(gaussian_kernel_f64(0.0).is_err());
+        let (radius, weights) = gaussian_kernel_f64(1.0).unwrap();
+        assert_eq!(radius, 3);
+        assert!((weights.iter().sum::<f64>() - 1.0).abs() < 1e-14);
+        assert_eq!(weights[0], weights[6]);
+        assert_eq!(weights[1], weights[5]);
+        assert_eq!(weights[2], weights[4]);
     }
 }

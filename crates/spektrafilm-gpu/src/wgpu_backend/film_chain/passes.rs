@@ -1435,6 +1435,165 @@ mod tests {
         }
     }
 
+    mod logic_tests {
+        use super::*;
+
+        #[test]
+        fn tap_plan_limits_geometry_validation_to_actual_stage_span() {
+            let mut p = params(8, 4);
+            p.collect = Tap::LogEFilm;
+            p.scanner_lens_blur_px = Some(3.0);
+            let prefix = chain_steps(&p).unwrap();
+            assert_eq!(prefix, [ChainStep::Front, ChainStep::Log]);
+            assert_eq!(ChainGeometry::plan(&p, &prefix).unwrap().tail, (8, 4));
+            p.collect = Tap::RgbOut;
+            assert_eq!(
+                ChainGeometry::plan(&p, &chain_steps(&p).unwrap())
+                    .unwrap()
+                    .field,
+                (8, 4)
+            );
+            p.inject = Tap::LogEPrint;
+            p.collect = Tap::CmyPrint;
+            assert_eq!(chain_steps(&p).unwrap(), [ChainStep::PrintDensity]);
+            for extent in [(0, 1), (u32::MAX, 2), (u32::MAX / 3 + 1, 1)] {
+                assert!(
+                    raster_bytes(extent).is_err(),
+                    "accepted invalid geometry {extent:?}"
+                );
+            }
+        }
+
+        #[test]
+        fn diagnostic_taps_reject_absent_or_reversed_topology_boundaries() {
+            let taps = [
+                Tap::RgbIn,
+                Tap::RgbPre,
+                Tap::LogEFilm,
+                Tap::CmyFilm,
+                Tap::LogEPrint,
+                Tap::CmyPrint,
+                Tap::RgbOut,
+            ];
+            for scan_film in [false, true] {
+                for (from_index, &inject) in taps.iter().enumerate() {
+                    for (to_index, &collect) in taps.iter().enumerate() {
+                        let mut p = params(1, 1);
+                        p.scan_film = scan_film;
+                        p.inject = inject;
+                        p.collect = collect;
+                        let absent_paper = scan_film
+                            && [inject, collect]
+                                .iter()
+                                .any(|tap| matches!(tap, Tap::LogEPrint | Tap::CmyPrint));
+                        let requires_preprocessing = inject == Tap::RgbIn && inject != collect;
+                        let rejected =
+                            absent_paper || to_index < from_index || requires_preprocessing;
+                        let path = chain_steps(&p);
+                        assert_eq!(
+                            path.is_err(),
+                            rejected,
+                            "scan_film={scan_film}: {inject:?} -> {collect:?}"
+                        );
+                        if !rejected && inject == collect {
+                            assert_eq!(path.unwrap(), []);
+                        }
+                    }
+                }
+            }
+        }
+
+        #[test]
+        fn required_chain_buffers_mirror_the_chain_arithmetic() {
+            const W: u32 = 8;
+            const H: u32 = 4;
+            let log_exp = [0.0f64; 5];
+            let tc_lut = spektrafilm_math::spectral::TcLut {
+                size: 16,
+                channels: 3,
+                data: vec![0.0; 16 * 16 * 3],
+            };
+            let p = FilmChainParams {
+                front: FrontPass::Hanatos2025 {
+                    tc_lut: &tc_lut,
+                    generated: None,
+                    rgb_to_adapted_xyz: MAT3,
+                },
+                film_log_exposure: &log_exp,
+                ..params(W, H)
+            };
+            let required = required_chain_buffers(&p);
+            // A non-empty `[[f64; 3]]` table narrows to 12 bytes per row and
+            // outgrows the fixed-aux bound, so the table path itself is pinned.
+            let density_rows = [[0.0f64; 3]; 400];
+            let table_params = FilmChainParams {
+                film_channel_density: &density_rows,
+                ..params(W, H)
+            };
+            assert_eq!(
+                required_chain_buffers(&table_params).static_bytes,
+                400u64 * 12
+            );
+            // Resource planning follows declared lattice geometry even when a
+            // generated retained table has no host sample vector.
+            assert_eq!(required.static_bytes, MAX_FIXED_AUX_BYTES);
+        }
+
+        #[test]
+        fn inactive_tables_cannot_inflate_a_diagnostic_spans_binding_requirement() {
+            let tc_lut = spektrafilm_math::spectral::TcLut {
+                size: 1000,
+                channels: 3,
+                data: Vec::new(),
+            };
+            let film_exposure = [0.0; 6000];
+            let film_spectra = [[0.0; 3]; 500];
+            let print_exposure = [0.0; 7000];
+            let print_spectra = [[0.0; 3]; 800];
+            let mut p = FilmChainParams {
+                front: FrontPass::Hanatos2025 {
+                    tc_lut: &tc_lut,
+                    generated: None,
+                    rgb_to_adapted_xyz: MAT3,
+                },
+                film_log_exposure: &film_exposure,
+                film_channel_density: &film_spectra,
+                print_log_exposure: &print_exposure,
+                print_channel_density: &print_spectra,
+                ..params(8, 4)
+            };
+            for (inject, collect, required_bytes) in [
+                (Tap::RgbPre, Tap::LogEFilm, 12_000_000),
+                (Tap::LogEFilm, Tap::CmyFilm, 24_000),
+                (Tap::CmyFilm, Tap::LogEPrint, 6_000),
+                (Tap::LogEPrint, Tap::CmyPrint, 28_000),
+                (Tap::CmyPrint, Tap::RgbOut, 9_600),
+            ] {
+                p.inject = inject;
+                p.collect = collect;
+                assert_eq!(
+                    required_chain_buffers(&p).static_bytes,
+                    required_bytes,
+                    "{inject:?} -> {collect:?} reserved an inactive table"
+                );
+            }
+        }
+
+        #[test]
+        fn immutable_binding_accepts_exact_capacity_and_checks_each_independent_limit() {
+            for (buffer_limit, binding_limit) in [(64, 128), (128, 64)] {
+                let limits = wgpu::Limits {
+                    max_buffer_size: buffer_limit,
+                    max_storage_buffer_binding_size: binding_limit,
+                    ..wgpu::Limits::default()
+                };
+                assert!(required_buffer_exceeds_limits(64, &limits).is_none());
+                assert!(required_buffer_exceeds_limits(65, &limits).is_some());
+                assert!(required_buffer_exceeds_limits(u64::MAX, &limits).is_some());
+            }
+        }
+    }
+
     #[test]
     fn prefix_tap_does_not_allocate_or_validate_inactive_tail_resources() {
         use spektrafilm_backend::telemetry::{CollectionMode, ObservationContext};
@@ -1530,32 +1689,6 @@ mod tests {
             .zip(&expected.data)
         {
             assert!((*actual as f64 - *expected as f64).abs() < 2e-6);
-        }
-    }
-
-    #[test]
-    fn tap_plan_limits_geometry_validation_to_actual_stage_span() {
-        let mut p = params(8, 4);
-        p.collect = Tap::LogEFilm;
-        p.scanner_lens_blur_px = Some(3.0);
-        let prefix = chain_steps(&p).unwrap();
-        assert_eq!(prefix, [ChainStep::Front, ChainStep::Log]);
-        assert_eq!(ChainGeometry::plan(&p, &prefix).unwrap().tail, (8, 4));
-        p.collect = Tap::RgbOut;
-        assert_eq!(
-            ChainGeometry::plan(&p, &chain_steps(&p).unwrap())
-                .unwrap()
-                .field,
-            (8, 4)
-        );
-        p.inject = Tap::LogEPrint;
-        p.collect = Tap::CmyPrint;
-        assert_eq!(chain_steps(&p).unwrap(), [ChainStep::PrintDensity]);
-        for extent in [(0, 1), (u32::MAX, 2), (u32::MAX / 3 + 1, 1)] {
-            assert!(
-                raster_bytes(extent).is_err(),
-                "accepted invalid geometry {extent:?}"
-            );
         }
     }
 
@@ -1838,57 +1971,5 @@ mod tests {
             scalars_to_f32(&healthy.to_host(gpu.backend()).unwrap().data).as_ref(),
             &[0.125, 0.5, 0.75]
         );
-    }
-
-    #[test]
-    fn diagnostic_taps_reject_absent_or_reversed_topology_boundaries() {
-        let mut p = params(1, 1);
-        p.inject = Tap::CmyFilm;
-        p.collect = Tap::LogEFilm;
-        assert!(validate_tap_span(&p).unwrap_err().contains("no node path"));
-        p.scan_film = true;
-        p.inject = Tap::LogEPrint;
-        p.collect = Tap::LogEPrint;
-        assert!(
-            validate_tap_span(&p)
-                .unwrap_err()
-                .contains("not part of this topology")
-        );
-    }
-
-    #[test]
-    fn required_chain_buffers_mirror_the_chain_arithmetic() {
-        const W: u32 = 8;
-        const H: u32 = 4;
-        let log_exp = [0.0f64; 5];
-        let tc_lut = spektrafilm_math::spectral::TcLut {
-            size: 16,
-            channels: 3,
-            data: vec![0.0; 16 * 16 * 3],
-        };
-        let p = FilmChainParams {
-            front: FrontPass::Hanatos2025 {
-                tc_lut: &tc_lut,
-                generated: None,
-                rgb_to_adapted_xyz: MAT3,
-            },
-            film_log_exposure: &log_exp,
-            ..params(W, H)
-        };
-        let required = required_chain_buffers(&p);
-        // A non-empty `[[f64; 3]]` table narrows to 12 bytes per row and
-        // outgrows the fixed-aux bound, so the table path itself is pinned.
-        let density_rows = [[0.0f64; 3]; 400];
-        let table_params = FilmChainParams {
-            film_channel_density: &density_rows,
-            ..params(W, H)
-        };
-        assert_eq!(
-            required_chain_buffers(&table_params).static_bytes,
-            400u64 * 12
-        );
-        // Resource planning follows declared lattice geometry even when a
-        // generated retained table has no host sample vector.
-        assert_eq!(required.static_bytes, MAX_FIXED_AUX_BYTES);
     }
 }

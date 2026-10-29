@@ -23,6 +23,15 @@ use crate::wgpu_backend::WgpuBackend;
 #[cfg(feature = "wgpu-backend")]
 use std::ops::Deref;
 
+/// Fail before adapter enumeration or lock acquisition in the logic-only lane.
+#[cfg(all(test, feature = "wgpu-backend"))]
+pub(crate) fn assert_device_allowed() {
+    assert!(
+        std::env::var_os("SPEKTRAFILM_TEST_NO_DEVICE").is_none(),
+        "logic-only test attempted to acquire a WGPU device"
+    );
+}
+
 /// Serial lock shared by all wgpu-backend test modules: the software Vulkan
 /// driver (llvmpipe) is not safe under concurrent device use in one process.
 /// Held for the whole test so the device outlives the guard.
@@ -34,6 +43,10 @@ pub static DEVICE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 /// lock is still held.
 #[cfg(feature = "wgpu-backend")]
 pub fn device_lock() -> std::sync::MutexGuard<'static, ()> {
+    #[cfg(test)]
+    {
+        assert_device_allowed();
+    }
     DEVICE_LOCK
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())

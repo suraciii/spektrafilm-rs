@@ -593,7 +593,7 @@ impl BoundedBlur {
             if sample_bytes == 8 {
                 include_str!("blur_bounded_box_f64.wgsl")
             } else {
-                include_str!("blur_bounded_f32.wgsl")
+                include_str!("blur_bounded_box_f32.wgsl")
             },
             &LAYOUT,
         );
@@ -934,7 +934,13 @@ impl BoundedBlur {
                 .pipeline,
             );
             pass.set_bind_group(0, &group, &[]);
-            pass.dispatch_workgroups(p.lines.div_ceil(64), 1, 1);
+            if direction.box_filter && self.sample_bytes == 4 {
+                let groups = (p.count.div_ceil(4) * p.lines).div_ceil(64);
+                let (x, y) = dispatch_grid(groups);
+                pass.dispatch_workgroups(x, y, 1);
+            } else {
+                pass.dispatch_workgroups(p.lines.div_ceil(64), 1, 1);
+            }
         }
         submission.command()?;
         let rect = if direction.vertical {
@@ -1144,6 +1150,46 @@ fn reflect(index: i64, length: u32) -> u32 {
     }
 }
 
+#[cfg(test)]
+mod logic_tests {
+    use super::*;
+
+    #[test]
+    fn workspace_caps_pages_by_sample_width_and_rejects_geometry_overflow() {
+        let f32_cap = u64::from(MAX_PAGE_VALUES) * 4;
+        let f64_cap = u64::from(MAX_PAGE_VALUES) * 8;
+        let small = workspace_bytes(3, 5, 1024).unwrap();
+        assert_eq!(small, workspace_bytes_f64(3, 5, 1024).unwrap());
+        assert_eq!(workspace_bytes(3, 5, 1025).unwrap() - small, 4);
+        assert_eq!(
+            workspace_bytes(3, 5, f32_cap).unwrap(),
+            workspace_bytes(3, 5, u64::MAX).unwrap()
+        );
+        assert_eq!(
+            workspace_bytes_f64(3, 5, f64_cap).unwrap(),
+            workspace_bytes_f64(3, 5, u64::MAX).unwrap()
+        );
+        assert_eq!(
+            workspace_bytes_f64(3, 5, u64::MAX).unwrap() - workspace_bytes(3, 5, u64::MAX).unwrap(),
+            4 * (f64_cap - f32_cap)
+        );
+        assert!(workspace_bytes(u32::MAX, u32::MAX, 1024).is_err());
+        assert!(workspace_bytes_f64(u32::MAX, u32::MAX, 1024).is_err());
+    }
+
+    #[test]
+    fn blur_reflection_repeats_endpoints_across_multiple_periods() {
+        for index in -12..=12 {
+            assert_eq!(reflect(index, 1), 0);
+            assert_eq!(reflect(index, 3), reflect(index + 6, 3));
+        }
+        assert_eq!(
+            (-1..=5).map(|i| reflect(i, 3)).collect::<Vec<_>>(),
+            [0, 0, 1, 2, 2, 1, 0]
+        );
+    }
+}
+
 #[cfg(all(test, not(feature = "precision-f64")))]
 mod tests {
     use super::super::reference::blur_channel;
@@ -1164,7 +1210,7 @@ mod tests {
         sigma: [f64; 3],
         limit: u64,
         cancelled_reuse: bool,
-    ) {
+    ) -> Vec<f32> {
         let gpu = crate::test_support::adapter();
         let mut gpu = gpu.derived_explicit();
         let cancellation = Arc::new(AtomicBool::new(false));
@@ -1304,6 +1350,7 @@ mod tests {
                 .iter()
                 .all(|&x| x == 123.0)
         );
+        tiled.to_vec()
     }
 
     #[test]
@@ -1311,6 +1358,146 @@ mod tests {
         compare(71, 67, [3.0, 4.0, 7.9], 192);
         compare(1, 39, [3.0, 4.0, 7.9], 24);
         compare(39, 1, [3.0, 4.0, 7.9], 24);
+    }
+
+    /// Compare the optimized box kernel with the original ordered-window
+    /// kernel on identical packed inputs, not with a shared CPU approximation.
+    #[test]
+    fn vector_boxes_preserve_ordered_window_bits_and_support() {
+        let gpu = crate::test_support::adapter();
+        let original = gpu.cached_pipeline(include_str!("blur_bounded_f32.wgsl"), &LAYOUT);
+        let vector = gpu.cached_pipeline(include_str!("blur_bounded_box_f32.wgsl"), &LAYOUT);
+        let lines = 6usize;
+        for count in [1usize, 3, 7, 31, 33, 129] {
+            for radius in [0usize, 9, 47, 141] {
+                for axis_major in [0u32, 1] {
+                    let span = count + 2 * radius;
+                    let mut values = vec![0.0f32; span * lines];
+                    for j in 0..span {
+                        for line in 0..lines {
+                            let value = match line {
+                                0 => ((j * 37 + 11) % 103) as f32 / 51.0 - 1.0,
+                                1 if j == radius => f32::NAN,
+                                2 if j == radius => f32::INFINITY,
+                                2 if j == radius + 7 => f32::NEG_INFINITY,
+                                3 => {
+                                    if j % 4 < 2 {
+                                        f32::MAX * 0.75
+                                    } else {
+                                        -f32::MAX * 0.75
+                                    }
+                                }
+                                4 if j == 0 => 16777216.0,
+                                5 => {
+                                    if j % 2 == 0 {
+                                        -0.0
+                                    } else {
+                                        0.0
+                                    }
+                                }
+                                _ => 1.0,
+                            };
+                            let index = if axis_major == 0 {
+                                line * span + j
+                            } else {
+                                j * lines + line
+                            };
+                            values[index] = value;
+                        }
+                    }
+                    let source = gpu
+                        .device
+                        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                            label: Some("box_order_input"),
+                            contents: bytemuck::cast_slice(&values),
+                            usage: wgpu::BufferUsages::STORAGE,
+                        });
+                    let params = Params32 {
+                        count: count as u32,
+                        lines: lines as u32,
+                        stride: 1,
+                        channel: 0,
+                        radius: radius as u32,
+                        mode: 3,
+                        initialize: 1,
+                        axis_major,
+                        a: 0.0,
+                        b1: 0.0,
+                        b2: 0.0,
+                        b3: 0.0,
+                    };
+                    let uniform = super::super::super::raster::uniform(&gpu, &params);
+                    let kernel = gpu
+                        .device
+                        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                            label: Some("box_order_weight"),
+                            contents: bytemuck::cast_slice(&[1.0 / (2 * radius + 1) as f32]),
+                            usage: wgpu::BufferUsages::STORAGE,
+                        });
+                    let state = transport(&gpu, "box_order_state", lines as u64 * 12, true);
+                    let bytes = (count * lines * 4) as u64;
+                    let a = transport(&gpu, "box_order_original", bytes, true);
+                    let b = transport(&gpu, "box_order_vector", bytes, true);
+                    let readback = gpu.device.create_buffer(&wgpu::BufferDescriptor {
+                        label: Some("box_order_readback"),
+                        size: bytes * 2,
+                        usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+                        mapped_at_creation: false,
+                    });
+                    let mut commands = super::super::super::raster::RasterCommands::default();
+                    // Both kernels use 64-thread workgroups, not the generic
+                    // RasterCommands 256-thread linear dispatch convention.
+                    commands.dispatch(
+                        &original,
+                        &[&uniform, &source, &a, &kernel, &state],
+                        (lines as u32).div_ceil(64),
+                        true,
+                        &gpu,
+                    );
+                    let threads = count.div_ceil(4) * lines;
+                    commands.dispatch(
+                        &vector,
+                        &[&uniform, &source, &b, &kernel, &state],
+                        (threads as u32).div_ceil(64),
+                        true,
+                        &gpu,
+                    );
+                    commands.copy(&a, 0, &readback, 0, bytes);
+                    commands.copy(&b, 0, &readback, bytes, bytes);
+                    commands.submit(&gpu).unwrap();
+                    let result = gpu.read_mapped_f32(&readback, bytes * 2);
+                    let (expected, actual) = result.split_at(count * lines);
+                    for (i, (&want, &got)) in expected.iter().zip(actual).enumerate() {
+                        if want.is_nan() {
+                            assert!(got.is_nan());
+                        } else {
+                            assert_eq!(
+                                got.to_bits(),
+                                want.to_bits(),
+                                "count={count} radius={radius} axis={axis_major} sample={i}"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn vector_boxes_preserve_bits_across_page_layouts() {
+        let mut baseline: Option<Vec<f32>> = None;
+        for limit in [512, 1024, 2048] {
+            let actual = compare_with_reuse(71, 67, [8.0, 20.0, 32.0], limit, false);
+            if let Some(expected) = &baseline {
+                assert_eq!(
+                    actual.iter().map(|x| x.to_bits()).collect::<Vec<_>>(),
+                    expected.iter().map(|x| x.to_bits()).collect::<Vec<_>>(),
+                    "transport layout changed bits at limit={limit}"
+                );
+            } else {
+                baseline = Some(actual);
+            }
+        }
     }
 
     #[test]
