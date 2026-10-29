@@ -9,14 +9,10 @@ fn key(label: &str) -> Option<&'static str> {
         "hoya_y2" => Some("controls.scanner.filter_y2"),
         "hoya_ya3" => Some("controls.scanner.filter_ya3"),
         "hoya_r1" => Some("controls.scanner.filter_r1"),
-        "Dye Advanced" => Some("controls.grain.dye_advanced"),
         "Spektra Advanced" => Some("controls.grain.spektra_advanced"),
         "Procedural Advanced" => Some("controls.grain.procedural_advanced"),
         "Spektra and Dye use record 0 for black-and-white material; G/B values remain stored and inactive" => {
             Some("controls.grain.inactive_bw_records")
-        }
-        "selected film has color records; channel_correlation is retained but inactive for single-record black-and-white material" => {
-            Some("controls.grain.inactive_bw_correlation")
         }
         "effective Procedural mode = analogue; Noise does not use Film Resolution or its method" => {
             Some("controls.grain.inactive_noise_resolution")
@@ -164,9 +160,6 @@ fn key(label: &str) -> Option<&'static str> {
         "Base" => Some("controls.base.print_section"),
         "Base density: scale and per-channel masks" => Some("surfaces.summary.print_base"),
         "Base density: scale, tilt, and per-channel masks" => Some("surfaces.summary.base"),
-        "Base statistical event area in square film micrometers; controls grain strength independently of dye support." => {
-            Some("controls.grain.event_area_help")
-        }
         "Bit depth" => Some("controls.label.bit_depth"),
         "Bit depth: 8 bit — required by JPEG and PNG" => Some("surfaces.export.depth_fixed"),
         "Blend all three film sub-layers toward the matched Gumbel shoulder while preserving midgray via a common horizontal offset." => {
@@ -218,7 +211,6 @@ fn key(label: &str) -> Option<&'static str> {
         "Changes the exposure time set in the virtual enlarger" => {
             Some("controls.scanner.print_exposure_help")
         }
-        "Channel correlation" => Some("controls.grain.channel_correlation"),
         "Choice" => Some("controls.metadata.choice"),
         "Choose an ICC profile for the display transform applied to the viewer raster only. It never reaches retained, saved or exported pixels." => {
             Some("surfaces.display.select_help")
@@ -385,7 +377,8 @@ fn key(label: &str) -> Option<&'static str> {
         "Dye" => Some("controls.grain.dye"),
         "Dye negative" => Some("controls.grain.dye_negative"),
         "Dye reversal" => Some("controls.grain.dye_reversal"),
-        "Dye support (spatial formation)" => Some("controls.grain.dye_support"),
+        "Grain strength" => Some("controls.grain.dye_strength"),
+        "Grain scale" => Some("controls.grain.dye_scale"),
         "Dye-cloud blur in micrometers." => Some("controls.grain.dye_cloud_blur_help"),
         "EXR uses linear color and ZIP compression; encoding is fixed off." => {
             Some("surfaces.export.exr_fixed")
@@ -444,7 +437,6 @@ fn key(label: &str) -> Option<&'static str> {
         "Estimated output size: ≈ %{size} before compression" => {
             Some("surfaces.export.size_compressed")
         }
-        "Event area (strength)" => Some("controls.grain.event_area"),
         "Experimental local source-response compression for halation only. Zero preserves the linear response; higher values make secondary bright sources contribute more nearly like the brightest source without changing the base film raw exposure." => {
             Some("controls.halation.source_compression_help")
         }
@@ -525,8 +517,11 @@ fn key(label: &str) -> Option<&'static str> {
         "Gaussian sigma in pixels on linear transmitted or reflected readout light, before negative conversion, gamut processing, sharpening and encoding. Identity points retain this optical order." => {
             Some("controls.scanner.lens_blur_help")
         }
-        "Dye support conditions the grain field and image detail in film micrometers; it is not a pure grain diameter control." => {
-            Some("controls.grain.dye_support_help")
+        "Relative Dye grain amplitude: 1 keeps the delivered look; 0 removes random grain, including residual count noise. The density response and the inter-record ratio stay unchanged, and this is not a certified optical RMS target." => {
+            Some("controls.grain.dye_strength_help")
+        }
+        "Relative Dye grain scale in film coordinates: 1 keeps the delivered correlation length, and the texture's octaves and band limit scale together. Not a crystal diameter, scanner blur, or output-pixel size." => {
+            Some("controls.grain.dye_scale_help")
         }
         "General" => Some("surfaces.settings.general"),
         "Geometry: crop toggle, center, size, upscale factor" => {
@@ -693,9 +688,7 @@ fn key(label: &str) -> Option<&'static str> {
         "Micro-structure scale and clump size." => Some("controls.grain.micro_structure_help"),
         "Midtone grain amount." => Some("controls.grain.midtones_help"),
         "Midtones" => Some("controls.grain.midtones"),
-        "Minimum grain density shared by Spektra and Dye." => {
-            Some("controls.grain.density_min_help")
-        }
+        "Minimum grain density for Spektra." => Some("controls.grain.density_min_help"),
         "Multiplier on the cross-layer (off-diagonal) inhibition. Controls saturation enhancement from interlayer DIR effects." => {
             Some("controls.couplers.inhibition_interlayer_help")
         }
@@ -787,13 +780,11 @@ fn key(label: &str) -> Option<&'static str> {
         "Per-channel gamma factor applied to the red channel." => {
             Some("controls.chemistry.gamma_factor_red_help")
         }
-        "Per-channel grain uniformity shared by Spektra and Dye." => {
-            Some("controls.grain.uniformity_help")
-        }
+        "Per-channel grain uniformity for Spektra." => Some("controls.grain.uniformity_help"),
         "Per-channel same-layer DIR gamma (R, G, B). Effective gamma reduction of each layer's density curve." => {
             Some("controls.couplers.gamma_samelayer_help")
         }
-        "Per-channel granularity G: Spektra derives statistical particle area from the film density curves using upstream granularity; Dye uses relative event-area strength k = (G / 6)^2, with zero retaining the reference-scale fallback. Neither is a certified optical RMS target. Distinct from Procedural Amount." => {
+        "Per-channel granularity G: Spektra derives statistical particle area from the film density curves using upstream granularity. It is not a certified optical RMS target. Distinct from Procedural Amount." => {
             Some("controls.grain.rms_granularity_help")
         }
         "Percentage of the glare light (typically 0.1-0.25)" => Some("controls.help.glare.percent"),
@@ -817,7 +808,7 @@ fn key(label: &str) -> Option<&'static str> {
             Some("surfaces.diagnostics.source")
         }
         "Positive" => Some("controls.grain.positive"),
-        "Positive scale per component: Spektra uses relative particle scales per emulsion sublayer; Dye uses numerical curve components, changing event mass and rate, not separate cloud-kernel widths." => {
+        "Positive scale per component: Spektra uses relative particle scales per emulsion sublayer." => {
             Some("controls.grain.particle_scale_sublayers_help")
         }
         "Post-blur sigma." => Some("controls.grain.blur_help"),
@@ -995,9 +986,6 @@ fn key(label: &str) -> Option<&'static str> {
         "Settings" => Some("surfaces.settings.title"),
         "Shadow grain amount." => Some("controls.grain.shadows_help"),
         "Shadows" => Some("controls.grain.shadows"),
-        "Shared Poisson-event rate fraction among active records within each numerical component, not realized CMY or final RGB correlation. Preserves each record's marginal count distribution; correlation depends on record-rate ratios. Inactive for single-record black-and-white material; the requested value is retained for color film." => {
-            Some("controls.grain.channel_correlation_help")
-        }
         "Show controls that differ from their factory baseline, independently of an applied preset." => {
             Some("surfaces.search.modified_help")
         }
@@ -1182,7 +1170,6 @@ fn key(label: &str) -> Option<&'static str> {
         "captured-negative Convert route" => Some("controls.condition.captured_negative"),
         "ccw rotate" => Some("surfaces.source.rotate_ccw"),
         "center_weighted" => Some("controls.scanner.metering_center"),
-        "channel correlation" => Some("controls.grain.channel_correlation"),
         "channel permutation" => Some("controls.label.channel_permutation"),
         "chroma" => Some("controls.grain.chroma"),
         "clear" => Some("surfaces.action.clear"),
@@ -1229,7 +1216,6 @@ fn key(label: &str) -> Option<&'static str> {
         "diffusion tail weight" => Some("controls.couplers.diffusion_tail_weight"),
         "dimensionless" => Some("controls.unit.dimensionless"),
         "duration unavailable" => Some("surfaces.diagnostics.duration_missing"),
-        "dye support (µm)" => Some("controls.grain.dye_support"),
         "dye-cloud blur" => Some("controls.grain.dye_cloud_blur"),
         "enable CMYK ink style" => Some("controls.cmyk.enable"),
         "enable dir couplers" => Some("controls.couplers.enable"),
@@ -1248,7 +1234,6 @@ fn key(label: &str) -> Option<&'static str> {
             Some("controls.condition.preflash")
         }
         "enum" => Some("controls.metadata.enum"),
-        "event area (µm²)" => Some("controls.grain.event_area"),
         "exposure compensation ev" => Some("controls.convert.exposure_compensation"),
         "exposure ×" => Some("controls.unit.exposure"),
         "film profile" => Some("controls.label.film_profile"),
@@ -1917,7 +1902,6 @@ mod tests {
                 "camera.diffusion_filter.active = true; strength and spatial_scale positive",
                 "film_render.chemistry.active = true; supported fitted density_curves_model required",
                 "print_render.density_curves_morph.active = true; supported fitted density_curves_model required",
-                "selected film has color records; channel_correlation is retained but inactive for single-record black-and-white material",
             ] {
                 let display = localized_for(locale, predicate);
                 assert_ne!(display, predicate);

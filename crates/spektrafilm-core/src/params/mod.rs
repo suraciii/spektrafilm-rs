@@ -1299,6 +1299,8 @@ mod tests {
         );
         assert_eq!(default.film_render.grain.dye_support_um, 3.5);
         assert_eq!(default.film_render.grain.dye_event_area_um2, 1.28);
+        assert_eq!(default.film_render.grain.dye_strength, 1.0);
+        assert_eq!(default.film_render.grain.dye_scale, 1.0);
         assert_eq!(default.film_render.grain.channel_correlation, 0.0);
         // Recipes saved before the Dye event area and the channel
         // correlation existed get their defaults.
@@ -1311,8 +1313,18 @@ mod tests {
             .as_object_mut()
             .unwrap()
             .remove("channel_correlation");
+        legacy["film_render"]["grain"]
+            .as_object_mut()
+            .unwrap()
+            .remove("dye_strength");
+        legacy["film_render"]["grain"]
+            .as_object_mut()
+            .unwrap()
+            .remove("dye_scale");
         let legacy: super::RuntimeParams = serde_json::from_value(legacy).unwrap();
         assert_eq!(legacy.film_render.grain.dye_event_area_um2, 1.28);
+        assert_eq!(legacy.film_render.grain.dye_strength, 1.0);
+        assert_eq!(legacy.film_render.grain.dye_scale, 1.0);
         assert_eq!(legacy.film_render.grain.channel_correlation, 0.0);
         value["film_render"]["grain"]["engine"] = serde_json::json!("dye");
         value["film_render"]["grain"]["dye_support_um"] = serde_json::json!(4.5);
@@ -1365,6 +1377,36 @@ mod tests {
             let mut ok = params.clone();
             ok.film_render.grain.channel_correlation = value;
             ok.validate().unwrap();
+        }
+        // The Dye look controls keep an explicit zero strength and a
+        // positive scale; values outside the declared domain fail.
+        for value in [0.0, 0.5, 1.0, 4.0] {
+            let mut ok = params.clone();
+            ok.film_render.grain.dye_strength = value;
+            ok.validate().unwrap();
+        }
+        for value in [-0.1, 4.1, f64::NAN, f64::INFINITY] {
+            let mut bad = params.clone();
+            bad.film_render.grain.dye_strength = value;
+            let error = bad.validate().unwrap_err();
+            assert!(
+                error.contains("film_render.grain.dye_strength"),
+                "unexpected error for {value}: {error}"
+            );
+        }
+        for value in [0.5, 1.0, 4.0] {
+            let mut ok = params.clone();
+            ok.film_render.grain.dye_scale = value;
+            ok.validate().unwrap();
+        }
+        for value in [0.49, 4.01, f64::NAN, f64::INFINITY] {
+            let mut bad = params.clone();
+            bad.film_render.grain.dye_scale = value;
+            let error = bad.validate().unwrap_err();
+            assert!(
+                error.contains("film_render.grain.dye_scale"),
+                "unexpected error for {value}: {error}"
+            );
         }
         // Spektra ignores the controls, but stored values stay validated so a
         // later switch to Dye cannot render from an invalid recipe.

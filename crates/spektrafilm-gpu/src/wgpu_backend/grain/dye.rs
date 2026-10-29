@@ -13,14 +13,7 @@ impl WgpuBackend {
         image: &ImageBuf,
         params: &DyeGpuParams,
     ) -> Result<ImageBuf, String> {
-        self.dye_law_field(
-            image,
-            params.source_pitch_um,
-            &params.grid,
-            params.seed,
-            params.expectation,
-            params.monochrome,
-        )
+        self.dye_law_field(image, params)
     }
 
     /// Admission check for a device field request.
@@ -35,6 +28,7 @@ impl WgpuBackend {
             width,
             height,
             params.source_pitch_um,
+            params.length_scale,
         )
         .map(|_| ())
     }
@@ -51,6 +45,7 @@ impl WgpuBackend {
             width,
             height,
             params.source_pitch_um,
+            params.length_scale,
         )
     }
 

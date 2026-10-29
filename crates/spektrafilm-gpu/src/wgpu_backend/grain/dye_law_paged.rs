@@ -109,12 +109,13 @@ pub(in crate::wgpu_backend) fn law_band_shape(
     backend: &WgpuBackend,
     width: u32,
     pitch_um: f64,
+    length_scale: f64,
 ) -> Result<(u32, u32), String> {
     let binding = crate::wgpu_backend::bounded::storage_binding_limit(backend)?;
     let budget = BAND_BUDGET_BYTES.min(binding);
     let pixels = (budget / 68).max(64);
     let rows = (pixels / u64::from(width.max(1))).max(1);
-    let halo = (halo_um() / pitch_um).ceil().max(1.0);
+    let halo = (halo_um(length_scale) / pitch_um).ceil().max(1.0);
     if halo > 4096.0 {
         return Err(format!(
             "Dye grain law: a {pitch_um} um pitch needs a {halo} px halo"
@@ -129,8 +130,10 @@ pub(in crate::wgpu_backend) fn law_workspace_bytes(
     width: u32,
     height: u32,
     pitch_um: f64,
+    length_scale: f64,
 ) -> Result<u64, String> {
-    let (rows, halo) = law_band_shape(backend, width, pitch_um)?;
+    law_taps(pitch_um, length_scale)?;
+    let (rows, halo) = law_band_shape(backend, width, pitch_um, length_scale)?;
     let window_rows = u64::from(rows) + 2 * u64::from(halo);
     let window = u64::from(width)
         .checked_mul(window_rows)
@@ -163,10 +166,10 @@ impl WgpuBackend {
             return Err("Dye grain law: the source pitch must be positive".into());
         }
         let grid = &params.grid;
-        let (rows_per_band, halo) = law_band_shape(self, width, source_pitch)?;
+        let (rows_per_band, halo) = law_band_shape(self, width, source_pitch, params.length_scale)?;
+        let taps = law_taps(source_pitch, params.length_scale)?;
         let output_pages = self.allocate_image_pages(grid.width, grid.height, "dye_law_output")?;
         let pipes = self.dye_law_pipelines();
-        let taps = law_taps(source_pitch);
         let readout_pipe = self.cached_pipeline_at(
             READOUT_WGSL,
             &[
@@ -216,6 +219,8 @@ impl WgpuBackend {
                     seed: params.seed,
                     expectation: params.expectation,
                     monochrome: params.monochrome,
+                    white: params.white,
+                    event_area_um2: params.event_area_um2,
                 },
                 readout,
             });

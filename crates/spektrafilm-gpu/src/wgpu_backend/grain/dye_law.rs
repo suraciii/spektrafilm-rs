@@ -36,23 +36,20 @@ const HIGHPASS_UM: f64 = 12.0;
 pub(super) const STRENGTH: [f64; 3] = [1.0, 1.0, 1.18];
 /// Shared fraction of the field between records.
 pub(super) const RHO: f64 = 0.92;
-/// Relative density amplitude at the taper peak.
-pub(super) const WHITE: f64 = 0.035;
-/// Event area of one developed silver cluster, in square micrometres.
-pub(super) const Q_UM2: f64 = 0.0015;
 /// Dark-end event baseline, in density units. Uncalibrated relative setting.
 pub(super) const FOG: f64 = 0.15;
 pub(super) const DMAX: f64 = 1.2;
 pub(super) const UNIFORMITY: f64 = 0.97;
 pub(super) const TAPER_FLOOR: f64 = 0.18;
 
-/// Halo radius in micrometres that a band needs on each side.
-pub(super) fn halo_um() -> f64 {
+/// Halo radius in micrometres that a band needs on each side at the
+/// request's correlation-length scale.
+pub(super) fn halo_um(length_scale: f64) -> f64 {
     let widest = OCTAVES
         .iter()
         .map(|(diameter, _)| diameter / 2.0)
         .fold(0.0f64, f64::max);
-    3.0 * widest + 3.0 * HIGHPASS_UM
+    length_scale * (3.0 * widest + 3.0 * HIGHPASS_UM)
 }
 
 /// Bytes one band of `pixels` pixels needs: density and output in RGB plus ten
@@ -127,10 +124,21 @@ struct ApplyParams {
     strength: [f32; 4],
 }
 
+/// Largest supported Gaussian radius in pixels. A request that needs more
+/// taps is rejected before allocation instead of silently truncating the
+/// kernel and realizing a different correlation length.
+const MAX_TAP_RADIUS: u32 = 48;
+
 /// Normalised Gaussian taps and their radius.
-fn taps_for(sigma_px: f64) -> (Vec<f32>, u32) {
+fn taps_for(sigma_px: f64) -> Result<(Vec<f32>, u32), String> {
     let sigma = sigma_px.max(0.05);
-    let radius = (3.0 * sigma).ceil().clamp(1.0, 48.0) as u32;
+    let radius = (3.0 * sigma).ceil();
+    if radius > f64::from(MAX_TAP_RADIUS) {
+        return Err(format!(
+            "Dye grain law: a {sigma_px:.3} px Gaussian needs a {radius:.0} px kernel above the {MAX_TAP_RADIUS} px tap bound"
+        ));
+    }
+    let radius = radius.max(1.0) as u32;
     let mut taps = Vec::with_capacity((2 * radius + 1) as usize);
     let mut sum = 0.0;
     for t in 0..=(2 * radius) {
@@ -142,7 +150,7 @@ fn taps_for(sigma_px: f64) -> (Vec<f32>, u32) {
     for v in taps.iter_mut() {
         *v /= sum;
     }
-    (taps.into_iter().map(|v| v as f32).collect(), radius)
+    Ok((taps.into_iter().map(|v| v as f32).collect(), radius))
 }
 
 /// Per-octave gains and the band-limited scale.
@@ -485,6 +493,8 @@ pub(super) struct LawGeom {
     pub seed: u64,
     pub expectation: bool,
     pub monochrome: bool,
+    pub white: f64,
+    pub event_area_um2: f64,
 }
 
 pub(super) struct LawTaps {
@@ -493,18 +503,19 @@ pub(super) struct LawTaps {
     pub(super) norm: LawNorm,
 }
 
-pub(super) fn law_taps(pitch_um: f64) -> LawTaps {
-    let octaves: [(Vec<f32>, u32); 3] = std::array::from_fn(|i| {
-        let sigma_px = OCTAVES[i].0 / 2.0 / pitch_um;
-        taps_for(sigma_px)
-    });
-    let highpass = taps_for(HIGHPASS_UM / pitch_um);
+pub(super) fn law_taps(pitch_um: f64, length_scale: f64) -> Result<LawTaps, String> {
+    let mut octaves: [(Vec<f32>, u32); 3] = std::array::from_fn(|_| (Vec::new(), 0));
+    for (i, taps) in octaves.iter_mut().enumerate() {
+        let sigma_px = OCTAVES[i].0 * length_scale / 2.0 / pitch_um;
+        *taps = taps_for(sigma_px)?;
+    }
+    let highpass = taps_for(HIGHPASS_UM * length_scale / pitch_um)?;
     let norm = law_norm([&octaves[0].0, &octaves[1].0, &octaves[2].0], &highpass.0);
-    LawTaps {
+    Ok(LawTaps {
         octaves,
         highpass,
         norm,
-    }
+    })
 }
 
 impl WgpuBackend {
@@ -831,13 +842,13 @@ impl WgpuBackend {
             h,
             seed: geom.seed as u32,
             expectation: u32::from(geom.expectation),
-            white: WHITE as f32,
+            white: geom.white as f32,
             rho: RHO as f32,
             taper_peak: taper_peak() as f32,
             taper_floor: TAPER_FLOOR as f32,
             dmax: DMAX as f32,
             uniformity: UNIFORMITY as f32,
-            q: Q_UM2 as f32,
+            q: geom.event_area_um2 as f32,
             area: (geom.pitch_um * geom.pitch_um) as f32,
             fog: FOG as f32,
             ox: geom.origin_x,
@@ -904,32 +915,35 @@ impl WgpuBackend {
     pub(in crate::wgpu_backend) fn dye_law_field(
         &self,
         image: &ImageBuf,
-        pitch_um: f64,
-        grid: &spektrafilm_backend::dye_params::DyeReadoutGrid,
-        seed: u64,
-        expectation: bool,
-        monochrome: bool,
+        params: &DyeGpuParams,
     ) -> Result<ImageBuf, String> {
         let (width, height) = (image.width, image.height);
         let pixels = u64::from(width) * u64::from(height);
         if pixels == 0 {
             return Err("Dye grain law: the source density is empty".into());
         }
+        let pitch_um = params.source_pitch_um;
         if !(pitch_um.is_finite() && pitch_um > 0.0) {
             return Err("Dye grain law: the source pitch must be positive".into());
         }
+        if !(params.length_scale.is_finite() && params.length_scale > 0.0) {
+            return Err("Dye grain law: the correlation-length scale must be positive".into());
+        }
+        let grid = &params.grid;
+        let taps = law_taps(pitch_um, params.length_scale)?;
         let upload = scalars_to_f32(&image.data);
         let band = LawBand::new(self, width, height, "dye_law_field", Some(&upload));
         let geom = LawGeom {
             origin_x: 0,
             origin_y: 0,
             pitch_um,
-            seed,
-            expectation,
-            monochrome,
+            seed: params.seed,
+            expectation: params.expectation,
+            monochrome: params.monochrome,
+            white: params.white,
+            event_area_um2: params.event_area_um2,
         };
         let pipes = self.dye_law_pipelines();
-        let taps = law_taps(pitch_um);
         let mut encoder = self.device.create_command_encoder(&Default::default());
         self.encode_law_band(&mut encoder, &band, &geom, &pipes, &taps);
         self.queue.submit(Some(encoder.finish()));
@@ -956,5 +970,22 @@ impl WgpuBackend {
             return Ok(film);
         }
         Ok(resample_readout(&film, pitch_um, grid))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn taps_reject_a_kernel_above_the_supported_radius() {
+        assert!(law_taps(3.5, 1.0).is_ok());
+        assert!(law_taps(0.75, 1.0).is_ok());
+        // At a 0.25 µm pitch the scale-4 band limit needs a 576 px radius.
+        let error = match law_taps(0.25, 4.0) {
+            Ok(_) => panic!("an unrepresentable kernel must fail"),
+            Err(error) => error,
+        };
+        assert!(error.contains("tap bound"), "{error}");
     }
 }

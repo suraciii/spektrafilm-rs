@@ -34,9 +34,46 @@ Changing film geometry MUST preserve requested output raster dimensions while ch
 
 ## Controls and resolved inputs
 
-Dye's law parameters are engine constants: relative amplitude, correlation lengths, band limit, event area, fog baseline, saturation density, and development uniformity. They MUST NOT be exposed as grain controls that can contradict one another.
+| Control | Key | Range | Default | Meaning |
+|---|---|---|---|---|
+| Grain strength | `film_render.grain.dye_strength` | `[0, 4]` | `1.0` | Relative amplitude of the stochastic field and count deviation |
+| Grain scale | `film_render.grain.dye_scale` | `[0.5, 4]` | `1.0` | Relative correlation length and band limit in film coordinates |
 
-The resolved seed selects the realization. The same seed, inputs, geometry, and implementation MUST reproduce the same field on the same executor.
+`film_render.grain.active` owns the enable switch. No other Dye value is a public control.
+
+Grain strength MUST scale the correlated field's standard deviation and the event count's standard deviation by the same factor. It MUST preserve `E[D] = t`, the derived density taper, and the per-record ratio. It is a relative look control, not a certified optical RMS target or material calibration.
+
+Grain strength `0` MUST return the target density at the Dye boundary with no random field and no residual count noise. `1` MUST leave the delivered law unchanged. Values outside the declared range MUST fail before rendering.
+
+Grain scale MUST multiply the field's correlation lengths and band limit in film coordinates. It MUST NOT change the target density, event area, per-record ratio, or readout geometry.
+
+It is not a crystal diameter, scanner blur, output-pixel size, or magnification. `1` MUST leave the delivered field unchanged. Values outside the declared range MUST fail before rendering.
+
+An omitted strength or scale key MUST resolve to `1.0`.
+
+### Resolved law inputs
+
+Dye's remaining law parameters are engine-derived constants: the per-record relative ratio, record coupling, the delivered correlation lengths, the delivered band limit, the delivered event area, the fog baseline, saturation density, and development uniformity.
+
+The per-record ratio and record coupling are advanced candidates, not public controls. They MUST NOT be exposed until each has a validated direction, range, and interaction with grain strength. Their current delivered values remain engine constants.
+
+The resolved seed selects the realization. The same seed, inputs, geometry, and implementation MUST reproduce the same field on the same executor. The seed MUST NOT be presented as a grain-arrangement or creative control.
+
+### Compatibility
+
+Recipes that carry `dye_support_um`, `dye_event_area_um2`, `rms_granularity`, `density_min`, `uniformity`, `particle_scale_sublayers`, or `channel_correlation` MUST load and save unchanged. Those values MUST NOT change the delivered Dye field and MUST NOT be presented as effective Dye controls.
+
+### Deferred and internal controls
+
+These candidates MUST remain internal or unexposed until a separate contract and evidence exist:
+
+- **Per-record grain ratio:** relative C/M/Y field amplitude. It is not a white-balance control and does not equal final RGB grain amounts.
+- **Record coupling:** the shared-field fraction between records. Its output direction and amplitude MUST be validated through the resolved color chain before exposure.
+- **Distribution width or roughness:** an internal spectrum-shape parameter. It is not `uniformity` and not an event-contribution width.
+- **Tone-zone weights:** record-density zones are not final-image shadows and highlights. A creative control would need its own definition.
+- **Fog grain:** a model or stock parameter, not a public knob.
+- **Event area, support, numerical grid, octave details, high-pass, Dmax, uniformity, and sublayer scales:** internal law, calibration, or numerical values, not ordinary appearance controls.
+- **Film format, scanner blur, and sharpening:** owned by their modules; they do not replace texture scale.
 
 The expectation diagnostic replaces every draw by its conditional mean and MUST remain a diagnostic. It MUST NOT change the user's recipe or become a production bypass.
 
@@ -46,7 +83,9 @@ The resolved film profile determines record layout and per-record response. Dye 
 
 Active Dye MUST use the continuous law and rectangular readout defined by the [Dye design](design.md). CPU and GPU executors MUST implement the same law, the same seed and stream addressing, and the same film-coordinate geometry.
 
-Both executors MUST draw the count from the same Poisson law: inversion below thirty events, the PTRS rejection method above it. A normal approximation keeps the mean and variance at large rates but changes the distribution once the rate is small, and a heavily oversampled geometry reaches that regime.
+Both executors MUST draw the count from the same law: exact Poisson by inversion below thirty events and the PTRS rejection method above it up to the declared large-rate threshold of `10^9` events per cell. Above that threshold both executors MUST use the same coordinate-addressed normal deviation.
+
+The distributions agree to the declared precision, and the branch prevents a tiny mapped event area from overflowing the rate or losing the mean. A normal approximation below the threshold is inadmissible: it changes the distribution once the rate is small, and a heavily oversampled geometry reaches that regime.
 
 Both executors MUST also address the underlying uniform by global cell coordinate and sample ordinal, never by traversal order, so one seed selects one realization on either backend. A sequential stream is not admissible: a device runs its invocations in an order it does not control. Executors MAY differ only in arithmetic precision.
 
@@ -66,6 +105,17 @@ Acceptance is gated. A later gate MUST NOT compensate for an earlier gate that f
 4. **Executor parity:** Prove the CPU and GPU realizations agree in expectation exactly, and that stochastic realizations agree within the declared count-term bound.
 5. **Optical measurement:** Run the independent spectral measurement oracle with a declared receiver, aperture, density definition, wavelength range, provenance, footprint, and viewing condition.
 6. **Photographic validation:** Use lossless outputs and a declared reference set containing portraits, smooth fields, dark and bright regions, saturated colors, fine detail, and a color chart. Record the intended viewing size and the limits of the comparison.
+
+### Look-control acceptance
+
+- **Defaults:** An omitted or `1.0` strength and scale MUST produce the delivered field bit for bit on each executor.
+- **Zero strength:** Strength `0` MUST return the target density at the Dye boundary. A final encoded comparison MUST state its downstream route and settings.
+- **Amplitude:** At fixed seed, geometry, and output footprints, strengths `0.5`, `1`, and `2` MUST produce monotonically increasing realized standard deviation while the mean stays at the target within the declared tolerance.
+- **Scale:** At fixed seed, geometry, and output footprints, scales `0.5`, `1`, and `2` MUST produce monotonically coarser texture under a declared spectral or adjacent-sample statistic.
+- **Handoff:** The CPU and device MUST receive the same mapped field amplitude, event area, and correlation scale. A scale and pitch whose Gaussian exceeds the supported device tap radius MUST fail before allocation; the kernel MUST NOT be truncated.
+- **Validity:** Every output MUST be finite. The acceptance record MUST report the tested stock, route, executor, target mean, channel bias, and spatial statistic.
+
+Scale acceptance MUST state that correlation length is in film coordinates and that the statistic is not a crystal-size estimate.
 
 Numerical proof and photographic proof are separate. A local synthetic probe, one seed, one crop, one stock, a software adapter, or a visually similar output MUST NOT be presented as universal algorithm or stock acceptance.
 

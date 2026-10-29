@@ -142,28 +142,36 @@ pub struct GrainParams {
     #[serde(default = "default_grain_procedural_timer")]
     #[serde(alias = "v2_timer")]
     pub procedural_timer: f32,
-    /// Positive component scales. Spektra uses relative particle scales per
-    /// emulsion sublayer; Dye's numerical curve components use these scales
-    /// for event mass and rate, not separate spatial kernel widths.
+    /// Positive component scales for Spektra's relative particle scales per
+    /// emulsion sublayer. Retained but not read by the delivered Dye law.
     #[serde(default = "default_particle_scale_sublayers_f64")]
     pub particle_scale_sublayers: [f64; 3],
-    /// Film-space Gaussian sigma of Dye's support, in micrometers. It
-    /// conditions the field: the resolved field-cell pitch is `support / 2`.
-    /// Dye-only; Spektra and Procedural never read it.
+    /// Retained legacy Dye support value, in micrometers. Loads and saves keep
+    /// it unchanged; the delivered Dye law does not read it.
     #[serde(default = "default_dye_support_um")]
     #[serde(alias = "v3_dye_support_um")]
     pub dye_support_um: f32,
-    /// Base statistical event area of Dye, in square film micrometers. The
-    /// relative `rms_granularity` scale multiplies it per channel; it never
-    /// changes dye support or certifies material RMS. Dye-only.
+    /// Retained legacy Dye event area, in square film micrometers. Loads and
+    /// saves keep it unchanged; the delivered Dye law does not read it.
     #[serde(default = "default_dye_event_area_um2")]
     #[serde(alias = "v3_event_area_um2")]
     pub dye_event_area_um2: f64,
-    /// Shared Poisson-event rate fraction among active records within each
-    /// numerical component, in `[0, MEASURED_CHANNEL_CORRELATION_CEILING]`.
-    /// Each record retains its marginal Poisson count distribution. This is
-    /// not realized CMY or final RGB correlation; record-rate ratios affect
-    /// count correlation. Dye-only; other engines have no equivalent control.
+    /// Relative Dye grain amplitude. `1.0` keeps the delivered law and `0.0`
+    /// realizes the target density without random grain, including the
+    /// residual count noise. Scales the correlated field and the event count
+    /// together, so the density response and the per-record ratio are kept.
+    /// Dye-only.
+    #[serde(default = "default_dye_strength")]
+    pub dye_strength: f64,
+    /// Relative Dye grain scale. `1.0` keeps the delivered correlation
+    /// length; the field's octaves and band limit scale together in film
+    /// coordinates. It is not a crystal diameter, scanner blur, or output
+    /// pixel size. Dye-only.
+    #[serde(default = "default_dye_scale")]
+    pub dye_scale: f64,
+    /// Retained legacy Dye record-correlation value, in
+    /// `[0, MEASURED_CHANNEL_CORRELATION_CEILING]`. Loads and saves keep it
+    /// unchanged; the delivered Dye law does not read it.
     #[serde(default = "default_channel_correlation")]
     pub channel_correlation: f64,
     #[serde(default = "default_07")]
@@ -177,9 +185,9 @@ pub struct GrainParams {
     #[serde(alias = "v2_resolution_factor")]
     pub procedural_resolution_factor: Option<f32>,
     /// Spektra's upstream RMS granularity control derives particle area from
-    /// the film's density curves. Dye treats it as relative strength `G`:
-    /// event-area scale `k = (G / 6)^2`, not a certified optical RMS target;
-    /// zero retains Dye's reference-scale fallback.
+    /// the film's density curves. It is not a certified optical RMS target.
+    /// Retained for recipes that also select Dye, but the delivered Dye law
+    /// does not read it.
     /// Typed defaults use zero. Source resolution supplies omitted Spektra
     /// targets `[6, 8, 10]` before stock defaults; direct Spektra API callers
     /// must supply positive targets themselves.
@@ -214,6 +222,15 @@ fn default_dye_support_um() -> f32 {
 /// (`kodak_portra_800`), not a validated absolute material event area.
 fn default_dye_event_area_um2() -> f64 {
     1.28
+}
+/// The delivered Dye amplitude: a recipe at `1.0` leaves the law unchanged.
+fn default_dye_strength() -> f64 {
+    1.0
+}
+/// The delivered Dye correlation length: a recipe at `1.0` leaves the law
+/// unchanged.
+fn default_dye_scale() -> f64 {
+    1.0
 }
 /// Historical supported and acceptance ceiling for [`GrainParams::channel_correlation`].
 ///
@@ -280,6 +297,8 @@ impl Default for GrainParams {
             particle_scale_sublayers: [1.0, 0.4, 0.25],
             dye_support_um: default_dye_support_um(),
             dye_event_area_um2: default_dye_event_area_um2(),
+            dye_strength: default_dye_strength(),
+            dye_scale: default_dye_scale(),
             channel_correlation: default_channel_correlation(),
             blur: 0.89,
             mult_usm_sigma: 0.7,

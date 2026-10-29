@@ -23,6 +23,8 @@ fn params(cell_um: Option<f64>, expectation: bool, seed: u64, area: f64) -> DyeG
     let (composite_curves, layer_curves) = curves();
     DyeGrainParams {
         monochrome: false,
+        dye_strength: 1.0,
+        dye_scale: 1.0,
         support_um: SIGMA,
         cell_um,
         event_area_um2: area,
