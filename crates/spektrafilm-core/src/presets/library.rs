@@ -983,7 +983,7 @@ mod tests {
     /// JSON-carrier case needs.
     fn grain(name: &str, amount: Value) -> Preset {
         let mut params = RuntimeParams::default();
-        params.film_render.grain.v2_amount = amount.as_f64().map(|v| v as f32);
+        params.film_render.grain.procedural_amount = amount.as_f64().map(|v| v as f32);
         let mut preset = Preset::capture(
             name,
             "kodak_portra_400",
@@ -1001,13 +1001,13 @@ mod tests {
                 .expect("captured look preset")
                 .film_render
                 .grain
-                .v2_amount = None;
+                .procedural_amount = None;
             let object = serde_json::to_value(&preset).unwrap();
             let mut map = object.as_object().unwrap().clone();
             map["parameters"]["film_render"]["grain"]
                 .as_object_mut()
                 .unwrap()
-                .insert("v2_amount".into(), Value::Null);
+                .insert("procedural_amount".into(), Value::Null);
             return Preset::from_value(Value::Object(map)).unwrap();
         }
         preset
@@ -1020,7 +1020,7 @@ mod tests {
         let path = temp.0.join("Native Grain Check.json");
         std::fs::write(
             &path,
-            r#"{"schema_version":2,"name":"Native Grain Check","parameters":{"film_render":{"grain":{"v2_amount":null}}}}"#,
+            r#"{"schema_version":2,"name":"Native Grain Check","parameters":{"film_render":{"grain":{"procedural_amount":null}}}}"#,
         )
         .unwrap();
         let entries = library.scan().unwrap();

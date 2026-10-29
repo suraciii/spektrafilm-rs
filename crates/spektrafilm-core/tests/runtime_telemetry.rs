@@ -233,7 +233,7 @@ fn negative_to_positive_cpu_override_preserves_stage_reports() {
 }
 
 #[test]
-fn active_v3_field_reports_its_cpu_stage_reason() {
+fn active_dye_field_reports_its_cpu_stage_reason() {
     // The supported Dye condition on a 2% crop: the readout region stays a few
     // film millimetres, so the field allocation is small while the pipeline
     // still resolves the engine, the plan and the report.
@@ -247,7 +247,7 @@ fn active_v3_field_reports_its_cpu_stage_reason() {
     params.io.crop = true;
     params.io.crop_size = [0.02, 0.02];
     params.film_render.grain.engine = spektrafilm_core::params::GrainEngine::Dye;
-    params.film_render.grain.v3_dye_support_um = 8.0;
+    params.film_render.grain.dye_support_um = 8.0;
     let runtime =
         Runtime::from_stocks("kodak_portra_800", "kodak_portra_endura", params, &data).unwrap();
     let (width, height) = (768u32, 512u32);
@@ -277,19 +277,19 @@ fn active_v3_field_reports_its_cpu_stage_reason() {
         report
             .summary()
             .cpu_stage_reasons
-            .contains(&("grain_v3_field".to_owned(), CpuReason::GrainV3FieldCpu)),
+            .contains(&("grain_dye_field".to_owned(), CpuReason::DyeGrainFieldCpu)),
         "Dye field stage missing from the report: {:?}",
         report.summary().cpu_stage_reasons
     );
 }
 
 #[test]
-fn active_v3_field_reports_its_device_stage() {
+fn active_dye_field_reports_its_device_stage() {
     use spektrafilm_backend::ComputeBackend as _;
     // The delivered raster (no crop, no upscale) resolves the Dye field as
     // the resident device pass: the render stays on the resident chain and
     // records no host field stage. The host field and its published reason
-    // are held by `active_v3_field_reports_its_cpu_stage_reason` (a host
+    // are held by `active_dye_field_reports_its_cpu_stage_reason` (a host
     // backend) and the mass-law case in the resident tests.
     let gpu = spektrafilm_gpu::test_support::adapter();
     let data = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data");
@@ -300,7 +300,7 @@ fn active_v3_field_reports_its_device_stage() {
     params.io.scan_film = true;
     params.io.output_gamut_compress.algorithm = "off".into();
     params.film_render.grain.engine = spektrafilm_core::params::GrainEngine::Dye;
-    params.film_render.grain.v3_dye_support_um = 8.0;
+    params.film_render.grain.dye_support_um = 8.0;
     let runtime = Runtime::new_with_backend(
         spektrafilm_core::profile::load_profile_by_name(&data, "kodak_portra_400").unwrap(),
         spektrafilm_core::profile::load_profile_by_name(&data, "kodak_portra_endura").unwrap(),
@@ -343,7 +343,7 @@ fn active_v3_field_reports_its_device_stage() {
         !summary
             .cpu_stage_reasons
             .iter()
-            .any(|(stage, _)| stage == "grain_v3_field"),
+            .any(|(stage, _)| stage == "grain_dye_field"),
         "the device Dye field recorded a host stage on {}: {:?}",
         gpu.name(),
         summary.cpu_stage_reasons

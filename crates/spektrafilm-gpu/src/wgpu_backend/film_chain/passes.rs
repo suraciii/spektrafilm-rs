@@ -52,7 +52,7 @@ enum ChainStep {
     Log,
     FilmDensity,
     Dir,
-    GrainV1,
+    SpektraGrain,
     Dye,
     Fotufilm,
     EnlargerLut,
@@ -67,7 +67,7 @@ enum ChainStep {
     Glare,
     Gamut,
     Unsharp,
-    GrainV2,
+    ProceduralGrain,
     Transfer,
     Cmyk,
 }
@@ -86,7 +86,7 @@ impl ChainStep {
                 | Self::Log
                 | Self::FilmDensity
                 | Self::Dir
-                | Self::GrainV1
+                | Self::SpektraGrain
                 | Self::Dye
                 | Self::Fotufilm
         )
@@ -120,7 +120,7 @@ impl ChainStep {
             Self::Log => "log_exposure",
             Self::FilmDensity => "film_density",
             Self::Dir => "dir_couplers",
-            Self::GrainV1 => super::super::grain::GRAIN_V1_STAGE_NAME,
+            Self::SpektraGrain => super::super::grain::GRAIN_SPEKTRA_STAGE_NAME,
             Self::Dye => "grain_dye",
             Self::Fotufilm => "grain_fotufilm",
             Self::EnlargerLut => "enlarger_lut",
@@ -135,7 +135,7 @@ impl ChainStep {
             Self::Glare => "glare",
             Self::Gamut => "output_gamut",
             Self::Unsharp => "unsharp_mask",
-            Self::GrainV2 => "grain_v2",
+            Self::ProceduralGrain => "grain_procedural",
             Self::Transfer => "output_transfer",
             Self::Cmyk => "cmyk",
         }
@@ -178,8 +178,8 @@ fn chain_steps(p: &spektrafilm_backend::FilmChainParams<'_>) -> Result<Vec<Chain
             steps.push(Dir);
         }
     }
-    if p.grain_v1.is_some() {
-        steps.push(GrainV1);
+    if p.grain_spektra.is_some() {
+        steps.push(SpektraGrain);
     }
     if p.grain_dye.is_some() {
         steps.push(Dye);
@@ -225,8 +225,8 @@ fn chain_steps(p: &spektrafilm_backend::FilmChainParams<'_>) -> Result<Vec<Chain
     if p.unsharp.is_some() {
         steps.push(Unsharp);
     }
-    if p.grain_v2.is_some() {
-        steps.push(GrainV2);
+    if p.grain_procedural.is_some() {
+        steps.push(ProceduralGrain);
     }
     if p.output_transfer.as_ref().is_some_and(|t| !t.decode) {
         steps.push(Transfer);
@@ -743,7 +743,7 @@ impl WgpuBackend {
                         ) {
                             ensure_pages(self, &mut rasters.a, geometry.source, "chain_work_a")?;
                         }
-                        if !matches!(step, InputDecode | GrainV1 | Dye | Fotufilm) {
+                        if !matches!(step, InputDecode | SpektraGrain | Dye | Fotufilm) {
                             ensure_pages(self, &mut rasters.b, geometry.source, "chain_work_b")?;
                         }
                         if step == FilmDensity {
@@ -869,12 +869,12 @@ impl WgpuBackend {
                             self,
                         )?
                         .submit_passes(self),
-                        GrainV1 => build_spektra_grain_state(
+                        SpektraGrain => build_spektra_grain_state(
                             &self.device,
                             width,
                             height,
                             &rasters.a,
-                            p.grain_v1.as_ref().ok_or("grain missing")?,
+                            p.grain_spektra.as_ref().ok_or("grain missing")?,
                             self,
                         )?
                         .submit(self),
@@ -1092,9 +1092,9 @@ impl WgpuBackend {
                             rasters.tail_b = state.destination().to_vec();
                             Ok(())
                         }
-                        GrainV2 => build_grain_v2_state(
+                        ProceduralGrain => build_grain_procedural_state(
                             &self.device,
-                            p.grain_v2.as_ref().ok_or("grain missing")?,
+                            p.grain_procedural.as_ref().ok_or("grain missing")?,
                             geometry.tail.0,
                             geometry.tail.1,
                             &rasters.tail_b,
@@ -1188,7 +1188,7 @@ impl WgpuBackend {
         tracing::debug!(target: "spektrafilm_gpu::wgpu_backend", cpu_setup_ms = format!("{:.1}", t_start.elapsed().as_secs_f32() * 1000.0), "film chain timings");
         let encoded = match p.output_transfer.as_ref() {
             Some(transfer) => !transfer.decode,
-            None => p.grain_v2.is_some(),
+            None => p.grain_procedural.is_some(),
         };
         let domain = match p.collect {
             Tap::LogEFilm | Tap::LogEPrint => spektrafilm_backend::SampleDomain::LogExposure,
@@ -1297,9 +1297,9 @@ pub(in crate::wgpu_backend) fn required_chain_buffers(
         | spektrafilm_backend::FrontPass::ScanInverse(_) => 0,
     };
     let cmax_bytes = p.gamut.map_or(0, |gp| f32s(gp.cmax.len()));
-    // Spektra v1's device pass uploads the composite curve x column
+    // Spektra's device pass uploads the composite curve x column
     // (`knots` × 3) and the layer curve tensor (`knots` × 9) as f64 storage.
-    let grain_v1_curve_bytes = p.grain_v1.as_ref().map_or(0, |gp| {
+    let grain_spektra_curve_bytes = p.grain_spektra.as_ref().map_or(0, |gp| {
         gp.curve_x.len() as u64 * 8 + gp.curve_layers.len() as u64 * 8
     });
     let scan_axes_bytes = p
@@ -1332,7 +1332,7 @@ pub(in crate::wgpu_backend) fn required_chain_buffers(
         ),
         needed(ChainStep::Front, tc_lut_bytes),
         needed(ChainStep::Gamut, cmax_bytes),
-        needed(ChainStep::GrainV1, grain_v1_curve_bytes),
+        needed(ChainStep::SpektraGrain, grain_spektra_curve_bytes),
         needed(ChainStep::Readout, scan_axes_bytes),
         needed(ChainStep::Inverse, convert_table_bytes),
         MAX_FIXED_AUX_BYTES,
@@ -1415,8 +1415,8 @@ mod tests {
             glare: None,
             gamut: None,
             unsharp: None,
-            grain_v2: None,
-            grain_v1: None,
+            grain_procedural: None,
+            grain_spektra: None,
             scan_output_space: &spektrafilm_math::colorspace::SRGB,
             camera_lens_blur_px: None,
             camera_diffusion: None,
@@ -1731,7 +1731,7 @@ mod tests {
         let prefix = [
             ChainStep::CameraBlur,
             ChainStep::FilmDensity,
-            ChainStep::GrainV1,
+            ChainStep::SpektraGrain,
         ];
         assert_eq!(
             WgpuBackend::chain_gaussian_interval(&p, &prefix),

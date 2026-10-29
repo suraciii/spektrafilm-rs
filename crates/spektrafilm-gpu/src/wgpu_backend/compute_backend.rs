@@ -258,12 +258,12 @@ impl ComputeBackend for WgpuBackend {
             f32_to_scalars(result),
         ))
     }
-    fn grain_v2(
+    fn grain_procedural(
         &self,
         img: &ImageBuf,
-        params: &spektrafilm_backend::GrainV2GpuParams,
+        params: &spektrafilm_backend::ProceduralGrainGpuParams,
     ) -> Result<Option<ImageBuf>, String> {
-        self.grain_v2_gpu(img, params).map(Some)
+        self.grain_procedural_gpu(img, params).map(Some)
     }
     fn fotufilm_grain(
         &self,

@@ -49,7 +49,7 @@ impl super::super::Pipeline {
                     let seed_backend = backend;
                     let closure: CpuStageFn<'_> = Box::new(move |density| {
                         let observation =
-                            crate::stages::StageObservation::new(seed_backend, "grain_v1");
+                            crate::stages::StageObservation::new(seed_backend, "grain_spektra");
                         let observed = observation.backend(seed_backend);
                         crate::stages::filming::apply_spektra_grain(
                             density.clone(),
@@ -65,13 +65,13 @@ impl super::super::Pipeline {
                     Some(closure)
                 }
                 // Spatial deactivation must bypass Dye before its field is
-                // resolved (spec film-grain/v3 §Controls and resolved inputs),
-                // exactly like the per-stage route: `grain_v3::active` is the
+                // resolved (spec film-grain/dye §Controls and resolved inputs),
+                // exactly like the per-stage route: `grain_dye::active` is the
                 // one authoritative gate. The fence holds the host field only
                 // for a request the device cannot realize; a device-realized
                 // field runs as the `grain_dye` pass instead.
                 crate::params::grain::GrainEngine::Dye
-                    if crate::stages::grain_v3::active(&self.params) && !dye_on_device =>
+                    if crate::stages::grain_dye::active(&self.params) && !dye_on_device =>
                 {
                     let film = &self.film;
                     let params = &self.params;
@@ -82,10 +82,10 @@ impl super::super::Pipeline {
                         // the device, with the identity readout geometry: the
                         // request resolves to the delivered raster, so the
                         // fence writes the field back through the same buffer.
-                        // `readout` reports its own `grain_v3_field` CPU
+                        // `readout` reports its own `grain_dye_field` CPU
                         // observation with the published reason.
                         let grid =
-                            crate::stages::grain_v3::geometry(density, params, source_pitch_um)?
+                            crate::stages::grain_dye::geometry(density, params, source_pitch_um)?
                                 .grid();
                         if grid.width != density.width || grid.height != density.height {
                             return Err(format!(
@@ -94,7 +94,7 @@ impl super::super::Pipeline {
                                 grid.width, grid.height, density.width, density.height
                             ));
                         }
-                        crate::stages::grain_v3::readout(
+                        crate::stages::grain_dye::readout(
                             density,
                             film,
                             params,

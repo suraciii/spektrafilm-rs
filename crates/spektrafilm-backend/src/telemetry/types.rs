@@ -1,7 +1,7 @@
 //! Vocabulary enums and bounded measurement data types for telemetry observations.
 use serde::{Deserialize, Serialize};
 
-macro_rules! vocabulary { ($name:ident { $($variant:ident),* $(,)? }) => { #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)] #[serde(rename_all="snake_case")] pub enum $name { $($variant),* } }; }
+macro_rules! vocabulary { ($name:ident { $( $(#[$attr:meta])* $variant:ident),* $(,)? }) => { #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)] #[serde(rename_all="snake_case")] pub enum $name { $( $(#[$attr])* $variant),* } }; }
 vocabulary!(CollectionMode {
     Off,
     Summary,
@@ -85,21 +85,24 @@ vocabulary!(CpuReason {
     Mallett,
     SpectralLut,
     FaithfulGrainDistribution,
-    GrainV1Sampler,
+    #[serde(alias = "grain_v1_sampler")]
+    SpektraGrainSampler,
     UnsupportedOutputGamut,
     BlurRadiusExceedsBackendSupport,
     DeviceResourceLimits,
-    GrainV2Unsupported,
-    GrainV3FieldCpu,
+    #[serde(alias = "grain_v2_unsupported")]
+    ProceduralGrainUnsupported,
+    #[serde(alias = "grain_v3_field_cpu")]
+    DyeGrainFieldCpu,
     FotufilmFilmCpu,
     NegativeToPositiveOutput,
     ScannerFilmPoints,
     ScannerReceiver,
 });
-// `ResidentDeclineReason::GrainV3FieldCpu` names the *routing* decline the
+// `ResidentDeclineReason::DyeGrainFieldCpu` names the *routing* decline the
 // resident raster records when the field's readout geometry (a crop or an
 // upscale) does not fit it. It does not say where the field then resolves:
-// `stages::grain_v3` publishes the effective field executor separately
+// `stages::grain_dye` publishes the effective field executor separately
 // (`published_host_field_reason` / `effective_field_backend`), and on a device
 // backend a cropped Dye request still reads its field out on the device.
 vocabulary!(ResidentDeclineReason {
@@ -109,7 +112,8 @@ vocabulary!(ResidentDeclineReason {
     RequestedSpectralLut,
     ActiveOpticalDiffusion,
     FaithfulGrainDistribution,
-    GrainV3FieldCpu,
+    #[serde(alias = "grain_v3_field_cpu")]
+    DyeGrainFieldCpu,
     FotufilmFilmCpu,
     UnsupportedOutputGamut,
     BlurRadiusExceedsBackendSupport,
@@ -286,10 +290,27 @@ pub struct PassMeasurement {
     pub occurrence: u64,
     pub duration: Measurement,
 }
+// Historical telemetry names are input spellings only. This keeps saved
+// schema-one reports readable while new reports use engine names.
+fn deserialize_observation_name<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<String, D::Error> {
+    let name = String::deserialize(deserializer)?;
+    Ok(match name.as_str() {
+        "grain_v1" => "grain_spektra".into(),
+        "grain_v1_sampler" => "grain_spektra_sampler".into(),
+        "grain_v2" => "grain_procedural".into(),
+        "grain_v2_cpu" => "grain_procedural_cpu".into(),
+        "grain_v3_field" => "grain_dye_field".into(),
+        _ => name,
+    })
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Observation {
     pub id: u64,
     pub parent_id: u64,
+    #[serde(deserialize_with = "deserialize_observation_name")]
     pub name: String,
     pub kind: ObservationKind,
     pub purpose: Purpose,

@@ -7,7 +7,7 @@ pub(super) enum ResidentFallbackReason {
     /// fixed-size density buffer cannot express (a crop or upscale, or the
     /// env-gated certification readouts); the field resolves on the
     /// per-stage route instead.
-    FilmGrainV3FieldCpu,
+    FilmDyeGrainFieldCpu,
     UnsupportedOutputGamut,
     BlurRadiusExceedsBackendSupport,
     MissingResidentFrontPass,
@@ -62,15 +62,15 @@ impl Pipeline {
         // crop or upscale included — runs inside the resident chain: the
         // device pass, or the assembled density fence for a request the device
         // cannot realize (see `resident_device_params_for_dims` in
-        // `stages::grain_v3`). Readouts that need a deferred crop tail or the
+        // `stages::grain_dye`). Readouts that need a deferred crop tail or the
         // aperture fine-print lattice, and the env-gated certification
         // readouts, keep the whole-route fallback to the per-stage readout
         // (`resident_fence_supported`, backed by `readout_plan`). This
         // decision is the capability authority for every resident entry point.
-        if crate::stages::grain_v3::active(&self.params)
-            && !crate::stages::grain_v3::resident_fence_supported(&self.film, &self.params)
+        if crate::stages::grain_dye::active(&self.params)
+            && !crate::stages::grain_dye::resident_fence_supported(&self.film, &self.params)
         {
-            reasons.push(ResidentFallbackReason::FilmGrainV3FieldCpu);
+            reasons.push(ResidentFallbackReason::FilmDyeGrainFieldCpu);
         }
         if self.output_gamut.is_active() && self.output_gamut.gpu_params().is_none() {
             reasons.push(ResidentFallbackReason::UnsupportedOutputGamut);

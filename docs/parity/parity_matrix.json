@@ -403,7 +403,7 @@
       "grain.sublayers_active": {
         "rust_status": "intentionally_retired",
         "owner_issue": null,
-        "implementation_source": "specs/film-grain/v1/spec.md",
+        "implementation_source": "specs/film-grain/spektra/spec.md",
         "verification": "Current model rejects this path; historical audit is not a current support or parity claim.",
         "audit_baseline": {
           "rust_status": "accepted_but_unread",
@@ -413,7 +413,7 @@
       "grain.particle_area_um2": {
         "rust_status": "intentionally_retired",
         "owner_issue": null,
-        "implementation_source": "specs/film-grain/v1/spec.md",
+        "implementation_source": "specs/film-grain/spektra/spec.md",
         "verification": "Current model rejects this path; historical audit is not a current support or parity claim.",
         "audit_baseline": {
           "rust_status": "supported",
@@ -423,7 +423,7 @@
       "grain.particle_scale": {
         "rust_status": "intentionally_retired",
         "owner_issue": null,
-        "implementation_source": "specs/film-grain/v1/spec.md",
+        "implementation_source": "specs/film-grain/spektra/spec.md",
         "verification": "Current model rejects this path; historical audit is not a current support or parity claim.",
         "audit_baseline": {
           "rust_status": "supported",
@@ -433,7 +433,7 @@
       "grain.particle_scale_layers": {
         "rust_status": "intentionally_retired",
         "owner_issue": null,
-        "implementation_source": "specs/film-grain/v1/spec.md",
+        "implementation_source": "specs/film-grain/spektra/spec.md",
         "verification": "Current model rejects this path; historical audit is not a current support or parity claim.",
         "audit_baseline": {
           "rust_status": "accepted_but_unread",
@@ -493,7 +493,7 @@
       "grain.n_sub_layers": {
         "rust_status": "intentionally_retired",
         "owner_issue": null,
-        "implementation_source": "specs/film-grain/v1/spec.md",
+        "implementation_source": "specs/film-grain/spektra/spec.md",
         "verification": "Current model rejects this path; historical audit is not a current support or parity claim.",
         "audit_baseline": {
           "rust_status": "supported",

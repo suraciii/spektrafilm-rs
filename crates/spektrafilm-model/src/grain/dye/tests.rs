@@ -19,9 +19,9 @@ fn curves() -> (Vec<[f64; 3]>, Vec<[[f64; 3]; 3]>) {
     (composite, layers)
 }
 
-fn params(cell_um: Option<f64>, expectation: bool, seed: u64, area: f64) -> GrainV3Params {
+fn params(cell_um: Option<f64>, expectation: bool, seed: u64, area: f64) -> DyeGrainParams {
     let (composite_curves, layer_curves) = curves();
-    GrainV3Params {
+    DyeGrainParams {
         monochrome: false,
         support_um: SIGMA,
         cell_um,
@@ -156,7 +156,7 @@ fn apply_region(
     rect: SourceRect,
     width: u32,
     height: u32,
-    p: &GrainV3Params,
+    p: &DyeGrainParams,
 ) -> Result<ImageBuf, String> {
     apply(target, pitch, grid(rect, (width, height), pitch), p)
 }
@@ -196,7 +196,7 @@ fn patterned(width: u32, height: u32) -> ImageBuf {
     image
 }
 
-fn render(p: &GrainV3Params, image: &ImageBuf, rect: SourceRect, out: (u32, u32)) -> ImageBuf {
+fn render(p: &DyeGrainParams, image: &ImageBuf, rect: SourceRect, out: (u32, u32)) -> ImageBuf {
     apply_region(image, PITCH, rect, out.0, out.1, p).expect("Dye render")
 }
 
@@ -372,7 +372,7 @@ fn device_mass_law_rejects_host_only_experiments() {
     for law in [MassLaw::TwoClass, MassLaw::Gamma4] {
         let error = check_mass_law(law).unwrap_err();
         assert!(
-            error.contains("SPEKTRAFILM_GRAIN_V3_MASS_LAW")
+            error.contains("SPEKTRAFILM_GRAIN_DYE_MASS_LAW")
                 && error.contains("no device field path"),
             "{error}"
         );
@@ -1001,10 +1001,10 @@ fn zero_correlation_reproduces_the_frozen_cell_densities() {
     // The digest is a constant of the default mass law, so an experiment
     // that selects another one is skipped by name instead of failing with a
     // digest mismatch that says nothing about the split.
-    if std::env::var("SPEKTRAFILM_GRAIN_V3_MASS_LAW").is_ok() {
+    if super::diagnostic_env("SPEKTRAFILM_GRAIN_DYE_MASS_LAW").is_ok() {
         eprintln!(
             "skipped: the frozen digest is recorded for the default mass law, and \
-             SPEKTRAFILM_GRAIN_V3_MASS_LAW selects another one"
+             SPEKTRAFILM_GRAIN_DYE_MASS_LAW selects another one"
         );
         return;
     }
@@ -1531,7 +1531,7 @@ fn monochrome_rejects_unresolved_single_record_and_mislabeled_color_curves() {
 fn monochrome_rejects_noncanonical_tables_and_nonfinite_or_inconsistent_density() {
     let mut good = params(None, true, 1, 1.28);
     good.monochrome = true;
-    let cases: [fn(&mut GrainV3Params); 8] = [
+    let cases: [fn(&mut DyeGrainParams); 8] = [
         |p| p.channel_scale[1] += 0.1,
         |p| p.density_min[2] += 0.01,
         |p| p.uniformity[1] += 0.1,
@@ -1772,7 +1772,7 @@ fn invalid_inputs_fail_before_rendering() {
     let mut bad = good.clone();
     bad.support_um = 0.0;
     let err = apply_region(&flat(8, 8, 0.1), PITCH, region(8, 8), 8, 8, &bad).unwrap_err();
-    assert!(err.contains("v3_dye_support_um"), "{err}");
+    assert!(err.contains("dye_support_um"), "{err}");
     let err = apply_region(&flat(8, 8, 0.1), 0.0, region(8, 8), 8, 8, &good).unwrap_err();
     assert!(err.contains("pitch"), "{err}");
     let mut bad = good.clone();
@@ -1816,7 +1816,7 @@ fn zero_capacity_layer_is_skipped() {
     let target = flat(24, 24, 0.12);
     let out = render(&p, &target, region(24, 24), (24, 24));
     let expectation = render(
-        &GrainV3Params {
+        &DyeGrainParams {
             expectation: true,
             ..p.clone()
         },
@@ -1895,8 +1895,8 @@ fn allocation_params(
     maxima: [[f64; 3]; 3],
     positive_film: bool,
     density_min: [f64; 3],
-) -> GrainV3Params {
-    GrainV3Params {
+) -> DyeGrainParams {
+    DyeGrainParams {
         composite_curves: knots.iter().map(|&k| [k; 3]).collect(),
         layer_curves: rows,
         layer_max: maxima,

@@ -187,8 +187,12 @@ impl PhotographRecord {
     fn decode(bytes: &[u8]) -> Result<Self> {
         let mut record: Self = serde_json::from_slice(bytes)
             .map_err(|e| Message::new("operations.record.format").context(e))?;
-        let carrier: serde_json::Value = serde_json::from_slice(bytes)
+        let mut carrier: serde_json::Value = serde_json::from_slice(bytes)
             .map_err(|e| Message::new("operations.record.format").context(e))?;
+        if let Some(grain) = carrier.pointer_mut("/settings/params/film_render/grain") {
+            spektrafilm_core::params::normalize_grain_control_names(grain)
+                .map_err(anyhow::Error::msg)?;
+        }
         let canonical = serde_json::to_value(&record.settings.params)?;
         ensure!(
             complete_shape(&carrier["settings"]["params"], &canonical),
@@ -686,6 +690,52 @@ mod tests {
         assert!(value.get("preferences").is_none());
         assert!(value["settings"].get("history").is_none());
         assert!(value["settings"].get("export").is_none());
+    }
+
+    #[test]
+    fn historical_grain_fields_and_ownership_survive_record_load_save() {
+        let (dir, data, source, mut settings) = fixture();
+        settings.params.film_render.grain.procedural_amount = Some(27.0);
+        settings.preparation.explicit_section_paths =
+            vec!["film_render.grain.procedural_amount".into()];
+        settings
+            .params
+            .restore_render_preparation_state(&settings.preparation);
+        let record = PhotographRecord::capture(&source, settings.clone(), &data).unwrap();
+        let mut value = serde_json::to_value(record).unwrap();
+        let grain = value["settings"]["params"]["film_render"]["grain"]
+            .as_object_mut()
+            .unwrap();
+        for (old, new) in [
+            ("v2_amount", "procedural_amount"),
+            ("v2_profile", "procedural_profile"),
+            ("v3_dye_support_um", "dye_support_um"),
+            ("v3_event_area_um2", "dye_event_area_um2"),
+        ] {
+            let v = grain.remove(new).unwrap();
+            grain.insert(old.into(), v);
+        }
+        value["settings"]["preparation"]["explicit_section_paths"] =
+            json!(["film_render.grain.v2_amount"]);
+        let path = dir.path().join("historical.json");
+        std::fs::write(&path, serde_json::to_vec(&value).unwrap()).unwrap();
+        let loaded = PhotographRecord::load(&path).unwrap();
+        assert_eq!(loaded.settings, settings);
+        let saved = dir.path().join("canonical.json");
+        loaded.save(&saved).unwrap();
+        let text = std::fs::read_to_string(saved).unwrap();
+        assert!(!text.contains("v2_amount") && !text.contains("v3_dye_support_um"));
+        value["settings"]["params"]["film_render"]["grain"]["procedural_amount"] = json!(27.0);
+        assert!(PhotographRecord::decode(&serde_json::to_vec(&value).unwrap()).is_err());
+        value["settings"]["params"]["film_render"]["grain"]
+            .as_object_mut()
+            .unwrap()
+            .remove("procedural_amount");
+        value["settings"]["params"]["film_render"]["grain"]
+            .as_object_mut()
+            .unwrap()
+            .remove("v2_amount");
+        assert!(PhotographRecord::decode(&serde_json::to_vec(&value).unwrap()).is_err());
     }
 
     #[test]

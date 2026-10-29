@@ -8,6 +8,8 @@ pub mod couplers;
 pub mod diffusion;
 pub mod glare;
 pub mod grain;
+mod grain_compat;
+pub use grain_compat::normalize_grain_control_names;
 pub mod halation;
 pub mod sources;
 
@@ -840,8 +842,8 @@ impl RuntimeParams {
             state
                 .explicit_section_paths
                 .iter()
-                .filter(|path| sources::describe_field(path).is_ok())
-                .cloned(),
+                .map(|path| grain_compat::canonical_grain_path(path).into_owned())
+                .filter(|path| sources::describe_field(path).is_ok()),
         );
         self.neutral_print_filters_protected = Some(state.neutral_print_filters_protected);
     }
@@ -852,6 +854,7 @@ impl RuntimeParams {
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RenderPreparationState {
+    #[serde(deserialize_with = "grain_compat::deserialize_preparation_paths")]
     pub explicit_section_paths: Vec<String>,
     pub neutral_print_filters_protected: [bool; 3],
 }
@@ -1205,85 +1208,88 @@ mod tests {
     }
 
     #[test]
-    fn grain_v2_profile_inheritance_and_overrides() {
+    fn grain_procedural_profile_inheritance_and_overrides() {
         let mut params = super::RuntimeParams::default();
         let grain = &mut params.film_render.grain;
-        grain.v2_profile = "8mm500".into();
-        grain.v2_amount = Some(25.0);
-        grain.v2_mode = super::grain::GrainV2Mode::Noise;
-        grain.v2_film_type = super::grain::GrainV2FilmType::Negative;
-        grain.v2_resolution_type = 0;
-        grain.v2_timer = 0.25;
-        let preset = grain.resolved_grain_v2();
+        grain.procedural_profile = "8mm500".into();
+        grain.procedural_amount = Some(25.0);
+        grain.procedural_mode = super::grain::ProceduralGrainMode::Noise;
+        grain.procedural_film_type = super::grain::ProceduralGrainFilmType::Negative;
+        grain.procedural_resolution_type = 0;
+        grain.procedural_timer = 0.25;
+        let preset = grain.resolved_grain_procedural();
         assert_eq!(preset.amount, 0.25);
         assert_eq!(
             preset.mode,
-            spektrafilm_model::grain::v2::GrainV2Mode::Analogue
+            spektrafilm_model::grain::procedural::ProceduralGrainMode::Analogue
         );
         assert_eq!(preset.resolution_type, 0);
         assert_eq!(preset.timer, Some(0.25));
         assert_eq!(preset.film_type, 0);
-        grain.v2_film_type = super::grain::GrainV2FilmType::Positive;
-        assert_eq!(grain.resolved_grain_v2().film_type, 0);
-        assert_eq!(grain.resolved_grain_v2().resolution_type, 0);
-        grain.select_custom_grain_v2();
-        grain.v2_film_type = super::grain::GrainV2FilmType::Positive;
-        assert_eq!(grain.v2_resolution_type, 0);
-        assert_eq!(grain.v2_timer, 0.25);
-        assert_eq!(grain.v2_amount, Some(25.0));
-        assert_eq!(grain.v2_size, Some(48.0));
-        assert_eq!(grain.v2_resolution_factor, Some(75.0));
-        grain.v2_amount = Some(25.0);
-        grain.v2_mode = super::grain::GrainV2Mode::Noise;
-        grain.v2_film_type = super::grain::GrainV2FilmType::Negative;
+        grain.procedural_film_type = super::grain::ProceduralGrainFilmType::Positive;
+        assert_eq!(grain.resolved_grain_procedural().film_type, 0);
+        assert_eq!(grain.resolved_grain_procedural().resolution_type, 0);
+        grain.select_custom_grain_procedural();
+        grain.procedural_film_type = super::grain::ProceduralGrainFilmType::Positive;
+        assert_eq!(grain.procedural_resolution_type, 0);
+        assert_eq!(grain.procedural_timer, 0.25);
+        assert_eq!(grain.procedural_amount, Some(25.0));
+        assert_eq!(grain.procedural_size, Some(48.0));
+        assert_eq!(grain.procedural_resolution_factor, Some(75.0));
+        grain.procedural_amount = Some(25.0);
+        grain.procedural_mode = super::grain::ProceduralGrainMode::Noise;
+        grain.procedural_film_type = super::grain::ProceduralGrainFilmType::Negative;
         let roundtrip: super::RuntimeParams =
             serde_json::from_value(serde_json::to_value(&params).unwrap()).unwrap();
-        let custom = roundtrip.film_render.grain.resolved_grain_v2();
+        let custom = roundtrip.film_render.grain.resolved_grain_procedural();
         assert_eq!(custom.amount, 0.25);
         assert_eq!(
             custom.mode,
-            spektrafilm_model::grain::v2::GrainV2Mode::Noise
+            spektrafilm_model::grain::procedural::ProceduralGrainMode::Noise
         );
         assert_eq!(custom.resolution_type, 0);
         assert_eq!(custom.timer, Some(0.25));
-        params.film_render.grain.v2_profile = "35mm250".into();
-        params.film_render.grain.v2_amount = None;
-        params.film_render.grain.select_custom_grain_v2();
-        assert_eq!(params.film_render.grain.v2_amount, Some(35.0));
+        params.film_render.grain.procedural_profile = "35mm250".into();
+        params.film_render.grain.procedural_amount = None;
+        params.film_render.grain.select_custom_grain_procedural();
+        assert_eq!(params.film_render.grain.procedural_amount, Some(35.0));
         assert_eq!(
-            params.film_render.grain.v2_mode,
-            super::grain::GrainV2Mode::Analogue
+            params.film_render.grain.procedural_mode,
+            super::grain::ProceduralGrainMode::Analogue
         );
         for value in [0.0, 100.0] {
-            params.film_render.grain.v2_amount = Some(value);
+            params.film_render.grain.procedural_amount = Some(value);
             params.validate().unwrap();
         }
         for value in [f32::NAN, f32::INFINITY, -0.1, 100.1] {
-            params.film_render.grain.v2_amount = Some(value);
+            params.film_render.grain.procedural_amount = Some(value);
             assert!(params.validate().is_err());
         }
-        params.film_render.grain.v2_resolution_type = 2;
+        params.film_render.grain.procedural_resolution_type = 2;
         assert!(params.validate().is_err());
-        params.film_render.grain.v2_resolution_type = 0;
-        params.film_render.grain.v2_timer = 1.0;
+        params.film_render.grain.procedural_resolution_type = 0;
+        params.film_render.grain.procedural_timer = 1.0;
         assert!(params.validate().is_err());
-        params.film_render.grain.v2_timer = f32::NAN;
+        params.film_render.grain.procedural_timer = f32::NAN;
         assert!(params.validate().is_err());
-        params.film_render.grain.v2_timer = 0.0;
-        params.film_render.grain.v2_amount = None;
-        params.film_render.grain.v2_profile = "unknown".into();
+        params.film_render.grain.procedural_timer = 0.0;
+        params.film_render.grain.procedural_amount = None;
+        params.film_render.grain.procedural_profile = "unknown".into();
         assert!(params.validate().is_err());
     }
     #[test]
     fn legacy_zero_timer_keeps_seed_derived_phase() {
         let mut value = serde_json::to_value(super::RuntimeParams::default()).unwrap();
-        value["film_render"]["grain"]["v2_timer"] = serde_json::json!(0.0);
+        value["film_render"]["grain"]["procedural_timer"] = serde_json::json!(0.0);
         let params: super::RuntimeParams = serde_json::from_value(value).unwrap();
-        assert_eq!(params.film_render.grain.v2_timer, 0.0);
-        assert_eq!(params.film_render.grain.resolved_grain_v2().timer, None);
+        assert_eq!(params.film_render.grain.procedural_timer, 0.0);
+        assert_eq!(
+            params.film_render.grain.resolved_grain_procedural().timer,
+            None
+        );
     }
     #[test]
-    fn v3_engine_and_controls_round_trip() {
+    fn dye_engine_and_controls_round_trip() {
         let mut value = serde_json::to_value(super::RuntimeParams::default()).unwrap();
         // New runtime recipes author Dye explicitly.
         let default: super::RuntimeParams = serde_json::from_value(value.clone()).unwrap();
@@ -1291,8 +1297,8 @@ mod tests {
             default.film_render.grain.engine,
             super::grain::GrainEngine::Dye
         );
-        assert_eq!(default.film_render.grain.v3_dye_support_um, 3.5);
-        assert_eq!(default.film_render.grain.v3_event_area_um2, 1.28);
+        assert_eq!(default.film_render.grain.dye_support_um, 3.5);
+        assert_eq!(default.film_render.grain.dye_event_area_um2, 1.28);
         assert_eq!(default.film_render.grain.channel_correlation, 0.0);
         // Recipes saved before the Dye event area and the channel
         // correlation existed get their defaults.
@@ -1300,47 +1306,47 @@ mod tests {
         legacy["film_render"]["grain"]
             .as_object_mut()
             .unwrap()
-            .remove("v3_event_area_um2");
+            .remove("dye_event_area_um2");
         legacy["film_render"]["grain"]
             .as_object_mut()
             .unwrap()
             .remove("channel_correlation");
         let legacy: super::RuntimeParams = serde_json::from_value(legacy).unwrap();
-        assert_eq!(legacy.film_render.grain.v3_event_area_um2, 1.28);
+        assert_eq!(legacy.film_render.grain.dye_event_area_um2, 1.28);
         assert_eq!(legacy.film_render.grain.channel_correlation, 0.0);
         value["film_render"]["grain"]["engine"] = serde_json::json!("dye");
-        value["film_render"]["grain"]["v3_dye_support_um"] = serde_json::json!(4.5);
-        value["film_render"]["grain"]["v3_event_area_um2"] = serde_json::json!(0.6);
+        value["film_render"]["grain"]["dye_support_um"] = serde_json::json!(4.5);
+        value["film_render"]["grain"]["dye_event_area_um2"] = serde_json::json!(0.6);
         value["film_render"]["grain"]["channel_correlation"] = serde_json::json!(0.35);
         let params: super::RuntimeParams = serde_json::from_value(value).unwrap();
         let reparsed: super::RuntimeParams =
             serde_json::from_value(serde_json::to_value(&params).unwrap()).unwrap();
         for grain in [&params.film_render.grain, &reparsed.film_render.grain] {
             assert_eq!(grain.engine, super::grain::GrainEngine::Dye);
-            assert_eq!(grain.v3_dye_support_um, 4.5);
-            assert_eq!(grain.v3_event_area_um2, 0.6);
+            assert_eq!(grain.dye_support_um, 4.5);
+            assert_eq!(grain.dye_event_area_um2, 0.6);
             assert_eq!(grain.channel_correlation, 0.35);
         }
         assert!(serde_json::from_str::<super::GrainParams>(r#"{"engine":"unknown"}"#).is_err());
     }
     #[test]
-    fn v3_controls_must_be_finite_and_positive() {
+    fn dye_controls_must_be_finite_and_positive() {
         let mut params = super::RuntimeParams::default();
         params.film_render.grain.engine = super::grain::GrainEngine::Dye;
         params.validate().unwrap();
         for value in [0.0, -0.5, f32::NAN, f32::INFINITY] {
             let mut bad = params.clone();
-            bad.film_render.grain.v3_dye_support_um = value;
+            bad.film_render.grain.dye_support_um = value;
             let error = bad.validate().unwrap_err();
             assert!(
-                error.contains("film_render.grain.v3_dye_support_um"),
+                error.contains("film_render.grain.dye_support_um"),
                 "unexpected error for {value}: {error}"
             );
             let mut bad = params.clone();
-            bad.film_render.grain.v3_event_area_um2 = f64::from(value);
+            bad.film_render.grain.dye_event_area_um2 = f64::from(value);
             let error = bad.validate().unwrap_err();
             assert!(
-                error.contains("film_render.grain.v3_event_area_um2"),
+                error.contains("film_render.grain.dye_event_area_um2"),
                 "unexpected error for {value}: {error}"
             );
         }
@@ -1364,7 +1370,7 @@ mod tests {
         // later switch to Dye cannot render from an invalid recipe.
         params.film_render.grain.engine = super::grain::GrainEngine::Spektra;
         params.film_render.grain.rms_granularity = [6.0, 8.0, 10.0];
-        params.film_render.grain.v3_event_area_um2 = -1.0;
+        params.film_render.grain.dye_event_area_um2 = -1.0;
         assert!(params.validate().is_err());
     }
 

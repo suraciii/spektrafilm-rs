@@ -1,755 +1,1376 @@
-//! Clump-based record grain (research, v4 candidate).
+//! Film-coordinate conditional dye-mass grain (Dye).
 //!
-//! Law, per record `c`:
-//!
-//! ```text
-//! delta_c(x) = sigma_c * [ sqrt(rho) u_shared(x) + sqrt(1-rho) u_c(x) ]
-//! sigma_c    = base * strength[c]
-//! e_c(x)     = exp(delta_c(x) - sigma_c^2 / 2)          E[e_c] = 1 pointwise
-//! N_c(x)    ~ Poisson(t_c(x) e_c(x) A / q)
-//! D_c(x)     = q N_c(x) / A                            E[D_c] = t_c
-//! ```
-//!
-//! `u_shared` and `u_c` are zero-mean, unit-variance, multi-octave Gaussian fields
-//! (separable box-filter approximation), addressed by global pixel coordinates so a
-//! crop does not reseed them. The target density is never convolved, so the image
-//! mean is preserved exactly and fine detail is not blurred.
-//!
-//! Numerical scope: full-field, source grid == readout grid (1:1). Banded/tiled
-//! execution is not implemented here.
+//! The model realizes conditional Poisson dye masses on a global film-cell
+//! grid, with optional shared counts among records within each numerical
+//! component. It forms the complete realization with a normalized truncated
+//! Gaussian and reads the field through rectangular output footprints.
+//! Curve components are numerical, not identified physical emulsion layers.
+//! `specs/film-grain/dye/design.md` owns the contract; this module implements it,
+//! and `specs/film-grain/dye/spec.md` owns the supported conditions.
 
 use rayon::prelude::*;
-use spektrafilm_math::gaussian;
 use spektrafilm_math::image::ImageBuf;
-use spektrafilm_math::precision::{Scalar, ZERO, from_f32, from_f64, to_f64};
-use spektrafilm_math::stats::{FastStatsRng, poisson_exact, poisson_exact_coordinate};
+use spektrafilm_math::precision::{from_f64, to_f64};
+use spektrafilm_math::stats::{FastStatsRng, cell_stream_index, poisson_exact};
 
-/// Octave centres (µm) and weights; weights are normalised by the caller.
-const OCTAVES: [(f64, f64); 3] = [(4.0, 0.35), (2.0, 1.0), (1.2, 0.9)];
+pub mod texture;
 
-/// Octave list, overridable for scale studies: `len_um,weight;len_um,weight;...`
-fn octaves() -> Vec<(f64, f64)> {
-    // The envelope field belongs to the legacy clump branch; the delivered model runs
-    // the texture path, so this mix only has to stay well-formed.
-    OCTAVES.to_vec()
-}
+mod diagnostic_env;
+pub use diagnostic_env::diagnostic_env;
 
-/// Texture-field octaves (µm, weight) used when the correlated field is enabled.
-const TEXTURE_OCTAVES: [(f64, f64); 3] = [(4.5, 1.0), (9.0, 1.0), (18.0, 0.5)];
-/// Band limit of the texture field, in micrometres.
-const TEXTURE_HIGHPASS_UM: f64 = 12.0;
+mod experiment_mass;
+use experiment_mass::MassLaw;
 
-/// strength_r,strength_g,strength_b,rho,base,q,white — the delivered Dye defaults.
-const DEFAULT_V4: &str = "1.0,1.0,1.18,0.92,0.073,0.0015,0.035";
+mod record_field;
+pub use record_field::{RecordFieldParams, apply_record_field, apply_record_field_with_response};
 
-fn texture_octaves() -> Vec<(f64, f64)> {
-    TEXTURE_OCTAVES.to_vec()
-}
+type CellResponse<'a> = &'a (dyn Fn(&ImageBuf) -> Result<ImageBuf, String> + Sync);
 
-/// Build a zero-mean, unit-variance multi-octave field. Octave length is the
-/// Gaussian sigma in micrometres; weights are normalised here.
-fn correlated_field(w: usize, h: usize, pitch_um: f64, seed: u64, field: u32) -> Vec<Scalar> {
-    let octs = texture_octaves();
-    let norm = octs.iter().map(|(_, v)| v * v).sum::<f64>().sqrt();
-    let mut combined = vec![ZERO; w * h];
-    for (o, (length_um, weight)) in octs.iter().enumerate() {
-        let v0 = noise_field(w, h, seed, field * 8 + o as u32);
-        // A real Gaussian, because the box approximation cannot resolve sigma < 1 px
-        // and that is exactly the range the aggregate texture lives in.
-        let mut v = gaussian::gaussian_blur_channel(
-            &v0,
-            w as u32,
-            h as u32,
-            (length_um / pitch_um / 2.0) as f32,
-        );
-        standardize(&mut v);
-        let k = from_f64(weight / norm);
-        combined
-            .par_iter_mut()
-            .zip(v.par_iter())
-            .for_each(|(a, b)| *a += k * b);
-    }
-    // Band-limit: subtract the field's own large-scale component. Aggregate grain
-    // should not move the local level over tens of microns, because that reads as a
-    // dark blotch rather than grain. `SPEKTRAFILM_GRAIN_V4_TEXTURE_HP` is that cut in
-    // micrometres (0 disables it).
-    let hp = texture_highpass_um();
-    if hp > 0.0 {
-        let big =
-            gaussian::gaussian_blur_channel(&combined, w as u32, h as u32, (hp / pitch_um) as f32);
-        combined
-            .par_iter_mut()
-            .zip(big.par_iter())
-            .for_each(|(a, b)| *a -= *b);
-    }
-    standardize(&mut combined);
-    combined
-}
+/// Production field pitch as a fraction of the support sigma (`h = sigma/2`).
+const CELLS_PER_SIGMA: f64 = 2.0;
+/// Gaussian truncation half-width in sigmas.
+const SUPPORT_SIGMAS: f64 = 4.0;
+/// Output rows per readout band before the cell budget applies.
+const BAND_OUTPUT_ROWS: usize = 128;
+/// Largest cell or source-pixel count a single band may hold. Bands are
+/// storage partitions of the global field: reduce output rectangles first,
+/// then split the formed cells of an oversized individual footprint.
+const MAX_BAND_CELLS: u64 = 1 << 24;
 
-/// High-pass cut for the texture field, in micrometres. Constant: this is a property
-/// of the model, not a knob.
-fn texture_highpass_um() -> f64 {
-    TEXTURE_HIGHPASS_UM
-}
+/// First stream tag reserved for the per-layer shared counts.
+///
+/// Tags `0..=8` are the per-`(channel, layer)` streams (`c * 3 + l`) and stay
+/// as they are, so adding the shared streams cannot move any existing
+/// sequence. Tags `9..=11` are the shared stream of layers 0..=2. The shared
+/// stream is per numerical component, not one stream for all three: all
+/// components of one cell share the same cell address, so a single shared
+/// tag would give them the same uniform sequence and correlate otherwise
+/// independent components.
+const SHARED_TAG_BASE: u64 = 9;
 
-/// Resolved clump parameters.
-/// Where the readout samples the film. A window is a set of film coordinates, so a
-/// crop, a preview scale, or a full-frame read all address the same lattice.
-#[derive(Clone, Copy, Debug)]
-pub struct ReadoutGeometry {
-    /// Film coordinate of the first readout cell's corner, in micrometres.
+/// Rectangular readout footprints in global film coordinates. Cropping
+/// changes the origin and dimensions, while retaining the full-frame pitch.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ReadoutGrid {
     pub origin_um: [f64; 2],
-    /// Readout pitch, in micrometres.
     pub pitch_um: [f64; 2],
     pub width: u32,
     pub height: u32,
 }
 
-impl ReadoutGeometry {
-    /// The readout that covers the whole source raster at its own pitch.
-    pub fn whole(width: u32, height: u32, pitch_um: f64) -> Self {
-        Self {
-            origin_um: [0.0, 0.0],
-            pitch_um: [pitch_um, pitch_um],
-            width,
-            height,
-        }
-    }
-}
-
-#[derive(Clone, Debug)]
-pub struct ClumpParams {
-    /// Relative per-record strength (`[1, 1, 1]` is neutral).
-    pub strength: [f64; 3],
-    /// Shared fraction across records, `[0, 1]`.
-    pub rho: f64,
-    /// Per-record clump-scale multiplier.
-    pub scales: [f64; 3],
-    /// Relative density modulation at strength 1.
-    pub base: f64,
-    /// Per-pixel (unblurred) modulation amplitude. Keeps the texture sharp; the
-    /// octave field supplies only the slowly varying envelope.
-    pub white: f64,
-    /// Single-event mass in `D * um^2`.
-    pub q: f64,
-    pub seed: u64,
-    /// Replace every count by its conditional mean (diagnostic only).
-    pub expectation: bool,
-    /// One effective record carried in three equal lanes.
+/// Resolved Dye inputs. Plain data — no profile or runtime types.
+#[derive(Debug, Clone)]
+pub struct DyeGrainParams {
+    /// Profile-derived single-record layout, carried in three equal lanes.
     pub monochrome: bool,
-    /// Record density where the granularity taper peaks.
-    pub taper_centre: f64,
-    /// Record density at which the density scale saturates (profile Dmax).
-    pub dmax: f64,
-    /// Development-probability uniformity (Spektra `uniformity`).
-    pub uniformity: f64,
-    /// Peak of the derived shape, used to normalise the taper to 1.
-    pub taper_peak: f64,
-    /// Residual granularity fraction at full development.
-    pub taper_floor: f64,
-    /// Base (fog) density that keeps the event rate alive in the deep shadows.
-    pub fog: f64,
-    /// Exponent of the local-density amplitude law, sigma_D proportional to t^amp_exp.
-    pub amp_exp: f64,
-    /// Band limit derived from the SIZE_UM knob; 0 keeps the environment value.
-    pub knob_highpass_um: f64,
-    /// Density-noise floor, in density units: granularity that survives at Dmin
-    /// (fog crystals plus the base's own irregularity). Added on the same field as
-    /// the density-proportional term, so the mean stays exactly t.
-    pub fog_grain: f64,
-    /// Level (multiplicative) envelope instead of amplitude modulation. Level modulation is
-    /// the only way to create a visible texture band, and it is also what can produce
-    /// large-scale dark patches; the octave list decides which of the two dominates.
-    pub level_mode: bool,
-    /// Shared field, installed by [`apply`] before the records are realised.
-    pub shared_white: std::sync::Arc<Vec<Scalar>>,
-    /// Correlated field instead of per-pixel noise (texture from aggregate scale).
-    pub texture: bool,
+    /// Gaussian sigma of the dye support in micrometers.
+    pub support_um: f64,
+    /// Field-cell pitch in micrometers. `None` selects the production value
+    /// `support_um / 2`; numerical certification may pass a finer pitch. It
+    /// must not be coarser than `support_um / 2`.
+    pub cell_um: Option<f64>,
+    /// Statistical event area in square micrometers before channel and layer
+    /// scaling. It controls count variance, never the support width.
+    pub event_area_um2: f64,
+    /// Shared Poisson-event rate fraction among active records within each
+    /// numerical component, not realized CMY or final RGB correlation. Each
+    /// record retains its marginal count law; record-rate ratios affect count
+    /// correlation. The model's structural domain is `[0, 1)`; runtime
+    /// validation retains the historical supported range `[0, 0.45]`, not a
+    /// certified material limit. Validated but inactive for monochrome.
+    pub channel_correlation: f64,
+    /// Relative per-channel event-area scale `(G / 6)^2`, not certified RMS.
+    pub channel_scale: [f64; 3],
+    /// Numerical-component event-area scale: changes mass and rate, not
+    /// separate spatial kernel widths. All components share the support.
+    pub particle_scale_sublayers: [f64; 3],
+    /// Per-channel base density offset.
+    pub density_min: [f64; 3],
+    /// Per-channel grain uniformity in `[0, 1]`.
+    pub uniformity: [f64; 3],
+    /// Raw numerical-component density maxima `[layer][channel]`.
+    pub layer_max: [[f64; 3]; 3],
+    /// Normalized composite density curves: the x axis of the layer split.
+    pub composite_curves: Vec<[f64; 3]>,
+    /// Raw numerical-component density curves `[exposure][layer][channel]`.
+    pub layer_curves: Vec<[[f64; 3]; 3]>,
+    /// Positive films flip the composite lookup axis.
+    pub positive_film: bool,
+    /// Full 64-bit seed; cell addresses derive from it.
+    pub seed: u64,
+    /// Replace every Poisson count with its conditional mean (diagnostic).
+    pub expectation: bool,
 }
 
-impl ClumpParams {
-    /// Read the research parameters from the environment. Unset means "not active".
-    /// The delivered Dye grain law. Every parameter is part of the engine, not of the
-    /// caller's environment: the model is the engine's grain, so there is nothing to
-    /// switch on and nothing to fall back to.
-    pub fn delivered() -> Self {
-        let parts: Vec<f64> = DEFAULT_V4
-            .split(',')
-            .map(|v| v.trim().parse::<f64>().unwrap())
-            .collect();
-        let strength = [parts[0], parts[1], parts[2]];
-        let mut params = Self {
-            strength,
-            rho: parts[3],
-            scales: [1.0, 1.0, 1.4],
-            base: parts[4],
-            white: parts[6],
-            q: parts[5],
-            seed: 7,
-            expectation: false,
-            monochrome: false,
-            shared_white: std::sync::Arc::new(Vec::new()),
-            texture: true,
-            dmax: 1.2,
-            uniformity: 0.97,
-            taper_peak: 0.0,
-            knob_highpass_um: 0.0,
-            fog_grain: 0.0,
-            amp_exp: 1.0,
-            fog: 0.15,
-            taper_floor: 0.18,
-            taper_centre: 1.0,
-            level_mode: false,
-        };
-        params.taper_peak = params.shape_peak();
-        params
-    }
+/// Realize the conditional dye field and read the global film `grid`.
+///
+/// `target` is the full-source developed CMY density and `pitch_um` its pixel
+/// pitch on the full film. The returned image holds the readout density with
+/// `density_min` subtracted once.
+/// Monochrome tables must be canonical replicated records. Source lanes
+/// must be finite and agree within an absolute `1e-6` density tolerance;
+/// record 0 supplies the single material target, never their average.
+pub fn apply(
+    target: &ImageBuf,
+    pitch_um: f64,
+    grid: ReadoutGrid,
+    params: &DyeGrainParams,
+) -> Result<ImageBuf, String> {
+    apply_with_budget(target, pitch_um, grid, params, MAX_BAND_CELLS)
+}
 
-    /// Peak of the derived granularity shape `sqrt(sat p (1-p))` over p in [0, 1].
-    fn shape_peak(&self) -> f64 {
-        let mut peak = 0.0_f64;
-        for i in 1..512 {
-            let p = i as f64 / 512.0;
-            let sat = 1.0 - p * self.uniformity;
-            let v = (sat * p * (1.0 - p)).max(0.0).sqrt();
-            if v > peak {
-                peak = v;
+/// Largest representable `Scalar`, widened to `f64`.
+///
+/// `Scalar::MAX as f64` is a no-op with `--features precision-f64` and a real
+/// widening with the default `Scalar = f32`, so the cast must survive both
+/// profiles; isolating it here keeps `clippy::unnecessary_cast` from firing on
+/// the f64 build, where the cast is genuinely redundant.
+#[allow(clippy::unnecessary_cast)]
+fn max_scalar_f64() -> f64 {
+    spektrafilm_math::precision::Scalar::MAX as f64
+}
+
+/// Experimental optical readout of the same formed field. The route owner
+/// converts each bounded CMY band (base offset already subtracted) into a
+/// linear response. Exact cell overlaps average that response, before any
+/// nonlinear development or output encoding. Exactness is relative to the
+/// piecewise-constant field; it does not recover within-cell fluctuations.
+pub fn apply_with_response(
+    target: &ImageBuf,
+    pitch_um: f64,
+    grid: ReadoutGrid,
+    params: &DyeGrainParams,
+    response: impl Fn(&ImageBuf) -> Result<ImageBuf, String> + Sync,
+) -> Result<ImageBuf, String> {
+    // Existing spectral backends may materialize wavelength tensors. Bound
+    // the band rather than allocate them for a full film canvas.
+    apply_impl(target, pitch_um, grid, params, 1 << 20, Some(&response))
+}
+
+fn apply_with_budget(
+    target: &ImageBuf,
+    pitch_um: f64,
+    grid: ReadoutGrid,
+    params: &DyeGrainParams,
+    max_band_cells: u64,
+) -> Result<ImageBuf, String> {
+    apply_impl(target, pitch_um, grid, params, max_band_cells, None)
+}
+
+fn apply_impl(
+    target: &ImageBuf,
+    pitch_um: f64,
+    grid: ReadoutGrid,
+    params: &DyeGrainParams,
+    max_band_cells: u64,
+    response: Option<CellResponse<'_>>,
+) -> Result<ImageBuf, String> {
+    let model = Model::new(params, pitch_um)?;
+    let src_w = target.width as usize;
+    let src_h = target.height as usize;
+    if src_w == 0 || src_h == 0 {
+        return Err("film grain Dye: source dimensions must be positive".to_owned());
+    }
+    let out_width = grid.width;
+    let out_height = grid.height;
+    if grid.origin_um.iter().any(|v| !v.is_finite())
+        || grid.pitch_um.iter().any(|v| !v.is_finite() || *v <= 0.0)
+    {
+        return Err(
+            "film grain Dye: readout origin must be finite and readout pitch finite and positive"
+                .to_owned(),
+        );
+    }
+    if out_width == 0 || out_height == 0 {
+        return Err("film grain Dye: output dimensions must be positive".to_owned());
+    }
+    check_target_range(target, &model)?;
+
+    let h = model.cell_um;
+    // Requested region in film coordinates.
+    let [x0, y0] = grid.origin_um;
+    let x1 = x0 + out_width as f64 * grid.pitch_um[0];
+    let y1 = y0 + out_height as f64 * grid.pitch_um[1];
+
+    let d = model.radius;
+    let dr = d as usize;
+    // Cells the readout footprints can touch, in global cell indices.
+    // Packing two signed 32-bit coordinates gives every supported cell a
+    // distinct 64-bit stream address, including the formation halo.
+    let address_limit = i32::MAX as f64 - d as f64 - 1.0;
+    if [x0, x1, y0, y1]
+        .iter()
+        .any(|v| !v.is_finite() || (*v / h).abs() > address_limit)
+        || !(src_w as f64 * pitch_um).is_finite()
+        || !(src_h as f64 * pitch_um).is_finite()
+    {
+        return Err("film grain Dye: film coordinates and support halo exceed the signed 32-bit cell address range; reduce camera.film_format_mm or move the requested region closer to the film origin".to_owned());
+    }
+    let [col_w, row_w] = grid.pitch_um;
+
+    if col_w <= 0.0
+        || row_w <= 0.0
+        || x0 + col_w == x0
+        || y0 + row_w == y0
+        || x1 - col_w == x1
+        || y1 - row_w == y1
+    {
+        return Err("film grain Dye: output footprints are below film-coordinate precision; reduce the output dimensions".to_owned());
+    }
+    let halo_extent = (2 * dr + 1) as u64;
+    if halo_extent.saturating_mul(halo_extent) > max_band_cells {
+        return Err(format!(
+            "film grain Dye: one formed cell and its formation halo exceed the {max_band_cells} cell/source-pixel budget"
+        ));
+    }
+    // Axis stencils precede field partitioning. Bound their total entries,
+    // not the size of an individual output footprint or output row.
+    let stencil_entries = [(out_width, col_w), (out_height, row_w)].into_iter().fold(
+        0_u64,
+        |sum, (extent, pitch)| {
+            sum.saturating_add(u64::from(extent).saturating_mul((pitch / h).ceil() as u64 + 1))
+        },
+    );
+    if stencil_entries > MAX_BAND_CELLS {
+        return Err("film grain Dye: output-axis stencil entries exceed the allocation budget; reduce the requested film region or increase the field pitch".into());
+    }
+    let output_bytes = (out_width as u64)
+        .checked_mul(out_height as u64)
+        .and_then(|n| {
+            n.checked_mul(3 * std::mem::size_of::<spektrafilm_math::precision::Scalar>() as u64)
+        });
+    if output_bytes.is_none_or(|bytes| bytes > isize::MAX as u64) {
+        return Err("film grain Dye: output storage exceeds the addressable allocation size; reduce the output dimensions".to_owned());
+    }
+    if out_width as u64 + out_height as u64 > MAX_BAND_CELLS {
+        return Err("film grain Dye: output-axis stencil storage exceeds the allocation budget; reduce the output dimensions".to_owned());
+    }
+    // Readout stencils repeat along the other axis, so build each once.
+    let x_read: Vec<Vec<(i64, f64)>> = (0..out_width)
+        .map(|px| readout_stencil(x0 + px as f64 * col_w, x0 + (px + 1) as f64 * col_w, h))
+        .collect();
+    let y_read: Vec<Vec<(i64, f64)>> = (0..out_height)
+        .map(|py| readout_stencil(y0 + py as f64 * row_w, y0 + (py + 1) as f64 * row_w, h))
+        .collect();
+    let edge = |index: i64, extent: usize| index.clamp(0, extent as i64 - 1) as usize;
+    let cell_area = h * h;
+    let out_w = out_width as usize;
+    let mut out = ImageBuf::new(out_width, out_height);
+    let mut hbuf = Vec::new();
+    let mut fbuf = Vec::new();
+    // Each tuple keeps output bounds, formed-cell bounds, and first/final
+    // flags. Cell pieces of one footprint remain consecutive in this stack.
+    let tile = |px0: usize, px1: usize, py0: usize, py1: usize| {
+        (
+            px0,
+            px1,
+            py0,
+            py1,
+            x_read[px0].first().expect("non-empty stencil").0,
+            x_read[px1 - 1].last().expect("non-empty stencil").0,
+            y_read[py0].first().expect("non-empty stencil").0,
+            y_read[py1 - 1].last().expect("non-empty stencil").0,
+            true,
+            true,
+        )
+    };
+    let mut pending = Vec::new();
+    for py in (0..out_height as usize).step_by(BAND_OUTPUT_ROWS).rev() {
+        pending.push(tile(
+            0,
+            out_w,
+            py,
+            (py + BAND_OUTPUT_ROWS).min(out_height as usize),
+        ));
+    }
+    let mut partial_sum = [0.0_f64; 3];
+    while let Some((px0, px1, py, band_end, inner_i0, inner_i1, j_lo, j_hi, first, last)) =
+        pending.pop()
+    {
+        let ext_i0 = inner_i0 - d;
+        let ext_j0 = j_lo - d;
+        let ext_j1 = j_hi + d;
+        let cols = (inner_i1 - inner_i0 + 1) as usize;
+        let rows = (j_hi - j_lo + 1) as usize;
+        let ext_cols = cols + 2 * dr;
+        let ext_rows = rows + 2 * dr;
+        let sx_lo = edge((ext_i0 as f64 * h / pitch_um).floor() as i64, src_w);
+        let sx_hi = edge(
+            ((((inner_i1 + d + 1) as f64 * h) / pitch_um).ceil() as i64).saturating_sub(1),
+            src_w,
+        );
+        let sy_lo = edge((ext_j0 as f64 * h / pitch_um).floor() as i64, src_h);
+        let sy_hi = edge(
+            ((((ext_j1 + 1) as f64 * h) / pitch_um).ceil() as i64).saturating_sub(1),
+            src_h,
+        );
+        let px_rows = sy_hi - sy_lo + 1;
+        let px_cols = sx_hi - sx_lo + 1;
+        if (ext_cols as u64).saturating_mul(ext_rows as u64) > max_band_cells
+            || (px_cols as u64).saturating_mul(px_rows as u64) > max_band_cells
+        {
+            if band_end - py > 1 {
+                let mid = py + (band_end - py) / 2;
+                pending.push(tile(px0, px1, mid, band_end));
+                pending.push(tile(px0, px1, py, mid));
+            } else if px1 - px0 > 1 {
+                let mid = px0 + (px1 - px0) / 2;
+                pending.push(tile(mid, px1, py, band_end));
+                pending.push(tile(px0, mid, py, band_end));
+            } else if cols >= rows && cols > 1 {
+                let mid = inner_i0 + (cols / 2) as i64;
+                pending.push((
+                    px0, px1, py, band_end, mid, inner_i1, j_lo, j_hi, false, last,
+                ));
+                pending.push((
+                    px0,
+                    px1,
+                    py,
+                    band_end,
+                    inner_i0,
+                    mid - 1,
+                    j_lo,
+                    j_hi,
+                    first,
+                    false,
+                ));
+            } else if rows > 1 {
+                let mid = j_lo + (rows / 2) as i64;
+                pending.push((
+                    px0, px1, py, band_end, inner_i0, inner_i1, mid, j_hi, false, last,
+                ));
+                pending.push((
+                    px0,
+                    px1,
+                    py,
+                    band_end,
+                    inner_i0,
+                    inner_i1,
+                    j_lo,
+                    mid - 1,
+                    first,
+                    false,
+                ));
+            } else {
+                return Err(format!(
+                    "film grain Dye: one formed cell and its formation halo exceed the {max_band_cells} cell/source-pixel budget"
+                ));
+            }
+            continue;
+        }
+        if first {
+            partial_sum = [0.0; 3];
+        }
+        let x_stencils: Vec<Vec<(usize, f64)>> = (ext_i0..=inner_i1 + d)
+            .map(|i| axis_stencil(i as f64 * h, (i + 1) as f64 * h, pitch_um, src_w))
+            .collect();
+        let y_stencils: Vec<Vec<(usize, f64)>> = (ext_j0..=ext_j1)
+            .map(|j| axis_stencil(j as f64 * h, (j + 1) as f64 * h, pitch_um, src_h))
+            .collect();
+        // Sublayer targets are allocated on the source grid, once per source
+        // pixel, and only then remapped conservatively to field cells.
+        let mut planes: [Vec<[f64; 3]>; 3] = [
+            vec![[0.0; 3]; px_rows * px_cols],
+            vec![[0.0; 3]; px_rows * px_cols],
+            vec![[0.0; 3]; px_rows * px_cols],
+        ];
+        {
+            let [p0, p1, p2] = &mut planes;
+            p0.par_chunks_mut(px_cols)
+                .zip(p1.par_chunks_mut(px_cols))
+                .zip(p2.par_chunks_mut(px_cols))
+                .enumerate()
+                .for_each(|(r, ((row0, row1), row2))| {
+                    let row = (sy_lo + r) * src_w;
+                    for px in 0..px_cols {
+                        let index = (row + sx_lo + px) * 3;
+                        let target = [
+                            to_f64(target.data[index]),
+                            to_f64(target.data[index + 1]),
+                            to_f64(target.data[index + 2]),
+                        ];
+                        let layers = model.layer_targets(target);
+                        row0[px] = layers[0];
+                        row1[px] = layers[1];
+                        row2[px] = layers[2];
+                    }
+                });
+        }
+
+        // Cell densities per channel over the extended band.
+        let mut src = [
+            vec![0.0f64; ext_rows * ext_cols],
+            vec![0.0f64; ext_rows * ext_cols],
+            vec![0.0f64; ext_rows * ext_cols],
+        ];
+        {
+            let [s0, s1, s2] = &mut src;
+            s0.par_chunks_mut(ext_cols)
+                .zip(s1.par_chunks_mut(ext_cols))
+                .zip(s2.par_chunks_mut(ext_cols))
+                .enumerate()
+                .try_for_each(|(r, ((row0, row1), row2))| -> Result<(), String> {
+                    let j = ext_j0 + r as i64;
+                    let yst = &y_stencils[r];
+                    for ci in 0..ext_cols {
+                        let i = inner_i0 - d + ci as i64;
+                        let cell =
+                            remap_layers(&planes, &x_stencils[ci], yst, (sx_lo, sy_lo), px_cols);
+                        let add = model.accumulate(i, j, cell, cell_area)?;
+                        row0[ci] = add[0];
+                        row1[ci] = add[1];
+                        row2[ci] = add[2];
+                    }
+                    Ok(())
+                })?;
+        }
+
+        hbuf.resize(ext_rows * cols, 0.0);
+        fbuf.resize(rows * cols, 0.0);
+        let mut formed = response.map(|_| ImageBuf::new(cols as u32, rows as u32));
+        for (c, s) in src.iter().enumerate() {
+            horizontal_pass(s, &mut hbuf, ext_rows, ext_cols, cols, dr, &model.taps);
+            vertical_pass(&hbuf, &mut fbuf, ext_rows, cols, rows, dr, &model.taps);
+            let min = model.channels[c].min;
+            if let Some(formed) = &mut formed {
+                for (pixel, &density) in formed.data.as_chunks_mut::<3>().0.iter_mut().zip(&fbuf) {
+                    pixel[c] = from_f64(density - min);
+                }
+                continue;
+            }
+            for (r, yst) in y_read.iter().enumerate().take(band_end).skip(py) {
+                for (px, xst) in x_read.iter().enumerate().take(px1).skip(px0) {
+                    let mut acc = if first { 0.0 } else { partial_sum[c] };
+                    for &(cj, wy) in yst {
+                        if cj < j_lo || cj > j_hi {
+                            continue;
+                        }
+                        let fr = (cj - j_lo) as usize * cols;
+                        for &(ci, wx) in xst {
+                            if ci < inner_i0 || ci > inner_i1 {
+                                continue;
+                            }
+                            acc += wy * wx * fbuf[fr + (ci - inner_i0) as usize];
+                        }
+                    }
+                    if last {
+                        out.data[(r * out_w + px) * 3 + c] = from_f64(acc - min);
+                    } else {
+                        partial_sum[c] = acc;
+                    }
+                }
             }
         }
-        peak.max(1e-6)
+        if let (Some(response), Some(formed)) = (response, formed) {
+            let linear = response(&formed)?;
+            if linear.width != formed.width
+                || linear.height != formed.height
+                || linear.data.len() != formed.data.len()
+                || linear.data.iter().any(|&value| !to_f64(value).is_finite())
+            {
+                return Err("film grain Dye: cell response must preserve band dimensions and return finite linear values".to_owned());
+            }
+            for (r, yst) in y_read.iter().enumerate().take(band_end).skip(py) {
+                for (px, xst) in x_read.iter().enumerate().take(px1).skip(px0) {
+                    let mut sum = if first { [0.0; 3] } else { partial_sum };
+                    for &(cj, wy) in yst {
+                        if cj < j_lo || cj > j_hi {
+                            continue;
+                        }
+                        for &(ci, wx) in xst {
+                            if ci < inner_i0 || ci > inner_i1 {
+                                continue;
+                            }
+                            let index =
+                                ((cj - j_lo) as usize * cols + (ci - inner_i0) as usize) * 3;
+                            for (c, value) in sum.iter_mut().enumerate() {
+                                *value += wy * wx * to_f64(linear.data[index + c]);
+                            }
+                        }
+                    }
+                    if last {
+                        for (c, value) in sum.iter().enumerate() {
+                            out.data[(r * out_w + px) * 3 + c] = from_f64(*value);
+                        }
+                    } else {
+                        partial_sum = sum;
+                    }
+                }
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// Named rejection of a device field request for the selected mass law.
+///
+/// The device realizes the fixed-mass conditional Poisson count law. The
+/// experimental random-mark laws of `SPEKTRAFILM_GRAIN_DYE_MASS_LAW` are
+/// host-only diagnostics, so a device request for one fails by name instead
+/// of silently rendering with the production law. Expectation mode and the
+/// field-pitch override are part of the production law and stay device-side.
+pub fn check_device_mass_law() -> Result<(), String> {
+    check_mass_law(MassLaw::from_env()?)
+}
+
+fn check_mass_law(law: MassLaw) -> Result<(), String> {
+    let name = match law {
+        MassLaw::Fixed => return Ok(()),
+        MassLaw::TwoClass => "two_class",
+        MassLaw::Gamma4 => "gamma4",
+    };
+    Err(format!(
+        "film grain Dye: the experimental {name} mass law (SPEKTRAFILM_GRAIN_DYE_MASS_LAW) has \
+         no device field path; unset it or render on the CPU backend"
+    ))
+}
+
+/// Derived model state: taps, per-channel capacity/curve tables.
+/// The Dye field model: the channel tables derived from a resolved
+/// [`DyeGrainParams`], plus the seed and mass law the realization uses.
+///
+/// [`apply`] owns the whole CPU realization. It is public because the device
+/// path has to evaluate the same stages against the same tables instead of
+/// re-deriving them, and a second derivation would be a second
+/// implementation of the conditioning.
+pub struct Model {
+    /// One-dimensional cell-integrated formation taps for offsets
+    /// `-radius..=radius`.
+    taps: Vec<f64>,
+    radius: i64,
+    cell_um: f64,
+    channels: [Channel; 3],
+    seed: u64,
+    expectation: bool,
+    monochrome: bool,
+    channel_correlation: f64,
+    mass_law: MassLaw,
+}
+
+/// Per-channel layer state and composite-axis lookup.
+struct Channel {
+    /// `M_lc = m_lc + f_lc * density_min_c`.
+    cap: [f64; 3],
+    /// `sum_l M_lc`.
+    cap_total: f64,
+    /// `f_lc = m_lc / sum_l m_lc`.
+    frac: [f64; 3],
+    /// `a_lc`, the effective event area in square micrometers.
+    area: [f64; 3],
+    /// `density_min_c`.
+    min: f64,
+    /// Uniformity control of this channel.
+    uniformity: f64,
+    /// Sign applied to the composite query before the bracket lookup
+    /// (`-1` for positive films, `1` for negative).
+    lookup_sign: f64,
+    /// Composite-axis knots with the positive-film sign applied.
+    knots: Vec<f64>,
+    /// Inverse knot spacing (`0` for duplicate knots).
+    inv_dx: Vec<f64>,
+    /// Raw layer curves at the knots, per layer.
+    layers: [Vec<f64>; 3],
+}
+
+impl Channel {
+    /// Bracket lookup with the composite-to-layer convention of
+    /// `spektrafilm_model::density_curves::interp_density_cmy_layers`:
+    /// endpoint clamping plus `searchsorted(side='right') - 1`. The knots
+    /// carry the positive-film sign, so the query is signed first.
+    fn bracket(&self, x: f64) -> (usize, f64) {
+        let x = x * self.lookup_sign;
+        let k = self.knots.len();
+        if x <= self.knots[0] {
+            (0, 0.0)
+        } else if x >= self.knots[k - 1] {
+            (k - 2, 1.0)
+        } else {
+            let idx = self.knots.partition_point(|&v| v <= x);
+            let low = if idx > 0 { idx - 1 } else { 0 };
+            (low, (x - self.knots[low]) * self.inv_dx[low])
+        }
+    }
+}
+
+/// One channel's lookup tables and capacities, as plain data.
+///
+/// A faithful view of [`Channel`] for consumers that have to evaluate the same
+/// stages elsewhere: the device path packs these into its own layout instead
+/// of deriving them again, which would be a second implementation of the
+/// conditioning. The curves are borrowed — the consumer packs them into its
+/// own buffers, so an owned view would clone every knot twice for nothing.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ChannelTable<'a> {
+    /// `M_lc = m_lc + f_lc * density_min_c`.
+    pub cap: [f64; 3],
+    /// `sum_l M_lc`.
+    pub cap_total: f64,
+    /// `f_lc = m_lc / sum_l m_lc`.
+    pub frac: [f64; 3],
+    /// `a_lc`, the effective event area in square micrometers.
+    pub area: [f64; 3],
+    /// `density_min_c`.
+    pub min: f64,
+    /// Uniformity control of this channel.
+    pub uniformity: f64,
+    /// Sign applied to the composite query before the bracket lookup
+    /// (`-1` for positive films, `1` for negative).
+    pub lookup_sign: f64,
+    /// Composite-axis knots with the positive-film sign applied.
+    pub knots: &'a [f64],
+    /// Inverse knot spacing (`0` for duplicate knots).
+    pub inv_dx: &'a [f64],
+    /// Raw layer curves at the knots, per layer.
+    pub layers: [&'a [f64]; 3],
+}
+
+impl Model {
+    /// The three channel tables, in channel order.
+    pub fn channel_tables(&self) -> [ChannelTable<'_>; 3] {
+        std::array::from_fn(|c| {
+            let channel = &self.channels[c];
+            ChannelTable {
+                cap: channel.cap,
+                cap_total: channel.cap_total,
+                frac: channel.frac,
+                area: channel.area,
+                min: channel.min,
+                uniformity: channel.uniformity,
+                lookup_sign: channel.lookup_sign,
+                knots: &channel.knots,
+                inv_dx: &channel.inv_dx,
+                layers: [&channel.layers[0], &channel.layers[1], &channel.layers[2]],
+            }
+        })
     }
 
-    /// Domain checks; an invalid value fails instead of being repaired.
-    pub fn validate(&self) -> Result<(), String> {
-        if self
-            .strength
+    /// Field-cell pitch in micrometers the realization uses.
+    pub fn cell_um(&self) -> f64 {
+        self.cell_um
+    }
+
+    /// One-dimensional cell-integrated formation taps for offsets
+    /// `-radius..=radius`.
+    pub fn taps(&self) -> &[f64] {
+        &self.taps
+    }
+
+    /// Build the model from resolved parameters and the source pitch.
+    pub fn new(params: &DyeGrainParams, pitch_um: f64) -> Result<Self, String> {
+        if !params.support_um.is_finite() || params.support_um <= 0.0 {
+            return Err(format!(
+                "film grain Dye: dye_support_um must be finite and > 0 (got {})",
+                params.support_um
+            ));
+        }
+        if !pitch_um.is_finite() || pitch_um <= 0.0 {
+            return Err(format!(
+                "film grain Dye: the film pitch must be finite and > 0 (got {pitch_um})"
+            ));
+        }
+        let production_cell = params.support_um / CELLS_PER_SIGMA;
+        let cell_um = params.cell_um.unwrap_or(production_cell);
+        if !cell_um.is_finite() || cell_um <= 0.0 || cell_um > production_cell {
+            return Err(format!(
+                "film grain Dye: the field pitch must be finite and at most {} um (got {cell_um})",
+                production_cell
+            ));
+        }
+        let radius_value = (SUPPORT_SIGMAS * (params.support_um / cell_um)).ceil() + 1.0;
+        // Even the smallest output footprint needs the full square halo.
+        if !radius_value.is_finite() || (2.0 * radius_value + 1.0).powi(2) > MAX_BAND_CELLS as f64 {
+            return Err("film grain Dye: support halo exceeds the single-row field-cell budget; increase the field pitch".to_owned());
+        }
+        let cell_area = cell_um * cell_um;
+        if !cell_area.is_finite() || cell_area <= 0.0 {
+            return Err("film grain Dye: squared field pitch must be finite and > 0; reduce the dye support or increase the field pitch".to_owned());
+        }
+        if params.monochrome {
+            check_monochrome_tables(params)?;
+        }
+        let mut channels = Vec::with_capacity(3);
+        for c in 0..3 {
+            channels.push(Channel::new(
+                params,
+                c,
+                params.layer_max.iter().map(|row| row[c]).collect(),
+                params.composite_curves.iter().map(|row| row[c]).collect(),
+                std::array::from_fn(|l| params.layer_curves.iter().map(|row| row[l][c]).collect()),
+            )?);
+        }
+        let channel_correlation = params.channel_correlation;
+        if !channel_correlation.is_finite() || !(0.0..1.0).contains(&channel_correlation) {
+            return Err(
+                "film grain Dye: channel correlation must be finite and in [0, 1)".to_owned(),
+            );
+        }
+        let mass_law = MassLaw::from_env()?;
+        for (c, channel) in channels.iter().enumerate() {
+            channel.check_sampling_bounds(c, cell_area)?;
+            channel.check_sampling_bounds(c, cell_area * mass_law.rate_multiplier())?;
+        }
+        Ok(Self {
+            taps: support_taps(params.support_um, cell_um),
+            radius: radius_value as i64,
+            cell_um,
+            channels: channels
+                .try_into()
+                .map_err(|_| "film grain Dye: channel state".to_owned())?,
+            seed: params.seed,
+            expectation: params.expectation,
+            monochrome: params.monochrome,
+            channel_correlation,
+            mass_law,
+        })
+    }
+
+    /// Absolute sublayer targets `t_lc` of one source pixel.
+    ///
+    /// Implements `design.md#sublayer-target-allocation`: bracket lookup on
+    /// the normalized composite axis, weights `v_lc + b_lc`, then iterative
+    /// weighted capacity allocation of `T_c = D_c + density_min_c`.
+    /// Monochrome allocates record 0 once and replicates its targets.
+    pub fn layer_targets(&self, target: [f64; 3]) -> [[f64; 3]; 3] {
+        let mut out = [[0.0f64; 3]; 3];
+        for (c, ch) in self
+            .channels
             .iter()
-            .any(|s| !s.is_finite() || *s < 0.0 || *s > 4.0)
+            .enumerate()
+            .take(if self.monochrome { 1 } else { 3 })
         {
-            return Err("film grain V4: strength must be finite and in [0, 4]".into());
+            let total = (target[c] + ch.min).clamp(0.0, ch.cap_total);
+            let (low, t) = ch.bracket(target[c]);
+            let mut weights = [0.0f64; 3];
+            for (l, weight) in weights.iter_mut().enumerate() {
+                if ch.cap[l] <= 0.0 {
+                    continue;
+                }
+                let value = ch.layers[l][low] + t * (ch.layers[l][low + 1] - ch.layers[l][low]);
+                *weight = (value + ch.frac[l] * ch.min).max(0.0);
+            }
+            out[c] = allocate(total, &ch.cap, &weights);
         }
-        if !self.white.is_finite() || self.white < 0.0 || self.white > 1.5 {
-            return Err("film grain V4: white must be finite and in [0, 1.5]".into());
+        if self.monochrome { [out[0]; 3] } else { out }
+    }
+
+    /// Realized (or expected) absolute cell density per channel.
+    ///
+    /// `i`/`j` are global signed cell coordinates: they alone select the
+    /// random stream, so a crop or a tile boundary cannot change a cell's
+    /// counts.
+    ///
+    /// Monochrome draws only record-0 component streams `0, 1, 2`, without
+    /// shared counts, and replicates the absolute density before formation.
+    ///
+    /// In color, each layer splits its per-channel rate `lambda_c` into a shared part
+    /// `corr * min_c(lambda_c)` and an independent remainder
+    /// `lambda_c - shared`. The shared part is drawn once per layer, so the
+    /// channels of one layer correlate while every channel keeps its marginal
+    /// count law (the split is a thinning, so it holds for the default law and
+    /// for the scale-mixture laws alike). `min` runs over the layer's active channels only:
+    /// an inactive channel has no rate to correlate with, and counting it as
+    /// zero would silently collapse the layer's correlation to zero.
+    ///
+    /// Layers are the outer loop here because the shared draw needs all three
+    /// channels of a layer. A channel's contributions are still added in
+    /// ascending layer order into one accumulator, which is what keeps
+    /// `corr = 0` bit-identical to the previous per-channel loop.
+    // The layer index is a layer *number*: it selects the shared stream tag and
+    // indexes three per-channel arrays, not one collection.
+    #[allow(clippy::needless_range_loop)]
+    fn accumulate(
+        &self,
+        i: i64,
+        j: i64,
+        layers: [[f64; 3]; 3],
+        cell_area: f64,
+    ) -> Result<[f64; 3], String> {
+        if self.monochrome {
+            let ch = &self.channels[0];
+            let index = cell_stream_index(i, j);
+            let mut out = 0.0f64;
+            for l in 0..3 {
+                let target = layers[0][l];
+                if target <= 0.0 || ch.cap[l] <= 0.0 {
+                    continue;
+                }
+                let p = (target / ch.cap[l]).clamp(0.0, 1.0);
+                let s = 1.0 - ch.uniformity * (1.0 - 1e-6) * p;
+                let mass = ch.cap[l] * ch.area[l] * s / ch.frac[l];
+                let rate = cell_area * ch.frac[l] * p / (ch.area[l] * s);
+                let count = if self.expectation {
+                    rate
+                } else {
+                    let mut rng = FastStatsRng::stream(self.seed, l as u64, index);
+                    self.mass_law.sample(&mut rng, rate)?
+                };
+                out += mass * count / cell_area;
+                if !out.is_finite() {
+                    return Err(
+                        "film grain Dye: sampled dye mass exceeds finite density range".to_owned(),
+                    );
+                }
+            }
+            return Ok([out; 3]);
         }
-        if !self.rho.is_finite() || !(0.0..=1.0).contains(&self.rho) {
-            return Err("film grain V4: rho must be finite and in [0, 1]".into());
+        let mut out = [0.0f64; 3];
+        let index = cell_stream_index(i, j);
+        for l in 0..3 {
+            // Per-channel rate and mass of this layer; `active[c]` marks the
+            // channels whose `(channel, layer)` contributes a count at all.
+            let mut rate = [0.0f64; 3];
+            let mut mass = [0.0f64; 3];
+            let mut active = [false; 3];
+            for (c, ch) in self.channels.iter().enumerate() {
+                let target = layers[c][l];
+                if target <= 0.0 || ch.cap[l] <= 0.0 {
+                    continue;
+                }
+                let p = (target / ch.cap[l]).clamp(0.0, 1.0);
+                let s = 1.0 - ch.uniformity * (1.0 - 1e-6) * p;
+                mass[c] = ch.cap[l] * ch.area[l] * s / ch.frac[l];
+                rate[c] = cell_area * ch.frac[l] * p / (ch.area[l] * s);
+                active[c] = true;
+            }
+
+            // One shared rate serves the whole layer, so it must be one the
+            // smallest rate can fund without going negative.
+            let mut shared = 0.0f64;
+            let mut active_channels = 0usize;
+            let mut smallest = f64::INFINITY;
+            for c in 0..3 {
+                if active[c] && rate[c] > 0.0 {
+                    active_channels += 1;
+                    smallest = smallest.min(rate[c]);
+                }
+            }
+            if active_channels >= 2 {
+                shared = self.channel_correlation * smallest;
+            }
+
+            let shared_count = if self.expectation || shared <= 0.0 {
+                0.0
+            } else {
+                let mut rng = FastStatsRng::stream(self.seed, SHARED_TAG_BASE + l as u64, index);
+                self.mass_law.sample(&mut rng, shared)?
+            };
+
+            for (c, _) in self.channels.iter().enumerate() {
+                if !active[c] {
+                    continue;
+                }
+                let count = if self.expectation {
+                    // The expectation is the marginal mean and must not move
+                    // with the correlation, so it is not split at all.
+                    rate[c]
+                } else {
+                    let independent = rate[c] - shared;
+                    let own = if independent > 0.0 {
+                        let mut rng = FastStatsRng::stream(self.seed, (c * 3 + l) as u64, index);
+                        self.mass_law.sample(&mut rng, independent)?
+                    } else {
+                        0.0
+                    };
+                    shared_count + own
+                };
+                out[c] += mass[c] * count / cell_area;
+                if !out[c].is_finite() {
+                    return Err(
+                        "film grain Dye: sampled dye mass exceeds finite density range".to_owned(),
+                    );
+                }
+            }
         }
-        if !self.base.is_finite() || self.base < 0.0 || self.base > 0.6 {
-            return Err("film grain V4: base must be finite and in [0, 0.6]".into());
+        Ok(out)
+    }
+}
+
+impl Channel {
+    #[allow(clippy::too_many_arguments)]
+    fn new(
+        params: &DyeGrainParams,
+        c: usize,
+        maxima: Vec<f64>,
+        composite: Vec<f64>,
+        layers: [Vec<f64>; 3],
+    ) -> Result<Self, String> {
+        if composite.len() < 2 || composite.len() != params.layer_curves.len() {
+            return Err(format!(
+                "film grain Dye: channel {c} needs at least two composite knots shared with the \
+                 layer curves (got {} knots and {} layer rows)",
+                composite.len(),
+                params.layer_curves.len()
+            ));
         }
-        if !self.q.is_finite() || self.q <= 0.0 {
-            return Err("film grain V4: q must be finite and positive".into());
+        if layers.iter().any(|column| column.len() != composite.len()) {
+            return Err(format!(
+                "film grain Dye: channel {c} layer curves must share the composite knot count"
+            ));
         }
-        if self.scales.iter().any(|s| !s.is_finite() || *s <= 0.0) {
-            return Err("film grain V4: scales must be finite and positive".into());
+        let sign = if params.positive_film { -1.0 } else { 1.0 };
+        let knots: Vec<f64> = composite.iter().map(|&v| v * sign).collect();
+        if knots.iter().any(|v| !v.is_finite()) {
+            return Err(format!(
+                "film grain Dye: channel {c} composite curve contains a non-finite value"
+            ));
+        }
+        let range = knots[knots.len() - 1] - knots[0];
+        if !range.is_finite() || range <= 0.0 {
+            return Err(format!(
+                "film grain Dye: channel {c} composite density axis must have positive range \
+                 (got {range})"
+            ));
+        }
+        for window in knots.windows(2) {
+            if window[1] < window[0] {
+                return Err(format!(
+                    "film grain Dye: channel {c} composite density axis must be nondecreasing"
+                ));
+            }
+        }
+        for (l, column) in layers.iter().enumerate() {
+            if column.iter().any(|v| !v.is_finite() || *v < 0.0) {
+                return Err(format!(
+                    "film grain Dye: channel {c} layer {l} curve must be finite and nonnegative"
+                ));
+            }
+        }
+        let min = params.density_min[c];
+        if !min.is_finite() || min < 0.0 {
+            return Err(format!(
+                "film grain Dye: density_min[{c}] must be finite and nonnegative (got {min})"
+            ));
+        }
+        let uniformity = params.uniformity[c];
+        if !uniformity.is_finite() || !(0.0..=1.0).contains(&uniformity) {
+            return Err(format!(
+                "film grain Dye: uniformity[{c}] must be finite in [0, 1] (got {uniformity})"
+            ));
+        }
+        let mut max_total = 0.0f64;
+        for &value in &maxima {
+            if !value.is_finite() || value < 0.0 {
+                return Err(format!(
+                    "film grain Dye: channel {c} layer maxima must be finite and nonnegative"
+                ));
+            }
+            max_total += value;
+        }
+        if !max_total.is_finite() || max_total <= 0.0 {
+            return Err(format!(
+                "film grain Dye: channel {c} has no positive layer capacity; the resolved profile \
+                 must provide nonnegative sublayer curves with a positive sum"
+            ));
+        }
+        let mut frac = [0.0f64; 3];
+        let mut capacity = [0.0f64; 3];
+        let mut area = [0.0f64; 3];
+        for l in 0..3 {
+            frac[l] = maxima[l] / max_total;
+            capacity[l] = maxima[l] + frac[l] * min;
+            let scale = params.channel_scale[c] * params.particle_scale_sublayers[l];
+            let effective_area = params.event_area_um2 * scale;
+            if !params.event_area_um2.is_finite()
+                || params.event_area_um2 <= 0.0
+                || !scale.is_finite()
+                || scale <= 0.0
+                || !effective_area.is_finite()
+                || effective_area <= 0.0
+            {
+                return Err(format!(
+                    "film grain Dye: event_area_um2 * channel_scale[{c}] * \
+                     particle_scale_sublayers[{l}] must be finite and > 0 (got {} * {scale})",
+                    params.event_area_um2
+                ));
+            }
+            area[l] = effective_area;
+        }
+        let inv_dx = (0..knots.len() - 1)
+            .map(|i| {
+                let dx = knots[i + 1] - knots[i];
+                if dx > 0.0 { 1.0 / dx } else { 0.0 }
+            })
+            .collect();
+        Ok(Self {
+            cap: capacity,
+            cap_total: capacity.iter().sum(),
+            frac,
+            area,
+            min,
+            uniformity,
+            lookup_sign: sign,
+            knots,
+            inv_dx,
+            layers,
+        })
+    }
+    /// Bound every occupancy before rendering. PTRS represents counts in
+    /// f64, so rates above half its consecutive-integer range are unsupported.
+    fn check_sampling_bounds(&self, c: usize, cell_area: f64) -> Result<(), String> {
+        if !self.cap_total.is_finite() || self.cap_total <= 0.0 {
+            return Err(format!(
+                "film grain Dye: channel {c} total capacity must be finite and positive"
+            ));
+        }
+        let s_min = 1.0 - self.uniformity * (1.0 - 1e-6);
+        for l in 0..3 {
+            if self.cap[l] == 0.0 {
+                continue;
+            }
+            let numerator = cell_area * self.frac[l];
+            let denominator = self.area[l] * s_min;
+            let max_rate = numerator / denominator;
+            let mass_product = self.cap[l] * self.area[l];
+            let max_mass = mass_product / self.frac[l];
+            let max_density = max_mass * ((1u64 << 53) as f64) / cell_area;
+            let max_scalar = max_scalar_f64();
+            if !self.cap[l].is_finite()
+                || self.frac[l] <= 0.0
+                || !numerator.is_finite()
+                || numerator <= 0.0
+                || !denominator.is_finite()
+                || denominator <= 0.0
+                || !max_rate.is_finite()
+                || max_rate <= 0.0
+                || max_rate > (1u64 << 52) as f64
+                || !mass_product.is_finite()
+                || mass_product <= 0.0
+                || !max_mass.is_finite()
+                || mass_product * s_min <= 0.0
+                || !max_density.is_finite()
+                || max_density > max_scalar / 3.0
+            {
+                return Err(format!(
+                    "film grain Dye: channel {c} layer {l} event area, capacity and field pitch produce an unrepresentable rate or dye mass (maximum rate {max_rate}, mass {max_mass}); adjust event area or field pitch; maximum supported rate is {}",
+                    1u64 << 52
+                ));
+            }
         }
         Ok(())
     }
 }
 
-/// Box blur: horizontal `src -> tmp`, then vertical `tmp -> src` (edge replicated).
-fn box_blur(src: &mut [Scalar], tmp: &mut [Scalar], w: usize, h: usize, half: usize) {
-    if half == 0 {
-        return;
-    }
-    let n = from_f64((2 * half + 1) as f64);
-    tmp.par_chunks_mut(w).enumerate().for_each(|(y, row)| {
-        let base = y * w;
-        for (x, value) in row.iter_mut().enumerate() {
-            let mut acc = ZERO;
-            for k in 0..=2 * half {
-                let xx = (x + k).saturating_sub(half).min(w - 1);
-                acc += src[base + xx];
-            }
-            *value = acc / n;
-        }
-    });
-    src.par_chunks_mut(w).enumerate().for_each(|(y, row)| {
-        for x in 0..w {
-            let mut acc = ZERO;
-            for k in 0..=2 * half {
-                let yy = (y + k).saturating_sub(half).min(h - 1);
-                acc += tmp[yy * w + x];
-            }
-            row[x] = acc / n;
-        }
-    });
-}
-
-fn box_blur_approx(field: &mut [Scalar], tmp: &mut [Scalar], w: usize, h: usize, sigma_px: f64) {
-    if sigma_px <= 0.35 {
-        return;
-    }
-    let half = (((12.0 * sigma_px * sigma_px / 3.0 + 1.0).sqrt() - 1.0) / 2.0)
-        .round()
-        .max(1.0) as usize;
-    for _ in 0..3 {
-        box_blur(field, tmp, w, h, half);
-    }
-}
-
-/// Zero-mean unit-variance field addressed by global pixel coordinates.
-/// The device's coordinate hash, replicated here so both executors draw the same
-/// realization from the same seed and stream. A CPU and a GPU render of one recipe
-/// must differ in sampling, never in the noise they start from.
-fn hash_u32(mut v: u32) -> u32 {
-    v = v.wrapping_mul(747_796_405).wrapping_add(2_891_336_453);
-    v = ((v >> ((v >> 28) + 4)) ^ v).wrapping_mul(277_803_737);
-    (v >> 22) ^ v
-}
-
-fn uniform01(seed: u32, stream: u32, x: u32, y: u32) -> f32 {
-    let h = hash_u32(x ^ hash_u32(y ^ hash_u32(seed ^ hash_u32(stream))));
-    (h >> 8) as f32 * (1.0 / 16_777_216.0)
-}
-
-fn normal01(seed: u32, stream: u32, x: u32, y: u32) -> f32 {
-    let u1 = uniform01(seed, stream, x, y).max(1e-6);
-    let u2 = uniform01(seed, stream ^ 0x9e37_79b9, y, x);
-    (-2.0 * u1.ln()).sqrt() * (std::f32::consts::TAU * u2).cos()
-}
-
-/// One field of coordinate-addressed noise. `stream` matches the device pass, so the
-/// same seed and stream produce the same field on both executors.
-fn noise_field(w: usize, h: usize, seed: u64, stream: u32) -> Vec<Scalar> {
-    let mut v = vec![ZERO; w * h];
-    let seed = seed as u32;
-    v.par_chunks_mut(w).enumerate().for_each(|(y, row)| {
-        for (x, cell) in row.iter_mut().enumerate() {
-            *cell = from_f32(normal01(seed, stream, x as u32, y as u32));
-        }
-    });
-    v
-}
-
-fn standardize(v: &mut [Scalar]) {
-    let mean = v.par_iter().map(|&x| to_f64(x)).sum::<f64>() / v.len() as f64;
-    let var = v
-        .par_iter()
-        .map(|&x| {
-            let d = to_f64(x) - mean;
-            d * d
-        })
-        .sum::<f64>()
-        / v.len() as f64;
-    let sd = var.sqrt().max(1e-12);
-    let (scale, shift) = (from_f64(1.0 / sd), from_f64(mean));
-    v.par_iter_mut().for_each(|x| *x = (*x - shift) * scale);
-}
-
-/// Realize one channel of the clump law on a 1:1 field.
-// Field buffers, geometry, law parameters, and shared fields stay explicit at this
-// realization boundary; grouping them would obscure the executor parity contract.
-#[allow(clippy::too_many_arguments)]
-fn channel(
-    target: &[Scalar],
-    out: &mut [Scalar],
-    w: usize,
-    h: usize,
-    pitch_um: f64,
-    p: &ClumpParams,
-    c: usize,
-    shared: &[Vec<Scalar>],
-) -> Result<(), String> {
-    let mut tmp = vec![ZERO; w * h];
-    let mut delta = vec![ZERO; w * h];
-    let octs = octaves();
-    let norm = octs.iter().map(|(_, v)| v * v).sum::<f64>().sqrt();
-    // Relative modulation is tapered where the record density is already high: the
-    // emulsion cannot keep the same relative fluctuation once the record saturates,
-    // and an untapered multiplicative field reads as large light/dark clouds there.
-    let record_strength = if p.monochrome { 1.0 } else { p.strength[c] };
-    let sigma_base = p.base * record_strength;
-    // Per-pixel component: unblurred, so the realised texture stays as sharp as the
-    // readout grid allows. The octave field above only shapes the envelope.
-    let sigma_white = p.white * record_strength;
-    // The per-pixel component must be shared across records like the envelope: one
-    // grain event affects the three layers together. Independent per-record white noise
-    // would destroy the measured inter-record correlation (~0.9 in real scans).
-    let white_independent = if p.texture {
-        correlated_field(
-            w,
-            h,
-            pitch_um,
-            p.seed,
-            if p.monochrome { 1 } else { c as u32 + 1 },
-        )
-    } else {
-        let mut v = noise_field(w, h, p.seed, (c as u32 + 1) * 8);
-        standardize(&mut v);
-        v
-    };
-    for (o, (length_um, weight)) in octs.iter().enumerate() {
-        let mut independent = noise_field(w, h, p.seed, (c as u32 + 1) * 8 + o as u32);
-        box_blur_approx(
-            &mut independent,
-            &mut tmp,
-            w,
-            h,
-            length_um * p.scales[c] / pitch_um,
-        );
-        standardize(&mut independent);
-        let us = &shared[o];
-        let a = from_f64(p.rho.sqrt());
-        let b = from_f64((1.0 - p.rho).sqrt());
-        let k = from_f64(weight / norm);
-        delta.par_iter_mut().enumerate().for_each(|(i, d)| {
-            *d += k * (a * us[i] + b * independent[i]);
-        });
-    }
-    // Diagnostic expectation mode is the *unconditional* mean of the law: the material
-    // modulation is replaced by its mean (e == 1) as well as each count by its mean.
-    // The conditional mean of one material realization would be t * e, which is not the
-    // grain-off image and is therefore not the invariant this mode exists to check.
-    if p.expectation {
-        delta.iter_mut().for_each(|d| *d = 0.0);
-    }
-    let area = pitch_um * pitch_um;
-    let q = p.q;
-    // Clumped counting ("grain reconstructs the image"): the density is built from a
-    // Poisson process of clumps, each carrying `1 + Poisson(kbar-1)` grains, and each
-    // clump is spread over `clump_um`. The mean is exactly t (smoothing preserves it),
-    // so no multiplicative envelope is needed and no neighbourhood is darkened; the
-    // texture comes from the clump *extent*, not from a level modulation.
-    if let Some((kbar, clump_um)) = clump_params() {
-        let qc = q * kbar;
-        let mut mass = vec![ZERO; w * h];
-        mass.par_iter_mut().enumerate().for_each(|(i, m)| {
-            let tv = to_f64(target[i * 3 + c]);
-            let index = (((i / w) as u64) << 32) | (i % w) as u64;
-            // One effective record draws one count: a monochrome realization must be
-            // identical in all three lanes.
-            let stream = if p.monochrome { 800 } else { 800 + c as u64 };
-            let mut rng = FastStatsRng::stream(p.seed, stream, index);
-            let lambda = (tv.max(0.0) * area / qc).min(1e12);
-            let count = if p.expectation {
-                lambda
-            } else {
-                poisson_exact(&mut rng, lambda)
-                    .map(|v| v as f64)
-                    .unwrap_or(0.0)
-            };
-            let k = if p.expectation {
-                kbar
-            } else {
-                1.0 + poisson_exact(&mut rng, (kbar - 1.0).max(0.0))
-                    .map(|v| v as f64)
-                    .unwrap_or(0.0)
-            };
-            *m = from_f64(count * k);
-        });
-        box_blur_approx(&mut mass, &mut tmp, w, h, clump_um / pitch_um);
-        out.par_iter_mut().enumerate().for_each(|(i, o)| {
-            *o = from_f64(q * to_f64(mass[i]) / area);
-        });
-        return Ok(());
-    }
-    out.par_iter_mut()
-        .enumerate()
-        .try_for_each(|(i, o)| -> Result<(), String> {
-            let t = to_f64(target[i * 3 + c]);
-            // Grain-vs-density response is *derived*, not tuned: for n particles with
-            // development probability p, Var = n p (1-p); with the particle budget
-            // reduced by `saturation` the standard deviation follows
-            // sqrt(saturation * p * (1 - p)). It vanishes at clear base and at Dmax and
-            // peaks in the mid densities, which is what the measured curves do.
-            let p_dev = (t / p.dmax).clamp(0.0, 1.0);
-            let sat = 1.0 - p_dev * p.uniformity;
-            let shape = (sat * p_dev * (1.0 - p_dev)).max(0.0).sqrt();
-            // A fully developed record still has granularity: the binomial shape goes to
-            // zero at p -> 1, which makes deep shadows perfectly clean. A floor keeps the
-            // measured residual instead of inventing a grain-free black.
-            let taper = (shape / p.taper_peak).max(p.taper_floor);
-            let sigma = sigma_base * taper;
-            // Amplitude modulation instead of level modulation: the envelope scales the
-            // local grain *contrast*, the mean density stays exactly t. A multiplicative
-            // level term (what exp() used to do) darkens whole neighbourhoods and reads as
-            // large dark patches.
-            let e = if p.expectation {
-                1.0
-            } else {
-                let wi = {
-                    let a = from_f64(p.rho.sqrt());
-                    let b = from_f64((1.0 - p.rho).sqrt());
-                    a * p.shared_white[i] + b * white_independent[i]
-                };
-                if p.level_mode {
-                    let dm = sigma * to_f64(delta[i]) + sigma_white * to_f64(wi)
-                        - 0.5 * (sigma * sigma + sigma_white * sigma_white);
-                    if dm > 40.0 { 40.0_f64.exp() } else { dm.exp() }
-                } else {
-                    let m = if p.texture {
-                        1.0
-                    } else {
-                        (1.0 + sigma * to_f64(delta[i])).clamp(0.05, 3.0)
-                    };
-                    // Absolute density granularity saturates with density (Selwyn): a purely
-                    // relative amplitude makes the densest (brightest) areas the grainiest,
-                    // which reads as dirty highlights. Cap the absolute sigma instead.
-                    // Amplitude exponent: sigma_D = t^amp_exp * taper. alpha = 1 keeps the
-                    // purely relative form (sigma proportional to local density); alpha = 0
-                    // makes the density noise absolute, so bright, thin areas keep granularity
-                    // instead of fading to a clean white.
-                    let amp = if p.amp_exp == 1.0 {
-                        1.0
-                    } else {
-                        let tref = (p.dmax * 0.5).max(1e-6);
-                        (t / tref).clamp(1e-4, 1e4).powf(p.amp_exp - 1.0)
-                    };
-                    // Fog granularity is bounded by the base density it lives in: the
-                    // effective floor is sigma_fog * t/(t + 0.05), so it saturates at
-                    // Dmin instead of blowing up where the record is nearly clear.
-                    // Fog granularity lives at the base, so it decays over roughly one
-                    // base density: w = 1 / (1 + (t / 0.1)^2).
-                    let w = 1.0 / (1.0 + (t / 0.1) * (t / 0.1));
-                    let rel = sigma_white * taper * amp + p.fog_grain * w / (t.max(0.0) + 0.02);
-                    (1.0 + rel * to_f64(wi) * m).max(0.02)
-                }
-            };
-            // Fog baseline: a developed record still carries base density, so the event
-            // rate does not vanish at t -> 0. The baseline is removed again after the
-            // count, so E[D] = t is unchanged.
-            let lambda = ((t.max(0.0) + p.fog) * e * area / q).min(1e12);
-            let count = if p.expectation {
-                lambda
-            } else {
-                // One count from the draw the device kernel also uses: the
-                // uniform is addressed by global cell coordinate and sample
-                // ordinal, so one seed selects one realization on either
-                // executor. A sequential stream cannot be replayed on a device
-                // whose invocations run in an order it does not control.
-                let stream = if p.monochrome { 100 } else { 100 + c as u32 };
-                poisson_exact_coordinate(
-                    lambda,
-                    p.seed as u32,
-                    stream,
-                    (i % w) as u32,
-                    (i / w) as u32,
-                ) as f64
-            };
-            *o = from_f64(q * count / area - p.fog);
+/// A single material record must arrive in canonical replicated tables.
+/// Reject disagreement instead of silently choosing a different grain law.
+fn check_monochrome_tables(params: &DyeGrainParams) -> Result<(), String> {
+    let check = |values: &[f64; 3], name: &str| {
+        if values.iter().any(|v| !v.is_finite()) || values[1] != values[0] || values[2] != values[0]
+        {
+            Err(format!(
+                "film grain Dye: monochrome {name} must be finite and identical across records"
+            ))
+        } else {
             Ok(())
-        })?;
+        }
+    };
+    check(&params.channel_scale, "channel scale")?;
+    check(&params.density_min, "density minimum")?;
+    check(&params.uniformity, "uniformity")?;
+    for row in &params.layer_max {
+        check(row, "layer maxima")?;
+    }
+    for row in &params.composite_curves {
+        check(row, "composite curve")?;
+    }
+    for row in &params.layer_curves {
+        for layer in row {
+            check(layer, "layer curve")?;
+        }
+    }
     Ok(())
 }
 
-/// Optional clumped-counting parameters: `SPEKTRAFILM_GRAIN_V4_CLUMP=kbar,clump_um`.
-fn clump_params() -> Option<(f64, f64)> {
-    None
+/// Fail before rendering when the developed target leaves the capacity
+/// envelope `[-density_min, sum_l M_lc]`.
+fn check_target_range(target: &ImageBuf, model: &Model) -> Result<(), String> {
+    const TOLERANCE: f64 = 1e-6;
+    let mut low = [f64::INFINITY; 3];
+    let mut high = [f64::NEG_INFINITY; 3];
+    for px in target.pixels() {
+        for c in 0..3 {
+            let value = to_f64(px[c]);
+            if !value.is_finite() {
+                return Err(format!(
+                    "film grain Dye: channel {c} developed density must be finite"
+                ));
+            }
+            if model.monochrome && (value - to_f64(px[0])).abs() > TOLERANCE {
+                return Err(format!(
+                    "film grain Dye: monochrome developed density lanes must agree within {TOLERANCE} D"
+                ));
+            }
+            if value < low[c] {
+                low[c] = value;
+            }
+            if value > high[c] {
+                high[c] = value;
+            }
+        }
+    }
+    for c in 0..3 {
+        let floor = -model.channels[c].min - TOLERANCE;
+        let ceiling = model.channels[c].cap_total - model.channels[c].min + TOLERANCE;
+        if low[c] < floor || high[c] > ceiling {
+            return Err(format!(
+                "film grain Dye: channel {c} developed density spans [{:.6}, {:.6}], outside the \
+                 supported [{:.6}, {:.6}] set by density_min {:.6} and the resolved layer \
+                 capacities {:?}",
+                low[c], high[c], floor, ceiling, model.channels[c].min, model.channels[c].cap
+            ));
+        }
+    }
+    Ok(())
 }
 
-/// Apply the clump law to a 1:1 source target.
-/// Bilinear read of the developed density at each readout cell centre. The law is
-/// defined on the source raster; the readout grid only changes where it is sampled.
-fn resample_density(
-    src: &[Scalar],
-    sw: usize,
-    sh: usize,
-    source_pitch_um: f64,
-    grid: &ReadoutGeometry,
-) -> Vec<Scalar> {
-    // Each readout cell names a film-coordinate window. Finer than the lattice, it
-    // interpolates that window's centre; coarser, it integrates the lattice cells the
-    // window covers. Integrating rather than point sampling is what makes a cropped
-    // readout and a full-frame readout agree where they overlap, and what keeps a
-    // render split into stages identical to the same render done in one pass.
-    let dw = grid.width as usize;
-    let dh = grid.height as usize;
-    let mut out = vec![ZERO; dw * dh * 3];
-    for y in 0..dh {
-        let fy0 = (grid.origin_um[1] + y as f64 * grid.pitch_um[1]) / source_pitch_um;
-        let fy1 = fy0 + grid.pitch_um[1] / source_pitch_um;
-        for x in 0..dw {
-            let fx0 = (grid.origin_um[0] + x as f64 * grid.pitch_um[0]) / source_pitch_um;
-            let fx1 = fx0 + grid.pitch_um[0] / source_pitch_um;
-            if fx1 - fx0 >= 1.0 || fy1 - fy0 >= 1.0 {
-                let mut acc = [0.0f64; 3];
-                let mut weight = 0.0f64;
-                let mut sy = fy0.floor() as i64;
-                while (sy as f64) < fy1 {
-                    let wy = (fy1.min(sy as f64 + 1.0) - fy0.max(sy as f64)).max(0.0);
-                    let mut sx = fx0.floor() as i64;
-                    while (sx as f64) < fx1 {
-                        let wx = (fx1.min(sx as f64 + 1.0) - fx0.max(sx as f64)).max(0.0);
-                        let w = wx * wy;
-                        if w > 0.0 {
-                            let syc = sy.clamp(0, sh as i64 - 1) as usize;
-                            let sxc = sx.clamp(0, sw as i64 - 1) as usize;
-                            for c in 0..3 {
-                                acc[c] += w * to_f64(src[(syc * sw + sxc) * 3 + c]);
-                            }
-                            weight += w;
-                        }
-                        sx += 1;
-                    }
-                    sy += 1;
-                }
-                let norm = if weight > 0.0 { weight } else { 1.0 };
-                for c in 0..3 {
-                    out[(y * dw + x) * 3 + c] = from_f64(acc[c] / norm);
-                }
-            } else {
-                let sx = ((fx0 + fx1) * 0.5 - 0.5).clamp(0.0, (sw - 1) as f64);
-                let sy = ((fy0 + fy1) * 0.5 - 0.5).clamp(0.0, (sh - 1) as f64);
-                let x0 = sx.floor() as usize;
-                let y0 = sy.floor() as usize;
-                let x1 = (x0 + 1).min(sw - 1);
-                let y1 = (y0 + 1).min(sh - 1);
-                let wx = from_f64(sx - x0 as f64);
-                let wy = from_f64(sy - y0 as f64);
-                for c in 0..3 {
-                    let p00 = src[(y0 * sw + x0) * 3 + c];
-                    let p10 = src[(y0 * sw + x1) * 3 + c];
-                    let p01 = src[(y1 * sw + x0) * 3 + c];
-                    let p11 = src[(y1 * sw + x1) * 3 + c];
-                    let top = p00 + (p10 - p00) * wx;
-                    let bottom = p01 + (p11 - p01) * wx;
-                    out[(y * dw + x) * 3 + c] = top + (bottom - top) * wy;
+/// Conservative overlap remap of allocated sublayer targets to one cell.
+///
+/// Weights are the exact area overlaps of the cell with the piecewise
+/// constant source grid and sum to one, including the constant edge
+/// extension outside the film bounds, so constants and integrated target
+/// mass survive the transfer.
+fn remap_layers(
+    planes: &[Vec<[f64; 3]>; 3],
+    xs: &[(usize, f64)],
+    ys: &[(usize, f64)],
+    origin: (usize, usize),
+    row_len: usize,
+) -> [[f64; 3]; 3] {
+    let (x_origin, y_origin) = origin;
+    let mut out = [[0.0f64; 3]; 3];
+    for (channel, plane) in planes.iter().enumerate() {
+        let mut layer = [0.0f64; 3];
+        for &(py, wy) in ys {
+            debug_assert!(py >= y_origin);
+            let row = (py - y_origin) * row_len;
+            for &(px, wx) in xs {
+                debug_assert!(px >= x_origin);
+                let weight = wy * wx;
+                let value = plane[row + px - x_origin];
+                for l in 0..3 {
+                    layer[l] += weight * value[l];
                 }
             }
+        }
+        out[channel] = layer;
+    }
+    out
+}
+
+/// Overlap weights of one cell interval `[lo, hi)` with the source pixel
+/// grid, normalized to sum to one. Values outside the film bounds keep the
+/// nearest edge source pixel.
+fn axis_stencil(lo: f64, hi: f64, pitch: f64, extent: usize) -> Vec<(usize, f64)> {
+    let mut out = Vec::with_capacity(3);
+    fill_axis_stencil(&mut out, lo, hi, pitch, extent);
+    out
+}
+
+fn fill_axis_stencil(out: &mut Vec<(usize, f64)>, lo: f64, hi: f64, pitch: f64, extent: usize) {
+    out.clear();
+    debug_assert!(extent > 0);
+    let width = hi - lo;
+    let end = extent as f64 * pitch;
+    if lo < 0.0 {
+        out.push((0, (hi.min(0.0) - lo) / width));
+    }
+    let a = lo.max(0.0);
+    let b = hi.min(end);
+    if b > a {
+        let first = ((a / pitch).floor() as usize).min(extent - 1);
+        let past = ((b / pitch).ceil() as usize).clamp(1, extent);
+        for p in first..past {
+            let overlap = b.min((p + 1) as f64 * pitch) - a.max(p as f64 * pitch);
+            if overlap > 0.0 {
+                out.push((p, overlap / width));
+            }
+        }
+    }
+    if hi > end {
+        out.push((extent - 1, (hi - end.max(lo)) / width));
+    }
+}
+
+/// Cells and normalized weights of one output footprint `[lo, hi)`.
+fn readout_stencil(lo: f64, hi: f64, cell: f64) -> Vec<(i64, f64)> {
+    let width = hi - lo;
+    let first = (lo / cell).floor() as i64;
+    let last = (hi / cell).ceil() as i64 - 1;
+    let mut out = Vec::with_capacity((last - first + 1) as usize);
+    for i in first..=last {
+        let overlap = hi.min((i + 1) as f64 * cell) - lo.max(i as f64 * cell);
+        if overlap > 0.0 {
+            out.push((i, overlap / width));
         }
     }
     out
 }
 
-pub fn apply(
-    target: &ImageBuf,
-    pitch_um: f64,
-    grid: &ReadoutGeometry,
-    params: &ClumpParams,
-) -> Result<ImageBuf, String> {
-    params.validate()?;
-    let (w, h) = (target.width as usize, target.height as usize);
-    if !pitch_um.is_finite() || pitch_um <= 0.0 {
-        return Err("film grain V4: source pitch must be finite and positive".into());
+/// Horizontal formation pass: cell densities → formed cell averages.
+fn horizontal_pass(
+    src: &[f64],
+    dst: &mut [f64],
+    ext_rows: usize,
+    ext_cols: usize,
+    cols: usize,
+    d: usize,
+    taps: &[f64],
+) {
+    debug_assert_eq!(src.len(), ext_rows * ext_cols);
+    dst.par_chunks_mut(cols).enumerate().for_each(|(r, row)| {
+        let cells = &src[r * ext_cols..(r + 1) * ext_cols];
+        for (ci, value) in row.iter_mut().enumerate() {
+            let mut acc = 0.0f64;
+            for (t, &weight) in taps.iter().enumerate() {
+                acc += weight * cells[ci + 2 * d - t];
+            }
+            *value = acc;
+        }
+    });
+}
+
+/// Vertical formation pass over already horizontally formed rows.
+fn vertical_pass(
+    src: &[f64],
+    dst: &mut [f64],
+    ext_rows: usize,
+    cols: usize,
+    rows: usize,
+    d: usize,
+    taps: &[f64],
+) {
+    debug_assert_eq!(src.len(), ext_rows * cols);
+    debug_assert_eq!(dst.len(), rows * cols);
+    dst.par_chunks_mut(cols).enumerate().for_each(|(k, row)| {
+        for (ci, value) in row.iter_mut().enumerate() {
+            let mut acc = 0.0f64;
+            for (t, &weight) in taps.iter().enumerate() {
+                acc += weight * src[(k + 2 * d - t) * cols + ci];
+            }
+            *value = acc;
+        }
+    });
+}
+
+/// Cell-integrated taps of the truncated Gaussian, normalized to sum one.
+///
+/// Tap `d` is `integral_Cj integral_Si g(z - x) dx dz / h` for cell offset
+/// `d`, so filtering cell densities with these taps yields formed cell
+/// averages.
+pub fn support_taps(sigma_um: f64, cell_um: f64) -> Vec<f64> {
+    let radius = (SUPPORT_SIGMAS * sigma_um / cell_um).ceil() as i64 + 1;
+    let mut taps: Vec<f64> = (-radius..=radius)
+        .map(|offset| tap(offset as f64 * cell_um, cell_um, sigma_um))
+        .collect();
+    for value in taps.iter_mut() {
+        if *value < 0.0 {
+            *value = 0.0;
+        }
     }
-    // The law is evaluated on the film lattice, i.e. on the source raster, and the
-    // readout resamples the developed density afterwards. Realizing the field on the
-    // readout grid instead would make the draw depend on how the render was cropped,
-    // scaled, or split into stages, which no film does.
-    let target_data = &target.data;
-    let _m_oct = octaves();
-    let octs = octaves();
-    let mut shared = Vec::with_capacity(octs.len());
-    let mut tmp = vec![ZERO; w * h];
-    for (o, (length_um, _)) in octs.iter().enumerate() {
-        let mut v = noise_field(w, h, params.seed, o as u32);
-        box_blur_approx(&mut v, &mut tmp, w, h, length_um / pitch_um);
-        standardize(&mut v);
-        shared.push(v);
+    let sum: f64 = taps.iter().sum();
+    for value in taps.iter_mut() {
+        *value /= sum;
     }
-    let shared_white = if params.texture {
-        correlated_field(w, h, pitch_um, params.seed, 0)
-    } else {
-        let mut v = noise_field(w, h, params.seed, 0);
-        standardize(&mut v);
-        v
-    };
-    let mut params = params.clone();
-    params.shared_white = std::sync::Arc::new(shared_white);
-    let params = &params;
-    let mut out = ImageBuf::new(w as u32, h as u32);
-    for c in 0..3 {
-        let mut plane = vec![ZERO; w * h];
-        channel(target_data, &mut plane, w, h, pitch_um, params, c, &shared)?;
-        out.data
-            .par_chunks_mut(3)
-            .zip(plane.par_iter())
-            .for_each(|(px, v)| px[c] = *v);
+    taps
+}
+
+/// `k_d = (R(dh + h) - 2 R(dh) + R(dh - h)) / h` for the double
+/// antiderivative `R` of the truncated normalized Gaussian.
+fn tap(delta: f64, cell_um: f64, sigma_um: f64) -> f64 {
+    (double_cdf(delta + cell_um, sigma_um) - 2.0 * double_cdf(delta, sigma_um)
+        + double_cdf(delta - cell_um, sigma_um))
+        / cell_um
+}
+
+/// Double antiderivative of the Gaussian truncated to `[-4 sigma, 4 sigma]`
+/// and normalized to unit integral, anchored at `R(-4 sigma) = 0`.
+///
+/// `R'` is the truncated CDF and `R''` the normalized Gaussian.
+fn double_cdf(y: f64, sigma: f64) -> f64 {
+    let cdf = |x: f64| 0.5 * (1.0 + libm::erf(x / std::f64::consts::SQRT_2));
+    let density = |x: f64| (-0.5 * x * x).exp() / (2.0 * std::f64::consts::PI).sqrt();
+    let low = -SUPPORT_SIGMAS * sigma;
+    let high = SUPPORT_SIGMAS * sigma;
+    if y <= low {
+        return 0.0;
     }
-    let whole = (grid.width as usize, grid.height as usize) == (w, h)
-        && grid.origin_um == [0.0, 0.0]
-        && grid.pitch_um == [pitch_um, pitch_um];
-    if whole {
-        return Ok(out);
+    // Double antiderivative `integral_a^y (y - x) g(x) dx` of the full
+    // normalized Gaussian, with `y * cdf(y/sigma) + sigma * density(y/sigma)`
+    // as its primitive.
+    let raw = |x: f64| x * cdf(x / sigma) + sigma * density(x / sigma);
+    let area = cdf(SUPPORT_SIGMAS) - cdf(-SUPPORT_SIGMAS);
+    let base = raw(low);
+    let lower_mass = cdf(-SUPPORT_SIGMAS);
+    let inside = |x: f64| (raw(x) - base - lower_mass * (x - low)) / area;
+    if y >= high {
+        return inside(high) + (y - high);
     }
-    let mut readout = ImageBuf::new(grid.width, grid.height);
-    readout.data = resample_density(&out.data, w, h, pitch_um, grid);
-    Ok(readout)
+    inside(y)
+}
+
+/// Iterative weighted capacity allocation (`design.md#sublayer-target-allocation`).
+///
+/// Distributes `target` over the layer capacities: unsaturated layers share
+/// the remaining target in proportion to their weights, a layer whose offer
+/// reaches capacity is fixed there, and the rest repeats. If every remaining
+/// weight is zero, the remaining capacity fractions replace them.
+fn allocate(target: f64, capacity: &[f64; 3], weights: &[f64; 3]) -> [f64; 3] {
+    let total: f64 = capacity.iter().sum();
+    let mut out = [0.0f64; 3];
+    if target <= 0.0 {
+        return out;
+    }
+    if target >= total {
+        return *capacity;
+    }
+    let mut active = [capacity[0] > 0.0, capacity[1] > 0.0, capacity[2] > 0.0];
+    let mut remaining = target;
+    while remaining > 0.0 && active.iter().any(|&a| a) {
+        let mut share = [0.0f64; 3];
+        let mut sum = 0.0f64;
+        for l in 0..3 {
+            if active[l] {
+                share[l] = weights[l].max(0.0);
+                sum += share[l];
+            }
+        }
+        if sum <= 0.0 {
+            let fixed: f64 = (0..3).filter(|&l| active[l]).map(|l| capacity[l]).sum();
+            if fixed <= 0.0 {
+                break;
+            }
+            for l in 0..3 {
+                share[l] = if active[l] { capacity[l] / fixed } else { 0.0 };
+            }
+            sum = 1.0;
+        }
+        let mut saturated = false;
+        for l in 0..3 {
+            if !active[l] {
+                continue;
+            }
+            let offer = remaining * share[l] / sum;
+            if offer >= capacity[l] {
+                out[l] = capacity[l];
+                active[l] = false;
+                saturated = true;
+            } else {
+                out[l] = offer;
+            }
+        }
+        if !saturated {
+            break;
+        }
+        // Drop the provisional offers of the still-active layers before the
+        // next iteration computes the target left after the fixed ones.
+        for l in 0..3 {
+            if active[l] {
+                out[l] = 0.0;
+            }
+        }
+        remaining = target - out.iter().sum::<f64>();
+    }
+    out
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn flat(n: u32, d: Scalar) -> ImageBuf {
-        let mut b = ImageBuf::new(n, n);
-        b.data.iter_mut().for_each(|v| *v = d);
-        b
-    }
-
-    fn params(strength: [f64; 3], expectation: bool) -> ClumpParams {
-        let mut p = ClumpParams::delivered();
-        p.strength = strength;
-        p.expectation = expectation;
-        p
-    }
-
-    #[test]
-    fn expectation_mode_reproduces_the_target_exactly() {
-        let src = flat(48, 0.7);
-        let out = apply(
-            &src,
-            3.6676,
-            &ReadoutGeometry::whole(48, 48, 3.6676),
-            &params([1.0, 1.0, 1.0], true),
-        )
-        .unwrap();
-        for (a, b) in src.data.iter().zip(out.data.iter()) {
-            assert!((*a - *b).abs() < 1e-6, "{a} vs {b}");
-        }
-    }
-
-    #[test]
-    fn mean_is_preserved_for_any_strength() {
-        let src = flat(96, 0.7);
-        for strength in [[1.0, 1.0, 1.0], [0.67, 1.0, 1.71], [0.0, 2.0, 0.5]] {
-            let out = apply(
-                &src,
-                3.6676,
-                &ReadoutGeometry::whole(96, 96, 3.6676),
-                &params(strength, false),
-            )
-            .unwrap();
-            let mean = out.data.iter().map(|&v| to_f64(v)).sum::<f64>() / out.data.len() as f64;
-            let rel = (mean - 0.7).abs() / 0.7;
-            assert!(
-                rel < 0.01,
-                "strength {strength:?} relative mean error {rel}"
-            );
-        }
-    }
-
-    #[test]
-    fn variance_grows_with_strength() {
-        let src = flat(96, 0.7);
-        let sd = |out: &ImageBuf| {
-            let m = out.data.iter().map(|&v| to_f64(v)).sum::<f64>() / out.data.len() as f64;
-            (out.data
-                .iter()
-                .map(|&v| (to_f64(v) - m).powi(2))
-                .sum::<f64>()
-                / out.data.len() as f64)
-                .sqrt()
-        };
-        let one = sd(&apply(
-            &src,
-            3.6676,
-            &ReadoutGeometry::whole(96, 96, 3.6676),
-            &params([1.0, 1.0, 1.0], false),
-        )
-        .unwrap());
-        let two = sd(&apply(
-            &src,
-            3.6676,
-            &ReadoutGeometry::whole(96, 96, 3.6676),
-            &params([2.0, 2.0, 2.0], false),
-        )
-        .unwrap());
-        let ratio = two / one;
-        assert!(
-            ratio > 1.4 && ratio < 2.6,
-            "variance ratio {ratio} not near 2"
-        );
-    }
-}
+mod tests;

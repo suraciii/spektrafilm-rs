@@ -290,7 +290,7 @@ The parameter validator owns the accepted document range. Recipes, presets, CLI 
 
 An editor MUST reject input that the validator would reject, before the value enters runtime parameters. The editor MUST NOT accept a value that fails at render time.
 
-The GUI editor reads the single declared range for `camera.film_format_mm` from the editor-range table. Recipes, presets, CLI parameters, and saved state MUST carry every strictly positive value accepted by the validator, including values outside the editor range. The [Film geometry](../film-grain/v3/design.md#film-geometry) contract owns the Dye-specific geometry consequence.
+The GUI editor reads the single declared range for `camera.film_format_mm` from the editor-range table. Recipes, presets, CLI parameters, and saved state MUST carry every strictly positive value accepted by the validator, including values outside the editor range. The [Film geometry](../film-grain/dye/design.md#film-geometry) contract owns the Dye-specific geometry consequence.
 
 The editor range is declared once per parameter path in a single table. The GUI editor reads that table; a missing entry is a defect, not a silent default to the machine range. The same table is the source for the CLI discovery `minimum`/`maximum` output.
 

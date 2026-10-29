@@ -214,7 +214,7 @@ fn execute(
             None
         };
     if header.is_none() {
-        spektrafilm_core::stages::grain_v3::validate_supported(&film, &params)
+        spektrafilm_core::stages::grain_dye::validate_supported(&film, &params)
             .map_err(anyhow::Error::msg)?;
         stage_execution::validate_stage_params(&film, &params).map_err(anyhow::Error::msg)?;
     }
@@ -711,7 +711,7 @@ fn dry_report(
     Ok(
         json!({"data":{"path":data.path,"source":data.source},"film_profile":film_name,"print_profile":print_name,
         "parameters":params,"scanner_provenance":ScannerProvenance::from_params(params),"feature_profiles":features,
-        "film_grain_dye":spektrafilm_core::stages::grain_v3::configuration_report(film, params),
+        "film_grain_dye":spektrafilm_core::stages::grain_dye::configuration_report(film, params),
         "film_grain_fotufilm":spektrafilm_core::stages::grain_fotufilm::configuration_report(params),
         "capture_illuminant":{"requested":params.camera.capture_illuminant,"effective":route.exposes_film().then(||params.camera.capture_illuminant.as_deref().unwrap_or(&film.info.reference_illuminant)),"source":capture_source,"profile_reference_illuminant":film.info.reference_illuminant,"status":if route.exposes_film(){"active"}else{"inactive"},"reason":if route.exposes_film(){None}else{Some("route computes no film exposure from scene RGB")}},
         "readout_illuminant":{"effective":readout.readout_illuminant(),"rule":readout.readout_rule()},

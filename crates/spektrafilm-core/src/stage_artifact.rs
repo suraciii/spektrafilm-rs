@@ -495,7 +495,21 @@ fn read_header_from_root(root: &publication::ArtifactRoot) -> Result<StageHeader
         text.len() as u64 <= MAX_MANIFEST_BYTES,
         "stage manifest exceeds maximum record size"
     );
-    let value = crate::params::sources::parse_carrier(&text, false).map_err(anyhow::Error::msg)?;
+    let mut value =
+        crate::params::sources::parse_carrier(&text, false).map_err(anyhow::Error::msg)?;
+    if let Some(grain) = value.pointer_mut("/baseline/film_render/grain") {
+        crate::params::normalize_grain_control_names(grain).map_err(anyhow::Error::msg)?;
+    }
+    if let Some(lineage) = value
+        .get_mut("lineage")
+        .and_then(serde_json::Value::as_array_mut)
+    {
+        for prior in lineage {
+            if let Some(grain) = prior.pointer_mut("/effective_parameters/film_render/grain") {
+                crate::params::normalize_grain_control_names(grain).map_err(anyhow::Error::msg)?;
+            }
+        }
+    }
     for name in ["film", "print", "original_print"] {
         if let Some(embedded) = value.get(name).filter(|v| !v.is_null()) {
             profile::validate_profile_fields(

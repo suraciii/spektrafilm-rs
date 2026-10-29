@@ -1,4 +1,4 @@
-// Grain V2 working-domain resolution passes.
+// Procedural grain working-domain resolution passes.
 // dimensions: width, height, axis (0/1; 2 = native encoded input), optical.
 // taps: weight count, CCTF wire code (`Cctf::code()` in colorspace.rs),
 // along-axis base, across-axis base.

@@ -185,7 +185,7 @@ impl Runtime {
     ) -> Result<Self, String> {
         let pipeline = Pipeline::new_with_spectral(film, print, params, data_dir)?;
         let record_configuration =
-            crate::stages::grain_v3::resolve_record(&pipeline.film, &pipeline.params)?;
+            crate::stages::grain_dye::resolve_record(&pipeline.film, &pipeline.params)?;
         Ok(Self {
             pipeline,
             record_configuration,
@@ -257,7 +257,7 @@ impl Runtime {
     ) -> Result<Self, String> {
         let pipeline = Pipeline::new_with_spectral_backend(film, print, params, data_dir, backend)?;
         let record_configuration =
-            crate::stages::grain_v3::resolve_record(&pipeline.film, &pipeline.params)?;
+            crate::stages::grain_dye::resolve_record(&pipeline.film, &pipeline.params)?;
         Ok(Self {
             pipeline,
             record_configuration,
@@ -723,7 +723,7 @@ impl Runtime {
             .material
             .as_ref()
             .map_or(&self.pipeline.film, |m| &m.film);
-        let record_configuration = crate::stages::grain_v3::resolve_record(film, &update.params)?;
+        let record_configuration = crate::stages::grain_dye::resolve_record(film, &update.params)?;
         self.pipeline.apply_parameter_update(update);
         self.record_configuration = record_configuration;
         Ok(())

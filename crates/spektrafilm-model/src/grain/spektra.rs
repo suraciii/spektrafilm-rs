@@ -185,13 +185,13 @@ fn observe_sampler(
         .filter(|context| context.enabled())
         .map(|context| {
             let scope = context.scope(
-                "grain_v1_sampler",
+                "grain_spektra_sampler",
                 spektrafilm_backend::telemetry::ObservationKind::Stage,
                 context.purpose(),
             );
             scope.context().record_executor(
                 spektrafilm_backend::telemetry::Executor::Cpu,
-                Some(spektrafilm_backend::telemetry::CpuReason::GrainV1Sampler),
+                Some(spektrafilm_backend::telemetry::CpuReason::SpektraGrainSampler),
             );
             scope
         })

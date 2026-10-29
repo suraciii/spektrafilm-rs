@@ -6,9 +6,9 @@ mod dye_law_paged;
 pub(in crate::wgpu_backend) mod fotufilm;
 pub(in crate::wgpu_backend) mod mt19937;
 pub(in crate::wgpu_backend) mod raster;
-pub mod v1;
+pub mod spektra;
 pub(in crate::wgpu_backend) use raster::RasterStorage;
-pub(in crate::wgpu_backend) use v1::{GRAIN_V1_STAGE_NAME, build_spektra_grain_state};
+pub(in crate::wgpu_backend) use spektra::{GRAIN_SPEKTRA_STAGE_NAME, build_spektra_grain_state};
 
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
@@ -25,7 +25,7 @@ struct ShaderParams {
 fn shader_params(
     width: u32,
     height: u32,
-    params: &spektrafilm_backend::GrainV2GpuParams,
+    params: &spektrafilm_backend::ProceduralGrainGpuParams,
 ) -> ShaderParams {
     let timer = params
         .timer
@@ -69,22 +69,22 @@ fn shader_params(
 }
 
 impl WgpuBackend {
-    pub fn grain_v2_gpu(
+    pub fn grain_procedural_gpu(
         &self,
         img: &ImageBuf,
-        params: &spektrafilm_backend::GrainV2GpuParams,
+        params: &spektrafilm_backend::ProceduralGrainGpuParams,
     ) -> Result<ImageBuf, String> {
         if !self.device.context.enabled() || img.width == 0 || img.height == 0 {
-            return self.grain_v2_gpu_inner(img, params);
+            return self.grain_procedural_gpu_inner(img, params);
         }
-        let (backend, _batch) = self.observed_batch("grain_v2");
-        backend.grain_v2_gpu_inner(img, params)
+        let (backend, _batch) = self.observed_batch("grain_procedural");
+        backend.grain_procedural_gpu_inner(img, params)
     }
     /// Execute Grain Procedural on native encoded RGB with no transfer or primaries conversion.
-    fn grain_v2_gpu_inner(
+    fn grain_procedural_gpu_inner(
         &self,
         img: &ImageBuf,
-        params: &spektrafilm_backend::GrainV2GpuParams,
+        params: &spektrafilm_backend::ProceduralGrainGpuParams,
     ) -> Result<ImageBuf, String> {
         if img.width == 0 || img.height == 0 {
             return Ok(img.clone());
@@ -98,7 +98,7 @@ impl WgpuBackend {
             self.queue
                 .write_buffer(&page.buffer, 0, bytemuck::cast_slice(&input[first..end]));
         }
-        let state = build_grain_v2_state(
+        let state = build_grain_procedural_state(
             &self.device,
             params,
             img.width,
@@ -242,7 +242,7 @@ impl WgpuBackend {
 }
 
 mod procedural;
-pub(super) use procedural::build_grain_v2_state;
+pub(super) use procedural::build_grain_procedural_state;
 
 #[cfg(test)]
 mod tests {

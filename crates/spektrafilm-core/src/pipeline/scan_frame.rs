@@ -61,7 +61,7 @@ impl Pipeline {
         self.params.scanner.requires_full_frame()
             && self.params.taps.inject.is_none()
             && self.params.taps.collect.is_none()
-            && !crate::stages::grain_v3::active(&self.params)
+            && !crate::stages::grain_dye::active(&self.params)
             && !crate::stages::grain_fotufilm::active(&self.params)
     }
 
@@ -340,7 +340,7 @@ impl Pipeline {
         let cacheable = self.params.scanner.requires_full_frame()
             && self.params.taps.inject.is_none()
             && self.params.taps.collect.is_none()
-            && !crate::stages::grain_v3::active(&self.params)
+            && !crate::stages::grain_dye::active(&self.params)
             && !crate::stages::grain_fotufilm::active(&self.params);
         if !cacheable {
             cache.entry = None;

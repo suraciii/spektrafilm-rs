@@ -14,10 +14,10 @@ use super::mt19937::{SpektraMt19937State, build_spektra_mt19937_state_with_limit
 use super::raster::{RasterCommands, RasterStorage, paged_transport, transport};
 use blur::{GrainBlurState, build_grain_blur_f64_paged, build_grain_blur_paged};
 use post::{GrainPostState, build_grain_post};
-use spektrafilm_backend::GrainV1GpuParams;
+use spektrafilm_backend::SpektraGrainGpuParams;
 
 /// Pass name in the resident chain's stage list (the density-fence slot).
-pub(in crate::wgpu_backend) const GRAIN_V1_STAGE_NAME: &str = "grain_spektra_v1";
+pub(in crate::wgpu_backend) const GRAIN_SPEKTRA_STAGE_NAME: &str = "grain_spektra";
 
 /// Bound transport scratch independently of image paging and coefficient
 /// bindings. This changes only execution partitions, never global RNG indices.
@@ -26,7 +26,7 @@ pub(in crate::wgpu_backend) fn transport_window_limit(binding_limit: u64) -> u64
 }
 
 /// Resident grain formation, layer optics, clumping, and density finishing.
-pub(in crate::wgpu_backend) struct SpektraGrainV1State {
+pub(in crate::wgpu_backend) struct SpektraGrainState {
     dispatch: RasterCommands,
     layer_blurs: Vec<GrainBlurState>,
     clump_blur: Option<GrainBlurState>,
@@ -35,7 +35,7 @@ pub(in crate::wgpu_backend) struct SpektraGrainV1State {
     mt19937: Option<SpektraMt19937State>,
 }
 
-impl SpektraGrainV1State {
+impl SpektraGrainState {
     pub(in crate::wgpu_backend) fn submit(&self, backend: &WgpuBackend) -> Result<(), String> {
         self.dispatch.submit(backend)?;
         if let Some(mt) = &self.mt19937 {
@@ -58,9 +58,9 @@ pub(in crate::wgpu_backend) fn build_spektra_grain_state(
     width: u32,
     height: u32,
     density: &(impl RasterStorage + ?Sized),
-    params: &GrainV1GpuParams,
+    params: &SpektraGrainGpuParams,
     backend: &WgpuBackend,
-) -> Result<SpektraGrainV1State, String> {
+) -> Result<SpektraGrainState, String> {
     build_spektra_grain_state_with_limit(
         device,
         width,
@@ -77,10 +77,10 @@ fn build_spektra_grain_state_with_limit(
     width: u32,
     height: u32,
     density: &(impl RasterStorage + ?Sized),
-    params: &GrainV1GpuParams,
+    params: &SpektraGrainGpuParams,
     backend: &WgpuBackend,
     limit: u64,
-) -> Result<SpektraGrainV1State, String> {
+) -> Result<SpektraGrainState, String> {
     let window_limit = transport_window_limit(limit);
     if !device
         .features()
@@ -147,7 +147,7 @@ fn build_spektra_grain_state_with_limit(
         concat!(
             include_str!("../../../../../spektrafilm-shaders/wgsl/f64_math.wgsl"),
             include_str!("../work_f32.wgsl"),
-            include_str!("grain_v1.wgsl")
+            include_str!("spektra.wgsl")
         ),
         &[
             wgpu::BufferBindingType::Uniform,
@@ -371,7 +371,7 @@ fn build_spektra_grain_state_with_limit(
     } else {
         None
     };
-    Ok(SpektraGrainV1State {
+    Ok(SpektraGrainState {
         dispatch,
         layer_blurs,
         clump_blur,

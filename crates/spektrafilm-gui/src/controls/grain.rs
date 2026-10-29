@@ -139,7 +139,7 @@ fn feature_profile_selector(
         return;
     }
     // Amount overrides do not change the canonical named/Custom selection.
-    let current = params.film_render.grain.v2_profile.as_str();
+    let current = params.film_render.grain.procedural_profile.as_str();
     let mut selected = current.to_owned();
     let choices = feature_profiles::names(family)
         .iter()
@@ -246,9 +246,9 @@ pub(crate) fn sections(
                 notice(ui, "controls.grain.single_record_notice");
             }
         } else if engine == GrainEngine::Procedural {
-            if params.film_render.grain.v2_profile != "custom" {
+            if params.film_render.grain.procedural_profile != "custom" {
                 notice(ui, "controls.grain.named_profile_custom_controls");
-            } else if params.film_render.grain.v2_mode == GrainV2Mode::Noise {
+            } else if params.film_render.grain.procedural_mode == ProceduralGrainMode::Noise {
                 notice(ui, "controls.grain.noise_notice");
             }
         }
@@ -325,7 +325,7 @@ fn engine_controls(
                 ui,
                 params,
                 filter,
-                v3_event_area_um2,
+                dye_event_area_um2,
                 "Event area (strength)",
                 "Base statistical event area in square film micrometers; controls grain strength independently of dye support."
             );
@@ -333,7 +333,7 @@ fn engine_controls(
                 ui,
                 params,
                 filter,
-                v3_dye_support_um,
+                dye_support_um,
                 "Dye support (spatial formation)",
                 "Dye support conditions the grain field and image detail in film micrometers; it is not a pure grain diameter control."
             );
@@ -399,7 +399,7 @@ fn engine_controls(
                 params,
                 filter,
                 "Procedural Grain Profiles",
-                "film_render.grain.v2_profile",
+                "film_render.grain.procedural_profile",
                 |ui, params| {
                     let mut cache = SectionLabelCache::default();
                     let mut profile_filter = ControlFilter::new("", &mut cache);
@@ -415,12 +415,12 @@ fn engine_controls(
                     flags.runtime_changed
                 },
             );
-            let resolved = params.film_render.grain.resolved_grain_v2();
+            let resolved = params.film_render.grain.resolved_grain_procedural();
             changed |= optional!(
                 ui,
                 params,
                 filter,
-                v2_amount,
+                procedural_amount,
                 "Amount",
                 resolved.amount * 100.0,
                 "Overall grain amount."
@@ -430,15 +430,15 @@ fn engine_controls(
                 params,
                 filter,
                 "Processing Mode",
-                "film_render.grain.v2_mode",
+                "film_render.grain.procedural_mode",
                 |ui, params| {
                     enum_choice(
                         ui,
                         "Processing Mode",
-                        &mut params.film_render.grain.v2_mode,
+                        &mut params.film_render.grain.procedural_mode,
                         &[
-                            (GrainV2Mode::Analogue, "Analogue"),
-                            (GrainV2Mode::Noise, "Noise"),
+                            (ProceduralGrainMode::Analogue, "Analogue"),
+                            (ProceduralGrainMode::Noise, "Noise"),
                         ],
                         "Procedural grain processing mode.",
                     )
@@ -448,7 +448,7 @@ fn engine_controls(
                 ui,
                 params,
                 filter,
-                v2_size,
+                procedural_size,
                 "Size",
                 resolved.size,
                 "Grain particle size."
@@ -460,12 +460,12 @@ fn engine_controls(
                 "Procedural Advanced",
                 |ui, params, filter| {
                     let mut changed = false;
-                    let resolved = params.film_render.grain.resolved_grain_v2();
+                    let resolved = params.film_render.grain.resolved_grain_procedural();
                     changed |= optional!(
                         ui,
                         params,
                         filter,
-                        v2_shadows,
+                        procedural_shadows,
                         "Shadows",
                         resolved.shadows * 100.0,
                         "Shadow grain amount."
@@ -474,7 +474,7 @@ fn engine_controls(
                         ui,
                         params,
                         filter,
-                        v2_midtones,
+                        procedural_midtones,
                         "Midtones",
                         resolved.midtones * 100.0,
                         "Midtone grain amount."
@@ -483,7 +483,7 @@ fn engine_controls(
                         ui,
                         params,
                         filter,
-                        v2_highlights,
+                        procedural_highlights,
                         "Highlights",
                         resolved.highlights * 100.0,
                         "Highlight grain amount."
@@ -492,7 +492,7 @@ fn engine_controls(
                         ui,
                         params,
                         filter,
-                        v2_chroma,
+                        procedural_chroma,
                         "Chroma",
                         resolved.color * 100.0,
                         "Chromatic grain amount."
@@ -501,7 +501,7 @@ fn engine_controls(
                         ui,
                         params,
                         filter,
-                        v2_resolution_factor,
+                        procedural_resolution_factor,
                         "Film Resolution",
                         resolved.resolution_factor,
                         "Resolution component of the post-scan Procedural appearance algorithm; this does not set scanner lens resolution."
@@ -510,7 +510,7 @@ fn engine_controls(
                         ui,
                         params,
                         filter,
-                        v2_resolution_type,
+                        procedural_resolution_type,
                         "Resolution Type",
                         "Post-scan Procedural appearance resolution method: 0 = Optical Resolution; 1 = Fast Blur. This does not change scanner readout optics."
                     );
@@ -518,7 +518,7 @@ fn engine_controls(
                         ui,
                         params,
                         filter,
-                        v2_timer,
+                        procedural_timer,
                         "Timer",
                         "Explicit Grain Procedural phase timer; 0 uses the seed-derived phase."
                     );
@@ -531,15 +531,15 @@ fn engine_controls(
                     params,
                     filter,
                     "Film Type",
-                    "film_render.grain.v2_film_type",
+                    "film_render.grain.procedural_film_type",
                     |ui, params| {
                         enum_choice(
                             ui,
                             "Film Type",
-                            &mut params.film_render.grain.v2_film_type,
+                            &mut params.film_render.grain.procedural_film_type,
                             &[
-                                (GrainV2FilmType::Negative, "Negative"),
-                                (GrainV2FilmType::Positive, "Positive"),
+                                (ProceduralGrainFilmType::Negative, "Negative"),
+                                (ProceduralGrainFilmType::Positive, "Positive"),
                             ],
                             "Retained Procedural Film Type metadata; rendering kernels do not consume it.",
                         )
@@ -866,7 +866,7 @@ mod tests {
     fn named_profile_retains_custom_controls_but_allows_amount_override() {
         let mut params = RuntimeParams::default();
         params.film_render.grain.engine = GrainEngine::Procedural;
-        params.film_render.grain.v2_shadows = Some(72.0);
+        params.film_render.grain.procedural_shadows = Some(72.0);
         let mut harness = Harness::new_ui_state(
             grain_ui,
             GrainUi {
@@ -876,7 +876,7 @@ mod tests {
         );
         assert!(harness.get_by_label("Shadows").node().is_disabled());
         assert_eq!(
-            harness.state().params.film_render.grain.v2_shadows,
+            harness.state().params.film_render.grain.procedural_shadows,
             Some(72.0)
         );
         harness.state_mut().query = "amount".into();
@@ -899,10 +899,15 @@ mod tests {
         drop(amounts);
         harness.run();
         let grain = &harness.state().params.film_render.grain;
-        assert_eq!(grain.v2_amount, Some(42.0));
-        assert_eq!(grain.v2_profile, "35mm250");
-        assert!((grain.resolved_grain_v2().amount - 0.42).abs() < 1e-6);
-        harness.state_mut().params.film_render.grain.v2_profile = "custom".into();
+        assert_eq!(grain.procedural_amount, Some(42.0));
+        assert_eq!(grain.procedural_profile, "35mm250");
+        assert!((grain.resolved_grain_procedural().amount - 0.42).abs() < 1e-6);
+        harness
+            .state_mut()
+            .params
+            .film_render
+            .grain
+            .procedural_profile = "custom".into();
         harness.state_mut().query = "shadows".into();
         harness.run();
         assert!(!harness.get_by_label("Shadows").node().is_disabled());
@@ -1003,9 +1008,9 @@ mod tests {
     fn procedural_metadata_and_noise_resolution_are_read_only_discovery() {
         let mut params = RuntimeParams::default();
         params.film_render.grain.engine = GrainEngine::Procedural;
-        params.film_render.grain.v2_profile = "custom".into();
-        params.film_render.grain.v2_mode = GrainV2Mode::Noise;
-        params.film_render.grain.v2_resolution_factor = Some(83.0);
+        params.film_render.grain.procedural_profile = "custom".into();
+        params.film_render.grain.procedural_mode = ProceduralGrainMode::Noise;
+        params.film_render.grain.procedural_resolution_factor = Some(83.0);
         let before = params.clone();
         let mut harness = Harness::new_ui_state(
             grain_ui,

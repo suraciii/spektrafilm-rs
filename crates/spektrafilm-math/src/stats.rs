@@ -201,7 +201,7 @@ pub fn fast_binomial_array(base_seed: u64, tag: u64, n: &[i64], p: &[f64]) -> Ve
 /// Exact Poisson variate: Knuth's multiplication below 30, Hörmann's PTRS
 /// above. Rounded normal approximations must not replace it -- this is the law
 /// the Dye model realizes and the one its device kernel must reproduce
-/// decision for decision (`specs/film-grain/v3/design.md#device-count-law`),
+/// decision for decision (`specs/film-grain/dye/design.md#device-count-law`),
 /// unlike [`fast_poisson`], which ports a reference implementation's normal
 /// approximation.
 ///

@@ -478,9 +478,9 @@ impl RenderConfiguration {
                 },
                 mode: match grain.engine {
                     crate::params::GrainEngine::Spektra => GrainMode::Spektra,
-                    crate::params::GrainEngine::Procedural => match grain.v2_mode {
-                        crate::params::grain::GrainV2Mode::Analogue => GrainMode::Analogue,
-                        crate::params::grain::GrainV2Mode::Noise => GrainMode::Noise,
+                    crate::params::GrainEngine::Procedural => match grain.procedural_mode {
+                        crate::params::grain::ProceduralGrainMode::Analogue => GrainMode::Analogue,
+                        crate::params::grain::ProceduralGrainMode::Noise => GrainMode::Noise,
                     },
                     crate::params::GrainEngine::Dye => GrainMode::DyeField,
                     crate::params::GrainEngine::Fotufilm => GrainMode::FotufilmFilm,

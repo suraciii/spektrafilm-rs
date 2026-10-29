@@ -635,3 +635,78 @@ fn writer_rejects_reparse_parent_before_creating_staging_or_destination() {
     assert!(!real.join("film.sfstage").exists());
     assert_eq!(std::fs::read_dir(&real).unwrap().count(), 0);
 }
+
+#[test]
+fn historical_grain_keys_and_preparation_paths_survive_strict_material_reads() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("historical.sfstage");
+    let mut material = state();
+    material.header.baseline.film_render.grain.procedural_amount = Some(27.0);
+    material.header.preparation.explicit_section_paths =
+        vec!["film_render.grain.procedural_amount".into()];
+    material.header.lineage.push(StageLineage {
+        seed: material.header.seed,
+        provenance: material.header.provenance.clone(),
+        effective_parameters: material.header.baseline.clone(),
+    });
+    write(&path, &material).unwrap();
+    edit_manifest(&path, |value| {
+        for pointer in [
+            "/baseline/film_render/grain",
+            "/lineage/0/effective_parameters/film_render/grain",
+        ] {
+            let grain = value.pointer_mut(pointer).unwrap().as_object_mut().unwrap();
+            let keys: Vec<_> = grain.keys().cloned().collect();
+            for new in keys {
+                let old = if let Some(suffix) = new.strip_prefix("procedural_") {
+                    format!("v2_{suffix}")
+                } else if new == "dye_support_um" {
+                    "v3_dye_support_um".into()
+                } else if new == "dye_event_area_um2" {
+                    "v3_event_area_um2".into()
+                } else {
+                    continue;
+                };
+                let v = grain.remove(&new).unwrap();
+                grain.insert(old, v);
+            }
+        }
+        value["preparation"]["explicit_section_paths"] = json!(["film_render.grain.v2_amount"]);
+    });
+    let loaded = read(&path).unwrap();
+    assert_eq!(
+        loaded.header.baseline.film_render.grain.procedural_amount,
+        Some(27.0)
+    );
+    assert_eq!(
+        loaded.header.lineage[0]
+            .effective_parameters
+            .film_render
+            .grain
+            .procedural_amount,
+        Some(27.0)
+    );
+    assert_eq!(
+        loaded.header.preparation.explicit_section_paths,
+        ["film_render.grain.procedural_amount"]
+    );
+    let saved = root.path().join("canonical.sfstage");
+    write(&saved, &loaded).unwrap();
+    let canonical = std::fs::read_to_string(saved.join("stage.json")).unwrap();
+    assert!(!canonical.contains("v2_amount") && !canonical.contains("v3_dye_support_um"));
+    edit_manifest(&path, |value| {
+        value["baseline"]["film_render"]["grain"]["procedural_amount"] = json!(27.0)
+    });
+    assert!(read_header(&path).is_err());
+    edit_manifest(&path, |value| {
+        value["baseline"]["film_render"]["grain"]
+            .as_object_mut()
+            .unwrap()
+            .remove("procedural_amount");
+        value["baseline"]["film_render"]["grain"]
+            .as_object_mut()
+            .unwrap()
+            .remove("v2_amount");
+    });
+    assert!(read_header(&path).is_err());
+}

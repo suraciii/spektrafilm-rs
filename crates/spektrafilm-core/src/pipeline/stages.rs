@@ -212,7 +212,7 @@ impl Pipeline {
             capture.record_skip(StageId::CmyPrint, "no_print_stage_on_route");
         }
         let (mut cur, mut pixel_size_um, ae_ev) = if inject == Tap::RgbIn && cp > ip {
-            crate::stages::grain_v3::validate_supported(&self.film, &self.params)?;
+            crate::stages::grain_dye::validate_supported(&self.film, &self.params)?;
             let image = self.expose_full_input(image, backend, capture.as_deref_mut())?;
             let (working, pitch) = self.rescale_working(&image, backend)?;
             let working = match working {
@@ -260,14 +260,14 @@ impl Pipeline {
                 // fired; the stage evidence reports what was applied.
                 capture.record_compensation(self.params.camera.exposure_compensation_ev as f64);
             }
-            if order[i] == Tap::LogEFilm && crate::stages::grain_v3::active(&self.params) {
+            if order[i] == Tap::LogEFilm && crate::stages::grain_dye::active(&self.params) {
                 let t = Instant::now();
                 let spatial_context = ((collect == Tap::RgbOut || material_geometry.is_some())
-                    && crate::stages::grain_v3::scanner_spatial_context(&self.params))
+                    && crate::stages::grain_dye::scanner_spatial_context(&self.params))
                     || ((collect != Tap::CmyFilm || material_geometry.is_some())
-                        && crate::stages::grain_v3::print_spatial_context(&self.params))
+                        && crate::stages::grain_dye::print_spatial_context(&self.params))
                     || (material_geometry.is_some() && collect == Tap::CmyFilm);
-                let plan = crate::stages::grain_v3::readout_plan(
+                let plan = crate::stages::grain_dye::readout_plan(
                     cur.width,
                     cur.height,
                     &self.params,
@@ -287,7 +287,7 @@ impl Pipeline {
                 // axis differ; the field itself retains both exact pitches.
                 let long_axis = usize::from(cur.height > cur.width);
                 let requested_pitch_um = geometry.output_pitch_um[long_axis];
-                cur = crate::stages::grain_v3::readout(
+                cur = crate::stages::grain_dye::readout(
                     &cur,
                     &self.film,
                     &self.params,
@@ -297,18 +297,18 @@ impl Pipeline {
                 )?;
                 stage_space = readout_space;
                 pixel_size_um = requested_pitch_um;
-                print_stage_timing(stage_timings_enabled(), "grain_v3_readout", t);
-                record_stage_timing(&mut stage_timings, "grain_v3_readout", t);
+                print_stage_timing(stage_timings_enabled(), "grain_dye_readout", t);
+                record_stage_timing(&mut stage_timings, "grain_dye_readout", t);
                 dump_if_env("SPEKTRAFILM_DUMP_FILM_DENSITY", &cur);
             }
             if order[i] == Tap::LogEFilm && crate::stages::grain_fotufilm::active(&self.params) {
                 let t = Instant::now();
                 let spatial_context = ((collect == Tap::RgbOut || material_geometry.is_some())
-                    && crate::stages::grain_v3::scanner_spatial_context(&self.params))
+                    && crate::stages::grain_dye::scanner_spatial_context(&self.params))
                     || ((collect != Tap::CmyFilm || material_geometry.is_some())
-                        && crate::stages::grain_v3::print_spatial_context(&self.params))
+                        && crate::stages::grain_dye::print_spatial_context(&self.params))
                     || (material_geometry.is_some() && collect == Tap::CmyFilm);
-                let plan = crate::stages::grain_v3::readout_plan(
+                let plan = crate::stages::grain_dye::readout_plan(
                     cur.width,
                     cur.height,
                     &self.params,
@@ -356,7 +356,7 @@ impl Pipeline {
             return Ok(cur);
         }
         match output_crop {
-            Some(rect) => crate::stages::grain_v3::crop_output_on_backend(cur, rect, backend),
+            Some(rect) => crate::stages::grain_dye::crop_output_on_backend(cur, rect, backend),
             None => Ok(cur),
         }
     }

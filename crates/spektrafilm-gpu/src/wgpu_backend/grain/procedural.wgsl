@@ -1,4 +1,4 @@
-// Grain V2: independent deterministic noise, native encoded RGB composition.
+// Procedural grain: independent deterministic noise, native encoded RGB composition.
 // Uniform layout: dimensions [width,height,phase_bits,mode], controls [amount,shadows,
 // midtones,highlights], geometry [raw_scale,cluster_size,rotation,color], flags
 // [resolution_factor,resolution_type,colored,clustered], window [first,count,row_base,rows],
@@ -17,7 +17,7 @@ struct Params { dimensions:vec4<u32>, controls:vec4<f32>, geometry:vec4<f32>, fl
 @group(0) @binding(5) var<storage,read_write> output_rgb:array<f32>;
 // The local WGPU HAL uses this named function to select strict Metal math.
 fn spektrafilm_strict_float(v:f32)->f32{return v;}
-// Vulkan selects this module only; V1/MT19937 retain their own math contract.
+// Vulkan selects this module only; Spektra/MT19937 retain their own math contract.
 fn spektrafilm_procedural_no_contraction(v:f32)->f32{return v;}
 fn hash(x0:u32)->u32 {
  var x=x0; x+=x<<10u; x^=x>>6u; x+=x<<3u; x^=x>>11u; x+=x<<15u; return x;
@@ -42,7 +42,7 @@ fn snoise(timer:f32,v:vec4<f32>)->vec4<f32> {
  let q=floor(fract(0.5*ip)*7.)*ip-1.;
  return vec4(q,q,q,1.5-(abs(q)+abs(q)+abs(q)));
 }
-// Independent Taylor trig and mathematical 2/pi reduction, shared with v2.rs.
+// Independent Taylor trig and mathematical 2/pi reduction, shared with procedural.rs.
 // Split constants avoid depending on device-specific FMA fusion below 8192.
 // The integer fallback covers all finite binary32 magnitudes.
 // The sine hash amplifies a one-ULP trig change into a different permutation.

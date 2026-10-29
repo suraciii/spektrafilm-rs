@@ -731,6 +731,15 @@ impl Preset {
         {
             value["parameters"]["scanner"]["conversion_style"] = "standard".into();
         }
+        if let Some(grain) = value.pointer_mut("/parameters/film_render/grain") {
+            crate::params::normalize_grain_control_names(grain).map_err(|detail| {
+                crate::params::ValidationError::new(
+                    crate::params::ValidationReason::LegacyConflict,
+                    "film_render.grain",
+                    detail,
+                )
+            })?;
+        }
         let wire: Wire = serde_json::from_value(value).map_err(|e| {
             PresetDocumentError::new(
                 PresetDocumentReason::Parser {

@@ -302,9 +302,9 @@ pub fn create_fixtures(
                 &[
                     "film_render.grain.active=true",
                     "film_render.grain.engine=procedural",
-                    "film_render.grain.v2_profile=custom",
-                    "film_render.grain.v2_mode=noise",
-                    "film_render.grain.v2_amount=25",
+                    "film_render.grain.procedural_profile=custom",
+                    "film_render.grain.procedural_mode=noise",
+                    "film_render.grain.procedural_amount=25",
                 ],
             ),
             &[0, 42, 99],
@@ -442,7 +442,10 @@ pub fn create_fixtures(
         for (name, edits) in [
             ("baseline", vec![]),
             ("candidate", vec!["camera.exposure_compensation_ev=0.25"]),
-            ("grain-candidate", vec!["film_render.grain.v2_amount=35"]),
+            (
+                "grain-candidate",
+                vec!["film_render.grain.procedural_amount=35"],
+            ),
         ] {
             target["id"] = json!(name);
             target["changes"]["set"] = json!(edits);
@@ -722,9 +725,9 @@ mod tests {
             "debug.deactivate_stochastic_effects=false",
             "film_render.grain.active=true",
             "film_render.grain.engine=procedural",
-            "film_render.grain.v2_profile=custom",
-            "film_render.grain.v2_mode=noise",
-            "film_render.grain.v2_amount=25",
+            "film_render.grain.procedural_profile=custom",
+            "film_render.grain.procedural_mode=noise",
+            "film_render.grain.procedural_amount=25",
         ]);
         assert_eq!(
             complete["cases"][2]["configuration"]["set"],

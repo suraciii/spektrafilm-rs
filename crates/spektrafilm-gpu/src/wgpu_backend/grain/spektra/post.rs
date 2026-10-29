@@ -1,7 +1,7 @@
 use super::super::super::{CachedPipelineRef, WgpuBackend};
 use super::super::raster::{RasterCommands, RasterStorage, paged_transport, transport, uniform};
 use super::blur::{GrainBlurState, build_grain_blur_paged};
-use spektrafilm_backend::GrainV1GpuParams;
+use spektrafilm_backend::SpektraGrainGpuParams;
 
 const SHARPEN_SHADER: &str = concat!(
     include_str!("../../../../../spektrafilm-shaders/wgsl/f64_math.wgsl"),
@@ -22,7 +22,7 @@ pub(in crate::wgpu_backend) fn build_grain_post(
     width: u32,
     height: u32,
     density: &(impl RasterStorage + ?Sized),
-    params: &GrainV1GpuParams,
+    params: &SpektraGrainGpuParams,
 ) -> Result<GrainPostState, String> {
     build_grain_post_with_limit(
         backend,
@@ -39,7 +39,7 @@ fn build_grain_post_with_limit(
     width: u32,
     height: u32,
     density: &(impl RasterStorage + ?Sized),
-    params: &GrainV1GpuParams,
+    params: &SpektraGrainGpuParams,
     limit: u64,
 ) -> Result<GrainPostState, String> {
     if !backend
@@ -433,8 +433,8 @@ mod tests {
     // ratio and output products are f32; the relative allowance is 1e-5.
     const MAX_RELATIVE_MASS_ERROR: f64 = 1e-5;
 
-    fn params() -> GrainV1GpuParams {
-        GrainV1GpuParams {
+    fn params() -> SpektraGrainGpuParams {
+        SpektraGrainGpuParams {
             base_seed: 7,
             layer_count: 3,
             density_min: [0.03, 0.05, 0.07],
@@ -462,7 +462,7 @@ mod tests {
         width: u32,
         height: u32,
         input: &[f32],
-        p: &GrainV1GpuParams,
+        p: &SpektraGrainGpuParams,
     ) -> Vec<f32> {
         let bytes = input.len() as u64 * 4;
         let density = gpu
@@ -598,7 +598,12 @@ mod tests {
 
     /// The layered reference tail after composition: optional `grain_blur`,
     /// then multiplicative USM, then the floor subtraction.
-    fn reference_layered(input: &[f32], width: u32, height: u32, p: &GrainV1GpuParams) -> Vec<f32> {
+    fn reference_layered(
+        input: &[f32],
+        width: u32,
+        height: u32,
+        p: &SpektraGrainGpuParams,
+    ) -> Vec<f32> {
         let mut image =
             ImageBuf::from_data(width, height, input.iter().map(|&v| from_f32(v)).collect());
         if p.grain_blur > 0.0 {
@@ -639,7 +644,7 @@ mod tests {
         width: u32,
         height: u32,
         input: &[f32],
-        p: &GrainV1GpuParams,
+        p: &SpektraGrainGpuParams,
         expected: &[f32],
         label: &str,
     ) {

@@ -1747,15 +1747,15 @@ mod tests {
     fn feature_copy_uses_canonical_family_leaves_including_custom_and_null_overrides() {
         let (app, _directory, _ctx) = app();
         let mut destination = app.capture_photograph_settings().unwrap();
-        destination.params.film_render.grain.v2_size = Some(33.0);
+        destination.params.film_render.grain.procedural_size = Some(33.0);
         let mut source = destination.clone();
-        source.params.film_render.grain.v2_profile = "custom".into();
-        source.params.film_render.grain.v2_size = None;
-        source.params.film_render.grain.v2_amount = Some(23.0);
+        source.params.film_render.grain.procedural_profile = "custom".into();
+        source.params.film_render.grain.procedural_size = None;
+        source.params.film_render.grain.procedural_amount = Some(23.0);
         source.params.film_render.grain.active = !destination.params.film_render.grain.active;
         source.params.film_render.grain.engine =
             spektrafilm_core::params::grain::GrainEngine::Procedural;
-        source.params.film_render.grain.v2_resolution_type = 0;
+        source.params.film_render.grain.procedural_resolution_type = 0;
         source.params.film_render.halation.halation_first_sigma_um = [41.0, 42.0, 43.0];
         source.params.film_render.halation.halation_strength = [0.11, 0.02, 0.001];
         source.params.film_render.halation.active = !destination.params.film_render.halation.active;
@@ -1821,9 +1821,9 @@ mod tests {
             app.begin_adjustment_frame(&ctx);
             match family {
                 FeatureProfileFamily::GrainProcedural => {
-                    app.params.film_render.grain.v2_profile = "custom".into();
-                    app.params.film_render.grain.v2_amount = Some(23.0);
-                    app.params.film_render.grain.v2_size = None;
+                    app.params.film_render.grain.procedural_profile = "custom".into();
+                    app.params.film_render.grain.procedural_amount = Some(23.0);
+                    app.params.film_render.grain.procedural_size = None;
                 }
                 FeatureProfileFamily::Halation => {
                     app.params.film_render.halation.halation_first_sigma_um = [41.0, 42.0, 43.0];
@@ -1844,7 +1844,7 @@ mod tests {
                 .settings
                 .clone();
             app.begin_adjustment_frame(&ctx);
-            app.params.film_render.grain.v2_amount = Some(72.0);
+            app.params.film_render.grain.procedural_amount = Some(72.0);
             app.params.film_render.halation.halation_strength = [0.2, 0.1, 0.05];
             app.mark_parameters_changed_invalidating_calibration();
             app.end_adjustment_frame(&ctx);

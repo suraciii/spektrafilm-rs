@@ -7,7 +7,7 @@ License: MIT OR Apache-2.0 (full texts included)
 Local modification: src/metal/device.rs recognizes the Naga function
 spektrafilm_strict_float and compiles only modules containing that marker
 with Metal fast math disabled and floating-point contraction disabled.
-Grain V2 requires CPU binary32 intermediate rounding because its hashes
+Procedural grain requires CPU binary32 intermediate rounding because its hashes
 amplify a one-ULP arithmetic difference into a different noise permutation.
 All other shader modules retain the upstream compilation options.
 
@@ -20,7 +20,7 @@ Local Vulkan modification: src/vulkan/procedural_math.rs recognizes only
 spektrafilm_procedural_no_contraction. Both Naga SPIR-V emission paths in
 src/vulkan/device.rs add NoContraction to ordinary float add/subtract/multiply/
 divide and vector-times-scalar results in this module. Explicit ExtInst Fma remains unchanged. This
-marker belongs to Grain V2 (Analogue and Digital), not V1 or MT19937. The Metal
+marker belongs to Procedural grain (Analogue and Digital), not Spektra or MT19937. The Metal
 marker remains separate. Raw SPIR-V input bypasses the Naga-specific patch.
 This preserves separate rounding, not general IEEE division or denormals.
 Workspace integration tests include this module to test the vendored transform.

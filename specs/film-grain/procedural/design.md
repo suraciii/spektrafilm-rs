@@ -9,9 +9,9 @@
 
 ## Vulkan arithmetic
 
-The V2 module MUST use a dedicated Vulkan marker.
-The marker MUST NOT change V1 or MT19937 compilation.
-Both Analogue and Digital share the V2 module.
+The Procedural module MUST use a dedicated Vulkan marker.
+The marker MUST NOT change Spektra or MT19937 compilation.
+Both Analogue and Digital share the Procedural module.
 
 Ordinary float add, subtract, multiply, and divide results, including vector-times-scalar results, MUST retain separate rounding through SPIR-V `NoContraction`.
 Explicit fused operations MUST remain unchanged.
