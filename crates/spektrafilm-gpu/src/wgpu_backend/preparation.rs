@@ -352,4 +352,55 @@ impl WgpuBackend {
             neutral: [neutral[0], neutral[1], neutral[2]],
         })
     }
+
+    /// Upload a host-resolved spectral exposure table on devices without
+    /// native f64. The table layout matches the device kernel output:
+    /// `cells * 3` f64 values in cell-major order, narrowed to f32 for the
+    /// runtime sampler; the first three f64 values hold the neutral response.
+    pub(super) fn upload_spectral_table_host(
+        &self,
+        table: &[f64],
+        size: u32,
+        neutral: [f64; 3],
+    ) -> Result<PreparedTable, String> {
+        let cells = u64::from(size)
+            .checked_mul(u64::from(size))
+            .ok_or("spectral dimensions overflow")?;
+        let expected = cells
+            .checked_mul(3)
+            .and_then(|values| usize::try_from(values).ok())
+            .ok_or("spectral dimensions overflow")?;
+        if size < 2 || table.len() != expected {
+            return Err("host spectral table does not match its declared size".to_owned());
+        }
+        let narrowed: Vec<f32> = table.iter().map(|value| *value as f32).collect();
+        let buffer = self
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("spectral_tc_host_upload_f32"),
+                contents: bytemuck::cast_slice(&narrowed),
+                usage: wgpu::BufferUsages::STORAGE
+                    | wgpu::BufferUsages::COPY_SRC
+                    | wgpu::BufferUsages::COPY_DST,
+            });
+        let mut wide = table.to_vec();
+        wide[0..3].copy_from_slice(&neutral);
+        let f64_buffer = self
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("spectral_tc_host_upload_f64"),
+                contents: bytemuck::cast_slice(&wide),
+                usage: wgpu::BufferUsages::STORAGE
+                    | wgpu::BufferUsages::COPY_SRC
+                    | wgpu::BufferUsages::COPY_DST,
+            });
+        Ok(PreparedTable {
+            values: Arc::new(PreparationTable {
+                backend_id: self.backend_id,
+                buffer,
+                f64_buffer,
+            }),
+            neutral,
+        })
+    }
 }

@@ -16,14 +16,15 @@ struct MeterParams {
     radius_x: u32,
     cctf_kind: u32,
     pattern: u32,
-    sigma_y: f64,
-    sigma_x: f64,
-    factor_y: f64,
-    factor_x: f64,
-    y_row: [f64; 4],
-    mid_grey: f64,
+    sigma_y: f32,
+    sigma_x: f32,
+    factor_y: f32,
+    factor_x: f32,
+    y_row: [f32; 4],
+    mid_grey: f32,
     decode: u32,
     pad: u32,
+    pad2: u32,
     tail: [u32; 4],
 }
 
@@ -97,14 +98,6 @@ fn build_meter_state_with_limit(
 ) -> Result<MeterState, String> {
     backend.check_cancelled()?;
     let device = &backend.device;
-    if !device
-        .features()
-        .contains(wgpu::Features::SHADER_F64 | wgpu::Features::SHADER_INT64)
-    {
-        return Err(
-            "auto-exposure metering requires device binary64 arithmetic and 64-bit integers".into(),
-        );
-    }
     if params.width == 0 || params.height == 0 || params.max_size != 256 {
         return Err("auto-exposure metering requires nonempty input and the reference 256-pixel preview cap".into());
     }
@@ -112,13 +105,13 @@ fn build_meter_state_with_limit(
         return Err("metering source dimensions do not match the resolved request".into());
     }
     let (cols, rows, factor_x, factor_y) = preview_dimensions(params.width, params.height);
-    let luminance_bytes = u64::from(rows) * u64::from(cols) * 8;
+    let luminance_bytes = u64::from(rows) * u64::from(cols) * 4;
     // The reference's bounded preview and fixed reduction coefficients remain
     // the minimum working set. Source size and rows*width are no longer limits.
-    if luminance_bytes.max(200) > limit {
+    if luminance_bytes.max(100) > limit {
         return Err(format!(
             "metering minimum preview/reduction binding needs {} bytes; limit is {limit}",
-            luminance_bytes.max(200)
+            luminance_bytes.max(100)
         ));
     }
     // Contiguous buffers produced by spatial stages are valid carriers too.
@@ -161,7 +154,7 @@ fn build_meter_state_with_limit(
     } else {
         source
     };
-    let capacity = chunk_elements(limit, 24)? as u32;
+    let capacity = chunk_elements(limit, 12)? as u32;
     let sigma_x = ((factor_x - 1.0) / 2.0).max(0.0);
     let sigma_y = ((factor_y - 1.0) / 2.0).max(0.0);
     let p = MeterParams {
@@ -182,14 +175,20 @@ fn build_meter_state_with_limit(
             "highlight_weighted" => 6,
             _ => 7,
         },
-        sigma_y,
-        sigma_x,
-        factor_y,
-        factor_x,
-        y_row: [params.y_row[0], params.y_row[1], params.y_row[2], 0.0],
-        mid_grey: params.mid_grey,
+        sigma_y: sigma_y as f32,
+        sigma_x: sigma_x as f32,
+        factor_y: factor_y as f32,
+        factor_x: factor_x as f32,
+        y_row: [
+            params.y_row[0] as f32,
+            params.y_row[1] as f32,
+            params.y_row[2] as f32,
+            0.0,
+        ],
+        mid_grey: params.mid_grey as f32,
         decode: params.cctf_kind.is_some() as u32,
         pad: 0,
+        pad2: 0,
         tail: [0; 4],
     };
     let uniform = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -222,13 +221,13 @@ fn build_meter_state_with_limit(
         vertical.push((
             first,
             count,
-            buffer("meter_vertical_page", u64::from(count) * 24),
+            buffer("meter_vertical_page", u64::from(count) * 12),
         ));
     }
-    let gathered = buffer("meter_tap_gather", u64::from(capacity) * 24);
-    let accumulated = buffer("meter_horizontal_sum", u64::from(horizontal_block) * 24);
+    let gathered = buffer("meter_tap_gather", u64::from(capacity) * 12);
+    let accumulated = buffer("meter_horizontal_sum", u64::from(horizontal_block) * 12);
     let luminance = buffer("meter_luminance", luminance_bytes);
-    let result = buffer("meter_ev", 8);
+    let result = buffer("meter_ev", 4);
     // Gather only copies source values on device. Accumulation is a separate
     // ordered loop, so page order cannot change floating-point summation.
     for row in 0..rows {
@@ -256,7 +255,6 @@ fn build_meter_state_with_limit(
                         &mut encoder,
                         &uniform,
                         concat!(
-                            include_str!("../../../../spektrafilm-shaders/wgsl/f64_math.wgsl"),
                             include_str!("../../../../spektrafilm-shaders/wgsl/meter_lib.wgsl"),
                             include_str!("gather_vertical.wgsl")
                         ),
@@ -276,7 +274,6 @@ fn build_meter_state_with_limit(
                     &mut encoder,
                     &uniform,
                     concat!(
-                        include_str!("../../../../spektrafilm-shaders/wgsl/f64_math.wgsl"),
                         include_str!("../../../../spektrafilm-shaders/wgsl/meter_lib.wgsl"),
                         include_str!("accumulate.wgsl")
                     ),
@@ -310,7 +307,6 @@ fn build_meter_state_with_limit(
                         &mut encoder,
                         &uniform,
                         concat!(
-                            include_str!("../../../../spektrafilm-shaders/wgsl/f64_math.wgsl"),
                             include_str!("../../../../spektrafilm-shaders/wgsl/meter_lib.wgsl"),
                             include_str!("gather_horizontal.wgsl")
                         ),
@@ -330,7 +326,6 @@ fn build_meter_state_with_limit(
                     &mut encoder,
                     &uniform,
                     concat!(
-                        include_str!("../../../../spektrafilm-shaders/wgsl/f64_math.wgsl"),
                         include_str!("../../../../spektrafilm-shaders/wgsl/meter_lib.wgsl"),
                         include_str!("accumulate.wgsl")
                     ),
@@ -346,7 +341,7 @@ fn build_meter_state_with_limit(
                 &mut encoder,
                 &uniform,
                 concat!(
-                    include_str!("../../../../spektrafilm-shaders/wgsl/f64_math.wgsl"),
+                    include_str!("../../../../spektrafilm-shaders/wgsl/cctf_lib.wgsl"),
                     include_str!("../../../../spektrafilm-shaders/wgsl/meter_lib.wgsl"),
                     include_str!("luminance.wgsl")
                 ),
@@ -370,11 +365,11 @@ fn build_meter_state_with_limit(
         backend.submit_commands(Some(encoder.finish()))?;
         backend.check_cancelled()?;
     }
-    let weights: [f64; 25] = std::array::from_fn(|i| {
+    let weights: [f32; 25] = std::array::from_fn(|i| {
         let y = (i / 5) as f64 / 2.0 - 1.0;
         let x = (i % 5) as f64 / 2.0 - 1.0;
         let distance = (x * x + y * y).sqrt() / 2.0f64.sqrt();
-        0.5 * (1.0 + (std::f64::consts::PI * distance).cos())
+        (0.5 * (1.0 + (std::f64::consts::PI * distance).cos())) as f32
     });
     let weights = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("meter_matrix_weights"),
@@ -383,7 +378,6 @@ fn build_meter_state_with_limit(
     });
     let pipeline = backend.cached_pipeline(
         concat!(
-            include_str!("../../../../spektrafilm-shaders/wgsl/f64_math.wgsl"),
             include_str!("../../../../spektrafilm-shaders/wgsl/meter_lib.wgsl"),
             include_str!("../../../../spektrafilm-shaders/wgsl/meter_reduce.wgsl")
         ),
@@ -501,7 +495,7 @@ impl MeterState {
         check_cancelled()?;
         let staging = pipe.device().create_buffer(&wgpu::BufferDescriptor {
             label: Some("meter_ev_readback"),
-            size: 8,
+            size: 4,
             mapped_at_creation: false,
             usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
         });
@@ -515,13 +509,13 @@ impl MeterState {
             pass.set_bind_group(0, &self.group, &[]);
             pass.dispatch_workgroups(1, 1, 1);
         }
-        encoder.copy_buffer_to_buffer(&self.result, 0, &staging, 0, 8);
+        encoder.copy_buffer_to_buffer(&self.result, 0, &staging, 0, 4);
         check_cancelled()?;
         pipe.queue()
             .submit_cancellable(Some(encoder.finish()), self.cancellation.as_ref())?;
-        let ev = pipe.read_mapped::<f64>(&staging, 8)[0];
+        let ev = pipe.read_mapped::<f32>(&staging, 4)[0];
         check_cancelled()?;
-        Ok(ev)
+        Ok(f64::from(ev))
     }
 }
 

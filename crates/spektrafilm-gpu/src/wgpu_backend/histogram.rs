@@ -1,60 +1,51 @@
 //! Retained-output tonal distribution. Source samples never cross the boundary.
-//! Exact f32 bin transitions are searched once in device binary64 arithmetic
-//! and retained with the backend identity, including observed derivatives.
+//! Exact f32 bin transitions are the reference's own binary64 bisection,
+//! resolved once on the host and retained with the backend identity, including
+//! observed derivatives. Binning itself is integer and normalization is f32.
 use super::*;
 use spektrafilm_backend::DeviceImage;
 
-const BOUNDARIES_SHADER: &str = concat!(
-    include_str!("../../../spektrafilm-shaders/wgsl/f64_math.wgsl"),
-    include_str!("../../../spektrafilm-shaders/wgsl/retained_histogram_boundaries.wgsl"),
-);
+/// First f32 word whose sRGB-encoded value rounds into the next bin. This is
+/// the reference's own binary64 bisection, resolved on the host because the
+/// table is bounded and image-independent.
+fn histogram_boundaries_host() -> [u32; 63] {
+    std::array::from_fn(|index| {
+        let mut low = 0u32;
+        let mut high = 1.0f32.to_bits();
+        while low < high {
+            let middle = low + (high - low) / 2;
+            let encoded =
+                spektrafilm_math::colorspace::srgb_encode_f64(f32::from_bits(middle) as f64);
+            if (encoded * 63.0).round() as usize > index {
+                high = middle;
+            } else {
+                low = middle + 1;
+            }
+        }
+        low
+    })
+}
 
 impl WgpuBackend {
     fn histogram_boundaries_gpu(&self) -> Result<&wgpu::Buffer, String> {
         self.check_cancelled()?;
-        if !self.device.features().contains(wgpu::Features::SHADER_F64) {
-            return Err("histogram boundary preparation requires device f64".to_owned());
-        }
         if let Some(boundaries) = self.pipe.histogram_boundaries.get() {
             return Ok(boundaries);
         }
-        let boundaries = self.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("histogram_boundaries"),
-            size: 63 * 4,
-            usage: wgpu::BufferUsages::STORAGE
-                | if cfg!(test) {
-                    wgpu::BufferUsages::COPY_SRC
-                } else {
-                    wgpu::BufferUsages::empty()
-                },
-            mapped_at_creation: false,
-        });
-        let pipeline = self.cached_pipeline(
-            BOUNDARIES_SHADER,
-            &[wgpu::BufferBindingType::Storage { read_only: false }],
-        );
-        let group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("histogram_boundaries"),
-            layout: &pipeline.layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: boundaries.as_entire_binding(),
-            }],
-        });
-        let mut encoder = self.device.create_command_encoder(&Default::default());
-        {
-            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+        let words = histogram_boundaries_host();
+        let boundaries = self
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("histogram_boundaries"),
-                timestamp_writes: None,
+                contents: bytemuck::cast_slice(&words),
+                usage: wgpu::BufferUsages::STORAGE
+                    | wgpu::BufferUsages::COPY_DST
+                    | if cfg!(test) {
+                        wgpu::BufferUsages::COPY_SRC
+                    } else {
+                        wgpu::BufferUsages::empty()
+                    },
             });
-            pass.set_pipeline(&pipeline.pipeline);
-            pass.set_bind_group(0, &group, &[]);
-            pass.dispatch_workgroups(1, 1, 1);
-        }
-        self.check_cancelled()?;
-        // Concurrent initializers may submit identical boundaries. Publish only
-        // a completed submission; all consumers then enqueue after its search.
-        self.submit_commands(Some(encoder.finish()))?;
         Ok(self.pipe.histogram_boundaries.get_or_init(|| boundaries))
     }
 

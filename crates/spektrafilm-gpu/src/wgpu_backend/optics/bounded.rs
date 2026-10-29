@@ -6,8 +6,7 @@ use crate::wgpu_backend::film_chain::device_image::BufferPayload;
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 struct Params {
     header: [u32; 4],
-    pad: [u32; 4],
-    controls: [f64; 4],
+    controls: [f32; 4],
 }
 
 fn reflect(index: i64, extent: u32) -> u32 {
@@ -50,22 +49,22 @@ pub(super) fn workspace_plan(
     limit: u64,
     print: bool,
 ) -> Result<u64, String> {
-    if width == 0 || height == 0 || k == 0 || limit < 24 {
+    if width == 0 || height == 0 || k == 0 || limit < 12 {
         return Err("optical diffusion cannot hold its minimum working set".into());
     }
     let image = u128::from(width) * u128::from(height) * 12;
-    let taps = u128::from(k) * u128::from(k) * 24;
+    let taps = u128::from(k) * u128::from(k) * 12;
     let uniforms = std::mem::size_of::<Params>() as u128;
     let temporary = if taps <= u128::from(limit) {
         let (tw, th) = window_geometry(width, height, k, limit);
         let halo = (u128::from(tw) + u128::from(k - 1)) * (u128::from(th) + u128::from(k - 1)) * 12;
         taps + 3 * (halo + u128::from(tw) * u128::from(th) * 12 + uniforms)
     } else {
-        let capacity = limit / 24;
+        let capacity = limit / 12;
         let count = capacity.min(u64::from(width));
         let n = capacity.min(u64::from(k));
-        u128::from(count) * 48
-            + 3 * (u128::from(count + n - 1) * 12 + u128::from(n) * 24 + uniforms)
+        u128::from(count) * 36
+            + 3 * (u128::from(count + n - 1) * 12 + u128::from(n) * 12 + uniforms)
     };
     // Two queued batches and one encoded batch can own tile/domain adapters.
     let domain = if print {
@@ -105,12 +104,6 @@ impl WgpuBackend {
         params: &spektrafilm_backend::OpticalDiffusionGpuParams<'_>,
         print_exposure: Option<f64>,
     ) -> Result<Vec<crate::wgpu_backend::paged::ImagePage>, String> {
-        if !self.device.features().contains(wgpu::Features::SHADER_F64) {
-            return Err(
-                "optical diffusion requires native shader binary64 for the reference convolution"
-                    .into(),
-            );
-        }
         if let Some(scale) = print_exposure {
             if !scale.is_finite() {
                 return Err("optical diffusion print exposure is not finite".into());
@@ -140,25 +133,22 @@ impl WgpuBackend {
             return Err("optical diffusion has invalid resolved coefficients".into());
         }
         let limit = crate::wgpu_backend::bounded::storage_binding_limit(self)?;
-        // Three f64 lanes per tap and per output accumulator. No full-image
+        // Three f32 lanes per tap and per output accumulator. No full-image
         // or full-kernel binding is needed, even when the radius exceeds a page.
-        let capacity = (limit / 24).min(u64::from(u32::MAX)) as u32;
+        let capacity = (limit / 12).min(u64::from(u32::MAX)) as u32;
         if capacity == 0 {
             return Err(format!(
-                "optical diffusion minimum working set needs 24 bytes per binding; limit is {limit}"
+                "optical diffusion minimum working set needs 12 bytes per binding; limit is {limit}"
             ));
         }
         #[cfg(test)]
         self.pipe.test_operation("optical_diffusion")?;
         let minimum_halo = u64::from(k) * u64::from(k) * 12;
-        if minimum_halo <= limit && (area as u64) * 24 <= limit {
+        if minimum_halo <= limit && (area as u64) * 12 <= limit {
             return self.diffusion_windows(source, params, limit, k);
         }
         let pipeline = self.cached_pipeline(
-            concat!(
-                include_str!("../../../../spektrafilm-shaders/wgsl/f64_math.wgsl"),
-                include_str!("../../../../spektrafilm-shaders/wgsl/optical_diffusion_bounded.wgsl")
-            ),
+            include_str!("../../../../spektrafilm-shaders/wgsl/optical_diffusion_bounded.wgsl"),
             &[
                 wgpu::BufferBindingType::Uniform,
                 wgpu::BufferBindingType::Storage { read_only: true },
@@ -184,7 +174,7 @@ impl WgpuBackend {
             while x < source.width {
                 let count = capacity.min(source.width - x);
                 let centers = buffer("diffusion_centers", u64::from(count) * 12);
-                let accumulation = buffer("diffusion_accumulation", u64::from(count) * 24);
+                let accumulation = buffer("diffusion_accumulation", u64::from(count) * 12);
                 let result = buffer("diffusion_result", u64::from(count) * 12);
                 let mut encoder = self.device.create_command_encoder(&Default::default());
                 self.copy_samples_to(
@@ -237,7 +227,11 @@ impl WgpuBackend {
                         let mut taps = Vec::with_capacity(n as usize * 3);
                         for channel in params.psf {
                             let start = ky as usize * k as usize + first as usize;
-                            taps.extend_from_slice(&channel[start..start + n as usize]);
+                            taps.extend(
+                                channel[start..start + n as usize]
+                                    .iter()
+                                    .map(|&tap| tap as f32),
+                            );
                         }
                         let taps = self.pipe.static_buffer(
                             "diffusion_taps",
@@ -251,8 +245,7 @@ impl WgpuBackend {
                                 u32::from(ky == 0 && first == 0),
                                 u32::from(ky == k - 1 && first + n == k),
                             ],
-                            pad: [0; 4],
-                            controls: [params.scatter_fraction, 0.0, 0.0, 0.0],
+                            controls: [params.scatter_fraction as f32, 0.0, 0.0, 0.0],
                         };
                         let uniform = self.pipe.static_buffer(
                             "diffusion_params",
@@ -310,10 +303,7 @@ impl WgpuBackend {
         log: bool,
     ) -> Result<Vec<crate::wgpu_backend::paged::ImagePage>, String> {
         let pipeline = self.cached_pipeline(
-            concat!(
-                include_str!("../../../../spektrafilm-shaders/wgsl/f64_math.wgsl"),
-                include_str!("../../../../spektrafilm-shaders/wgsl/optical_diffusion_domain.wgsl")
-            ),
+            include_str!("../../../../spektrafilm-shaders/wgsl/optical_diffusion_domain.wgsl"),
             &[
                 wgpu::BufferBindingType::Uniform,
                 wgpu::BufferBindingType::Storage { read_only: true },
@@ -331,8 +321,16 @@ impl WgpuBackend {
             });
             let uniform = Params {
                 header: [page.n_pixels, u32::from(log), 0, 0],
-                pad: [0; 4],
-                controls: [scale, 0.0, 0.0, 0.0],
+                controls: [
+                    scale.abs().log2() as f32,
+                    if scale == 0.0 {
+                        0.0
+                    } else {
+                        scale.signum() as f32
+                    },
+                    0.0,
+                    0.0,
+                ],
             };
             let uniform = self.pipe.static_buffer(
                 "diffusion_domain_params",
@@ -384,10 +382,7 @@ impl WgpuBackend {
         k: u32,
     ) -> Result<Vec<crate::wgpu_backend::paged::ImagePage>, String> {
         let pipeline = self.cached_pipeline(
-            concat!(
-                include_str!("../../../../spektrafilm-shaders/wgsl/f64_math.wgsl"),
-                include_str!("../../../../spektrafilm-shaders/wgsl/optical_diffusion_window.wgsl")
-            ),
+            include_str!("../../../../spektrafilm-shaders/wgsl/optical_diffusion_window.wgsl"),
             &[
                 wgpu::BufferBindingType::Uniform,
                 wgpu::BufferBindingType::Storage { read_only: true },
@@ -395,10 +390,10 @@ impl WgpuBackend {
                 wgpu::BufferBindingType::Storage { read_only: false },
             ],
         );
-        let taps: Vec<f64> = params
+        let taps: Vec<f32> = params
             .psf
             .iter()
-            .flat_map(|channel| channel.iter().copied())
+            .flat_map(|channel| channel.iter().map(|&tap| tap as f32))
             .collect();
         let taps = self.pipe.static_buffer(
             "diffusion_full_psf",
@@ -466,8 +461,7 @@ impl WgpuBackend {
                 }
                 let uniform = Params {
                     header: [width, height, halo_width, k],
-                    pad: [0; 4],
-                    controls: [params.scatter_fraction, 0.0, 0.0, 0.0],
+                    controls: [params.scatter_fraction as f32, 0.0, 0.0, 0.0],
                 };
                 let uniform = self.pipe.static_buffer(
                     "diffusion_window_params",

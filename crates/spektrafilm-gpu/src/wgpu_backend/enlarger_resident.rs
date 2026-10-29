@@ -12,11 +12,10 @@ struct Generate {
     flags: u32,
     origin: [u32; 4],
     extent: [u32; 4],
-    pad: [u32; 4],
-    minimum: [f64; 4],
-    maximum: [f64; 4],
-    preflash: [f64; 4],
-    normalization: [f64; 4],
+    minimum: [f32; 4],
+    maximum: [f32; 4],
+    preflash: [f32; 4],
+    normalization: [f32; 4],
 }
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
@@ -37,12 +36,12 @@ struct Interpolate {
     size_m1: u32,
     scanner: u32,
     pad: [u32; 4],
-    minimum: [f64; 4],
-    scale: [f64; 4],
+    minimum: [f32; 4],
+    scale: [f32; 4],
     origin: [u32; 4],
     extent: [u32; 4],
-    cat: [[f64; 4]; 3],
-    rgb: [[f64; 4]; 3],
+    cat: [[f32; 4]; 3],
+    rgb: [[f32; 4]; 3],
 }
 
 #[derive(Clone, Copy)]
@@ -164,10 +163,6 @@ impl WgpuBackend {
         p: &EnlargerSpectralLutGpuParams<'_>,
         scanner: Option<ScannerMatrices<'_>>,
     ) -> Result<(), String> {
-        if !self.device.features().contains(wgpu::Features::SHADER_F64) {
-            return Err("spectral LUT preparation requires device f64".to_owned());
-        }
-        let enlarger = scanner.is_none();
         let size = p.size;
         if size < 2
             || u64::from(size)
@@ -201,8 +196,7 @@ impl WgpuBackend {
         if n == 0 {
             return Ok(());
         }
-        // Each source halo retains binary64 log samples. Endpoint slopes use
-        // three samples; two neighbours each side cover every interior brick.
+        // Two neighbours on each side cover the unchanged endpoint slopes.
         let workspace_limit = limit.min(super::resources::WORKSPACE_BINDING_BYTES / 8);
         let minimum_source = u64::from(size.min(6)).pow(3) * 24;
         if minimum_source > workspace_limit {
@@ -219,11 +213,11 @@ impl WgpuBackend {
             .len()
             .min(p.illuminant.len())
             .min(p.sensitivity.len());
-        let coefficient = |values: &[f64]| -> Result<wgpu::Buffer, String> {
+        let coefficient = |values: &[f32]| -> Result<wgpu::Buffer, String> {
             if std::mem::size_of_val(values) as u64 > limit {
                 return Err("spectral LUT coefficient exceeds bounded binding".to_owned());
             }
-            let zero = [0.0f64];
+            let zero = [0.0f32];
             Ok(self
                 .device
                 .create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -243,13 +237,25 @@ impl WgpuBackend {
                     && !p.illuminant[i].is_nan()
             })
             .collect();
-        let cd: Vec<f64> = active.iter().flat_map(|&i| p.channel_density[i]).collect();
-        let sensitivity: Vec<f64> = active.iter().flat_map(|&i| p.sensitivity[i]).collect();
-        let base: Vec<f64> = active
+        let cd: Vec<f32> = active
             .iter()
-            .map(|&i| if has_base { p.base_density[i] } else { 0.0 })
+            .flat_map(|&i| p.channel_density[i].map(|v| v as f32))
             .collect();
-        let lamp: Vec<f64> = active.iter().map(|&i| p.illuminant[i]).collect();
+        let sensitivity: Vec<f32> = active
+            .iter()
+            .flat_map(|&i| p.sensitivity[i].map(|v| v as f32))
+            .collect();
+        let base: Vec<f32> = active
+            .iter()
+            .map(|&i| {
+                if has_base {
+                    p.base_density[i] as f32
+                } else {
+                    0.0
+                }
+            })
+            .collect();
+        let lamp: Vec<f32> = active.iter().map(|&i| p.illuminant[i] as f32).collect();
         let n_wl = active.len();
         let cd = coefficient(&cd)?;
         let bd = coefficient(&base)?;
@@ -259,10 +265,7 @@ impl WgpuBackend {
         let write = wgpu::BufferBindingType::Storage { read_only: false };
         let uniform = wgpu::BufferBindingType::Uniform;
         let generation = self.cached_pipeline(
-            concat!(
-                include_str!("../../../spektrafilm-shaders/wgsl/f64_math.wgsl"),
-                include_str!("enlarger_generate.wgsl")
-            ),
+            include_str!("enlarger_generate.wgsl"),
             &[uniform, read, read, read, read, write],
         );
         let preparation = self.cached_pipeline(
@@ -270,10 +273,7 @@ impl WgpuBackend {
             &[uniform, read, write, write, write, write, write, write],
         );
         let interpolation = self.cached_pointwise_pipeline(
-            concat!(
-                include_str!("../../../spektrafilm-shaders/wgsl/f64_math.wgsl"),
-                include_str!("../../../spektrafilm-shaders/wgsl/spectral_lut_f64.wgsl")
-            ),
+            include_str!("../../../spektrafilm-shaders/wgsl/spectral_lut_f32.wgsl"),
             &[uniform, read, read, read, read, read, read, read, write],
             &[(1, "input"), (8, "output")],
         );
@@ -308,29 +308,25 @@ impl WgpuBackend {
                     let nodes = extent[0] * extent[1] * extent[2];
                     let cells = (extent[0] - 1) * (extent[1] - 1) * (extent[2] - 1);
                     let source = self
-                        .enlarger_scratch(u64::from(source_n) * 24, "spectral_lut_sampled_halo");
-                    let lut = self.enlarger_scratch(u64::from(nodes) * 24, "spectral_lut_lattice");
-                    let sx = self.enlarger_scratch(u64::from(nodes) * 24, "spectral_lut_slope_x");
-                    let sy = self.enlarger_scratch(u64::from(nodes) * 24, "spectral_lut_slope_y");
-                    let sz = self.enlarger_scratch(u64::from(nodes) * 24, "spectral_lut_slope_z");
-                    let lo = self.enlarger_scratch(u64::from(cells) * 24, "spectral_lut_cell_min");
-                    let hi = self.enlarger_scratch(u64::from(cells) * 24, "spectral_lut_cell_max");
-                    let row = |v: [f64; 3]| [v[0], v[1], v[2], 0.0];
-                    // The CPU grid uses Scalar, while scanner log_xyz stays f64 and
-                    // enlarger log_raw crosses an ImageBuf boundary before preparation.
-                    let narrow = u32::from(!cfg!(feature = "precision-f64"));
+                        .enlarger_scratch(u64::from(source_n) * 12, "spectral_lut_sampled_halo");
+                    let lut = self.enlarger_scratch(u64::from(nodes) * 12, "spectral_lut_lattice");
+                    let sx = self.enlarger_scratch(u64::from(nodes) * 12, "spectral_lut_slope_x");
+                    let sy = self.enlarger_scratch(u64::from(nodes) * 12, "spectral_lut_slope_y");
+                    let sz = self.enlarger_scratch(u64::from(nodes) * 12, "spectral_lut_slope_z");
+                    let lo = self.enlarger_scratch(u64::from(cells) * 12, "spectral_lut_cell_min");
+                    let hi = self.enlarger_scratch(u64::from(cells) * 12, "spectral_lut_cell_max");
+                    let row = |v: [f64; 3]| [v[0] as f32, v[1] as f32, v[2] as f32, 0.0];
                     let g = self.enlarger_uniform(&Generate {
                         size,
                         n: source_n,
                         n_wl: n_wl as u32,
-                        flags: narrow | if enlarger { narrow * 2 } else { 0 },
+                        flags: 0,
                         origin: so,
                         extent: se,
-                        pad: [0; 4],
                         minimum: row(p.minimum),
                         maximum: row(p.maximum),
                         preflash: row(p.preflash),
-                        normalization: [p.normalization, 0.0, 0.0, 0.0],
+                        normalization: [p.normalization as f32, 0.0, 0.0, 0.0],
                     });
                     let prep = self.enlarger_uniform(&Prepare {
                         size,
@@ -493,30 +489,55 @@ mod tests {
 
     #[test]
     fn spectral_lut_uniforms_match_wgsl_alignment() {
-        // vec4<f64> aligns to 32, unlike Rust's [f64;4]. These offsets
-        // catch silent device reads from the preceding extent/padding.
-        assert_eq!(std::mem::offset_of!(Generate, minimum), 64);
-        assert_eq!(std::mem::offset_of!(Generate, maximum), 96);
-        assert_eq!(std::mem::offset_of!(Generate, preflash), 128);
-        assert_eq!(std::mem::offset_of!(Generate, normalization), 160);
-        assert_eq!(std::mem::size_of::<Generate>(), 192);
+        assert_eq!(std::mem::offset_of!(Generate, minimum), 48);
+        assert_eq!(std::mem::offset_of!(Generate, maximum), 64);
+        assert_eq!(std::mem::offset_of!(Generate, preflash), 80);
+        assert_eq!(std::mem::offset_of!(Generate, normalization), 96);
+        assert_eq!(std::mem::size_of::<Generate>(), 112);
         assert_eq!(std::mem::offset_of!(Interpolate, minimum), 32);
-        assert_eq!(std::mem::offset_of!(Interpolate, scale), 64);
-        assert_eq!(std::mem::offset_of!(Interpolate, cat), 128);
-        assert_eq!(std::mem::offset_of!(Interpolate, rgb), 224);
-        assert_eq!(std::mem::size_of::<Interpolate>(), 320);
+        assert_eq!(std::mem::offset_of!(Interpolate, scale), 48);
+        assert_eq!(std::mem::offset_of!(Interpolate, cat), 96);
+        assert_eq!(std::mem::offset_of!(Interpolate, rgb), 144);
+        assert_eq!(std::mem::size_of::<Interpolate>(), 192);
+    }
+
+    #[test]
+    fn enlarger_spectral_lut_matches_cpu_linear_density() {
+        let backend = crate::test_support::adapter();
+        let p = EnlargerSpectralLutGpuParams {
+            channel_density: &[[0.1, 0.2, 0.3]],
+            base_density: &[0.02],
+            illuminant: &[1.0],
+            sensitivity: &[[1.0, 1.2, 0.8]],
+            normalization: 1.0,
+            preflash: [0.0; 3],
+            minimum: [0.0; 3],
+            maximum: [1.0; 3],
+            size: 8,
+        };
+        let values = [0.0, 0.0, 0.0, 0.2, 0.7, 0.4, 0.5, 0.5, 0.5, 1.0, 1.0, 1.0];
+        let image = ImageBuf::from_data(4, 1, values.iter().map(|&x| x as _).collect());
+        let result = backend.enlarger_resident(&image, &p).unwrap();
+        let mut worst = 0.0f64;
+        for (pixel, actual) in values
+            .as_chunks::<3>()
+            .0
+            .iter()
+            .zip(result.data.as_chunks::<3>().0)
+        {
+            let density = 0.02 + pixel[0] * 0.1 + pixel[1] * 0.2 + pixel[2] * 0.3;
+            for (c, &a) in actual.iter().enumerate() {
+                let expected = (10f64.powf(-density) * p.sensitivity[0][c] + 1e-10).log10();
+                worst = worst.max((a as f64 - expected).abs());
+            }
+        }
+        eprintln!("enlarger spectral LUT max absolute error: {worst:.9e}");
+        assert!(worst < 2e-5, "max absolute error {worst}");
     }
 
     #[test]
     fn spectral_transport_preserves_all_brick_owners_and_sentinels() {
         let backend = crate::test_support::adapter();
-        if !backend
-            .device
-            .features()
-            .contains(wgpu::Features::SHADER_F64)
-        {
-            return;
-        }
         struct Restore(Option<std::ffi::OsString>);
         impl Drop for Restore {
             fn drop(&mut self) {

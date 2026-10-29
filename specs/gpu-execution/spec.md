@@ -118,7 +118,7 @@ A missing justified budget means that numerical acceptance is incomplete, not pa
 6. Statistical appearance evidence MUST supplement exact discrete checks and bounded sample comparisons.
 7. Prove full-source and tiled execution equivalence. Exercise images larger than a single device binding, wide optical support beyond the historical FIR cap, non-square and portrait geometry, and bounded working sets.
 8. Retain seams, boundary, full-source metering, and global grain-coordinate evidence.
-9. Exercise explicit CPU, explicit GPU, automatic hardware selection, absent hardware, software WGPU, missing capabilities, device/resource failure, cancellation, and stale GUI results. Verify that no requested effect changes and no failed operation replaces or publishes output.
+9. Exercise explicit CPU, explicit GPU, automatic hardware selection, absent hardware, software WGPU, missing capabilities, device failures, cancellation, and stale GUI results; no failed operation MAY replace published output. An adapter without binary64 MUST run the [declared f32 stages](design.md#devices-without-native-f64) and fail the engines that require binary64 or 64-bit integers explicitly.
 10. Retain actual executors and transfers for the complete computation scope, including input numerics, preparation, simulation, saving conversion, and viewer work. A backend name, shader source, dispatch count, fused-path label, or truncated report MUST NOT alone establish full-GPU coverage.
 11. Follow the [telemetry contract](../telemetry/spec.md) and its historical path semantics.
 12. Run hardware acceptance on the supported Metal, Vulkan, and Windows WGPU APIs. Identify each adapter, driver, executable hash, build precision, reference, invocation, and source data.

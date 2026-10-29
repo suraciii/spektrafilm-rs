@@ -127,3 +127,24 @@ pub fn adapter() -> DeviceBackend {
 pub fn explicit_adapter() -> DeviceBackend {
     locked(|| WgpuBackend::new_explicit().expect("WGPU adapter required for GPU tests"))
 }
+
+/// Adapter whose device reports neither binary64 nor 64-bit integer support,
+/// for the f32-device acceptance path. The override is process-wide, so the
+/// lock must be held from before device creation until it is restored.
+#[cfg(feature = "wgpu-backend")]
+pub fn restricted_adapter() -> DeviceBackend {
+    locked(|| {
+        let previous = std::env::var_os("SPEKTRAFILM_GPU_DISABLE_F64");
+        unsafe {
+            std::env::set_var("SPEKTRAFILM_GPU_DISABLE_F64", "1");
+        }
+        let backend = WgpuBackend::new().expect("WGPU adapter required for GPU tests");
+        unsafe {
+            match previous {
+                Some(value) => std::env::set_var("SPEKTRAFILM_GPU_DISABLE_F64", value),
+                None => std::env::remove_var("SPEKTRAFILM_GPU_DISABLE_F64"),
+            }
+        }
+        backend
+    })
+}

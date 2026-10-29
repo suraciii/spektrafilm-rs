@@ -16,8 +16,7 @@ mod scan_setup;
 #[path = "scan_tests.rs"]
 mod tests;
 
-/// Immutable binary64 reconstruction. `exposure` pages contain 24 bytes per
-/// RGB pixel (not the ordinary f32 RasterStorage transport).
+/// Immutable binary32 reconstruction, with 12 bytes per RGB pixel.
 pub(super) struct PreparedScan {
     pub(super) exposure: Vec<super::paged::ImagePage>,
     pub(super) setup: wgpu::Buffer,
@@ -159,9 +158,6 @@ impl WgpuBackend {
         width: u32,
         height: u32,
     ) -> Result<PointwisePass, String> {
-        if !self.device.features().contains(wgpu::Features::SHADER_F64) {
-            return Err("direct scanner acquisition requires native shader f64".into());
-        }
         let (density, base) = if p.scan_film {
             (p.film_channel_density, p.film_base_density)
         } else {
@@ -186,14 +182,14 @@ impl WgpuBackend {
         #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
         struct Params {
             header: [u32; 4],
-            normalization: [f64; 2],
-            cat: [[f64; 4]; 3],
-            rgb: [[f64; 4]; 3],
+            normalization: [f32; 4],
+            cat: [[f32; 4]; 3],
+            rgb: [[f32; 4]; 3],
         }
-        let row = |r: [f64; 3]| [r[0], r[1], r[2], 0.0];
+        let row = |r: [f64; 3]| [r[0] as f32, r[1] as f32, r[2] as f32, 0.0];
         let params = Params {
             header: [width * height, active.len() as u32, 0, 0],
-            normalization: [p.scan_normalization, 0.0],
+            normalization: [p.scan_normalization as f32, 0.0, 0.0, 0.0],
             cat: p.scan_cat.map(row),
             rgb: p.scan_base_xyz_to_rgb.map(row),
         };
@@ -201,19 +197,25 @@ impl WgpuBackend {
             self.pipe
                 .static_buffer(name, bytes, wgpu::BufferUsages::STORAGE)
         };
-        let dye: Vec<_> = active.iter().map(|&i| density[i]).collect();
+        let dye: Vec<_> = active
+            .iter()
+            .map(|&i| density[i].map(|v| v as f32))
+            .collect();
         let base: Vec<_> = active
             .iter()
-            .map(|&i| if has_base { base[i] } else { 0.0 })
+            .map(|&i| if has_base { base[i] as f32 } else { 0.0 })
             .collect();
-        let lamp: Vec<_> = active.iter().map(|&i| p.scan_illuminant[i]).collect();
+        let lamp: Vec<_> = active
+            .iter()
+            .map(|&i| p.scan_illuminant[i] as f32)
+            .collect();
         let cmfs: Vec<_> = active
             .iter()
             .map(|&i| {
                 [
-                    spektrafilm_math::spectral::CMF_X_F64[i],
-                    spektrafilm_math::spectral::CMF_Y_F64[i],
-                    spektrafilm_math::spectral::CMF_Z_F64[i],
+                    spektrafilm_math::spectral::CMF_X_F64[i] as f32,
+                    spektrafilm_math::spectral::CMF_Y_F64[i] as f32,
+                    spektrafilm_math::spectral::CMF_Z_F64[i] as f32,
                 ]
             })
             .collect();
@@ -230,10 +232,7 @@ impl WgpuBackend {
             [&uniform, source, &dye, &base, &lamp, &cmfs, output];
         use wgpu::BufferBindingType::{Storage as S, Uniform as U};
         self.scan_pass(
-            concat!(
-                include_str!("../../../spektrafilm-shaders/wgsl/f64_math.wgsl"),
-                include_str!("../../../spektrafilm-shaders/wgsl/scan/direct_spectral.wgsl")
-            ),
+            include_str!("../../../spektrafilm-shaders/wgsl/scan/direct_spectral.wgsl"),
             &[
                 U,
                 S { read_only: true },
@@ -371,19 +370,16 @@ impl WgpuBackend {
         preparation_key: Option<&std::sync::Arc<dyn spektrafilm_backend::DeviceImagePayload>>,
     ) -> Result<ScanDensityState, String> {
         self.check_cancelled()?;
-        if !self
-            .device
-            .features()
-            .contains(wgpu::Features::SHADER_F64 | wgpu::Features::SHADER_INT64)
-        {
-            return Err(
-                "negative-to-positive acquisition requires native shader f64 and int64".into(),
-            );
-        }
         let pixels = width
             .checked_mul(height)
             .filter(|&n| n != 0)
             .ok_or("standard setup requires a nonempty RGB density frame")?;
+        if p.dmax
+            .iter()
+            .any(|&d| !d.is_finite() || d.abs() > f32::MAX as f64)
+        {
+            return Err("negative-to-positive dmax exceeds finite f32 range".into());
+        }
         if p.counts
             .iter()
             .enumerate()
@@ -408,17 +404,17 @@ impl WgpuBackend {
             offsets: [u32; 4],
             counts: [u32; 4],
             flags: [u32; 4],
-            contrast: [f64; 4],
-            dmax: [f64; 4],
-            brightness: [f64; 4],
-            denominator: [f64; 4],
-            camera: [f64; 4],
-            setup: [f64; 4],
-            operator: [f64; 4],
-            color: [f64; 4],
-            destination: [[f64; 4]; 3],
+            contrast: [f32; 4],
+            dmax: [f32; 4],
+            brightness: [f32; 4],
+            denominator: [f32; 4],
+            camera: [f32; 4],
+            setup: [f32; 4],
+            operator: [f32; 4],
+            color: [f32; 4],
+            destination: [[f32; 4]; 3],
         }
-        let row = |v: [f64; 3]| [v[0], v[1], v[2], 0.0];
+        let row = |v: [f64; 3]| [v[0] as f32, v[1] as f32, v[2] as f32, 0.0];
         let identity = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
         let operator_active = p.operator_contrast_delta != 0.0
             || p.operator_exposure_ev != 0.0
@@ -438,16 +434,20 @@ impl WgpuBackend {
             brightness: row(p.brightness_ev),
             denominator: row(p.denominator),
             camera: [
-                if p.standard_setup { 0.0 } else { p.camera_ev },
+                if p.standard_setup {
+                    0.0
+                } else {
+                    p.camera_ev as f32
+                },
                 0.0,
                 0.0,
                 0.0,
             ],
-            setup: [p.setup_aim_density, p.setup_gamma, 0.0, 0.0],
+            setup: [p.setup_aim_density as f32, p.setup_gamma as f32, 0.0, 0.0],
             operator: [
-                p.operator_pivot,
-                p.operator_contrast_delta,
-                p.operator_exposure_ev,
+                p.operator_pivot as f32,
+                p.operator_contrast_delta as f32,
+                p.operator_exposure_ev as f32,
                 0.0,
             ],
             color: row(p.operator_color),
@@ -465,20 +465,22 @@ impl WgpuBackend {
                 contents: bytemuck::bytes_of(&0u32),
                 usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
             });
-        let density = table("density_axes", bytemuck::cast_slice(&p.density));
-        let exposure = table("exposure_axes", bytemuck::cast_slice(&p.exposure));
+        let density_values: Vec<f32> = p.density.iter().map(|&v| v as f32).collect();
+        let exposure_values: Vec<f32> = p.exposure.iter().map(|&v| v as f32).collect();
+        let density = table("density_axes", bytemuck::cast_slice(&density_values));
+        let exposure = table("exposure_axes", bytemuck::cast_slice(&exposure_values));
         let limit = super::bounded::storage_binding_limit(self)?;
         if density.size() > limit || exposure.size() > limit {
             return Err(format!(
                 "scanner calibrated coefficient binding exceeds {limit} bytes"
             ));
         }
-        if limit < 112 {
+        if limit < 88 {
             return Err(format!(
-                "scanner setup working state needs 112 bytes per binding; limit is {limit}"
+                "scanner setup working state needs 88 bytes per binding; limit is {limit}"
             ));
         }
-        let capacity = (super::bounded::chunk_elements(limit, 24)? as u32).min(pixels);
+        let capacity = (super::bounded::chunk_elements(limit, 12)? as u32).min(pixels);
         let cached = preparation_key
             .and_then(|key| self.cached_prepared_scan(key, p, width, height))
             .filter(|prepared| {
@@ -498,7 +500,7 @@ impl WgpuBackend {
                 let n = capacity.min(pixels - first);
                 let buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
                     label: Some("scan_reconstructed_exposure"),
-                    size: u64::from(n) * 24,
+                    size: u64::from(n) * 12,
                     usage: wgpu::BufferUsages::STORAGE
                         | wgpu::BufferUsages::COPY_SRC
                         | wgpu::BufferUsages::COPY_DST,
@@ -513,8 +515,10 @@ impl WgpuBackend {
             }
             let setup = self.device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("scan_fullframe_setup"),
-                size: 112,
-                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                size: 88,
+                usage: wgpu::BufferUsages::STORAGE
+                    | wgpu::BufferUsages::COPY_DST
+                    | wgpu::BufferUsages::COPY_SRC,
                 mapped_at_creation: false,
             });
             std::sync::Arc::new(PreparedScan {
@@ -548,10 +552,9 @@ impl WgpuBackend {
         let optics = if p.lens_blur > 0.0 && !reuse {
             let make = |inverse: u32| {
                 self.scan_pass(
-                    concat!(
-                        include_str!("../../../spektrafilm-shaders/wgsl/f64_math.wgsl"),
-                        include_str!("../../../spektrafilm-shaders/wgsl/scan/transmission.wgsl")
-                    ),
+                    concat!(include_str!(
+                        "../../../spektrafilm-shaders/wgsl/scan/transmission.wgsl"
+                    )),
                     &[U, S { read_only: false }],
                     &[
                         &self.pipe.static_buffer(
@@ -584,7 +587,6 @@ impl WgpuBackend {
         };
         let render_pipeline = self.cached_pipeline(
             concat!(
-                include_str!("../../../spektrafilm-shaders/wgsl/f64_math.wgsl"),
                 include_str!("../../../spektrafilm-shaders/wgsl/scan/density_lib.wgsl"),
                 include_str!("../../../spektrafilm-shaders/wgsl/scan/scanner_density.wgsl")
             ),
@@ -677,5 +679,170 @@ impl WgpuBackend {
             status,
             prepared,
         })
+    }
+}
+
+#[cfg(test)]
+mod direct_tests {
+    use super::*;
+    use spektrafilm_backend::{FilmChainParams, FrontPass, Tap};
+    use spektrafilm_math::image::ImageBuf;
+
+    #[test]
+    fn scan_direct_restricted_device_matches_cpu() {
+        let gpu = crate::test_support::restricted_adapter();
+        assert!(
+            !gpu.device
+                .features()
+                .intersects(wgpu::Features::SHADER_F64 | wgpu::Features::SHADER_INT64)
+        );
+        let matrix = [[1.05, -0.05, 0.0], [0.02, 0.98, 0.0], [0.0, -0.03, 1.03]];
+        let rgb = [[3.2, -1.5, -0.5], [-0.9, 1.9, 0.04], [0.05, -0.2, 1.1]];
+        let dyes: Vec<[f64; 3]> = (0..81)
+            .map(|i| {
+                let x = i as f64 / 80.0;
+                [0.1 + x, 0.2 + (x - 0.5).abs(), 1.1 - x]
+            })
+            .collect();
+        let base: Vec<f64> = (0..81).map(|i| 0.08 + i as f64 * 0.001).collect();
+        let lamp: Vec<f64> = (0..81).map(|i| 0.7 + i as f64 * 0.005).collect();
+        let norm: f64 = lamp
+            .iter()
+            .zip(spektrafilm_math::spectral::CMF_Y_F64.iter())
+            .map(|(a, b)| a * b)
+            .sum();
+        let values = [
+            0.0f32, 0.0, 0.0, 0.2, 0.5, 1.0, 1.5, 0.3, 0.7, 2.0, 2.5, 3.0, 0.7, 1.1, 0.4, 0.04,
+            0.1, 0.2,
+        ];
+        let p = FilmChainParams {
+            inject: Tap::RgbPre,
+            collect: Tap::RgbOut,
+            enlarger_lut: None,
+            scanner_lut: None,
+            image_width: 3,
+            image_height: 2,
+            pixel_pitch_um: 1.0,
+            front: FrontPass::Mallett2019 { matrix },
+            film_log_exposure: &[],
+            film_density_curves_normalized: &[],
+            film_gamma: 1.0,
+            film_channel_density: &dyes,
+            film_base_density: &base,
+            print_illuminant: &[],
+            print_sensitivity: &[],
+            print_normalization_factor: 1.0,
+            print_exposure_scale: 1.0,
+            print_log_exposure: &[],
+            print_density_curves: &[],
+            grain_fotufilm: None,
+            print_gamma: 1.0,
+            print_channel_density: &[],
+            print_base_density: &[],
+            preflash: [0.0; 3],
+            scan_illuminant: &lamp,
+            scan_normalization: norm,
+            scan_xyz_to_rgb: &rgb,
+            scan_cat: &matrix,
+            scan_base_xyz_to_rgb: &rgb,
+            scan_film: true,
+            halation: None,
+            dir_couplers: None,
+            glare: None,
+            gamut: None,
+            unsharp: None,
+            grain_v2: None,
+            grain_v1: None,
+            scan_output_space: &spektrafilm_math::colorspace::SRGB,
+            camera_lens_blur_px: None,
+            camera_diffusion: None,
+            enlarger_diffusion: None,
+            scanner_lens_blur_px: None,
+            highlight_boost: None,
+            grain_dye: None,
+            grain_dye_crop: None,
+            density_cpu_stage: None,
+            scan_acquisition_cpu_stage: None,
+            scan_readout: None,
+            scan_preparation_key: None,
+            output_transfer: None,
+            cmyk: None,
+            input_decode: None,
+        };
+        let source = gpu
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("direct_scan_test_source"),
+                contents: bytemuck::cast_slice(&values),
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+            });
+        let output = gpu.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("direct_scan_test_output"),
+            size: values.len() as u64 * 4,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
+        });
+        gpu.build_scan_direct_state(&p, &source, &output, 3, 2)
+            .unwrap()
+            .submit(&gpu)
+            .unwrap();
+        let actual = gpu
+            .pipe
+            .readback_buffer_as::<f32>(&output, values.len() as u64 * 4);
+        let image = ImageBuf::from_data(
+            3,
+            2,
+            values
+                .iter()
+                .map(|&v| spektrafilm_math::precision::from_f64(f64::from(v)))
+                .collect(),
+        );
+        let expected = spektrafilm_backend::cpu_backend::scan_spectral_cpu(
+            &image, &dyes, &base, &lamp, norm, &matrix, &rgb,
+        );
+        let worst = actual
+            .iter()
+            .zip(&expected.data)
+            .map(|(a, b)| (a - spektrafilm_math::precision::to_f64(*b) as f32).abs())
+            .fold(0.0f32, f32::max);
+        eprintln!("restricted direct scan max absolute error: {worst}");
+        // RGB budget is 1e-5; measured 6.56e-7, with a 2e-6 limit (>3x margin).
+        assert!(worst < 2e-6, "direct scanner error {worst}");
+    }
+
+    #[test]
+    fn convert_inverse_reports_the_missing_f64_capability() {
+        let gpu = crate::test_support::restricted_adapter();
+        let p = ConvertSolverGpuParams {
+            dye: &[],
+            base: &[],
+            illuminant: &[],
+            cmfs: &[],
+            normalization: 1.0,
+            xyz_to_rgb: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+            cmy_max: [1.0; 3],
+            calibration: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+            gain: 1.0,
+            seed_log_rgb: [0.0; 3],
+            seed_inverse: [[0.0; 3]; 3],
+            cctf_kind: 0,
+            decode_input: false,
+            n_wl: 0,
+        };
+        let raster = gpu
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("convert_inverse_restricted_raster"),
+                contents: bytemuck::cast_slice(&[0.0f32; 3]),
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+            });
+        let error = match gpu.build_convert_inverse_state(&p, &raster, &raster, 1) {
+            Ok(_) => panic!("restricted device must not build the inverse solver"),
+            Err(error) => error,
+        };
+        assert_eq!(
+            error,
+            "convert-film inverse scan requires native shader f64"
+        );
     }
 }

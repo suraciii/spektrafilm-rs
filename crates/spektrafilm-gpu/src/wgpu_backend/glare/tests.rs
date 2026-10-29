@@ -304,9 +304,10 @@ fn glare_large_fields_keep_reference_error_bounded() {
 }
 
 #[test]
-fn glare_without_native_f64_runs_the_generator_and_rejects_the_gaussian() {
-    // The MT19937 normal transform stays f32-only; the Gaussian owns binary64
-    // coefficients and state, so a blurred glare request fails explicitly.
+fn glare_runs_without_native_f64_features() {
+    // The MT19937 normal transform and the Gaussian both execute with f32
+    // device arithmetic; blurred glare keeps the reference budget on an
+    // adapter without SHADER_F64.
     // Acquire the common device guard before opening a second, restricted device.
     let gpu = crate::test_support::adapter();
     let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
@@ -369,23 +370,11 @@ fn glare_without_native_f64_runs_the_generator_and_rejects_the_gaussian() {
             .unwrap();
         let mut scratch = GaussianScratch::new(37, 19);
         let state = build_glare_state(&backend.device, &gp, 37, 19, &image, &mut scratch, &backend);
-        if blur > 0.0 {
-            // The Gaussian owns binary64 coefficients and state; a device without
-            // native f64 fails explicitly rather than approximating the law.
-            let Err(error) = state else {
-                panic!("blurred glare must not run without native f64");
-            };
-            assert_eq!(
-                error,
-                "glare Gaussian: grain Gaussian requires native shader f64 arithmetic"
-            );
-            eprintln!(
-                "f32-only glare features={:?} blur={blur} rejected",
-                backend.device.features()
-            );
-            continue;
-        }
-        let state = state.unwrap();
+        // Every glare blur must run on an adapter without native f64; the
+        // device Gaussian uses the f32 kernels with their declared budgets.
+        let state = state.unwrap_or_else(|error| {
+            panic!("f32-only glare blur {blur} must run: {error}");
+        });
         state.submit(&backend).unwrap();
         let expected =
             spektrafilm_model::glare::compute_random_glare_amount(37, 19, 0.1, 0.5, blur, 42);

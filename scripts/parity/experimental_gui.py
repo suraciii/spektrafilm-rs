@@ -283,7 +283,8 @@ class ExperimentalDesktop(X11):
         self.discard_photograph_changes()
         # Clear the pointer/hover tooltip from the source and header labels.
         self.xd('mousemove', '--window', self.window, 700, 100)
-        self.wait_text(r'Source:\s*' + re.escape(path.name), label)
+        # The photo-first header shows the source file name without a label.
+        self.wait_text(re.escape(path.name), label)
         report = self.wait_report(label + '-automatic-preview', 'Preview')
         self.snap(label + '-automatic-preview')
         return report

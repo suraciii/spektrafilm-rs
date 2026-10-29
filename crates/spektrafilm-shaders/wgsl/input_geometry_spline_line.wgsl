@@ -1,15 +1,15 @@
 // Whole-line spline recurrence, streamed through bounded windows. State is
 // [closed-form first, zi, previous forward/backward value].
-struct Params { len: u32, count: u32, mode: u32, first: u32, zn: f64, }
+struct Params { len: u32, count: u32, mode: u32, first: u32, zn: f32, z: f32, gain: f32, _pad: f32, }
 @group(0) @binding(0) var<uniform> p: Params;
-@group(0) @binding(1) var<storage, read> a: array<f64>;
-@group(0) @binding(2) var<storage, read> b: array<f64>;
-@group(0) @binding(3) var<storage, read_write> out: array<f64>;
-@group(0) @binding(4) var<storage, read_write> state: array<f64>;
+@group(0) @binding(1) var<storage, read> a: array<f32>;
+@group(0) @binding(2) var<storage, read> b: array<f32>;
+@group(0) @binding(3) var<storage, read_write> out: array<f32>;
+@group(0) @binding(4) var<storage, read_write> state: array<f32>;
 @compute @workgroup_size(1)
 fn main() {
-    let z = 0.0lf - 0.267949192431122706472553658494127633lf;
-    let gain = (1.0lf - z) * (1.0lf - 1.0lf / z);
+    let z = p.z;
+    let gain = p.gain;
     if p.mode == 0u {
         state[0] = a[0] * gain + p.zn * (b[0] * gain);
         state[1] = z;
@@ -27,7 +27,7 @@ fn main() {
         for (var i = 0u; i < p.count; i = i + 1u) {
             var value = a[i] * gain;
             if p.first + i == 0u {
-                value = state[0] / (1.0lf - p.zn * p.zn);
+                value = state[0] / (1.0 - p.zn * p.zn);
             } else {
                 value = value + z * previous;
             }
@@ -36,7 +36,7 @@ fn main() {
         }
         state[2] = previous;
     } else if p.mode == 3u {
-        let value = (z * a[0] + b[0]) * z / (z * z - 1.0lf);
+        let value = (z * a[0] + b[0]) * z / (z * z - 1.0);
         out[0] = value;
         state[2] = value;
     } else {

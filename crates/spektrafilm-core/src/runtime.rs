@@ -22,7 +22,11 @@ use std::time::Instant;
 /// addressed by cell coordinate and ordinal, so grain pixels changed again.
 /// Revision five makes the Procedural engine's composite tone-neutral on both
 /// executors, which moves every Procedural grain pixel.
-pub const MODEL_VERSION: &str = "lab_scan_operator_v5";
+/// Revision six applies the reflected box cascade above sigma 8 instead of a
+/// truncated FIR support, so wide halation and DIR tails changed pixels; the
+/// f32 kernels run on devices without binary64 within their frozen stage
+/// budgets and do not change the model.
+pub const MODEL_VERSION: &str = "lab_scan_operator_v6";
 
 /// Last-call wall-clock timings exposed by the runtime facade.
 pub type Timings = BTreeMap<String, f64>;

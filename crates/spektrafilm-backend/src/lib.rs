@@ -93,10 +93,32 @@ pub trait ComputeBackend: Send + Sync {
     ) -> Result<Option<PreparedTable>, String> {
         Ok(None)
     }
+    /// Upload a host-computed spectral exposure table for devices that cannot
+    /// carry the reference contraction. Bounded, image-independent tables may
+    /// be resolved on the host in reference precision.
+    fn prepare_spectral_tc_lut_from_host(
+        &self,
+        _table: &[f64],
+        _size: u32,
+        _neutral: [f64; 3],
+    ) -> Result<Option<PreparedTable>, String> {
+        Ok(None)
+    }
     /// Bisect and retain the destination-specific perceptual gamut boundary.
     fn prepare_gamut_table(
         &self,
         _params: &GamutTableParams,
+    ) -> Result<Option<PreparedTable>, String> {
+        Ok(None)
+    }
+    /// Upload a host-computed output gamut boundary for devices without
+    /// native binary64. Bounded, image-independent tables may be resolved on
+    /// the host in reference precision.
+    fn prepare_gamut_table_from_host(
+        &self,
+        _table: &[f64],
+        _n_l: u32,
+        _n_h: u32,
     ) -> Result<Option<PreparedTable>, String> {
         Ok(None)
     }

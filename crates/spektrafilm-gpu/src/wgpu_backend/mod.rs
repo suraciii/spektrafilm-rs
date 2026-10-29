@@ -145,6 +145,13 @@ impl WgpuBackend {
             // host fence rather than approximating (see `grain::v1`).
             features |=
                 adapter.features() & (wgpu::Features::SHADER_F64 | wgpu::Features::SHADER_INT64);
+            // Acceptance hook: simulate an adapter without 64-bit shader
+            // arithmetic. The default flow must run on such hardware, so this
+            // strips both features and lets the real CLI/GUI expose every
+            // remaining device-precision dependency.
+            if std::env::var_os("SPEKTRAFILM_GPU_DISABLE_F64").is_some() {
+                features &= !(wgpu::Features::SHADER_F64 | wgpu::Features::SHADER_INT64);
+            }
             wgpu::DeviceDescriptor {
                 label: Some("spektrafilm"),
                 required_features: features,

@@ -54,6 +54,23 @@ struct IirParams {
 
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+struct IirParamsF32 {
+    width: u32,
+    height: u32,
+    channel: u32,
+    vertical: u32,
+    a: f32,
+    b1: f32,
+    b2: f32,
+    b3: f32,
+    grid_width: u32,
+    source_base: u32,
+    destination_base: u32,
+    _pad: u32,
+}
+
+#[repr(C)]
+#[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 struct CopyParams {
     width: u32,
     height: u32,
@@ -68,6 +85,7 @@ struct CopyParams {
 enum Method {
     Fir,
     Iir,
+    Box,
     Copy,
 }
 
@@ -98,16 +116,15 @@ struct Pass {
 }
 
 struct ChannelPasses {
-    first: Pass,
-    second: Option<Pass>,
+    passes: Vec<Pass>,
     _kernel: Option<wgpu::Buffer>,
 }
 
 /// Reference Gaussian blur over resident, interleaved f32 RGB samples.
 ///
-/// `sigma[c] < 3` uses the reference reflect-boundary FIR (vertical then
-/// horizontal); `sigma[c] >= 3` uses the sample-replicating Young-van Vliet
-/// recursion (horizontal then vertical); `sigma[c] <= 0` copies the channel
+/// `sigma[c] < 3` uses reflected FIR; `3 <= sigma[c] < 8` uses
+/// sample-replicating IIR; larger sigma uses three reflected box passes per axis.
+/// `sigma[c] <= 0` copies the channel
 /// unchanged, as the reference does. All three channels are filtered with
 /// their own sigma and pass order.
 ///
@@ -117,9 +134,8 @@ struct ChannelPasses {
 /// bounded bulk-copy adapters. Source requires COPY_SRC, destination requires
 /// COPY_SRC | COPY_DST. Offsets count float samples, without alignment rules.
 ///
-/// Samples remain binary32. Kernel products, horizontal FIR accumulation and
-/// recursive state use binary64; vertical FIR narrows after every tap, exactly
-/// like the upstream f32 intermediate. Native shader f64 is required.
+/// FIR and IIR use binary64 arithmetic when supported, binary32 otherwise.
+/// Box passes always use binary32 arithmetic.
 pub(in crate::wgpu_backend) struct GrainBlurState {
     execution: Execution,
 }
@@ -136,6 +152,7 @@ enum Execution {
 struct DirectBlurState {
     fir: CachedPipelineRef,
     iir: CachedPipelineRef,
+    boxes: CachedPipelineRef,
     copy: CachedPipelineRef,
     channels: [ChannelPasses; 3],
     _owned_scratch: Option<wgpu::Buffer>,
@@ -243,16 +260,28 @@ pub(in crate::wgpu_backend) fn build_grain_blur_with_scratch(
     if sigma.iter().any(|value| !value.is_finite()) {
         return Err("Gaussian blur sigma values must be finite".into());
     }
-    if !backend
+    let f64_supported = backend
         .device
         .features()
-        .contains(wgpu::Features::SHADER_F64)
-    {
-        return Err("grain Gaussian requires native shader f64 arithmetic".into());
-    }
+        .contains(wgpu::Features::SHADER_F64);
     let max_groups = backend.device.limits().max_compute_workgroups_per_dimension;
-    let fir = backend.cached_pipeline(include_str!("blur_fir.wgsl"), &FIR_LAYOUT);
-    let iir = backend.cached_pipeline(include_str!("blur_iir.wgsl"), &IMAGE_LAYOUT);
+    let fir = backend.cached_pipeline(
+        if f64_supported {
+            include_str!("blur_fir.wgsl")
+        } else {
+            include_str!("blur_direct_fir_f32.wgsl")
+        },
+        &FIR_LAYOUT,
+    );
+    let iir = backend.cached_pipeline(
+        if f64_supported {
+            include_str!("blur_iir.wgsl")
+        } else {
+            include_str!("blur_direct_iir_f32.wgsl")
+        },
+        &IMAGE_LAYOUT,
+    );
+    let boxes = backend.cached_pipeline(include_str!("blur_direct_box.wgsl"), &IMAGE_LAYOUT);
     let copy = backend.cached_pipeline(include_str!("blur_copy.wgsl"), &IMAGE_LAYOUT);
     let channels = [
         build_channel(
@@ -266,6 +295,8 @@ pub(in crate::wgpu_backend) fn build_grain_blur_with_scratch(
             &fir,
             &iir,
             &copy,
+            &boxes,
+            f64_supported,
             max_groups,
         )?,
         build_channel(
@@ -279,6 +310,8 @@ pub(in crate::wgpu_backend) fn build_grain_blur_with_scratch(
             &fir,
             &iir,
             &copy,
+            &boxes,
+            f64_supported,
             max_groups,
         )?,
         build_channel(
@@ -292,6 +325,8 @@ pub(in crate::wgpu_backend) fn build_grain_blur_with_scratch(
             &fir,
             &iir,
             &copy,
+            &boxes,
+            f64_supported,
             max_groups,
         )?,
     ];
@@ -299,6 +334,7 @@ pub(in crate::wgpu_backend) fn build_grain_blur_with_scratch(
         execution: Execution::Direct(DirectBlurState {
             fir,
             iir,
+            boxes,
             copy,
             channels,
             _owned_scratch: None,
@@ -579,29 +615,40 @@ fn build_channel(
     fir: &CachedPipelineRef,
     iir: &CachedPipelineRef,
     copy: &CachedPipelineRef,
+    boxes: &CachedPipelineRef,
+    f64_supported: bool,
     max_groups: u32,
 ) -> Result<ChannelPasses, String> {
     let pixels = u64::from(region.width) * u64::from(region.height);
     if sigma_f64 <= 0.0 {
         let grid = bounded_grid(pixels.div_ceil(u64::from(FIR_WORKGROUP_SIZE)), max_groups)?;
         return Ok(ChannelPasses {
-            first: make_copy_pass(backend, copy, region, channel, grid, source, destination),
-            second: None,
+            passes: vec![make_copy_pass(
+                backend,
+                copy,
+                region,
+                channel,
+                grid,
+                source,
+                destination,
+            )],
             _kernel: None,
         });
     }
     if sigma_f64 < 3.0 {
         let (radius, weights) = gaussian_kernel_f64(sigma_f64)?;
-        let kernel_bytes = u64::try_from(weights.len())
-            .ok()
-            .and_then(|count| count.checked_mul(8))
-            .ok_or_else(|| "Gaussian FIR kernel size overflows".to_owned())?;
-        check_region_limit(backend, kernel_bytes)?;
+        let kernel_data = if f64_supported {
+            bytemuck::cast_slice(&weights).to_vec()
+        } else {
+            let weights: Vec<f32> = weights.iter().map(|&weight| weight as f32).collect();
+            bytemuck::cast_slice(&weights).to_vec()
+        };
+        check_region_limit(backend, kernel_data.len() as u64)?;
         let kernel = backend
             .device
             .create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("grain_gaussian_kernel"),
-                contents: bytemuck::cast_slice(&weights),
+                contents: &kernel_data,
                 usage: wgpu::BufferUsages::STORAGE,
             });
         let grid = bounded_grid(pixels.div_ceil(u64::from(FIR_WORKGROUP_SIZE)), max_groups)?;
@@ -632,11 +679,10 @@ fn build_channel(
             (destination, &region.destination),
         );
         Ok(ChannelPasses {
-            first: vertical,
-            second: Some(horizontal),
+            passes: vec![vertical, horizontal],
             _kernel: Some(kernel),
         })
-    } else {
+    } else if sigma_f64 < 8.0 {
         let coefficients = iir_coefficients_f64(sigma_f64);
         if ![
             coefficients.0,
@@ -664,6 +710,7 @@ fn build_channel(
             channel,
             false,
             coefficients,
+            f64_supported,
             horizontal_grid,
             source,
             &region.source,
@@ -676,14 +723,64 @@ fn build_channel(
             channel,
             true,
             coefficients,
+            f64_supported,
             vertical_grid,
             scratch,
             &region.scratch,
             (destination, &region.destination),
         );
         Ok(ChannelPasses {
-            first: horizontal,
-            second: Some(vertical),
+            passes: vec![horizontal, vertical],
+            _kernel: None,
+        })
+    } else {
+        let width = spektrafilm_math::gaussian::gaussian_box_width(sigma_f64);
+        let radius =
+            u32::try_from(width / 2).map_err(|_| "Gaussian box radius is not representable")?;
+        if radius > i32::MAX as u32 / 2
+            || radius + region.width.max(region.height) > i32::MAX as u32
+        {
+            return Err("Gaussian box radius exceeds shader indexing range".into());
+        }
+        let mut passes = Vec::with_capacity(6);
+        for index in 0..6 {
+            let vertical = index >= 3;
+            let lines = if vertical {
+                region.width
+            } else {
+                region.height
+            };
+            let grid = bounded_grid(
+                u64::from(lines).div_ceil(u64::from(IIR_WORKGROUP_SIZE)),
+                max_groups,
+            )?;
+            let (input, input_range) = if index == 0 {
+                (source, &region.source)
+            } else if index % 2 == 1 {
+                (scratch, &region.scratch)
+            } else {
+                (destination, &region.destination)
+            };
+            let output = if index % 2 == 0 {
+                (scratch, &region.scratch)
+            } else {
+                (destination, &region.destination)
+            };
+            passes.push(make_box_pass(
+                backend,
+                boxes,
+                region,
+                radius,
+                channel,
+                vertical,
+                grid,
+                input,
+                input_range,
+                output,
+            ));
+        }
+        Ok(ChannelPasses {
+            passes,
             _kernel: None,
         })
     }
@@ -810,30 +907,50 @@ fn make_iir_pass(
     channel: u32,
     vertical: bool,
     coefficients: (f64, f64, f64, f64),
+    f64_supported: bool,
     grid: (u32, u32),
     source: &wgpu::Buffer,
     source_range: &BindingRange,
     destination: (&wgpu::Buffer, &BindingRange),
 ) -> Pass {
     let (destination_buffer, destination_range) = destination;
+    let params64 = IirParams {
+        width: region.width,
+        height: region.height,
+        channel,
+        vertical: u32::from(vertical),
+        a: coefficients.0,
+        b1: coefficients.1,
+        b2: coefficients.2,
+        b3: coefficients.3,
+        grid_width: grid.0,
+        source_base: source_range.base,
+        destination_base: destination_range.base,
+        _pad: 0,
+    };
+    let params32 = IirParamsF32 {
+        width: region.width,
+        height: region.height,
+        channel,
+        vertical: u32::from(vertical),
+        a: coefficients.0 as f32,
+        b1: coefficients.1 as f32,
+        b2: coefficients.2 as f32,
+        b3: coefficients.3 as f32,
+        grid_width: grid.0,
+        source_base: source_range.base,
+        destination_base: destination_range.base,
+        _pad: 0,
+    };
     let params = backend
         .device
         .create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("grain_gaussian_iir_params"),
-            contents: bytemuck::bytes_of(&IirParams {
-                width: region.width,
-                height: region.height,
-                channel,
-                vertical: u32::from(vertical),
-                a: coefficients.0,
-                b1: coefficients.1,
-                b2: coefficients.2,
-                b3: coefficients.3,
-                grid_width: grid.0,
-                source_base: source_range.base,
-                destination_base: destination_range.base,
-                _pad: 0,
-            }),
+            contents: if f64_supported {
+                bytemuck::bytes_of(&params64)
+            } else {
+                bytemuck::bytes_of(&params32)
+            },
             usage: wgpu::BufferUsages::UNIFORM,
         });
     let bind_group = backend
@@ -860,6 +977,64 @@ fn make_iir_pass(
         _params: params,
         bind_group,
         method: Method::Iir,
+        workgroups: grid,
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn make_box_pass(
+    backend: &WgpuBackend,
+    pipeline: &CachedPipelineRef,
+    region: &Region,
+    radius: u32,
+    channel: u32,
+    vertical: bool,
+    grid: (u32, u32),
+    source: &wgpu::Buffer,
+    source_range: &BindingRange,
+    destination: (&wgpu::Buffer, &BindingRange),
+) -> Pass {
+    let (destination_buffer, destination_range) = destination;
+    let params = backend
+        .device
+        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("grain_gaussian_box_params"),
+            contents: bytemuck::bytes_of(&FirParams {
+                width: region.width,
+                height: region.height,
+                radius,
+                channel,
+                vertical: u32::from(vertical),
+                grid_width: grid.0,
+                source_base: source_range.base,
+                destination_base: destination_range.base,
+            }),
+            usage: wgpu::BufferUsages::UNIFORM,
+        });
+    let bind_group = backend
+        .device
+        .create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("grain_gaussian_box_bind_group"),
+            layout: &pipeline.layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: params.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: bind(source, source_range),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: bind(destination_buffer, destination_range),
+                },
+            ],
+        });
+    Pass {
+        _params: params,
+        bind_group,
+        method: Method::Box,
         workgroups: grid,
     }
 }
@@ -924,7 +1099,7 @@ impl GrainBlurState {
             Execution::Bounded(bounded) => bounded.submit(backend),
             Execution::Direct(direct) => {
                 for channel in &direct.channels {
-                    for pass in std::iter::once(&channel.first).chain(channel.second.iter()) {
+                    for pass in &channel.passes {
                         backend.check_cancelled()?;
                         let mut encoder =
                             backend.device.create_command_encoder(&Default::default());
@@ -944,6 +1119,7 @@ impl DirectBlurState {
         let (pipeline, label) = match pass.method {
             Method::Fir => (&self.fir, "grain_blur_fir"),
             Method::Iir => (&self.iir, "grain_blur_iir"),
+            Method::Box => (&self.boxes, "grain_blur_box"),
             Method::Copy => (&self.copy, "grain_blur_copy"),
         };
         let mut compute = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
@@ -1067,9 +1243,9 @@ mod tests {
     #[test]
     fn iir_matches_reference_from_dispatch_threshold() {
         let gpu = crate::test_support::adapter();
-        // σ exactly 3.0 takes the reference IIR branch; large σ has no radius
-        // cap and must not be truncated.
-        compare_with_reference(&gpu, 11, 7, [3.0, 8.0, 20.0], 0, 3);
+        // Exercise both sides of the IIR-to-box boundary with original f64 sigma.
+        compare_with_reference(&gpu, 11, 7, [3.0, 8.0 - 1e-10, 8.0], 0, 3);
+        compare_with_reference(&gpu, 11, 7, [8.0, 20.0, 0.0], 0, 3);
     }
 
     #[test]

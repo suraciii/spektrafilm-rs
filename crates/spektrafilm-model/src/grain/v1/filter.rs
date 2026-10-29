@@ -34,8 +34,10 @@ pub(super) fn blur<T: Sample>(data: &[T], w: usize, h: usize, sigma: f64) -> Vec
     // 2.99999999 is FIR even when the image is f32.
     if sigma < 3.0 {
         fir(data, w, h, sigma)
-    } else {
+    } else if sigma < 8.0 {
         iir(data, w, h, sigma)
+    } else {
+        boxes(data, w, h, sigma)
     }
 }
 
@@ -86,6 +88,37 @@ fn fir<T: Sample>(data: &[T], w: usize, h: usize, sigma: f64) -> Vec<T> {
         }
     }
     out
+}
+
+fn boxes<T: Sample>(data: &[T], w: usize, h: usize, sigma: f64) -> Vec<T> {
+    let width = spektrafilm_math::gaussian::gaussian_box_width(sigma);
+    let radius = (width / 2) as isize;
+    let mut current = data.to_vec();
+    let mut next = vec![T::store(0.0); data.len()];
+    for horizontal in [true, false] {
+        let (lines, length, stride) = if horizontal { (h, w, 1) } else { (w, h, w) };
+        for _ in 0..3 {
+            for line in 0..lines {
+                let start = if horizontal { line * w } else { line };
+                let mut sum = 0.0;
+                for offset in -radius..=radius {
+                    sum += current[start + reflect(offset, length) * stride].load();
+                }
+                for index in 0..length {
+                    next[start + index * stride] = T::store(sum / width as f64);
+                    if index + 1 < length {
+                        sum -= current[start + reflect(index as isize - radius, length) * stride]
+                            .load();
+                        sum += current
+                            [start + reflect(index as isize + radius + 1, length) * stride]
+                            .load();
+                    }
+                }
+            }
+            std::mem::swap(&mut current, &mut next);
+        }
+    }
+    current
 }
 
 fn iir<T: Sample>(data: &[T], w: usize, h: usize, sigma: f64) -> Vec<T> {

@@ -36,16 +36,14 @@ fn workspace_bytes_for_samples(
     limit: u64,
     sample_bytes: u64,
 ) -> Result<u64, String> {
-    let bytes = u64::from(width)
+    u64::from(width)
         .checked_mul(u64::from(height))
         .and_then(|n| n.checked_mul(3 * sample_bytes))
         .ok_or("Gaussian workspace geometry overflows")?;
-    let taps = 19 * 8;
-    let page = limit
-        .min(u64::from(MAX_PAGE_VALUES) * sample_bytes)
-        .min(bytes.max(taps));
+    // The box halo can exceed the image itself, up to the binding limit.
+    let page = limit.min(u64::from(MAX_PAGE_VALUES) * sample_bytes);
     // Input, output, adapter, line state, three kernels and retained uniforms.
-    Ok(page * 4 + 3 * taps + u64::from(MAX_COMMANDS_PER_SUBMIT) * 3 * 96)
+    Ok(page * 4 + 3 * 152 + u64::from(MAX_COMMANDS_PER_SUBMIT) * 3 * 96)
 }
 #[derive(Clone)]
 struct Store(Vec<BytePage>);
@@ -246,6 +244,45 @@ struct Params {
     b3: f64,
 }
 
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+struct Params32 {
+    count: u32,
+    lines: u32,
+    stride: u32,
+    channel: u32,
+    radius: u32,
+    mode: u32,
+    initialize: u32,
+    axis_major: u32,
+    a: f32,
+    b1: f32,
+    b2: f32,
+    b3: f32,
+}
+
+impl From<Params> for Params32 {
+    fn from(p: Params) -> Self {
+        let b1 = p.b1 as f32;
+        let b2 = p.b2 as f32;
+        let b3 = p.b3 as f32;
+        Self {
+            count: p.count,
+            lines: p.lines,
+            stride: p.stride,
+            channel: p.channel,
+            radius: p.radius,
+            mode: p.mode,
+            initialize: p.initialize,
+            axis_major: p.axis_major,
+            a: 1.0 - ((b1 + b2) + b3),
+            b1,
+            b2,
+            b3,
+        }
+    }
+}
+
 struct Page {
     params: Params,
     first: u32,
@@ -259,6 +296,7 @@ struct Direction {
     destination_offset: u64,
     channel: u32,
     vertical: bool,
+    box_filter: bool,
     kernel: wgpu::Buffer,
     pages: Vec<Page>,
 }
@@ -268,7 +306,9 @@ pub(super) struct BoundedBlur {
     height: u32,
     limit: u64,
     sample_bytes: u64,
+    arithmetic_f64: bool,
     pipeline: CachedPipelineRef,
+    box_pipeline: CachedPipelineRef,
     copy_pipeline: CachedPipelineRef,
     input: wgpu::Buffer,
     output: wgpu::Buffer,
@@ -433,12 +473,12 @@ impl BoundedBlur {
         limit: u64,
         sample_bytes: u64,
     ) -> Result<Self, String> {
-        if !backend
+        let arithmetic_f64 = backend
             .device
             .features()
-            .contains(wgpu::Features::SHADER_F64)
-        {
-            return Err("grain Gaussian requires native shader f64 arithmetic".into());
+            .contains(wgpu::Features::SHADER_F64);
+        if sample_bytes == 8 && !arithmetic_f64 {
+            return Err("binary64 Gaussian requires native shader f64 arithmetic".into());
         }
         if width == 0 || height == 0 {
             return Err("Gaussian blur dimensions must be nonzero".into());
@@ -484,9 +524,15 @@ impl BoundedBlur {
                     if s <= 0.0 {
                         Ok(minimum)
                     } else if s < 3.0 {
-                        Ok(minimum.max(gaussian_kernel_f64(s)?.1.len() as u64 * 8))
+                        Ok(minimum.max(
+                            gaussian_kernel_f64(s)?.1.len() as u64
+                                * if arithmetic_f64 { 8 } else { 4 },
+                        ))
+                    } else if s < 8.0 {
+                        Ok(minimum.max(if arithmetic_f64 { 24 } else { 12 }))
                     } else {
-                        Ok(minimum.max(24))
+                        let width = spektrafilm_math::gaussian::gaussian_box_width(s);
+                        Ok(minimum.max((width as u64).saturating_mul(sample_bytes)))
                     }
                 })?;
         if limit < minimum {
@@ -498,6 +544,11 @@ impl BoundedBlur {
         let page_bytes = limit
             .min(u64::from(MAX_PAGE_VALUES) * sample_bytes)
             .min(bytes.max(minimum));
+        if page_bytes < minimum {
+            return Err(format!(
+                "Gaussian bounded blur minimum working set requires {minimum} bytes per storage binding; page capacity is {page_bytes}"
+            ));
+        }
         let input = transport(backend, "gaussian_page_input", page_bytes, true);
         let output = transport(backend, "gaussian_page_output", page_bytes, true);
         // COPY-only callers and sub-alignment caps use this one shared adapter,
@@ -506,9 +557,9 @@ impl BoundedBlur {
         let state = transport(
             backend,
             "gaussian_line_state",
-            (page_bytes / 8 * 8)
+            (page_bytes / 4 * 4)
                 .max(4)
-                .min(u64::from(width.max(height)) * 24),
+                .min(u64::from(width.max(height)) * if arithmetic_f64 { 24 } else { 12 }),
             true,
         );
         let intermediate = if sigma.iter().all(|&s| s <= 0.0) {
@@ -531,8 +582,18 @@ impl BoundedBlur {
         let pipeline = backend.cached_pipeline(
             if sample_bytes == 8 {
                 include_str!("blur_bounded_f64.wgsl")
-            } else {
+            } else if arithmetic_f64 {
                 include_str!("blur_bounded.wgsl")
+            } else {
+                include_str!("blur_bounded_f32.wgsl")
+            },
+            &LAYOUT,
+        );
+        let box_pipeline = backend.cached_pipeline(
+            if sample_bytes == 8 {
+                include_str!("blur_bounded_box_f64.wgsl")
+            } else {
+                include_str!("blur_bounded_f32.wgsl")
             },
             &LAYOUT,
         );
@@ -552,13 +613,19 @@ impl BoundedBlur {
                 ));
                 continue;
             }
+            let box_filter = s >= 8.0;
             let fir = s < 3.0;
-            let (radius, weights) = if fir {
+            let (radius, weights) = if box_filter {
+                let width = spektrafilm_math::gaussian::gaussian_box_width(s);
+                let radius = u32::try_from(width / 2)
+                    .map_err(|_| "Gaussian box radius exceeds device coordinate range")?;
+                (radius, vec![1.0 / width as f64])
+            } else if fir {
                 gaussian_kernel_f64(s)?
             } else {
                 (0, vec![0.0])
             };
-            let coefficients = if fir {
+            let coefficients = if fir || box_filter {
                 (0.0, 0.0, 0.0, 0.0)
             } else {
                 iir_coefficients_f64(s)
@@ -574,19 +641,31 @@ impl BoundedBlur {
             {
                 return Err("Gaussian IIR coefficients exceed the device scalar range".into());
             }
+            let kernel_bytes: Vec<u8> = if arithmetic_f64 && !box_filter {
+                bytemuck::cast_slice(&weights).to_vec()
+            } else {
+                let weights: Vec<f32> = weights.iter().map(|&v| v as f32).collect();
+                bytemuck::cast_slice(&weights).to_vec()
+            };
             let kernel = backend
                 .device
                 .create_buffer_init(&wgpu::util::BufferInitDescriptor {
                     label: Some("gaussian_page_kernel"),
-                    contents: bytemuck::cast_slice(&weights),
+                    contents: &kernel_bytes,
                     usage: wgpu::BufferUsages::STORAGE,
                 });
-            for first_axis in [true, false] {
-                let vertical = first_axis == fir;
-                let (src, dst, src_offset, dst_offset) = if first_axis {
-                    (&source, &intermediate, source_offset, 0)
+            for pass in 0..if box_filter { 6 } else { 2 } {
+                let vertical = if box_filter {
+                    pass >= 3
                 } else {
+                    (pass == 0) == fir
+                };
+                let (src, dst, src_offset, dst_offset) = if pass == 0 {
+                    (&source, &intermediate, source_offset, 0)
+                } else if pass % 2 == 1 {
                     (&intermediate, &destination, 0, destination_offset)
+                } else {
+                    (&destination, &intermediate, destination_offset, 0)
                 };
                 let length = if vertical { height } else { width };
                 let line_count = if vertical { width } else { height };
@@ -611,7 +690,13 @@ impl BoundedBlur {
                 while line < line_count {
                     backend.check_cancelled()?;
                     let batch = lines.min(line_count - line);
-                    for mode in if fir { 0..1 } else { 1..3 } {
+                    for mode in if box_filter {
+                        3..4
+                    } else if fir {
+                        0..1
+                    } else {
+                        1..3
+                    } {
                         let page_count = length.div_ceil(count);
                         for ordinal in 0..page_count {
                             let first = if mode == 2 {
@@ -648,6 +733,7 @@ impl BoundedBlur {
                     destination_offset: dst_offset,
                     channel,
                     vertical,
+                    box_filter,
                     kernel: kernel.clone(),
                     pages,
                 });
@@ -658,7 +744,9 @@ impl BoundedBlur {
             height,
             limit,
             sample_bytes,
+            arithmetic_f64,
             pipeline,
+            box_pipeline,
             copy_pipeline,
             input,
             output,
@@ -794,12 +882,17 @@ impl BoundedBlur {
             j += run;
         }
         let backend = submission.backend;
-        // Both sample widths use f64 coefficients and recursive state.
+        let p32 = Params32::from(p);
+        let params = if self.arithmetic_f64 && !direction.box_filter {
+            bytemuck::bytes_of(&p)
+        } else {
+            bytemuck::bytes_of(&p32)
+        };
         let uniform = backend
             .device
             .create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("gaussian_page_params"),
-                contents: bytemuck::bytes_of(&p),
+                contents: params,
                 usage: wgpu::BufferUsages::UNIFORM,
             });
         let buffers = [
@@ -817,7 +910,12 @@ impl BoundedBlur {
             .device
             .create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("gaussian_page_group"),
-                layout: &self.pipeline.layout,
+                layout: &if direction.box_filter {
+                    &self.box_pipeline
+                } else {
+                    &self.pipeline
+                }
+                .layout,
                 entries: &entries,
             });
         {
@@ -827,7 +925,14 @@ impl BoundedBlur {
                     label: Some("gaussian_bounded_line"),
                     timestamp_writes: None,
                 });
-            pass.set_pipeline(&self.pipeline.pipeline);
+            pass.set_pipeline(
+                &if direction.box_filter {
+                    &self.box_pipeline
+                } else {
+                    &self.pipeline
+                }
+                .pipeline,
+            );
             pass.set_bind_group(0, &group, &[]);
             pass.dispatch_workgroups(p.lines.div_ceil(64), 1, 1);
         }
@@ -1203,9 +1308,16 @@ mod tests {
 
     #[test]
     fn paged_iir_preserves_both_true_endpoints_and_recursion_seams() {
-        compare(71, 67, [3.0, 8.0, 20.0], 192);
-        compare(1, 39, [3.0, 8.0, 20.0], 24);
-        compare(39, 1, [3.0, 8.0, 20.0], 24);
+        compare(71, 67, [3.0, 4.0, 7.9], 192);
+        compare(1, 39, [3.0, 4.0, 7.9], 24);
+        compare(39, 1, [3.0, 4.0, 7.9], 24);
+    }
+
+    #[test]
+    fn paged_boxes_reflect_endpoints_and_page_seams() {
+        compare(71, 67, [8.0, 20.0, 32.0], 512);
+        compare(1, 39, [8.0, 20.0, 32.0], 512);
+        compare(39, 1, [8.0, 20.0, 32.0], 512);
     }
 
     #[test]
@@ -1681,7 +1793,7 @@ mod binary64_tests {
             });
         let bytes = samples as u64 * 4;
         let output = transport(&gpu, "mixed_precision_gaussian_output", bytes, true);
-        let sigma = [0.5 - 1e-10, f64::from_bits(3.0f64.to_bits() - 1), 20.0];
+        let sigma = [0.5 - 1e-10, f64::from_bits(3.0f64.to_bits() - 1), 7.0];
         let bounded = BoundedBlur::build(
             &gpu, width, height, &source, &output, None, sigma, 0, 0, 192,
         )

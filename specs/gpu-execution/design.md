@@ -93,7 +93,7 @@ A full-source reduction MUST retain the specified source population before crop 
 
 Retained RGB images carry full dimensions and absolute pixel-indexed device pages. Upload and final materialization traverse those pages; intermediate extraction and output assembly copy page intersections on the device. `SPEKTRAFILM_GPU_BINDING_LIMIT_BYTES` MAY lower the physical binding limit to exercise the same paging route.
 
-Full-source exposure metering gathers reflected source support from those pages, streams bounded binary64 vertical blocks one preview row at a time, and preserves vertical-then-horizontal tap order and the reference 256-pixel preview cap. The complete preview luminance grid feeds the existing global pattern reduction; only the final eight-byte EV returns to the host.
+Full-source exposure metering gathers reflected source support from those pages, streams bounded f32 vertical blocks one preview row at a time, and preserves vertical-then-horizontal tap order and the reference 256-pixel preview cap. The complete preview luminance grid feeds the existing global pattern reduction; only the final f32 EV returns to the host.
 
 The preview grid and fixed reduction coefficients remain the metering minimum working set.
 
@@ -131,11 +131,34 @@ DIR exponential tails and channel-specific halation MUST NOT be approximated awa
 
 Floating tolerances MUST be frozen per stage and complete scenario using the [acceptance rules](spec.md#acceptance). They MUST protect endpoints, dark-region behavior, signed samples, neutral preservation, continuity, optical profiles, and spatial correlation, not only average final RGB error. File-encoding tolerance MUST remain separate from floating computation tolerance.
 
-A device without native f64 does not waive reference-sensitive arithmetic. The GPU implementation MUST retain the decisions its owning engine requires, in that engine's declared arithmetic or in validated integer or extended-precision arithmetic, or fail explicitly. A capability limitation is not permission for a CPU image-stage fallback or an approximate model.
+A device without native f64 does not waive reference-sensitive arithmetic. The GPU implementation MUST retain the decisions its owning engine requires, or fail explicitly.
+
+The declared arithmetic is native binary64, a stage-declared f32 kernel under its frozen budget, or validated integer or extended-precision arithmetic. A capability limitation is not permission for a CPU image-stage fallback or an approximate model. [Devices without native f64](#devices-without-native-f64) owns which stages MAY declare f32.
 
 No universal f64 shader-support requirement is added to WGPU.
 
 An accepted CPU algorithm MUST NOT be changed merely to make GPU results pass. If an alternative numerical implementation also changes CPU behavior, it MUST preserve the frozen reference under the same domain budgets. A changed photographic model requires a separately approved contract change.
+
+## Devices without native f64
+
+A stage whose law and discrete decisions the owning engine defines in f32 MAY run on a device without `SHADER_F64` under its frozen budget. Each such stage keeps the reference law, stage order, coefficients, tap order, kernel support, paging decomposition and coordinate identity; only the arithmetic precision changes. The measured device error and the frozen limit are:
+
+| Stage | Metric | Measured | Frozen limit |
+| --- | --- | --- | --- |
+| Auto-exposure metering | EV against CPU f64 | 7.6e-5 | 2e-4 |
+| Gaussian on a restricted device, through blurred glare | model output | 3.0e-9 | 1e-8 |
+| Spline resize | scaled sample against CPU f64 | 1.9e-6 | 4e-6 |
+| Direct scanner acquisition | RGB against CPU f64 | 6.6e-7 | 1e-5 |
+| Negative readout and setup | log10 exposure / tone | 8.5e-7 / 3.6e-7 | 1e-5 / 1e-5 |
+| Output gamut, modes 0-3 | RGB against CPU reference | 1.2e-6 | 5e-6 |
+| Optical diffusion | sample against CPU f64 | 1.3e-6 | 5e-5 |
+| Enlarger/scanner spectral LUT | sample against CPU f64 | 3.8e-8 / 7.0e-7 | 2e-5 |
+
+`SPEKTRAFILM_GPU_DISABLE_F64=1` is an acceptance control, not a user-facing profile: it makes the adapter report no binary64 so the same device path is exercised. It MUST NOT select the CPU backend or change resolved controls.
+
+Host-only preparation MUST stay outside image arithmetic and use the CPU reference in std f64 when the device cannot serve it: spectral transport tables, output-gamut boundary tables, and histogram bin boundaries. The resulting tables are uploaded; the device MUST NOT require f64 to consume them.
+
+Stochastic engines whose appearance depends on reference-exact draw identity (procedural v1 and Spektra) still require native binary64 and 64-bit integers and MUST fail explicitly on such a device. The Dye engine's coordinate-addressed draw runs.
 
 ## Stochastic alignment
 
@@ -193,7 +216,9 @@ Partial resource retirement MUST NOT mark a complete image batch ready.
 
 Gaussian gathering and scattering MUST address target-channel samples on the device without changing sample bits. Copy-only or binding-incompatible storage MAY use bounded contiguous device copies for adaptation, but host commands MUST NOT be generated for individual pixels or filter taps.
 
-Gaussian transport MUST preserve the reference support, endpoint policy, and axis order. Recursive filter state MUST continue through forward and backward page boundaries without restarting.
+Gaussian transport MUST preserve the reference support, endpoint policy, and axis order. Recursive filter state MUST continue through forward and backward page boundaries without restarting. Above sigma 8, CPU and device both use the reflected unit-sum box cascade with the same width selection.
+
+Its frozen kernel error against the truncated Gaussian is 1.68e-3 at sigma 8, 3.33e-4 at 32, and 7.10e-5 at 147 of unit kernel mass. No smaller-sigma branch changes.
 
 Gaussian page planning SHOULD balance serial coordinate work against independent lines. A complete supported raster that fits binding, coordinate, and line-state limits SHOULD remain one page.
 
