@@ -243,23 +243,6 @@ fn assert_retained_gpu_report(
     assert!(chain.work.dispatch_count.is_some_and(|count| count > 0));
     assert!(chain.start_offset >= simulation.start_offset);
     assert!(chain.start_offset + chain.duration <= simulation.start_offset + simulation.duration);
-    let conversion_phase = if kind == "export" {
-        "saving_convert"
-    } else {
-        "display_prepare"
-    };
-    let conversion = report
-        .phases
-        .iter()
-        .find(|phase| phase.name == conversion_phase)
-        .unwrap();
-    assert!(
-        conversion
-            .work
-            .readback_count
-            .is_some_and(|count| count > 0),
-        "bounded display/writer transfers belong to {conversion_phase}"
-    );
     report
 }
 
@@ -464,7 +447,14 @@ fn scroll_controls_into_view(h: &mut Harness<'_, App>, label: &str) {
             ((viewport.x0 + viewport.x1) * 0.5) as f32,
             ((viewport.y0 + viewport.y1) * 0.5) as f32,
         );
-        let target = h
+        // Inspector content has its own accessibility subtree. Modal owners
+        // cover the active dialog, including their retained offscreen nodes.
+        let owner = if viewport_label == "Inspector controls" {
+            h.get_by_role_and_label(egui::accesskit::Role::ScrollView, viewport_label)
+        } else {
+            h.node()
+        };
+        let target = owner
             .query_all_by_label(label)
             .filter_map(|node| node.node().raw_bounds())
             .find(|bounds| bounds.x0 >= left && (bounds.y0 < top || bounds.y1 > bottom));
@@ -594,6 +584,17 @@ fn wait_until(h: &mut Harness<'_, App>, condition: impl Fn(&App) -> bool) {
         );
         wait_tick();
     }
+}
+
+fn analysis_output_ready(app: &App) -> bool {
+    let Some(render) = app.source_render.as_ref() else {
+        return false;
+    };
+    app.analysis.result.as_ref().is_some_and(|result| {
+        app.analysis.identity.as_ref() == Some(&result.identity)
+            && result.identity.modified_generation == Some(render.operation_id)
+            && result.data[1].is_some()
+    })
 }
 
 fn save_retained(h: &mut Harness<'_, App>, path: &Path) {
@@ -1206,7 +1207,22 @@ mod layout_snapshots {
         let h = &mut s.harness;
         preview(h);
         settle_animation(h);
-        wait_until(h, |a| a.histogram.cached_data().is_some());
+        click(h, "Image analysis");
+        wait_until(h, analysis_output_ready);
+        for mode in ["Histogram", "Waveform", "RGB parade", "Vectorscope"] {
+            choose(h, "Analysis mode", mode);
+            wait_until(h, analysis_output_ready);
+            h.run_steps(3);
+            let image = h.render().expect("offscreen analysis render");
+            assert_eq!((image.width(), image.height()), (1460, 980));
+            save_snapshot(&image, &format!("analysis-{mode}.png"));
+        }
+        click(h, "Image analysis");
+        h.run_steps(3);
+        save_snapshot(
+            &h.render().expect("collapsed analysis render"),
+            "analysis-collapsed.png",
+        );
         for stage in controls::Stage::ALL {
             navigate_stage(h, stage);
             h.run_steps(3);

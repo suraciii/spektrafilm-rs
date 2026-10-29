@@ -254,7 +254,9 @@ impl App {
         self.render_job = None;
         self.output_image = None;
         self.output_retained = None;
-        self.output_histogram = None;
+        self.output_geometry = None;
+        self.analysis.selection = None;
+        self.analysis.clear();
         self.viewer.set_retained_output(None);
         self.output_metadata = None;
         self.source_render = None;

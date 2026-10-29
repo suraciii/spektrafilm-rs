@@ -96,8 +96,11 @@ Withdrawn draft response groups and cyan-shift paths MUST fail normal unknown-fi
 
 The window has three regions and one header.
 
-- The viewer occupies the central region and is the primary surface. It presents the retained input, output, or paper back under [Viewer presentation](#viewer-presentation), and its footer owns the layer selector.
-- The adjustment inspector occupies the right region. It owns photographic parameter editors, stage headings and their jump strip, control search, and the tonal-distribution readout.
+- The viewer occupies the central region and is the primary surface.
+- The viewer presents the retained input, output, or paper back under [Viewer presentation](#viewer-presentation). Its footer owns the layer selector.
+- The viewer owns the optional [image-analysis workspace](../gui-product-design/image-analysis/spec.md) directly below the photograph.
+- The adjustment inspector occupies the right region. It owns photographic parameter editors, stage headings and their jump strip, and control search.
+- The adjustment inspector MUST NOT contain image-analysis controls or plots.
 - Application settings and Export own their separate editors under [Stage and surface ownership](#stage-and-surface-ownership).
 - The preset browser occupies the left region and is collapsible. Its width and expanded state follow [the preset browser design](../presets/design.md).
 - The window header spans the three regions. It owns Open image, Undo, Redo, application settings, and independent Export actions.
@@ -321,19 +324,15 @@ Opening a source, changing a display profile, and interacting with the viewer MU
 
 Cache availability MUST NOT change supported profiles or displayed pixel values. Missing, invalid, stale, or unwritable caches MUST NOT prevent the viewer from preparing the correct transform.
 
-The viewer MUST expose a tonal-distribution readout of the retained output. It MUST be viewer-only: it MUST NOT alter saved or exported pixels.
-- The readout is a fixed strip at the top of the control panel, above search and stage navigation. It is co-visible with the controls, does not occlude the image, and does not increase the control panel width.
-- It MUST start collapsed when no visibility state is saved.
-- A saved expanded or collapsed state MUST take precedence.
-- Visibility changes MUST be persisted.
-
-The readout MUST derive from the retained output. It MUST NOT require a second render.
-
-An empty or absent output MUST present an explicit empty state instead of a blank or broken readout.
+The viewer MUST expose [image analysis](../gui-product-design/image-analysis/spec.md) as an optional workspace below the photograph. That capability owns analysis subjects, regions, display preferences, availability, and read-only measurement behavior.
 
 ## Viewer interaction
 
 Viewer gestures act on the viewer surface. They change the retained view and MUST NOT alter saved or exported pixels. They MUST NOT edit numeric fields and MUST NOT scroll the control panel.
+
+The explicitly armed [Select area tool](../gui-product-design/image-analysis/spec.md#area-inspection) is the only exception to the normal primary-drag gesture. Leaving that tool MUST restore the gestures below without changing photographic adjustments.
+
+[Linked pixel inspection](../gui-product-design/image-analysis/spec.md#linked-pixel-inspection) MUST remain passive with respect to these viewer gestures. It MUST NOT introduce another photographic editing or layer-selection action.
 
 - The wheel and pinch zoom at the pointer.
 - A primary-button drag pans the view.

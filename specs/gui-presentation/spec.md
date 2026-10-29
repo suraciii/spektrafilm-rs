@@ -150,10 +150,25 @@ A locator MUST look and act like a navigation result, not a second parameter edi
 
 Locator results and destination cues MUST remain readable and keyboard accessible without relying on color.
 
+## Image-analysis presentation
+
+The [analysis product contract](../gui-product-design/image-analysis/spec.md#workspace-and-controls) owns panel composition. Its plot controls MUST reuse native components and visible focus states.
+
+Analysis traces MUST use the series roles. Data-derived tint MAY represent measured hue, but MUST NOT imply action selection or a quality judgment.
+
+A statistical endpoint or hue-reference crossing MUST NOT receive error styling solely because of its plot location. Invalid analysis and stale identity MUST remain distinct from ordinary image characteristics.
+
+Committed area outlines and transient correspondence guides MUST remain visually distinct. They MUST NOT resemble a photographic crop or editing mask.
+
+Linked sample markers MUST remain distinguishable from aggregate traces and plot-driven band guides. Their numeric readouts MUST identify analysis values separately from original carrier RGB.
+
 ## Viewer footer
 
 - The footer groups its actions by target. One action belongs to one group.
-- Its groups are layer selection, view zoom, and reveal or crossfade presentation.
+- Its groups are layer selection, view zoom, reveal or crossfade presentation, and the optional image-analysis visibility action.
+- The image-analysis action is a quiet presentation control.
+- The action opens the analysis workspace below the photograph. It MUST NOT select a photographic subject or another page.
+- The footer MUST preserve its other controls while the workspace is open.
 - The footer presents the current zoom as read-only text, apart from the actions.
 - The footer MUST keep Original and Modified together and Paper back separate. Compact Paper back and transition actions MAY use named icons to preserve nonoverlapping zoom and reset actions in a reopened narrow workspace.
 

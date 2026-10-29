@@ -639,7 +639,9 @@ impl App {
                 app.image_path = Some(path);
                 app.output_image = None;
                 app.output_retained = None;
-                app.output_histogram = None;
+                app.output_geometry = None;
+                app.analysis.selection = None;
+                app.analysis.clear();
                 app.output_metadata = None;
                 app.source_render = None;
                 app.retained_kind = None;
@@ -695,7 +697,7 @@ impl App {
                 app.full_scan_requested = false;
                 app.output_image = None;
                 app.output_retained = None;
-                app.output_histogram = None;
+                app.output_geometry = None;
                 app.output_metadata = None;
                 app.source_render = None;
                 app.publish_input_viewer(view.oriented, view.raster);
@@ -769,6 +771,11 @@ impl App {
                 source.domain() == spektrafilm_backend::SampleDomain::Encoded,
             ),
         };
+        self.analysis.original_space = space.to_owned();
+        self.analysis.original_encoded = encoded;
+        self.analysis.original_rotation = self.input_rotation.rem_euclid(4) as u32;
+        self.analysis.original_generation = self.analysis.original_generation.wrapping_add(1);
+        self.viewer.cancel_analysis_selection();
         self.viewer.set_input_display_source(space, encoded);
         match &image {
             crate::render::InputImage::Host(source) => self
@@ -2365,7 +2372,7 @@ impl eframe::App for App {
             .current_material_baseline()
             .unwrap_or_else(|| Arc::new(section_reset::unavailable_material_baseline().clone()));
         controls::begin_control_frame(ctx, &self.params, &self.gui_state.sections, baseline);
-        // Fixed histogram, search, and stage jumps above one scrolling inspector.
+        // Fixed search and stage jumps above one scrolling inspector.
         egui::SidePanel::right("controls")
             .resizable(true)
             .default_width(theme::WIDTH_CONTROL_PANEL)
@@ -2396,23 +2403,6 @@ impl eframe::App for App {
                 inspector.set_clip_rect(inspector_rect);
                 inspector.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
                 let ui = &mut inspector;
-                if let Some(data) = self.output_histogram.as_ref() {
-                    let output_id = self
-                        .source_render
-                        .as_ref()
-                        .expect("accepted GPU output has source identity")
-                        .operation_id;
-                    self.histogram.update_retained(data, output_id);
-                } else {
-                    let output_id = self
-                        .output_image
-                        .as_ref()
-                        .map(|o| Arc::as_ptr(o) as usize as u64)
-                        .unwrap_or(0);
-                    self.histogram
-                        .update(&self.output_image, output_id, ui.ctx());
-                }
-                self.histogram.render(ui);
                 ui.add_space(theme::SPACE_BLOCK);
                 ui.horizontal(|ui| {
                     let clear_width = if self.filter.is_empty() {
@@ -2520,23 +2510,20 @@ impl eframe::App for App {
                         ))
                         .max_width(ui.available_width())
                         .auto_shrink([false, false])
-                        .show(ui, |ui| self.controls_panel(ui));
-                    let viewport = ui.interact(
-                        scroll.inner_rect,
-                        ui.id().with("inspector-viewport"),
-                        egui::Sense::hover(),
-                    );
+                        .show(ui, |ui| {
+                            self.controls_panel(ui);
+                            ui.unique_id()
+                        });
                     let content_label = crate::i18n::text(ctx, "surfaces.search.content");
-                    viewport.widget_info(|| {
-                        egui::WidgetInfo::labeled(
-                            egui::WidgetType::Other,
-                            true,
-                            content_label.as_ref(),
-                        )
-                    });
-                    ctx.accesskit_node_builder(viewport.id, |node| {
+                    ctx.accesskit_node_builder(scroll.inner, |node| {
                         node.set_role(egui::accesskit::Role::ScrollView);
                         node.set_label(content_label.as_ref());
+                        node.set_bounds(egui::accesskit::Rect {
+                            x0: f64::from(scroll.inner_rect.left()),
+                            y0: f64::from(scroll.inner_rect.top()),
+                            x1: f64::from(scroll.inner_rect.right()),
+                            y1: f64::from(scroll.inner_rect.bottom()),
+                        });
                     });
                     controls::install_view_filter(ui.ctx(), false);
                 });
@@ -2544,7 +2531,9 @@ impl eframe::App for App {
                 self.simulation_action_bar(ui);
             });
         self.persist_browser_state(false);
-        if self.browser_state_changed_at.is_some() {
+        self.persist_analysis_preferences(false);
+        if self.browser_state_changed_at.is_some() || self.analysis_preferences_changed_at.is_some()
+        {
             ctx.request_repaint_after(Duration::from_millis(300));
         }
         if self.diagnostics.pending_publications() > 0 {
@@ -2558,6 +2547,19 @@ impl eframe::App for App {
         egui::CentralPanel::default()
             .frame(egui::Frame::NONE)
             .show(ctx, |ui| {
+                if self.analysis.visible {
+                    egui::TopBottomPanel::bottom("image-analysis-workspace")
+                        .exact_height(
+                            self.analysis
+                                .preferences
+                                .height
+                                .clamp(100.0, 400.0)
+                                .min((ui.available_height() * 0.4).max(120.0))
+                                + 72.0,
+                        )
+                        .frame(egui::Frame::NONE.fill(theme::SURFACE))
+                        .show_inside(ui, |ui| self.show_image_analysis(ui));
+                }
                 egui::TopBottomPanel::bottom("viewer-footer")
                     .exact_height(theme::HEIGHT_VIEWER_FOOTER)
                     .frame(
@@ -2565,7 +2567,21 @@ impl eframe::App for App {
                             .fill(theme::SURFACE)
                             .inner_margin(egui::Margin::symmetric(theme::SPACE_3 as i8, 9)),
                     )
-                    .show_inside(ui, |ui| self.viewer.footer_controls(ui));
+                    .show_inside(ui, |ui| {
+                        self.viewer.footer_controls(ui, &mut self.analysis.visible)
+                    });
+                if !self.analysis.visible
+                    && (self.analysis.identity.is_some()
+                        || self.viewer.analysis.enabled
+                        || self.viewer.analysis.armed)
+                {
+                    self.viewer.analysis.enabled = false;
+                    self.viewer.analysis.selection = None;
+                    self.viewer.analysis.band = None;
+                    self.viewer.analysis.sample = None;
+                    self.viewer.cancel_analysis_selection();
+                    self.analysis.clear();
+                }
                 // Reserve the strip before the canvas and populate it after the
                 // viewer accepts composition and transition work for this frame.
                 let status_rect = egui::TopBottomPanel::top("viewer-status")
@@ -2648,6 +2664,7 @@ impl eframe::App for App {
     /// Cancel pending export publication and drain its worker before exiting.
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
         self.persist_browser_state(true);
+        self.persist_analysis_preferences(true);
         self.cancel_pending_saves();
         if let Some(mut job) = self.export_job.take() {
             job.cancel.store(true, Ordering::SeqCst);

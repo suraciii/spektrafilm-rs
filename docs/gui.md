@@ -202,7 +202,41 @@ The footer uses compact named icons for Paper back and transitions when reopenin
 
 The footer switches between **Original** (原图), the retained input, and **Modified** (修改图), the latest accepted Preview or Scan. Modified is disabled until output exists. The first accepted Preview or Scan selects Modified. Switching does not render or edit adjustments; both views share zoom and pan. **Paper back** remains a separate presentation. **Settings → Display → output interpolation** selects nearest, linear, cubic, spline16, spline36, Lanczos, or Blackman sampling for Modified. Original uses nearest interpolation. Paper back uses spline36. The viewport samples the retained full-resolution image for visible detail.
 
-The tonal-distribution readout sits above inspector search and stage navigation and describes the retained output without another render. It starts collapsed in a fresh session and restores its saved expanded or collapsed state. Its empty state and its source follow [viewer presentation](../specs/gui-workflow/spec.md#viewer-presentation).
+### Image analysis
+
+**Image analysis** is an optional workspace below the photograph, opened from the viewer footer. The inspector has no analysis entry or reserved space. It starts collapsed in a fresh session. Expand it to measure the selected **Original** or **Modified** without another photographic render. Close it to restore the full photograph workspace and stop analysis computation. Modified identifies the accepted Preview or Scan; **Paper back** has no photographic analysis. Pan, zoom, display ICC, and temporary transitions do not change the measured population.
+
+| Mode | Reading |
+| --- | --- |
+| Histogram | Overall Tone or RGB distribution. Linear and Logarithmic change relative-frequency presentation, not image values. |
+| Waveform | Picture position from left to right against Tone or RGB values. Choose RGB overlay or RGB parade to compare channels on matching scales. Density shows frequency. |
+| Advanced → Vectorscope | Color frequency in the Oklab a,b plane. Neutral is central; fixed references identify hue directions, not a gamut boundary or a preferred result. |
+
+**Analysis mode** offers Histogram and Waveform directly. Expand **Advanced** within this selector to choose Vectorscope. Histogram is the initial mode without a saved preference.
+
+**Waveform display** offers **Tone**, **RGB overlay**, and **RGB parade**. Parade places Red, Green, and Blue in separate plots; it is a waveform display, not another analysis mode. Returning to Waveform restores the selected display.
+
+Histogram offers **Tone** and **RGB**. Tone is display-encoded relative luminance, not physical light or one RGB channel. Histogram uses filled distributions; RGB overlaps show channel combinations.
+
+Histogram RGB and Waveform RGB overlay share channel visibility choices. RGB parade always shows all three channels without changing those choices. Histogram defaults to Logarithmic; its scale control exposes Linear on demand.
+
+The plot and its coordinate guides take priority over explanatory text. Hover over a mode or waveform display choice for its question and limits. The scope line identifies Original, Preview or Scan, Full image or Selection, and **sRGB analysis**.
+
+Vectorscope offers **1×**, **2×**, and **4×** chroma zoom and reports colors outside its window. All modes use the same sRGB analysis interpretation before monitor conversion. They do not predict a saving profile, bit depth, printer, or physical spectrum.
+
+**Select area** arms a temporary primary-drag tool. The committed rectangle changes the analysis population, not crop or photographic adjustments. Use the focusable move and resize handles with arrow keys and Enter for keyboard selection. Escape cancels an unfinished selection. **Full image** clears it. The selection follows its source area across rotation, crop, Preview, and Scan. If its complete area is absent in the other subject, analysis reports the mismatch instead of intersecting it with that frame.
+
+Hover over the photograph to show the native pixel coordinates, analysis values, and matching accent-colored plot markers. Focus **Analysis pixel cursor** and use arrow keys for keyboard inspection. A pixel outside the selected area retains a labeled numeric readout without a plot marker. Hover over or focus the plot to inspect bins with a subdued band and edge ticks; Waveform and RGB parade show the corresponding image band. Parade marks the same column in all three channel plots. Inspection never changes the distributions.
+
+**Analysis settings → Plot height** changes the requested plot size. The shelf adapts to shorter windows while keeping the photograph and viewer controls available. Changing its size preserves photographic adjustments, layer selection, zoom, and pan.
+
+Either close control cancels unfinished analysis and any armed area-selection tool. Normal viewer gestures remain available while the workspace is hidden.
+
+Visibility, requested height, mode, waveform display, signal choices, channel visibility, histogram scale, and chroma zoom persist as application preferences. Existing saved parade and waveform choices upgrade automatically. Selections and cursors do not enter photograph records, looks, or export metadata.
+
+Analysis reports below-range, above-range, and invalid samples separately. Endpoint accumulation is not proof of clipping. Preview retains its detail-effects caveat. Pending, stale, unavailable, or failed analysis does not replace the accepted photograph or block Save and Export. See the [image-analysis specification](../specs/gui-product-design/image-analysis/spec.md) for measurement and comparison rules.
+
+### Canvas and retained presentation
 
 The canvas uses the pinned 18% gray (`#767676`) or black. It includes normalized white padding and the upstream paper watermark. Hovering reports the original floating RGB pixel. GPU hover readings arrive asynchronously without blocking viewer navigation. Moving to another source pixel or changing the source or layer clears the old reading until the current result is ready.
 
@@ -210,7 +244,7 @@ The single status strip above the canvas identifies **Original**, **Paper back**
 
 The strip reserves two text lines so changing status does not resize the canvas. A long identity is shortened on screen; hover shows its full text.
 
-With a selected GPU, the accepted render owns device samples through viewing and Save. Fitted resampling, display conversion, ICC evaluation, full-source interpolation, crossfade, development animation, and virtual-paper numerical synthesis use disposable device buffers; none rewrites the accepted render. The native egui frontend receives only packed RGBA8 presentation pixels. Histogram data and hovered source pixels are bounded readouts, not a full-image download followed by re-upload. Inactive camera and scanner lens blur do not allocate their image-sized blur scratch buffers. A failed viewer computation keeps the last accepted texture and reports the display error.
+With a selected GPU, the accepted render owns device samples through viewing and Save. Fitted resampling, display conversion, ICC evaluation, full-source interpolation, crossfade, development animation, and virtual-paper numerical synthesis use disposable device buffers; none rewrites the accepted render. The native egui frontend receives only packed RGBA8 presentation pixels. Image-analysis reductions and hovered source pixels are bounded readouts, not a full-image download followed by re-upload. Inactive camera and scanner lens blur do not allocate their image-sized blur scratch buffers. A failed viewer computation keeps the last accepted texture and reports the display error.
 
 ### Display transform and ICC
 

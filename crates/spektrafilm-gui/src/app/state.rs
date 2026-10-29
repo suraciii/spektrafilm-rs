@@ -23,6 +23,8 @@ pub(crate) struct App {
     pub(crate) chooser: chooser::Chooser,
     pub(crate) observed_browser_state: presets::BrowserState,
     pub(crate) browser_state_changed_at: Option<Instant>,
+    pub(crate) observed_analysis_preferences: serde_json::Value,
+    pub(crate) analysis_preferences_changed_at: Option<Instant>,
     pub(crate) film_reference_illuminant: String,
     pub(crate) film_name: String,
     pub(crate) film_medium: controls::ScanMedium,
@@ -63,8 +65,7 @@ pub(crate) struct App {
     pub(crate) output_image: Option<Arc<ImageBuf>>,
     /// Device result from the same accepted transaction; Save and viewer reuse it.
     pub(crate) output_retained: Option<spektrafilm_backend::DeviceImage>,
-    /// Reduced bins accepted atomically with the device output, never a host raster.
-    pub(crate) output_histogram: Option<histogram::HistogramData>,
+    pub(crate) output_geometry: Option<crate::analysis_geometry::AnalysisGeometry>,
     pub(crate) output_metadata: Option<ImageMetadata>,
     pub(crate) source_render: Option<SourceRender>,
     pub(crate) diagnostics: diagnostics::Diagnostics,
@@ -125,7 +126,7 @@ pub(crate) struct App {
     pub(crate) calibration_job: Option<CalibrationJob>,
     pub(crate) calibration_epoch: u64,
     pub(crate) parameter_revision: u64,
-    pub(crate) histogram: histogram::HistogramStrip,
+    pub(crate) analysis: analysis::Analysis,
 }
 
 /// A fully validated candidate; source preparation must succeed before installation.
@@ -274,6 +275,8 @@ impl App {
             language_preference_error,
             observed_browser_state: presets.state.clone(),
             browser_state_changed_at: explicit_state.then(Instant::now),
+            observed_analysis_preferences: serde_json::Value::Null,
+            analysis_preferences_changed_at: None,
             film_reference_illuminant,
             film_name,
             film_medium,
@@ -306,7 +309,7 @@ impl App {
             input_epoch: 0,
             output_image: None,
             output_retained: None,
-            output_histogram: None,
+            output_geometry: None,
             output_metadata: None,
             source_render: None,
             diagnostics: diagnostics::Diagnostics::default(),
@@ -340,7 +343,7 @@ impl App {
             calibration_job: None,
             calibration_epoch: 0,
             parameter_revision: 0,
-            histogram: histogram::HistogramStrip::new(),
+            analysis: analysis::Analysis::default(),
             filter: String::new(),
             factory_reset_confirm: false,
             section_labels: std::collections::HashMap::new(),
@@ -369,8 +372,22 @@ impl App {
         }
         app.viewer
             .restore_state(&app.gui_state.sections["rust"]["viewer"]);
-        app.histogram
-            .restore_state(&app.gui_state.sections["rust"]["histogram"]);
+        match crate::analysis_preferences::load(&app.config_directory) {
+            Ok(Some(value)) => {
+                if app.analysis.restore_state(&value) {
+                    app.analysis_preferences_changed_at = Some(Instant::now());
+                }
+            }
+            Ok(None) => {
+                let legacy = &app.gui_state.sections["rust"]["histogram"];
+                app.analysis.restore_state(legacy);
+                if legacy.get("visible").and_then(|v| v.as_bool()).is_some() {
+                    app.analysis_preferences_changed_at = Some(Instant::now());
+                }
+            }
+            Err(error) => tracing::warn!(%error, "could not load image analysis preferences"),
+        }
+        app.observed_analysis_preferences = app.analysis.persistent_state();
         app.reset_adjustment_history();
         app
     }
@@ -448,7 +465,10 @@ impl App {
             extras["rust"] = serde_json::json!({"version": state::CURRENT_STATE_VERSION});
         }
         extras["rust"]["viewer"] = self.viewer.persistent_state();
-        extras["rust"]["histogram"] = self.histogram.persistent_state();
+        if let Some(rust) = extras["rust"].as_object_mut() {
+            rust.remove("histogram");
+            rust.remove("analysis");
+        }
         self.export_options.write_state(&mut extras);
         extras["rust"]["presets"] = serde_json::to_value(&self.presets.state)?;
         state::GuiState::from_runtime(&self.params, &self.film_name, &self.print_name, &extras)
@@ -613,6 +633,15 @@ impl App {
             let view = prepared
                 .view
                 .expect("state application prepared its input view");
+            if self.image.is_none()
+                || prepared
+                    .digest
+                    .as_ref()
+                    .is_some_and(|digest| self.photograph.source_digest.as_ref() != Some(digest))
+            {
+                self.analysis.selection = None;
+                self.analysis.clear();
+            }
             self.image = Some(prepared.source);
             if prepared.digest.is_some() {
                 self.source_metadata = prepared.metadata;
@@ -629,7 +658,7 @@ impl App {
             self.input_epoch = self.input_epoch.wrapping_add(1);
             self.output_image = None;
             self.output_retained = None;
-            self.output_histogram = None;
+            self.output_geometry = None;
             self.viewer.set_retained_output(None);
             self.output_metadata = None;
             self.source_render = None;
@@ -637,8 +666,6 @@ impl App {
         }
         self.viewer
             .restore_state(&self.gui_state.sections["rust"]["viewer"]);
-        self.histogram
-            .restore_state(&self.gui_state.sections["rust"]["histogram"]);
         if let Some(ctx) = &self.photograph.context {
             crate::numeric::NumericDrafts::take(ctx);
         }
@@ -647,6 +674,25 @@ impl App {
         self.retained_kind = None;
         self.photograph.baseline = self.capture_photograph_settings().ok();
         self.photograph.record_path = None;
+    }
+    pub(crate) fn persist_analysis_preferences(&mut self, closing: bool) {
+        let current = self.analysis.persistent_state();
+        if current != self.observed_analysis_preferences {
+            self.observed_analysis_preferences = current;
+            self.analysis_preferences_changed_at = Some(Instant::now());
+        }
+        if self
+            .analysis_preferences_changed_at
+            .is_some_and(|changed| closing || changed.elapsed() >= Duration::from_millis(300))
+        {
+            self.analysis_preferences_changed_at = None;
+            if let Err(error) = crate::analysis_preferences::save(
+                &self.config_directory,
+                &self.observed_analysis_preferences,
+            ) {
+                tracing::warn!(%error, "could not save image analysis preferences");
+            }
+        }
     }
 
     pub(crate) fn persist_browser_state(&mut self, closing: bool) {

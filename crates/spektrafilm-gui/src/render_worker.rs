@@ -93,7 +93,7 @@ pub(super) struct RenderWorker {
 pub(super) struct RenderResult {
     pub(super) output: Option<ImageBuf>,
     pub(super) retained: Option<spektrafilm_backend::DeviceImage>,
-    pub(super) histogram: Option<crate::histogram::HistogramData>,
+    pub(super) geometry: Option<crate::analysis_geometry::AnalysisGeometry>,
     pub(super) preview: display::DisplayRaster,
     pub(super) display_status: crate::app::Message,
     pub(super) display_enabled: bool,
@@ -454,7 +454,7 @@ impl RenderWorker {
                             ObservationKind::Phase,
                             Purpose::Image,
                         );
-                        let display_result = (|| {
+                        let display_result = {
                             let cancellable = request
                                 .backend
                                 .with_cancellation(request.snapshot.cancellation());
@@ -468,16 +468,8 @@ impl RenderWorker {
                             });
                             let backend = bound.as_deref().unwrap_or(backend);
                             let _span = display_prepare.context().span().map(|span| span.enter());
-                            let histogram = retained
-                                .as_ref()
-                                .map(|image| {
-                                    backend
-                                        .retained_histogram(image)
-                                        .map(crate::histogram::HistogramData::from_bins)
-                                })
-                                .transpose()?;
                             let _unit = spektrafilm_core::progress::report("display_prepare");
-                            let displayed = if let Some(retained) = retained.as_ref() {
+                            if let Some(retained) = retained.as_ref() {
                                 display::output_display_raster_retained(
                                     backend,
                                     retained,
@@ -497,10 +489,9 @@ impl RenderWorker {
                                     request.display_profile.as_deref(),
                                     runtime_params.settings.preview_max_size as usize,
                                 )
-                            };
-                            displayed.map(|(preview, status)| (preview, status, histogram))
-                        })();
-                        let (preview, display_status, histogram) = observed_result(
+                            }
+                        };
+                        let (preview, display_status) = observed_result(
                             display_prepare,
                             display_result,
                             IssueCategory::Backend,
@@ -510,6 +501,21 @@ impl RenderWorker {
                             crate::app::Message::new("operations.display_error")
                                 .arg("detail", error)
                         })?;
+                        let output_size = retained.as_ref().map_or_else(
+                            || {
+                                let image = output
+                                    .as_ref()
+                                    .expect("successful render has output samples");
+                                [image.width, image.height]
+                            },
+                            |image| [image.width(), image.height()],
+                        );
+                        let geometry = crate::analysis_geometry::AnalysisGeometry::rendered(
+                            [request.image.width(), request.image.height()],
+                            rotation,
+                            output_size,
+                            runtime_params,
+                        );
                         Ok(RenderResult {
                             operator_compare: request.snapshot.operator_compare(),
                             source_metadata: request.source_metadata,
@@ -517,7 +523,7 @@ impl RenderWorker {
                             output_cctf_encoding: runtime_params.io.output_cctf_encoding,
                             output,
                             retained,
-                            histogram,
+                            geometry,
                             preview,
                             display_status,
                             display_enabled: request.display_enabled,

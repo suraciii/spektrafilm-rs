@@ -206,6 +206,30 @@ The viewer MUST distinguish:
 
 Viewer hints MUST name the gestures in this vocabulary: click zooms at the pointer, primary-button drag pans, Shift or secondary-button drag selects, and double click fits. A hint MUST NOT claim an effect on saved or exported pixels.
 
+## Image-analysis language
+
+The panel MUST use these labels under [image analysis](../gui-product-design/image-analysis/spec.md):
+
+| English presentation | Simplified Chinese presentation |
+| --- | --- |
+| Image analysis | 图像分析 |
+| Histogram | 直方图 |
+| Waveform | 波形 |
+| RGB parade | RGB 分列 |
+| Vectorscope | 矢量示波器 |
+| Tone | 明暗 |
+| Full image / Selection | 全图 / 选区 |
+| Select area | 选择区域 |
+| Analyzing | 正在分析 |
+| Outside selection | 选区外 |
+| Pixel sample | 像素取样 |
+
+Mode help MUST name the photographic judgment from the owning capability rather than require prior knowledge of the instrument. RGB analysis MUST NOT be labeled Spectrum or Spectral analysis.
+
+Select area MUST remain distinct from the normal viewer select-to-zoom gesture. Hints MUST identify the temporary analysis tool while it is armed.
+
+Linked inspection help MUST explain that pointing at the photograph locates a sample without changing statistics. Outside selection and off-scale wording MUST NOT imply missing image data or confirmed clipping.
+
 ## Action language
 
 Actions MUST use one stable verb and one explicit target:

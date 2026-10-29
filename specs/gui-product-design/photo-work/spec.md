@@ -16,6 +16,8 @@ Save MUST continue to write the retained output, even while Original is selected
 
 Paper back MAY remain a separate presentation. The scanner's held automatic-baseline comparison MUST remain independent of Original/Modified selection.
 
+[Image analysis](../image-analysis/spec.md#analysis-subject-and-comparison) owns how these presentations select measurements without introducing another layer selector.
+
 ## Photograph adjustment records
 
 A **photograph adjustment record** associates a source identity with accepted input interpretation, RAW settings, geometry, photographic adjustments, and material dependencies. It is not a preset or startup default.
