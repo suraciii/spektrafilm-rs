@@ -484,7 +484,7 @@ impl WgpuBackend {
 }
 
 #[cfg(test)]
-mod tests {
+mod logic_tests {
     use super::*;
 
     #[test]
@@ -500,6 +500,11 @@ mod tests {
         assert_eq!(std::mem::offset_of!(Interpolate, rgb), 144);
         assert_eq!(std::mem::size_of::<Interpolate>(), 192);
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
 
     #[test]
     fn enlarger_spectral_lut_matches_cpu_linear_density() {

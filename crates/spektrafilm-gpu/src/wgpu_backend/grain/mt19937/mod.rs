@@ -50,6 +50,25 @@ pub(in crate::wgpu_backend) fn build_spektra_mt19937_state(
     )
 }
 
+fn validate_inputs(
+    width: u32,
+    height: u32,
+    params: &GrainV1GpuParams,
+) -> Result<(u32, usize), String> {
+    let n_pixels = width
+        .checked_mul(height)
+        .filter(|&n| n > 0 && n <= u32::MAX / 3)
+        .ok_or("Spektra grain pixel count overflows or is zero")?;
+    let knots = params.curve_x.len() / 3;
+    if knots < 2 || params.curve_layers.len() != knots * 9 {
+        return Err("Spektra grain requires matching composite and sublayer curve tables".into());
+    }
+    if !(1..=3).contains(&params.layer_count) {
+        return Err("Spektra grain layer_count must be in 1..=3".into());
+    }
+    Ok((n_pixels, knots))
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(in crate::wgpu_backend) fn build_spektra_mt19937_state_with_limit(
     device: &ObservedDevice,
@@ -71,17 +90,7 @@ pub(in crate::wgpu_backend) fn build_spektra_mt19937_state_with_limit(
                 .into(),
         );
     }
-    let n_pixels = width
-        .checked_mul(height)
-        .filter(|&n| n > 0 && n <= u32::MAX / 3)
-        .ok_or("Spektra grain pixel count overflows or is zero")?;
-    let knots = params.curve_x.len() / 3;
-    if knots < 2 || params.curve_layers.len() != knots * 9 {
-        return Err("Spektra grain requires matching composite and sublayer curve tables".into());
-    }
-    if !(1..=3).contains(&params.layer_count) {
-        return Err("Spektra grain layer_count must be in 1..=3".into());
-    }
+    let (n_pixels, knots) = validate_inputs(width, height, params)?;
     if limit < MT_STATE_BYTES {
         return Err("Spektra MT19937 minimum generator binding needs 2520 bytes".into());
     }
