@@ -112,6 +112,73 @@ fn save_mutate_and_reload(
 }
 
 #[test]
+fn material_edits_refresh_automatic_preview_and_scan() {
+    let mut s = session();
+    let h = &mut s.harness;
+    set_route(h, "input > film > print > scan");
+    let mut previous = preview(h);
+    for (path, label, value) in [
+        ("film_render.base.scale", "scale", "1.7"),
+        ("film_render.chemistry.gamma_factor", "gamma factor", "1.5"),
+    ] {
+        edit_control(h, path, label, value);
+        let automatic = preview(h);
+        assert_ne!(
+            automatic.data, previous.data,
+            "{path}: automatic preview ignored edit"
+        );
+        let params = h
+            .state()
+            .current_state()
+            .unwrap()
+            .effective_runtime_params()
+            .unwrap();
+        let snapshot = h.state_mut().render_snapshot(params);
+        let source = h
+            .state()
+            .image
+            .as_ref()
+            .unwrap()
+            .to_host(&CpuBackend)
+            .unwrap();
+        for is_preview in [true, false] {
+            let actual = if is_preview {
+                automatic.clone()
+            } else {
+                scan(h)
+            };
+            let fresh = crate::render::build_runtime_observed(
+                &snapshot,
+                is_preview,
+                &spektrafilm_backend::telemetry::ObservationContext::default(),
+            )
+            .unwrap();
+            let input = if fresh.params().settings.preview_mode {
+                spektrafilm_core::params_builder::resize_for_preview(
+                    &source,
+                    fresh.params().settings.preview_max_size,
+                )
+            } else {
+                source.clone()
+            };
+            let expected = fresh.process(input, &CpuBackend).unwrap();
+            assert_eq!(
+                (actual.width, actual.height),
+                (expected.width, expected.height)
+            );
+            for (&a, &b) in actual.data.iter().zip(&expected.data) {
+                assert!(a.is_finite() && b.is_finite());
+                assert!(
+                    (a - b).abs() < 1e-5,
+                    "{path}, preview={is_preview}: {a} != {b}"
+                );
+            }
+        }
+        previous = automatic;
+    }
+}
+
+#[test]
 fn film_chemistry_material_and_capture_controls_accept_edits_and_persist() {
     let mut s = session();
     let h = &mut s.harness;
