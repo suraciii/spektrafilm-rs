@@ -19,6 +19,8 @@ pollster = "0.4"
 parking_lot = "0.12"
 
 [dev-dependencies]
+# Exercise the vendored Vulkan writer patch without creating a device.
+naga = { version = "24.0.0", features = ["wgsl-in", "spv-out"] }
 tracing-subscriber = { workspace = true }
 # Device tests compare the shader against the CPU reference, which lives in
 # the model crate. A dev-dependency keeps the library's acyclic build graph

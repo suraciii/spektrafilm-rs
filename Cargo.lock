@@ -4090,6 +4090,7 @@ version = "0.1.2"
 dependencies = [
  "bytemuck",
  "image",
+ "naga",
  "parking_lot",
  "pollster",
  "spektrafilm-backend",

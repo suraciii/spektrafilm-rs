@@ -15,3 +15,12 @@ The source, examples, build script, published Cargo manifest, and VCS
 provenance are copied from the published crate. Registry cache markers and
 the crate's independent Cargo.lock are omitted. Full license files are
 copied from the upstream commit rather than the published relative links.
+
+Local Vulkan modification: src/vulkan/procedural_math.rs recognizes only
+spektrafilm_procedural_no_contraction. Both Naga SPIR-V emission paths in
+src/vulkan/device.rs add NoContraction to ordinary float add/subtract/multiply/
+divide and vector-times-scalar results in this module. Explicit ExtInst Fma remains unchanged. This
+marker belongs to Grain V2 (Analogue and Digital), not V1 or MT19937. The Metal
+marker remains separate. Raw SPIR-V input bypasses the Naga-specific patch.
+This preserves separate rounding, not general IEEE division or denormals.
+Workspace integration tests include this module to test the vendored transform.

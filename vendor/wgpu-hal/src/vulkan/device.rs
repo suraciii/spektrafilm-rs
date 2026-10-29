@@ -955,6 +955,8 @@ impl super::Device {
                     naga::back::spv::write_vec(&module, &info, options, Some(&pipeline_options))
                 }
                 .map_err(|e| crate::PipelineError::Linkage(stage_flags, format!("{e}")))?;
+                let spv = super::procedural_math::preserve_operations(&module, spv)
+                    .map_err(|e| crate::PipelineError::Linkage(stage_flags, e.into()))?;
                 self.create_shader_module_impl(&spv)?
             }
         };
@@ -1836,13 +1838,17 @@ impl crate::Device for super::Device {
                     };
                 }
                 Cow::Owned(
-                    naga::back::spv::write_vec(
+                    super::procedural_math::preserve_operations(
                         &naga_shader.module,
-                        &naga_shader.info,
-                        &naga_options,
-                        None,
+                        naga::back::spv::write_vec(
+                            &naga_shader.module,
+                            &naga_shader.info,
+                            &naga_options,
+                            None,
+                        )
+                        .map_err(|e| crate::ShaderError::Compilation(format!("{e}")))?,
                     )
-                    .map_err(|e| crate::ShaderError::Compilation(format!("{e}")))?,
+                    .map_err(|e| crate::ShaderError::Compilation(e.into()))?,
                 )
             }
             crate::ShaderInput::SpirV(spv) => Cow::Borrowed(spv),
