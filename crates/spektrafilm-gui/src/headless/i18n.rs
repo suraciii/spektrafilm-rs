@@ -72,7 +72,7 @@ fn switching_language_preserves_photographic_identity_and_bilingual_search() {
 }
 
 #[test]
-fn grain_correlation_search_survives_language_switch_without_changing_the_recipe() {
+fn grain_look_control_search_survives_language_switch_without_changing_the_recipe() {
     let mut s = grain_session();
     let h = &mut s.harness;
     reveal_control(h, "film_render.grain.engine");
@@ -87,24 +87,24 @@ fn grain_correlation_search_survives_language_switch_without_changing_the_recipe
         (
             LanguagePreference::English,
             "Search controls",
-            "Channel correlation",
+            "Grain strength",
         ),
         (
             LanguagePreference::SimplifiedChinese,
             "搜索控件",
-            "通道相关性",
+            "颗粒强度",
         ),
         (
             LanguagePreference::English,
             "Search controls",
-            "Channel correlation",
+            "Grain strength",
         ),
     ] {
         language(h, preference);
         for query in [
-            "Channel correlation",
-            "通道相关性",
-            "film_render.grain.channel_correlation",
+            "Grain strength",
+            "颗粒强度",
+            "film_render.grain.dye_strength",
         ] {
             h.get_by_label(search).focus();
             h.step();
@@ -115,7 +115,7 @@ fn grain_correlation_search_survives_language_switch_without_changing_the_recipe
                 h.query_by_label(label).is_some(),
                 "grain control unavailable for {query}"
             );
-            assert!(h.get_by_label(label).node().is_disabled());
+            assert!(!h.get_by_label(label).node().is_disabled());
             assert_eq!(h.state().params, params);
             assert_eq!(h.state().gui_state.sections, sections);
             assert_eq!(h.state().parameter_revision, revision);

@@ -88,6 +88,13 @@ pub struct DyeGrainParams {
     pub density_min: [f64; 3],
     /// Per-channel grain uniformity in `[0, 1]`.
     pub uniformity: [f64; 3],
+    /// Relative delivered-law grain amplitude from the recipe. `1.0` keeps
+    /// the delivered law; `0.0` realizes the target without random grain.
+    /// The delivered continuous law reads this; the capacity model does not.
+    pub dye_strength: f64,
+    /// Relative delivered-law correlation-length scale from the recipe.
+    /// The delivered continuous law reads this; the capacity model does not.
+    pub dye_scale: f64,
     /// Raw numerical-component density maxima `[layer][channel]`.
     pub layer_max: [[f64; 3]; 3],
     /// Normalized composite density curves: the x axis of the layer split.

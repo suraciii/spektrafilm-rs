@@ -275,15 +275,7 @@ fn shared_controls(
         filter,
         rms_granularity,
         "rms granularity",
-        "Per-channel granularity G: Spektra derives statistical particle area from the film density curves using upstream granularity; Dye uses relative event-area strength k = (G / 6)^2, with zero retaining the reference-scale fallback. Neither is a certified optical RMS target. Distinct from Procedural Amount."
-    );
-    changed |= number!(
-        ui,
-        params,
-        filter,
-        channel_correlation,
-        "Channel correlation",
-        "Shared Poisson-event rate fraction among active records within each numerical component, not realized CMY or final RGB correlation. Preserves each record's marginal count distribution; correlation depends on record-rate ratios. Inactive for single-record black-and-white material; the requested value is retained for color film."
+        "Per-channel granularity G: Spektra derives statistical particle area from the film density curves using upstream granularity. It is not a certified optical RMS target. Distinct from Procedural Amount."
     );
     changed |= vector!(
         ui,
@@ -291,7 +283,7 @@ fn shared_controls(
         filter,
         density_min,
         "density min",
-        "Minimum grain density shared by Spektra and Dye."
+        "Minimum grain density for Spektra."
     );
     changed |= vector!(
         ui,
@@ -299,7 +291,7 @@ fn shared_controls(
         filter,
         uniformity,
         "uniformity",
-        "Per-channel grain uniformity shared by Spektra and Dye."
+        "Per-channel grain uniformity for Spektra."
     );
     changed |= vector!(
         ui,
@@ -307,7 +299,7 @@ fn shared_controls(
         filter,
         particle_scale_sublayers,
         "particle scale sublayers",
-        "Positive scale per component: Spektra uses relative particle scales per emulsion sublayer; Dye uses numerical curve components, changing event mass and rate, not separate cloud-kernel widths."
+        "Positive scale per component: Spektra uses relative particle scales per emulsion sublayer."
     );
     changed
 }
@@ -325,25 +317,18 @@ fn engine_controls(
                 ui,
                 params,
                 filter,
-                dye_event_area_um2,
-                "Event area (strength)",
-                "Base statistical event area in square film micrometers; controls grain strength independently of dye support."
+                dye_strength,
+                "Grain strength",
+                "Relative Dye grain amplitude: 1 keeps the delivered look; 0 removes random grain, including residual count noise. The density response and the inter-record ratio stay unchanged, and this is not a certified optical RMS target."
             );
             changed |= number!(
                 ui,
                 params,
                 filter,
-                dye_support_um,
-                "Dye support (spatial formation)",
-                "Dye support conditions the grain field and image detail in film micrometers; it is not a pure grain diameter control."
+                dye_scale,
+                "Grain scale",
+                "Relative Dye grain scale in film coordinates: 1 keeps the delivered correlation length, and the texture's octaves and band limit scale together. Not a crystal diameter, scanner blur, or output-pixel size."
             );
-            changed |= advanced(ui, params, filter, "Dye Advanced", |ui, params, filter| {
-                let mut changed = false;
-                if !filter.active() {
-                    changed |= shared_controls(ui, params, filter);
-                }
-                changed
-            });
         }
         GrainEngine::Spektra => {
             changed |= number!(ui, params, filter, blur, "blur", "Post-blur sigma.");
@@ -804,11 +789,7 @@ mod tests {
         for (selected, query, label) in [
             (GrainEngine::Procedural, "dye-cloud blur", "dye-cloud blur"),
             (GrainEngine::Spektra, "shadows", "Shadows"),
-            (
-                GrainEngine::Spektra,
-                "dye support",
-                "Dye support (spatial formation)",
-            ),
+            (GrainEngine::Spektra, "Grain strength", "Grain strength"),
             (GrainEngine::Spektra, "rms density", "RMS density"),
             (GrainEngine::Spektra, "sublayer shares", "Sublayer 1"),
         ] {
@@ -855,7 +836,7 @@ mod tests {
                 assert_eq!(harness.query_all_by_label(label).count(), 1, "{label}");
                 assert_eq!(
                     harness.get_by_label(label).node().is_disabled(),
-                    !matches!(selected, GrainEngine::Spektra | GrainEngine::Dye),
+                    !matches!(selected, GrainEngine::Spektra),
                     "{label}",
                 );
             }
@@ -954,7 +935,7 @@ mod tests {
     }
 
     #[test]
-    fn black_and_white_dye_edits_record_zero_without_erasing_color_requests() {
+    fn black_and_white_dye_exposes_only_look_controls_and_retains_shared_requests() {
         let mut params = RuntimeParams::default();
         params.film_render.grain.engine = GrainEngine::Dye;
         params.film_render.grain.monochrome = true;
@@ -966,42 +947,25 @@ mod tests {
                 query: String::new(),
             },
         );
-        harness.get_by_label("Dye Advanced").click();
-        harness.run();
-        assert!(harness.query_by_label("density min G").is_none());
-        assert!(harness.query_by_label("density min B").is_none());
+        assert!(harness.query_by_label("Dye Advanced").is_none());
+        assert!(harness.query_by_label("density min R").is_none());
         assert!(harness.query_by_label("Channel correlation").is_none());
-        for index in 0..3 {
-            assert!(
-                !harness
-                    .get_by_label(&format!("particle scale sublayers {index}"))
-                    .node()
-                    .is_disabled()
-            );
-        }
-        harness.get_by_label("density min R").focus();
+        assert!(!harness.get_by_label("Grain strength").node().is_disabled());
+        harness.get_by_label("Grain strength").focus();
         harness.run();
         harness.press_key_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
-        harness.get_by_label("density min R").type_text("0.05");
+        harness.get_by_label("Grain strength").type_text("0.5");
         harness.run();
+        assert_eq!(harness.state().params.film_render.grain.dye_strength, 0.5);
+        // Hidden shared requests stay stored without editors.
         assert_eq!(
             harness.state().params.film_render.grain.density_min,
-            [0.05, 0.07, 0.09]
+            [0.03, 0.07, 0.09]
         );
         let before = harness.state().params.clone();
         harness.state_mut().query = "density min".into();
         harness.run();
-        assert!(harness.get_by_label("density min G").node().is_disabled());
-        assert!(harness.get_by_label("density min B").node().is_disabled());
         assert_eq!(harness.state().params, before);
-        harness.state_mut().params.film_render.grain.monochrome = false;
-        harness.run();
-        assert!(!harness.get_by_label("density min G").node().is_disabled());
-        assert!(!harness.get_by_label("density min B").node().is_disabled());
-        assert_eq!(
-            harness.state().params.film_render.grain.density_min,
-            [0.05, 0.07, 0.09]
-        );
     }
 
     #[test]

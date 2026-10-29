@@ -22,7 +22,15 @@ use rayon::prelude::*;
 use spektrafilm_math::gaussian;
 use spektrafilm_math::image::ImageBuf;
 use spektrafilm_math::precision::{Scalar, ZERO, from_f32, from_f64, to_f64};
-use spektrafilm_math::stats::{FastStatsRng, poisson_exact, poisson_exact_coordinate};
+use spektrafilm_math::stats::{
+    FastStatsRng, normal01_coordinate, poisson_exact, poisson_exact_coordinate,
+};
+
+/// Above this conditional count rate both executors draw the same normal
+/// deviation instead of the exact Poisson count. The distributions agree to
+/// the declared precision; the branch keeps a tiny mapped event area from
+/// overflowing the rate or losing the mean.
+pub const LARGE_RATE_THRESHOLD: f64 = 1e9;
 
 /// Octave centres (µm) and weights; weights are normalised by the caller.
 const OCTAVES: [(f64, f64); 3] = [(4.0, 0.35), (2.0, 1.0), (1.2, 0.9)];
@@ -48,7 +56,14 @@ fn texture_octaves() -> Vec<(f64, f64)> {
 
 /// Build a zero-mean, unit-variance multi-octave field. Octave length is the
 /// Gaussian sigma in micrometres; weights are normalised here.
-fn correlated_field(w: usize, h: usize, pitch_um: f64, seed: u64, field: u32) -> Vec<Scalar> {
+fn correlated_field(
+    w: usize,
+    h: usize,
+    pitch_um: f64,
+    seed: u64,
+    field: u32,
+    length_scale: f64,
+) -> Vec<Scalar> {
     let octs = texture_octaves();
     let norm = octs.iter().map(|(_, v)| v * v).sum::<f64>().sqrt();
     let mut combined = vec![ZERO; w * h];
@@ -60,7 +75,7 @@ fn correlated_field(w: usize, h: usize, pitch_um: f64, seed: u64, field: u32) ->
             &v0,
             w as u32,
             h as u32,
-            (length_um / pitch_um / 2.0) as f32,
+            (length_um * length_scale / pitch_um / 2.0) as f32,
         );
         standardize(&mut v);
         let k = from_f64(weight / norm);
@@ -75,8 +90,12 @@ fn correlated_field(w: usize, h: usize, pitch_um: f64, seed: u64, field: u32) ->
     // micrometres (0 disables it).
     let hp = texture_highpass_um();
     if hp > 0.0 {
-        let big =
-            gaussian::gaussian_blur_channel(&combined, w as u32, h as u32, (hp / pitch_um) as f32);
+        let big = gaussian::gaussian_blur_channel(
+            &combined,
+            w as u32,
+            h as u32,
+            (hp * length_scale / pitch_um) as f32,
+        );
         combined
             .par_iter_mut()
             .zip(big.par_iter())
@@ -132,6 +151,8 @@ pub struct ClumpParams {
     pub white: f64,
     /// Single-event mass in `D * um^2`.
     pub q: f64,
+    /// Relative field correlation length. The delivered reference is `1.0`.
+    pub length_scale: f64,
     pub seed: u64,
     /// Replace every count by its conditional mean (diagnostic only).
     pub expectation: bool,
@@ -185,6 +206,7 @@ impl ClumpParams {
             base: parts[4],
             white: parts[6],
             q: parts[5],
+            length_scale: 1.0,
             seed: 7,
             expectation: false,
             monochrome: false,
@@ -242,6 +264,9 @@ impl ClumpParams {
         }
         if self.scales.iter().any(|s| !s.is_finite() || *s <= 0.0) {
             return Err("film grain V4: scales must be finite and positive".into());
+        }
+        if !self.length_scale.is_finite() || self.length_scale <= 0.0 {
+            return Err("film grain V4: length_scale must be finite and positive".into());
         }
         Ok(())
     }
@@ -373,6 +398,7 @@ fn channel(
             pitch_um,
             p.seed,
             if p.monochrome { 1 } else { c as u32 + 1 },
+            p.length_scale,
         )
     } else {
         let mut v = noise_field(w, h, p.seed, (c as u32 + 1) * 8);
@@ -386,7 +412,7 @@ fn channel(
             &mut tmp,
             w,
             h,
-            length_um * p.scales[c] / pitch_um,
+            length_um * p.scales[c] * p.length_scale / pitch_um,
         );
         standardize(&mut independent);
         let us = &shared[o];
@@ -506,28 +532,37 @@ fn channel(
                     (1.0 + rel * to_f64(wi) * m).max(0.02)
                 }
             };
+            // The expectation diagnostic and the zero-strength limit must return the
+            // target directly. Deriving it from a capped count rate would shift the
+            // mean at coarse readouts.
+            if p.expectation || q <= 0.0 {
+                *o = from_f64(t);
+                return Ok(());
+            }
             // Fog baseline: a developed record still carries base density, so the event
             // rate does not vanish at t -> 0. The baseline is removed again after the
             // count, so E[D] = t is unchanged.
-            let lambda = ((t.max(0.0) + p.fog) * e * area / q).min(1e12);
-            let count = if p.expectation {
-                lambda
+            let expected = (t.max(0.0) + p.fog) * e;
+            let lambda = expected * area / q;
+            let stream = if p.monochrome { 100 } else { 100 + c as u32 };
+            let x = (i % w) as u32;
+            let y = (i / w) as u32;
+            if lambda > LARGE_RATE_THRESHOLD {
+                // The exact sampler is indistinguishable from the normal law at this
+                // rate. Evaluate the deviation directly so a small mapped event area
+                // cannot overflow the rate and lose the mean.
+                let variance = (q * expected / area).max(0.0);
+                let z = normal01_coordinate(p.seed as u32, stream, x, y);
+                *o = from_f64(expected - p.fog + variance.sqrt() * z);
             } else {
                 // One count from the draw the device kernel also uses: the
                 // uniform is addressed by global cell coordinate and sample
                 // ordinal, so one seed selects one realization on either
                 // executor. A sequential stream cannot be replayed on a device
                 // whose invocations run in an order it does not control.
-                let stream = if p.monochrome { 100 } else { 100 + c as u32 };
-                poisson_exact_coordinate(
-                    lambda,
-                    p.seed as u32,
-                    stream,
-                    (i % w) as u32,
-                    (i / w) as u32,
-                ) as f64
-            };
-            *o = from_f64(q * count / area - p.fog);
+                let count = poisson_exact_coordinate(lambda, p.seed as u32, stream, x, y) as f64;
+                *o = from_f64(q * count / area - p.fog);
+            }
             Ok(())
         })?;
     Ok(())
@@ -634,12 +669,18 @@ pub fn apply(
     let mut tmp = vec![ZERO; w * h];
     for (o, (length_um, _)) in octs.iter().enumerate() {
         let mut v = noise_field(w, h, params.seed, o as u32);
-        box_blur_approx(&mut v, &mut tmp, w, h, length_um / pitch_um);
+        box_blur_approx(
+            &mut v,
+            &mut tmp,
+            w,
+            h,
+            length_um * params.length_scale / pitch_um,
+        );
         standardize(&mut v);
         shared.push(v);
     }
     let shared_white = if params.texture {
-        correlated_field(w, h, pitch_um, params.seed, 0)
+        correlated_field(w, h, pitch_um, params.seed, 0, params.length_scale)
     } else {
         let mut v = noise_field(w, h, params.seed, 0);
         standardize(&mut v);

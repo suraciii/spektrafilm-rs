@@ -137,13 +137,15 @@ No duplicate grain selector or automatic engine conversion is required.
 
 Ordinary Grain browsing MUST place Enable grain and Engine first. It MUST show only the selected engine's effective controls. Turning grain off MUST hide numerical controls without clearing their requests.
 
-Dye MUST expose Event area and Dye support immediately. One Advanced disclosure MUST contain its effective secondary controls.
+Dye MUST expose Grain strength and Grain scale as its only numerical editors. Grain strength 0 MUST remove random grain, including residual count noise; 1 MUST keep the delivered look. Grain scale MUST be described as a film-coordinate texture scale, not a crystal diameter or scanner blur, and MUST NOT be described as an output-pixel size.
 
-Dye support MUST NOT be described as a pure grain-diameter control. The panel MUST explain the lightweight Preview bypass and direct inspection to SCAN and exact 100% zoom.
+RMS granularity, channel correlation, density minimum, uniformity, and particle scale sublayers MUST remain stored recipe values without Dye editors; loads and saves MUST keep them unchanged. Their Dye applicability MUST report them inactive, and search MUST NOT present them as effective Dye controls.
 
-Black-and-white Spektra and Dye MUST show only record 0 for RMS or relative strength, density minimum, and uniformity. Hidden G/B requests MUST remain stored and reactivate for color material.
+The panel MUST explain the lightweight Preview bypass and direct inspection to SCAN and exact 100% zoom.
 
-Dye MUST hide color-only channel correlation without clearing its request. The three numerical-component scales MUST remain independent editors for both material models.
+Black-and-white Spektra MUST show only record 0 for RMS or relative strength, density minimum, and uniformity. Hidden G/B requests MUST remain stored and reactivate for color material.
+
+The three numerical-component scales MUST remain independent editors for Spektra; they are not RGB lanes.
 
 Procedural Grain Profiles MUST appear ordinarily only for Procedural. Named profiles MUST retain the allowed Amount override. Custom-only controls MUST appear only after explicit Custom selection.
 

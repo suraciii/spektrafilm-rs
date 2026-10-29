@@ -24,6 +24,8 @@
       5.0,
       4.9
     ],
+    "dye_strength": 1.0,
+    "dye_scale": 1.0,
     "density_min": [
       0.03,
       0.03,

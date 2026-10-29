@@ -74,6 +74,18 @@ fn poisson_uniform(seed: u32, stream: u32, x: u32, y: u32, n: u32) -> f32 {
     return f32(h >> 8u) * (1.0 / 16777216.0);
 }
 
+// Coordinate-addressed standard normal over the same samples as the host
+// `normal01_coordinate`: ordinals 1 and 2.
+fn normal01(seed: u32, stream: u32, x: u32, y: u32) -> f32 {
+    let u1 = max(poisson_uniform(seed, stream, x, y, 1u), 1e-12);
+    let u2 = poisson_uniform(seed, stream, x, y, 2u);
+    return sqrt(-2.0 * log(u1)) * cos(6.283185307179586 * u2);
+}
+
+// Above this rate both executors draw the normal deviation instead of the
+// exact Poisson count. Keep in sync with `dye::LARGE_RATE_THRESHOLD`.
+const LARGE_RATE_THRESHOLD: f32 = 1.0e9;
+
 // Exact Poisson sampling, matching the host `poisson_exact`: inversion below 30,
 // PTRS above. A normal approximation keeps the mean and variance at large rates but
 // changes the distribution once the rate is small, which a heavily oversampled
@@ -148,12 +160,22 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         let wi = a * s + b * own_c;
         let rel = p.white * strength * taper(t);
         let e = 1.0 + rel * wi;
-        if (p.expectation != 0u) {
+        if (p.expectation != 0u || p.q <= 0.0) {
             out[i * 3u + c] = t;
             continue;
         }
-        let lambda = max((t + p.fog) * e * p.area / p.q, 0.0);
+        let expected = (t + p.fog) * e;
+        let lambda = max(expected * p.area / p.q, 0.0);
         let stream = select(100u + c, 100u, mono);
+        if (lambda > LARGE_RATE_THRESHOLD) {
+            // The exact sampler is indistinguishable from the normal law at
+            // this rate. Evaluate the deviation directly so a small mapped
+            // event area cannot overflow the rate and lose the mean.
+            let variance = max(p.q * expected / p.area, 0.0);
+            let z = normal01(p.seed, stream, x + p.ox, y + p.oy);
+            out[i * 3u + c] = expected - p.fog + sqrt(variance) * z;
+            continue;
+        }
         let count = poisson_exact(lambda, p.seed, stream, x + p.ox, y + p.oy);
         out[i * 3u + c] = p.q * count / p.area - p.fog;
     }

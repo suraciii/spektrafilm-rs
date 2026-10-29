@@ -23,4 +23,11 @@ pub struct DyeGpuParams {
     /// One effective record carried in three equal lanes: every record reads the
     /// same field, the same strength and the same count draw.
     pub monochrome: bool,
+    /// Relative density amplitude at the taper peak (the mapped law value).
+    pub white: f64,
+    /// Event area of one developed cluster, in square micrometres (the
+    /// mapped law value).
+    pub event_area_um2: f64,
+    /// Relative correlation length of the field (the mapped law value).
+    pub length_scale: f64,
 }

@@ -388,7 +388,12 @@ fn explicit_rms_is_not_replaced_by_engine_defaults() {
                 .iter()
                 .find(|edit| edit.path == "film_render.grain.rms_granularity")
                 .unwrap();
-            assert_eq!(rms.status, EditStatus::Active);
+            let expected = if engine == "spektra" {
+                EditStatus::Active
+            } else {
+                EditStatus::Inactive
+            };
+            assert_eq!(rms.status, expected);
         }
     }
 }

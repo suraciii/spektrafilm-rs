@@ -2104,20 +2104,37 @@ mod tests {
     }
 
     #[test]
-    fn dye_only_controls_carry_the_dye_engine_condition() {
+    fn dye_look_controls_are_effective_and_legacy_values_are_retained() {
         use super::effects::conditions;
         for path in [
-            "film_render.grain.dye_support_um",
-            "film_render.grain.dye_event_area_um2",
-            "film_render.grain.channel_correlation",
+            "film_render.grain.dye_strength",
+            "film_render.grain.dye_scale",
         ] {
-            let found = conditions(path);
-            let described: Vec<_> = found.iter().map(|c| c.description()).collect();
+            let described: Vec<_> = conditions(path).iter().map(|c| c.description()).collect();
             assert!(
                 described
                     .iter()
                     .any(|d| d.starts_with("film_render.grain.engine = dye;")),
                 "missing the Dye engine condition for {path}: {described:?}"
+            );
+            assert!(
+                !described
+                    .iter()
+                    .any(|d| d.starts_with("retained legacy Dye")),
+                "an effective Dye control must not be marked retained: {path}: {described:?}"
+            );
+        }
+        for path in [
+            "film_render.grain.dye_support_um",
+            "film_render.grain.dye_event_area_um2",
+            "film_render.grain.channel_correlation",
+        ] {
+            let described: Vec<_> = conditions(path).iter().map(|c| c.description()).collect();
+            assert!(
+                described
+                    .iter()
+                    .any(|d| d.starts_with("retained legacy Dye")),
+                "missing the retained condition for {path}: {described:?}"
             );
             assert!(
                 !described
@@ -2129,7 +2146,7 @@ mod tests {
     }
 
     #[test]
-    fn rms_granularity_is_effective_for_spektra_and_dye_without_layer_controls() {
+    fn rms_granularity_is_effective_only_for_spektra_without_layer_controls() {
         let film: crate::profile::Profile =
             serde_json::from_str(r#"{"metadata":{},"info":{},"data":{}}"#).unwrap();
         let mut params = RuntimeParams::default();
@@ -2138,22 +2155,22 @@ mod tests {
             .apply(&mut params)
             .unwrap();
         let path = "film_render.grain.rms_granularity";
+        params.film_render.grain.engine = crate::params::GrainEngine::Spektra;
+        assert_eq!(inactive_reason(path, &params, &film, &film), None);
         for engine in [
-            crate::params::GrainEngine::Spektra,
             crate::params::GrainEngine::Dye,
+            crate::params::GrainEngine::Procedural,
         ] {
             params.film_render.grain.engine = engine;
-            assert_eq!(inactive_reason(path, &params, &film, &film), None);
+            assert_eq!(
+                inactive_reason(path, &params, &film, &film).as_deref(),
+                Some("film_render.grain.engine = spektra")
+            );
         }
-        params.film_render.grain.engine = crate::params::GrainEngine::Procedural;
-        assert_eq!(
-            inactive_reason(path, &params, &film, &film).as_deref(),
-            Some("film_render.grain.engine = spektra or dye")
-        );
     }
 
     #[test]
-    fn dye_correlation_is_preserved_for_bw_and_reactivated_for_color() {
+    fn legacy_dye_values_are_retained_but_inactive() {
         use crate::profile::Profile;
         let color: Profile = serde_json::from_value(serde_json::json!({
             "metadata": {}, "info": {"channel_model": "color"}, "data": {}
@@ -2164,29 +2181,28 @@ mod tests {
         let mut params = RuntimeParams::default();
         params.film_render.grain.active = true;
         params.film_render.grain.engine = crate::params::GrainEngine::Dye;
-        let path = "film_render.grain.channel_correlation";
-        ParameterEdits::parse(&format!("{path}=0.35"))
-            .unwrap()
-            .apply(&mut params)
-            .unwrap();
-        // Applicability follows the selected profile, not a stale runtime flag.
-        params.film_render.grain.monochrome = false;
-        assert_eq!(
-            inactive_reason(path, &params, &bw, &color).as_deref(),
-            Some(
-                "selected film has color records; channel_correlation is retained but inactive for single-record black-and-white material"
-            )
-        );
-        assert_eq!(params.film_render.grain.channel_correlation, 0.35);
-        params.film_render.grain.monochrome = true;
-        assert_eq!(inactive_reason(path, &params, &color, &bw), None);
-        assert_eq!(params.film_render.grain.channel_correlation, 0.35);
-        for other in [
-            "film_render.grain.dye_event_area_um2",
-            "film_render.grain.dye_support_um",
+        for (path, value) in [
+            ("film_render.grain.channel_correlation", "0.35"),
+            ("film_render.grain.dye_event_area_um2", "2.25"),
+            ("film_render.grain.dye_support_um", "4.5"),
         ] {
-            assert_eq!(inactive_reason(other, &params, &bw, &color), None);
+            ParameterEdits::parse(&format!("{path}={value}"))
+                .unwrap()
+                .apply(&mut params)
+                .unwrap();
+            let expected =
+                Some("retained legacy Dye value; the delivered Dye law does not read it");
+            for film in [&bw, &color] {
+                assert_eq!(
+                    inactive_reason(path, &params, film, film).as_deref(),
+                    expected,
+                    "{path}"
+                );
+            }
         }
+        assert_eq!(params.film_render.grain.channel_correlation, 0.35);
+        assert_eq!(params.film_render.grain.dye_event_area_um2, 2.25);
+        assert_eq!(params.film_render.grain.dye_support_um, 4.5);
     }
 
     #[test]

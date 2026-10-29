@@ -836,51 +836,38 @@ fn ordinary_grain_controls_follow_engine_and_enable_without_losing_values() {
     let h = &mut s.harness;
     open_grain(h);
     assert_eq!(h.state().params.film_render.grain.engine, GrainEngine::Dye);
-    assert!(!h.get_by_label("Event area (strength)").node().is_disabled());
-    assert!(
-        !h.get_by_label("Dye support (spatial formation)")
-            .node()
-            .is_disabled()
-    );
+    assert!(!h.get_by_label("Grain strength").node().is_disabled());
+    assert!(!h.get_by_label("Grain scale").node().is_disabled());
     assert!(h.query_by_label("Channel correlation").is_none());
     assert!(h.query_by_label("Procedural Grain Profiles").is_none());
     assert!(h.query_by_label("blur").is_none());
     assert!(h.query_by_label("Layer amounts").is_none());
-    edit(h, "Event area (strength)", "0.64");
-    edit(h, "Dye support (spatial formation)", "4.5");
-    click(h, "Dye Advanced");
-    edit(h, "Channel correlation", "0.21");
-    click(h, "Dye Advanced");
-    assert!(h.query_by_label("Channel correlation").is_none());
+    edit(h, "Grain strength", "0.64");
+    edit(h, "Grain scale", "2.5");
     let retained = h.state().params.film_render.grain.clone();
     click(h, "Enable grain");
     let mut disabled = retained.clone();
     disabled.active = false;
     assert_eq!(h.state().params.film_render.grain, disabled);
-    assert!(h.query_by_label("Event area (strength)").is_none());
-    assert!(
-        h.query_by_label("Dye support (spatial formation)")
-            .is_none()
-    );
-    assert!(h.query_by_label("Dye Advanced").is_none());
+    assert!(h.query_by_label("Grain strength").is_none());
+    assert!(h.query_by_label("Grain scale").is_none());
     assert!(
         h.query_by_role_and_label(egui::accesskit::Role::ComboBox, "Engine")
             .is_some()
     );
     click(h, "Enable grain");
     assert_eq!(h.state().params.film_render.grain, retained);
-    assert!(h.query_by_label("Event area (strength)").is_some());
+    assert!(h.query_by_label("Grain strength").is_some());
 
     choose(h, "Engine", "Spektra");
-    assert!(h.query_by_label("Event area (strength)").is_none());
+    assert!(h.query_by_label("Grain strength").is_none());
     edit(h, "blur", "1.05");
     choose(h, "Engine", "Fotufilm Film");
     assert!(h.query_by_label("blur").is_none());
     edit(h, "Amount", "2.25");
     choose(h, "Engine", "Dye");
-    assert_eq!(h.state().params.film_render.grain.dye_event_area_um2, 0.64);
-    assert_eq!(h.state().params.film_render.grain.dye_support_um, 4.5);
-    assert_eq!(h.state().params.film_render.grain.channel_correlation, 0.21);
+    assert_eq!(h.state().params.film_render.grain.dye_strength, 0.64);
+    assert_eq!(h.state().params.film_render.grain.dye_scale, 2.5);
     choose(h, "Engine", "Spektra");
     assert_eq!(h.state().params.film_render.grain.blur, 1.05);
     choose(h, "Engine", "Fotufilm Film");
@@ -1030,10 +1017,7 @@ fn canonical_search_reveals_unselected_grain_engines_without_mutating_values() {
     let revision = h.state().parameter_revision;
     for (path, label) in [
         ("film_render.grain.fotufilm.rms_density", "RMS density"),
-        (
-            "film_render.grain.dye_event_area_um2",
-            "Event area (strength)",
-        ),
+        ("film_render.grain.dye_strength", "Grain strength"),
         ("film_render.grain.procedural_timer", "Timer"),
     ] {
         reveal_control(h, path);
@@ -1056,75 +1040,53 @@ fn canonical_search_reveals_unselected_grain_engines_without_mutating_values() {
 }
 
 #[test]
-fn dye_bw_hides_color_records_without_losing_edits_or_saved_state() {
+fn dye_bw_keeps_look_controls_and_retains_hidden_requests() {
     let mut s = grain_session();
     let h = &mut s.harness;
     let color = profile::load_profile_by_name(&data_dir(), "kodak_portra_400").unwrap();
     select_film(h, color.info.name.as_deref().unwrap_or("kodak_portra_400"));
     open_grain(h);
-    click(h, "Dye Advanced");
-    edit(h, "Channel correlation", "0.35");
-    edit(h, "rms granularity G", "7");
-    edit(h, "density min G", "0.05");
-    edit(h, "uniformity B", "0.85");
-    let mut retained = h.state().params.film_render.grain.clone();
-    assert!(!retained.monochrome);
+    edit(h, "Grain strength", "1.5");
+    edit(h, "Grain scale", "2");
 
     let bw = profile::load_profile_by_name(&data_dir(), "kodak_doublex").unwrap();
     select_film(h, bw.info.name.as_deref().unwrap_or("kodak_doublex"));
-    retained.monochrome = true;
-    assert_eq!(h.state().params.film_render.grain, retained);
-    open_grain(h);
-    for label in [
-        "rms granularity R",
-        "density min R",
-        "uniformity R",
-        "particle scale sublayers 0",
-        "particle scale sublayers 1",
-        "particle scale sublayers 2",
-    ] {
-        assert!(
-            !h.get_by_label(label).node().is_disabled(),
-            "active BW control {label}"
-        );
+    // Shared secondary requests have no Dye editors and survive unchanged.
+    {
+        let grain = &mut h.state_mut().params.film_render.grain;
+        grain.channel_correlation = 0.35;
+        grain.rms_granularity = [6.0, 7.0, 6.0];
+        grain.density_min = [0.03, 0.05, 0.09];
+        grain.uniformity = [0.97, 0.97, 0.85];
     }
+    let mut retained = h.state().params.film_render.grain.clone();
+    assert!(retained.monochrome);
+    open_grain(h);
+    assert!(
+        !h.get_by_label("Grain strength").node().is_disabled(),
+        "the look controls stay editable for BW material"
+    );
+    assert!(!h.get_by_label("Grain scale").node().is_disabled());
+    assert!(h.query_by_label("Dye Advanced").is_none());
     for label in [
         "Channel correlation",
-        "rms granularity G",
-        "rms granularity B",
-        "density min G",
-        "density min B",
-        "uniformity G",
+        "rms granularity R",
+        "density min R",
         "uniformity B",
+        "particle scale sublayers 0",
     ] {
         assert!(
             h.query_by_label(label).is_none(),
-            "ordinary BW controls hide {label}"
+            "Dye keeps shared requests without editors ({label})"
         );
     }
-    let revision = h.state().parameter_revision;
-    for (path, label) in [
-        (
-            "film_render.grain.channel_correlation",
-            "Channel correlation",
-        ),
-        ("film_render.grain.rms_granularity", "rms granularity G"),
-        ("film_render.grain.density_min", "density min G"),
-        ("film_render.grain.uniformity", "uniformity B"),
-    ] {
-        reveal_control(h, path);
-        assert!(h.get_by_label(label).node().is_disabled());
-        assert_eq!(h.state().params.film_render.grain, retained);
-        assert_eq!(h.state().parameter_revision, revision);
-    }
+    // Retained legacy requests have no editors and do not change the field.
+    assert!(h.query_by_label("Channel correlation").is_none());
+    assert_eq!(h.state().params.film_render.grain, retained);
     // An ordinary edit must retain the material-derived single-record layout.
     open_grain(h);
-    edit(h, "Event area (strength)", "0.5");
-    retained.dye_event_area_um2 = 0.5;
-    edit(h, "rms granularity R", "6.5");
-    retained.rms_granularity[0] = 6.5;
-    edit(h, "particle scale sublayers 2", "0.6");
-    retained.particle_scale_sublayers[2] = 0.6;
+    edit(h, "Grain strength", "0.5");
+    retained.dye_strength = 0.5;
     assert_eq!(h.state().params.film_render.grain, retained);
     let preset = spektrafilm_core::presets::Preset::capture_section(
         "Hidden BW grain",
@@ -1147,7 +1109,18 @@ fn dye_bw_hides_color_records_without_losing_edits_or_saved_state() {
     target.film_render.grain.density_min = [0.02; 3];
     target.film_render.grain.uniformity = [0.9; 3];
     let restored = preset.apply_section(&target, &bw).unwrap();
-    assert_eq!(restored.film_render.grain, retained);
+    // The target switches engine and film, so material preparation re-seeds
+    // the shared Spektra fields. The Dye look controls and retained coupling
+    // are the values this section must restore unchanged.
+    assert_eq!(
+        restored.film_render.grain.dye_strength,
+        retained.dye_strength
+    );
+    assert_eq!(restored.film_render.grain.dye_scale, retained.dye_scale);
+    assert_eq!(
+        restored.film_render.grain.channel_correlation,
+        retained.channel_correlation
+    );
     assert_eq!(
         restored.camera, target.camera,
         "Grain preset is module-scoped"
@@ -1156,21 +1129,26 @@ fn dye_bw_hides_color_records_without_losing_edits_or_saved_state() {
     save_mutate_and_reload(&mut s, "hidden-bw-grain.json", |h| {
         edit_control(
             h,
-            "film_render.grain.dye_event_area_um2",
-            "Event area (strength)",
+            "film_render.grain.dye_strength",
+            "Grain strength",
             "0.75",
         );
     });
 
     let h = &mut s.harness;
-    assert_eq!(h.state().params.film_render.grain, retained);
+    let reloaded = &h.state().params.film_render.grain;
+    assert_eq!(reloaded.dye_strength, retained.dye_strength);
+    assert_eq!(reloaded.dye_scale, retained.dye_scale);
+    assert_eq!(reloaded.channel_correlation, retained.channel_correlation);
     select_film(h, color.info.name.as_deref().unwrap_or("kodak_portra_400"));
-    retained.monochrome = false;
-    assert_eq!(h.state().params.film_render.grain, retained);
-    reveal_control(h, "film_render.grain.channel_correlation");
-    assert!(!h.get_by_label("Channel correlation").node().is_disabled());
-    edit(h, "Channel correlation", "0.25");
-    assert_eq!(h.state().params.film_render.grain.channel_correlation, 0.25);
+    let color_grain = &h.state().params.film_render.grain;
+    assert_eq!(color_grain.dye_strength, retained.dye_strength);
+    assert_eq!(color_grain.dye_scale, retained.dye_scale);
+    assert_eq!(
+        color_grain.channel_correlation,
+        retained.channel_correlation
+    );
+    assert!(h.query_by_label("Channel correlation").is_none());
 }
 
 #[test]
@@ -1194,18 +1172,8 @@ fn hidden_grain_modified_locators_and_whole_reset_are_complete_scoped_and_revers
     choose_control(h, "film_render.grain.engine", "Engine", "Spektra");
     edit_control(h, "film_render.grain.blur", "blur", "1.05");
     choose_control(h, "film_render.grain.engine", "Engine", "Dye");
-    edit_control(
-        h,
-        "film_render.grain.channel_correlation",
-        "Channel correlation",
-        "0.35",
-    );
-    edit_control(
-        h,
-        "film_render.grain.rms_granularity",
-        "rms granularity G",
-        "7",
-    );
+    edit_control(h, "film_render.grain.dye_strength", "Grain strength", "1.4");
+    edit_control(h, "film_render.grain.dye_scale", "Grain scale", "2");
     let bw = profile::load_profile_by_name(&data_dir(), "kodak_doublex").unwrap();
     select_film(h, bw.info.name.as_deref().unwrap_or("kodak_doublex"));
     toggle_control(h, "film_render.grain.active", "Enable grain");
@@ -1217,11 +1185,8 @@ fn hidden_grain_modified_locators_and_whole_reset_are_complete_scoped_and_revers
     for (path, label) in [
         ("film_render.grain.fotufilm.rms_density", "RMS density"),
         ("film_render.grain.blur", "blur"),
-        (
-            "film_render.grain.channel_correlation",
-            "Channel correlation",
-        ),
-        ("film_render.grain.rms_granularity", "rms granularity G"),
+        ("film_render.grain.dye_strength", "Grain strength"),
+        ("film_render.grain.dye_scale", "Grain scale"),
     ] {
         reveal_control(h, path);
         assert!(h.get_by_label(label).node().is_disabled());
@@ -1263,7 +1228,6 @@ fn hidden_grain_modified_locators_and_whole_reset_are_complete_scoped_and_revers
     assert!(h.query_by_label("rms granularity G").is_none());
     click(h, "Undo");
     assert_eq!(h.state().params, edited);
-    assert!(h.query_by_label("rms granularity G").is_some());
     click(h, "Redo");
     assert_eq!(h.state().params, expected);
     assert!(!section_reset::is_modified(
@@ -1505,7 +1469,7 @@ fn locating_another_export_control_preserves_the_open_draft() {
 }
 
 #[test]
-fn collapsed_grain_subsections_remain_accessible_and_shared_fields_have_one_active_editor() {
+fn collapsed_grain_subsections_remain_accessible_and_shared_fields_retain_one_editor() {
     let mut s = grain_session();
     let h = &mut s.harness;
     choose_control(h, "film_render.grain.engine", "Engine", "Fotufilm Film");
@@ -1529,12 +1493,7 @@ fn collapsed_grain_subsections_remain_accessible_and_shared_fields_have_one_acti
     let sections = h.state().gui_state.sections.clone();
     let revision = h.state().parameter_revision;
     reveal_control(h, "film_render.grain.rms_granularity");
-    h.get_by_label(&locator_label(h, "film_render.grain.rms_granularity"))
-        .focus();
-    h.step();
-    h.press_key(egui::Key::Enter);
-    h.run_steps(3);
-    assert!(h.get_by_label("rms granularity R").node().is_focused());
+    assert!(h.get_by_label("rms granularity R").node().is_disabled());
     assert_eq!(h.state().params, params);
     assert_eq!(h.state().gui_state.sections, sections);
     assert_eq!(h.state().parameter_revision, revision);
@@ -1542,8 +1501,8 @@ fn collapsed_grain_subsections_remain_accessible_and_shared_fields_have_one_acti
         h.query_all_by_label("rms granularity R")
             .filter(|node| !node.node().is_disabled())
             .count(),
-        1,
-        "one persisted component has one active editor"
+        0,
+        "the delivered Dye law does not read the shared RMS request"
     );
     assert_eq!(
         h.query_all_by_label("rms granularity R").count(),
