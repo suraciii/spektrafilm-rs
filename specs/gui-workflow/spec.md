@@ -234,6 +234,8 @@ The baseline MUST NOT incorporate live explicit edits, the last applied preset, 
 
 Reset MUST release explicit ownership of every leaf in its scope, including when the values already equal the baseline. A metadata-only reset is a reversible edit.
 
+Reset MUST preserve the value and optional state of preparation metadata outside that scope.
+
 The row marker, module marker, Only modified filter, and reset action MUST use the same baseline and comparison under [GUI presentation](../gui-presentation/design.md#factory-projection-and-modified-state).
 
 The reset action MUST name its scope and baseline. Reset and Revert to applied preset MUST remain separate actions.

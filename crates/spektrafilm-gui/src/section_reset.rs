@@ -440,6 +440,7 @@ pub(crate) fn reset(
     let Some(paths) = section_paths(section) else {
         return false;
     };
+    let filter_protection = params.neutral_print_filters_protected;
     let mut changed = false;
     if let Ok(mut live_root) = serde_json::to_value(&*params) {
         for path in paths {
@@ -506,6 +507,7 @@ pub(crate) fn reset(
             }
         }
     }
+    params.neutral_print_filters_protected = filter_protection;
     changed
 }
 
