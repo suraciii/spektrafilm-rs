@@ -1,7 +1,8 @@
 //! Conservative additional buffer capacities for the fixed photographic stages.
 //! Chain-owned rasters and shared Gaussian image pages are counted by passes.rs.
 use super::super::{
-    WgpuBackend, bounded::storage_binding_limit, page_views::ADAPTER_WORKSPACE_BYTES,
+    WgpuBackend, bounded::storage_binding_limit, grain::GRAIN_SPEKTRA_STAGE_NAME,
+    page_views::ADAPTER_WORKSPACE_BYTES,
 };
 use spektrafilm_backend::FilmChainParams;
 
@@ -112,7 +113,7 @@ impl WgpuBackend {
                 // bounded independently of hardware binding size by its owner.
                 mul(super::super::resources::WORKSPACE_BINDING_BYTES / 8, 21)?
             }
-            "grain_spektra_v1" => {
+            GRAIN_SPEKTRA_STAGE_NAME => {
                 let gp = p
                     .grain_spektra
                     .as_ref()
