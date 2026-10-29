@@ -570,6 +570,7 @@ pub(crate) fn wait_tick() {
     std::thread::sleep(Duration::from_millis(1));
 }
 
+#[track_caller]
 fn wait_until(h: &mut Harness<'_, App>, condition: impl Fn(&App) -> bool) {
     let deadline = Instant::now() + WAIT_DEADLINE;
     loop {
@@ -579,8 +580,25 @@ fn wait_until(h: &mut Harness<'_, App>, condition: impl Fn(&App) -> bool) {
         }
         assert!(
             Instant::now() < deadline,
-            "App completion timed out: {}",
-            h.state().status
+            "App completion timed out: {}; dirty={}; full_scan={}; job={:?}; calibration={}; retained_scan={:?}; host={}; device={}; current=({}, {}); source={:?}",
+            h.state().status,
+            h.state().dirty,
+            h.state().full_scan_requested,
+            h.state()
+                .render_job
+                .as_ref()
+                .map(|job| (job.kind == RenderKind::Scan, job.request_id)),
+            h.state().calibration_job.is_some(),
+            h.state().retained_kind.map(|kind| kind == RenderKind::Scan),
+            h.state().output_image.is_some(),
+            h.state().output_retained.is_some(),
+            h.state().input_epoch,
+            h.state().parameter_revision,
+            h.state().source_render.as_ref().map(|source| (
+                source.operation_id,
+                source.input_revision,
+                source.parameter_revision
+            ))
         );
         wait_tick();
     }
