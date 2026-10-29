@@ -655,15 +655,15 @@ fn build_canvas_band(
             }
             chunk /= 2;
         };
-        for source_row in first_row..last_row {
-            commands.copy(
-                original,
-                u64::from(source_row * width) * 12,
-                source_window,
-                u64::from((source_row - first_row) * width) * 12,
-                u64::from(width) * 12,
-            );
-        }
+        // Whole rows form one contiguous interval. RasterCommands splits it
+        // only at physical page boundaries, not at every row.
+        commands.copy(
+            original,
+            u64::from(first_row) * u64::from(width) * 12,
+            source_window,
+            0,
+            u64::from(last_row - first_row) * u64::from(width) * 12,
+        );
         let mut p = shader_params(width, height, params);
         // `canvas.z` is where this chunk starts inside the band buffer; the
         // cell coordinates themselves stay global.
@@ -784,15 +784,13 @@ fn build_resolution(
                     let rows = band.min(height - first_row);
                     let low = first_row.saturating_sub(reach as u32);
                     let high = height.min(first_row + rows + reach as u32);
-                    for row in low..high {
-                        commands.copy(
-                            source,
-                            u64::from(row * width) * 12,
-                            source_window,
-                            u64::from((row - low) * width) * 12,
-                            u64::from(width) * 12,
-                        );
-                    }
+                    commands.copy(
+                        source,
+                        u64::from(low) * u64::from(width) * 12,
+                        source_window,
+                        0,
+                        u64::from(high - low) * u64::from(width) * 12,
+                    );
                     let mut data = [0u32; 24];
                     data[..8].copy_from_slice(&[
                         width,
@@ -1140,7 +1138,7 @@ mod logic_tests {
         assert_eq!(bands.last().unwrap().stored.1, ch);
     }
 
-    fn test_params() -> spektrafilm_backend::GrainV2GpuParams {
+    pub(super) fn test_params() -> spektrafilm_backend::GrainV2GpuParams {
         spektrafilm_backend::GrainV2GpuParams {
             mode: 0,
             resolution_type: 0,
@@ -1287,6 +1285,252 @@ mod tests {
                     "{w}x{h} limit {limit}: every sample must be composed exactly once"
                 );
             }
+        }
+    }
+
+    #[test]
+    fn contiguous_row_gathers_match_row_sized_copies_across_physical_pages() {
+        use super::super::super::paged::ImagePage;
+        use super::super::raster::RasterCommand;
+
+        let gpu = crate::test_support::adapter();
+        let (width, height) = (13u32, 37u32);
+        let row_bytes = u64::from(width) * 12;
+        let values: Vec<f32> = (0..width * height * 3)
+            .map(|i| (i % 71) as f32 / 71.0 - 0.25)
+            .collect();
+        // Neither physical source nor destination pages end on image rows.
+        let input_pages: Vec<_> = values
+            .chunks(123)
+            .enumerate()
+            .map(|(i, chunk)| ImagePage {
+                first_pixel: i as u32 * 41,
+                n_pixels: chunk.len() as u32 / 3,
+                buffer: gpu
+                    .device
+                    .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                        label: Some("procedural_row_copy_source"),
+                        contents: bytemuck::cast_slice(chunk),
+                        usage: wgpu::BufferUsages::COPY_SRC,
+                    }),
+            })
+            .collect();
+        let make_pages = |label| -> Vec<ImagePage> {
+            (0..width * height)
+                .step_by(47)
+                .map(|first| {
+                    let n_pixels = 47.min(width * height - first);
+                    ImagePage {
+                        first_pixel: first,
+                        n_pixels,
+                        buffer: transport(&gpu, u64::from(n_pixels) * 12, label).unwrap(),
+                    }
+                })
+                .collect()
+        };
+        let horizontal = make_pages("procedural_row_copy_horizontal");
+        let filtered = make_pages("procedural_row_copy_filtered");
+        let page = width * 12;
+        let window = transport(&gpu, u64::from(page) * 12, "procedural_row_copy_window").unwrap();
+        // A partial canvas band with enough cells to require several source
+        // chunks; its coordinates stay absolute, independent of copy batching.
+        let canvas = transport(&gpu, 3 * 13600 * 8, "procedural_row_copy_canvas").unwrap();
+        let params = super::logic_tests::test_params();
+        let canvas_pass = gpu.cached_pipeline_at(
+            include_str!("grain_v2.wgsl"),
+            &[
+                wgpu::BufferBindingType::Uniform,
+                wgpu::BufferBindingType::Storage { read_only: true },
+                wgpu::BufferBindingType::Storage { read_only: false },
+            ],
+            "canvas_main",
+        );
+        for canvas_job in [false, true] {
+            let mut commands = RasterCommands::default();
+            if canvas_job {
+                build_canvas_band(
+                    &mut commands,
+                    &gpu,
+                    width,
+                    height,
+                    &params,
+                    &input_pages,
+                    &window,
+                    3,
+                    14800,
+                    &CanvasBand {
+                        stored: (400, 14000),
+                        pixels: (0, width * height),
+                    },
+                    &canvas,
+                    u64::from(page),
+                    &canvas_pass,
+                );
+            } else {
+                assert!(column_band_plan(u64::from(page), width, height, 2).1);
+                build_resolution(
+                    &mut commands,
+                    &gpu,
+                    width,
+                    height,
+                    &input_pages,
+                    &horizontal,
+                    &filtered,
+                    &window,
+                    page,
+                    u64::from(page) * 12,
+                    true,
+                    &[[0.25, 0.0], [0.5, 0.0], [0.25, 0.0]],
+                )
+                .unwrap();
+            }
+            let mut row_sized = RasterCommands::default();
+            let mut copies = 0;
+            let mut dispatches = 0u32;
+            let mut gathered = vec![u64::MAX; (u64::from(page) * 3) as usize];
+            for command in &commands.0 {
+                match command {
+                    RasterCommand::Copy {
+                        source,
+                        source_offset,
+                        destination,
+                        destination_offset,
+                        bytes,
+                    } => {
+                        copies += 1;
+                        if *destination == window {
+                            let source_page = input_pages
+                                .iter()
+                                .chain(&horizontal)
+                                .find(|p| p.buffer == *source)
+                                .unwrap();
+                            let first_sample =
+                                u64::from(source_page.first_pixel) * 3 + source_offset / 4;
+                            for sample in 0..bytes / 4 {
+                                gathered[(destination_offset / 4 + sample) as usize] =
+                                    first_sample + sample;
+                            }
+                        }
+                        let mut offset = 0;
+                        while offset < *bytes {
+                            let count = row_bytes.min(bytes - offset);
+                            row_sized.0.push(RasterCommand::Copy {
+                                source: source.clone(),
+                                source_offset: source_offset + offset,
+                                destination: destination.clone(),
+                                destination_offset: destination_offset + offset,
+                                bytes: count,
+                            });
+                            offset += count;
+                        }
+                    }
+                    RasterCommand::Dispatch {
+                        pipeline,
+                        group,
+                        count,
+                        groups,
+                    } => {
+                        let expected_rows = if canvas_job {
+                            // Hand-derived source rows for canvas chunks
+                            // 400..3800, 3800..7200, 7200..10600, 10600..14000.
+                            Some([(0u32, 12u32), (8, 20), (16, 28), (24, 36)][dispatches as usize])
+                        } else if dispatches >= height {
+                            let first = (dispatches - height) * 7;
+                            Some((first.saturating_sub(2), height.min(first + 9)))
+                        } else {
+                            None // The horizontal pass stages two row segments.
+                        };
+                        if let Some((low, high)) = expected_rows {
+                            let expected: Vec<_> =
+                                (u64::from(low * width) * 3..u64::from(high * width) * 3).collect();
+                            assert_eq!(
+                                &gathered[..expected.len()],
+                                &expected,
+                                "wrong source range at dispatch {dispatches}, canvas={canvas_job}"
+                            );
+                            assert!(
+                                gathered[expected.len()..].iter().all(|&x| x == u64::MAX),
+                                "extra source rows at dispatch {dispatches}, canvas={canvas_job}"
+                            );
+                        }
+                        gathered.fill(u64::MAX);
+                        dispatches += 1;
+                        row_sized.0.push(RasterCommand::Dispatch {
+                            pipeline: pipeline.clone(),
+                            group: group.clone(),
+                            count: *count,
+                            groups: *groups,
+                        });
+                    }
+                }
+            }
+            assert_eq!(dispatches, if canvas_job { 4 } else { height + 6 });
+            // Copy-only pages above deliberately force physical intersections.
+            // At least one gather must still cover several rows in one command.
+            assert!(commands.0.iter().any(|c| matches!(c,
+                RasterCommand::Copy { destination, bytes, .. }
+                    if *destination == window && *bytes > row_bytes)));
+            assert!(row_sized.0.len() > commands.0.len());
+            assert!(copies > 1);
+            let bytes = if canvas_job {
+                canvas.size()
+            } else {
+                u64::from(width * height) * 12
+            };
+            let readback = gpu.device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("procedural_row_copy_readback"),
+                size: bytes * 2,
+                usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+                mapped_at_creation: false,
+            });
+            // Poison every writable transport between variants, including
+            // scratch and per-axis results retained through copy commands.
+            // Different poisons expose a missing write instead of reusing the
+            // first execution's output. Immutable source pages are COPY_SRC only.
+            let mut writable = Vec::new();
+            for command in &commands.0 {
+                if let RasterCommand::Copy {
+                    source,
+                    destination,
+                    ..
+                } = command
+                {
+                    for buffer in [source, destination] {
+                        if buffer.usage().contains(wgpu::BufferUsages::COPY_DST)
+                            && !writable.contains(buffer)
+                        {
+                            writable.push(buffer.clone());
+                        }
+                    }
+                }
+            }
+            if canvas_job {
+                writable.push(canvas.clone());
+            }
+            for (index, variant) in [&commands, &row_sized].into_iter().enumerate() {
+                for buffer in &writable {
+                    let poison = vec![
+                        if index == 0 { -123.0f32 } else { 321.0 };
+                        buffer.size() as usize / 4
+                    ];
+                    gpu.queue
+                        .write_buffer(buffer, 0, bytemuck::cast_slice(&poison));
+                }
+                variant.submit(&gpu).unwrap();
+                let mut copy = RasterCommands::default();
+                if canvas_job {
+                    copy.copy(&canvas, 0, &readback, index as u64 * bytes, bytes);
+                } else {
+                    copy.copy(&filtered, 0, &readback, index as u64 * bytes, bytes);
+                }
+                copy.submit(&gpu).unwrap();
+            }
+            let actual = gpu.read_mapped_f32(&readback, bytes * 2);
+            let (bulk, rows) = actual.split_at(bytes as usize / 4);
+            assert_eq!(
+                bulk.iter().map(|x| x.to_bits()).collect::<Vec<_>>(),
+                rows.iter().map(|x| x.to_bits()).collect::<Vec<_>>()
+            );
         }
     }
 
