@@ -1256,11 +1256,14 @@ fn canonical_search_preserves_inspector_and_viewer_geometry_at_supported_desktop
 #[track_caller]
 fn wait_device_output(h: &mut Harness<'_, App>) {
     wait_until(h, |app| {
+        let viewer = app.viewer.observation();
         !app.dirty
             && app.render_job.is_none()
             && app.calibration_job.is_none()
             && !app.accepted_frame_is_stale()
             && app.output_retained.is_some()
+            && viewer.generation == viewer.accepted_generation
+            && viewer.transition.is_none()
     });
 }
 
@@ -1272,6 +1275,14 @@ fn scan_device_output(h: &mut Harness<'_, App>) {
     let previous = h.state().source_render.as_ref().unwrap().operation_id;
     h.get_by_label("SCAN").simulate_click();
     h.run_steps(3);
+    assert!(
+        h.state().render_job.is_some() || h.state().full_scan_requested,
+        "SCAN click was dropped"
+    );
+    wait_for_new_scan(h, previous);
+}
+
+fn wait_for_new_scan(h: &mut Harness<'_, App>, previous: u64) {
     wait_until(h, |app| {
         !app.dirty
             && app.render_job.is_none()
@@ -1283,6 +1294,21 @@ fn scan_device_output(h: &mut Harness<'_, App>) {
                 .as_ref()
                 .is_some_and(|render| render.operation_id != previous)
     });
+}
+
+/// Request the Scan before the next frame so the automatic Preview cannot
+/// form a whole Fotufilm bank that this test does not inspect. The Scan still
+/// exercises the same cold production formation and worker observation.
+#[track_caller]
+fn request_scan_device_output(h: &mut Harness<'_, App>) {
+    let previous = h.state().source_render.as_ref().unwrap().operation_id;
+    h.state_mut().full_scan_requested = true;
+    h.run_steps(3);
+    assert!(
+        h.state().render_job.is_some() || h.state().full_scan_requested,
+        "direct Scan request was dropped"
+    );
+    wait_for_new_scan(h, previous);
 }
 
 #[test]
@@ -1565,7 +1591,7 @@ fn gpu_gui_scan_view_transition_and_save_keep_the_accepted_device_samples() {
         app.params.random_seed = 17;
         app.mark_parameters_changed();
     }
-    scan_device_output(&mut h);
+    request_scan_device_output(&mut h);
     let report = assert_retained_gpu_report(
         h.state(),
         &directory.path().join("fotufilm-scan-report.json"),
