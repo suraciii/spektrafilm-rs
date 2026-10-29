@@ -1204,11 +1204,6 @@ mod logic_tests {
         assert!(!canvas_transport_needed(&params, false));
         assert!(!canvas_transport_needed(&params, true));
     }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
 
     /// Every sample must be composed by exactly one band, and every band must
     /// store the rows its pixels read. Brute force over the same mapping the
@@ -1289,6 +1284,11 @@ mod tests {
             }
         }
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
 
     #[test]
     fn procedural_windows_preserve_absolute_coordinates_and_resolution() {

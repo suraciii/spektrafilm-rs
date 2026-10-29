@@ -489,6 +489,21 @@ fn address_shader(source: &str, images: &[(usize, &str)]) -> String {
 }
 
 #[cfg(test)]
+mod logic_tests {
+    use super::*;
+
+    #[test]
+    fn shader_specialization_preserves_comments_names_and_nested_indices() {
+        let source = "// input[ignored]\n/* input[x] */ raw_input[0] = input [lookup[input[i]]];";
+        let result = address_shader(source, &[(1, "input")]);
+        assert_eq!(
+            result,
+            "// input[ignored]\n/* input[x] */ raw_input[0] = input [pointwise_bases.values[0][1] + lookup[input[pointwise_bases.values[0][1] + i]]];"
+        );
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::super::paged::ImagePage;
     use super::*;
@@ -872,14 +887,5 @@ fn main(@builtin(global_invocation_id) gid:vec3<u32>, @builtin(num_workgroups) g
         })
         .unwrap();
         assert_eq!(read(&backend, &output), values);
-    }
-    #[test]
-    fn shader_specialization_preserves_comments_names_and_nested_indices() {
-        let source = "// input[ignored]\n/* input[x] */ raw_input[0] = input [lookup[input[i]]];";
-        let result = address_shader(source, &[(1, "input")]);
-        assert_eq!(
-            result,
-            "// input[ignored]\n/* input[x] */ raw_input[0] = input [pointwise_bases.values[0][1] + lookup[input[pointwise_bases.values[0][1] + i]]];"
-        );
     }
 }

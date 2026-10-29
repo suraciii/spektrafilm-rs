@@ -16,6 +16,16 @@ mod scan_setup;
 #[path = "scan_tests.rs"]
 mod tests;
 
+fn validate_dmax(dmax: &[f64; 3]) -> Result<(), String> {
+    if dmax
+        .iter()
+        .any(|&d| !d.is_finite() || d.abs() > f32::MAX as f64)
+    {
+        return Err("negative-to-positive dmax exceeds finite f32 range".into());
+    }
+    Ok(())
+}
+
 /// Immutable binary32 reconstruction, with 12 bytes per RGB pixel.
 pub(super) struct PreparedScan {
     pub(super) exposure: Vec<super::paged::ImagePage>,
@@ -374,12 +384,7 @@ impl WgpuBackend {
             .checked_mul(height)
             .filter(|&n| n != 0)
             .ok_or("standard setup requires a nonempty RGB density frame")?;
-        if p.dmax
-            .iter()
-            .any(|&d| !d.is_finite() || d.abs() > f32::MAX as f64)
-        {
-            return Err("negative-to-positive dmax exceeds finite f32 range".into());
-        }
+        validate_dmax(&p.dmax)?;
         if p.counts
             .iter()
             .enumerate()
