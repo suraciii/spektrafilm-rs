@@ -122,9 +122,11 @@ mod tests {
                 "writer must emit the vector-times-scalar chain"
             );
             // GLSL.std.450 Fma=50, OpExtInst=12.
-            assert!(before_ops
-                .iter()
-                .any(|op| op[0] & 0xffff == 12 && op[4] == 50));
+            assert!(
+                before_ops
+                    .iter()
+                    .any(|op| op[0] & 0xffff == 12 && op[4] == 50)
+            );
             let is_nc = |op: &&[u32]| {
                 op.len() == 3 && op[0] & 0xffff == DECORATE && op[2] == NO_CONTRACTION
             };
