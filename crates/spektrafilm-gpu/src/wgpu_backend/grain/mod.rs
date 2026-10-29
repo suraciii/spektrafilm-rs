@@ -19,6 +19,7 @@ struct ShaderParams {
     flags: [f32; 4],
     window: [u32; 4],
     canvas: [u32; 4],
+    generator_geometry: [f32; 4],
 }
 
 fn shader_params(
@@ -29,6 +30,18 @@ fn shader_params(
     let timer = params
         .timer
         .unwrap_or_else(|| spektrafilm_math::grain::seeded_phase(params.seed));
+    let gsf = (5200.0f32 / width.max(1) as f32).max(3100.0f32 / height.max(1) as f32);
+    let size = [(width as f32 * gsf).floor(), (height as f32 * gsf).floor()];
+    let scale = params.raw_scale.clamp(0.5, 1.4);
+    let scaled = size.map(|v| v * scale);
+    // Image-independent generator coefficients retain CPU stepwise f32
+    // division. Native Vulkan division can change the rnm hash lattice.
+    let generator_geometry = [
+        scaled[0] / params.cluster_size / scale,
+        scaled[1] / params.cluster_size / scale,
+        scaled[0] / scaled[1],
+        1.0f32 / 256.0 / params.cluster_size,
+    ];
     ShaderParams {
         dimensions: [width, height, timer.to_bits(), params.mode],
         controls: [
@@ -51,6 +64,7 @@ fn shader_params(
         ],
         window: [0, width * height, 0, 0],
         canvas: [0; 4],
+        generator_geometry,
     }
 }
 
@@ -75,6 +89,7 @@ impl WgpuBackend {
         if img.width == 0 || img.height == 0 {
             return Ok(img.clone());
         }
+        procedural::validate_coordinate_scale(params)?;
         let input = scalars_to_f32(&img.data);
         let original = self.allocate_image_pages(img.width, img.height, "grain_encoded_input")?;
         for page in &original {
