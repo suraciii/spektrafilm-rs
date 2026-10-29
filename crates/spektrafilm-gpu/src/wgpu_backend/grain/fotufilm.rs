@@ -544,24 +544,86 @@ impl FotufilmPagedState {
     }
 }
 
-impl WgpuBackend {
-    fn fotufilm_window_side(&self) -> Result<u32, String> {
-        let limit = super::super::bounded::storage_binding_limit(self)?;
-        if u64::from(LEVELS * SUMS_LEVEL) * 4 > limit || u64::from(SAMPLE * SAMPLE) * 4 > limit {
-            return Err(
-                "Fotufilm fixed bank lattices exceed the device storage binding limit".into(),
-            );
-        }
-        let mut side = 256u32;
-        while u64::from(side) * u64::from(side) * 24 > limit && side > 1 {
-            side /= 2;
-        }
-        if u64::from(side) * u64::from(side) * 24 > limit {
-            return Err("Fotufilm cannot bind one output sample on this device".into());
-        }
-        Ok(side)
+fn fotufilm_window_side(limit: u64) -> Result<u32, String> {
+    if u64::from(LEVELS * SUMS_LEVEL) * 4 > limit || u64::from(SAMPLE * SAMPLE) * 4 > limit {
+        return Err("Fotufilm fixed bank lattices exceed the device storage binding limit".into());
     }
+    let mut side = 256u32;
+    while u64::from(side) * u64::from(side) * 24 > limit && side > 1 {
+        side /= 2;
+    }
+    if u64::from(side) * u64::from(side) * 24 > limit {
+        return Err("Fotufilm cannot bind one output sample on this device".into());
+    }
+    Ok(side)
+}
 
+fn validate_field_geometry(
+    width: u32,
+    height: u32,
+    params: &FotufilmGpuParams,
+) -> Result<(), String> {
+    if width == 0
+        || height == 0
+        || params.source_width != width
+        || params.source_height != height
+        || params.width == 0
+        || params.height == 0
+        || params.records.len() != 3
+    {
+        return Err("Fotufilm source/output geometry or indexed record count is invalid".into());
+    }
+    Ok(())
+}
+
+fn field_workspace_bytes(params: &FotufilmGpuParams, limit: u64) -> Result<u64, String> {
+    let add = |a: u64, b: u64| {
+        a.checked_add(b)
+            .ok_or_else(|| "Fotufilm workspace byte size overflow".to_owned())
+    };
+    let mul = |a: u64, b: u64| {
+        a.checked_mul(b)
+            .ok_or_else(|| "Fotufilm workspace byte size overflow".to_owned())
+    };
+    let side = fotufilm_window_side(limit)?;
+    let bank_bytes =
+        u64::from(LEVELS * SUMS_LEVEL) * 4 + u64::from(LEVELS) * 16 + u64::from(LEVELS - 1) * 8;
+    let banks = mul(params.records.len() as u64, bank_bytes)?;
+    let mut formation_peak = 0;
+    let limit = limit.min(MAX_BAND_SCRATCH_BYTES);
+    for (r, record) in params.records.iter().enumerate() {
+        if record.sublayers.is_empty() || (params.monochrome && r != 1) {
+            continue;
+        }
+        // Seven SAMPLE² fields, tile, cloud taps, and pitch probe density
+        // remain live together until form_record returns.
+        let mut bytes = u64::from(SAMPLE * SAMPLE) * 4 * 7
+            + u64::from(TILE * TILE) * 4
+            + u64::from(PROBE * PROBE * LEVELS) * 8;
+        bytes = add(bytes, cloud_kernel_bytes(record)?)?;
+        for layer in &record.sublayers {
+            let (per_row, rows) = formation_band_layout(layer, limit)?;
+            bytes = add(bytes, mul(mul(per_row, u64::from(rows))?, 2)?)?;
+            bytes = add(
+                bytes,
+                std::mem::size_of_val(layer.thresholds.as_slice()) as u64,
+            )?;
+            bytes = add(
+                bytes,
+                std::mem::size_of_val(layer.forming.as_slice()) as u64,
+            )?;
+        }
+        formation_peak = formation_peak.max(bytes);
+    }
+    let windows = mul(
+        u64::from(side) * u64::from(side),
+        48 + 8 * params.records.len() as u64,
+    )?;
+    let output = mul(mul(u64::from(params.width), u64::from(params.height))?, 12)?;
+    add(add(add(output, banks)?, formation_peak.max(windows))?, 8)
+}
+
+impl WgpuBackend {
     /// Peak additional capacity of field output, retained record banks, and
     /// the larger of record formation and output-window scratch.
     pub(in crate::wgpu_backend) fn fotufilm_workspace_bytes(
@@ -570,62 +632,9 @@ impl WgpuBackend {
         height: u32,
         params: &FotufilmGpuParams,
     ) -> Result<u64, String> {
-        if width == 0
-            || height == 0
-            || params.source_width != width
-            || params.source_height != height
-            || params.width == 0
-            || params.height == 0
-            || params.records.len() != 3
-        {
-            return Err(
-                "Fotufilm source/output geometry or indexed record count is invalid".into(),
-            );
-        }
-        let add = |a: u64, b: u64| {
-            a.checked_add(b)
-                .ok_or_else(|| "Fotufilm workspace byte size overflow".to_owned())
-        };
-        let mul = |a: u64, b: u64| {
-            a.checked_mul(b)
-                .ok_or_else(|| "Fotufilm workspace byte size overflow".to_owned())
-        };
-        let side = self.fotufilm_window_side()?;
-        let bank_bytes =
-            u64::from(LEVELS * SUMS_LEVEL) * 4 + u64::from(LEVELS) * 16 + u64::from(LEVELS - 1) * 8;
-        let banks = mul(params.records.len() as u64, bank_bytes)?;
-        let mut formation_peak = 0;
-        let limit = super::super::bounded::storage_binding_limit(self)?.min(MAX_BAND_SCRATCH_BYTES);
-        for (r, record) in params.records.iter().enumerate() {
-            if record.sublayers.is_empty() || (params.monochrome && r != 1) {
-                continue;
-            }
-            // Seven SAMPLE² fields, tile, cloud taps, and pitch probe density
-            // remain live together until form_record returns.
-            let mut bytes = u64::from(SAMPLE * SAMPLE) * 4 * 7
-                + u64::from(TILE * TILE) * 4
-                + u64::from(PROBE * PROBE * LEVELS) * 8;
-            bytes = add(bytes, cloud_kernel_bytes(record)?)?;
-            for layer in &record.sublayers {
-                let (per_row, rows) = formation_band_layout(layer, limit)?;
-                bytes = add(bytes, mul(mul(per_row, u64::from(rows))?, 2)?)?;
-                bytes = add(
-                    bytes,
-                    std::mem::size_of_val(layer.thresholds.as_slice()) as u64,
-                )?;
-                bytes = add(
-                    bytes,
-                    std::mem::size_of_val(layer.forming.as_slice()) as u64,
-                )?;
-            }
-            formation_peak = formation_peak.max(bytes);
-        }
-        let windows = mul(
-            u64::from(side) * u64::from(side),
-            48 + 8 * params.records.len() as u64,
-        )?;
-        let output = mul(mul(u64::from(params.width), u64::from(params.height))?, 12)?;
-        add(add(add(output, banks)?, formation_peak.max(windows))?, 8)
+        validate_field_geometry(width, height, params)?;
+        let limit = super::super::bounded::storage_binding_limit(self)?;
+        field_workspace_bytes(params, limit)
     }
 
     pub(in crate::wgpu_backend) fn prepare_fotufilm_paged(
@@ -653,7 +662,7 @@ impl WgpuBackend {
         if params.records.len() != 3 {
             return Err("Fotufilm requires three indexed records (including empty records)".into());
         }
-        let side = self.fotufilm_window_side()?;
+        let side = fotufilm_window_side(super::super::bounded::storage_binding_limit(self)?)?;
         Ok(FotufilmPagedState {
             source: BufferPayload::from_pages(
                 self.backend_id(),
@@ -1210,7 +1219,22 @@ fn population() -> spektrafilm_model::grain::fotufilm::Population {
 mod tests {
     use super::*;
     use spektrafilm_math::precision::{from_f64, to_f64};
-    use spektrafilm_model::grain::fotufilm::DeviceRecord;
+    use spektrafilm_model::grain::fotufilm::{Bank, DeviceRecord};
+    use std::sync::{Arc, LazyLock};
+
+    struct HostFixture {
+        records: Vec<DeviceRecord>,
+        bank: Arc<Bank>,
+    }
+
+    // Host preparation is shared; devices and per-case state are not.
+    static HOST_FIXTURE: LazyLock<HostFixture> = LazyLock::new(|| {
+        let population = population();
+        HostFixture {
+            records: population.device_records(),
+            bank: population.build_bank(&|| Ok(())).expect("CPU bank"),
+        }
+    });
 
     /// The stage's own `FotufilmGpuParams` for a source of `source`'s extent
     /// read onto a `readout`-sized lattice, which differs from the source.
@@ -1261,23 +1285,32 @@ mod tests {
         }
     }
 
-    #[test]
-    fn field_workspace_counts_output_growth_once_without_allocating_it() {
-        let gpu = crate::test_support::explicit_adapter();
-        let empty = FotufilmRecordGpuParams {
-            sublayers: Vec::new(),
-            d_min: 0.0,
-            d_max: 1.0,
-        };
-        let mut p = device_params(&[], (8, 4), (8, 4));
-        p.records = vec![empty; 3];
-        let small = gpu.fotufilm_workspace_bytes(8, 4, &p).unwrap();
-        p.width = 1024;
-        p.height = 1024;
-        let large = gpu.fotufilm_workspace_bytes(8, 4, &p).unwrap();
-        assert_eq!(large - small, (1024 * 1024 - 8 * 4) * 12);
-        p.source_width = 9;
-        assert!(gpu.fotufilm_workspace_bytes(8, 4, &p).is_err());
+    mod logic_tests {
+        use super::*;
+
+        #[test]
+        fn field_workspace_counts_output_growth_once_without_allocating_it() {
+            let empty = FotufilmRecordGpuParams {
+                sublayers: Vec::new(),
+                d_min: 0.0,
+                d_max: 1.0,
+            };
+            let mut p = device_params(&[], (8, 4), (8, 4));
+            p.records = vec![empty; 3];
+            let minimum = (u64::from(LEVELS * SUMS_LEVEL) * 4).max(u64::from(SAMPLE * SAMPLE) * 4);
+            assert!(field_workspace_bytes(&p, minimum - 1).is_err());
+            validate_field_geometry(8, 4, &p).unwrap();
+            let small = field_workspace_bytes(&p, minimum).unwrap();
+            p.width = 1024;
+            p.height = 1024;
+            let large = field_workspace_bytes(&p, minimum).unwrap();
+            assert_eq!(large - small, (1024 * 1024 - 8 * 4) * 12);
+            p.width = u32::MAX;
+            p.height = u32::MAX;
+            assert!(field_workspace_bytes(&p, minimum).is_err());
+            p.source_width = 9;
+            assert!(validate_field_geometry(8, 4, &p).is_err());
+        }
     }
 
     /// The developed source the stage hands the device: a mid-density ramp
@@ -1306,17 +1339,16 @@ mod tests {
     /// re-derives the physics — the model evaluates every rule.
     fn host_reference(
         bank: &spektrafilm_model::grain::fotufilm::Bank,
-        size: (u32, u32),
+        input: &ImageBuf,
     ) -> ImageBuf {
         use spektrafilm_model::grain::fotufilm::{Geometry, Look};
-        let input = source_image(size);
         let geometry = Geometry {
             source_pitch_mm: [0.01; 2],
             origin_mm: [0.0; 2],
             output_pitch_mm: [0.01; 2],
             footprint_mm: [0.01; 2],
         };
-        bank.apply(&input, geometry, Look::default(), 12345, &|| Ok(()))
+        bank.apply(input, geometry, Look::default(), 12345, &|| Ok(()))
             .expect("host readout")
     }
 
@@ -1327,22 +1359,19 @@ mod tests {
     /// resample is the identity on both sides and the comparison isolates the
     /// grain readout itself.
     ///
-    /// `test_support::adapter` acquires [`DEVICE_LOCK`](crate::test_support::DEVICE_LOCK)
-    /// before creating the device and holds it for the returned backend's whole
-    /// lifetime, so the device never outlives the guard that makes using it
-    /// safe; this helper takes no lock of its own.
+    /// The caller holds the device guard across all comparisons.
     fn compare(
+        backend: &WgpuBackend,
         bank: &spektrafilm_model::grain::fotufilm::Bank,
         records: &[DeviceRecord],
         size: (u32, u32),
     ) -> (f64, f64, usize) {
-        let backend = crate::test_support::adapter();
         let image = source_image(size);
         let params = device_params(records, size, size);
         let device = backend
             .fotufilm_grain_inner(&image, &params)
             .expect("the device readout completes");
-        let expected = host_reference(bank, size);
+        let expected = host_reference(bank, &image);
         assert_eq!(device.width, expected.width);
         assert_eq!(device.height, expected.height);
         let mut mean = 0.0f64;
@@ -1363,11 +1392,11 @@ mod tests {
 
     #[test]
     fn device_multi_sublayer_readout_matches_the_host_reference() {
-        let population = population();
-        let records = population.device_records();
-        let bank = population.build_bank(&|| Ok(())).expect("bank");
+        let fixture = &*HOST_FIXTURE;
+        let backend = crate::test_support::adapter();
         for (width, height) in [(32, 24), (400, 300), (1600, 1200)] {
-            let (mean, max, samples) = compare(&bank, &records, (width, height));
+            let (mean, max, samples) =
+                compare(&backend, &fixture.bank, &fixture.records, (width, height));
             println!(
                 "fotufilm device vs host at {width}x{height}: \
                  mean {mean:.6e}, max {max:.6e} over {samples} samples"
@@ -1525,9 +1554,9 @@ mod tests {
     #[test]
     fn fractional_geometry_and_paged_readout_match_the_cpu_bank() {
         use spektrafilm_model::grain::fotufilm::{Geometry, Look};
-        let population = population();
-        let bank = population.build_bank(&|| Ok(())).expect("CPU bank");
-        let records = population.device_records();
+        let fixture = &*HOST_FIXTURE;
+        let bank = &fixture.bank;
+        let records = &fixture.records;
         let backend = crate::test_support::adapter();
         // A 4x4 source contains four constant quadrants separated at 40um.
         // Their transition is interior, so its exact area average is analytical
@@ -1590,7 +1619,7 @@ mod tests {
                 &|| Ok(()),
             )
             .expect("CPU physical readout");
-        let mut params = device_params(&records, (4, 4), (width, height));
+        let mut params = device_params(records, (4, 4), (width, height));
         params.source_pitch_um = 20.0;
         params.origin_um = origin.map(|v| v / look.size);
         params.pitch_um = pitch.map(|v| v / look.size);

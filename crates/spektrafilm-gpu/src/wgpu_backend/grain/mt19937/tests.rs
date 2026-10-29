@@ -515,7 +515,11 @@ fn segmented_dispatch_preserves_fields_and_clump_continuation() {
 #[test]
 fn builder_rejects_without_native_f64() {
     let gpu = crate::test_support::adapter();
-    if gpu.device.features().contains(wgpu::Features::SHADER_F64) {
+    if gpu
+        .device
+        .features()
+        .contains(wgpu::Features::SHADER_F64 | wgpu::Features::SHADER_INT64)
+    {
         return;
     }
     let params = params(1, false, 3);
@@ -526,58 +530,76 @@ fn builder_rejects_without_native_f64() {
             .err()
             .expect("a device without native f64 must decline");
     assert!(error.contains("native f64"), "got: {error}");
+    let mut invalid = params;
+    invalid.layer_count = 0;
+    invalid.curve_layers.clear();
+    let error = build_spektra_mt19937_state(
+        &gpu.device,
+        0,
+        0,
+        &density,
+        &fields,
+        &clumps,
+        &invalid,
+        &gpu,
+    )
+    .err()
+    .expect("missing shader capabilities must take precedence over invalid inputs");
+    assert!(error.contains("native f64"), "got: {error}");
 }
 
-#[test]
-fn builder_rejects_inconsistent_curve_tables() {
-    let gpu = crate::test_support::adapter();
-    let mut params = params(1, false, 3);
-    params.curve_layers.clear();
-    let density = storage(&gpu, 12, "reject_density");
-    let (fields, clumps) = outputs(&gpu, 1, 1, 3);
-    let error =
-        build_spektra_mt19937_state(&gpu.device, 1, 1, &density, &fields, &clumps, &params, &gpu)
-            .err()
-            .expect("a mismatched layer table must be rejected");
-    assert!(error.contains("curve tables"), "got: {error}");
-}
+mod logic_tests {
+    use super::*;
 
-#[test]
-fn builder_rejects_invalid_active_layer_counts() {
-    let gpu = crate::test_support::adapter();
-    let density = storage(&gpu, 12, "reject_layer_density");
-    let (fields, clumps) = outputs(&gpu, 1, 1, 3);
-    for layer_count in [0, 4] {
+    #[test]
+    fn builder_rejects_inconsistent_curve_tables() {
         let mut params = params(1, false, 3);
-        params.layer_count = layer_count;
+        assert!(validate_inputs(1, 1, &params).is_ok());
+        params.curve_layers.clear();
+        let error = validate_inputs(1, 1, &params).unwrap_err();
+        assert!(error.contains("curve tables"), "got: {error}");
+    }
+
+    #[test]
+    fn builder_rejects_invalid_active_layer_counts() {
+        let mut params = params(1, false, 3);
+        for layer_count in 1..=3 {
+            params.layer_count = layer_count;
+            assert!(validate_inputs(1, 1, &params).is_ok());
+        }
+        for layer_count in [0, 4] {
+            params.layer_count = layer_count;
+            assert!(
+                validate_inputs(1, 1, &params).is_err(),
+                "layer_count {layer_count} must be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn builder_rejects_zero_pixel_count() {
+        let params = params(1, false, 3);
+        for (width, height) in [(0, 0), (0, 1), (1, 0)] {
+            let error = validate_inputs(width, height, &params).unwrap_err();
+            assert!(error.contains("zero"), "got: {error}");
+        }
+        assert!(validate_inputs(u32::MAX, 2, &params).is_err());
+        assert!(validate_inputs(u32::MAX / 3 + 1, 1, &params).is_err());
+        assert!(validate_inputs(u32::MAX / 3, 1, &params).is_ok());
+    }
+
+    #[test]
+    fn validation_reports_pixel_then_curve_then_layer_errors() {
+        let mut params = params(1, false, 3);
+        params.curve_layers.clear();
+        params.layer_count = 0;
+        assert!(validate_inputs(0, 1, &params).unwrap_err().contains("zero"));
         assert!(
-            build_spektra_mt19937_state(
-                &gpu.device,
-                1,
-                1,
-                &density,
-                &fields,
-                &clumps,
-                &params,
-                &gpu,
-            )
-            .is_err(),
-            "layer_count {layer_count} must be rejected"
+            validate_inputs(1, 1, &params)
+                .unwrap_err()
+                .contains("curve tables")
         );
     }
-}
-
-#[test]
-fn builder_rejects_zero_pixel_count() {
-    let gpu = crate::test_support::adapter();
-    let params = params(1, false, 3);
-    let density = storage(&gpu, 12, "reject_zero_density");
-    let (fields, clumps) = outputs(&gpu, 1, 1, 3);
-    let error =
-        build_spektra_mt19937_state(&gpu.device, 0, 0, &density, &fields, &clumps, &params, &gpu)
-            .err()
-            .expect("an empty image must be rejected");
-    assert!(error.contains("zero"), "got: {error}");
 }
 
 fn physical_pages(

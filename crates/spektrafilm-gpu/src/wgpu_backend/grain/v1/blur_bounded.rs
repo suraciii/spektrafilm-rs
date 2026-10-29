@@ -45,6 +45,46 @@ fn workspace_bytes_for_samples(
     // Input, output, adapter, line state, three kernels and retained uniforms.
     Ok(page * 4 + 3 * 152 + u64::from(MAX_COMMANDS_PER_SUBMIT) * 3 * 96)
 }
+
+fn page_capacity(
+    sigma: [f64; 3],
+    limit: u64,
+    bytes: u64,
+    sample_bytes: u64,
+    arithmetic_f64: bool,
+) -> Result<u64, String> {
+    let minimum = sigma
+        .iter()
+        .try_fold(sample_bytes, |minimum, &s| -> Result<u64, String> {
+            if s <= 0.0 {
+                Ok(minimum)
+            } else if s < 3.0 {
+                Ok(minimum.max(
+                    gaussian_kernel_f64(s)?.1.len() as u64 * if arithmetic_f64 { 8 } else { 4 },
+                ))
+            } else if s < 8.0 {
+                Ok(minimum.max(if arithmetic_f64 { 24 } else { 12 }))
+            } else {
+                let width = spektrafilm_math::gaussian::gaussian_box_width(s);
+                Ok(minimum.max((width as u64).saturating_mul(sample_bytes)))
+            }
+        })?;
+    if limit < minimum {
+        return Err(format!(
+            "Gaussian bounded blur minimum working set requires {minimum} bytes per storage binding; limit is {limit}"
+        ));
+    }
+    let limit = limit / sample_bytes * sample_bytes;
+    let page_bytes = limit
+        .min(u64::from(MAX_PAGE_VALUES) * sample_bytes)
+        .min(bytes.max(minimum));
+    if page_bytes < minimum {
+        return Err(format!(
+            "Gaussian bounded blur minimum working set requires {minimum} bytes per storage binding; page capacity is {page_bytes}"
+        ));
+    }
+    Ok(page_bytes)
+}
 #[derive(Clone)]
 struct Store(Vec<BytePage>);
 
@@ -517,38 +557,8 @@ impl BoundedBlur {
             wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST,
             max,
         )?;
-        let minimum =
-            sigma
-                .iter()
-                .try_fold(sample_bytes, |minimum, &s| -> Result<u64, String> {
-                    if s <= 0.0 {
-                        Ok(minimum)
-                    } else if s < 3.0 {
-                        Ok(minimum.max(
-                            gaussian_kernel_f64(s)?.1.len() as u64
-                                * if arithmetic_f64 { 8 } else { 4 },
-                        ))
-                    } else if s < 8.0 {
-                        Ok(minimum.max(if arithmetic_f64 { 24 } else { 12 }))
-                    } else {
-                        let width = spektrafilm_math::gaussian::gaussian_box_width(s);
-                        Ok(minimum.max((width as u64).saturating_mul(sample_bytes)))
-                    }
-                })?;
-        if limit < minimum {
-            return Err(format!(
-                "Gaussian bounded blur minimum working set requires {minimum} bytes per storage binding; limit is {limit}"
-            ));
-        }
+        let page_bytes = page_capacity(sigma, limit, bytes, sample_bytes, arithmetic_f64)?;
         let limit = limit / sample_bytes * sample_bytes;
-        let page_bytes = limit
-            .min(u64::from(MAX_PAGE_VALUES) * sample_bytes)
-            .min(bytes.max(minimum));
-        if page_bytes < minimum {
-            return Err(format!(
-                "Gaussian bounded blur minimum working set requires {minimum} bytes per storage binding; page capacity is {page_bytes}"
-            ));
-        }
         let input = transport(backend, "gaussian_page_input", page_bytes, true);
         let output = transport(backend, "gaussian_page_output", page_bytes, true);
         // COPY-only callers and sub-alignment caps use this one shared adapter,
@@ -1178,6 +1188,35 @@ mod logic_tests {
     }
 
     #[test]
+    fn minimum_binding_capacity_accepts_boundaries_for_each_blur_mode() {
+        for (sample_bytes, arithmetic_f64, fir_minimum, iir_minimum) in
+            [(4, false, 76, 12), (4, true, 152, 24), (8, true, 152, 24)]
+        {
+            let box_minimum =
+                spektrafilm_math::gaussian::gaussian_box_width(8.0) as u64 * sample_bytes;
+            for (sigma, minimum) in [
+                ([0.0, -1.0, 0.0], sample_bytes),
+                ([2.99, 0.0, 0.0], fir_minimum),
+                ([3.0, 0.0, 0.0], iir_minimum),
+                ([8.0, 0.0, 0.0], box_minimum),
+                (
+                    [2.99, 3.0, 8.0],
+                    fir_minimum.max(iir_minimum).max(box_minimum),
+                ),
+            ] {
+                let bytes = 3 * sample_bytes;
+                assert!(
+                    page_capacity(sigma, minimum - 1, bytes, sample_bytes, arithmetic_f64).is_err()
+                );
+                assert_eq!(
+                    page_capacity(sigma, minimum, bytes, sample_bytes, arithmetic_f64).unwrap(),
+                    minimum
+                );
+            }
+        }
+    }
+
+    #[test]
     fn blur_reflection_repeats_endpoints_across_multiple_periods() {
         for index in -12..=12 {
             assert_eq!(reflect(index, 1), 0);
@@ -1200,18 +1239,18 @@ mod tests {
         atomic::{AtomicBool, Ordering},
     };
 
-    fn compare(width: u32, height: u32, sigma: [f64; 3], limit: u64) {
-        compare_with_reuse(width, height, sigma, limit, false);
+    fn compare(gpu: &WgpuBackend, width: u32, height: u32, sigma: [f64; 3], limit: u64) {
+        compare_with_reuse(gpu, width, height, sigma, limit, false);
     }
 
     fn compare_with_reuse(
+        gpu: &WgpuBackend,
         width: u32,
         height: u32,
         sigma: [f64; 3],
         limit: u64,
         cancelled_reuse: bool,
     ) -> Vec<f32> {
-        let gpu = crate::test_support::adapter();
         let mut gpu = gpu.derived_explicit();
         let cancellation = Arc::new(AtomicBool::new(false));
         gpu.pipe = gpu.pipe.with_cancellation(Some(cancellation.clone()));
@@ -1355,9 +1394,10 @@ mod tests {
 
     #[test]
     fn paged_iir_preserves_both_true_endpoints_and_recursion_seams() {
-        compare(71, 67, [3.0, 4.0, 7.9], 192);
-        compare(1, 39, [3.0, 4.0, 7.9], 24);
-        compare(39, 1, [3.0, 4.0, 7.9], 24);
+        let gpu = crate::test_support::adapter();
+        compare(&gpu, 71, 67, [3.0, 4.0, 7.9], 192);
+        compare(&gpu, 1, 39, [3.0, 4.0, 7.9], 24);
+        compare(&gpu, 39, 1, [3.0, 4.0, 7.9], 24);
     }
 
     /// Compare the optimized box kernel with the original ordered-window
@@ -1485,9 +1525,10 @@ mod tests {
 
     #[test]
     fn vector_boxes_preserve_bits_across_page_layouts() {
+        let gpu = crate::test_support::adapter();
         let mut baseline: Option<Vec<f32>> = None;
         for limit in [512, 1024, 2048] {
-            let actual = compare_with_reuse(71, 67, [8.0, 20.0, 32.0], limit, false);
+            let actual = compare_with_reuse(&gpu, 71, 67, [8.0, 20.0, 32.0], limit, false);
             if let Some(expected) = &baseline {
                 assert_eq!(
                     actual.iter().map(|x| x.to_bits()).collect::<Vec<_>>(),
@@ -1502,71 +1543,43 @@ mod tests {
 
     #[test]
     fn paged_boxes_reflect_endpoints_and_page_seams() {
-        compare(71, 67, [8.0, 20.0, 32.0], 512);
-        compare(1, 39, [8.0, 20.0, 32.0], 512);
-        compare(39, 1, [8.0, 20.0, 32.0], 512);
+        let gpu = crate::test_support::adapter();
+        compare(&gpu, 71, 67, [8.0, 20.0, 32.0], 512);
+        compare(&gpu, 1, 39, [8.0, 20.0, 32.0], 512);
+        compare(&gpu, 39, 1, [8.0, 20.0, 32.0], 512);
     }
 
     #[test]
     fn paged_fir_reflects_true_support_and_keeps_mixed_channel_order() {
-        compare(29, 23, [2.99, 3.5, 0.0], 152);
-        compare(7, 3, [2.99, 0.4, 0.1667], 152);
-        compare(1, 1, [2.99, 3.0, 0.0], 152);
+        let gpu = crate::test_support::adapter();
+        compare(&gpu, 29, 23, [2.99, 3.5, 0.0], 152);
+        compare(&gpu, 7, 3, [2.99, 0.4, 0.1667], 152);
+        compare(&gpu, 1, 1, [2.99, 3.0, 0.0], 152);
     }
 
     #[test]
     fn column_batches_match_reference_without_per_pixel_channel_transport() {
-        compare(37, 5, [0.4, 3.0, 0.0], 192);
+        let gpu = crate::test_support::adapter();
+        compare(&gpu, 37, 5, [0.4, 3.0, 0.0], 192);
     }
 
     #[test]
     fn paged_fir_and_iir_match_reference_across_both_axis_batch_tails() {
-        compare(137, 131, [2.99, 3.0, 0.0], 4096);
+        let gpu = crate::test_support::adapter();
+        compare(&gpu, 137, 131, [2.99, 3.0, 0.0], 4096);
     }
 
     #[test]
     fn gpu_transport_command_growth_and_cancelled_partial_state_reuse() {
-        compare_with_reuse(129, 97, [3.0, 0.4, 0.0], 65536, true);
+        let gpu = crate::test_support::adapter();
+        compare_with_reuse(&gpu, 129, 97, [3.0, 0.4, 0.0], 65536, true);
     }
 
     #[test]
     fn narrow_rasters_bound_transport_and_preserve_cancelled_recurrence() {
-        for (width, height) in [(1, 65537), (65537, 1)] {
-            compare_with_reuse(width, height, [3.0, 0.0, 0.0], 262144, true);
-        }
-    }
-}
-
-#[cfg(test)]
-mod working_set_tests {
-    use super::*;
-
-    #[test]
-    fn impossible_minimum_reports_required_binding_bytes() {
         let gpu = crate::test_support::adapter();
-        let source = transport(&gpu, "gaussian_minimum_source", 12, false);
-        let destination = transport(&gpu, "gaussian_minimum_destination", 12, false);
-        for (sigma, limit, minimum) in [([2.99, 0.0, 0.0], 151, 152), ([3.0, 0.0, 0.0], 23, 24)] {
-            let error = match BoundedBlur::build(
-                &gpu,
-                1,
-                1,
-                &source,
-                &destination,
-                None,
-                sigma,
-                0,
-                0,
-                limit,
-            ) {
-                Ok(_) => panic!("binding limit {limit} accepted below minimum {minimum}"),
-                Err(error) => error,
-            };
-            assert!(
-                error.contains(&format!("requires {minimum} bytes")),
-                "{error}"
-            );
-            assert!(error.contains(&format!("limit is {limit}")), "{error}");
+        for (width, height) in [(1, 65537), (65537, 1)] {
+            compare_with_reuse(&gpu, width, height, [3.0, 0.0, 0.0], 262144, true);
         }
     }
 }

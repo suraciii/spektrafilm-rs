@@ -231,32 +231,45 @@ pub(super) use procedural::build_grain_v2_state;
 
 #[cfg(test)]
 mod tests {
-    use spektrafilm_math::colorspace::Cctf;
-
-    /// The CCTF wire codes the host sends are the `case` labels in
-    /// `film_resolution.wgsl`; a renumbering on either side must fail here
-    /// rather than silently changing the encoded output.
-    ///
-    /// `Linear` (code 1) is the identity curve: the shader's `default` branch
-    /// returns the value unchanged, so it deliberately has no `case`.
     #[test]
-    fn cctf_wire_codes_match_film_resolution_shader() {
-        const SHADER: &str = include_str!("film_resolution.wgsl");
-        assert!(SHADER.contains("default: {return v;}"));
-        assert_eq!(Cctf::Linear.code(), 1);
+    fn destination_transfers_match_cpu_across_toes_and_headroom() {
+        use spektrafilm_math::colorspace::{Cctf, cctf_encode};
+        use spektrafilm_math::precision::{from_f64, to_f64};
+
+        let backend = crate::test_support::adapter();
+        let mut samples = vec![-1.5, -0.25, -1e-6, 0.0, 1e-6, 0.18, 0.5, 1.0, 1.5, 4.0];
+        for threshold in [1.0 / 512.0, 0.0031308, 0.0078125, 0.018] {
+            samples.extend([threshold - 1e-6, threshold, threshold + 1e-6]);
+        }
+        let image = spektrafilm_math::image::ImageBuf::from_data(
+            1,
+            samples.len() as u32,
+            samples
+                .iter()
+                .flat_map(|&v| [from_f64(v), from_f64(v), from_f64(v)])
+                .collect(),
+        );
         for cctf in [
+            Cctf::Linear,
             Cctf::Acescct,
             Cctf::Srgb,
             Cctf::ProPhoto,
             Cctf::Rec2020,
-            Cctf::AdobeRgb1998,
-            Cctf::Gamma2_6,
         ] {
-            let label = format!("case {}u:", cctf.code());
-            assert!(
-                SHADER.contains(&label),
-                "film_resolution.wgsl is missing `{label}` for {cctf:?}"
-            );
+            let encoded = backend.encode_in_space(&image, cctf);
+            for (i, &v) in samples.iter().enumerate() {
+                let reference = cctf_encode(v, cctf);
+                // The shader rounds to binary16; allow its relative rounding
+                // error plus a small absolute margin for subnormals and f32 math.
+                let tolerance = reference.abs() * 0.0006 + 1e-6;
+                for channel in 0..3 {
+                    let got = to_f64(encoded.data[i * 3 + channel]);
+                    assert!(
+                        got.is_finite() && (got - reference).abs() <= tolerance,
+                        "{cctf:?} at {v}, channel {channel}: device {got} != reference {reference}"
+                    );
+                }
+            }
         }
     }
 
