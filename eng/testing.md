@@ -12,6 +12,8 @@ Shared host fixtures may retain prepared populations, CPU banks, and parameter r
 
 Parameterized device tests should acquire one backend outside the case loop unless device creation or replacement is the behavior under test. Reuse its pipeline cache, but keep mutable buffers, cancellation, and observation state local to each case. Do not share a global backend across tests.
 
+Prepared device banks may be reused within one test when formation parameters and sampling footprints match. Keep them on the backend that prepared them. Keep image and readout buffers local to each case. Prepared-bank reuse must not replace cold production-path acceptance.
+
 **Main cost:** The full gate must stay within the `Main full verification` timeout in [.github/workflows/ci.yml](../.github/workflows/ci.yml). A change that adds rendering or preparation work reports the measured wall clock of the affected suites in the pull request. Test codegen uses `[profile.test] opt-level = 2` in [Cargo.toml](../Cargo.toml); it still inherits `dev`, so debug assertions and overflow checks stay enabled and only code generation differs.
 
 **Long local gates:** Use `just ci-pr` as the first local gate. If `just ci` reaches the local shell timeout while a workspace test is still running, run `just test` and `just test-f64` as separate commands and report each result. A partial `just ci` run is not a full-gate pass.
@@ -27,6 +29,8 @@ Prefer device-free tests of production logic. Parameter validation, geometry, in
 Logic tests must use small deterministic in-memory inputs instead of unnecessary stock loading or environment setup. Inspect helper calls before placing a test in `logic_tests::`; the absence of device code in the test body is not enough. Test accepted and rejected boundaries, not incidental error wording, struct copies, or source-text markers.
 
 Tests of source transformation should exercise the transformation with supplied input. Do not inspect checked-in shader text as a substitute for executing the shader's behavior.
+
+Numerical shader tests should execute the production pipeline assembly instead of copying its concatenation into a compilation-only test.
 
 Persistence tests must use real IO in isolated temporary directories. Shader numerics, actual bindings, queue synchronization, and device ownership require real execution. Keep those device assertions and full-render acceptance; a mock dispatch or a duplicate host implementation of a shader is not equivalent coverage.
 
