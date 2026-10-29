@@ -192,7 +192,7 @@ This rule applies equally to whole-look payloads and section payloads. Capturing
 - The authored-versus-baseline state persists in the parameter document so replaying a resolved document reproduces its render bit-identically; documents without the flags treat every axis as baseline.
 - The exposure normalization refines baseline axes from the database's f64 values while the published parameter surface carries their f32 views. Authored axes stay exact.
 - A render that consumes only the published f32 views MUST agree within 1e-8 absolute on the f64 reference values (measured 6.4e-10 in the report/render acceptance fixture).
-- Existing `--params` invocations, RenderRecipe, LUT behavior, CPU f64 semantics, WGPU f32 semantics, Grain V2 algorithm, and raw profile assets MUST retain their `0.3.4` results with `output_mix.amount = 1`. Exceptions are the explicit [output lightness retirement](../output-mix/spec.md#output-boundary-and-retirement) and [optical-order cutover](../film-chain/spec.md#optical-order-cutover).
+- Existing `--params` invocations, RenderRecipe, LUT behavior, CPU f64 semantics, WGPU f32 semantics, Procedural grain algorithm, and raw profile assets MUST retain their `0.3.4` results with `output_mix.amount = 1`. Exceptions are the explicit [output lightness retirement](../output-mix/spec.md#output-boundary-and-retirement) and [optical-order cutover](../film-chain/spec.md#optical-order-cutover).
 - The cutover does not change stored blur units, grain selectors, or print-glare ownership.
 - The [CLI parameter language](../cli/spec.md) owns command syntax and composition rules.
 

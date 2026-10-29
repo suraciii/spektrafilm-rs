@@ -307,7 +307,7 @@ fn scanner_operator_cli_discovery_rendering_and_rejection_share_the_contract() {
 fn sources_compose_in_order_and_dry_run_preserves_existing_outputs() {
     let f = Fixture::new();
     let sparse = f.root.join("edits.toml");
-    std::fs::write(&sparse, "[camera]\nexposure_compensation_ev = 1.0\n[film_render.grain]\nrms_granularity = [1.0,2.0,3.0]\nv2_amount = 25.0\n[enlarger]\ny_filter_neutral = 12.0\n").unwrap();
+    std::fs::write(&sparse, "[camera]\nexposure_compensation_ev = 1.0\n[film_render.grain]\nrms_granularity = [1.0,2.0,3.0]\nprocedural_amount = 25.0\n[enlarger]\ny_filter_neutral = 12.0\n").unwrap();
     let raw = f.root.join("buffer.raw");
     std::fs::write(f.root.join("output.tif"), b"existing-image").unwrap();
     std::fs::write(&raw, b"existing-buffer").unwrap();
@@ -319,7 +319,7 @@ fn sources_compose_in_order_and_dry_run_preserves_existing_outputs() {
         "--set",
         sparse.to_str().unwrap(),
         "--set",
-        "camera.exposure_compensation_ev=0.5,film_render.grain.v2_amount=null",
+        "camera.exposure_compensation_ev=0.5,film_render.grain.procedural_amount=null",
         "--dry-run",
         "--backend",
         "gpu",
@@ -337,7 +337,7 @@ fn sources_compose_in_order_and_dry_run_preserves_existing_outputs() {
         json!([1.0, 2.0, 3.0])
     );
     assert_eq!(
-        report["parameters"]["film_render"]["grain"]["v2_amount"],
+        report["parameters"]["film_render"]["grain"]["procedural_amount"],
         Value::Null
     );
     assert_eq!(report["parameters"]["enlarger"]["y_filter_neutral"], 12.0);
@@ -402,7 +402,7 @@ fn preset_discovery_exports_both_carriers_and_reloads_same_parameters() {
         .as_array()
         .unwrap()
         .iter()
-        .find(|field| field["path"] == "film_render.grain.v2_amount")
+        .find(|field| field["path"] == "film_render.grain.procedural_amount")
         .unwrap();
     assert_eq!(amount["nullable"], true);
     assert_eq!(amount["default"], Value::Null);
@@ -494,7 +494,7 @@ fn sparse_edits_protect_only_supplied_neutral_axes() {
 fn invalid_sources_fail_even_when_later_replaced_and_publish_nothing() {
     let f = Fixture::new();
     for source in [
-        "film_render.grain.v2_amount=101",
+        "film_render.grain.procedural_amount=101",
         "camera.exposure_compensation_ev=3.5e38",
         "settings.preview_max_size=1.5",
         "camera.color_filter=null",
@@ -518,7 +518,7 @@ fn invalid_sources_fail_even_when_later_replaced_and_publish_nothing() {
             "--set",
             source,
             "--set",
-            "film_render.grain.v2_amount=25",
+            "film_render.grain.procedural_amount=25",
             "--dry-run",
         ]);
         assert!(
@@ -1381,15 +1381,15 @@ fn inline_strings_and_enums_accept_normal_cli_values() {
         "--preset",
         "Kodak Portra 400",
         "--set",
-        "film_render.grain.engine=procedural,film_render.grain.v2_profile=custom",
+        "film_render.grain.engine=procedural,film_render.grain.procedural_profile=custom",
         "--set",
         "io.output_color_space=ProPhoto RGB",
         "--set",
         "camera.auto_exposure=false,camera.exposure_compensation_ev=+.5",
         "--set",
-        "film_render.grain.v2_amount=25",
+        "film_render.grain.procedural_amount=25",
         "--set",
-        "film_render.grain.v2_amount=null",
+        "film_render.grain.procedural_amount=null",
         "--dry-run",
     ]);
     assert_eq!(
@@ -1397,11 +1397,11 @@ fn inline_strings_and_enums_accept_normal_cli_values() {
         "procedural"
     );
     assert_eq!(
-        report["parameters"]["film_render"]["grain"]["v2_profile"],
+        report["parameters"]["film_render"]["grain"]["procedural_profile"],
         "custom"
     );
     assert_eq!(
-        report["parameters"]["film_render"]["grain"]["v2_amount"],
+        report["parameters"]["film_render"]["grain"]["procedural_amount"],
         Value::Null
     );
     assert_eq!(
@@ -1705,7 +1705,7 @@ fn library_document(f: &Fixture, name: &str, grain_amount: f64) -> PathBuf {
         "parameters": {
             "enlarger": {},
             "scanner": {},
-            "film_render": {"grain": {"v2_amount": grain_amount}},
+            "film_render": {"grain": {"procedural_amount": grain_amount}},
             "print_render": {},
             "camera_diffusion_filter": {"active": false},
             "output_mix": {"amount": 1.0},
@@ -1767,7 +1767,7 @@ fn names_resolve_user_first_and_explicit_groups_reach_shadowed_builtins() {
     );
     let document: Value = serde_json::from_slice(&selected.stdout).unwrap();
     assert_eq!(
-        document["parameters"]["film_render"]["grain"]["v2_amount"],
+        document["parameters"]["film_render"]["grain"]["procedural_amount"],
         12.0
     );
     let stderr = String::from_utf8_lossy(&selected.stderr);

@@ -473,7 +473,7 @@ impl Pipeline {
         // Only routes forming film defer crop/upscale to an optical field.
         // Inverse scan recovers existing density and uses ordinary geometry.
         let resized = if self.params.workflow.route_enum().exposes_film()
-            && (crate::stages::grain_v3::active(&self.params)
+            && (crate::stages::grain_dye::active(&self.params)
                 || crate::stages::grain_fotufilm::active(&self.params))
         {
             Ok((

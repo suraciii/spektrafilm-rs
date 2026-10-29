@@ -7,7 +7,7 @@
 
 use super::super::*;
 use super::raster::{RasterCommands, RasterStorage, paged_transport, transport, uniform};
-use spektrafilm_backend::GrainV1GpuParams;
+use spektrafilm_backend::SpektraGrainGpuParams;
 
 pub(in crate::wgpu_backend) const CHUNK_ELEMENTS: u32 = 65_536;
 const MT_STATE_BYTES: u64 = 2520;
@@ -34,7 +34,7 @@ pub(in crate::wgpu_backend) fn build_spektra_mt19937_state(
     density: &(impl RasterStorage + ?Sized),
     layer_fields: &(impl RasterStorage + ?Sized),
     clump: &(impl RasterStorage + ?Sized),
-    params: &GrainV1GpuParams,
+    params: &SpektraGrainGpuParams,
     backend: &WgpuBackend,
 ) -> Result<SpektraMt19937State, String> {
     build_spektra_mt19937_state_with_limit(
@@ -53,7 +53,7 @@ pub(in crate::wgpu_backend) fn build_spektra_mt19937_state(
 fn validate_inputs(
     width: u32,
     height: u32,
-    params: &GrainV1GpuParams,
+    params: &SpektraGrainGpuParams,
 ) -> Result<(u32, usize), String> {
     let n_pixels = width
         .checked_mul(height)
@@ -77,7 +77,7 @@ pub(in crate::wgpu_backend) fn build_spektra_mt19937_state_with_limit(
     density: &(impl RasterStorage + ?Sized),
     layer_fields: &(impl RasterStorage + ?Sized),
     clump: &(impl RasterStorage + ?Sized),
-    params: &GrainV1GpuParams,
+    params: &SpektraGrainGpuParams,
     backend: &WgpuBackend,
     limit: u64,
 ) -> Result<SpektraMt19937State, String> {

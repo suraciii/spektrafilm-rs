@@ -1,6 +1,6 @@
 use super::blur::{GaussianBuffers, GaussianScratch};
 use super::grain::raster::{RasterStorage, paged_transport};
-use super::grain::v1::blur::{GrainBlurState as BlurJob, build_grain_blur_paged_with_scratch};
+use super::grain::spektra::blur::{GrainBlurState as BlurJob, build_grain_blur_paged_with_scratch};
 use super::highlight::{PointwiseAccess, PointwiseJob, image_transport_bytes, pointwise_job};
 use super::paged::ImagePage;
 use super::*;

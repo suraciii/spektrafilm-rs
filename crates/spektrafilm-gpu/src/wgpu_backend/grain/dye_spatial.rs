@@ -6,7 +6,7 @@
 //! only at the optical response or density publication boundary.
 //!
 //! This module owns the spatial halves of
-//! `specs/film-grain/v3/design.md`: `dye_layers` allocates sublayer targets
+//! `specs/film-grain/dye/design.md`: `dye_layers` allocates sublayer targets
 //! per source pixel (G2), the count law realizes cell masses (G4), and the
 //! passes here transfer, form, and read that field (G3, G5). The host prepares
 //! only bounded scalar geometry and resource bounds; every overlap, tap sum,

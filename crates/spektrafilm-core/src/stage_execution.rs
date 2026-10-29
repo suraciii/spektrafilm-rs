@@ -21,7 +21,7 @@ pub fn validate_stage_params(film: &Profile, params: &RuntimeParams) -> Result<(
         .artifact_output()
         .ok_or("route does not produce a material state")?;
     validate_stage_model(params, kind)?;
-    crate::stages::grain_v3::validate_supported(film, params)?;
+    crate::stages::grain_dye::validate_supported(film, params)?;
     crate::stages::grain_fotufilm::validate_supported(film, params)?;
     Ok(())
 }
@@ -54,7 +54,7 @@ pub fn is_frozen_parameter(kind: MaterialKind, path: &str, baseline: &RuntimePar
         // Procedural is a post-scan appearance; a formed material realization is immutable.
         return !(path == "film_render.grain.engine"
             || path == "film_render.grain.active"
-            || path.starts_with("film_render.grain.v2_")
+            || path.starts_with("film_render.grain.procedural_")
             || baseline.film_render.grain.engine == GrainEngine::Procedural);
     }
     if kind == MaterialKind::Film

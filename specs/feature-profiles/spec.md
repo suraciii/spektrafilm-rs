@@ -37,7 +37,7 @@ There is no universal profile that maps one parameter set across Spektra, Proced
 
 ### Procedural grain profile family
 
-The family retains the existing `v2_profile` identifiers and default. Names are serialized values, not display labels, and remain lower-case with no aliases.
+The family retains the existing `procedural_profile` identifiers and default. Names are serialized values, not display labels, and remain lower-case with no aliases.
 
 | Name | Size | Amount | Shadows | Midtones | Highlights | Chroma | Film Resolution |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
@@ -54,11 +54,11 @@ The family retains the existing `v2_profile` identifiers and default. Names are 
 | `65mm250` | 2 | 15 | 30 | 55 | 65 | 65 | 90 |
 | `65mm500` | 3 | 25 | 25 | 55 | 65 | 80 | 100 |
 
-Applying a named Procedural profile MUST set `v2_profile` to that name and clear optional profile overrides. It MUST preserve `v2_mode`, `v2_film_type`, `v2_resolution_type`, `v2_timer`, `active`, and `engine`.
+Applying a named Procedural profile MUST set `procedural_profile` to that name and clear optional profile overrides. It MUST preserve `procedural_mode`, `procedural_film_type`, `procedural_resolution_type`, `procedural_timer`, `active`, and `engine`.
 
 Selecting `custom` preserves current resolved Procedural values and exposes them as explicit custom controls. It MUST NOT select an engine or change mode, film type, resolution implementation, or timer.
 
-The catalog values are SpektraFilm values. They do not claim pixel parity with an external product. The algorithm and post-scan boundary remain those defined by [Procedural grain](../film-grain/v2/spec.md).
+The catalog values are SpektraFilm values. They do not claim pixel parity with an external product. The algorithm and post-scan boundary remain those defined by [Procedural grain](../film-grain/procedural/spec.md).
 
 ### Halation profile family
 
@@ -85,7 +85,7 @@ The catalog exposes existing Halation parameter arrays without claiming a separa
 
 Each applicable feature section MUST provide one profile selector. The selector MUST list built-in entries in stable order and `custom`. It MUST NOT repeat numeric controls owned by the same section.
 
-The selector MUST show `custom` when current scoped values do not equal a built-in entry. It MUST NOT store a second persisted identity for Halation. Procedural retains its existing `v2_profile` wire field.
+The selector MUST show `custom` when current scoped values do not equal a built-in entry. It MUST NOT store a second persisted identity for Halation. Procedural retains its existing `procedural_profile` wire field.
 
 Selecting an entry MUST update only its profile scope and mark the feature section as edited. The selector MUST explain inactive route or engine conditions without clearing stored values.
 

@@ -226,16 +226,16 @@ pub(crate) fn leaf_numeric_bounds(path: &str) -> Option<(f64, Option<f64>)> {
         | "film_render.grain.fotufilm.coating_density_scale" => Some((0.25, Some(4.0))),
         "film_render.grain.fotufilm.radius_span" => Some((1.0, Some(20.0))),
         "film_render.grain.fotufilm.fog_density" => Some((0.0, Some(0.3))),
-        "film_render.grain.v2_size" => Some((1.0, Some(48.0))),
-        "film_render.grain.v2_amount"
-        | "film_render.grain.v2_shadows"
-        | "film_render.grain.v2_midtones"
-        | "film_render.grain.v2_highlights"
-        | "film_render.grain.v2_chroma"
-        | "film_render.grain.v2_resolution_factor" => Some((0.0, Some(100.0))),
-        "film_render.grain.v2_resolution_type" => Some((0.0, Some(1.0))),
-        "film_render.grain.v2_timer" => Some((0.0, Some(1.0))),
-        "film_render.grain.v3_dye_support_um" | "film_render.grain.v3_event_area_um2" => {
+        "film_render.grain.procedural_size" => Some((1.0, Some(48.0))),
+        "film_render.grain.procedural_amount"
+        | "film_render.grain.procedural_shadows"
+        | "film_render.grain.procedural_midtones"
+        | "film_render.grain.procedural_highlights"
+        | "film_render.grain.procedural_chroma"
+        | "film_render.grain.procedural_resolution_factor" => Some((0.0, Some(100.0))),
+        "film_render.grain.procedural_resolution_type" => Some((0.0, Some(1.0))),
+        "film_render.grain.procedural_timer" => Some((0.0, Some(1.0))),
+        "film_render.grain.dye_support_um" | "film_render.grain.dye_event_area_um2" => {
             Some((0.0, None))
         }
         "film_render.grain.channel_correlation" => Some((
@@ -438,12 +438,12 @@ pub(crate) fn validate_gamut_triplet_detailed(
 
 /// Grain Procedural timer override sentinel: 0 selects the seed-derived phase;
 /// otherwise the phase must be finite and strictly below 1.
-pub(crate) fn validate_v2_timer_detailed(value: f64) -> Result<(), ValidationError> {
+pub(crate) fn validate_procedural_timer_detailed(value: f64) -> Result<(), ValidationError> {
     if value != 0.0 && (!value.is_finite() || !(0.0..1.0).contains(&value)) {
         return Err(ValidationError::new(
             Reason::Timer,
-            "film_render.grain.v2_timer",
-            "film_render.grain.v2_timer: must be 0 or finite in (0,1)",
+            "film_render.grain.procedural_timer",
+            "film_render.grain.procedural_timer: must be 0 or finite in (0,1)",
         )
         .arg("value", value));
     }
@@ -465,16 +465,20 @@ pub(crate) fn enum_values(path: &str) -> Option<Vec<String>> {
             .iter()
             .map(|v| (*v).into())
             .collect(),
-        "film_render.grain.v2_mode" => ["analogue", "noise"].iter().map(|v| (*v).into()).collect(),
-        "film_render.grain.v2_film_type" => ["negative", "positive"]
+        "film_render.grain.procedural_mode" => {
+            ["analogue", "noise"].iter().map(|v| (*v).into()).collect()
+        }
+        "film_render.grain.procedural_film_type" => ["negative", "positive"]
             .iter()
             .map(|v| (*v).into())
             .collect(),
-        "film_render.grain.v2_profile" => spektrafilm_model::grain::v2::PROFILE_NAMES
-            .iter()
-            .map(|v| (*v).into())
-            .chain(std::iter::once("custom".into()))
-            .collect(),
+        "film_render.grain.procedural_profile" => {
+            spektrafilm_model::grain::procedural::PROFILE_NAMES
+                .iter()
+                .map(|v| (*v).into())
+                .chain(std::iter::once("custom".into()))
+                .collect()
+        }
         "settings.rgb_to_raw_method" => rgb_to_raw_names().iter().map(|v| (*v).into()).collect(),
         "camera.color_filter" => crate::spectral_service::available_color_filters()
             .iter()
@@ -566,10 +570,11 @@ pub(crate) fn validate_enum_value_detailed(path: &str, value: &str) -> Result<()
         "film_render.grain.fotufilm.material" => {
             matches!(value, "auto" | "silver" | "dye_negative" | "dye_reversal")
         }
-        "film_render.grain.v2_mode" => matches!(value, "analogue" | "noise"),
-        "film_render.grain.v2_film_type" => matches!(value, "negative" | "positive"),
-        "film_render.grain.v2_profile" => {
-            value == "custom" || spektrafilm_model::grain::v2::profile_index(value).is_some()
+        "film_render.grain.procedural_mode" => matches!(value, "analogue" | "noise"),
+        "film_render.grain.procedural_film_type" => matches!(value, "negative" | "positive"),
+        "film_render.grain.procedural_profile" => {
+            value == "custom"
+                || spektrafilm_model::grain::procedural::profile_index(value).is_some()
         }
         "settings.rgb_to_raw_method" => rgb_to_raw_names().contains(&value),
         "camera.color_filter" => crate::spectral_service::is_supported_color_filter(value),
@@ -753,37 +758,41 @@ pub(super) fn validate_detailed(params: &RuntimeParams) -> Result<(), Validation
         .map_err(|error| error.prefix("print_render.density_curves_morph."))?;
     let grain = &params.film_render.grain;
     grain.fotufilm.validate_detailed()?;
-    if grain.v2_profile != "custom"
-        && spektrafilm_model::grain::v2::profile_index(&grain.v2_profile).is_none()
+    if grain.procedural_profile != "custom"
+        && spektrafilm_model::grain::procedural::profile_index(&grain.procedural_profile).is_none()
     {
         return Err(ValidationError::new(
             Reason::UnknownProfile,
-            "film_render.grain.v2_profile",
+            "film_render.grain.procedural_profile",
             format!(
-                "film_render.grain.v2_profile: unknown profile {:?}",
-                grain.v2_profile
+                "film_render.grain.procedural_profile: unknown profile {:?}",
+                grain.procedural_profile
             ),
         )
-        .arg("value", format!("{:?}", grain.v2_profile)));
+        .arg("value", format!("{:?}", grain.procedural_profile)));
     }
-    if grain.v2_resolution_type > 1 {
+    if grain.procedural_resolution_type > 1 {
         return Err(ValidationError::new(
             Reason::Binary,
-            "film_render.grain.v2_resolution_type",
-            "film_render.grain.v2_resolution_type: must be 0 or 1",
+            "film_render.grain.procedural_resolution_type",
+            "film_render.grain.procedural_resolution_type: must be 0 or 1",
         )
-        .arg("value", grain.v2_resolution_type));
+        .arg("value", grain.procedural_resolution_type));
     }
-    validate_v2_timer_detailed(f64::from(grain.v2_timer))?;
+    validate_procedural_timer_detailed(f64::from(grain.procedural_timer))?;
     // Strict positivity is owned here: the metadata bound only reports a
     // discovery range (`0..=inf`).
-    if !grain.v3_dye_support_um.is_finite() || grain.v3_dye_support_um <= 0.0 {
-        return Err(ValidationError::new(Reason::DyeSupport, "film_render.grain.v3_dye_support_um",
-            "film_render.grain.v3_dye_support_um: must be finite and strictly positive (micrometers)").arg("value", grain.v3_dye_support_um));
+    if !grain.dye_support_um.is_finite() || grain.dye_support_um <= 0.0 {
+        return Err(ValidationError::new(
+            Reason::DyeSupport,
+            "film_render.grain.dye_support_um",
+            "film_render.grain.dye_support_um: must be finite and strictly positive (micrometers)",
+        )
+        .arg("value", grain.dye_support_um));
     }
-    if !grain.v3_event_area_um2.is_finite() || grain.v3_event_area_um2 <= 0.0 {
-        return Err(ValidationError::new(Reason::EventArea, "film_render.grain.v3_event_area_um2",
-            "film_render.grain.v3_event_area_um2: must be finite and strictly positive (square micrometers)").arg("value", grain.v3_event_area_um2));
+    if !grain.dye_event_area_um2.is_finite() || grain.dye_event_area_um2 <= 0.0 {
+        return Err(ValidationError::new(Reason::EventArea, "film_render.grain.dye_event_area_um2",
+            "film_render.grain.dye_event_area_um2: must be finite and strictly positive (square micrometers)").arg("value", grain.dye_event_area_um2));
     }
     // Preserve the historical supported and acceptance range. This ceiling
     // is not a certified material limit or scanner-processing attribution;
@@ -801,19 +810,24 @@ pub(super) fn validate_detailed(params: &RuntimeParams) -> Result<(), Validation
         .arg("value", grain.channel_correlation));
     }
     for (name, value) in [
-        ("v2_size", grain.v2_size),
-        ("v2_amount", grain.v2_amount),
-        ("v2_shadows", grain.v2_shadows),
-        ("v2_midtones", grain.v2_midtones),
-        ("v2_highlights", grain.v2_highlights),
-        ("v2_chroma", grain.v2_chroma),
-        ("v2_resolution_factor", grain.v2_resolution_factor),
+        ("procedural_size", grain.procedural_size),
+        ("procedural_amount", grain.procedural_amount),
+        ("procedural_shadows", grain.procedural_shadows),
+        ("procedural_midtones", grain.procedural_midtones),
+        ("procedural_highlights", grain.procedural_highlights),
+        ("procedural_chroma", grain.procedural_chroma),
+        (
+            "procedural_resolution_factor",
+            grain.procedural_resolution_factor,
+        ),
     ] {
         let path = format!("film_render.grain.{name}");
-        let (min, max) = leaf_numeric_bounds(&path).expect("grain v2 bounds");
+        let (min, max) = leaf_numeric_bounds(&path).expect("Procedural grain bounds");
         if let Some(value) = value {
             let value = f64::from(value);
-            if !value.is_finite() || !(min..=max.expect("grain v2 maximum")).contains(&value) {
+            if !value.is_finite()
+                || !(min..=max.expect("Procedural grain maximum")).contains(&value)
+            {
                 return Err(ValidationError::new(
                     Reason::NumericRange,
                     &path,

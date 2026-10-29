@@ -112,11 +112,11 @@ Collection MUST NOT block on an external consumer.
 
 With identical inputs and effective parameters, enabling summary collection MUST preserve output pixels and publication outcomes. Enabling GPU timestamps MUST preserve the same image passes and execution route.
 
-Resident and per-stage scenarios MUST show different observed GPU boundary counts. A Grain V1 or film-coordinate grain scenario that actually executes CPU image sampling MUST identify that CPU work and its reason. The reason MUST include a Dye field stage or `grain_fotufilm` when applicable.
+Resident and per-stage scenarios MUST show different observed GPU boundary counts. A Spektra grain or film-coordinate grain scenario that actually executes CPU image sampling MUST identify that CPU work and its reason. The reason MUST include a Dye field stage or `grain_fotufilm` when applicable.
 
 Selecting an engine alone MUST NOT force a CPU-stage reason or resident decline.
 
-A Grain V2 resident scenario MUST identify the actual dispatched grain pass. GPU execution of supported grain stages MUST be reported as GPU work. CPU-only execution MUST report zero observed GPU work and unavailable GPU timestamp measurements.
+A Procedural grain resident scenario MUST identify the actual dispatched grain pass. GPU execution of supported grain stages MUST be reported as GPU work. CPU-only execution MUST report zero observed GPU work and unavailable GPU timestamp measurements.
 
 Telemetry acceptance MUST also verify negative conversion with neutral and user-authored per-channel styles, scanner lens blur, and unsharp masking against their actual executors. GPU execution MUST be reported as GPU work without a forced CPU reason. CPU execution MUST retain its applicable existing reason.
 

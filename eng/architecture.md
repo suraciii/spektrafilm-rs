@@ -46,8 +46,8 @@ See the current P1+P2 record in the project context workspace for the execution 
 
 Feature ownership stays inside the existing crates:
 
-- `spektrafilm-model/src/`: `grain/{v1,v2}.rs`, `halation/`, `diffusion/`, `couplers/`, and `glare/` own their models and numerical tests. `optics/` owns shared physical blur, unsharp masking, and highlight boost.
-- `spektrafilm-core/src/params/`: grain, halation, diffusion, couplers, and glare each own their parameter types and feature-specific defaults. `RuntimeParams` remains the aggregate. Serialized JSON fields are unchanged.
+- `spektrafilm-model/src/`: `grain/{spektra,procedural,dye}.rs`, `halation/`, `diffusion/`, `couplers/`, and `glare/` own their models and numerical tests. `optics/` owns shared physical blur, unsharp masking, and highlight boost.
+- `spektrafilm-core/src/params/`: grain, halation, diffusion, couplers, and glare each own their parameter types and feature-specific defaults. `RuntimeParams` remains the aggregate. Grain readers migrate historical numbered control names; serialization uses engine names.
 - `spektrafilm-gpu/src/wgpu_backend/`: each effect owns its buffers, pass encoding, and dedicated WGSL. `blur/` owns Gaussian FIR weight generation and its shared uniform layout. `film_chain.rs` owns resident orchestration and its resource lifetimes. `mod.rs` retains device setup and shared dispatch.
 - `spektrafilm-cli/src/process.rs` owns process arguments, invocation setup, preflight, rendering, and publication. `lib.rs` owns the shared command plumbing and data selection for the `spektrafilm`, `spektrafilm-f64`, and `spektrafilm-lab` binaries; `bin/lab.rs` owns the instrument's command surface, which the `lab/` module serves.
 - `spektrafilm-core/src/lut_baker/bundle.rs` owns canonical topology stage roles, taps, suffixes, and print sharing. Baking, QA, and OCIO consume those descriptors, including CMYK ink style final-stage roles.
@@ -55,7 +55,7 @@ Feature ownership stays inside the existing crates:
 - `spektrafilm-gui/src/main.rs` owns contiguous parameter-revision/dirty transitions, with a separate calibration-invalidating transition. State restoration retains its explicit ordering around profile and viewer updates.
 - `spektrafilm-benchmark/src/documents.rs` owns authored-document validation and shared document helpers. `documents/evidence.rs` owns generated run/comparison validation. `documents/masks.rs` owns render/reference geometry-mask decoding with their distinct acceptance rules.
 
-Canonical Rust paths include `spektrafilm_model::grain::v1`, `spektrafilm_model::grain::v2`, and `spektrafilm_core::params::grain::GrainParams`.
+Canonical Rust paths include `spektrafilm_model::grain::spektra`, `spektrafilm_model::grain::procedural`, and `spektrafilm_core::params::grain::GrainParams`.
 The former flat module paths have been removed.
 
 ## See also

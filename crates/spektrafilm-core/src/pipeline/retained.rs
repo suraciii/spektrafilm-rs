@@ -167,7 +167,7 @@ impl Pipeline {
             }
         }
         // The same validation the host route performs, in the same order.
-        crate::stages::grain_v3::validate_supported(&self.film, &self.params)?;
+        crate::stages::grain_dye::validate_supported(&self.film, &self.params)?;
         crate::stages::grain_fotufilm::validate_supported(&self.film, &self.params)?;
         self.check_cancelled()?;
         Ok(())
@@ -336,7 +336,7 @@ impl Pipeline {
         //    source: their field readout owns the crop and the output lattice,
         //    so the generic geometry stage stays identity for them.
         let full_source_fields = route.exposes_film()
-            && (crate::stages::grain_v3::active(&self.params)
+            && (crate::stages::grain_dye::active(&self.params)
                 || crate::stages::grain_fotufilm::active(&self.params));
         let mut working_pitch = source_pitch;
         let mut applied_geometry: Vec<InputGeometryGpuParams> = Vec::new();

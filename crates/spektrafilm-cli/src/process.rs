@@ -832,12 +832,12 @@ fn cmd_process(
             .map_err(|e| anyhow::anyhow!("unsupported saving color space {saving_space:?}: {e}"))?;
     }
     // Validate configuration without creating a compute device for dry runs.
-    spektrafilm_core::stages::grain_v3::validate_supported(&film, &params)
+    spektrafilm_core::stages::grain_dye::validate_supported(&film, &params)
         .map_err(anyhow::Error::msg)?;
-    let grain_v3_active = spektrafilm_core::stages::grain_v3::active(&params);
+    let grain_dye_active = spektrafilm_core::stages::grain_dye::active(&params);
     let grain_fotufilm = spektrafilm_core::stages::grain_fotufilm::configuration_report(&params);
     if dry_run {
-        let grain_v3 = spektrafilm_core::stages::grain_v3::configuration_report(&film, &params);
+        let grain_dye = spektrafilm_core::stages::grain_dye::configuration_report(&film, &params);
         let backend_env = std::env::var("SPEKTRAFILM_BACKEND").ok();
         let output_format = plan.as_ref().map(|plan| plan.format.name());
         let output_bit_depth = plan
@@ -923,7 +923,7 @@ fn cmd_process(
             "readout_illuminant": readout_illuminant,
             "parameters": params,
             "scanner_provenance": ScannerProvenance::from_params(&params),
-            "film_grain_dye": grain_v3,
+            "film_grain_dye": grain_dye,
             "film_grain_fotufilm": grain_fotufilm,
             "input": {
                 "kind": if input_is_raw { "raw" } else { "raster" },
@@ -1019,10 +1019,10 @@ fn cmd_process(
         spektrafilm_core::stage_evidence::ensure_supported_backend(backend.as_ref())
             .map_err(anyhow::Error::msg)?;
     }
-    if grain_v3_active {
+    if grain_dye_active {
         eprintln!(
             "Backend (effective): {}",
-            spektrafilm_core::stages::grain_v3::effective_backend_note(
+            spektrafilm_core::stages::grain_dye::effective_backend_note(
                 &film,
                 &params,
                 backend.is_gpu(),

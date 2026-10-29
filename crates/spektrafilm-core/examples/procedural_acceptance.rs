@@ -3,7 +3,7 @@ use spektrafilm_core::{
     image_io::{self, BitDepth, SaveOptions},
     params::{
         RuntimeParams,
-        grain::{GrainEngine, GrainV2FilmType, GrainV2Mode},
+        grain::{GrainEngine, ProceduralGrainFilmType, ProceduralGrainMode},
     },
     pipeline::Pipeline,
     profile,
@@ -15,7 +15,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let output = std::env::args()
         .nth(1)
         .map(std::path::PathBuf::from)
-        .unwrap_or_else(|| std::env::temp_dir().join("spektrafilm-grain-v2-acceptance"));
+        .unwrap_or_else(|| std::env::temp_dir().join("spektrafilm-procedural-acceptance"));
     std::fs::create_dir_all(&output)?;
     let image = ImageBuf::from_data(
         32,
@@ -29,13 +29,26 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     for scan_film in [false, true] {
         for engine in [GrainEngine::Spektra, GrainEngine::Procedural] {
             for (mode, film_type) in [
-                (GrainV2Mode::Analogue, GrainV2FilmType::Negative),
-                (GrainV2Mode::Analogue, GrainV2FilmType::Positive),
-                (GrainV2Mode::Noise, GrainV2FilmType::Negative),
-                (GrainV2Mode::Noise, GrainV2FilmType::Positive),
+                (
+                    ProceduralGrainMode::Analogue,
+                    ProceduralGrainFilmType::Negative,
+                ),
+                (
+                    ProceduralGrainMode::Analogue,
+                    ProceduralGrainFilmType::Positive,
+                ),
+                (
+                    ProceduralGrainMode::Noise,
+                    ProceduralGrainFilmType::Negative,
+                ),
+                (
+                    ProceduralGrainMode::Noise,
+                    ProceduralGrainFilmType::Positive,
+                ),
             ] {
                 if engine == GrainEngine::Spektra
-                    && (mode == GrainV2Mode::Noise || film_type == GrainV2FilmType::Positive)
+                    && (mode == ProceduralGrainMode::Noise
+                        || film_type == ProceduralGrainFilmType::Positive)
                 {
                     continue;
                 }
@@ -44,9 +57,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 params.io.scan_film = scan_film;
                 params.film_render.grain.engine = engine;
                 params.film_render.grain.rms_granularity = [6.0, 8.0, 10.0];
-                params.film_render.grain.select_custom_grain_v2();
-                params.film_render.grain.v2_mode = mode;
-                params.film_render.grain.v2_film_type = film_type;
+                params.film_render.grain.select_custom_grain_procedural();
+                params.film_render.grain.procedural_mode = mode;
+                params.film_render.grain.procedural_film_type = film_type;
                 params.validate()?;
                 let pipeline =
                     Pipeline::new_with_spectral(film.clone(), paper.clone(), params, &root)?;

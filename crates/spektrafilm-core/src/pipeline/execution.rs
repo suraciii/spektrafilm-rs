@@ -76,8 +76,8 @@ impl Pipeline {
                     .into(),
             );
         }
-        if crate::stages::grain_v3::active(&self.params) {
-            crate::stages::grain_v3::validate_supported(&self.film, &self.params)?;
+        if crate::stages::grain_dye::active(&self.params) {
+            crate::stages::grain_dye::validate_supported(&self.film, &self.params)?;
         }
         if backend.is_gpu() {
             // Diagnostic endpoints are not permission to enter the CPU
@@ -191,7 +191,7 @@ impl Pipeline {
         // Active Dye outside its supported condition fails here, before any
         // route work — including the passthrough and convert routes, which
         // never reach a grain stage.
-        crate::stages::grain_v3::validate_supported(&self.film, &self.params)?;
+        crate::stages::grain_dye::validate_supported(&self.film, &self.params)?;
         crate::stages::grain_fotufilm::validate_supported(&self.film, &self.params)?;
         self.check_cancelled()?;
         if self.params.workflow.route_enum() == WorkflowRoute::Input {

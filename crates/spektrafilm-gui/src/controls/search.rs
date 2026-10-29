@@ -274,7 +274,10 @@ mod tests {
                 "Dye support (spatial formation)",
                 "Dye support (spatial formation)",
             ),
-            ("film_render.grain.v2_resolution_factor", "Film Resolution"),
+            (
+                "film_render.grain.procedural_resolution_factor",
+                "Film Resolution",
+            ),
             ("halation spatial scale", "halation spatial scale"),
         ] {
             let found = build_filtered(query, &params, &extras, false);

@@ -388,7 +388,7 @@ fn dye_fence_params() -> RuntimeParams {
     params.io.output_cctf_encoding = false;
     params.film_render.grain.active = true;
     params.film_render.grain.engine = crate::params::grain::GrainEngine::Dye;
-    params.film_render.grain.v3_dye_support_um = 8.0;
+    params.film_render.grain.dye_support_um = 8.0;
     params
 }
 
@@ -425,7 +425,7 @@ fn dye_grain_field_runs_on_the_resident_device_chain() {
         !snapshot
             .observations
             .iter()
-            .any(|stage| stage.name == "grain_v3_field"),
+            .any(|stage| stage.name == "grain_dye_field"),
         "the resident Dye field recorded a host stage on {}: {:?}",
         gpu.name(),
         snapshot
@@ -481,7 +481,7 @@ fn dye_grain_field_runs_on_the_resident_device_chain() {
 }
 
 /// Spatial deactivation must bypass Dye before its field parameters are
-/// resolved (spec film-grain/v3 §Controls and resolved inputs), exactly
+/// resolved (spec film-grain/dye §Controls and resolved inputs), exactly
 /// like the per-stage route: no density fence is assembled, so the
 /// resident route renders the grain-free reference.
 #[test]
@@ -1033,7 +1033,7 @@ fn explicit_gpu_deferred_crop_dye_route_matches_cpu() {
     params.film_render.grain.engine = crate::params::grain::GrainEngine::Dye;
     // Field realization and the geometry-aware tail both stay on device.
     assert_eq!(
-        crate::stages::grain_v3::effective_field_backend(&params, true),
+        crate::stages::grain_dye::effective_field_backend(&params, true),
         "gpu"
     );
     let pipeline = Pipeline::new_with_spectral(film, print, params, &dir).unwrap();
@@ -1075,7 +1075,7 @@ fn explicit_gpu_request_runs_the_dye_field_on_the_device() {
     let print = crate::profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap();
     let params = dye_fence_params();
     assert_eq!(
-        crate::stages::grain_v3::effective_field_backend(&params, true),
+        crate::stages::grain_dye::effective_field_backend(&params, true),
         "gpu"
     );
     let pipeline = Pipeline::new_with_spectral(film, print, params, &dir).unwrap();
@@ -1095,7 +1095,7 @@ fn explicit_gpu_request_runs_the_dye_field_on_the_device() {
         !snapshot
             .observations
             .iter()
-            .any(|stage| stage.name == "grain_v3_field"),
+            .any(|stage| stage.name == "grain_dye_field"),
         "the explicit GPU Dye field recorded a host stage: {:?}",
         snapshot
             .observations
@@ -1145,7 +1145,7 @@ fn spektra_mt19937_grain_runs_on_the_device() {
             !snapshot
                 .observations
                 .iter()
-                .any(|stage| stage.name == "grain_v1"),
+                .any(|stage| stage.name == "grain_spektra"),
             "the MT19937 regime fell back to the host fence (single_curve={single_curve}): {:?}",
             snapshot
                 .observations
@@ -1193,7 +1193,7 @@ fn deferred_crop_dye_with_downstream_optics_keeps_the_resident_route() {
     params.io.crop_size = [0.5, 0.5];
     params.scanner.unsharp_mask = [0.7, 0.7];
     assert_eq!(
-        crate::stages::grain_v3::effective_field_backend(&params, true),
+        crate::stages::grain_dye::effective_field_backend(&params, true),
         "gpu"
     );
     let pipeline = Pipeline::new_with_spectral(film, print, params, &dir).unwrap();
@@ -1216,7 +1216,7 @@ fn experimental_mass_law_keeps_the_host_field() {
             "pipeline::resident::tests::experimental_mass_law_child",
             "--nocapture",
         ])
-        .env("SPEKTRAFILM_GRAIN_V3_MASS_LAW", "two_class")
+        .env("SPEKTRAFILM_GRAIN_DYE_MASS_LAW", "two_class")
         .output()
         .expect("run the mass-law child case");
     assert!(
@@ -1231,7 +1231,7 @@ fn experimental_mass_law_keeps_the_host_field() {
 /// the selector is set (the suite runs it directly as well).
 #[test]
 fn experimental_mass_law_child() {
-    if std::env::var("SPEKTRAFILM_GRAIN_V3_MASS_LAW").as_deref() != Ok("two_class") {
+    if std::env::var("SPEKTRAFILM_GRAIN_DYE_MASS_LAW").as_deref() != Ok("two_class") {
         eprintln!("skipped: run through the parent case with the mass-law selector set");
         return;
     }
@@ -1241,10 +1241,10 @@ fn experimental_mass_law_child() {
     let params = dye_fence_params();
     // The capability output names the host field and its reason.
     assert_eq!(
-        crate::stages::grain_v3::effective_field_backend(&params, true),
+        crate::stages::grain_dye::effective_field_backend(&params, true),
         "cpu"
     );
-    let note = crate::stages::grain_v3::effective_backend_note(&film, &params, true);
+    let note = crate::stages::grain_dye::effective_backend_note(&film, &params, true);
     assert!(
         note.contains("MASS_LAW") && note.contains("resident chain"),
         "{note}"
@@ -1698,7 +1698,7 @@ fn mallett_parity_params() -> RuntimeParams {
 /// Mallett shader had "no numerically equivalent route through CPU
 /// display-domain grain and optics": the CPU per-stage route had silently
 /// dropped Procedural grain for Mallett (`stages/scanning.rs`'s
-/// `grain_v2_active` carried a `rgb_to_raw_method != "mallett2019"`
+/// `grain_procedural_active` carried a `rgb_to_raw_method != "mallett2019"`
 /// conjunct from a merge resolution with no spec citation), so a resident
 /// render would have applied grain the CPU reference did not. Removing the
 /// CPU drop makes the two routes one algorithm, and the parity below is the
@@ -1739,7 +1739,7 @@ fn explicit_gpu_request_runs_mallett_on_the_resident_device_chain() {
         !snapshot
             .observations
             .iter()
-            .any(|stage| stage.name == "grain_v2"),
+            .any(|stage| stage.name == "grain_procedural"),
         "the explicit GPU Mallett render recorded a host grain stage: {:?}",
         snapshot
             .observations
@@ -1944,7 +1944,7 @@ fn retained_convert_film_never_generates_dye_or_fotufilm_grain() {
             params.film_render.grain.engine = engine;
             params.film_render.grain.active = false;
             params.film_render.grain.fotufilm.amount = 1.0;
-            params.film_render.grain.v3_dye_support_um = 8.0;
+            params.film_render.grain.dye_support_um = 8.0;
             params.scanner.scan_output = "direct_scan".into();
             params.scanner.lens_blur = 0.0;
             params.scanner.unsharp_mask = [0.0, 0.0];
@@ -1981,7 +1981,7 @@ fn retained_convert_film_never_generates_dye_or_fotufilm_grain() {
                 .with_params_with_backend(params, gpu.backend())
                 .unwrap();
             if engine == GrainEngine::Dye {
-                let expected = crate::stages::grain_v3::validate_supported(&cpu.film, &cpu.params)
+                let expected = crate::stages::grain_dye::validate_supported(&cpu.film, &cpu.params)
                     .unwrap_err();
                 assert!(
                     expected.contains("film grain Dye: unsupported condition"),

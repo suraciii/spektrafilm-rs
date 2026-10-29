@@ -819,9 +819,9 @@ mod collector_edges {
         }
         let late = phase
             .context()
-            .scope("grain_v1", ObservationKind::Stage, Purpose::Image);
+            .scope("grain_spektra", ObservationKind::Stage, Purpose::Image);
         late.context()
-            .record_executor(Executor::Cpu, Some(CpuReason::GrainV1Sampler));
+            .record_executor(Executor::Cpu, Some(CpuReason::SpektraGrainSampler));
         assert!(late.context().retained());
         drop(late);
         drop(phase);
@@ -833,10 +833,10 @@ mod collector_edges {
         let stage = snapshot
             .observations
             .iter()
-            .find(|o| o.name == "grain_v1")
+            .find(|o| o.name == "grain_spektra")
             .unwrap();
         assert_eq!(stage.executor, Some(Executor::Cpu));
-        assert_eq!(stage.cpu_reason, Some(CpuReason::GrainV1Sampler));
+        assert_eq!(stage.cpu_reason, Some(CpuReason::SpektraGrainSampler));
     }
 
     #[test]

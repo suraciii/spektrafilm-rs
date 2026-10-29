@@ -608,7 +608,7 @@ mod tests {
     }
 
     #[test]
-    fn preview_mode_keeps_v2_grain_active() {
+    fn preview_mode_keeps_procedural_grain_active() {
         let film = film_profile("kodak_portra_400", "negative", "still", "strong");
         let print = blank_profile();
         let mut params = RuntimeParams::default();

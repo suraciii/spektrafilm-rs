@@ -114,12 +114,12 @@ class UnitTestScopeDetection(unittest.TestCase):
 
 class IntegrationTestScope(unittest.TestCase):
     def test_tests_directory_is_checked_without_a_marker(self) -> None:
-        # `tests/grain_v2_shader.rs` carries no `#[cfg(test)]` at all, which is
+        # `tests/procedural_shader.rs` carries no `#[cfg(test)]` at all, which is
         # why the guard was blind to integration tests before run #15.
         expect(
             "#![cfg(feature = \"wgpu-backend\")]\n"
             "#[test]\n"
-            "fn grain_v2_shader_compiles() {\n"
+            "fn grain_procedural_shader_compiles() {\n"
             "    let instance = wgpu::Instance::default();\n"
             "}\n",
             "Instance::default",
@@ -210,7 +210,7 @@ class RawDeviceConstruction(unittest.TestCase):
         )
 
     def test_instance_after_lock_is_allowed(self) -> None:
-        # The shape of the correctly-fixed `tests/grain_v2_shader.rs`.
+        # The shape of the correctly-fixed `tests/procedural_shader.rs`.
         expect_clean(
             "#[test]\n"
             "fn a() {\n"

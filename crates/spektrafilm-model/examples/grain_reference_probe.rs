@@ -1,10 +1,10 @@
-use spektrafilm_backend::GrainV2GpuParams;
+use spektrafilm_backend::ProceduralGrainGpuParams;
 use spektrafilm_gpu::wgpu_backend::WgpuBackend;
 use spektrafilm_math::{
     image::ImageBuf,
     precision::{from_f32, to_f32},
 };
-use spektrafilm_model::grain::v2::{GrainV2Mode, GrainV2Params, apply_cpu};
+use spektrafilm_model::grain::procedural::{ProceduralGrainMode, ProceduralGrainParams, apply_cpu};
 use std::{env, error::Error, fs};
 fn main() -> Result<(), Box<dyn Error>> {
     // Input and both outputs are native encoded RGB; the input carrier is
@@ -29,11 +29,11 @@ fn main() -> Result<(), Box<dyn Error>> {
         })
         .collect();
     let input = ImageBuf::from_data(w, h, data);
-    let mut p = GrainV2Params::for_profile(a[6].parse()?);
+    let mut p = ProceduralGrainParams::for_profile(a[6].parse()?);
     p.mode = if a[5] == "noise" {
-        GrainV2Mode::Noise
+        ProceduralGrainMode::Noise
     } else {
-        GrainV2Mode::Analogue
+        ProceduralGrainMode::Analogue
     };
     p.seed = a[7].parse()?;
     p.resolution_factor = 100.;
@@ -49,7 +49,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     };
     save(format!("{}_cpu_rgb_f32le.bin", a[4]), &cpu)?;
     let gpu = WgpuBackend::new().ok_or("no WGPU adapter")?;
-    let gp = GrainV2GpuParams {
+    let gp = ProceduralGrainGpuParams {
         mode: p.mode as u32,
         resolution_type: p.resolution_type,
         amount: p.amount,
@@ -66,7 +66,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         colored: p.colored,
         clustered: p.clustered,
     };
-    let out = gpu.grain_v2_gpu(&input, &gp)?;
+    let out = gpu.grain_procedural_gpu(&input, &gp)?;
     save(format!("{}_gpu_rgb_f32le.bin", a[4]), &out)?;
     let max = cpu
         .data

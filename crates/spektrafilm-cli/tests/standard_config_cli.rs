@@ -13,7 +13,7 @@ use std::{
 use tempfile::TempDir;
 
 // Deliberately omit the final newline: the export must preserve stdout bytes.
-const PRESET: &str = "schema_version = 2\nname = \"Kodak Gold 200\"\n[parameters.film_render.grain]\nactive = true\nv2_amount = 17.0";
+const PRESET: &str = "schema_version = 2\nname = \"Kodak Gold 200\"\n[parameters.film_render.grain]\nactive = true\nprocedural_amount = 17.0";
 const SHARED_SET: &[&str] = &[
     "camera.auto_exposure=false",
     "camera.exposure_compensation_ev=0",
@@ -264,9 +264,9 @@ fn standard_bundle_is_portable_validated_and_frozen_against_library_and_destinat
             "debug.deactivate_stochastic_effects=false",
             "film_render.grain.active=true",
             "film_render.grain.engine=procedural",
-            "film_render.grain.v2_profile=custom",
-            "film_render.grain.v2_mode=noise",
-            "film_render.grain.v2_amount=25",
+            "film_render.grain.procedural_profile=custom",
+            "film_render.grain.procedural_mode=noise",
+            "film_render.grain.procedural_amount=25",
         ])
     );
     for index in [3, 4] {
@@ -295,7 +295,7 @@ fn standard_bundle_is_portable_validated_and_frozen_against_library_and_destinat
     let conflicting_preset = serde_json::to_vec(&json!({
         "schema_version":2,
         "name":"Kodak Gold 200",
-        "parameters":{"film_render":{"grain":{"active":false,"v2_amount":99.0}}},
+        "parameters":{"film_render":{"grain":{"active":false,"procedural_amount":99.0}}},
         "provenance":{"implementation_version":"test","model_version":"test"}
     }))
     .unwrap();

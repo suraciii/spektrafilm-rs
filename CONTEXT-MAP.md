@@ -2,7 +2,7 @@
 
 ## Contexts
 
-- [Film simulation](./CONTEXT.md) — project-wide film workflow language and shared domain terms; [Dye grain](./specs/film-grain/v3/CONTEXT.md) extends this vocabulary for the Dye bounded context.
+- [Film simulation](./CONTEXT.md) — project-wide film workflow language and shared domain terms; [Dye grain](./specs/film-grain/dye/CONTEXT.md) extends this vocabulary for the Dye bounded context.
 
 ## Relationships
 

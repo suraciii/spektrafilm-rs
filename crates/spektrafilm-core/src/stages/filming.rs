@@ -297,7 +297,7 @@ pub fn develop(
     let grain = &params.film_render.grain;
     if grain.active && matches!(grain.engine, crate::params::grain::GrainEngine::Spektra) {
         let t = Instant::now();
-        let grain_observation = super::StageObservation::new(backend, "grain_v1");
+        let grain_observation = super::StageObservation::new(backend, "grain_spektra");
         let backend = grain_observation.backend(backend);
         density_cmy = apply_spektra_grain(
             density_cmy,
@@ -317,7 +317,7 @@ pub fn develop(
 
 struct PreparedSpektra {
     layers_tensor: Vec<[[f64; 3]; 3]>,
-    grain: spektrafilm_model::grain::v1::PreparedGrain,
+    grain: spektrafilm_model::grain::spektra::PreparedGrain,
 }
 
 fn prepare_spektra(
@@ -345,7 +345,7 @@ fn prepare_spektra(
     if layers_tensor.len() != norm_curves_f64.len() || norm_curves_f64.len() < 2 {
         return Err("Spektra grain requires matching composite and sublayer curve tables".into());
     }
-    let prepared = spektrafilm_model::grain::v1::prepare_grain(
+    let prepared = spektrafilm_model::grain::spektra::prepare_grain(
         &layers_tensor,
         layer_count,
         pixel_size_um,
@@ -368,7 +368,7 @@ pub(crate) fn spektra_grain_device_params(
     use_fast_stats: bool,
     random_seed: u64,
     pixel_size_um: f64,
-) -> Result<spektrafilm_backend::GrainV1GpuParams, String> {
+) -> Result<spektrafilm_backend::SpektraGrainGpuParams, String> {
     let PreparedSpektra {
         layers_tensor,
         grain: prepared,
@@ -386,7 +386,7 @@ pub(crate) fn spektra_grain_device_params(
             curve_layers.extend_from_slice(layer);
         }
     }
-    Ok(spektrafilm_backend::GrainV1GpuParams {
+    Ok(spektrafilm_backend::SpektraGrainGpuParams {
         base_seed: random_seed,
         layer_count: prepared.layer_count,
         density_min: prepared.density_min,
@@ -421,7 +421,7 @@ pub(crate) fn apply_spektra_grain(
     backend: &dyn ComputeBackend,
 ) -> Result<ImageBuf, String> {
     let prepared = prepare_spektra(film, grain, norm_curves_f64, pixel_size_um)?;
-    spektrafilm_model::grain::v1::apply_grain(
+    spektrafilm_model::grain::spektra::apply_grain(
         &density_cmy,
         norm_curves_f64,
         &prepared.layers_tensor,

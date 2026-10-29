@@ -2,6 +2,5 @@
 
 pub mod dye;
 pub mod fotufilm;
-pub mod v1;
-pub mod v2;
-pub mod v3;
+pub mod procedural;
+pub mod spektra;

@@ -75,13 +75,13 @@ impl GaussianScratch {
 
 /// One exact reference Gaussian over interleaved RGB storage pages.
 ///
-/// The filter itself lives in `grain::v1::blur`: FIR below sigma 3 with
+/// The filter itself lives in `grain::spektra::blur`: FIR below sigma 3 with
 /// half-sample reflection and the reference `floor(3σ + 0.5)` radius, the
 /// Young-van Vliet recursion at and above 3, and a per-channel copy for a
 /// non-positive sigma. There is no radius cap, so a large width is a recursion
 /// rather than a truncated kernel.
 pub(super) struct BlurJob {
-    pub(super) state: crate::wgpu_backend::grain::v1::blur::GrainBlurState,
+    pub(super) state: crate::wgpu_backend::grain::spektra::blur::GrainBlurState,
     /// Caller-owned paged scratch; kept alive for the encoded work.
     pub(super) _scratch: Vec<ImagePage>,
 }
@@ -105,7 +105,7 @@ pub(super) fn make_blur_job(
     let source = src.pages();
     let destination = out.pages();
     let scratch = scratch.pages();
-    let state = crate::wgpu_backend::grain::v1::blur::build_grain_blur_paged_with_scratch(
+    let state = crate::wgpu_backend::grain::spektra::blur::build_grain_blur_paged_with_scratch(
         backend,
         width,
         height,
@@ -229,7 +229,7 @@ impl WgpuBackend {
         let input_f32 = scalars_to_f32(&img.data);
         self.queue
             .write_buffer(&buf_in, 0, bytemuck::cast_slice(&input_f32));
-        let blur = crate::wgpu_backend::grain::v1::blur::build_grain_blur(
+        let blur = crate::wgpu_backend::grain::spektra::blur::build_grain_blur(
             self,
             w,
             h,
@@ -279,7 +279,7 @@ impl WgpuBackend {
     ) -> Result<Vec<ImageBuf>, String> {
         #[cfg(test)]
         self.pipe.test_operation("gaussian_blur_multi")?;
-        use crate::wgpu_backend::grain::v1::blur::build_grain_blur_with_scratch;
+        use crate::wgpu_backend::grain::spektra::blur::build_grain_blur_with_scratch;
         let w = img.width;
         let h = img.height;
         let img_bytes = (w as u64) * (h as u64) * 3 * 4;

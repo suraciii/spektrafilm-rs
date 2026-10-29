@@ -15,11 +15,11 @@ pub(super) enum MassLaw {
 
 impl MassLaw {
     pub(super) fn from_env() -> Result<Self, String> {
-        match std::env::var("SPEKTRAFILM_GRAIN_V3_MASS_LAW") {
+        match super::diagnostic_env("SPEKTRAFILM_GRAIN_DYE_MASS_LAW") {
             Ok(value) => Self::parse(&value),
             Err(std::env::VarError::NotPresent) => Ok(Self::Fixed),
             Err(std::env::VarError::NotUnicode(_)) => Err(
-                "film grain Dye: SPEKTRAFILM_GRAIN_V3_MASS_LAW must be fixed, two_class or gamma4"
+                "film grain Dye: SPEKTRAFILM_GRAIN_DYE_MASS_LAW must be fixed, two_class or gamma4"
                     .to_owned(),
             ),
         }

@@ -8,7 +8,7 @@ use super::*;
 use spektrafilm_backend::cpu_backend::CpuBackend;
 use spektrafilm_math::image::ImageBuf;
 use spektrafilm_math::precision::{from_f64, to_f64};
-use spektrafilm_model::grain::v1::{PreparedGrain, apply_grain, prepare_grain};
+use spektrafilm_model::grain::spektra::{PreparedGrain, apply_grain, prepare_grain};
 
 const PIXEL_SIZE_UM: f64 = 2.0;
 
@@ -120,10 +120,10 @@ fn params(
     base_seed: u64,
     monochrome: bool,
     layer_count: u32,
-) -> spektrafilm_backend::GrainV1GpuParams {
+) -> spektrafilm_backend::SpektraGrainGpuParams {
     let (curve, layers) = curves(layer_count);
     let prepared = prepared(layer_count, monochrome);
-    spektrafilm_backend::GrainV1GpuParams {
+    spektrafilm_backend::SpektraGrainGpuParams {
         base_seed,
         layer_count,
         density_min: prepared.density_min,
@@ -161,7 +161,7 @@ fn image(width: u32, height: u32) -> ImageBuf {
     )
 }
 
-fn reference(image: &ImageBuf, params: &spektrafilm_backend::GrainV1GpuParams) -> ImageBuf {
+fn reference(image: &ImageBuf, params: &spektrafilm_backend::SpektraGrainGpuParams) -> ImageBuf {
     let (mut curve, mut layers) = curves(params.layer_count);
     if params.lookup_sign < 0.0 {
         curve.reverse();
@@ -193,7 +193,7 @@ fn reference(image: &ImageBuf, params: &spektrafilm_backend::GrainV1GpuParams) -
 fn composed(
     fields: &[f32],
     pixels: usize,
-    params: &spektrafilm_backend::GrainV1GpuParams,
+    params: &spektrafilm_backend::SpektraGrainGpuParams,
 ) -> Vec<f32> {
     (0..pixels * 3)
         .map(|i| {
@@ -440,7 +440,7 @@ fn clumping_continues_the_final_active_plane_numpy_state() {
                     "layer_count {layer_count}, monochrome {monochrome}, sample {i}: particle count before clumping differs"
                 );
             }
-            let state = super::super::v1::build_spektra_grain_state(
+            let state = super::super::spektra::build_spektra_grain_state(
                 &gpu.device,
                 width,
                 height,

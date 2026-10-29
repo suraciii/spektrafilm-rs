@@ -696,7 +696,7 @@ def main() -> None:
         "runtime_fields": {
             group: {
                 field: integration_entry(status, owner, notes,
-                    ("specs/film-grain/v1/spec.md" if field.startswith("grain.")
+                    ("specs/film-grain/spektra/spec.md" if field.startswith("grain.")
                      else "specs/output-mix/spec.md#output-boundary-and-retirement") if status == RETIRED
                     else "crates/spektrafilm-core/src/params/; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain/",
                     audit_status=AUDIT_RUNTIME_STATUSES.get(f"{group}.{field}", status))

@@ -705,35 +705,39 @@ fn added_sources_accept_vision3_printing_film_target() {
 }
 #[test]
 fn feature_profile_precedes_sources_and_reports_winning_scope() {
-    let sources = vec!["film_render.grain.v2_amount=25,film_render.grain.engine=procedural".into()];
+    let sources =
+        vec!["film_render.grain.procedural_amount=25,film_render.grain.engine=procedural".into()];
     let selection = crate::feature_profiles::parse_selection("grain.procedural=8mm50", 1).unwrap();
     let selections = [selection];
     let mut req = public_request(&sources);
     req.feature_profiles = &selections;
     let result = resolve(req, &data_dir()).unwrap();
-    assert_eq!(result.params.film_render.grain.v2_profile, "8mm50");
-    assert_eq!(result.params.film_render.grain.v2_amount, Some(25.0));
+    assert_eq!(result.params.film_render.grain.procedural_profile, "8mm50");
+    assert_eq!(
+        result.params.film_render.grain.procedural_amount,
+        Some(25.0)
+    );
     let profile_edit = result
         .edits
         .iter()
-        .find(|edit| edit.path == "film_render.grain.v2_profile")
+        .find(|edit| edit.path == "film_render.grain.procedural_profile")
         .unwrap();
     assert_eq!(profile_edit.source.kind, "feature_profile");
     let amount_edit = result
         .edits
         .iter()
-        .find(|edit| edit.path == "film_render.grain.v2_amount")
+        .find(|edit| edit.path == "film_render.grain.procedural_amount")
         .unwrap();
     assert_eq!(amount_edit.source.kind, "set");
     assert_eq!(amount_edit.source.index, Some(1));
     assert_eq!(result.feature_profiles.len(), 1);
     assert_eq!(result.feature_profiles[0].status, EditStatus::Overridden);
     assert_eq!(
-        result.feature_profiles[0].requested["film_render.grain.v2_profile"],
+        result.feature_profiles[0].requested["film_render.grain.procedural_profile"],
         "8mm50"
     );
     assert_eq!(
-        result.feature_profiles[0].resolved["film_render.grain.v2_profile"],
+        result.feature_profiles[0].resolved["film_render.grain.procedural_profile"],
         "8mm50"
     );
 }
@@ -842,33 +846,36 @@ fn public_routes_have_identical_topology_with_noop_sources() {
 #[test]
 fn feedback_reports_conditions_constraints_and_only_winning_leaves() {
     let sources = vec![
-        "film_render.grain.engine=procedural,film_render.grain.v2_profile=35mm250,film_render.grain.v2_size=12,film_render.grain.v2_amount=20,camera.lens_blur_um=2".into(),
-        "film_render.grain.v2_amount=25,settings.preview_mode=true".into(),
+        "film_render.grain.engine=procedural,film_render.grain.procedural_profile=35mm250,film_render.grain.procedural_size=12,film_render.grain.procedural_amount=20,camera.lens_blur_um=2".into(),
+        "film_render.grain.procedural_amount=25,settings.preview_mode=true".into(),
     ];
     let result = resolve(public_request(&sources), &data_dir()).unwrap();
     let edit = |path: &str| result.edits.iter().find(|edit| edit.path == path).unwrap();
     assert_eq!(
-        edit("film_render.grain.v2_size").status,
+        edit("film_render.grain.procedural_size").status,
         EditStatus::Inactive
     );
     assert!(
-        edit("film_render.grain.v2_size")
+        edit("film_render.grain.procedural_size")
             .reason
             .as_ref()
             .unwrap()
             .contains("custom")
     );
     assert_eq!(
-        edit("film_render.grain.v2_amount").status,
+        edit("film_render.grain.procedural_amount").status,
         EditStatus::Active
     );
-    assert_eq!(edit("film_render.grain.v2_amount").source.index, Some(2));
+    assert_eq!(
+        edit("film_render.grain.procedural_amount").source.index,
+        Some(2)
+    );
     assert_eq!(edit("camera.lens_blur_um").status, EditStatus::Constrained);
     assert_eq!(
         result
             .edits
             .iter()
-            .filter(|edit| edit.path == "film_render.grain.v2_amount")
+            .filter(|edit| edit.path == "film_render.grain.procedural_amount")
             .count(),
         1
     );

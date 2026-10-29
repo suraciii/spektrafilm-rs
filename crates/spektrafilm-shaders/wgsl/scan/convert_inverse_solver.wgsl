@@ -25,7 +25,7 @@
 // Precision: the reference runs the solve in f64, and the residual break
 // at 1e-6 plus the clamped update are discrete decisions that f32 rounding
 // would move, so the whole solver runs in f64 (the same explicit
-// `f64_math.wgsl` arithmetic the Spektra v1 pass uses: the driver's
+// `f64_math.wgsl` arithmetic the Spektra pass uses: the driver's
 // extended log/exp builtins are unusable on some devices, and `10^-x` is
 // `sf64_exp(-x · ln 10)`).
 //

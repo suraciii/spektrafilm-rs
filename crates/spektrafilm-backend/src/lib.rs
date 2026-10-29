@@ -56,7 +56,7 @@ pub fn cctf_kind(cctf: spektrafilm_math::colorspace::Cctf) -> u32 {
 /// core parameter mapper. The field groups mirror the shader's 64-byte
 /// uniform layout.
 #[derive(Debug, Clone, Copy)]
-pub struct GrainV2GpuParams {
+pub struct ProceduralGrainGpuParams {
     pub mode: u32,
     /// Host Film Resolution implementation: 0 = OpticalResolution, 1 = FastBlur.
     pub resolution_type: u32,
@@ -392,10 +392,10 @@ pub trait ComputeBackend: Send + Sync {
     /// and final composition round to binary16 while sampling and noise use f32.
     /// Only a CPU-selected caller may use the independent reference on None.
     /// A selected device reports dispatch/resource failures through Err.
-    fn grain_v2(
+    fn grain_procedural(
         &self,
         _image: &ImageBuf,
-        _params: &GrainV2GpuParams,
+        _params: &ProceduralGrainGpuParams,
     ) -> Result<Option<ImageBuf>, String> {
         Ok(None)
     }
@@ -1115,7 +1115,7 @@ pub struct FilmChainParams<'a> {
     pub unsharp: Option<UnsharpGpuParams>,
     /// Optional Grain Procedural pass — applied after scanner effects, the destination
     /// same-space matrix roundtrip, and transfer encoding. Returns encoded RGB.
-    pub grain_v2: Option<GrainV2GpuParams>,
+    pub grain_procedural: Option<ProceduralGrainGpuParams>,
     /// Destination space used to encode the resident Grain Procedural input.
     pub scan_output_space: &'static spektrafilm_math::colorspace::RgbColorSpace,
     /// Optional camera lens Gaussian blur on the raw film exposure buffer,
@@ -1180,13 +1180,13 @@ pub struct FilmChainParams<'a> {
     /// shared discriminant (0 Linear, 1 ACEScct, 2 sRGB, 3 ProPhoto,
     /// 4 Rec2020, 5 Adobe RGB (1998), 6 Gamma 2.6).
     pub input_decode: Option<InputDecodeGpuParams>,
-    /// Optional device Spektra v1 grain pass on the film density buffer, in
+    /// Optional device Spektra grain pass on the film density buffer, in
     /// the same position as `density_cpu_stage` (after the film density curve
     /// and DIR, before printing). `None` when the request samples the scipy
     /// MT19937 regime, whose single sequential generator over the whole array
     /// is not a per-pixel mapping — those requests keep the host fence, so the
     /// device never runs a different noise law.
-    pub grain_v1: Option<GrainV1GpuParams>,
+    pub grain_spektra: Option<SpektraGrainGpuParams>,
 }
 
 /// Chain-head input transfer decoding.
@@ -1196,7 +1196,7 @@ pub struct InputDecodeGpuParams {
     pub cctf_kind: u32,
 }
 
-/// Device Spektra v1 grain on the film density CMY buffer, in the
+/// Device Spektra grain on the film density CMY buffer, in the
 /// density-fence position (after the film density curve and DIR, before
 /// printing).
 ///
@@ -1211,7 +1211,7 @@ pub struct InputDecodeGpuParams {
 /// Both tagged fast-statistics and sequential NumPy MT19937 sampling remain
 /// resident, including continuation into NumPy microstructure normals.
 #[derive(Debug, Clone, PartialEq)]
-pub struct GrainV1GpuParams {
+pub struct SpektraGrainGpuParams {
     /// Request seed shared by the plane MT19937 and tagged fast-statistics draws.
     pub base_seed: u64,
     /// Active layers in the fixed three-slot profile carrier (1..=3).
@@ -1499,7 +1499,7 @@ impl FilmChainParams<'_> {
                 })
             })
             && self
-                .grain_v1
+                .grain_spektra
                 .as_ref()
                 .is_none_or(|p| p.grain_blur <= 0.0 || p.grain_blur.is_finite())
     }

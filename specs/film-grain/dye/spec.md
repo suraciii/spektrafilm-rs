@@ -116,5 +116,5 @@ The BW extension preserves the existing parameter documents and color execution 
 
 - [Dye design](design.md)
 - [Film grain overview](../spec.md)
-- [Spektra contract](../v1/spec.md)
-- [Procedural contract](../v2/spec.md)
+- [Spektra contract](../spektra/spec.md)
+- [Procedural contract](../procedural/spec.md)

@@ -28,9 +28,9 @@ This default change does not preserve pixels for an omitted engine in a new spar
 - Grain is optional. `active = false` is an exact bypass.
 - The grain engine is selected through the shared engine parameter.
 - Spektra operates in film-density space and uses film-profile chemistry.
-- Dye's processing boundary is defined in its [design](v3/design.md#processing-boundary).
+- Dye's processing boundary is defined in its [design](dye/design.md#processing-boundary).
 - Fotufilm Film adds a fitted-population residual at the film-density boundary under [its contract](fotufilm/spec.md).
-- Procedural is a post-scan appearance on native encoded scanner RGB, not material-grain formation, under [its contract](v2/spec.md).
+- Procedural is a post-scan appearance on native encoded scanner RGB, not material-grain formation, under [its contract](procedural/spec.md).
 - Existing density-sensitive grain continues to consume its own stage's material or scanner-domain input.
 - Preflash does not alter upstream film density; changing a material control does not make grain engines share a domain.
 - [Output mixing](../output-mix/spec.md#output-mix) blends the completed result without regenerating or reseeding any grain engine.
@@ -45,7 +45,20 @@ This default change does not preserve pixels for an omitted engine in a new spar
 - Procedural provides `Analogue` and `Noise` modes, Negative and Positive film types, named format/speed profiles, and a `custom` profile with explicit controls.
 - Procedural profile controls are bounded: Size 1–48; Amount, Shadows, Midtones, Highlights, Chroma, and Film Resolution 0–100.
 - Dye targets convincing color-film grain and supplies an effective single-record monochrome model, formed in film coordinates and read through output footprints.
-- Its [contract](v3/spec.md) defines the product boundary and acceptance gates.
+- Its [contract](dye/spec.md) defines the product boundary and acceptance gates.
 - Calibration evidence is separate and does not lock algorithm values.
 
-Engine-specific contracts live in [Spektra](v1/spec.md), [Procedural](v2/spec.md), [Dye](v3/spec.md), and [Fotufilm Film](fotufilm/spec.md).
+Engine-specific contracts live in [Spektra](spektra/spec.md), [Procedural](procedural/spec.md), [Dye](dye/spec.md), and [Fotufilm Film](fotufilm/spec.md).
+
+## Control naming
+
+Runtime control names MUST identify their engine.
+Procedural controls MUST use the `procedural_` prefix.
+Dye support and event-area controls MUST use `dye_support_um` and `dye_event_area_um2`.
+
+Readers MUST preserve the values of historical numbered control keys.
+Writers and parameter discovery MUST emit only canonical control names.
+
+A grain object containing both spellings of one control MUST fail without applying either value.
+GUI carriers MUST retain their existing precedence: an authored top-level control overrides the runtime extension after each carrier is normalized.
+Historical numbered engine selector values MUST remain invalid.
