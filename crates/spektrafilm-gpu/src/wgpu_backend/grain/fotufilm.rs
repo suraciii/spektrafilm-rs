@@ -1262,36 +1262,6 @@ mod tests {
     }
 
     #[test]
-    fn formation_layout_rejects_overflow_and_respects_actual_row_capacity() {
-        let mut layer = FotufilmSublayerGpuParams {
-            cells: 96,
-            silver: false,
-            sigma_mm: 0.001,
-            capacity: 1.0,
-            edge: 0.0,
-            forming: Vec::new(),
-            thresholds: Vec::new(),
-            reach_texels: 1.0,
-            occupied_area: 1.0,
-        };
-        let row_bytes = 96 * 10 * 10 * 4;
-        assert_eq!(
-            formation_band_layout(&layer, row_bytes * 2).unwrap(),
-            (row_bytes, 2)
-        );
-        assert!(formation_band_layout(&layer, row_bytes - 1).is_err());
-        layer.reach_texels = f64::MAX;
-        assert!(
-            formation_band_layout(&layer, u64::MAX)
-                .unwrap_err()
-                .contains("overflow")
-        );
-        layer.reach_texels = 1.0;
-        layer.cells = 0;
-        assert!(formation_band_layout(&layer, u64::MAX).is_err());
-    }
-
-    #[test]
     fn field_workspace_counts_output_growth_once_without_allocating_it() {
         let gpu = crate::test_support::explicit_adapter();
         let empty = FotufilmRecordGpuParams {
@@ -1694,5 +1664,58 @@ mod tests {
             page_max < 1e-6,
             "page/window partition changed the physical field by {page_max:.6e}"
         );
+    }
+}
+
+#[cfg(test)]
+mod logic_tests {
+    use super::*;
+
+    #[test]
+    fn formation_layout_rejects_overflow_and_respects_actual_row_capacity() {
+        let mut layer = FotufilmSublayerGpuParams {
+            cells: 96,
+            silver: false,
+            sigma_mm: 0.001,
+            capacity: 1.0,
+            edge: 0.0,
+            forming: Vec::new(),
+            thresholds: Vec::new(),
+            reach_texels: 1.0,
+            occupied_area: 1.0,
+        };
+        let row_bytes = 96 * 10 * 10 * 4;
+        assert_eq!(
+            formation_band_layout(&layer, row_bytes * 2).unwrap(),
+            (row_bytes, 2)
+        );
+        assert!(formation_band_layout(&layer, row_bytes - 1).is_err());
+        assert_eq!(
+            formation_band_layout(&layer, row_bytes).unwrap(),
+            (row_bytes, 1)
+        );
+        assert_eq!(
+            formation_band_layout(&layer, u64::MAX).unwrap(),
+            (row_bytes, BAND_ROWS)
+        );
+        for invalid in [-1.0, f64::NAN, f64::INFINITY] {
+            layer.reach_texels = invalid;
+            assert!(formation_band_layout(&layer, u64::MAX).is_err());
+        }
+        layer.reach_texels = 1.01;
+        let (larger_row, _) = formation_band_layout(&layer, u64::MAX).unwrap();
+        assert!(
+            larger_row > row_bytes,
+            "fractional reach rounds its margin upward"
+        );
+        layer.reach_texels = f64::MAX;
+        assert!(
+            formation_band_layout(&layer, u64::MAX)
+                .unwrap_err()
+                .contains("overflow")
+        );
+        layer.reach_texels = 1.0;
+        layer.cells = 0;
+        assert!(formation_band_layout(&layer, u64::MAX).is_err());
     }
 }

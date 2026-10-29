@@ -168,7 +168,7 @@ impl PipelineCache {
 }
 
 #[cfg(test)]
-mod tests {
+mod logic_tests {
     use super::*;
 
     #[test]

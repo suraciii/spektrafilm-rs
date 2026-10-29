@@ -1073,7 +1073,7 @@ impl GrainV2State {
 }
 
 #[cfg(test)]
-mod tests {
+mod logic_tests {
     use super::*;
 
     /// The band plan decides between one bulk pass and a command per pixel, so
@@ -1139,6 +1139,76 @@ mod tests {
         assert_eq!(bands[0].stored.0, 0);
         assert_eq!(bands.last().unwrap().stored.1, ch);
     }
+
+    fn test_params() -> spektrafilm_backend::GrainV2GpuParams {
+        spektrafilm_backend::GrainV2GpuParams {
+            mode: 0,
+            resolution_type: 0,
+            amount: 1.0,
+            shadows: 1.0,
+            midtones: 1.0,
+            highlights: 1.0,
+            raw_scale: 1.0,
+            cluster_size: 1.6,
+            rotation: 0.0,
+            color: 1.0,
+            resolution_factor: 1.0,
+            seed: 42,
+            timer: None,
+            colored: true,
+            clustered: false,
+        }
+    }
+
+    #[test]
+    fn column_band_plan_switches_at_margin_and_whole_frame_limits() {
+        assert_eq!(column_band_plan(89, 10, 20, 4), (1, false, 9));
+        assert_eq!(column_band_plan(90, 10, 20, 4), (1, true, 9));
+        assert_eq!(column_band_plan(200, 10, 20, 4), (20, true, 20));
+        assert_eq!(column_band_plan(19, 10, 2, 4), (1, false, 9));
+        assert_eq!(column_band_plan(20, 10, 2, 4), (2, true, 2));
+    }
+
+    #[test]
+    fn canvas_band_limits_reject_undersized_windows_and_allow_exact_fit() {
+        let params = test_params();
+        assert!(canvas_bands(4, 4, 2, 1, 47, &params).is_err());
+        assert!(canvas_bands(4, 4, 6, 1, 48, &params).is_ok());
+        assert!(canvas_bands(4, 4, 10, 4, 48, &params).is_err());
+        assert!(canvas_bands(4, 4, 6, 4, 143, &params).is_err());
+
+        let bands = canvas_bands(4, 4, 6, 4, 144, &params).unwrap();
+        assert_eq!(bands.first().unwrap().pixels.0, 0);
+        assert_eq!(bands.last().unwrap().pixels.1, 16);
+        for band in &bands {
+            assert!(u64::from(band.stored.1 - band.stored.0) * 48 <= 144);
+        }
+        for pair in bands.windows(2) {
+            assert_eq!(pair[0].pixels.1, pair[1].pixels.0);
+        }
+        assert_eq!(
+            canvas_bands(4, 4, 6, 4, 192, &params).unwrap(),
+            vec![CanvasBand {
+                stored: (0, 4),
+                pixels: (0, 16)
+            }]
+        );
+    }
+
+    #[test]
+    fn canvas_transport_is_only_needed_for_nonresident_analog_grain() {
+        let mut params = test_params();
+        assert!(canvas_transport_needed(&params, false));
+        assert!(!canvas_transport_needed(&params, true));
+        params.mode = 1;
+        assert!(!canvas_transport_needed(&params, false));
+        assert!(!canvas_transport_needed(&params, true));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
 
     /// Every sample must be composed by exactly one band, and every band must
     /// store the rows its pixels read. Brute force over the same mapping the

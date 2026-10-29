@@ -166,3 +166,41 @@ impl RawPlane {
         }
     }
 }
+
+#[cfg(test)]
+mod logic_tests {
+    use super::*;
+
+    #[test]
+    fn window_check_accepts_exact_edges_and_rejects_empty_or_outside() {
+        let plane = RawPlane {
+            width: 11,
+            height: 7,
+            pages: Vec::new(),
+        };
+        assert!(plane.check(0, 0, 11, 7).is_ok());
+        assert!(plane.check(10, 6, 1, 1).is_ok());
+        for (x, y, w, h) in [
+            (0, 0, 0, 1),
+            (0, 0, 1, 0),
+            (11, 0, 1, 1),
+            (0, 7, 1, 1),
+            (10, 6, 2, 1),
+            (10, 6, 1, 2),
+        ] {
+            assert!(plane.check(x, y, w, h).is_err());
+        }
+    }
+
+    #[test]
+    fn window_check_rejects_wrapping_end_coordinates() {
+        let plane = RawPlane {
+            width: u32::MAX,
+            height: u32::MAX,
+            pages: Vec::new(),
+        };
+        assert!(plane.check(u32::MAX - 1, u32::MAX - 1, 1, 1).is_ok());
+        assert!(plane.check(u32::MAX - 1, 0, 2, 1).is_err());
+        assert!(plane.check(0, u32::MAX - 1, 1, 2).is_err());
+    }
+}

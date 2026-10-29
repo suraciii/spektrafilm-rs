@@ -98,7 +98,7 @@ pub(crate) fn is_uniform_grid_endpoint(xs: &[f64]) -> bool {
 }
 
 #[cfg(test)]
-mod tests {
+mod logic_tests {
     use super::*;
 
     #[test]

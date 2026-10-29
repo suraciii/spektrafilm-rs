@@ -1144,6 +1144,46 @@ fn reflect(index: i64, length: u32) -> u32 {
     }
 }
 
+#[cfg(test)]
+mod logic_tests {
+    use super::*;
+
+    #[test]
+    fn workspace_caps_pages_by_sample_width_and_rejects_geometry_overflow() {
+        let f32_cap = u64::from(MAX_PAGE_VALUES) * 4;
+        let f64_cap = u64::from(MAX_PAGE_VALUES) * 8;
+        let small = workspace_bytes(3, 5, 1024).unwrap();
+        assert_eq!(small, workspace_bytes_f64(3, 5, 1024).unwrap());
+        assert_eq!(workspace_bytes(3, 5, 1025).unwrap() - small, 4);
+        assert_eq!(
+            workspace_bytes(3, 5, f32_cap).unwrap(),
+            workspace_bytes(3, 5, u64::MAX).unwrap()
+        );
+        assert_eq!(
+            workspace_bytes_f64(3, 5, f64_cap).unwrap(),
+            workspace_bytes_f64(3, 5, u64::MAX).unwrap()
+        );
+        assert_eq!(
+            workspace_bytes_f64(3, 5, u64::MAX).unwrap() - workspace_bytes(3, 5, u64::MAX).unwrap(),
+            4 * (f64_cap - f32_cap)
+        );
+        assert!(workspace_bytes(u32::MAX, u32::MAX, 1024).is_err());
+        assert!(workspace_bytes_f64(u32::MAX, u32::MAX, 1024).is_err());
+    }
+
+    #[test]
+    fn blur_reflection_repeats_endpoints_across_multiple_periods() {
+        for index in -12..=12 {
+            assert_eq!(reflect(index, 1), 0);
+            assert_eq!(reflect(index, 3), reflect(index + 6, 3));
+        }
+        assert_eq!(
+            (-1..=5).map(|i| reflect(i, 3)).collect::<Vec<_>>(),
+            [0, 0, 1, 2, 2, 1, 0]
+        );
+    }
+}
+
 #[cfg(all(test, not(feature = "precision-f64")))]
 mod tests {
     use super::super::reference::blur_channel;

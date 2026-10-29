@@ -1,6 +1,39 @@
 //! The production RAW route uses bounded integer image pages. Reductions run
 //! over the complete source before demosaic windows or output gathers begin.
 use super::*;
+
+fn validate_paged_sensor(sensor: &RawSensor) -> Result<(), String> {
+    if sensor.width == 0
+        || sensor.height == 0
+        || u64::from(sensor.width) * u64::from(sensor.height) > u64::from(u32::MAX)
+    {
+        return Err("RAW dimensions exceed device indexing".into());
+    }
+    if sensor.cfa_rows == 0
+        || sensor.cfa_columns == 0
+        || sensor.cfa.len() != sensor.cfa_rows as usize * sensor.cfa_columns as usize
+        || sensor.cfa.iter().any(|&c| c > 3)
+    {
+        return Err("Invalid native RAW CFA metadata".into());
+    }
+    if sensor.colors == 0
+        || sensor.colors > 4
+        || sensor.black_map.len()
+            != sensor.black_map_rows as usize * sensor.black_map_columns as usize
+    {
+        return Err("Invalid native RAW colour/black metadata".into());
+    }
+    let sites = if sensor.fuji_width != 0 {
+        u64::from(sensor.copied_width) * u64::from(sensor.copied_height)
+    } else {
+        u64::from(sensor.width) * u64::from(sensor.height)
+    };
+    if sensor.samples.len() as u64 != sites * u64::from(sensor.layout.channels()) {
+        return Err("RAW sample allocation disagrees with sensor layout".into());
+    }
+    Ok(())
+}
+
 impl WgpuBackend {
     pub(super) fn raw_process_paged(
         &self,
@@ -8,34 +41,7 @@ impl WgpuBackend {
         params: &RawGpuParams,
     ) -> Result<spektrafilm_backend::DeviceImage, String> {
         self.check_cancelled()?;
-        if sensor.width == 0
-            || sensor.height == 0
-            || u64::from(sensor.width) * u64::from(sensor.height) > u64::from(u32::MAX)
-        {
-            return Err("RAW dimensions exceed device indexing".into());
-        }
-        if sensor.cfa_rows == 0
-            || sensor.cfa_columns == 0
-            || sensor.cfa.len() != sensor.cfa_rows as usize * sensor.cfa_columns as usize
-            || sensor.cfa.iter().any(|&c| c > 3)
-        {
-            return Err("Invalid native RAW CFA metadata".into());
-        }
-        if sensor.colors == 0
-            || sensor.colors > 4
-            || sensor.black_map.len()
-                != sensor.black_map_rows as usize * sensor.black_map_columns as usize
-        {
-            return Err("Invalid native RAW colour/black metadata".into());
-        }
-        let sites = if sensor.fuji_width != 0 {
-            u64::from(sensor.copied_width) * u64::from(sensor.copied_height)
-        } else {
-            u64::from(sensor.width) * u64::from(sensor.height)
-        };
-        if sensor.samples.len() as u64 != sites * u64::from(sensor.layout.channels()) {
-            return Err("RAW sample allocation disagrees with sensor layout".into());
-        }
+        validate_paged_sensor(sensor)?;
         let (out_width, out_height) = sensor.output_dimensions()?;
         let frame = RawFrame {
             width: sensor.width,
@@ -108,5 +114,74 @@ impl WgpuBackend {
             &spektrafilm_math::colorspace::ACES2065_1,
             None,
         ))
+    }
+}
+
+#[cfg(test)]
+mod logic_tests {
+    use super::*;
+    use spektrafilm_backend::RawSensorLayout;
+
+    #[test]
+    fn dimensions_and_cfa_reject_invalid_metadata() {
+        let mut sensor = super::super::tests::synthetic_sensor(2);
+        assert!(validate_paged_sensor(&sensor).is_ok());
+        sensor.width = 0;
+        assert!(validate_paged_sensor(&sensor).is_err());
+        sensor.width = 2;
+        sensor.height = 0;
+        assert!(validate_paged_sensor(&sensor).is_err());
+        sensor.width = 65_536;
+        sensor.height = 65_536;
+        assert!(validate_paged_sensor(&sensor).is_err());
+        sensor.width = 2;
+        sensor.height = 2;
+        assert!(validate_paged_sensor(&sensor).is_ok());
+        sensor.cfa_rows = 0;
+        assert!(validate_paged_sensor(&sensor).is_err());
+        sensor.cfa_rows = 2;
+        sensor.cfa_columns = 0;
+        assert!(validate_paged_sensor(&sensor).is_err());
+        sensor.cfa_columns = 2;
+        sensor.cfa.pop();
+        assert!(validate_paged_sensor(&sensor).is_err());
+        sensor.cfa.push(4);
+        assert!(validate_paged_sensor(&sensor).is_err());
+        sensor.cfa[3] = 2;
+        assert!(validate_paged_sensor(&sensor).is_ok());
+    }
+
+    #[test]
+    fn colour_black_map_and_sample_layout_require_matching_extents() {
+        let mut sensor = super::super::tests::synthetic_sensor(2);
+        sensor.colors = 0;
+        assert!(validate_paged_sensor(&sensor).is_err());
+        sensor.colors = 5;
+        assert!(validate_paged_sensor(&sensor).is_err());
+        sensor.colors = 4;
+        assert!(validate_paged_sensor(&sensor).is_ok());
+        sensor.black_map_rows = 1;
+        sensor.black_map_columns = 2;
+        sensor.black_map = vec![0];
+        assert!(validate_paged_sensor(&sensor).is_err());
+        sensor.black_map.push(0);
+        assert!(validate_paged_sensor(&sensor).is_ok());
+        sensor.layout = RawSensorLayout::Interleaved3;
+        assert!(validate_paged_sensor(&sensor).is_err());
+        sensor.samples.resize(12, 0.0);
+        assert!(validate_paged_sensor(&sensor).is_ok());
+    }
+
+    #[test]
+    fn fuji_samples_use_copied_rectangle_not_active_dimensions() {
+        let mut sensor = super::super::tests::synthetic_sensor(2);
+        sensor.fuji_width = 1;
+        sensor.copied_width = 3;
+        sensor.copied_height = 1;
+        assert!(validate_paged_sensor(&sensor).is_err());
+        sensor.samples.truncate(3);
+        assert!(validate_paged_sensor(&sensor).is_ok());
+        sensor.fuji_width = 0;
+        assert!(validate_paged_sensor(&sensor).is_err());
     }
 }

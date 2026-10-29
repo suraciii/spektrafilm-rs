@@ -7,6 +7,155 @@ use std::{
     time::{Duration, Instant},
 };
 
+mod logic_tests {
+    use super::*;
+
+    #[test]
+    fn full_resolution_gui_peak_above_overlap_target_is_admitted_exclusively() {
+        // Eighteen full-resolution RGB rasters are a scheduling request, not
+        // an allocation/VRAM claim. No raster is allocated for this test.
+        let planned_peak = 18u64 * 6342 * 9543 * 12;
+        let mut state = AdmissionState::default();
+        assert_eq!(
+            state
+                .decide(planned_peak, 0, OVERLAP_TARGET_BYTES, false, false)
+                .unwrap(),
+            AdmissionDecision::RetirePrior
+        );
+        assert_eq!(
+            state
+                .decide(planned_peak, 0, OVERLAP_TARGET_BYTES, false, true)
+                .unwrap(),
+            AdmissionDecision::Admit { exclusive: true }
+        );
+        state.reserve(planned_peak, true).unwrap();
+        assert_eq!(
+            (state.bytes, state.owners, state.exclusive),
+            (planned_peak, 1, true)
+        );
+        state.release(planned_peak, true);
+        assert_eq!((state.bytes, state.owners, state.exclusive), (0, 0, false));
+    }
+
+    #[test]
+    fn finite_peak_is_not_rejected_but_footprint_arithmetic_overflow_is() {
+        let mut state = AdmissionState::default();
+        assert!(
+            state
+                .decide(u64::MAX, 1, OVERLAP_TARGET_BYTES, false, false)
+                .is_err()
+        );
+        assert_eq!(
+            state
+                .decide(u64::MAX, 0, OVERLAP_TARGET_BYTES, false, false)
+                .unwrap(),
+            AdmissionDecision::RetirePrior
+        );
+        assert_eq!(
+            state
+                .decide(u64::MAX, 0, OVERLAP_TARGET_BYTES, false, true)
+                .unwrap(),
+            AdmissionDecision::Admit { exclusive: true }
+        );
+        state.reserve(u64::MAX, true).unwrap();
+        assert_eq!(
+            (state.bytes, state.owners, state.exclusive),
+            (u64::MAX, 1, true)
+        );
+        state.release(u64::MAX, true);
+        assert_eq!((state.bytes, state.owners, state.exclusive), (0, 0, false));
+    }
+
+    #[test]
+    fn overlap_counts_retained_and_reserved_capacity_at_the_exact_target() {
+        let mut state = AdmissionState {
+            bytes: 30,
+            owners: 1,
+            ..Default::default()
+        };
+        assert_eq!(
+            state.decide(50, 20, 100, false, false).unwrap(),
+            AdmissionDecision::Admit { exclusive: false }
+        );
+        assert_eq!(
+            state.decide(51, 20, 100, false, false).unwrap(),
+            AdmissionDecision::Wait { exclusive: false }
+        );
+        state.reserve(50, false).unwrap();
+        assert_eq!((state.bytes, state.owners), (80, 2));
+        state.release(50, false);
+        assert_eq!((state.bytes, state.owners), (30, 1));
+    }
+
+    #[test]
+    fn exclusive_owners_and_waiters_prevent_overlap_bypass() {
+        let mut state = AdmissionState {
+            bytes: 60,
+            owners: 1,
+            exclusive_waiters: 1,
+            ..Default::default()
+        };
+        assert_eq!(
+            state.decide(20, 0, 100, false, false).unwrap(),
+            AdmissionDecision::Wait { exclusive: false }
+        );
+        state.exclusive_waiters = 0;
+        assert_eq!(
+            state.decide(20, 0, 100, false, false).unwrap(),
+            AdmissionDecision::Admit { exclusive: false }
+        );
+        state.exclusive = true;
+        assert_eq!(
+            state.decide(20, 0, 100, false, false).unwrap(),
+            AdmissionDecision::Wait { exclusive: false }
+        );
+        assert_eq!(
+            state.decide(150, 0, 100, false, true).unwrap(),
+            AdmissionDecision::Wait { exclusive: true }
+        );
+    }
+
+    #[test]
+    fn exclusive_intent_survives_falling_footprint_and_requires_prior_retirement() {
+        let mut state = AdmissionState::default();
+        assert_eq!(
+            state.decide(20, 0, 100, true, false).unwrap(),
+            AdmissionDecision::RetirePrior
+        );
+        assert_eq!(
+            state.decide(20, 0, 100, true, true).unwrap(),
+            AdmissionDecision::Admit { exclusive: true }
+        );
+        state.reserve(20, true).unwrap();
+        state.release(20, true);
+        assert_eq!(
+            state.decide(20, 0, 100, false, false).unwrap(),
+            AdmissionDecision::Admit { exclusive: false }
+        );
+    }
+
+    #[test]
+    fn overlap_overflow_waits_and_failed_reservations_leave_the_ledger_unchanged() {
+        let mut state = AdmissionState {
+            bytes: 1,
+            owners: 1,
+            ..Default::default()
+        };
+        assert_eq!(
+            state.decide(u64::MAX, 0, u64::MAX, false, false).unwrap(),
+            AdmissionDecision::Wait { exclusive: false }
+        );
+        assert!(state.reserve(u64::MAX, true).is_err());
+        assert_eq!((state.bytes, state.owners, state.exclusive), (1, 1, false));
+        state.owners = usize::MAX;
+        assert!(state.reserve(1, true).is_err());
+        assert_eq!(
+            (state.bytes, state.owners, state.exclusive),
+            (1, usize::MAX, false)
+        );
+    }
+}
+
 fn await_admission_waiters(resources: &DeviceResources, expected: usize) {
     let deadline = Instant::now() + Duration::from_secs(5);
     let mut state = resources.reserved.lock();
@@ -455,24 +604,6 @@ fn portable_admission_counts_readbacks_after_their_image_owner_drops() {
 }
 
 #[test]
-fn full_resolution_gui_peak_above_overlap_target_is_admitted_exclusively() {
-    let gpu = crate::test_support::adapter();
-    let resources = Arc::new(DeviceResources::new(gpu.device.raw.clone(), false));
-    // Current GUI-default layered Spektra alone can retain eighteen RGB
-    // rasters. This is admission coverage, not an allocation/VRAM claim.
-    let planned_peak = 18u64 * 6342 * 9543 * 12;
-    assert!(planned_peak > OVERLAP_TARGET_BYTES);
-    let operation = resources
-        .admit(planned_peak, 0, None, &ObservationContext::default())
-        .unwrap();
-    assert_eq!(operation.reserved_bytes(), planned_peak);
-    assert!(operation.state.exclusive);
-    assert_eq!(resources.reserved.lock().owners, 1);
-    drop(operation);
-    assert_eq!(resources.reserved.lock().bytes, 0);
-}
-
-#[test]
 fn oversized_owners_block_both_normal_and_oversized_admission_until_owner_release() {
     let gpu = crate::test_support::adapter();
     let mut resources = DeviceResources::new(gpu.device.raw.clone(), false);
@@ -574,24 +705,6 @@ fn cancelled_admission_waits_drop_priority_without_releasing_another_owner() {
         drop(ordinary);
         drop(first);
     }
-    assert_eq!(resources.reserved.lock().owners, 0);
-}
-
-#[test]
-fn finite_peak_is_not_rejected_but_footprint_arithmetic_overflow_is() {
-    let gpu = crate::test_support::adapter();
-    let resources = Arc::new(DeviceResources::new(gpu.device.raw.clone(), false));
-    let result = resources.admit(u64::MAX, 1, None, &ObservationContext::default());
-    assert_eq!(
-        result.err().as_deref(),
-        Some("GPU operation planned footprint overflows")
-    );
-    let operation = resources
-        .admit(u64::MAX, 0, None, &ObservationContext::default())
-        .unwrap();
-    assert!(operation.state.exclusive);
-    assert_eq!(resources.reserved.lock().bytes, u64::MAX);
-    drop(operation);
     assert_eq!(resources.reserved.lock().owners, 0);
 }
 
