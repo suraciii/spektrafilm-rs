@@ -839,6 +839,109 @@ mod tests {
     }
 
     #[test]
+    fn material_selection_retains_authored_vectors_and_replays_exact_history() {
+        let (mut app, _directory, ctx) = app();
+        let gamma = app.params.film_render.dir_couplers.gamma_samelayer_rgb;
+        for value in [[0.4; 3], gamma] {
+            app.begin_adjustment_frame(&ctx);
+            app.params.film_render.dir_couplers.gamma_samelayer_rgb = value;
+            controls::record_edited_path(&ctx, "film_render.dir_couplers.gamma_samelayer_rgb");
+            app.end_adjustment_frame(&ctx);
+        }
+        let gold = app.params.clone();
+        let ownership = gold.render_preparation_state();
+        app.begin_adjustment_frame(&ctx);
+        app.select_film_profile("kodak_kodachrome_64".into());
+        app.end_adjustment_frame(&ctx);
+        assert_eq!(
+            app.params.film_render.dir_couplers.gamma_samelayer_rgb,
+            gamma
+        );
+        assert_eq!(
+            app.params.film_render.dir_couplers.gamma_interlayer_r_to_gb,
+            [0.1699, 0.2188]
+        );
+        assert_eq!(app.params.film_render.grain.rms_granularity, [10.0; 3]);
+        assert!(app.params.film_render.dir_couplers.active);
+        assert_eq!(app.params.render_preparation_state(), ownership);
+        let slide = app.params.clone();
+        assert!(app.undo_adjustment());
+        assert_eq!(app.film_name, "kodak_gold_200");
+        assert_eq!(app.params, gold);
+        assert_eq!(app.params.render_preparation_state(), ownership);
+        assert!(app.redo_adjustment());
+        assert_eq!(app.film_name, "kodak_kodachrome_64");
+        assert_eq!(app.params, slide);
+        assert_eq!(app.params.render_preparation_state(), ownership);
+    }
+
+    #[test]
+    fn material_reset_releases_equal_valued_ownership_as_one_reversible_edit() {
+        let (mut app, _directory, ctx) = app();
+        app.select_film_profile("kodak_kodachrome_64".into());
+        app.params.camera.exposure_compensation_ev = 1.0;
+        let mut ownership = app.params.render_preparation_state();
+        ownership.explicit_section_paths = vec![
+            "camera.exposure_compensation_ev".into(),
+            "film_render.dir_couplers.gamma_samelayer_rgb".into(),
+        ];
+        ownership.neutral_print_filters_protected = [true, false, true];
+        app.params.restore_render_preparation_state(&ownership);
+        app.reset_adjustment_history();
+        let before = app.params.clone();
+        app.begin_adjustment_frame(&ctx);
+        assert!(app.reset_parameter_section("Couplers"));
+        app.end_adjustment_frame(&ctx);
+        assert_eq!(
+            serde_json::to_value(&app.params).unwrap(),
+            serde_json::to_value(&before).unwrap()
+        );
+        let released = app.params.render_preparation_state();
+        assert_eq!(
+            released.explicit_section_paths,
+            ["camera.exposure_compensation_ev"]
+        );
+        assert_eq!(
+            released.neutral_print_filters_protected,
+            ownership.neutral_print_filters_protected
+        );
+        assert!(app.undo_adjustment());
+        assert_eq!(app.params.render_preparation_state(), ownership);
+        assert!(app.redo_adjustment());
+        assert_eq!(app.params.render_preparation_state(), released);
+        app.select_film_profile("kodak_gold_200".into());
+        assert_eq!(
+            app.params.film_render.dir_couplers.gamma_samelayer_rgb,
+            [0.5159, 0.5934, 0.2829]
+        );
+        assert_eq!(app.params.camera.exposure_compensation_ev, 1.0);
+    }
+
+    #[test]
+    fn resetting_the_current_factory_material_preserves_restored_look_and_route() {
+        let (mut app, _directory, ctx) = app();
+        app.params.workflow.route = "input > film > scan".into();
+        app.params.io.scan_film = true;
+        app.params.scanner.scan_output = "negative_to_positive".into();
+        app.params.film_render.grain.rms_granularity = [1.0, 2.0, 3.0];
+        app.params.film_render.dir_couplers.gamma_samelayer_rgb = [0.2; 3];
+        app.params.film_render.halation.halation_strength = [0.1; 3];
+        app.params.film_render.development_time = Some(1.0);
+        app.reset_adjustment_history();
+        let before = app.params.clone();
+        let mut expected = before.clone();
+        expected.film_render.development_time = None;
+        app.begin_adjustment_frame(&ctx);
+        assert!(app.reset_parameter_section("Film material"));
+        app.end_adjustment_frame(&ctx);
+        assert_eq!(app.params, expected);
+        assert!(app.undo_adjustment());
+        assert_eq!(app.params, before);
+        assert!(app.redo_adjustment());
+        assert_eq!(app.params, expected);
+    }
+
+    #[test]
     fn history_restores_material_metadata_and_scan_for_print_without_preferences() {
         let (mut app, _directory, ctx) = app();
         app.params.print_render.glare.active = true;

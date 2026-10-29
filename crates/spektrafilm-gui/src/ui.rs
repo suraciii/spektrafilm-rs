@@ -465,6 +465,37 @@ impl App {
         self.scan_for_print_snapshot = None;
         self.mark_parameters_changed_invalidating_calibration();
     }
+    pub(crate) fn current_material_baseline(&mut self) -> Option<Arc<serde_json::Value>> {
+        if let Some((data_dir, film, baseline)) = &self.material_baseline
+            && data_dir == &self.data_dir
+            && film == &self.film_name
+        {
+            return baseline.clone();
+        }
+        let baseline = match profile::load_profile_by_name(&self.data_dir, &self.film_name) {
+            Ok(film) if film.is_film() && film.is_filming() => {
+                Some(Arc::new(section_reset::material_baseline(&film)))
+            }
+            Ok(_) => {
+                self.status = crate::app::Message::new("surfaces.status.profile_not_film")
+                    .arg("name", &self.film_name);
+                None
+            }
+            Err(error) => {
+                self.status = crate::app::Message::new("surfaces.presets.profile_load")
+                    .message_arg("kind", crate::app::Message::control("film"))
+                    .arg("stock", &self.film_name)
+                    .message_arg("detail", crate::app::Message::profile(&error));
+                None
+            }
+        };
+        self.material_baseline = Some((
+            self.data_dir.clone(),
+            self.film_name.clone(),
+            baseline.clone(),
+        ));
+        baseline
+    }
 
     pub(super) fn select_film_profile(&mut self, selected: String) {
         let film = match profile::load_profile_by_name(&self.data_dir, &selected) {
@@ -482,6 +513,12 @@ impl App {
                 return;
             }
         };
+        spektrafilm_core::params_builder::apply_film_specifics(&mut self.params, &film);
+        self.material_baseline = Some((
+            self.data_dir.clone(),
+            selected.clone(),
+            Some(Arc::new(section_reset::material_baseline(&film))),
+        ));
         self.film_name = selected;
         self.params.film_render.grain.monochrome = film.is_bw();
         self.params.film_render.development_time = None;
@@ -1042,8 +1079,16 @@ impl App {
             ),
             _ => false,
         };
+        let baseline = self
+            .current_material_baseline()
+            .unwrap_or_else(|| Arc::new(section_reset::unavailable_material_baseline().clone()));
         let modified = material_modified
-            || section_reset::is_modified(section, &self.params, &self.gui_state.sections);
+            || section_reset::is_modified(
+                section,
+                &self.params,
+                &self.gui_state.sections,
+                &baseline,
+            );
         let resettable = section_reset::sections().any(|name| name == section);
         let mut changed = false;
         if trailing && resettable {
@@ -1067,6 +1112,10 @@ impl App {
         if !response.clicked() {
             return false;
         }
+        self.reset_parameter_section(section)
+    }
+
+    pub(crate) fn reset_parameter_section(&mut self, section: &str) -> bool {
         if !matches!(section, "Session" | "Display") {
             self.label_adjustment_message(
                 crate::app::Message::new("operations.history.reset_section")
@@ -1074,11 +1123,28 @@ impl App {
             );
         }
         if section == "Film material" {
-            self.select_film_profile(state::GuiState::factory().film().to_owned());
+            let factory = state::GuiState::factory();
+            if self.film_name != factory.film() {
+                self.select_film_profile(factory.film().to_owned());
+            }
         } else if section == "Print material" {
-            self.select_print_profile(state::GuiState::factory().paper().to_owned());
+            let factory = state::GuiState::factory();
+            if self.print_name != factory.paper() {
+                self.select_print_profile(factory.paper().to_owned());
+            }
         }
-        section_reset::reset(&mut self.params, &mut self.gui_state.sections, section);
+        let baseline = self.current_material_baseline();
+        if baseline.is_none() && matches!(section, "Grain" | "Halation" | "Couplers") {
+            return false;
+        }
+        let baseline = baseline
+            .unwrap_or_else(|| Arc::new(section_reset::unavailable_material_baseline().clone()));
+        section_reset::reset(
+            &mut self.params,
+            &mut self.gui_state.sections,
+            section,
+            &baseline,
+        );
         if section == "Workflow" {
             self.finish_route_change();
         } else if section != "Display" {
@@ -2302,7 +2368,10 @@ impl eframe::App for App {
         self.work_list_controls(ctx);
         self.preset_panel(ctx);
         self.sync_display_controls();
-        controls::begin_control_frame(ctx, &self.params, &self.gui_state.sections);
+        let baseline = self
+            .current_material_baseline()
+            .unwrap_or_else(|| Arc::new(section_reset::unavailable_material_baseline().clone()));
+        controls::begin_control_frame(ctx, &self.params, &self.gui_state.sections, baseline);
         // Fixed search and stage jumps above one scrolling inspector.
         egui::SidePanel::right("controls")
             .resizable(true)

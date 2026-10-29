@@ -34,6 +34,13 @@ const HALATION_PRESETS: &[HalationPreset] = &[
     (("cine", "no"), "cine_no"),
 ];
 
+/// Stock initialization distinguishes legacy baselines from fresh material defaults.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum FilmSpecificsPolicy {
+    LegacyOverrides,
+    MaterialDefaults,
+}
+
 /// Digest the params to prepare for use in the runtime pipeline.
 ///
 /// Mirrors upstream `digest_params(params, apply_stocks_specifics=True)`:
@@ -48,21 +55,34 @@ const HALATION_PRESETS: &[HalationPreset] = &[
 /// never fails — unknown enum-like strings are rejected earlier by
 /// [`RuntimeParams::validate`].
 pub fn digest_params(
-    mut params: RuntimeParams,
+    params: RuntimeParams,
     film: &Profile,
     print: &Profile,
     database: Option<&NeutralFilters>,
     apply_stocks_specifics: bool,
 ) -> RuntimeParams {
+    digest_params_with_stock_policy(
+        params,
+        film,
+        print,
+        database,
+        apply_stocks_specifics.then_some(FilmSpecificsPolicy::LegacyOverrides),
+    )
+}
+
+pub(crate) fn digest_params_with_stock_policy(
+    mut params: RuntimeParams,
+    film: &Profile,
+    print: &Profile,
+    database: Option<&NeutralFilters>,
+    stock_policy: Option<FilmSpecificsPolicy>,
+) -> RuntimeParams {
     params = apply_database_neutral_print_filters(params, film, print, database);
     apply_preview_constraints(&mut params);
-
-    if apply_stocks_specifics {
-        apply_film_specifics(&mut params, film);
-        // Upstream `_apply_print_specifics` is intentionally empty in 0.3.4.
+    if let Some(policy) = stock_policy {
+        apply_film_specifics_with_policy(&mut params, film, policy);
     }
     apply_debug_constraints(&mut params);
-
     params
 }
 
@@ -207,14 +227,25 @@ pub(crate) fn apply_database_neutral_print_filters_protected(
     params
 }
 
-/// Film-specific overrides — mirrors upstream `_apply_film_specifics`:
-/// positive/negative DIR-coupler gammas, the `(use, antihalation)` halation
-/// preset, and the velvia/provia slide-film coupler retunes.
-pub(crate) fn apply_film_specifics(params: &mut RuntimeParams, film: &Profile) {
+/// Seed the selected film's material defaults without changing explicit edits.
+///
+/// GUI material selection calls this once; ordinary rendering digests retain
+/// the accepted values. Grain, DIR gamma and low-level halation defaults share
+/// this implementation with CLI and preset resolution. Missing values fall
+/// through the existing preset lookup to schema defaults, not the prior film.
+pub fn apply_film_specifics(params: &mut RuntimeParams, film: &Profile) {
+    apply_film_specifics_with_policy(params, film, FilmSpecificsPolicy::MaterialDefaults);
+}
+
+pub(crate) fn apply_film_specifics_with_policy(
+    params: &mut RuntimeParams,
+    film: &Profile,
+    policy: FilmSpecificsPolicy,
+) {
     let explicit = crate::presets::explicit_stock_values(params);
-    apply_grain_preset(params, film);
+    apply_grain_preset(params, film, policy);
     apply_coupler_preset(params, film);
-    apply_halation_preset(params, film);
+    apply_halation_preset(params, film, policy);
     crate::presets::restore_explicit_stock_values(params, explicit);
 }
 
@@ -225,7 +256,7 @@ struct GrainPresetFile {
     stocks: std::collections::HashMap<String, toml::Value>,
 }
 
-fn apply_grain_preset(params: &mut RuntimeParams, film: &Profile) {
+fn apply_grain_preset(params: &mut RuntimeParams, film: &Profile, policy: FilmSpecificsPolicy) {
     let spektra = params.film_render.grain.engine == crate::params::GrainEngine::Spektra;
     let source = if spektra {
         include_str!("../../../data/presets/grain_spektra.toml")
@@ -247,7 +278,7 @@ fn apply_grain_preset(params: &mut RuntimeParams, film: &Profile) {
         .and_then(|v| v.get(class))
         .and_then(|v| v.get(polarity));
     let stock = film.info.stock.as_deref().and_then(|s| file.stocks.get(s));
-    if stock.is_none() {
+    if policy == FilmSpecificsPolicy::LegacyOverrides && stock.is_none() {
         return;
     }
     let value = |key: &str| {
@@ -256,7 +287,12 @@ fn apply_grain_preset(params: &mut RuntimeParams, film: &Profile) {
             .or_else(|| defaults.and_then(|v| v.get(key)))
     };
     let g = &mut params.film_render.grain;
-    let array = |key: &str, dst: &mut [f64]| {
+    static DEFAULT_GRAIN: std::sync::LazyLock<crate::params::GrainParams> =
+        std::sync::LazyLock::new(crate::params::GrainParams::default);
+    let array = |key: &str, dst: &mut [f64], fallback: &[f64]| {
+        if policy == FilmSpecificsPolicy::MaterialDefaults {
+            dst.copy_from_slice(fallback);
+        }
         if let Some(toml::Value::Array(values)) = value(key) {
             for (d, v) in dst.iter_mut().zip(values) {
                 if let Some(v) = v.as_float() {
@@ -265,10 +301,22 @@ fn apply_grain_preset(params: &mut RuntimeParams, film: &Profile) {
             }
         }
     };
-    array("rms_granularity", &mut g.rms_granularity);
-    array("density_min", &mut g.density_min);
-    array("uniformity", &mut g.uniformity);
-    array("particle_scale_sublayers", &mut g.particle_scale_sublayers);
+    array(
+        "rms_granularity",
+        &mut g.rms_granularity,
+        &DEFAULT_GRAIN.rms_granularity,
+    );
+    array(
+        "density_min",
+        &mut g.density_min,
+        &DEFAULT_GRAIN.density_min,
+    );
+    array("uniformity", &mut g.uniformity, &DEFAULT_GRAIN.uniformity);
+    array(
+        "particle_scale_sublayers",
+        &mut g.particle_scale_sublayers,
+        &DEFAULT_GRAIN.particle_scale_sublayers,
+    );
     if !spektra && film.info.stock.as_deref() == Some("kodak_portra_400") {
         g.uniformity = [0.97, 0.99, 0.97];
     }
@@ -346,7 +394,7 @@ fn apply_coupler_preset(params: &mut RuntimeParams, film: &Profile) {
 /// Seed low-level halation parameters from the profile's `use` /
 /// `antihalation` tags — mirrors upstream `_apply_halation_preset`.
 /// Papers (and films without a preset) keep their values.
-fn apply_halation_preset(params: &mut RuntimeParams, film: &Profile) {
+fn apply_halation_preset(params: &mut RuntimeParams, film: &Profile, policy: FilmSpecificsPolicy) {
     if !film.is_film() {
         return;
     }
@@ -358,6 +406,10 @@ fn apply_halation_preset(params: &mut RuntimeParams, film: &Profile) {
             .expect("stock halation preset name must exist in the shared catalog");
         params.film_render.halation.halation_first_sigma_um = profile.first_sigma_um;
         params.film_render.halation.halation_strength = profile.strength;
+    } else if policy == FilmSpecificsPolicy::MaterialDefaults {
+        let defaults = crate::params::HalationParams::default();
+        params.film_render.halation.halation_first_sigma_um = defaults.halation_first_sigma_um;
+        params.film_render.halation.halation_strength = defaults.halation_strength;
     }
 }
 
@@ -629,6 +681,130 @@ mod tests {
     }
 
     #[test]
+    fn film_selection_replaces_material_defaults_without_resetting_adjustments() {
+        let gold = film_profile("kodak_gold_200", "negative", "still", "strong");
+        let slide = film_profile("kodak_kodachrome_64", "positive", "still", "weak");
+        let mut params = RuntimeParams::default();
+        params.camera.exposure_compensation_ev = 1.5;
+        params.film_render.dir_couplers.amount = 0.75;
+        params.film_render.dir_couplers.active = false;
+        params.film_render.grain.active = false;
+        apply_film_specifics(&mut params, &gold);
+        let gold_params = params.clone();
+
+        apply_film_specifics(&mut params, &slide);
+        assert_eq!(
+            params.film_render.dir_couplers.gamma_samelayer_rgb,
+            [0.2942, 0.0841, 0.2492]
+        );
+        assert_eq!(
+            params.film_render.dir_couplers.gamma_interlayer_r_to_gb,
+            [0.1699, 0.2188]
+        );
+        assert_eq!(params.film_render.grain.rms_granularity, [10.0; 3]);
+        assert_eq!(params.film_render.dir_couplers.amount, 0.75);
+        assert!(!params.film_render.dir_couplers.active);
+        assert!(!params.film_render.grain.active);
+        assert_eq!(params.camera.exposure_compensation_ev, 1.5);
+
+        apply_film_specifics(&mut params, &gold);
+        assert_eq!(params, gold_params);
+    }
+
+    #[test]
+    fn explicit_material_leaf_equal_to_old_default_survives_selection_and_render_digest() {
+        let gold = film_profile("kodak_gold_200", "negative", "still", "strong");
+        let slide = film_profile("kodak_kodachrome_64", "positive", "still", "weak");
+        let mut params = RuntimeParams::default();
+        apply_film_specifics(&mut params, &gold);
+        let authored_gamma = params.film_render.dir_couplers.gamma_samelayer_rgb;
+        params
+            .explicit_section_paths
+            .insert("film_render.dir_couplers.gamma_samelayer_rgb".into());
+        params
+            .explicit_section_paths
+            .insert("film_render.grain.uniformity".into());
+        params.film_render.grain.uniformity = [0.81, 0.82, 0.83];
+        let ownership = params.render_preparation_state();
+
+        apply_film_specifics(&mut params, &slide);
+        assert_eq!(
+            params.film_render.dir_couplers.gamma_samelayer_rgb,
+            authored_gamma
+        );
+        assert_eq!(
+            params.film_render.dir_couplers.gamma_interlayer_g_to_rb,
+            [0.0625, 0.0692]
+        );
+        assert_eq!(params.film_render.grain.uniformity, [0.81, 0.82, 0.83]);
+        assert_eq!(params.film_render.grain.rms_granularity, [10.0; 3]);
+        assert_eq!(params.render_preparation_state(), ownership);
+
+        params.film_render.halation.halation_strength = [0.12, 0.02, 0.01];
+        let digested = digest_params(params.clone(), &slide, &blank_profile(), None, false);
+        assert_eq!(digested.film_render, params.film_render);
+        assert_eq!(digested.render_preparation_state(), ownership);
+    }
+
+    #[test]
+    fn legacy_digest_preserves_missing_stock_arrays_and_unmatched_halation() {
+        let custom = film_profile("custom_stock", "positive", "custom", "custom");
+        for engine in [
+            crate::params::GrainEngine::Dye,
+            crate::params::GrainEngine::Spektra,
+        ] {
+            let mut baseline = RuntimeParams::default();
+            baseline.film_render.grain.engine = engine;
+            baseline.film_render.grain.rms_granularity = [1.0, 2.0, 3.0];
+            baseline.film_render.grain.density_min = [0.01, 0.02, 0.03];
+            baseline.film_render.grain.uniformity = [0.81, 0.82, 0.83];
+            baseline.film_render.grain.particle_scale_sublayers = [1.0, 0.2, 0.3];
+            baseline.film_render.halation.halation_strength = [0.1, 0.2, 0.3];
+            baseline.film_render.halation.halation_first_sigma_um = [21.0, 22.0, 23.0];
+            let retained = digest_params(baseline.clone(), &custom, &blank_profile(), None, true);
+            assert_eq!(retained.film_render.grain, baseline.film_render.grain);
+            assert_eq!(retained.film_render.halation, baseline.film_render.halation);
+            assert_eq!(
+                retained.render_preparation_state(),
+                baseline.render_preparation_state()
+            );
+            baseline.debug.lut_mode = true;
+            let lut = digest_params(baseline.clone(), &custom, &blank_profile(), None, true);
+            assert_eq!(
+                lut.film_render.grain.rms_granularity,
+                baseline.film_render.grain.rms_granularity
+            );
+            assert_eq!(
+                lut.film_render.grain.density_min,
+                baseline.film_render.grain.density_min
+            );
+            assert!(!lut.film_render.grain.active);
+        }
+    }
+
+    #[test]
+    fn unlisted_material_does_not_inherit_previous_stock_defaults() {
+        let known = film_profile("kodak_kodachrome_64", "positive", "cine", "no");
+        let custom = film_profile("custom_stock", "positive", "custom", "custom");
+        for engine in [
+            crate::params::GrainEngine::Dye,
+            crate::params::GrainEngine::Spektra,
+        ] {
+            let mut clean = RuntimeParams::default();
+            clean.film_render.grain.engine = engine;
+            let mut switched = clean.clone();
+            apply_film_specifics(&mut switched, &known);
+            assert_ne!(
+                switched.film_render.grain.rms_granularity,
+                clean.film_render.grain.rms_granularity
+            );
+            apply_film_specifics(&mut clean, &custom);
+            apply_film_specifics(&mut switched, &custom);
+            assert_eq!(switched.film_render, clean.film_render);
+        }
+    }
+
+    #[test]
     fn presets_override_controls_when_stock_specifics_are_requested() {
         let film = film_profile("kodak_portra_400", "negative", "still", "strong");
         let print = blank_profile();
@@ -652,24 +828,11 @@ mod tests {
             edited.film_render.dir_couplers.gamma_samelayer_rgb,
             [0.9; 3]
         );
-        let unknown = film_profile("custom_stock", "negative", "still", "strong");
         let mut dye = RuntimeParams::default();
         dye.film_render.grain.engine = crate::params::GrainEngine::Dye;
         let dye = digest_params(dye, &film, &print, None, true);
         assert_eq!(dye.film_render.grain.rms_granularity, [5.6385, 4.5, 5.544]);
         assert_eq!(dye.film_render.grain.uniformity, [0.97, 0.99, 0.97]);
-        for engine in [
-            crate::params::GrainEngine::Spektra,
-            crate::params::GrainEngine::Dye,
-        ] {
-            let mut custom = RuntimeParams::default();
-            custom.film_render.grain.engine = engine;
-            custom.film_render.grain.rms_granularity = [99.0; 3];
-            custom.film_render.grain.uniformity = [0.5; 3];
-            let custom = digest_params(custom, &unknown, &print, None, true);
-            assert_eq!(custom.film_render.grain.rms_granularity, [99.0; 3]);
-            assert_eq!(custom.film_render.grain.uniformity, [0.5; 3]);
-        }
     }
 
     #[test]

@@ -43,6 +43,7 @@ enum RowScope {
         section: &'static str,
         root: std::sync::Arc<Value>,
         extras: std::sync::Arc<Value>,
+        baseline: std::sync::Arc<Value>,
     },
 }
 
@@ -52,11 +53,12 @@ impl RowScope {
             section,
             root,
             extras,
+            baseline,
         } = self
         else {
             return false;
         };
-        section_reset::leaf_modified(section, path, root, extras)
+        section_reset::leaf_modified(section, path, root, extras, baseline)
     }
 }
 
@@ -79,6 +81,7 @@ pub(crate) fn install(
                 section,
                 root: projection.runtime,
                 extras: projection.extras,
+                baseline: projection.baseline,
             }
         }
         _ => RowScope::Unmodified,

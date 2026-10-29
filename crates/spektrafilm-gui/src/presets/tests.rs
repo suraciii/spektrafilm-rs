@@ -285,6 +285,30 @@ fn scanner_transitions_reset_the_scan_polarity() {
 }
 
 #[test]
+fn direct_material_selection_rebases_unowned_defaults_and_failed_selection_is_atomic() {
+    let (mut app, directory) = test_app("material-default-selection");
+    app.params.camera.exposure_compensation_ev = 1.25;
+    app.params.scanner.lens_blur = 2.5;
+    app.select_film_profile("kodak_kodachrome_64".into());
+    let dir = &app.params.film_render.dir_couplers;
+    assert!(dir.active);
+    assert_eq!(dir.gamma_samelayer_rgb, [0.2942, 0.0841, 0.2492]);
+    assert_eq!(dir.gamma_interlayer_r_to_gb, [0.1699, 0.2188]);
+    assert_eq!(dir.gamma_interlayer_g_to_rb, [0.0625, 0.0692]);
+    assert_eq!(dir.gamma_interlayer_b_to_rg, [0.1153, 0.2359]);
+    assert_eq!(app.params.film_render.grain.rms_granularity, [10.0; 3]);
+    assert_eq!(app.params.camera.exposure_compensation_ev, 1.25);
+    assert_eq!(app.params.scanner.lens_blur, 2.5);
+    let accepted = app.params.clone();
+    let revision = app.parameter_revision;
+    app.select_film_profile("missing_material".into());
+    assert_eq!(app.film_name, "kodak_kodachrome_64");
+    assert_eq!(app.params, accepted);
+    assert_eq!(app.parameter_revision, revision);
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
 fn preset_application_reports_scanner_normalization() {
     let (mut app, directory) = test_app("preset-scanner-normalization");
     app.params.workflow.route = "input > film > scan".into();

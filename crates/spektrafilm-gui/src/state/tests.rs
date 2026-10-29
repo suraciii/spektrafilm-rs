@@ -2,8 +2,14 @@ use super::*;
 
 #[test]
 fn sparse_dye_state_preserves_omitted_and_authored_strength() {
+    let inherited = GuiState::factory()
+        .runtime_params()
+        .unwrap()
+        .film_render
+        .grain
+        .rms_granularity;
     for (nested, canonical, expected) in [
-        (None, None, [5.0; 3]),
+        (None, None, inherited),
         (Some([6.0, 8.0, 10.0]), None, [6.0, 8.0, 10.0]),
         (Some([6.0, 8.0, 10.0]), Some([9.0; 3]), [9.0; 3]),
     ] {

@@ -1,10 +1,4 @@
-//! Per-section reset to the projected factory state.
-//!
-//! A section reset restores every parameter the section presents to what
-//! [`crate::state::GuiState::factory`] projects, and changes nothing outside
-//! that section. The comparison that marks a section as modified is an
-//! exact-bit comparison of the projected values, so a value typed back to the
-//! factory value clears the mark.
+//! Per-section reset to factory defaults, including defaults for the selected film.
 //!
 //! The reset acts on the live model the rows edit — the runtime parameters
 //! and the extras document — rather than on a projection of a captured
@@ -184,7 +178,8 @@ const SECTION_PARAMETERS: &[(&str, &[&str], &[&str])] = &[
     ),
 ];
 
-/// Factory values shared by module resets, inventory filtering and module markers.
+#[cfg(test)]
+/// Factory values used by comparison tests.
 pub(crate) fn factory_value(path: &str) -> Option<Value> {
     if let Some(path) = path.strip_prefix("extras.") {
         document_value(&FACTORY_EXTRAS, path)
@@ -224,13 +219,23 @@ fn extras_value(extras: &Value, path: &str) -> Option<Value> {
     }
 }
 
-pub(crate) fn path_modified(path: &str, live_root: &Value, extras: &Value) -> bool {
+pub(crate) fn path_modified(
+    path: &str,
+    live_root: &Value,
+    extras: &Value,
+    baseline: &Value,
+) -> bool {
     let live = if let Some(path) = path.strip_prefix("extras.") {
         extras_value(extras, path)
     } else {
         value_at(live_root, path)
     };
-    match (live, factory_value(path)) {
+    let default = if let Some(path) = path.strip_prefix("extras.") {
+        document_value(&FACTORY_EXTRAS, path)
+    } else {
+        value_at(baseline, path)
+    };
+    match (live, default) {
         (Some(live), Some(factory)) => !same_bits(&live, &factory),
         (None, Some(factory)) => !factory.is_null(),
         _ => false,
@@ -276,6 +281,31 @@ static FACTORY: std::sync::LazyLock<RuntimeParams> = std::sync::LazyLock::new(||
 static FACTORY_ROOT: std::sync::LazyLock<Value> =
     std::sync::LazyLock::new(|| serde_json::to_value(&*FACTORY).expect("the factory serializes"));
 
+/// A factory projection seeded with the selected film, independent of live edits.
+pub(crate) fn material_baseline(film: &spektrafilm_core::profile::Profile) -> Value {
+    let mut params = FACTORY.clone();
+    spektrafilm_core::params_builder::apply_film_specifics(&mut params, film);
+    serde_json::to_value(params).expect("the material baseline serializes")
+}
+
+pub(crate) fn factory_root() -> &'static Value {
+    &FACTORY_ROOT
+}
+
+/// Baseline for unrelated controls when the selected material cannot be loaded.
+pub(crate) fn unavailable_material_baseline() -> &'static Value {
+    static BASELINE: std::sync::LazyLock<Value> = std::sync::LazyLock::new(|| {
+        let mut root = FACTORY_ROOT.clone();
+        if let Some(film) = root.get_mut("film_render").and_then(Value::as_object_mut) {
+            for key in ["grain", "halation", "dir_couplers"] {
+                film.remove(key);
+            }
+        }
+        root
+    });
+    &BASELINE
+}
+
 /// The factory extras document, computed once. The channel swaps and other
 /// extras-only values never reach the runtime model, so their factory values
 /// are read from the document the factory projects.
@@ -313,18 +343,22 @@ fn value_at(root: &Value, path: &str) -> Option<Value> {
     Some(value)
 }
 
-/// Whether a section's live parameters differ from the projected factory state.
+/// Whether a section's live parameters differ from its projected defaults.
 ///
-/// Exact-bit comparison, so a value typed back to the factory value clears the
-/// mark and a value that differs only in representation does not set it.
-pub fn is_modified(section: &str, live: &RuntimeParams, extras: &Value) -> bool {
+/// Exact-bit comparison clears the mark when the default value is restored.
+pub(crate) fn is_modified(
+    section: &str,
+    live: &RuntimeParams,
+    extras: &Value,
+    baseline: &Value,
+) -> bool {
     let Some(paths) = section_paths(section) else {
         return false;
     };
     let Some(live_root) = serde_json::to_value(live).ok() else {
         return false;
     };
-    let factory_root = &*FACTORY_ROOT;
+    let factory_root = baseline;
     for path in paths {
         if let (Some(live), Some(factory)) =
             (value_at(&live_root, path), value_at(factory_root, path))
@@ -358,6 +392,7 @@ pub(crate) fn leaf_modified(
     path: &str,
     live_root: &Value,
     live_extras: &Value,
+    baseline: &Value,
 ) -> bool {
     if let Some(paths) = section_paths(section) {
         for scope in paths {
@@ -367,7 +402,7 @@ pub(crate) fn leaf_modified(
                 let Some(live) = value_at(live_root, path) else {
                     continue;
                 };
-                let Some(factory) = value_at(&FACTORY_ROOT, path) else {
+                let Some(factory) = value_at(baseline, path) else {
                     continue;
                 };
                 return !same_bits(&live, &factory);
@@ -392,21 +427,24 @@ pub(crate) fn leaf_modified(
     false
 }
 
-/// Restore one section's parameters to the projected factory state.
+/// Restore one section's parameters to its projected defaults.
 ///
 /// Only the section's own paths are restored, so neighbouring sections keep
-/// their values. Returns whether anything changed.
-pub fn reset(params: &mut RuntimeParams, extras: &mut Value, section: &str) -> bool {
+/// their values. Returns whether values or scoped ownership changed.
+pub(crate) fn reset(
+    params: &mut RuntimeParams,
+    extras: &mut Value,
+    section: &str,
+    baseline: &Value,
+) -> bool {
     let Some(paths) = section_paths(section) else {
         return false;
     };
+    let filter_protection = params.neutral_print_filters_protected;
     let mut changed = false;
-    if let (Some(mut live_root), Some(factory_root)) = (
-        serde_json::to_value(&*params).ok(),
-        serde_json::to_value(&*FACTORY).ok(),
-    ) {
+    if let Ok(mut live_root) = serde_json::to_value(&*params) {
         for path in paths {
-            let Some(factory) = value_at(&factory_root, path) else {
+            let Some(factory) = value_at(baseline, path) else {
                 continue;
             };
             // The mark and the reset must agree on what differs, so both use
@@ -441,6 +479,18 @@ pub fn reset(params: &mut RuntimeParams, extras: &mut Value, section: &str) -> b
             }
         }
     }
+    let mut preparation = params.render_preparation_state();
+    let old_len = preparation.explicit_section_paths.len();
+    preparation.explicit_section_paths.retain(|owned| {
+        !paths.iter().any(|scope| {
+            owned == scope
+                || (owned.starts_with(scope) && owned.as_bytes().get(scope.len()) == Some(&b'.'))
+        })
+    });
+    if preparation.explicit_section_paths.len() != old_len {
+        params.restore_render_preparation_state(&preparation);
+        changed = true;
+    }
     if let Some(extras_paths) = section_extras(section) {
         for path in extras_paths {
             let Some(factory) = document_value(&FACTORY_EXTRAS, path) else {
@@ -457,6 +507,7 @@ pub fn reset(params: &mut RuntimeParams, extras: &mut Value, section: &str) -> b
             }
         }
     }
+    params.neutral_print_filters_protected = filter_protection;
     changed
 }
 
@@ -510,7 +561,8 @@ mod tests {
         assert!(!path_modified(
             "extras.display.white_padding",
             &raw_root,
-            &extras
+            &extras,
+            factory_root()
         ));
         let projected = crate::display::DisplaySettings::from_json(&extras["display"]).to_json();
         extras["display"]["white_padding"] = projected["white_padding"].clone();
@@ -518,11 +570,12 @@ mod tests {
         assert!(!path_modified(
             "extras.display.white_padding",
             &root,
-            &extras
+            &extras,
+            factory_root()
         ));
         extras["display"]["white_padding"] = Value::from(0.25_f32);
         let mut params = params;
-        assert!(reset(&mut params, &mut extras, "Display"));
+        assert!(reset(&mut params, &mut extras, "Display", factory_root()));
         assert_eq!(
             extras["display"]["white_padding"],
             projected["white_padding"]
@@ -530,7 +583,8 @@ mod tests {
         assert!(!path_modified(
             "extras.display.white_padding",
             &root,
-            &extras
+            &extras,
+            factory_root()
         ));
     }
 
@@ -546,10 +600,13 @@ mod tests {
         ];
         for path in paths {
             assert!(factory_value(path).is_some(), "{path}");
-            assert!(!path_modified(path, &root, &extras), "{path}");
+            assert!(
+                !path_modified(path, &root, &extras, factory_root()),
+                "{path}"
+            );
         }
         extras["rust"]["display_profile"] = Value::Null;
-        assert!(!path_modified(paths[2], &root, &extras));
+        assert!(!path_modified(paths[2], &root, &extras, factory_root()));
         let mut options = crate::export::ExportOptions::from_state(&extras);
         options.format = crate::export::ExportFormat::Tiff;
         options.saving_color_space = "ProPhoto RGB".into();
@@ -557,13 +614,16 @@ mod tests {
         options.write_state(&mut extras);
         extras["rust"]["display_profile"] = Value::from("selected-display.icc");
         for path in paths {
-            assert!(path_modified(path, &root, &extras), "{path}");
+            assert!(
+                path_modified(path, &root, &extras, factory_root()),
+                "{path}"
+            );
         }
         extras["rust"]
             .as_object_mut()
             .unwrap()
             .remove("display_profile");
-        assert!(!path_modified(paths[2], &root, &extras));
+        assert!(!path_modified(paths[2], &root, &extras, factory_root()));
     }
 
     #[test]
@@ -580,7 +640,7 @@ mod tests {
         preparation.neutral_print_filters_protected = [true, false, true];
         params.restore_render_preparation_state(&preparation);
         let mut extras = GuiState::factory().sections.clone();
-        assert!(reset(&mut params, &mut extras, "Camera"));
+        assert!(reset(&mut params, &mut extras, "Camera", factory_root()));
         assert_eq!(params.render_preparation_state(), preparation);
         assert_eq!(params.camera.exposure_compensation_ev, 0.0);
         assert_eq!(params.enlarger.preflash_y_filter_shift, 7.0);
@@ -611,11 +671,11 @@ mod tests {
     fn a_section_is_unmodified_until_a_value_changes_and_clears_when_typed_back() {
         let mut params = factory();
         let extras = GuiState::factory().sections.clone();
-        assert!(!is_modified("Grain", &params, &extras));
+        assert!(!is_modified("Grain", &params, &extras, factory_root()));
         params.film_render.grain.active = !params.film_render.grain.active;
-        assert!(is_modified("Grain", &params, &extras));
+        assert!(is_modified("Grain", &params, &extras, factory_root()));
         params.film_render.grain.active = !params.film_render.grain.active;
-        assert!(!is_modified("Grain", &params, &extras));
+        assert!(!is_modified("Grain", &params, &extras, factory_root()));
     }
 
     #[test]
@@ -625,7 +685,7 @@ mod tests {
         let neighbour = params.film_render.base.scale;
         params.film_render.base.scale = neighbour + 0.5;
         params.film_render.grain.blur = 0.25;
-        assert!(reset(&mut params, &mut extras, "Film base"));
+        assert!(reset(&mut params, &mut extras, "Film base", factory_root()));
         assert_eq!(params.film_render.base.scale, neighbour);
         // The neighbour's edit survives the reset.
         assert_eq!(params.film_render.grain.blur, 0.25);
@@ -636,19 +696,24 @@ mod tests {
         let mut params = factory();
         let mut extras = GuiState::factory().sections.clone();
         params.film_render.grain.active = !params.film_render.grain.active;
-        assert!(!reset(&mut params, &mut extras, "No such section"));
-        assert!(is_modified("Grain", &params, &extras));
+        assert!(!reset(
+            &mut params,
+            &mut extras,
+            "No such section",
+            factory_root()
+        ));
+        assert!(is_modified("Grain", &params, &extras, factory_root()));
     }
 
     #[test]
     fn the_channel_swap_edit_marks_the_convert_section_modified() {
         let mut params = factory();
         let mut extras = GuiState::factory().sections.clone();
-        assert!(!is_modified("Convert", &params, &extras));
+        assert!(!is_modified("Convert", &params, &extras, factory_root()));
         extras["special"]["film_channel_swap"] = serde_json::json!([1, 0, 2]);
-        assert!(is_modified("Convert", &params, &extras));
-        assert!(reset(&mut params, &mut extras, "Convert"));
-        assert!(!is_modified("Convert", &params, &extras));
+        assert!(is_modified("Convert", &params, &extras, factory_root()));
+        assert!(reset(&mut params, &mut extras, "Convert", factory_root()));
+        assert!(!is_modified("Convert", &params, &extras, factory_root()));
     }
 
     #[test]
@@ -657,16 +722,16 @@ mod tests {
         let mut extras = GuiState::factory().sections;
         let factory_light = params.film_render.convert.scan_illuminant.clone();
         params.film_render.convert.scan_illuminant = "BB4321".into();
-        assert!(is_modified("Convert", &params, &extras));
-        assert!(!is_modified("Scanner", &params, &extras));
+        assert!(is_modified("Convert", &params, &extras, factory_root()));
+        assert!(!is_modified("Scanner", &params, &extras, factory_root()));
         params.scanner.lens_blur = 0.25;
-        assert!(reset(&mut params, &mut extras, "Scanner"));
+        assert!(reset(&mut params, &mut extras, "Scanner", factory_root()));
         assert_eq!(params.film_render.convert.scan_illuminant, "BB4321");
         params.scanner.lens_blur = 0.5;
-        assert!(reset(&mut params, &mut extras, "Convert"));
+        assert!(reset(&mut params, &mut extras, "Convert", factory_root()));
         assert_eq!(params.film_render.convert.scan_illuminant, factory_light);
         assert_eq!(params.scanner.lens_blur, 0.5);
-        assert!(!is_modified("Convert", &params, &extras));
+        assert!(!is_modified("Convert", &params, &extras, factory_root()));
     }
 
     #[test]
@@ -675,7 +740,12 @@ mod tests {
         let mut extras = GuiState::factory().sections.clone();
         params.io.input_color_space = "ProPhoto RGB".to_string();
         params.io.upscale_factor = 3.0;
-        assert!(reset(&mut params, &mut extras, "Crop and upscale"));
+        assert!(reset(
+            &mut params,
+            &mut extras,
+            "Crop and upscale",
+            factory_root()
+        ));
         // The Input section owns the color space; the crop reset must not
         // restore it.
         assert_eq!(params.io.input_color_space, "ProPhoto RGB");
@@ -690,21 +760,31 @@ mod tests {
         // reset must not reach it even though the camera group carries it.
         let diffusion = params.camera.diffusion_filter.strength;
         params.camera.diffusion_filter.strength = diffusion + 1.0;
-        assert!(is_modified("Camera diffusion", &params, &extras));
+        assert!(is_modified(
+            "Camera diffusion",
+            &params,
+            &extras,
+            factory_root()
+        ));
         assert!(
-            !is_modified("Camera", &params, &extras),
+            !is_modified("Camera", &params, &extras, factory_root()),
             "a diffusion edit marks its own section, not the Camera header"
         );
         params.camera.exposure_compensation_ev = 0.5;
-        assert!(is_modified("Camera", &params, &extras));
-        assert!(reset(&mut params, &mut extras, "Camera"));
+        assert!(is_modified("Camera", &params, &extras, factory_root()));
+        assert!(reset(&mut params, &mut extras, "Camera", factory_root()));
         assert_eq!(params.camera.exposure_compensation_ev, 0.0);
         assert_eq!(
             params.camera.diffusion_filter.strength,
             diffusion + 1.0,
             "the Camera reset leaves the Camera diffusion section alone"
         );
-        assert!(is_modified("Camera diffusion", &params, &extras));
+        assert!(is_modified(
+            "Camera diffusion",
+            &params,
+            &extras,
+            factory_root()
+        ));
     }
 
     #[test]
@@ -713,14 +793,19 @@ mod tests {
         let mut extras = GuiState::factory().sections.clone();
         let diffusion = params.enlarger.diffusion_filter.strength;
         params.enlarger.diffusion_filter.strength = diffusion + 1.0;
-        assert!(is_modified("Enlarger diffusion", &params, &extras));
+        assert!(is_modified(
+            "Enlarger diffusion",
+            &params,
+            &extras,
+            factory_root()
+        ));
         assert!(
-            !is_modified("Enlarger", &params, &extras),
+            !is_modified("Enlarger", &params, &extras, factory_root()),
             "a diffusion edit marks its own section, not the Enlarger header"
         );
         params.enlarger.print_exposure = 2.0;
-        assert!(is_modified("Enlarger", &params, &extras));
-        assert!(reset(&mut params, &mut extras, "Enlarger"));
+        assert!(is_modified("Enlarger", &params, &extras, factory_root()));
+        assert!(reset(&mut params, &mut extras, "Enlarger", factory_root()));
         assert_eq!(params.enlarger.print_exposure, 1.0);
         assert_eq!(
             params.enlarger.diffusion_filter.strength,
@@ -738,7 +823,7 @@ mod tests {
         let neutral = params.enlarger.y_filter_neutral;
         params.enlarger.y_filter_neutral = neutral + 10.0;
         params.enlarger.print_exposure = 2.0;
-        assert!(reset(&mut params, &mut extras, "Enlarger"));
+        assert!(reset(&mut params, &mut extras, "Enlarger", factory_root()));
         assert_eq!(
             params.enlarger.y_filter_neutral,
             neutral + 10.0,
@@ -751,9 +836,9 @@ mod tests {
         let mut params = factory();
         let mut extras = GuiState::factory().sections.clone();
         params.output_mix.amount = 0.25;
-        assert!(is_modified("Output", &params, &extras));
-        assert!(reset(&mut params, &mut extras, "Output"));
+        assert!(is_modified("Output", &params, &extras, factory_root()));
+        assert!(reset(&mut params, &mut extras, "Output", factory_root()));
         assert_eq!(params.output_mix.amount, 1.0);
-        assert!(!is_modified("Output", &params, &extras));
+        assert!(!is_modified("Output", &params, &extras, factory_root()));
     }
 }

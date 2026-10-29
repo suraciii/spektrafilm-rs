@@ -83,7 +83,11 @@ impl<'a> ControlFilter<'a> {
                         && entry.searchable()
                         && entry.matches(&query)
                         && projection.as_ref().is_none_or(|projection| {
-                            entry.is_modified(&projection.runtime, &projection.extras)
+                            entry.is_modified(
+                                &projection.runtime,
+                                &projection.extras,
+                                &projection.baseline,
+                            )
                         })
                 })
                 .map(|entry| entry.path.clone())

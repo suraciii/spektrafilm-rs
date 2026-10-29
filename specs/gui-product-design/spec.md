@@ -90,7 +90,7 @@ Parameter search MUST find controls across all stages, including collapsed and i
 
 The Scan and Output stages MUST distinguish scan acquisition through the fixed product readout illuminant, scan output polarity and negative conversion, readout optics and digital sharpening, and downstream digital output.
 
-A row MUST offer help and its unit where applicable. A module MUST offer the factory reset for its controls, and a row MUST NOT offer one of its own. Factory differences MUST remain distinct from differences against the applied preset.
+A row MUST offer help and its unit where applicable. A module MUST offer the reset for its controls, and a row MUST NOT offer one of its own. Reset-baseline differences MUST remain distinct from differences against the applied preset.
 
 A drag, reset, feature-profile selection, material selection, or preset application MUST be reversible under [Edit history](../gui-workflow/spec.md#edit-history).
 
@@ -160,7 +160,7 @@ The HTML design reference is not an engine implementation. Its sample values, pa
 | Expand several modules; edit and wait for preview | Open state, scroll, and numeric focus remain usable; the image remains visible. |
 | Search a folded or inactive control by label or canonical path | The correct owner is revealed with its current value and applicability reason; no second editor or parameter change appears. |
 | Search an Export or display option | The result opens that dialog or setting; unrelated dialogs are not filtered by the inspector query. |
-| Use Only modified, reset a module, then undo | Filtering uses the factory baseline; reset changes only the module's owned scope; undo restores values and edit provenance. |
+| Use Only modified, reset a module, then undo | Filtering uses the reset baseline; reset changes only the module's owned scope; undo restores values and edit provenance. |
 | Drag a slider through several intermediate values | Its number updates consistently; the completed gesture creates one undo step. |
 | Apply a Halation profile; edit an RGB component | Only the feature profile's declared scope changes; the direct edit remains available and profile identity is recomputed. |
 | Set Preflash exposure and Y/M shifts; set exposure to zero | Flash stops while both filter values remain; a route without printing marks the group inactive without clearing it. |

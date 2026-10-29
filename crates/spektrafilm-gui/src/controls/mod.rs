@@ -17,16 +17,23 @@ use std::path::Path;
 pub(crate) struct ControlProjection {
     pub(crate) runtime: std::sync::Arc<Value>,
     pub(crate) extras: std::sync::Arc<Value>,
+    pub(crate) baseline: std::sync::Arc<Value>,
 }
 
 thread_local! {
     static FRAME_PROJECTION: std::cell::RefCell<Option<(usize, usize, ControlProjection)>> = const { std::cell::RefCell::new(None) };
 }
 
-pub(crate) fn begin_control_frame(_ctx: &egui::Context, params: &RuntimeParams, extras: &Value) {
+pub(crate) fn begin_control_frame(
+    _ctx: &egui::Context,
+    params: &RuntimeParams,
+    extras: &Value,
+    baseline: std::sync::Arc<Value>,
+) {
     let projection = ControlProjection {
         runtime: std::sync::Arc::new(serde_json::to_value(params).expect("runtime serializes")),
         extras: std::sync::Arc::new(extras.clone()),
+        baseline,
     };
     FRAME_PROJECTION.with(|cache| {
         *cache.borrow_mut() = Some((
@@ -55,6 +62,7 @@ pub(crate) fn control_projection(params: &RuntimeParams, extras: &Value) -> Cont
         .unwrap_or_else(|| ControlProjection {
             runtime: std::sync::Arc::new(serde_json::to_value(params).expect("runtime serializes")),
             extras: std::sync::Arc::new(extras.clone()),
+            baseline: std::sync::Arc::new(crate::section_reset::factory_root().clone()),
         })
 }
 
@@ -583,7 +591,11 @@ pub(crate) fn entry_matches(
     entry.matches(&query.to_lowercase())
         && (!only_modified || {
             let projection = control_projection(params, extras);
-            entry.is_modified(&projection.runtime, &projection.extras)
+            entry.is_modified(
+                &projection.runtime,
+                &projection.extras,
+                &projection.baseline,
+            )
         })
 }
 

@@ -34,6 +34,7 @@ pub(crate) struct App {
     pub(crate) print_dev_times: Vec<f64>,
     pub(crate) params: RuntimeParams,
     pub(crate) gui_state: state::GuiState,
+    pub(crate) material_baseline: Option<(PathBuf, String, Option<Arc<serde_json::Value>>)>,
     pub(crate) full_scan_requested: bool,
     /// Original print-glare switch captured while Scan-for-print is active.
     /// This transient workflow state is deliberately excluded from persistence.
@@ -286,6 +287,7 @@ impl App {
             print_dev_times,
             params,
             gui_state,
+            material_baseline: None,
             full_scan_requested: false,
             scan_for_print_snapshot: None,
             operator_compare: false,

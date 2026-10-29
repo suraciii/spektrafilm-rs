@@ -27,6 +27,7 @@ A route or film profile change that makes the selected mode ineligible resets it
 - Imported states and presets MUST reject the removed mode as defined by [Scanner language](../film-chain/spec.md#scanner-language). A rejected import MUST NOT replace accepted parameters or the retained image.
 - Numeric parameter fields use text editing and the default text cursor. Each original wheel event over a field changes its value by the declared step.
 - Smoothed scroll residue MUST NOT repeat that change in later frames. Invalid or incomplete text MUST NOT enter runtime parameters.
+- Focusing, revealing, or leaving a numeric field without editing its text MUST preserve the full stored value. Display rounding MUST NOT become an accepted edit.
 - A numeric editor MUST offer a usable range and step, and MUST NOT accept a value the parameter validator rejects. [Numeric editor ranges](#numeric-editor-ranges) owns both rules.
 - Preview computation and viewer composition run outside the UI thread. Queued requests retain only the latest snapshot.
 - Results from older requests, input images, or parameter revisions MUST NOT replace current output.
@@ -211,21 +212,31 @@ Module disable, unsupported material capability, source type, route, and selecte
 
 An inactive optional subfeature MUST NOT mark its whole module inactive. A module-level notice appears only when every dependent control in that module is inactive; the module's own enable switch is not evidence of its inactivity.
 
-A route or material change MUST NOT erase inactive values except for normalizations explicitly required by the owning contract, such as scanner-output eligibility; the header MUST report those normalizations.
+A route or material change MUST preserve inactive values except for normalizations explicitly required by the owning contract and [material defaults](../presets/spec.md#material-defaults). The header MUST report route and scanner normalizations.
 
 `settings.print_exposure_ev_tracking` belongs to Print → Enlarger because it controls exposure behavior. Its `settings` wire group MUST NOT move it to application preferences or remove its existing look ownership.
 
 Inherited optional values MUST show both their inherited state and effective value. Entering an explicit value and returning to inheritance MUST remain distinct operations. Development-time controls MUST use the selected material's actual family rather than invented common time choices.
 
-Modules expose factory resets under [Section reset](#section-reset). Control coverage acceptance MUST exercise every inventory owner and every engine branch through production GUI controls, with applicable and inapplicable states. It MUST check canonical values and component independence, not only count widgets.
+Modules expose resets under [Section reset](#section-reset). Control coverage acceptance MUST exercise every inventory owner and every engine branch through production GUI controls, with applicable and inapplicable states. It MUST check canonical values and component independence, not only count widgets.
 
 ## Section reset
 
-A visible module reset MUST restore exactly that module's editable canonical paths to their projected factory values. A module reset MUST NOT reset another module because modules can share one serialized preset section.
+A visible module reset MUST restore exactly that module's editable canonical paths to their reset baseline. A module reset MUST NOT reset another module because modules can share one serialized preset section.
 
 In particular, Preflash reset MUST leave main Enlarger exposure and filtration unchanged, and Print viewing glare reset MUST leave Print chemistry unchanged. A material module reset MUST also restore its material selection and development time.
 
-A factory projection MUST include runtime-only editable leaves and preserve each leaf's type and optional state. It is not the selected material's suggested values, the last applied preset, or the prototype's example configuration. The row marker, module marker, Only modified filter, and reset action MUST use the same projection and comparison rule under [GUI presentation](../gui-presentation/design.md).
+If a material reset keeps the selected stock unchanged, it MUST NOT reapply material defaults or normalize unrelated workflow and scanner controls.
+
+The reset baseline starts from a fresh factory projection and includes runtime-only editable leaves with their types and optional states. For modules other than material selection, only [stock-derived leaves](../presets/spec.md#material-defaults) use the currently selected film's defaults.
+
+The baseline MUST NOT incorporate live explicit edits, the last applied preset, or a saved startup default. Material selection and development time retain their factory reset targets.
+
+Reset MUST release explicit ownership of every leaf in its scope, including when the values already equal the baseline. A metadata-only reset is a reversible edit.
+
+Reset MUST preserve the value and optional state of preparation metadata outside that scope.
+
+The row marker, module marker, Only modified filter, and reset action MUST use the same baseline and comparison under [GUI presentation](../gui-presentation/design.md#factory-projection-and-modified-state).
 
 The reset action MUST name its scope and baseline. Reset and Revert to applied preset MUST remain separate actions.
 
@@ -243,7 +254,7 @@ Incomplete or invalid text MUST NOT change accepted values or history. Escape MU
 
 Undo MUST restore the preceding accepted values, profile selections, workflow, explicit-leaf ownership, applied-preset marker, and affected transient rendering state. Redo MUST restore the recorded successor, not reapply a possibly changed preset file or recompute stock defaults. A new accepted edit after Undo MUST discard the redo branch.
 
-Factory-modified and preset-modified indicators MUST be recomputed against their own baselines.
+Reset-baseline and preset-modified indicators MUST be recomputed against their own baselines.
 
 History MUST NOT own image buffers, viewer transforms, library files, startup defaults, diagnostics, or completed Save/Export artifacts. Library mutations and file writes MUST NOT be presented as reversible by adjustment Undo. Application settings and an unsubmitted Export draft remain outside adjustment history.
 
@@ -364,7 +375,7 @@ An inactive match MUST retain its value and explanation. Search MUST NOT change 
 
 The search field MUST provide a clear action and an explicit no-match state that includes the query. Search and its temporary disclosure state MUST be session-local. Clearing the query MUST restore the preceding normal open state and MUST NOT hide controls previously available without search.
 
-Only modified is an independent, reversible view filter against the factory projection in [Section reset](#section-reset). It combines with search by intersection. Its no-match state MUST distinguish no modified controls from no search matches.
+Only modified is an independent, reversible view filter against the reset baseline in [Section reset](#section-reset). It combines with search by intersection. Its no-match state MUST distinguish no modified controls from no search matches.
 
 Turning it off MUST restore the ordinary inventory. A preset's modified marker MUST NOT be used as the filter predicate.
 

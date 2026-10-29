@@ -1143,12 +1143,18 @@ fn hidden_grain_modified_locators_and_whole_reset_are_complete_scoped_and_revers
     }
     click(h, "reset Grain");
     let mut expected = edited.clone();
-    expected.film_render.grain = state::GuiState::factory()
-        .runtime_params()
-        .unwrap()
-        .film_render
-        .grain;
+    let baseline = section_reset::material_baseline(&bw);
+    expected.film_render.grain =
+        serde_json::from_value::<spektrafilm_core::params::RuntimeParams>(baseline.clone())
+            .unwrap()
+            .film_render
+            .grain;
     expected.film_render.grain.monochrome = true;
+    let mut preparation = expected.render_preparation_state();
+    preparation
+        .explicit_section_paths
+        .retain(|path| !path.starts_with("film_render.grain."));
+    expected.restore_render_preparation_state(&preparation);
     assert_eq!(
         h.state().params,
         expected,
@@ -1158,7 +1164,8 @@ fn hidden_grain_modified_locators_and_whole_reset_are_complete_scoped_and_revers
     assert!(!section_reset::is_modified(
         "Grain",
         &h.state().params,
-        &serde_json::json!({})
+        &serde_json::json!({}),
+        &baseline
     ));
     assert!(h.query_by_label("rms granularity G").is_none());
     click(h, "Undo");
@@ -1169,7 +1176,8 @@ fn hidden_grain_modified_locators_and_whole_reset_are_complete_scoped_and_revers
     assert!(!section_reset::is_modified(
         "Grain",
         &h.state().params,
-        &serde_json::json!({})
+        &serde_json::json!({}),
+        &baseline
     ));
 }
 
@@ -1291,9 +1299,16 @@ fn module_resets_restore_only_their_owned_values_and_are_reversible() {
     expected.enlarger.preflash_y_filter_shift = factory.enlarger.preflash_y_filter_shift;
     expected.enlarger.preflash_m_filter_shift = factory.enlarger.preflash_m_filter_shift;
     assert_eq!(
-        h.state().params,
-        expected,
+        serde_json::to_value(&h.state().params).unwrap(),
+        serde_json::to_value(&expected).unwrap(),
         "Preflash reset must not own main enlarger exposure or diffusion"
+    );
+    assert_eq!(
+        h.state()
+            .params
+            .render_preparation_state()
+            .explicit_section_paths,
+        ["enlarger.print_exposure"]
     );
     assert!(
         h.query_by_label("preflash y filter shift").is_none(),
@@ -1309,9 +1324,20 @@ fn module_resets_restore_only_their_owned_values_and_are_reversible() {
     expected = edited.clone();
     expected.enlarger.print_exposure = factory.enlarger.print_exposure;
     assert_eq!(
-        h.state().params,
-        expected,
+        serde_json::to_value(&h.state().params).unwrap(),
+        serde_json::to_value(&expected).unwrap(),
         "Enlarger reset must retain separate Preflash controls"
+    );
+    assert_eq!(
+        h.state()
+            .params
+            .render_preparation_state()
+            .explicit_section_paths,
+        [
+            "enlarger.preflash_exposure",
+            "enlarger.preflash_m_filter_shift",
+            "enlarger.preflash_y_filter_shift"
+        ]
     );
     assert_eq!(
         h.state().params.enlarger.preflash_y_filter_shift,
@@ -1513,9 +1539,16 @@ fn camera_module_reset_retains_camera_diffusion_and_other_stage_edits() {
     reveal_control(h, "camera.exposure_compensation_ev");
     click(h, "reset Camera");
     assert_eq!(
-        h.state().params,
-        expected,
+        serde_json::to_value(&h.state().params).unwrap(),
+        serde_json::to_value(&expected).unwrap(),
         "Camera reset must not replace its separately owned diffusion or another stage"
+    );
+    assert_eq!(
+        h.state()
+            .params
+            .render_preparation_state()
+            .explicit_section_paths,
+        ["enlarger.print_exposure"]
     );
 }
 

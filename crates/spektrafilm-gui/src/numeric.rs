@@ -917,7 +917,8 @@ fn value_row_events<T: egui::emath::Numeric>(
             }
         }
 
-        if !state.suspended_for_language
+        if state.editing
+            && !state.suspended_for_language
             && (response.lost_focus()
                 || (state.focused && !response.has_focus())
                 || finish_for_wheel)
@@ -1380,6 +1381,21 @@ mod tests {
             },
             egui::Event::Text(text.into()),
         ]
+    }
+
+    #[test]
+    fn focusing_and_confirming_without_editing_preserves_unrounded_value() {
+        let ctx = egui::Context::default();
+        let mut value = 0.123456;
+        let mut changed = false;
+        let rect = std::cell::Cell::new(egui::Rect::NOTHING);
+        run_numeric_frame(&ctx, vec![], &mut value, &mut changed, &rect);
+        for events in focus_events(rect.get().center()) {
+            run_numeric_frame(&ctx, events, &mut value, &mut changed, &rect);
+        }
+        run_numeric_frame(&ctx, enter_events(), &mut value, &mut changed, &rect);
+        assert!(!changed);
+        assert_eq!(value, 0.123456);
     }
 
     #[test]

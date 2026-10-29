@@ -86,7 +86,7 @@ The existing control inventory remains the sole owner/path index. Its searchable
 
 General/通用 and both language-selector names MUST locate their actual Settings owner.
 
-Search entries and result presentation MUST be separate. Changing locale MAY refresh displayed destinations and labels, but it MUST preserve the query and result identities. Only modified MUST continue to compare canonical values with the same typed factory projection.
+Search entries and result presentation MUST be separate. Changing locale MAY refresh displayed destinations and labels, but it MUST preserve the query and result identities. Only modified MUST continue to use the [reset baseline](../gui-workflow/spec.md#section-reset).
 
 Language preference modified-state, if shown, MUST use its application-preference baseline and remain outside photographic history.
 

@@ -1232,6 +1232,7 @@ fn canonical_search_preserves_inspector_and_viewer_geometry_at_supported_desktop
     }
 }
 
+#[track_caller]
 fn wait_device_output(h: &mut Harness<'_, App>) {
     wait_until(h, |app| {
         !app.dirty
@@ -1242,6 +1243,7 @@ fn wait_device_output(h: &mut Harness<'_, App>) {
     });
 }
 
+#[track_caller]
 fn scan_device_output(h: &mut Harness<'_, App>) {
     // Unlike the CPU pixel helpers, readiness is the accepted device carrier
     // and its provenance, never a compatibility raster or a host readback.
