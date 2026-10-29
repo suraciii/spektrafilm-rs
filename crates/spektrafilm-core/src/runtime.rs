@@ -709,22 +709,28 @@ impl Runtime {
     }
 
     pub fn update(&mut self, params: RuntimeParams) -> Result<(), String> {
-        params.validate()?;
-        // Film-curve controls are absent from the spectral and calibration
-        // control keys, so refresh the resolved film unconditionally and keep
-        // the prepared grain cache and cancellation binding across the rebuild.
-        let pipeline = self.pipeline.clone().rebuild_spectral(params)?;
-        let record_configuration =
-            crate::stages::grain_v3::resolve_record(&pipeline.film, &pipeline.params)?;
-        self.pipeline = pipeline;
+        self.update_with_backend(params, &spektrafilm_backend::cpu_backend::CpuBackend)?;
+        Ok(())
+    }
+
+    fn update_with_backend(
+        &mut self,
+        params: RuntimeParams,
+        backend: &dyn ComputeBackend,
+    ) -> Result<(), String> {
+        let update = self.pipeline.prepare_parameter_update(params, backend)?;
+        let film = update
+            .material
+            .as_ref()
+            .map_or(&self.pipeline.film, |m| &m.film);
+        let record_configuration = crate::stages::grain_v3::resolve_record(film, &update.params)?;
+        self.pipeline.apply_parameter_update(update);
         self.record_configuration = record_configuration;
         Ok(())
     }
     /// Return a runtime with updated parameters while retaining the facade state.
     pub fn with_params(mut self, params: RuntimeParams) -> Result<Self, String> {
-        self.pipeline = self.pipeline.with_params(params)?;
-        self.record_configuration =
-            crate::stages::grain_v3::resolve_record(&self.pipeline.film, &self.pipeline.params)?;
+        self.update(params)?;
         Ok(self)
     }
 
@@ -733,9 +739,7 @@ impl Runtime {
         params: RuntimeParams,
         backend: &dyn ComputeBackend,
     ) -> Result<Self, String> {
-        self.pipeline = self.pipeline.with_params_with_backend(params, backend)?;
-        self.record_configuration =
-            crate::stages::grain_v3::resolve_record(&self.pipeline.film, &self.pipeline.params)?;
+        self.update_with_backend(params, backend)?;
         Ok(self)
     }
 
@@ -1038,6 +1042,31 @@ mod tests {
                     .iter()
                     .any(|pixel| pixel.as_slice() != &baseline.data[..3]),
                 "{route}: the fixture must contain spatially varying output"
+            );
+
+            let mut params = runtime.params().clone();
+            params.film_render.base.scale = 1.5;
+            params.film_render.chemistry.gamma_factor = 1.25;
+            runtime.update(params).unwrap();
+            let edited = render(&runtime, &mut cache, (4, 4));
+            let rebuilt = Runtime::from_stocks(
+                "kodak_portra_400",
+                "kodak_portra_endura",
+                runtime.params().clone(),
+                &data_dir(),
+            )
+            .unwrap();
+            assert_eq!(
+                edited.data,
+                rebuilt
+                    .process(image.as_ref().clone(), backend.as_ref())
+                    .unwrap()
+                    .data,
+                "{route}: material update must match independent preparation"
+            );
+            assert_ne!(
+                edited.data, baseline.data,
+                "{route}: material edit was ignored"
             );
 
             let mut params = runtime.params().clone();
@@ -1420,6 +1449,166 @@ mod tests {
                 .any(|(before, after)| (*before as f64 - *after as f64).abs() > 1e-6),
             "film curve gamma update did not change processed pixels"
         );
+    }
+
+    #[test]
+    fn update_is_idempotent_and_rejected_material_edit_preserves_output() {
+        let mut params = scanner_params();
+        params.workflow.route = "input > film > print > scan".into();
+        params.io.scan_film = false;
+        params.scanner.scan_output = "direct_scan".into();
+        params.print_render.glare.active = false;
+        params.debug.deactivate_spatial_effects = true;
+        params.debug.deactivate_stochastic_effects = true;
+        params.film_render.base.scale = 1.8;
+        let mut runtime = Runtime::from_stocks(
+            "kodak_portra_400",
+            "kodak_portra_endura",
+            params,
+            &data_dir(),
+        )
+        .unwrap();
+        let backend = CpuBackend;
+        let image = scanner_image();
+        let accepted = runtime.params().clone();
+        let baseline = runtime.process(image.clone(), &backend).unwrap();
+        for _ in 0..2 {
+            runtime.update(accepted.clone()).unwrap();
+            assert_eq!(
+                runtime.process(image.clone(), &backend).unwrap().data,
+                baseline.data
+            );
+        }
+        let mut rejected = accepted.clone();
+        rejected.film_render.base.scale = 2.4;
+        rejected.scanner.conversion_style = "missing-material-update-style".into();
+        assert!(runtime.update(rejected).is_err());
+        assert_eq!(runtime.params(), &accepted);
+        assert_eq!(
+            runtime.process(image.clone(), &backend).unwrap().data,
+            baseline.data
+        );
+
+        let mut params = accepted;
+        params.film_render.base.scale = 2.4;
+        runtime.update(params).unwrap();
+        let fresh = Runtime::from_stocks(
+            "kodak_portra_400",
+            "kodak_portra_endura",
+            runtime.params().clone(),
+            &data_dir(),
+        )
+        .unwrap();
+        let actual = runtime.process(image.clone(), &backend).unwrap();
+        assert_eq!(actual.data, fresh.process(image, &backend).unwrap().data);
+        assert_ne!(actual.data, baseline.data);
+    }
+
+    #[test]
+    fn film_only_monochrome_updates_match_fresh_material_stage() {
+        let data = data_dir();
+        let film = profile::load_profile_by_name(&data, "kodak_doublex").unwrap();
+        let mut params = scanner_params();
+        params.workflow.route = "input > film".into();
+        params.debug.deactivate_spatial_effects = true;
+        params.debug.deactivate_stochastic_effects = true;
+        let mut runtime = Runtime::new_film(film.clone(), params, &data).unwrap();
+        let backend = CpuBackend;
+        let image = scanner_image();
+        let baseline = runtime.process_stage(image.clone(), &backend, 42).unwrap();
+
+        let accepted = runtime.params().clone();
+        runtime.update(accepted.clone()).unwrap();
+        assert_eq!(runtime.params(), &accepted);
+        let identical = runtime.process_stage(image.clone(), &backend, 42).unwrap();
+        assert_eq!(identical.density.data, baseline.density.data);
+
+        let mut gamma = accepted;
+        gamma.film_render.density_curve_gamma = 2.0;
+        runtime.update(gamma).unwrap();
+        assert_eq!(runtime.params().film_render.density_curve_gamma, 2.0);
+        let fresh = Runtime::new_film(film, runtime.params().clone(), &data).unwrap();
+        let actual = runtime.process_stage(image.clone(), &backend, 42).unwrap();
+        let expected = fresh.process_stage(image, &backend, 42).unwrap();
+        assert_eq!(
+            (actual.density.width, actual.density.height),
+            (expected.density.width, expected.density.height)
+        );
+        assert_eq!(actual.density.data, expected.density.data);
+        assert_ne!(actual.density.data, baseline.density.data);
+        assert_eq!(actual.header.baseline, expected.header.baseline);
+        assert_eq!(
+            serde_json::to_value(&actual.header.context).unwrap(),
+            serde_json::to_value(&expected.header.context).unwrap()
+        );
+        assert_eq!(
+            serde_json::to_value(&actual.header.film).unwrap(),
+            serde_json::to_value(&expected.header.film).unwrap()
+        );
+        assert!(actual.header.print.is_none());
+        assert!(actual.header.original_print.is_none());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn late_neutral_filter_error_rolls_back_material_update() {
+        let data = data_dir();
+        let film = profile::load_profile_by_name(&data, "kodak_portra_400").unwrap();
+        let print = profile::load_profile_by_name(&data, "kodak_portra_endura").unwrap();
+        let overlay = tempfile::tempdir().unwrap();
+        for entry in std::fs::read_dir(&data).unwrap() {
+            let entry = entry.unwrap();
+            if entry.file_name() != "filters" {
+                std::os::unix::fs::symlink(entry.path(), overlay.path().join(entry.file_name()))
+                    .unwrap();
+            }
+        }
+        let filters = overlay.path().join("filters");
+        std::fs::create_dir(&filters).unwrap();
+        for entry in std::fs::read_dir(data.join("filters")).unwrap() {
+            let entry = entry.unwrap();
+            let destination = filters.join(entry.file_name());
+            if entry.file_name() == "neutral_print_filters.json" {
+                std::fs::copy(entry.path(), destination).unwrap();
+            } else {
+                std::os::unix::fs::symlink(entry.path(), destination).unwrap();
+            }
+        }
+        let neutral_path = filters.join("neutral_print_filters.json");
+        let neutral = std::fs::read(&neutral_path).unwrap();
+        let mut params = scanner_params();
+        params.workflow.route = "input > film > print > scan".into();
+        params.io.scan_film = false;
+        params.scanner.scan_output = "direct_scan".into();
+        params.print_render.glare.active = false;
+        params.debug.deactivate_spatial_effects = true;
+        params.debug.deactivate_stochastic_effects = true;
+        params.film_render.base.scale = 1.8;
+        let mut runtime =
+            Runtime::new(film.clone(), print.clone(), params, overlay.path()).unwrap();
+        let backend = CpuBackend;
+        let image = scanner_image();
+        let accepted = runtime.params().clone();
+        let baseline = runtime.process(image.clone(), &backend).unwrap();
+
+        // A missing database is optional; malformed contents force a late preparation error.
+        std::fs::write(&neutral_path, b"{invalid json").unwrap();
+        let mut edited = accepted.clone();
+        edited.film_render.base.scale = 2.4;
+        assert!(runtime.update(edited.clone()).is_err());
+        assert_eq!(runtime.params(), &accepted);
+        assert_eq!(
+            runtime.process(image.clone(), &backend).unwrap().data,
+            baseline.data
+        );
+
+        std::fs::write(&neutral_path, neutral).unwrap();
+        runtime.update(edited).unwrap();
+        assert_eq!(runtime.params().film_render.base.scale, 2.4);
+        let fresh = Runtime::new(film, print, runtime.params().clone(), overlay.path()).unwrap();
+        let actual = runtime.process(image.clone(), &backend).unwrap();
+        assert_eq!(actual.data, fresh.process(image, &backend).unwrap().data);
+        assert_ne!(actual.data, baseline.data);
     }
 
     #[test]

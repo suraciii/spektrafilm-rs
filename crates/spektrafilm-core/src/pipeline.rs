@@ -125,6 +125,16 @@ pub struct Pipeline {
     fotufilm_prepared: crate::stages::grain_fotufilm::Prepared,
     cancellation: Option<Arc<AtomicBool>>,
 }
+
+/// Fully prepared candidate; committing it performs no fallible work.
+pub(crate) struct ParameterUpdate {
+    pub params: RuntimeParams,
+    pub material: Option<crate::pipeline_calibration::MaterialCalibration>,
+    convert_converter: Option<crate::stages::converting::Converter>,
+    conversion_tones: [crate::stages::scanning::ChannelTone; 3],
+    output_gamut: crate::gamut_compression::OutputGamutCompress,
+}
+
 impl Pipeline {
     /// Accessor for the pre-computed TC LUT (used by parity tests).
     pub fn tc_lut(&self) -> Option<&TcLut> {
@@ -143,19 +153,8 @@ impl Pipeline {
         self.preflash_raw
     }
 
-    /// Return a copy of this calibrated pipeline with updated runtime params.
-    ///
-    /// When a sensitivity-affecting (spectral) control changes, the whole
-    /// spectral front-end is rebuilt from `data_dir` — mirroring the cache
-    /// invalidation of Python's `SpectralLUTService`, where
-    /// `set_hanatos2025_adaptation` clears the filming tc_lut whenever the
-    /// adaptation state changes and `get_filming_tc_lut` re-keys on the
-    /// (camera-filtered) sensitivity. Reusing the stale LUT would silently
-    /// ignore the new UV/IR filters, blur and surface settings.
-    ///
-    /// Calibration-affecting runtime controls are detected and rebuilt from
-    /// the spectral source data; rebuild and validation failures are returned
-    /// instead of retaining stale calibration.
+    /// Update parameters, deriving changed materials from their original sources.
+    /// Compatible spectral tables remain owned by this pipeline during preparation.
     pub fn with_params(self, params: RuntimeParams) -> Result<Self, String> {
         self.with_params_with_backend(params, &spektrafilm_backend::cpu_backend::CpuBackend)
     }
@@ -165,20 +164,20 @@ impl Pipeline {
         params: RuntimeParams,
         backend: &dyn ComputeBackend,
     ) -> Result<Self, String> {
-        let mut params = params;
-        crate::params_builder::normalize_runtime_topology(&self.film, &mut params);
+        let update = self.prepare_parameter_update(params, backend)?;
+        self.apply_parameter_update(update);
+        Ok(self)
+    }
+
+    pub(crate) fn prepare_parameter_update(
+        &self,
+        mut params: RuntimeParams,
+        backend: &dyn ComputeBackend,
+    ) -> Result<ParameterUpdate, String> {
+        crate::params_builder::normalize_runtime_topology(&self.original_film, &mut params);
         params.validate()?;
         params.validate_color()?;
         crate::pipeline_calibration::validate_scan_output(&params, &self.film)?;
-        if let Some(model) = self.print.data.density_curves_model.as_ref() {
-            crate::print_morph::morph_density_curves(
-                &self.print.log_exposure_f64(),
-                model,
-                &params.print_render.density_curves_morph,
-                self.print.is_positive(),
-            )
-            .map_err(|error| format!("invalid print density-curve model: {error}"))?;
-        }
         let preparation_changed = match (&self.prepared_tc_lut, backend.preparation_device_id()) {
             (Some(table), Some(device)) => table.values.backend_id() != device,
             (Some(_), None) => true,
@@ -187,64 +186,109 @@ impl Pipeline {
         };
         let route_changed = self.params.workflow.route_enum() != params.workflow.route_enum();
         let prepares_film = params.workflow.route_enum() != crate::WorkflowRoute::Input;
-        if route_changed
+        let spectral_changed = route_changed
             || (prepares_film
                 && (crate::pipeline_calibration::spectral_changed(&self.params, &params)
-                    || crate::pipeline_calibration::calibration_changed(&self.params, &params)
-                    || preparation_changed))
+                    || preparation_changed));
+        let recalibrate = spectral_changed
+            || crate::pipeline_calibration::material_changed(&self.params, &params)
+            || (prepares_film
+                && crate::pipeline_calibration::calibration_changed(&self.params, &params));
+        if !recalibrate
+            && params.workflow.route_enum() != crate::WorkflowRoute::InputFilm
+            && let Some(model) = self.print.data.density_curves_model.as_ref()
         {
-            return self.rebuild_spectral_with_backend(params, backend);
+            crate::print_morph::morph_density_curves(
+                &self.print.log_exposure_f64(),
+                model,
+                &params.print_render.density_curves_morph,
+                self.print.is_positive(),
+            )
+            .map_err(|error| format!("invalid print density-curve model: {error}"))?;
         }
-        if params.scanner.conversion_style != self.params.scanner.conversion_style {
-            self.conversion_tones = crate::stages::scanning::style::resolve(
+        let conversion_tones = if recalibrate
+            || params.scanner.conversion_style != self.params.scanner.conversion_style
+        {
+            crate::stages::scanning::style::resolve(
                 &params.scanner.conversion_style,
                 self.data_dir.as_deref(),
+            )?
+        } else {
+            self.conversion_tones
+        };
+        if recalibrate {
+            let data_dir = self
+                .data_dir
+                .as_deref()
+                .ok_or_else(|| "pipeline lacks data_dir for calibration rebuild".to_owned())?;
+            let retained = (!spectral_changed).then_some(
+                crate::pipeline_calibration::SpectralPreparationRef {
+                    tc_lut: self.tc_lut.as_ref(),
+                    prepared_tc_lut: self.prepared_tc_lut.as_ref(),
+                    mallett_core: self.mallett_core.as_ref(),
+                    front_illuminant: &self.front_illuminant,
+                },
+            );
+            let calibrated = crate::pipeline_calibration::build_with_frontend(
+                (*self.original_film).clone(),
+                (*self.original_print).clone(),
+                params,
+                data_dir,
+                backend,
+                retained,
             )?;
+            return Ok(ParameterUpdate {
+                params: calibrated.params,
+                material: Some(calibrated.material),
+                convert_converter: None,
+                conversion_tones,
+                output_gamut: calibrated.output_gamut,
+            });
         }
-        self.output_gamut = crate::gamut_compression::OutputGamutCompress::build_with_backend(
+        let convert_converter = if params.workflow.route_enum().is_convert_film()
+            && crate::stages::converting::converter_changed(&self.params, &params)
+        {
+            crate::stages::converting::resolve_converter(&self.film, &params)?
+        } else {
+            None
+        };
+        let output_gamut = crate::gamut_compression::OutputGamutCompress::build_with_backend(
             &params.io.output_gamut_compress,
             &params.io.output_color_space,
             backend,
         )?;
-        self.params = params;
-        Ok(self)
-    }
-    /// Rebuild the spectral pipeline unconditionally, carrying the prepared
-    /// grain cache and the bound cancellation signal across the rebuild.
-    ///
-    /// Film-curve controls such as `film_render.density_curve_gamma`,
-    /// `film_render.development_time` and `film_render.chemistry` are absent
-    /// from the spectral and calibration control keys, so a caller that must
-    /// refresh the resolved film cannot rely on `with_params` alone.
-    pub(crate) fn rebuild_spectral(self, params: RuntimeParams) -> Result<Self, String> {
-        self.rebuild_spectral_with_backend(params, &spektrafilm_backend::cpu_backend::CpuBackend)
+        Ok(ParameterUpdate {
+            params,
+            material: None,
+            convert_converter,
+            conversion_tones,
+            output_gamut,
+        })
     }
 
-    pub(crate) fn rebuild_spectral_with_backend(
-        self,
-        params: RuntimeParams,
-        backend: &dyn ComputeBackend,
-    ) -> Result<Self, String> {
-        let data_dir = self
-            .data_dir
-            .clone()
-            .ok_or_else(|| "pipeline lacks data_dir for calibration rebuild".to_owned())?;
-        // A different route prepares its own material state from the source
-        // profiles, not from the previous route's resolved density curves.
-        let route_changed = self.params.workflow.route_enum() != params.workflow.route_enum();
-        let (film, print) = if route_changed {
-            (
-                (*self.original_film).clone(),
-                (*self.original_print).clone(),
-            )
-        } else {
-            (self.film.clone(), self.print.clone())
-        };
-        let mut rebuilt = Self::new_with_spectral_backend(film, print, params, &data_dir, backend)?;
-        rebuilt.original_film = self.original_film.clone();
-        rebuilt.fotufilm_prepared = self.fotufilm_prepared.clone();
-        rebuilt.cancellation = self.cancellation.clone();
-        Ok(rebuilt)
+    pub(crate) fn apply_parameter_update(&mut self, update: ParameterUpdate) {
+        if let Some(material) = update.material {
+            self.film = material.film;
+            self.print = material.print;
+            self.convert_converter = material.convert_converter;
+            self.print_exposure_factor = material.print_exposure_factor;
+            self.print_illuminant = material.print_illuminant;
+            self.preflash_raw = material.preflash_raw;
+            self.midgray_density = material.midgray_density;
+            self.compensated_midgray_density = material.compensated_midgray_density;
+            if let Some(spectral) = material.spectral {
+                self.tc_lut = spectral.tc_lut;
+                self.prepared_tc_lut = spectral.prepared_tc_lut;
+                self.mallett_core = spectral.mallett_core;
+                self.front_illuminant = spectral.front_illuminant;
+            }
+        }
+        if let Some(converter) = update.convert_converter {
+            self.convert_converter = Some(converter);
+        }
+        self.params = update.params;
+        self.output_gamut = update.output_gamut;
+        self.conversion_tones = update.conversion_tones;
     }
     #[cfg(test)]
     pub(crate) fn fotufilm_bank_identity(&self) -> Option<usize> {
@@ -385,23 +429,27 @@ impl Pipeline {
         let calibrated = crate::pipeline_calibration::build_with_backend(
             film, print, params, data_dir, backend,
         )?;
+        let material = calibrated.material;
+        let spectral = material
+            .spectral
+            .expect("cold preparation owns its front end");
         Ok(Self {
-            film: calibrated.film,
-            print: calibrated.print,
+            film: material.film,
+            print: material.print,
             params: calibrated.params,
-            tc_lut: calibrated.tc_lut,
-            prepared_tc_lut: calibrated.prepared_tc_lut,
-            mallett_core: calibrated.mallett_core,
-            convert_converter: calibrated.convert_converter,
-            front_illuminant: calibrated.front_illuminant,
-            print_exposure_factor: calibrated.print_exposure_factor,
-            print_illuminant: calibrated.print_illuminant,
-            preflash_raw: calibrated.preflash_raw,
-            midgray_density: calibrated.midgray_density,
-            compensated_midgray_density: calibrated.compensated_midgray_density,
+            tc_lut: spectral.tc_lut,
+            prepared_tc_lut: spectral.prepared_tc_lut,
+            mallett_core: spectral.mallett_core,
+            convert_converter: material.convert_converter,
+            front_illuminant: spectral.front_illuminant,
+            print_exposure_factor: material.print_exposure_factor,
+            print_illuminant: material.print_illuminant,
+            preflash_raw: material.preflash_raw,
+            midgray_density: material.midgray_density,
+            compensated_midgray_density: material.compensated_midgray_density,
             conversion_tones,
             output_gamut: calibrated.output_gamut,
-            data_dir: calibrated.data_dir,
+            data_dir: Some(data_dir.to_owned()),
             original_film,
             original_print,
             fotufilm_prepared,

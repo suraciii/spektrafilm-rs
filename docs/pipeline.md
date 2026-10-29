@@ -44,6 +44,17 @@ Dedicated research workflows own those buffers through the core observer under t
 [instrument native-observation contract](../specs/instrument/native-observations.md),
 not the `.sfstage` contract.
 
+### Updating material controls
+
+Use `Runtime::update` for in-place CPU-reference updates, or consume the runtime with `with_params` or `with_params_with_backend`.
+Material updates resolve the original profiles again instead of applying adjustments to an already tuned material.
+Film Chemistry, film and print Base, and development-time edits refresh material preparation; film curve gamma also refreshes its middle-gray calibration.
+Print curve morphing and model-less print gamma remain render-time operations.
+Material and exposure-calibration edits retain compatible spectral tables.
+Conversion illumination, calibration, exposure, input color space, and transfer-decoding edits refresh the retained `convert-film` inverse without rebuilding compatible spectral tables.
+An in-place update that fails leaves the previous runtime usable with its accepted parameters and output.
+See the [preparation invariants](../specs/film-chain/design.md) for ownership and invalidation rules.
+
 ### Selected-GPU preparation
 
 Library callers must select the backend before spectral preparation: use `Runtime::new_with_backend` or `Pipeline::new_with_spectral_backend`. `Runtime::new`, `Runtime::from_stocks`, and `Pipeline::new_with_spectral` prepare the CPU reference. To move an existing instance to WGPU, call `with_params_with_backend` with the selected backend before rendering. Immutable processing entry points reject a CPU-prepared TC table or a table owned by another device, before uploading the source; they never upload host-generated TC values as a compatibility path. Changing devices requires rebuilding preparation on the new device through the same backend-aware API. CPU processing retains its reference preparation and algorithms.

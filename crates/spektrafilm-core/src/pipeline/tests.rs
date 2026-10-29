@@ -96,6 +96,380 @@ fn build() -> Pipeline {
         .clone()
 }
 
+fn deterministic_material_params(pipeline: &Pipeline) -> RuntimeParams {
+    let mut params = pipeline.params.clone();
+    params.camera.auto_exposure = false;
+    params.film_render.grain.active = false;
+    params.film_render.halation.active = false;
+    params.film_render.dir_couplers.active = false;
+    params.film_render.glare.active = false;
+    params.print_render.glare.active = false;
+    params.enlarger.diffusion_filter.active = false;
+    params.enlarger.lens_blur = 0.0;
+    params.scanner.lens_blur = 0.0;
+    params.scanner.unsharp_mask = [0.0; 2];
+    params.debug.deactivate_spatial_effects = true;
+    params.debug.deactivate_stochastic_effects = true;
+    params
+}
+
+fn material_probe() -> ImageBuf {
+    ImageBuf::from_data(
+        5,
+        4,
+        (0..60)
+            .map(|i| from_f64(0.035 + (i % 31) as f64 / 45.0))
+            .collect(),
+    )
+}
+
+fn fresh_material_pipeline(source: &Pipeline, params: RuntimeParams) -> Pipeline {
+    Pipeline::new_with_spectral(
+        (*source.original_film).clone(),
+        (*source.original_print).clone(),
+        params,
+        &data_dir(),
+    )
+    .unwrap()
+}
+
+fn assert_material_pixels_close(actual: &ImageBuf, expected: &ImageBuf, case: &str) {
+    assert_eq!(
+        (actual.width, actual.height),
+        (expected.width, expected.height),
+        "{case}"
+    );
+    assert_eq!(actual.data.len(), expected.data.len(), "{case}");
+    for (index, (&actual, &expected)) in actual.data.iter().zip(&expected.data).enumerate() {
+        let (actual, expected) = (to_f64(actual), to_f64(expected));
+        assert!(
+            actual.is_finite() && expected.is_finite(),
+            "{case}: non-finite pixel {index}"
+        );
+        assert!(
+            (actual - expected).abs() <= 1e-5 * (1.0 + expected.abs()),
+            "{case}: pixel {index}: {actual} != {expected}"
+        );
+    }
+}
+
+fn assert_material_pixels_changed(actual: &ImageBuf, baseline: &ImageBuf, case: &str) {
+    assert!(
+        actual
+            .data
+            .iter()
+            .zip(&baseline.data)
+            .any(|(&a, &b)| (to_f64(a) - to_f64(b)).abs() > 1e-7),
+        "{case}: edit did not affect rendered pixels"
+    );
+}
+
+#[test]
+fn material_edits_match_fresh_raw_profile_preparation() {
+    let shared = build();
+    let base = shared
+        .clone()
+        .with_params(deterministic_material_params(&shared))
+        .unwrap();
+    let backend = spektrafilm_backend::cpu_backend::CpuBackend;
+    let image = material_probe();
+    let baseline = base.process(image.clone(), &backend).unwrap();
+    type Edit = fn(&mut RuntimeParams);
+    let cases: [(&str, Edit); 5] = [
+        ("film base scale", |p| p.film_render.base.scale = 1.7),
+        ("film base color", |p| {
+            p.film_render.base.yellow = 1.6;
+            p.film_render.base.cyan = 0.65;
+            p.film_render.base.tilt = 0.12;
+        }),
+        ("film chemistry gamma", |p| {
+            p.film_render.chemistry.gamma_factor = 1.5
+        }),
+        ("film chemistry exhaustion", |p| {
+            p.film_render.chemistry.developer_exhaustion = 0.8
+        }),
+        ("print base", |p| {
+            p.print_render.base.scale = 1.7;
+            p.print_render.base.yellow = 1.5;
+            p.print_render.base.cyan = 0.7;
+        }),
+    ];
+    for (name, edit) in cases {
+        let mut params = base.params.clone();
+        edit(&mut params);
+        let cached = base.clone().with_params(params).unwrap();
+        let fresh = fresh_material_pipeline(&base, cached.params.clone());
+        let actual = cached.process(image.clone(), &backend).unwrap();
+        let expected = fresh.process(image.clone(), &backend).unwrap();
+        assert_material_pixels_close(&actual, &expected, name);
+        assert_material_pixels_changed(&actual, &baseline, name);
+    }
+
+    let mut params = base.params.clone();
+    params.film_render.chemistry.gamma_factor = 1.5;
+    params.film_render.chemistry.developer_exhaustion = 0.7;
+    let active = base.clone().with_params(params.clone()).unwrap();
+    params.film_render.chemistry.active = false;
+    let inactive = active.clone().with_params(params).unwrap();
+    let fresh = fresh_material_pipeline(&base, inactive.params.clone());
+    let inactive_pixels = inactive.process(image.clone(), &backend).unwrap();
+    assert_material_pixels_close(
+        &inactive_pixels,
+        &fresh.process(image.clone(), &backend).unwrap(),
+        "film chemistry toggle",
+    );
+    assert_material_pixels_changed(
+        &inactive_pixels,
+        &active.process(image, &backend).unwrap(),
+        "film chemistry toggle",
+    );
+}
+
+#[test]
+fn film_gamma_recalibrates_print_from_raw_materials() {
+    let shared = build();
+    let base = shared
+        .clone()
+        .with_params(deterministic_material_params(&shared))
+        .unwrap();
+    let mut params = base.params.clone();
+    params.film_render.density_curve_gamma = 1.6;
+    let updated = base.clone().with_params(params).unwrap();
+    let fresh = fresh_material_pipeline(&base, updated.params.clone());
+    assert!(updated.print_exposure_factor().is_finite());
+    assert!(fresh.print_exposure_factor().is_finite());
+    assert!((updated.print_exposure_factor() - fresh.print_exposure_factor()).abs() < 1e-10);
+    assert!((updated.print_exposure_factor() - base.print_exposure_factor()).abs() > 1e-8);
+    let backend = spektrafilm_backend::cpu_backend::CpuBackend;
+    let image = material_probe();
+    let actual = updated.process(image.clone(), &backend).unwrap();
+    assert_material_pixels_close(
+        &actual,
+        &fresh.process(image.clone(), &backend).unwrap(),
+        "film gamma",
+    );
+    assert_material_pixels_changed(
+        &actual,
+        &base.process(image, &backend).unwrap(),
+        "film gamma",
+    );
+}
+
+#[test]
+fn material_edits_round_trip_and_exposure_rebuild_do_not_compound_base() {
+    let shared = build();
+    let base = shared
+        .clone()
+        .with_params(deterministic_material_params(&shared))
+        .unwrap();
+    let mut a = base.params.clone();
+    a.film_render.base.scale = 1.4;
+    a.film_render.base.yellow = 1.3;
+    a.print_render.base.scale = 1.6;
+    a.print_render.base.magenta = 0.7;
+    let first = base.with_params(a.clone()).unwrap();
+    let mut b = first.params.clone();
+    b.film_render.base.scale = 0.7;
+    b.print_render.base.scale = 0.8;
+    let second = first.clone().with_params(b).unwrap();
+    let backend = spektrafilm_backend::cpu_backend::CpuBackend;
+    let image = material_probe();
+    let first_pixels = first.process(image.clone(), &backend).unwrap();
+    let second_pixels = second.process(image.clone(), &backend).unwrap();
+    assert_material_pixels_changed(&second_pixels, &first_pixels, "A to B");
+    let restored = second.with_params(a).unwrap();
+    let restored_pixels = restored.process(image.clone(), &backend).unwrap();
+    assert_material_pixels_close(&restored_pixels, &first_pixels, "A to B to A");
+    let fresh = fresh_material_pipeline(&first, restored.params.clone());
+    assert_material_pixels_close(
+        &restored_pixels,
+        &fresh.process(image.clone(), &backend).unwrap(),
+        "restored fresh",
+    );
+
+    let mut exposed = restored.params.clone();
+    exposed.camera.exposure_compensation_ev = 0.75;
+    let exposed = restored.with_params(exposed).unwrap();
+    let fresh = fresh_material_pipeline(&first, exposed.params.clone());
+    let exposed_pixels = exposed.process(image.clone(), &backend).unwrap();
+    assert_material_pixels_close(
+        &exposed_pixels,
+        &fresh.process(image, &backend).unwrap(),
+        "exposure rebuild",
+    );
+    assert_material_pixels_changed(&exposed_pixels, &first_pixels, "exposure rebuild");
+}
+
+#[test]
+fn monochrome_development_time_update_uses_raw_family() {
+    let shared = build();
+    let film = crate::profile::load_profile_by_name(&data_dir(), "kodak_doublex").unwrap();
+    let mut params = deterministic_material_params(&shared);
+    params.workflow.route = "input > film > scan".into();
+    params.film_render.development_time = Some(4.0);
+    let first =
+        Pipeline::new_with_spectral(film, (*shared.original_print).clone(), params, &data_dir())
+            .unwrap();
+    assert_eq!(first.film.data.development_time, vec![4.0]);
+    let mut params = first.params.clone();
+    params.film_render.development_time = Some(12.0);
+    let updated = first.clone().with_params(params).unwrap();
+    let fresh = fresh_material_pipeline(&first, updated.params.clone());
+    assert_eq!(
+        updated.original_film.data.development_time,
+        vec![4.0, 5.0, 6.5, 9.0, 12.0]
+    );
+    assert_eq!(updated.film.data.development_time, vec![12.0]);
+    let backend = spektrafilm_backend::cpu_backend::CpuBackend;
+    let image = material_probe();
+    let actual = updated.process(image.clone(), &backend).unwrap();
+    assert_material_pixels_close(
+        &actual,
+        &fresh.process(image.clone(), &backend).unwrap(),
+        "BW development time",
+    );
+    assert_material_pixels_changed(
+        &actual,
+        &first.process(image, &backend).unwrap(),
+        "BW development time",
+    );
+}
+
+#[test]
+fn edited_material_stage_round_trip_preserves_sources_and_continuation() {
+    use crate::stage_execution::{StageResult, continue_stage};
+    use sha2::{Digest, Sha256};
+    let shared = build();
+    let base = shared
+        .clone()
+        .with_params(deterministic_material_params(&shared))
+        .unwrap();
+    let mut params = base.params.clone();
+    params.camera.exposure_compensation_ev = 0.5;
+    params.film_render.base.scale = 1.4;
+    params.film_render.base.yellow = 1.25;
+    params.film_render.density_curve_gamma = 1.3;
+    params.print_render.base.scale = 1.6;
+    params.print_render.base.cyan = 0.8;
+    let full = base.clone().with_params(params).unwrap();
+    assert!(Arc::ptr_eq(&full.original_film, &base.original_film));
+    assert!(Arc::ptr_eq(&full.original_print, &base.original_print));
+    let backend = spektrafilm_backend::cpu_backend::CpuBackend;
+    let image = material_probe();
+    let mut input_digest = Sha256::new();
+    for value in &image.data {
+        input_digest.update(value.to_le_bytes());
+    }
+    let expected = fresh_material_pipeline(&base, full.params.clone())
+        .process(image.clone(), &backend)
+        .unwrap();
+    let mut params = full.params.clone();
+    params.workflow.route = "input > film".into();
+    params.film_render.density_curve_gamma = base.params.film_render.density_curve_gamma;
+    let producing = full.clone().with_params(params).unwrap();
+    let prior_midgray = producing.midgray_density.clone();
+    let mut params = producing.params.clone();
+    params.film_render.density_curve_gamma = full.params.film_render.density_curve_gamma;
+    let producing = producing.with_params(params).unwrap();
+    let fresh = fresh_material_pipeline(&base, producing.params.clone());
+    assert!(
+        producing
+            .midgray_density
+            .iter()
+            .zip(&prior_midgray)
+            .any(|(a, b)| a.is_finite() && b.is_finite() && (a - b).abs() > 1e-8)
+    );
+    for (actual, expected) in [
+        (&producing.midgray_density, &fresh.midgray_density),
+        (
+            &producing.compensated_midgray_density,
+            &fresh.compensated_midgray_density,
+        ),
+    ] {
+        assert_eq!(actual.len(), expected.len());
+        for (&a, &b) in actual.iter().zip(expected) {
+            assert!(a == b || (a.is_nan() && b.is_nan()), "{a} != {b}");
+        }
+    }
+    let mut film = producing.process_stage(image, &backend, 42).unwrap();
+    film.header.provenance.input_identity = format!("{:x}", input_digest.finalize());
+    film.header.provenance.backend = backend.name().to_owned();
+    assert!(
+        film.header
+            .film
+            .matches_source(&full.original_film)
+            .unwrap()
+    );
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("film.sfstage");
+    crate::stage_artifact::write(&path, &film).unwrap();
+    let film = crate::stage_artifact::read(&path).unwrap();
+    assert!(
+        film.header
+            .film
+            .matches_source(&full.original_film)
+            .unwrap()
+    );
+    let mut continuation = film.header.baseline.clone();
+    continuation.workflow.route = "film > print".into();
+    let StageResult::Material(print) = continue_stage(
+        film,
+        continuation,
+        Some((*full.original_print).clone()),
+        &data_dir(),
+        &backend,
+        42,
+    )
+    .unwrap() else {
+        panic!("expected completed print")
+    };
+    assert!(
+        print
+            .header
+            .film
+            .matches_source(&full.original_film)
+            .unwrap()
+    );
+    assert!(
+        print
+            .header
+            .print
+            .as_ref()
+            .unwrap()
+            .matches_source(&full.original_print)
+            .unwrap()
+    );
+    assert!(
+        print
+            .header
+            .original_print
+            .as_ref()
+            .unwrap()
+            .matches_source(&full.original_print)
+            .unwrap()
+    );
+    let path = dir.path().join("print.sfstage");
+    crate::stage_artifact::write(&path, &print).unwrap();
+    let print = crate::stage_artifact::read(&path).unwrap();
+    assert!(
+        print
+            .header
+            .print
+            .as_ref()
+            .unwrap()
+            .matches_source(&full.original_print)
+            .unwrap()
+    );
+    let mut continuation = print.header.baseline.clone();
+    continuation.workflow.route = "print > scan".into();
+    let StageResult::Image(actual) =
+        continue_stage(print, continuation, None, &data_dir(), &backend, 42).unwrap()
+    else {
+        panic!("expected scanned image")
+    };
+    assert_material_pixels_close(&actual, &expected, "persisted material continuation");
+}
+
 #[test]
 fn input_preparation_and_route_changes_preserve_pixels_and_material_calibration() {
     let base = build();
