@@ -376,6 +376,7 @@ fn neighboring_module_reset_retains_inactive_operator_and_uses_global_history() 
     let factory = state::GuiState::factory().runtime_params().unwrap();
     let mut expected = edited.clone();
     expected.output_mix.amount = factory.output_mix.amount;
+    expected.explicit_section_paths.remove("output_mix.amount");
     click(h, "reset Output");
     assert_eq!(h.state().params, expected);
     assert_eq!(h.state().params.scanner.operator, stored);
