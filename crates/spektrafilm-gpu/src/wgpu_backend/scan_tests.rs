@@ -248,42 +248,39 @@ fn standard_setup_large_frame_error_budget() {
     );
 }
 
-#[test]
-fn positive_tone_rejects_dmax_outside_f32_range() {
-    let gpu = crate::test_support::adapter();
-    let mut p = parameters();
-    p.standard_setup = false;
-    p.camera_ev = 0.0;
-    p.dmax = [1e308; 3];
-    p.contrast = [1.0; 3];
-    p.brightness_ev = [1000.0; 3];
-    p.denominator = p.dmax.map(|d| -(-std::f64::consts::LN_10 * d).exp_m1());
-    p.operator_contrast_delta = 0.0;
-    p.operator_exposure_ev = 0.0;
-    p.operator_color = [0.0; 3];
-    p.tone_to_output = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
-    // Finite binary64 values outside the binary32 range are rejected.
-    let values = [2.0f32, 2.2, 2.4];
-    let source = gpu
-        .device
-        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("huge_dmax_white_source"),
-            contents: bytemuck::cast_slice(&values),
-            usage: wgpu::BufferUsages::STORAGE
-                | wgpu::BufferUsages::COPY_SRC
-                | wgpu::BufferUsages::COPY_DST,
-        });
-    let output = gpu.device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("huge_dmax_white_output"),
-        size: 12,
-        mapped_at_creation: false,
-        usage: wgpu::BufferUsages::STORAGE
-            | wgpu::BufferUsages::COPY_SRC
-            | wgpu::BufferUsages::COPY_DST,
-    });
-    let error = match gpu.build_scan_density_state(&p, &source, &output, 1, 1, None) {
-        Ok(_) => panic!("unrepresentable dmax was accepted"),
-        Err(error) => error,
-    };
-    assert_eq!(error, "negative-to-positive dmax exceeds finite f32 range");
+mod logic_tests {
+    use super::*;
+
+    #[test]
+    fn positive_tone_rejects_dmax_outside_f32_range() {
+        let max = f64::from(f32::MAX);
+        for value in [0.0, -0.0, 1.0, -1.0, max, -max] {
+            for channel in 0..3 {
+                let mut dmax = [1.0; 3];
+                dmax[channel] = value;
+                assert!(
+                    validate_dmax(&dmax).is_ok(),
+                    "dmax {value} in channel {channel}"
+                );
+            }
+        }
+        let beyond = max * (1.0 + f64::EPSILON);
+        for value in [
+            beyond,
+            -beyond,
+            1e308,
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+            f64::NAN,
+        ] {
+            for channel in 0..3 {
+                let mut dmax = [1.0; 3];
+                dmax[channel] = value;
+                assert_eq!(
+                    validate_dmax(&dmax).unwrap_err(),
+                    "negative-to-positive dmax exceeds finite f32 range"
+                );
+            }
+        }
+    }
 }

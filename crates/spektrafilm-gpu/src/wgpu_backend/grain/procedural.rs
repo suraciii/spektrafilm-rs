@@ -1202,11 +1202,6 @@ mod logic_tests {
         assert!(!canvas_transport_needed(&params, false));
         assert!(!canvas_transport_needed(&params, true));
     }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
 
     /// Every sample must be composed by exactly one band, and every band must
     /// store the rows its pixels read. Brute force over the same mapping the
@@ -1287,6 +1282,11 @@ mod tests {
             }
         }
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
 
     #[test]
     fn contiguous_row_gathers_match_row_sized_copies_across_physical_pages() {

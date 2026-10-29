@@ -8,6 +8,8 @@
 
 **Fixtures:** A case must reuse a prepared fixture that another case in the same binary already prepared when both need the same inputs. A case must not rebuild a population, bank, or calibration that already exists for its inputs.
 
+Shared host fixtures may retain prepared populations, CPU banks, and parameter records. Initialize them before acquiring a device guard. Reuse the same input image for both sides of a parity comparison when the inputs are identical.
+
 Parameterized device tests should acquire one backend outside the case loop unless device creation or replacement is the behavior under test. Reuse its pipeline cache, but keep mutable buffers, cancellation, and observation state local to each case. Do not share a global backend across tests.
 
 **Main cost:** The full gate must stay within the `Main full verification` timeout in [.github/workflows/ci.yml](../.github/workflows/ci.yml). A change that adds rendering or preparation work reports the measured wall clock of the affected suites in the pull request. Test codegen uses `[profile.test] opt-level = 2` in [Cargo.toml](../Cargo.toml); it still inherits `dev`, so debug assertions and overflow checks stay enabled and only code generation differs.
@@ -23,6 +25,8 @@ This lane still compiles the GPU unit-test binary and its dependencies. It does 
 Prefer device-free tests of production logic. Parameter validation, geometry, index ranges, resource budgets, execution plans, and small numerical boundaries should not require an adapter. Before adding a device test, check whether the regression belongs in an existing host calculation or a small private calculation shared with the production path.
 
 Logic tests must use small deterministic in-memory inputs instead of unnecessary stock loading or environment setup. Inspect helper calls before placing a test in `logic_tests::`; the absence of device code in the test body is not enough. Test accepted and rejected boundaries, not incidental error wording, struct copies, or source-text markers.
+
+Tests of source transformation should exercise the transformation with supplied input. Do not inspect checked-in shader text as a substitute for executing the shader's behavior.
 
 Persistence tests must use real IO in isolated temporary directories. Shader numerics, actual bindings, queue synchronization, and device ownership require real execution. Keep those device assertions and full-render acceptance; a mock dispatch or a duplicate host implementation of a shader is not equivalent coverage.
 
