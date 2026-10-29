@@ -66,6 +66,19 @@ impl Preflight {
 }
 
 impl Pipeline {
+    /// A device TC descriptor has no host samples and cannot enter the CPU sampler.
+    pub(in crate::pipeline) fn host_tc_lut(
+        &self,
+    ) -> Result<Option<&spektrafilm_math::spectral::TcLut>, String> {
+        if self.prepared_tc_lut().is_some() {
+            return Err(
+                "CPU rendering requires host spectral preparation; update parameters with the CPU backend first"
+                    .into(),
+            );
+        }
+        Ok(self.tc_lut())
+    }
+
     /// The conservative device-coverage decision for this request and backend.
     ///
     /// A CPU backend is never rejected; the CPU path is a complete, legitimate
@@ -122,8 +135,8 @@ impl Pipeline {
         // resident route depends on; without it no device path exists.
         // Input-only uses terminal conversion, and convert-film starts with
         // the inverse scanner solve, so neither needs an RGB-to-raw head.
-        if self.tc_lut.is_none()
-            && self.mallett_core.is_none()
+        if self.tc_lut().is_none()
+            && self.mallett_core().is_none()
             && !route.is_convert_film()
             && route != crate::WorkflowRoute::Input
         {

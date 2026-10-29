@@ -349,7 +349,7 @@ impl RuntimeCache {
         context: &ObservationContext,
         backend: &dyn spektrafilm_backend::ComputeBackend,
     ) -> Result<&mut Runtime, crate::app::Message> {
-        if let Some(mut cached) = self.entry.take() {
+        let cached_update = self.entry.as_ref().and_then(|cached| {
             let digested = snapshot.digested_params(
                 preview,
                 &cached.film,
@@ -365,18 +365,17 @@ impl RuntimeCache {
                 special: snapshot.special.clone(),
                 preparation_device: backend.preparation_device_id(),
             };
-            if cached.key == key {
-                cached.runtime = cached
-                    .runtime
-                    .with_params_with_backend(digested, backend)
-                    .map_err(|error| {
-                        crate::app::Message::new("operations.runtime_update_error")
-                            .arg("detail", error)
-                    })?;
-                self.entry = Some(cached);
-                return Ok(&mut self.entry.as_mut().expect("runtime cache restored").runtime);
-            }
-            self.entry = Some(cached);
+            (cached.key == key).then_some(digested)
+        });
+        if let Some(digested) = cached_update {
+            let cached = self.entry.as_mut().expect("matching runtime cache entry");
+            cached
+                .runtime
+                .update_with_backend(digested, backend)
+                .map_err(|error| {
+                    crate::app::Message::new("operations.runtime_update_error").arg("detail", error)
+                })?;
+            return Ok(&mut cached.runtime);
         }
 
         let film = profile::load_profile_by_name(&snapshot.data_dir, &snapshot.film_name).map_err(
@@ -558,7 +557,23 @@ mod tests {
 
     #[test]
     fn runtime_cache_recovers_from_profile_and_update_failures() {
-        let (snapshot, image) = snapshot_and_input();
+        fn link_tree(source: &std::path::Path, destination: &std::path::Path) {
+            std::fs::create_dir_all(destination).unwrap();
+            for entry in std::fs::read_dir(source).unwrap() {
+                let entry = entry.unwrap();
+                let target = destination.join(entry.file_name());
+                if entry.file_type().unwrap().is_dir() {
+                    link_tree(&entry.path(), &target);
+                } else if std::fs::hard_link(entry.path(), &target).is_err() {
+                    std::fs::copy(entry.path(), target).unwrap();
+                }
+            }
+        }
+
+        let (mut snapshot, image) = snapshot_and_input();
+        let data = tempfile::tempdir().unwrap();
+        link_tree(&snapshot.data_dir, data.path());
+        snapshot.data_dir = data.path().to_owned();
         let input = &image;
         let backend = CpuBackend;
         let context = ObservationContext::default();
@@ -568,6 +583,7 @@ mod tests {
             .unwrap()
             .process(input.clone(), &backend)
             .unwrap();
+        let committed_params = cache.entry.as_ref().unwrap().runtime.params().clone();
 
         let missing = tempfile::tempdir().unwrap();
         let mut failed_profile = snapshot.clone();
@@ -580,7 +596,10 @@ mod tests {
                 .to_string()
                 .contains("kodak_portra_400")
         );
-        assert!(cache.entry.is_some());
+        assert_eq!(
+            cache.entry.as_ref().unwrap().runtime.params(),
+            &committed_params
+        );
         let recovered = cache
             .prepare_observed(&snapshot, false, &context)
             .unwrap()
@@ -588,8 +607,31 @@ mod tests {
             .unwrap();
         assert_eq!(recovered.data, expected.data);
 
+        // A different key can load its profiles but still fail runtime setup.
+        let mut failed_build = snapshot.clone();
+        failed_build.special["film_channel_swap"] = serde_json::json!([2, 1, 0]);
+        failed_build.params.scanner.conversion_style = "missing-cache-build-style".into();
+        assert!(
+            cache
+                .prepare_observed(&failed_build, false, &context)
+                .err()
+                .unwrap()
+                .to_string()
+                .contains("conversion_style")
+        );
+        let retained = &cache.entry.as_ref().unwrap().runtime;
+        assert_eq!(retained.params(), &committed_params);
+        assert_eq!(
+            retained.process(input.clone(), &backend).unwrap().data,
+            expected.data
+        );
+
+        // Any cold rebuild must now fail, while the committed snapshot remains usable.
+        std::fs::remove_dir_all(data.path().join("profiles")).unwrap();
+
         let mut failed_update = snapshot.clone();
-        failed_update.params.scanner.conversion_style = "../etc/passwd".into();
+        failed_update.params.film_render.base.scale = 2.4;
+        failed_update.params.scanner.conversion_style = "missing-cache-update-style".into();
         assert!(
             cache
                 .prepare_observed(&failed_update, false, &context)
@@ -598,12 +640,17 @@ mod tests {
                 .to_string()
                 .contains("conversion_style")
         );
-        assert!(cache.entry.is_none());
-        let rebuilt = cache
+        let retained = &cache.entry.as_ref().unwrap().runtime;
+        assert_eq!(retained.params(), &committed_params);
+        assert_eq!(
+            retained.process(input.clone(), &backend).unwrap().data,
+            expected.data
+        );
+        let recovered = cache
             .prepare_observed(&snapshot, false, &context)
             .unwrap()
             .process(input.clone(), &backend)
             .unwrap();
-        assert_eq!(rebuilt.data, expected.data);
+        assert_eq!(recovered.data, expected.data);
     }
 }

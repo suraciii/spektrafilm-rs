@@ -1,7 +1,7 @@
 // Procedural grain: independent deterministic noise, native encoded RGB composition.
 // Uniform layout: dimensions [width,height,phase_bits,mode], controls [amount,shadows,
 // midtones,highlights], geometry [raw_scale,cluster_size,rotation,color], flags
-// [resolution_factor,resolution_type,colored,clustered], window [first,count,row_base,rows],
+// [canvas_width,canvas_height,colored,clustered], window [first,count,row_base,rows],
 // canvas [cells_wide,cells_high,chunk_cell_base,row_base], generator_geometry
 // [analogue_mult_x,analogue_mult_y,analogue_aspect,analogue_texel].
 struct Params { dimensions:vec4<u32>, controls:vec4<f32>, geometry:vec4<f32>, flags:vec4<f32>, window:vec4<u32>, canvas:vec4<u32>, generator_geometry:vec4<f32> }
@@ -256,8 +256,7 @@ fn canvas_main(@builtin(global_invocation_id) gid:vec3<u32>,@builtin(num_workgro
  let local=gid.x+gid.y*grid.x*256u;
  if(local>=p.window.y){return;}
  let cell=p.window.x+local;
- let width=p.dimensions.x;let height=p.dimensions.y;
- let gsf=max(5200./f32(width),3100./f32(height));let size=floor(vec2<f32>(f32(width),f32(height))*gsf);
+ let size=p.flags.xy;
  let coord=vec2<i32>(i32(cell%p.canvas.x),i32(cell/p.canvas.x));
  let rgb=source_at(coord,size);let luma=dot(rgb,vec3(0.2125,0.7154,0.0721));
  let value=generator(vec2<f32>(coord),size,luma,rgb,false);
@@ -269,9 +268,9 @@ fn canvas_main(@builtin(global_invocation_id) gid:vec3<u32>,@builtin(num_workgro
 @compute @workgroup_size(256)
 fn main(@builtin(global_invocation_id) gid:vec3<u32>,@builtin(num_workgroups) grid:vec3<u32>){
  let local=gid.x+gid.y*grid.x*256u;let width=p.dimensions.x;let height=p.dimensions.y;if(local>=p.window.y){return;}let idx=p.window.x+local;let i=local*3u;
- let x=idx%width;let y=idx/width;let raw_a=clamp(p.controls.x,0.,1.);let effective_a=effective_control(raw_a);let a=effective_a*select(1.,0.5,p.dimensions.w!=0u);let gsf=max(5200./f32(width),3100./f32(height));
+ let x=idx%width;let y=idx/width;let raw_a=clamp(p.controls.x,0.,1.);let effective_a=effective_control(raw_a);let a=effective_a*select(1.,0.5,p.dimensions.w!=0u);
  let rgb=vec3(working_rgb[i],working_rgb[i+1u],working_rgb[i+2u]);let luma=rgb.x*0.2125+rgb.y*0.7154+rgb.z*0.0721;
- let uv=vec2<f32>(f32(x),f32(y))*vec2(1./f32(max(width-1u,1u)),1./f32(max(height-1u,1u)));let size=floor(vec2<f32>(f32(width),f32(height))*gsf);var g=vec3<f32>(0.);
+ let uv=vec2<f32>(f32(x),f32(y))*vec2(1./f32(max(width-1u,1u)),1./f32(max(height-1u,1u)));let size=p.flags.xy;var g=vec3<f32>(0.);
  if(p.dimensions.w!=0u){g=generator(uv,vec2(f32(width),f32(height)),luma,rgb,true);}else{
   let at=vec2<i32>(uv*(size/(1.+(p.geometry.x-1.)/47.*1.5)));
   for(var dy=-1;dy<=1;dy++){for(var dx=-1;dx<=1;dx++){g+=cell_at(at+vec2<i32>(dx,dy));}}g*=1./9.;

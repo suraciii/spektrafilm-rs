@@ -22,6 +22,13 @@ struct ShaderParams {
     generator_geometry: [f32; 4],
 }
 
+// Resolve once in host binary32 arithmetic. A device's approximate division
+// before floor can otherwise select a different canvas size and noise hash.
+fn canvas_size(width: u32, height: u32) -> [f32; 2] {
+    let scale = (5200.0 / width as f32).max(3100.0 / height as f32);
+    [width, height].map(|extent| (extent as f32 * scale).floor().max(1.0))
+}
+
 fn shader_params(
     width: u32,
     height: u32,
@@ -30,8 +37,7 @@ fn shader_params(
     let timer = params
         .timer
         .unwrap_or_else(|| spektrafilm_math::grain::seeded_phase(params.seed));
-    let gsf = (5200.0f32 / width.max(1) as f32).max(3100.0f32 / height.max(1) as f32);
-    let size = [(width as f32 * gsf).floor(), (height as f32 * gsf).floor()];
+    let size = canvas_size(width, height);
     let scale = params.raw_scale.clamp(0.5, 1.4);
     let scaled = size.map(|v| v * scale);
     // Image-independent generator coefficients retain CPU stepwise f32
@@ -57,8 +63,8 @@ fn shader_params(
             params.color,
         ],
         flags: [
-            params.resolution_factor,
-            params.resolution_type as f32,
+            size[0],
+            size[1],
             params.colored as u32 as f32,
             params.clustered as u32 as f32,
         ],

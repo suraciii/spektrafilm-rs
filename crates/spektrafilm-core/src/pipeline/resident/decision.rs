@@ -75,7 +75,9 @@ impl Pipeline {
         if self.output_gamut.is_active() && self.output_gamut.gpu_params().is_none() {
             reasons.push(ResidentFallbackReason::UnsupportedOutputGamut);
         }
-        if self.tc_lut.is_none() && self.mallett_core.is_none() && self.convert_converter.is_none()
+        if self.tc_lut().is_none()
+            && self.mallett_core().is_none()
+            && self.convert_converter.is_none()
         {
             reasons.push(ResidentFallbackReason::MissingResidentFrontPass);
         }

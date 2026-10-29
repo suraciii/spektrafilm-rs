@@ -4,6 +4,8 @@
 //! scanned RGB is mapped back to film CMY density using the same spectral scan
 //! model used by `scanning.rs`.
 
+use std::sync::Arc;
+
 use rayon::prelude::*;
 use spektrafilm_math::{
     colorspace,
@@ -76,6 +78,52 @@ fn solve3(mut a: [[f64; 3]; 3], mut b: [f64; 3]) -> [f64; 3] {
     x
 }
 
+struct ConverterInputs<'a> {
+    dye: &'a [Vec<f64>],
+    base: &'a [f64],
+    density_curves: &'a [Vec<f64>],
+    scan_illuminant: &'a str,
+    calibration: &'a str,
+    exposure_compensation_ev: f64,
+    input_color_space: &'a str,
+    decode_input: bool,
+}
+
+impl<'a> ConverterInputs<'a> {
+    fn from_profile_and_params(profile: &'a Profile, params: &'a RuntimeParams) -> Self {
+        Self {
+            dye: &profile.data.channel_density,
+            base: &profile.data.base_density,
+            density_curves: &profile.data.density_curves,
+            scan_illuminant: &params.film_render.convert.scan_illuminant,
+            calibration: &params.film_render.convert.calibration,
+            exposure_compensation_ev: params.film_render.convert.exposure_compensation_ev,
+            input_color_space: &params.io.input_color_space,
+            decode_input: params.io.input_cctf_decoding,
+        }
+    }
+
+    fn matches(&self, other: &Self) -> bool {
+        fn same_values(a: &[f64], b: &[f64]) -> bool {
+            std::ptr::eq(a, b)
+                || (a.len() == b.len() && a.iter().zip(b).all(|(x, y)| x.to_bits() == y.to_bits()))
+        }
+        fn same_rows(a: &[Vec<f64>], b: &[Vec<f64>]) -> bool {
+            std::ptr::eq(a, b)
+                || (a.len() == b.len() && a.iter().zip(b).all(|(x, y)| same_values(x, y)))
+        }
+
+        same_rows(self.dye, other.dye)
+            && same_values(self.base, other.base)
+            && same_rows(self.density_curves, other.density_curves)
+            && self.scan_illuminant == other.scan_illuminant
+            && self.calibration == other.calibration
+            && self.exposure_compensation_ev == other.exposure_compensation_ev
+            && self.input_color_space == other.input_color_space
+            && self.decode_input == other.decode_input
+    }
+}
+
 #[derive(Clone)]
 pub(crate) struct Converter {
     dye: Vec<[f64; 3]>,
@@ -89,19 +137,18 @@ pub(crate) struct Converter {
     gain: f64,
     seed_log_rgb: [f64; 3],
     seed_inverse: nalgebra::Matrix3<f64>,
-    cctf_kind: u32,
+    cctf: colorspace::Cctf,
     decode_input: bool,
 }
 
 impl Converter {
-    fn new(profile: &Profile, params: &RuntimeParams) -> Result<Self, String> {
-        let illuminant =
-            select_illuminant_f64(&params.film_render.convert.scan_illuminant).into_owned();
+    fn new(inputs: &ConverterInputs<'_>) -> Result<Self, String> {
+        let illuminant = select_illuminant_f64(inputs.scan_illuminant).into_owned();
         let n = illuminant
             .len()
-            .min(profile.data.channel_density.len())
+            .min(inputs.dye.len())
             .min(spectral::N_WAVELENGTHS);
-        let dye: Vec<[f64; 3]> = profile.data.channel_density[..n]
+        let dye: Vec<[f64; 3]> = inputs.dye[..n]
             .iter()
             .map(|row| {
                 [
@@ -111,8 +158,7 @@ impl Converter {
                 ]
             })
             .collect();
-        let base: Vec<f64> =
-            profile.data.base_density[..n.min(profile.data.base_density.len())].to_vec();
+        let base: Vec<f64> = inputs.base[..n.min(inputs.base.len())].to_vec();
         let mut cmfs = Vec::with_capacity(n);
         for i in 0..n {
             cmfs.push([
@@ -137,8 +183,8 @@ impl Converter {
             1.0,
             illum_xyz[2] / sum / (illum_xyz[1] / sum),
         ];
-        let input_space = colorspace::resolve(&params.io.input_color_space)
-            .expect("validated input colour space");
+        let input_space =
+            colorspace::resolve(inputs.input_color_space).expect("validated input colour space");
         let cat =
             colorspace::chromatic_adaptation_matrix_f64(scan_white, input_space.whitepoint_xyz());
         let mut xyz_to_rgb = [[0.0; 3]; 3];
@@ -156,7 +202,7 @@ impl Converter {
         #[allow(clippy::needless_range_loop)]
         for channel in 0..3 {
             let (mut lo, mut hi) = (f64::INFINITY, f64::NEG_INFINITY);
-            for row in &profile.data.density_curves {
+            for row in inputs.density_curves {
                 if let Some(value) = row.get(channel).copied().filter(|v| v.is_finite()) {
                     lo = lo.min(value);
                     hi = hi.max(value);
@@ -174,12 +220,12 @@ impl Converter {
             normalization,
             xyz_to_rgb,
             cmy_max,
-            calibration: parse_calibration(&params.film_render.convert.calibration)?,
-            gain: 2.0f64.powf(params.film_render.convert.exposure_compensation_ev),
+            calibration: parse_calibration(inputs.calibration)?,
+            gain: 2.0f64.powf(inputs.exposure_compensation_ev),
             seed_log_rgb: [0.0; 3],
             seed_inverse: nalgebra::Matrix3::zeros(),
-            cctf_kind: spektrafilm_backend::cctf_kind(input_space.cctf),
-            decode_input: params.io.input_cctf_decoding,
+            cctf: input_space.cctf,
+            decode_input: inputs.decode_input,
         };
         let (rgb, jacobian) = converter.forward_jacobian(cmy_max.map(|v| v * 0.5));
         converter.seed_log_rgb = rgb.map(|v| v.max(1e-12).log10());
@@ -208,7 +254,7 @@ impl Converter {
             seed_inverse: std::array::from_fn(|i| {
                 std::array::from_fn(|j| self.seed_inverse[(i, j)])
             }),
-            cctf_kind: self.cctf_kind,
+            cctf_kind: spektrafilm_backend::cctf_kind(self.cctf),
             decode_input: self.decode_input,
             n_wl: self.dye.len() as u32,
         }
@@ -295,26 +341,25 @@ impl Converter {
     }
 }
 
-/// Whether a non-profile input captured by `Converter::new` has changed.
-pub(crate) fn converter_changed(old: &RuntimeParams, new: &RuntimeParams) -> bool {
-    old.film_render.convert.scan_illuminant != new.film_render.convert.scan_illuminant
-        || old.film_render.convert.calibration != new.film_render.convert.calibration
-        || old.film_render.convert.exposure_compensation_ev
-            != new.film_render.convert.exposure_compensation_ev
-        || old.io.input_color_space != new.io.input_color_space
-        || old.io.input_cctf_decoding != new.io.input_cctf_decoding
-}
-
-pub(crate) fn resolve_converter(
+pub(crate) fn prepare_converter(
     profile: &Profile,
     params: &RuntimeParams,
-) -> Result<Option<Converter>, String> {
-    params
-        .workflow
-        .route_enum()
-        .is_convert_film()
-        .then(|| Converter::new(profile, params))
-        .transpose()
+    previous: Option<(&Profile, &RuntimeParams, &Arc<Converter>)>,
+) -> Result<Option<Arc<Converter>>, String> {
+    if !params.workflow.route_enum().is_convert_film() {
+        return Ok(None);
+    }
+    let inputs = ConverterInputs::from_profile_and_params(profile, params);
+    if let Some((old_profile, old_params, converter)) = previous
+        && old_params.workflow.route_enum().is_convert_film()
+        && inputs.matches(&ConverterInputs::from_profile_and_params(
+            old_profile,
+            old_params,
+        ))
+    {
+        return Ok(Some(Arc::clone(converter)));
+    }
+    Converter::new(&inputs).map(Arc::new).map(Some)
 }
 
 pub fn process(
@@ -322,25 +367,29 @@ pub fn process(
     profile: &Profile,
     params: &RuntimeParams,
 ) -> Result<ImageBuf, String> {
-    let converter = Converter::new(profile, params)?;
-    let mut output = ImageBuf::new(image.width, image.height);
-    output
-        .data
-        .par_chunks_exact_mut(3)
-        .zip(image.data.par_chunks_exact(3))
-        .for_each(|(dst, src)| {
-            let mut rgb = [to_f64(src[0]), to_f64(src[1]), to_f64(src[2])];
-            if params.io.input_cctf_decoding {
-                let space = colorspace::resolve(&params.io.input_color_space)
-                    .expect("validated input colour space");
-                rgb = rgb.map(|v| colorspace::cctf_decode(v, space.cctf));
-            }
-            let cmy = converter.invert(rgb);
-            dst[0] = from_f64(cmy[0]);
-            dst[1] = from_f64(cmy[1]);
-            dst[2] = from_f64(cmy[2]);
-        });
-    Ok(output)
+    let converter = Converter::new(&ConverterInputs::from_profile_and_params(profile, params))?;
+    Ok(converter.process(image))
+}
+
+impl Converter {
+    pub(crate) fn process(&self, image: &ImageBuf) -> ImageBuf {
+        let mut output = ImageBuf::new(image.width, image.height);
+        output
+            .data
+            .par_chunks_exact_mut(3)
+            .zip(image.data.par_chunks_exact(3))
+            .for_each(|(dst, src)| {
+                let mut rgb = [to_f64(src[0]), to_f64(src[1]), to_f64(src[2])];
+                if self.decode_input {
+                    rgb = rgb.map(|v| colorspace::cctf_decode(v, self.cctf));
+                }
+                let cmy = self.invert(rgb);
+                dst[0] = from_f64(cmy[0]);
+                dst[1] = from_f64(cmy[1]);
+                dst[2] = from_f64(cmy[2]);
+            });
+        output
+    }
 }
 
 /// Damped least squares shared by the small calibration problems.
@@ -489,7 +538,7 @@ pub fn detect_base(
         base.yellow = x[2];
         let mut profile = native.clone();
         crate::pipeline_calibration::apply_base_tuning(&mut profile, &base, None);
-        Converter::new(&profile, params)
+        Converter::new(&ConverterInputs::from_profile_and_params(&profile, params))
             .expect("validated conversion parameters")
             .forward_jacobian([0.0; 3])
             .0
@@ -536,7 +585,7 @@ pub fn blind_calibration(
         .map(|i| pixels[i * (pixels.len() - 1) / (count - 1).max(1)].map(|v| v.max(0.0)))
         .collect();
     let base = bright_mean(&samples, 99.0);
-    let mut converter = Converter::new(film, params)?;
+    let mut converter = Converter::new(&ConverterInputs::from_profile_and_params(film, params))?;
     let gain = converter.gain;
     converter.gain = 1.0;
     converter.calibration = [[1., 0., 0.], [0., 1., 0.], [0., 0., 1.]];
@@ -738,7 +787,8 @@ mod acquisition_tests {
         for light in ["D55", "T"] {
             params.film_render.convert.scan_illuminant = light.into();
             params.validate().unwrap();
-            let converter = Converter::new(&film, &params).unwrap();
+            let converter =
+                Converter::new(&ConverterInputs::from_profile_and_params(&film, &params)).unwrap();
             let capture = converter.forward_jacobian(expected).0;
             let inverse = converter.invert(capture);
             for c in 0..3 {
@@ -752,7 +802,7 @@ mod acquisition_tests {
             changed.info.stage = "printing".into();
             changed.info.usage = "cine".into();
             assert_eq!(changed.readout_illuminant(), "BB5800");
-            let same = Converter::new(&changed, &params)
+            let same = Converter::new(&ConverterInputs::from_profile_and_params(&changed, &params))
                 .unwrap()
                 .forward_jacobian(expected)
                 .0;
@@ -774,5 +824,156 @@ mod acquisition_tests {
                 .unwrap_err()
                 .contains("film_render.convert.scan_illuminant")
         );
+    }
+
+    #[test]
+    fn prepared_image_conversion_decodes_the_selected_input_transfer() {
+        let film = crate::profile::load_profile_by_name(
+            &crate::test_support::data_dir(),
+            "kodak_portra_400",
+        )
+        .unwrap();
+        let mut params = RuntimeParams::default();
+        params.workflow.route = "input > convert-film > scan".into();
+        params.io.input_color_space = "sRGB".into();
+        let densities = [[0.2, 0.35, 0.15], [0.4, 0.2, 0.3]];
+        for decode in [false, true] {
+            params.io.input_cctf_decoding = decode;
+            let converter = prepare_converter(&film, &params, None).unwrap().unwrap();
+            let samples = densities
+                .iter()
+                .flat_map(|density| {
+                    converter.forward_jacobian(*density).0.map(|value| {
+                        from_f64(if decode {
+                            colorspace::cctf_encode(value, colorspace::Cctf::Srgb)
+                        } else {
+                            value
+                        })
+                    })
+                })
+                .collect();
+            let image = ImageBuf::from_data(2, 1, samples);
+            let output = converter.process(&image);
+            assert_eq!(output.data, process(&image, &film, &params).unwrap().data);
+            for (pixel, expected) in output.data.as_chunks::<3>().0.iter().zip(densities) {
+                for channel in 0..3 {
+                    assert!(
+                        (to_f64(pixel[channel]) - expected[channel]).abs() < 1e-4,
+                        "decode={decode}: {pixel:?} vs {expected:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn preparation_reuses_only_matching_conversion_inputs() {
+        let film = crate::profile::load_profile_by_name(
+            &crate::test_support::data_dir(),
+            "kodak_portra_400",
+        )
+        .unwrap();
+        let mut params = RuntimeParams::default();
+        params.workflow.route = "input > convert-film > scan".into();
+        let original = prepare_converter(&film, &params, None).unwrap().unwrap();
+
+        let mut unrelated = params.clone();
+        unrelated.io.output_color_space = "Display P3".into();
+        unrelated.film_render.convert.base_percentile = 95.0;
+        let mut equivalent_film = film.clone();
+        equivalent_film.info.usage = "different metadata".into();
+        let reused = prepare_converter(
+            &equivalent_film,
+            &unrelated,
+            Some((&film, &params, &original)),
+        )
+        .unwrap()
+        .unwrap();
+        assert!(Arc::ptr_eq(&original, &reused));
+
+        let edits: [fn(&mut RuntimeParams); 5] = [
+            |p| p.film_render.convert.scan_illuminant = "T".into(),
+            |p| p.film_render.convert.calibration = "1.1 0 0 0 1 0 0 0 1".into(),
+            |p| p.film_render.convert.exposure_compensation_ev = 0.5,
+            |p| p.io.input_color_space = "ACES2065-1".into(),
+            |p| p.io.input_cctf_decoding = !p.io.input_cctf_decoding,
+        ];
+        for edit in edits {
+            let mut changed = params.clone();
+            edit(&mut changed);
+            let updated = prepare_converter(&film, &changed, Some((&film, &params, &original)))
+                .unwrap()
+                .unwrap();
+            let cold = prepare_converter(&film, &changed, None).unwrap().unwrap();
+            assert!(!Arc::ptr_eq(&original, &updated));
+            assert_eq!(
+                updated.invert([0.4, 0.5, 0.6]),
+                cold.invert([0.4, 0.5, 0.6])
+            );
+            assert_eq!(updated.gpu_params().cctf_kind, cold.gpu_params().cctf_kind);
+            assert_eq!(
+                updated.gpu_params().decode_input,
+                cold.gpu_params().decode_input
+            );
+        }
+
+        for material in 0..3 {
+            let mut changed = film.clone();
+            match material {
+                0 => {
+                    let value = changed
+                        .data
+                        .channel_density
+                        .iter_mut()
+                        .flat_map(|row| row.iter_mut())
+                        .find(|v| v.is_finite())
+                        .unwrap();
+                    *value += 0.25;
+                }
+                1 => {
+                    let value = changed
+                        .data
+                        .base_density
+                        .iter_mut()
+                        .find(|v| v.is_finite())
+                        .unwrap();
+                    *value += 0.25;
+                }
+                _ => {
+                    let value = changed
+                        .data
+                        .density_curves
+                        .iter_mut()
+                        .flat_map(|row| row.iter_mut())
+                        .find(|v| v.is_finite())
+                        .unwrap();
+                    *value += 0.25;
+                }
+            }
+            let updated = prepare_converter(&changed, &params, Some((&film, &params, &original)))
+                .unwrap()
+                .unwrap();
+            let cold = prepare_converter(&changed, &params, None).unwrap().unwrap();
+            assert!(!Arc::ptr_eq(&original, &updated), "material {material}");
+            assert_eq!(
+                updated.invert([0.4, 0.5, 0.6]),
+                cold.invert([0.4, 0.5, 0.6])
+            );
+        }
+
+        let mut inactive = params.clone();
+        inactive.workflow.route = "input > film > scan".into();
+        inactive.film_render.convert.calibration = "invalid".into();
+        assert!(
+            prepare_converter(&film, &inactive, Some((&film, &params, &original)))
+                .unwrap()
+                .is_none()
+        );
+        inactive.workflow.route = params.workflow.route.clone();
+        assert!(prepare_converter(&film, &inactive, Some((&film, &params, &original))).is_err());
+        let restored = prepare_converter(&film, &params, Some((&film, &params, &original)))
+            .unwrap()
+            .unwrap();
+        assert!(Arc::ptr_eq(&original, &restored));
     }
 }

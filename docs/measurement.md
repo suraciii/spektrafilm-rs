@@ -32,6 +32,11 @@ stages on that path execute whatever the route says; only the metering stays ski
 convert routes, and `io.scan_film` still drops the print stage. The failure list is the
 resolved chain's own state either way, so it names what the run would actually execute.
 
+For example, `--route "input > convert-film > scan" --enter rgb_in --read log_e_film`
+measures film log exposure, not inverse-converted density. The narrower range retains
+the exposure boundary and its `log10` units. A whole-chain conversion still uses
+the inverse scan model.
+
 The failure prints one line per offender — `path=value  ->  pass --set path=fixed`, the
 resolved value on the left and the value that disables it on the right. The
 [worked example](#worked-example) shows the whole report. The list is the chain's own state

@@ -25,6 +25,8 @@ A finite raw scale clamped to `[0.5, 1.4]` makes every nonzero coordinate quotie
 
 The host MUST reject non-finite Analogue scales before device allocation.
 
+The host MUST resolve the same binary32 virtual canvas dimensions for the generator, canvas sampling, and mean reduction.
+
 Image-independent Analogue generator coefficients MUST be prepared with the CPU reference's stepwise binary32 expressions.
 These coefficients are the two multipliers, the aspect ratio, and the texel size.
 Digital MUST retain its image-dependent computation on the device.

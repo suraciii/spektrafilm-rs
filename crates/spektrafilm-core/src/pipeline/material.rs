@@ -78,7 +78,7 @@ impl Pipeline {
         )?;
         let print = if self.params.workflow.route_enum().prints() {
             Some(
-                EmbeddedProfile::with_source(self.print.clone(), &self.original_print)
+                EmbeddedProfile::with_source((*self.print).clone(), &self.original_print)
                     .map_err(|e| e.to_string())?,
             )
         } else {
@@ -96,16 +96,16 @@ impl Pipeline {
                 metered_ev,
             },
             camera_compensation_ev: self.params.camera.exposure_compensation_ev as f64,
-            print_exposure_factor: self.print_exposure_factor,
-            print_illuminant: self.print_illuminant.clone(),
-            preflash_raw: self.preflash_raw,
-            midgray_density: self.midgray_density.clone(),
-            compensated_midgray_density: self.compensated_midgray_density.clone(),
+            print_exposure_factor: self.print_exposure_factor(),
+            print_illuminant: self.print_illuminant_slice().to_vec(),
+            preflash_raw: self.preflash_raw(),
+            midgray_density: self.midgray_density().to_vec(),
+            compensated_midgray_density: self.compensated_midgray_density().to_vec(),
             prepared_source_color_space: source
                 .as_ref()
                 .map(|_| self.params.io.output_color_space.clone()),
         };
-        let film = EmbeddedProfile::with_source(self.film.clone(), &self.original_film)
+        let film = EmbeddedProfile::with_source((*self.film).clone(), &self.original_film)
             .map_err(|e| e.to_string())?;
         let mut baseline = self.params.clone();
         baseline.random_seed = seed;
@@ -222,21 +222,28 @@ impl Pipeline {
                 &film,
                 params.film_render.development_time,
             ),
-            front_illuminant: film.info.reference_illuminant.clone(),
-            film,
-            print,
-            params,
-            tc_lut: None,
-            prepared_tc_lut: None,
-            mallett_core: None,
+            film: Arc::new(film),
+            print: Arc::new(print),
+            spectral: None,
             convert_converter: None,
-            print_exposure_factor: factor,
-            print_illuminant: illuminant,
-            preflash_raw: preflash,
-            midgray_density: header.context.midgray_density.clone(),
-            compensated_midgray_density: header.context.compensated_midgray_density.clone(),
+            print_calibration: Some(Arc::new(crate::pipeline_calibration::PrintCalibration {
+                exposure_factor: factor,
+                illuminant,
+                preflash_raw: preflash,
+                neutral_cmy: [
+                    params.enlarger.c_filter_neutral as f64,
+                    params.enlarger.m_filter_neutral as f64,
+                    params.enlarger.y_filter_neutral as f64,
+                ],
+            })),
+            gray: Some(Arc::new(crate::pipeline_calibration::GrayReferences {
+                midgray_density: header.context.midgray_density.clone(),
+                compensated_midgray_density: header.context.compensated_midgray_density.clone(),
+            })),
+            params,
             conversion_tones,
-            output_gamut,
+            output_gamut: Arc::new(output_gamut),
+            preparation_device: backend.preparation_device_id(),
             data_dir: Some(data_dir.to_owned()),
             cancellation: None,
         };
@@ -274,7 +281,7 @@ impl Pipeline {
             header.boundary = kind.boundary().into();
             header.print = Some(
                 EmbeddedProfile::with_source(
-                    pipeline.print.clone(),
+                    (*pipeline.print).clone(),
                     &original_print
                         .as_ref()
                         .ok_or("missing original print material")?
@@ -289,7 +296,7 @@ impl Pipeline {
             header.density = None;
             header.prepared_source = None;
             header.context.print_exposure_factor = factor;
-            header.context.print_illuminant = pipeline.print_illuminant.clone();
+            header.context.print_illuminant = pipeline.print_illuminant_slice().to_vec();
             header.context.preflash_raw = preflash;
             header.provenance.backend = backend.name().to_string();
             header.provenance.producing_route =

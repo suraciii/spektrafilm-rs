@@ -1,159 +1,112 @@
 use std::path::Path;
 
-use spektrafilm_math::spectral::TcLut;
-
 use crate::WorkflowRoute;
 use crate::enlarger;
 use crate::params::{PrintExposureEvTracking, PrintExposureMode, RuntimeParams};
 use crate::profile::Profile;
 use crate::spectral_service::{self, select_illuminant};
 
-/// Runtime controls that invalidate spectral calibration artifacts.
-#[derive(Debug, Clone, PartialEq)]
-struct SpectralControlsKey {
-    capture_illuminant: Option<String>,
-    rgb_to_raw_method: String,
-    apply_hanatos2025_adaptation_window: bool,
-    apply_hanatos2025_adaptation_surface: bool,
-    spectral_gaussian_blur: f32,
-    use_cat16: bool,
-    filter_uv: [f32; 3],
-    filter_ir: [f32; 3],
-    color_filter: String,
-    input_gamut_active: bool,
-    input_gamut_algorithm: String,
-    input_gamut_knee: [f32; 3],
-    input_gamut_boundary: String,
-    input_gamut_hull_detail: f64,
+struct SourceIdentity<'a>(&'a Profile);
+
+impl PartialEq for SourceIdentity<'_> {
+    fn eq(&self, other: &Self) -> bool {
+        std::ptr::eq(self.0, other.0)
+    }
 }
 
-/// Profile controls that require rebuilding resolved material from its source.
+#[derive(Clone, Copy, PartialEq)]
+enum FilmChemistryInputs<'a> {
+    NoModel,
+    Unmorphed,
+    Morphed(&'a crate::params::PrintCurvesMorphParams),
+}
+
 #[derive(PartialEq)]
-struct MaterialControlsKey<'a> {
-    film_base: &'a crate::params::FilmBaseParams,
-    film_chemistry: &'a crate::params::PrintCurvesMorphParams,
-    film_development_time: &'a Option<f64>,
-    print_base: Option<&'a crate::params::PrintBaseParams>,
-    print_development_time: Option<&'a Option<f64>>,
+pub(crate) struct FilmMaterialInputs<'a> {
+    source: SourceIdentity<'a>,
+    base: Option<&'a crate::params::FilmBaseParams>,
+    chemistry: FilmChemistryInputs<'a>,
+    development_time: Option<f64>,
 }
 
-fn material_controls_key(params: &RuntimeParams) -> MaterialControlsKey<'_> {
-    let prepare_print = params.workflow.route_enum() != WorkflowRoute::InputFilm;
-    MaterialControlsKey {
-        film_base: &params.film_render.base,
-        film_chemistry: &params.film_render.chemistry,
-        film_development_time: &params.film_render.development_time,
-        print_base: prepare_print.then_some(&params.print_render.base),
-        print_development_time: prepare_print.then_some(&params.print_render.development_time),
+impl<'a> FilmMaterialInputs<'a> {
+    pub fn new(source: &'a Profile, params: &'a RuntimeParams) -> Self {
+        let chemistry = &params.film_render.chemistry;
+        Self {
+            source: SourceIdentity(source),
+            base: params
+                .film_render
+                .base
+                .active
+                .then_some(&params.film_render.base),
+            chemistry: if source.data.density_curves_model.is_none() {
+                FilmChemistryInputs::NoModel
+            } else if chemistry.active {
+                FilmChemistryInputs::Morphed(chemistry)
+            } else {
+                FilmChemistryInputs::Unmorphed
+            },
+            development_time: params.film_render.development_time,
+        }
+    }
+
+    pub fn resolve(&self) -> Profile {
+        crate::profile::resolve_for_render(self.source.0.clone(), self.development_time)
+    }
+
+    pub fn build(&self, mut film: Profile) -> Result<Profile, String> {
+        if let Some(base) = self.base {
+            apply_base_tuning_inner(&mut film, BaseTuning::Film(base));
+        }
+        let inactive = crate::params::PrintCurvesMorphParams {
+            active: false,
+            ..Default::default()
+        };
+        let chemistry = match self.chemistry {
+            FilmChemistryInputs::NoModel => return Ok(film),
+            FilmChemistryInputs::Unmorphed => &inactive,
+            FilmChemistryInputs::Morphed(chemistry) => chemistry,
+        };
+        apply_film_chemistry(&mut film, chemistry)
+            .map_err(|error| format!("invalid film density-curve model: {error}"))?;
+        Ok(film)
     }
 }
 
-pub(crate) fn material_changed(old: &RuntimeParams, new: &RuntimeParams) -> bool {
-    material_controls_key(old) != material_controls_key(new)
+#[derive(PartialEq)]
+pub(crate) struct PrintMaterialInputs<'a> {
+    source: SourceIdentity<'a>,
+    base: Option<&'a crate::params::PrintBaseParams>,
+    development_time: Option<f64>,
 }
 
-/// Runtime controls that invalidate print/front-end calibration data.
-#[derive(Debug, Clone, PartialEq)]
-struct CalibrationControlsKey {
-    exposure_compensation_ev: f32,
-    film_density_curve_gamma: f32,
-    print_exposure_mode: PrintExposureMode,
-    print_exposure_ev_tracking: PrintExposureEvTracking,
-    illuminant: String,
-    y_filter_shift: f32,
-    m_filter_shift: f32,
-    y_filter_neutral: f32,
-    m_filter_neutral: f32,
-    c_filter_neutral: f32,
-    preflash_exposure: f32,
-    preflash_y_filter_shift: f32,
-    preflash_m_filter_shift: f32,
-    neutral_print_filters_from_database: bool,
-    neutral_print_filters_protected: [bool; 3],
-}
+impl<'a> PrintMaterialInputs<'a> {
+    pub fn new(source: &'a Profile, params: &'a RuntimeParams) -> Option<Self> {
+        (!matches!(
+            params.workflow.route_enum(),
+            WorkflowRoute::Input | WorkflowRoute::InputFilm
+        ))
+        .then_some(Self {
+            source: SourceIdentity(source),
+            base: params
+                .print_render
+                .base
+                .active
+                .then_some(&params.print_render.base),
+            development_time: params.print_render.development_time,
+        })
+    }
 
-pub(crate) fn spectral_changed(old: &RuntimeParams, new: &RuntimeParams) -> bool {
-    spectral_controls_key(old) != spectral_controls_key(new)
-}
-
-pub(crate) fn calibration_changed(old: &RuntimeParams, new: &RuntimeParams) -> bool {
-    calibration_controls_key(old) != calibration_controls_key(new)
-}
-
-fn calibration_controls_key(params: &RuntimeParams) -> CalibrationControlsKey {
-    CalibrationControlsKey {
-        exposure_compensation_ev: params.camera.exposure_compensation_ev,
-        film_density_curve_gamma: params.film_render.density_curve_gamma,
-        print_exposure_mode: params.enlarger.print_exposure_mode,
-        print_exposure_ev_tracking: params.settings.print_exposure_ev_tracking,
-        illuminant: params.enlarger.illuminant.clone(),
-        y_filter_shift: params.enlarger.y_filter_shift,
-        m_filter_shift: params.enlarger.m_filter_shift,
-        y_filter_neutral: params.enlarger.y_filter_neutral,
-        m_filter_neutral: params.enlarger.m_filter_neutral,
-        c_filter_neutral: params.enlarger.c_filter_neutral,
-        preflash_exposure: params.enlarger.preflash_exposure,
-        preflash_y_filter_shift: params.enlarger.preflash_y_filter_shift,
-        preflash_m_filter_shift: params.enlarger.preflash_m_filter_shift,
-        neutral_print_filters_from_database: params.settings.neutral_print_filters_from_database,
-        neutral_print_filters_protected: params
-            .neutral_print_filters_protected
-            .unwrap_or([false; 3]),
+    pub fn build(&self) -> Profile {
+        let mut print =
+            crate::profile::resolve_for_render(self.source.0.clone(), self.development_time);
+        if let Some(base) = self.base {
+            apply_base_tuning_inner(&mut print, BaseTuning::Print(base));
+        }
+        print
     }
 }
 
-fn spectral_controls_key(params: &RuntimeParams) -> SpectralControlsKey {
-    SpectralControlsKey {
-        capture_illuminant: params.camera.capture_illuminant.clone(),
-        rgb_to_raw_method: params.settings.rgb_to_raw_method.clone(),
-        apply_hanatos2025_adaptation_window: params.settings.apply_hanatos2025_adaptation_window,
-        apply_hanatos2025_adaptation_surface: params.settings.apply_hanatos2025_adaptation_surface,
-        spectral_gaussian_blur: params.settings.spectral_gaussian_blur,
-        use_cat16: params.settings.use_cat16,
-        filter_uv: params.camera.filter_uv,
-        filter_ir: params.camera.filter_ir,
-        color_filter: params.camera.color_filter.clone(),
-        input_gamut_active: params.io.input_gamut_compress.active,
-        input_gamut_algorithm: params.io.input_gamut_compress.algorithm.clone(),
-        input_gamut_knee: params.io.input_gamut_compress.knee,
-        input_gamut_boundary: params.io.input_gamut_compress.boundary.clone(),
-        input_gamut_hull_detail: params.io.input_gamut_compress.hull_detail,
-    }
-}
-pub(crate) struct CalibrationResult {
-    pub params: RuntimeParams,
-    pub material: MaterialCalibration,
-    pub output_gamut: crate::gamut_compression::OutputGamutCompress,
-}
-
-pub(crate) struct MaterialCalibration {
-    pub film: Profile,
-    pub print: Profile,
-    /// Resolved inverse-scan converter for a convert-film route.
-    pub convert_converter: Option<crate::stages::converting::Converter>,
-    pub print_exposure_factor: f64,
-    pub print_illuminant: Vec<f64>,
-    pub preflash_raw: [f64; 3],
-    pub midgray_density: Vec<f64>,
-    pub compensated_midgray_density: Vec<f64>,
-    /// None retains the compatible frontend; Some replaces it.
-    pub spectral: Option<SpectralPreparation>,
-}
-
-pub(crate) struct SpectralPreparation {
-    pub tc_lut: Option<TcLut>,
-    pub prepared_tc_lut: Option<spektrafilm_backend::PreparedTable>,
-    pub mallett_core: Option<[[f64; 3]; 3]>,
-    pub front_illuminant: String,
-}
-
-#[derive(Clone, Copy)]
-pub(crate) struct SpectralPreparationRef<'a> {
-    pub tc_lut: Option<&'a TcLut>,
-    pub prepared_tc_lut: Option<&'a spektrafilm_backend::PreparedTable>,
-    pub mallett_core: Option<&'a [[f64; 3]; 3]>,
-    pub front_illuminant: &'a str,
-}
 fn interpolate(values: &[f64], wavelengths: &[f64], wavelength: f64) -> f64 {
     if values.is_empty() {
         return 0.0;
@@ -200,24 +153,37 @@ pub(crate) fn apply_base_tuning(
     film_base: &crate::params::FilmBaseParams,
     print_base: Option<&crate::params::PrintBaseParams>,
 ) {
-    let (active, scale, channels, tilt, sigma_points, peaks) = if let Some(base) = print_base {
-        (
+    let tuning = match print_base {
+        Some(base) => BaseTuning::Print(base),
+        None => BaseTuning::Film(film_base),
+    };
+    apply_base_tuning_inner(profile, tuning);
+}
+
+#[derive(Clone, Copy)]
+enum BaseTuning<'a> {
+    Film(&'a crate::params::FilmBaseParams),
+    Print(&'a crate::params::PrintBaseParams),
+}
+
+fn apply_base_tuning_inner(profile: &mut Profile, tuning: BaseTuning<'_>) {
+    let (active, scale, channels, tilt, sigma_points, peaks) = match tuning {
+        BaseTuning::Print(base) => (
             base.active,
             base.scale,
             [base.yellow, base.magenta, base.cyan],
             0.0,
             20.0 / 5.0,
             [445.0, 530.0, 610.0],
-        )
-    } else {
-        (
+        ),
+        BaseTuning::Film(film_base) => (
             film_base.active,
             film_base.scale,
             [film_base.yellow, film_base.magenta, film_base.cyan],
             film_base.tilt,
             35.0 / 5.0,
             [460.0, 555.0, 650.0],
-        )
+        ),
     };
     if !active || profile.data.base_density.is_empty() {
         return;
@@ -243,7 +209,7 @@ pub(crate) fn apply_base_tuning(
             .copied()
             .unwrap_or(380.0 + 5.0 * index as f64)
     };
-    let tuned = if print_base.is_some() {
+    let tuned = if matches!(tuning, BaseTuning::Print(_)) {
         let channel_density = [
             interpolate(base, wavelengths, peaks[0]) * channels[0],
             interpolate(base, wavelengths, peaks[1]) * channels[1],
@@ -371,343 +337,276 @@ pub fn validate_scan_output_detailed(
     Ok(())
 }
 
-pub(crate) fn build_with_backend(
-    film: Profile,
-    print: Profile,
-    params: RuntimeParams,
-    data_dir: &Path,
-    backend: &dyn spektrafilm_backend::ComputeBackend,
-) -> Result<CalibrationResult, String> {
-    build_with_frontend(film, print, params, data_dir, backend, None)
+pub(crate) struct GrayReferences {
+    pub midgray_density: Vec<f64>,
+    pub compensated_midgray_density: Vec<f64>,
 }
 
-pub(crate) fn build_with_frontend(
-    film: Profile,
-    print: Profile,
-    mut params: RuntimeParams,
-    data_dir: &Path,
-    backend: &dyn spektrafilm_backend::ComputeBackend,
-    retained: Option<SpectralPreparationRef<'_>>,
-) -> Result<CalibrationResult, String> {
-    // Reject malformed params (e.g. an unknown diffusion-filter family)
-    // up front — Python raises ValueError mid-run, which also aborts
-    // before any artifact; failing at construction keeps the error
-    // actionable and artifact-free on every entry point.
-    params.validate()?;
-    crate::params_builder::normalize_runtime_topology(&film, &mut params);
-    let prepare_print = params.workflow.route_enum() != WorkflowRoute::InputFilm;
-    // Resolve development time and broadcast the profile's single channel
-    // onto the 3-channel engine layout before reading the profile data.
-    let mut film = crate::profile::resolve_for_render(film, params.film_render.development_time);
-    validate_scan_output(&params, &film)?;
-    let mut print = if prepare_print {
-        crate::profile::resolve_for_render(print, params.print_render.development_time)
-    } else {
-        print
-    };
-    apply_base_tuning(&mut film, &params.film_render.base, None);
-    apply_film_chemistry(&mut film, &params.film_render.chemistry)
-        .map_err(|error| format!("invalid film density-curve model: {error}"))?;
-    if prepare_print {
-        apply_base_tuning(
-            &mut print,
-            &params.film_render.base,
-            Some(&params.print_render.base),
-        );
+pub(crate) struct GrayInputs<'a> {
+    film: &'a Profile,
+    spectral: &'a spectral_service::SpectralPreparation,
+    gamma: f32,
+    exposure_ev: f32,
+    use_cat16: bool,
+}
 
-        if let Some(model) = print.data.density_curves_model.as_ref() {
-            crate::print_morph::morph_density_curves(
-                &print.log_exposure_f64(),
-                model,
-                &params.print_render.density_curves_morph,
-                print.is_positive(),
-            )
-            .map_err(|error| format!("invalid print density-curve model: {error}"))?;
+impl<'a> GrayInputs<'a> {
+    pub fn new(
+        film: &'a Profile,
+        spectral: &'a spectral_service::SpectralPreparation,
+        params: &RuntimeParams,
+    ) -> Self {
+        Self {
+            film,
+            spectral,
+            gamma: params.film_render.density_curve_gamma,
+            exposure_ev: params.camera.exposure_compensation_ev,
+            use_cat16: spectral.tc_lut().is_some() && params.settings.use_cat16,
         }
     }
 
-    // Python parity: look up per-(print, illuminant, film) neutral filter values from
-    // the JSON database — matches `apply_database_neutral_print_filters`. Defaults to
-    // params.enlarger.{c,m,y}_filter_neutral when the combo isn't in the database.
-    // Keep the f64 lookup values around (params is f32) — narrowing to
-    // f32 here costs ~4e-8 precision through the `10^(-cc/100)` step.
-    // Authored-versus-baseline resolution is shared with preparation
-    // (`authored_filter_axes`): authored axes keep the carried value so
-    // replaying a resolved document reproduces its render; baseline axes
-    // follow the per-paper database.
-    let mut neutral_cmy_f64: Option<[f64; 3]> = None;
-    if prepare_print && params.settings.neutral_print_filters_from_database {
-        let db = crate::neutral_filters::NeutralFilters::load(data_dir)?;
-        let print_stock = print.info.stock.as_deref().unwrap_or("");
-        let film_stock = film.info.stock.as_deref().unwrap_or("");
-        if let Some(mut cmy) = db.lookup(print_stock, &params.enlarger.illuminant, film_stock) {
-            let protected =
-                crate::params_builder::authored_filter_axes(params.neutral_print_filters_protected);
-            let controls = [
-                &mut params.enlarger.c_filter_neutral,
-                &mut params.enlarger.m_filter_neutral,
-                &mut params.enlarger.y_filter_neutral,
-            ];
-            for (axis, control) in controls.into_iter().enumerate() {
-                if protected[axis] {
-                    cmy[axis] = *control as f64;
-                } else {
-                    *control = cmy[axis] as f32;
-                }
+    pub fn build(&self) -> GrayReferences {
+        let raw = |scale: f64| {
+            if let Some(prepared) = self.spectral.prepared_tc_lut() {
+                let xyz = spectral_service::calibration_neutral_xyz(
+                    &self.spectral.front_illuminant,
+                    self.use_cat16,
+                    scale,
+                );
+                let brightness = xyz[0] + xyz[1] + xyz[2];
+                prepared.neutral.map(|value| {
+                    spektrafilm_math::precision::to_f64(spektrafilm_math::precision::from_f64(
+                        value * brightness,
+                    ))
+                })
+            } else if let Some(lut) = self.spectral.tc_lut() {
+                enlarger::midgray_raw_hanatos(
+                    lut,
+                    &select_illuminant(&self.spectral.front_illuminant),
+                    self.use_cat16,
+                    scale,
+                )
+            } else {
+                let core = self
+                    .spectral
+                    .mallett_core()
+                    .expect("spectral transform is present");
+                let matrix = crate::mallett::film_matrix(core, "sRGB");
+                let g = 0.184 * scale;
+                crate::mallett::apply(&matrix, [g, g, g])
             }
-            neutral_cmy_f64 = Some(cmy);
-        }
-    }
-
-    // Input-only processing has no film exposure or printing reference. Keep
-    // validation and resolved controls above, and prepare its real output
-    // boundary without constructing unused spectral tables or gray cards.
-    if params.workflow.route_enum() == WorkflowRoute::Input {
-        let output_gamut = crate::gamut_compression::OutputGamutCompress::build_with_backend(
-            &params.io.output_gamut_compress,
-            &params.io.output_color_space,
-            backend,
-        )?;
-        return Ok(CalibrationResult {
-            material: MaterialCalibration {
-                spectral: Some(SpectralPreparation {
-                    front_illuminant: film.info.reference_illuminant.clone(),
-                    tc_lut: None,
-                    prepared_tc_lut: None,
-                    mallett_core: None,
-                }),
-                film,
-                print,
-                convert_converter: None,
-                print_exposure_factor: 1.0,
-                print_illuminant: Vec::new(),
-                preflash_raw: [0.0; 3],
-                midgray_density: Vec::new(),
-                compensated_midgray_density: Vec::new(),
-            },
-            params,
-            output_gamut,
-        });
-    }
-    let cmy_f64 = neutral_cmy_f64.unwrap_or([
-        params.enlarger.c_filter_neutral as f64,
-        params.enlarger.m_filter_neutral as f64,
-        params.enlarger.y_filter_neutral as f64,
-    ]);
-    let (c_neutral_f64, m_neutral_f64, y_neutral_f64) = (cmy_f64[0], cmy_f64[1], cmy_f64[2]);
-
-    let spectral = if retained.is_none() {
-        // Capture illuminant is a filming-context input only for direct
-        // film-exposure routes; preserve the inactive control in params.
-        let spectral_params = if params.workflow.route_enum().exposes_film() {
-            params.clone()
-        } else {
-            let mut inactive_params = params.clone();
-            inactive_params.camera.capture_illuminant = None;
-            inactive_params
         };
-        let spectral_service::FilmingUpsampler {
-            tc_lut,
-            prepared_tc_lut,
-            mallett_core,
-            front_illuminant,
-            ..
-        } = spectral_service::build_filming_upsampler_with_backend(
-            &film,
-            &spectral_params,
-            data_dir,
-            backend,
-        )?;
-        Some(SpectralPreparation {
-            tc_lut,
-            prepared_tc_lut,
-            mallett_core,
-            front_illuminant,
-        })
-    } else {
-        None
-    };
-    let frontend = retained.unwrap_or_else(|| {
-        let built = spectral.as_ref().expect("frontend was built");
-        SpectralPreparationRef {
-            tc_lut: built.tc_lut.as_ref(),
-            prepared_tc_lut: built.prepared_tc_lut.as_ref(),
-            mallett_core: built.mallett_core.as_ref(),
-            front_illuminant: &built.front_illuminant,
-        }
-    });
-
-    // Python parity: sensitivities are pre-balanced in the profile so midgray ≈ 1.0.
-    // The TC LUT is used unnormalized — Python's `rgb_to_raw_hanatos2025` does NOT scale it.
-    // See `spektrafilm/utils/spectral_upsampling.py:rgb_to_raw_hanatos2025` (comment line 373).
-
-    // Compute enlarger illuminant with dichroic filters — f64 for Python parity.
-    // Unprotected neutral axes retain f64 database values; explicit controls and shifts are f32.
-    let print_illuminant = enlarger::enlarger_filtered_illuminant_f64(
-        &params.enlarger.illuminant,
-        c_neutral_f64,
-        m_neutral_f64 + params.enlarger.m_filter_shift as f64,
-        y_neutral_f64 + params.enlarger.y_filter_shift as f64,
-    );
-
-    // Midgray sensor raw for the print-exposure normalization — always in
-    // sRGB (Python `_rgb_to_film_raw` default), through whichever upsampler
-    // is active. `scale` folds the EV compensation for the `_comp` branch.
-    let midgray_raw = |scale: f64| -> [f64; 3] {
-        if let Some(prepared) = frontend.prepared_tc_lut {
-            let xyz = spectral_service::calibration_neutral_xyz(
-                frontend.front_illuminant,
-                params.settings.use_cat16,
-                scale,
-            );
-            let brightness = xyz[0] + xyz[1] + xyz[2];
-            prepared.neutral.map(|value| {
-                spektrafilm_math::precision::to_f64(spektrafilm_math::precision::from_f64(
-                    value * brightness,
-                ))
-            })
-        } else if let Some(lut) = frontend.tc_lut {
-            enlarger::midgray_raw_hanatos(
-                lut,
-                &select_illuminant(frontend.front_illuminant),
-                params.settings.use_cat16,
-                scale,
-            )
+        let midgray_density =
+            enlarger::midgray_density_spectral_from_raw(raw(1.0), self.film, self.gamma);
+        let compensated_midgray_density = if self.exposure_ev == 0.0 {
+            midgray_density.clone()
         } else {
-            let core = frontend
-                .mallett_core
-                .expect("one upsampler is always built");
-            let m = crate::mallett::film_matrix(core, "sRGB");
-            let g = 0.184 * scale;
-            crate::mallett::apply(&m, [g, g, g])
+            enlarger::midgray_density_spectral_from_raw(
+                raw(2.0f64.powf(self.exposure_ev as f64)),
+                self.film,
+                self.gamma,
+            )
+        };
+        GrayReferences {
+            midgray_density,
+            compensated_midgray_density,
         }
-    };
+    }
+}
 
-    // Compute midgray spectral density (gray card through full filming path)
-    let density_spectral_midgray =
-        enlarger::midgray_density_spectral_from_raw(midgray_raw(1.0), &film, &params);
+impl PartialEq for GrayInputs<'_> {
+    fn eq(&self, other: &Self) -> bool {
+        std::ptr::eq(self.film, other.film)
+            && std::ptr::eq(self.spectral, other.spectral)
+            && self.gamma == other.gamma
+            && self.exposure_ev == other.exposure_ev
+            && self.use_cat16 == other.use_cat16
+    }
+}
 
-    let compensated_midgray_density = if params.camera.exposure_compensation_ev == 0.0 {
-        density_spectral_midgray.clone()
-    } else {
-        enlarger::midgray_density_spectral_from_raw(
-            midgray_raw(2.0f64.powf(params.camera.exposure_compensation_ev as f64)),
-            &film,
-            &params,
-        )
-    };
-    // Print sensitivity: Python `sensitivity = np.nan_to_num(10 ** log_sensitivity)`.
-    let print_sensitivity: Vec<[f64; 3]> = if prepare_print {
-        print.sensitivity_f64()
-    } else {
-        Vec::new()
-    };
+pub(crate) struct PrintCalibration {
+    pub exposure_factor: f64,
+    pub illuminant: Vec<f64>,
+    pub preflash_raw: [f64; 3],
+    pub neutral_cmy: [f64; 3],
+}
 
-    // Constant enlarger preflash exposure (Python `_compute_raw_preflash`):
-    // film base density lit by the preflash-filtered illuminant, integrated
-    // against the print sensitivity. Off (→ [0; 3]) unless preflash_exposure > 0.
-    let preflash_raw = if prepare_print {
-        enlarger::compute_preflash_raw(
-            &params.enlarger,
-            c_neutral_f64,
-            m_neutral_f64,
-            y_neutral_f64,
-            &film.data.base_density,
-            &print_sensitivity,
-        )
-    } else {
-        [0.0; 3]
-    };
+pub(crate) struct PrintInputs<'a> {
+    film: &'a Profile,
+    print: &'a Profile,
+    gray: &'a GrayReferences,
+    illuminant: &'a str,
+    neutral_cmy: [f64; 3],
+    m_shift: f32,
+    y_shift: f32,
+    preflash_exposure: f32,
+    preflash_m_shift: f32,
+    preflash_y_shift: f32,
+    mode: PrintExposureMode,
+    tracking: PrintExposureEvTracking,
+    exposure_ev: f32,
+}
 
-    // Print exposure normalization — mirror Python's
-    // `_compute_exposure_factor_midgray` in
-    // `spektrafilm/runtime/stages/printing.py`. There are two
-    // candidate factors:
-    //   * `factor_midgray`     = 1 / geomean(raw_midgray)
-    //   * `factor_midgray_comp`= 1 / geomean(raw_midgray_with_neg_EV)
-    // selected by `enlarger.print_exposure_mode` and
-    // `settings.print_exposure_ev_tracking`. The legacy boolean pair
-    // `normalize_print_exposure` × `print_exposure_compensation` maps
-    // one-to-one onto the two enums: (true, true) → auto/follow_mode,
-    // (true, false) → auto/never, (false, false) → manual/follow_mode,
-    // (false, true) → manual/always.
-    //
-    // With the defaults (auto/follow_mode) and no EV compensation,
-    // Python returns `factor_midgray_comp == 1.0`. Rust used to
-    // unconditionally apply `factor_midgray` here, which biased
-    // the print exposure by ~3% on every render and was the root
-    // cause of the residual Python-parity drift in the print stage.
-    let factor_midgray = if prepare_print {
-        enlarger::compute_exposure_factor(
-            &density_spectral_midgray,
-            &print_illuminant,
-            &print_sensitivity,
-        )
-    } else {
-        1.0
-    };
-    // Python builds `density_spectral_midgray_comp` whenever EV
-    // tracking is on — even when EV == 0, in which case
-    // `rgb_midgray_comp = rgb_midgray * 2^0` and so
-    // `factor_midgray_comp == factor_midgray`. We have to mirror
-    // that (NOT short-circuit to 1.0) because the
-    // `factor_midgray_comp` branch is what gets returned by default.
-    let factor_midgray_comp = if !prepare_print
-        || params.settings.print_exposure_ev_tracking == PrintExposureEvTracking::Never
-    {
-        1.0
-    } else if params.camera.exposure_compensation_ev == 0.0 {
-        factor_midgray
-    } else {
-        // The same frozen compensated reference is consumed by continuation.
-        enlarger::compute_exposure_factor(
-            &compensated_midgray_density,
-            &print_illuminant,
-            &print_sensitivity,
-        )
-    };
-    let print_exposure_factor = select_print_factor(&params, factor_midgray, factor_midgray_comp);
-
-    tracing::info!(
-        method = params.settings.rgb_to_raw_method,
-        lut_size = frontend.tc_lut.map_or(0, |l| l.size),
-        film = film.info.stock.as_deref().unwrap_or("unknown"),
-        print_exposure_factor = print_exposure_factor,
-        "pipeline calibrated"
-    );
-
-    let output_gamut = crate::gamut_compression::OutputGamutCompress::build_with_backend(
-        &params.io.output_gamut_compress,
-        &params.io.output_color_space,
-        backend,
-    )?;
-    // The inverse-scan converter reads the resolved film's dye tables, the
-    // route, and the input colour space — all of which must be final before
-    // the record is built, so it resolves after every calibration mutation
-    // and before the result consumes the film and the params.
-    let convert_converter = crate::stages::converting::resolve_converter(&film, &params)?;
-    Ok(CalibrationResult {
-        material: MaterialCalibration {
+impl<'a> PrintInputs<'a> {
+    pub fn new(
+        film: &'a Profile,
+        print: &'a Profile,
+        gray: &'a GrayReferences,
+        params: &'a RuntimeParams,
+        neutral_cmy: [f64; 3],
+    ) -> Self {
+        Self {
             film,
             print,
-            convert_converter,
-            print_exposure_factor,
-            print_illuminant,
+            gray,
+            neutral_cmy,
+            illuminant: &params.enlarger.illuminant,
+            m_shift: params.enlarger.m_filter_shift,
+            y_shift: params.enlarger.y_filter_shift,
+            preflash_exposure: params.enlarger.preflash_exposure,
+            preflash_m_shift: params.enlarger.preflash_m_filter_shift,
+            preflash_y_shift: params.enlarger.preflash_y_filter_shift,
+            mode: params.enlarger.print_exposure_mode,
+            tracking: params.settings.print_exposure_ev_tracking,
+            exposure_ev: params.camera.exposure_compensation_ev,
+        }
+    }
+
+    pub fn build(&self) -> PrintCalibration {
+        let [c, m, y] = self.neutral_cmy;
+        let illuminant = enlarger::enlarger_filtered_illuminant_f64(
+            self.illuminant,
+            c,
+            m + self.m_shift as f64,
+            y + self.y_shift as f64,
+        );
+        let sensitivity = self.print.sensitivity_f64();
+        let preflash_raw = enlarger::compute_preflash_raw(
+            self.illuminant,
+            self.preflash_exposure,
+            self.preflash_m_shift,
+            self.preflash_y_shift,
+            self.neutral_cmy,
+            &self.film.data.base_density,
+            &sensitivity,
+        );
+        let midgray = enlarger::compute_exposure_factor(
+            &self.gray.midgray_density,
+            &illuminant,
+            &sensitivity,
+        );
+        let compensated = if self.tracking == PrintExposureEvTracking::Never {
+            1.0
+        } else if self.exposure_ev == 0.0 {
+            midgray
+        } else {
+            enlarger::compute_exposure_factor(
+                &self.gray.compensated_midgray_density,
+                &illuminant,
+                &sensitivity,
+            )
+        };
+        PrintCalibration {
+            exposure_factor: select_print_factor(self.mode, self.tracking, midgray, compensated),
+            illuminant,
             preflash_raw,
-            midgray_density: density_spectral_midgray,
-            compensated_midgray_density,
-            spectral,
-        },
-        params,
-        output_gamut,
-    })
+            neutral_cmy: self.neutral_cmy,
+        }
+    }
 }
 
-fn select_print_factor(params: &RuntimeParams, midgray: f64, compensated: f64) -> f64 {
-    match (
-        params.enlarger.print_exposure_mode,
-        params.settings.print_exposure_ev_tracking,
-    ) {
+impl PartialEq for PrintInputs<'_> {
+    fn eq(&self, other: &Self) -> bool {
+        std::ptr::eq(self.film, other.film)
+            && std::ptr::eq(self.print, other.print)
+            && std::ptr::eq(self.gray, other.gray)
+            && self.illuminant == other.illuminant
+            && self.neutral_cmy == other.neutral_cmy
+            && self.m_shift == other.m_shift
+            && self.y_shift == other.y_shift
+            && self.preflash_exposure == other.preflash_exposure
+            && self.preflash_m_shift == other.preflash_m_shift
+            && self.preflash_y_shift == other.preflash_y_shift
+            && self.mode == other.mode
+            && self.tracking == other.tracking
+            && self.exposure_ev == other.exposure_ev
+    }
+}
+
+#[derive(PartialEq)]
+pub(crate) struct NeutralInputs<'a> {
+    film_stock: &'a str,
+    print_stock: &'a str,
+    illuminant: &'a str,
+    controls: [f32; 3],
+    protected: [bool; 3],
+    database: bool,
+}
+
+impl<'a> NeutralInputs<'a> {
+    pub fn new(
+        film: &'a Profile,
+        print: &'a Profile,
+        params: &'a RuntimeParams,
+        prepare_print: bool,
+    ) -> Self {
+        Self {
+            film_stock: film.info.stock.as_deref().unwrap_or(""),
+            print_stock: print.info.stock.as_deref().unwrap_or(""),
+            illuminant: &params.enlarger.illuminant,
+            controls: [
+                params.enlarger.c_filter_neutral,
+                params.enlarger.m_filter_neutral,
+                params.enlarger.y_filter_neutral,
+            ],
+            protected: crate::params_builder::authored_filter_axes(
+                params.neutral_print_filters_protected,
+            ),
+            database: prepare_print && params.settings.neutral_print_filters_from_database,
+        }
+    }
+
+    pub fn build(&self, data_dir: Option<&Path>) -> Result<[f64; 3], String> {
+        let mut cmy = self.controls.map(f64::from);
+        if self.database
+            && let Some(data_dir) = data_dir
+        {
+            let db = crate::neutral_filters::NeutralFilters::load(data_dir)?;
+            if let Some(database) = db.lookup(self.print_stock, self.illuminant, self.film_stock) {
+                for axis in 0..3 {
+                    if !self.protected[axis] {
+                        cmy[axis] = database[axis];
+                    }
+                }
+            }
+        }
+        Ok(cmy)
+    }
+}
+
+pub(crate) fn validate_print_morph(
+    print: &Profile,
+    params: &crate::params::PrintCurvesMorphParams,
+) -> Result<(), String> {
+    if let Some(model) = print.data.density_curves_model.as_ref() {
+        crate::print_morph::morph_density_curves(
+            &print.log_exposure_f64(),
+            model,
+            params,
+            print.is_positive(),
+        )
+        .map_err(|error| format!("invalid print density-curve model: {error}"))?;
+    }
+    Ok(())
+}
+
+fn select_print_factor(
+    mode: PrintExposureMode,
+    tracking: PrintExposureEvTracking,
+    midgray: f64,
+    compensated: f64,
+) -> f64 {
+    match (mode, tracking) {
         (PrintExposureMode::Auto, PrintExposureEvTracking::Never) => midgray,
         (PrintExposureMode::Auto, _) => compensated,
         (PrintExposureMode::Manual, PrintExposureEvTracking::Always) => compensated / midgray,
@@ -741,30 +640,10 @@ pub(crate) fn prepare_continued_print(
             print.is_positive(),
         )?;
     }
-    let mut cmy = [
-        params.enlarger.c_filter_neutral as f64,
-        params.enlarger.m_filter_neutral as f64,
-        params.enlarger.y_filter_neutral as f64,
-    ];
-    if params.settings.neutral_print_filters_from_database {
-        let db = crate::neutral_filters::NeutralFilters::load(data_dir)?;
-        if let Some(database) = db.lookup(
-            print.info.stock.as_deref().unwrap_or(""),
-            &params.enlarger.illuminant,
-            film.info.stock.as_deref().unwrap_or(""),
-        ) {
-            let protected =
-                crate::params_builder::authored_filter_axes(params.neutral_print_filters_protected);
-            for axis in 0..3 {
-                if !protected[axis] {
-                    cmy[axis] = database[axis];
-                }
-            }
-            params.enlarger.c_filter_neutral = cmy[0] as f32;
-            params.enlarger.m_filter_neutral = cmy[1] as f32;
-            params.enlarger.y_filter_neutral = cmy[2] as f32;
-        }
-    }
+    let cmy = NeutralInputs::new(film, &print, params, true).build(Some(data_dir))?;
+    params.enlarger.c_filter_neutral = cmy[0] as f32;
+    params.enlarger.m_filter_neutral = cmy[1] as f32;
+    params.enlarger.y_filter_neutral = cmy[2] as f32;
     let illuminant = enlarger::enlarger_filtered_illuminant_f64(
         &params.enlarger.illuminant,
         cmy[0],
@@ -773,10 +652,11 @@ pub(crate) fn prepare_continued_print(
     );
     let sensitivity = print.sensitivity_f64();
     let preflash = enlarger::compute_preflash_raw(
-        &params.enlarger,
-        cmy[0],
-        cmy[1],
-        cmy[2],
+        &params.enlarger.illuminant,
+        params.enlarger.preflash_exposure,
+        params.enlarger.preflash_m_filter_shift,
+        params.enlarger.preflash_y_filter_shift,
+        cmy,
         &film.data.base_density,
         &sensitivity,
     );
@@ -796,7 +676,12 @@ pub(crate) fn prepare_continued_print(
         };
     Ok((
         print,
-        select_print_factor(params, midgray, compensated),
+        select_print_factor(
+            params.enlarger.print_exposure_mode,
+            params.settings.print_exposure_ev_tracking,
+            midgray,
+            compensated,
+        ),
         illuminant,
         preflash,
     ))
@@ -831,6 +716,24 @@ mod tests {
     }
 
     #[test]
+    fn neutral_projection_retains_database_f64_and_authored_axes() {
+        let mut film = profile("negative", "film", "filming");
+        film.info.stock = Some("cinestill_800t_cs41_approx".into());
+        let mut print = profile("positive", "paper", "printing");
+        print.info.stock = Some("fujifilm_crystal_archive_typeii".into());
+        let mut params = RuntimeParams {
+            neutral_print_filters_protected: Some([true, false, false]),
+            ..Default::default()
+        };
+        params.enlarger.c_filter_neutral = 12.0;
+        let cmy = super::NeutralInputs::new(&film, &print, &params, true)
+            .build(Some(&crate::test_support::data_dir()))
+            .unwrap();
+        assert_eq!(cmy, [12.0, 37.6398, 50.9664]);
+        assert_ne!(cmy[1], f64::from(cmy[1] as f32));
+    }
+
+    #[test]
     fn print_exposure_factor_folds_degenerate_tracking_onto_the_mode_default() {
         use crate::params::{PrintExposureEvTracking, PrintExposureMode};
         use crate::test_support::data_dir;
@@ -844,7 +747,7 @@ mod tests {
             params.enlarger.print_exposure_mode = mode;
             params.settings.print_exposure_ev_tracking = tracking;
             params.camera.exposure_compensation_ev = 0.5;
-            super::build_with_backend(
+            crate::pipeline::Pipeline::new_with_spectral_backend(
                 film.clone(),
                 print.clone(),
                 params,
@@ -852,8 +755,7 @@ mod tests {
                 &spektrafilm_backend::cpu_backend::CpuBackend,
             )
             .unwrap()
-            .material
-            .print_exposure_factor
+            .print_exposure_factor()
         };
         let auto_follow = factor(Auto, FollowMode);
         let auto_never = factor(Auto, Never);

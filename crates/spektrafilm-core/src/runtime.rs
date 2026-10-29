@@ -713,17 +713,16 @@ impl Runtime {
         Ok(())
     }
 
-    fn update_with_backend(
+    /// Prepare and commit parameters with the selected backend. On failure the
+    /// runtime and its parameters remain unchanged.
+    pub fn update_with_backend(
         &mut self,
         params: RuntimeParams,
         backend: &dyn ComputeBackend,
     ) -> Result<(), String> {
         let update = self.pipeline.prepare_parameter_update(params, backend)?;
-        let film = update
-            .material
-            .as_ref()
-            .map_or(&self.pipeline.film, |m| &m.film);
-        let record_configuration = crate::stages::grain_dye::resolve_record(film, &update.params)?;
+        let record_configuration =
+            crate::stages::grain_dye::resolve_record(&update.film, &update.params)?;
         self.pipeline.apply_parameter_update(update);
         self.record_configuration = record_configuration;
         Ok(())
@@ -1589,12 +1588,21 @@ mod tests {
         let backend = CpuBackend;
         let image = scanner_image();
         let accepted = runtime.params().clone();
+
+        // Unchanged neutral inputs reuse their accepted snapshot, even if the
+        // database subsequently becomes unreadable.
+        std::fs::write(&neutral_path, b"{invalid json").unwrap();
+        let mut material_only = accepted.clone();
+        material_only.film_render.base.scale = 2.0;
+        runtime.update(material_only).unwrap();
+        let accepted = runtime.params().clone();
         let baseline = runtime.process(image.clone(), &backend).unwrap();
 
-        // A missing database is optional; malformed contents force a late preparation error.
-        std::fs::write(&neutral_path, b"{invalid json").unwrap();
+        // Changing a neutral input requires a fresh lookup, which must fail
+        // transactionally before either material edit is committed.
         let mut edited = accepted.clone();
         edited.film_render.base.scale = 2.4;
+        edited.enlarger.illuminant = "D65".into();
         assert!(runtime.update(edited.clone()).is_err());
         assert_eq!(runtime.params(), &accepted);
         assert_eq!(

@@ -106,7 +106,7 @@ impl Pipeline {
         if let Some(capture) = capture.as_deref_mut() {
             capture.begin(
                 &self.params,
-                self.print_exposure_factor,
+                self.print_exposure_factor(),
                 inject,
                 collect,
                 &image,
@@ -339,9 +339,12 @@ impl Pipeline {
             "converting",
             spektrafilm_backend::telemetry::CpuReason::BackendDefault,
         );
-        let converted = crate::stages::converting::process(&image, &self.film, &self.params);
-        converting.set_complete(converted.is_ok());
-        let film_density = converted?;
+        let film_density = self
+            .convert_converter
+            .as_ref()
+            .expect("convert-film route has a prepared converter")
+            .process(&image);
+        converting.set_complete(true);
         drop(converting);
         if let Some(capture) = capture.as_deref_mut() {
             capture.record_boundary(StageId::CmyFilm, &film_density, CoordinateSpace::Working);
@@ -355,9 +358,9 @@ impl Pipeline {
                 &self.print,
                 &self.params,
                 printing_backend,
-                &self.print_illuminant,
-                self.print_exposure_factor,
-                self.preflash_raw,
+                self.print_illuminant_slice(),
+                self.print_exposure_factor(),
+                self.preflash_raw(),
                 pixel_size_um,
             )?;
             let developed = crate::stages::printing::develop(
@@ -434,7 +437,7 @@ impl Pipeline {
         // highlight boost. Unsupported effects select the faithful per-stage
         // path; backends without resident support return `None`. Active Dye
         // selects a per-stage path through `resident_decision`.
-        if (self.tc_lut.is_some() || self.mallett_core.is_some())
+        if (self.tc_lut().is_some() || self.mallett_core().is_some())
             && let Some(out) = self.try_gpu_resident(&image, backend, pixel_size_um, ae_ev)?
         {
             tracing::info!("pipeline: gpu-resident fast path complete");
@@ -524,7 +527,7 @@ impl Pipeline {
             }
             return Ok(None);
         }
-        if self.tc_lut.is_none() && self.mallett_core.is_none() {
+        if self.tc_lut().is_none() && self.mallett_core().is_none() {
             if let Some(context) = backend.observation_context() {
                 context.decline_resident(
                     spektrafilm_backend::telemetry::ResidentDeclineReason::MissingResidentFrontPass,

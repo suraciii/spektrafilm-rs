@@ -200,6 +200,7 @@ fn build_bounded_grain_procedural(
         partials
     };
     let scale = 1.0 + (params.raw_scale - 1.0) / 47.0 * 1.5;
+    let size = canvas_size(width, height);
     let resident = cells * 8 <= limit;
     // A resident canvas is built, measured and composed once. A canvas that
     // does not fit walks bands twice: the first pass measures the exact mean,
@@ -261,8 +262,8 @@ fn build_bounded_grain_procedural(
                         chunks as u32,
                         scale.to_bits(),
                         (band.stored.0 as f32).to_bits(),
-                        0,
-                        0,
+                        size[0].to_bits(),
+                        size[1].to_bits(),
                     ],
                 );
                 commands.dispatch_named(
@@ -291,8 +292,8 @@ fn build_bounded_grain_procedural(
                 chunks as u32,
                 scale.to_bits(),
                 0,
-                0,
-                0,
+                size[0].to_bits(),
+                size[1].to_bits(),
             ],
         );
         commands.dispatch_named(
@@ -519,11 +520,7 @@ fn canvas_cells(
     height: u32,
     params: &spektrafilm_backend::ProceduralGrainGpuParams,
 ) -> (u32, u32) {
-    let gsf = (5200.0 / width as f32).max(3100.0 / height as f32);
-    let size = [
-        (width as f32 * gsf).floor().max(1.0),
-        (height as f32 * gsf).floor().max(1.0),
-    ];
+    let size = canvas_size(width, height);
     let scale = 1.0 + (params.raw_scale - 1.0) / 47.0 * 1.5;
     let used = |extent: f32, limit: f32| {
         ((extent / scale).ceil() as i64 + 2).clamp(1, limit.max(1.0) as i64) as u32
@@ -583,8 +580,7 @@ fn canvas_bands(
     let rows = u64::from(cells_h);
     // Mirror the composition's cell mapping in binary32 so a band owns exactly
     // the pixels the shader resolves into it.
-    let gsf = (5200.0f32 / width as f32).max(3100.0f32 / height as f32);
-    let size_y = (height as f32 * gsf).floor().max(1.0);
+    let size_y = canvas_size(width, height)[1];
     let scale = 1.0 + (params.raw_scale - 1.0) / 47.0 * 1.5;
     let inv_h = 1.0 / height.saturating_sub(1).max(1) as f32;
     let cell_row = |y: u32| -> i32 { ((y as f32 * inv_h) * (size_y / scale)) as i32 };
@@ -669,8 +665,7 @@ fn build_canvas_band(
 ) {
     let (store_from, store_to) = band.stored;
     // Cells address the full virtual canvas, not the stored table.
-    let canvas_rows =
-        ((height as f32 * (5200.0 / width as f32).max(3100.0 / height as f32)).floor()).max(1.0);
+    let canvas_rows = canvas_size(width, height)[1];
     let to_source = |cell_row: f32| (cell_row / (canvas_rows - 1.0)) * (height as f32 - 1.0) - 0.1;
     let source_rows = |from: u32, to: u32| {
         let first = (to_source(from as f32).floor() as i64 - 1).max(0) as u32;
@@ -1130,6 +1125,30 @@ mod logic_tests {
     }
 
     use super::*;
+
+    #[test]
+    fn rectangular_canvas_and_generator_geometry_share_host_dimensions() {
+        let mut params = test_params();
+        params.raw_scale = 1.1;
+        params.cluster_size = 0.8;
+        for (width, height, size) in [
+            (768, 512, [5200.0f32, 3466.0]),
+            (512, 768, [5200.0f32, 7800.0]),
+        ] {
+            let uniform = shader_params(width, height, &params);
+            assert_eq!(&uniform.flags[..2], &size);
+            let scaled = size.map(|v| v * params.raw_scale);
+            assert_eq!(
+                uniform.generator_geometry,
+                [
+                    scaled[0] / params.cluster_size / params.raw_scale,
+                    scaled[1] / params.cluster_size / params.raw_scale,
+                    scaled[0] / scaled[1],
+                    1.0f32 / 256.0 / params.cluster_size,
+                ]
+            );
+        }
+    }
 
     /// The band plan decides between one bulk pass and a command per pixel, so
     /// pin the geometries that used to fall to the slow side.
@@ -1698,7 +1717,7 @@ mod parity_tests {
     // Exercise the production WGSL helper, not a Rust transcription of it.
     #[test]
     fn procedural_coordinate_division_matches_binary32() {
-        let gpu = crate::test_support::adapter();
+        let gpu = crate::test_support::restricted_adapter();
         let mut pairs: Vec<[f32; 2]> = vec![
             [0.0, 5200.0],
             [1.0, f32::from_bits((171u32 << 23) - 1)],
@@ -1712,6 +1731,14 @@ mod parity_tests {
             [i32::MAX as f32, 2.0f32.powi(43)],
             [-2147483648.0, 1550.0],
         ];
+        for extent in [7280.0, 5005.0, 3101.0 * 1.4, u32::MAX as f32 * 5200.0] {
+            for position in [0.0, 1.0, 255.0, 5200.0, 1048575.0, 16777215.0] {
+                pairs.push([position, extent]);
+            }
+        }
+        for index in 0..257u32 {
+            pairs.push([(index * 104729 % 5201) as f32, 4800.0 + index as f32 * 1.4]);
+        }
         let mut state = 90210u32;
         for _ in 0..4096 {
             state ^= state << 13;

@@ -22,6 +22,25 @@
 - The chain preserves floating headroom until a bounded image writer clips and encodes it.
 - Invalid color spaces, routes, dimensions, crops, resize factors, and effect parameters fail before a final output is written.
 
+## Parameter updates and preparation reuse
+
+- For identical source data, image samples, final controls, seed, backend, and precision, updating an existing runtime MUST produce the same result as constructing that final configuration directly, within the existing numerical contract.
+- Editing a control and restoring its original value MUST NOT accumulate material adjustments or calibration changes.
+- A rejected in-place update MUST preserve the last accepted parameters and render behavior.
+- A change to conversion illumination, calibration, exposure, input color space, or input transfer decoding MUST refresh the converted-film interpretation without rebuilding unrelated preparation.
+- Changing only output gamut controls MUST NOT rebuild material, spectral, or exposure-reference preparation.
+- Changing the preparation device MUST replace device-bound resources and any calibration that depends on their numerical values before image execution.
+- An inactive control MUST retain its stored value. Preparation MUST NOT create a dependency solely because that control exists in the parameter document.
+- Reuse MUST NOT change validation, parameter precedence, serialized values, stage order, or the selected backend's failure policy.
+
+### Preparation acceptance
+
+- Acceptance MUST compare cold and updated results for material edits, conversion edits, exposure and print-reference edits, route transitions, and backend transitions.
+- It MUST cover edit-and-restore and rejected-update recovery.
+- Both build precisions MUST retain their existing numerical tolerances.
+- Device acceptance MUST use real device resources rather than a mock backend.
+- Conversion and print-reference preparation MUST remain compatible when a route consumes both.
+
 ## Film and print continuation
 
 The [stage-artifact contract](../cli/stage-artifacts.md) is authoritative for the `.sfstage` format, validation, frozen controls, seed inheritance, and publication. This section owns the film-chain meaning of continuing from a developed medium. Existing image-entry and real-negative `convert-film` behavior remains unchanged.

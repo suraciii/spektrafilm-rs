@@ -1730,24 +1730,6 @@ mod tests {
     }
 
     #[test]
-    fn spektra_grain_stage_name_is_planned() {
-        let gpu = crate::test_support::explicit_adapter();
-        let p = params(8, 4);
-        let error = gpu
-            .chain_effect_workspace_bytes(
-                crate::wgpu_backend::grain::GRAIN_SPEKTRA_STAGE_NAME,
-                &p,
-                8,
-                4,
-            )
-            .unwrap_err();
-        assert!(
-            error.contains("Spektra grain parameters missing"),
-            "stage name was not recognized: {error}"
-        );
-    }
-
-    #[test]
     fn shared_gaussian_capacity_is_charged_only_from_first_to_last_consumer() {
         let gpu = crate::test_support::explicit_adapter();
         let mut p = params(8, 4);

@@ -7,14 +7,7 @@
 - The readout illuminant participates in the prepared scan identity and its cache key.
 - `core::runtime` is the production entry point. `Pipeline` owns stage topology and state.
 - Pipeline entry points share optical diagnostic tap admission and selector-conflict rules. Each entry point retains its validation order and topology-specific guards.
-- Stage preparation derives film curves, spectral data, scan settings, color transforms, and working pixel pitch once for the selected execution.
-- Runtime parameter updates MUST derive changed film and print materials from their original source profiles, not from previously tuned profiles.
-- Material preparation invalidation MUST include film chemistry, base tuning, and development time for the materials that preparation consumes. Film curve gamma MUST invalidate its middle-gray references and exposure calibration.
-- Material-only and exposure-calibration updates MUST retain compatible spectral tables. A spectral-input, route, or preparation-device change MUST rebuild the affected spectral preparation.
-- Runtime MUST prepare all changed state before committing a parameter update. A failed in-place update MUST retain the previous parameters, prepared state, and render behavior.
-- Prepared material updates MUST retain both original profile identities so scan caches, grain references, and material-artifact provenance continue to identify the untuned sources.
-- Updates on `input > film` MUST NOT validate unused print density-curve models.
-- The `convert-film` inverse MUST refresh its captured illumination, calibration, exposure, input color space, and transfer-decoding state when those controls change.
+- Preparation and parameter-update ownership follows [Prepared runtime state](#prepared-runtime-state).
 - `ComputeBackend` separates stage orchestration from CPU and WGPU execution. Both MUST implement the [target optical order](spec.md#scan-optics-and-print-viewing-glare) and [GPU numerical alignment](../gpu-execution/design.md#numerical-alignment).
 - WGPU owns validated device representations, resources, and dispatch.
 - Scan preparation resolves one colorimetric sensor: the CIE 1931 color-matching functions over the production wavelength grid. No receiver profile is selectable, and no receiver calibration matrix is applied.
@@ -51,3 +44,41 @@
 - [Output mix and material controls](../output-mix/design.md) owns preflash exposure composition, Output lightness retirement, and final mixing. Per-stage, resident, converted-film, and diagnostic paths execute only material operations present in their route.
 - Existing chemistry and scanner reference ownership remain unchanged.
 - The shared output finishing boundary delegates CMYK ink style to [CMYK ink style](../cmyk-style/design.md). It MUST also serve the film-free `input` workflow without preparing a spectral chain.
+
+## Prepared runtime state
+
+`Runtime` MUST remain the production facade. Preparation MUST use explicit calls inside the existing owners, not a generic graph scheduler, service registry, or second public parameter model.
+
+### Inputs and identity
+
+- Each preparation component MUST define one typed input projection. Construction and reuse decisions MUST consume that projection rather than maintain separate lists of parameter dependencies.
+- Component builders MUST receive their consumed controls and source data explicitly. They MUST NOT read unrelated fields through the complete `RuntimeParams` aggregate.
+- Parameter digestion, topology normalization, and validation MUST retain their existing owners and precedence.
+- Material preparation MUST start from the original source profiles and include the consumed base, chemistry, and development-time controls.
+- Film curve gamma MUST belong to reference preparation, not to repeated material mutation.
+- Preparation MUST preserve original film and print identities for grain, frame-cache, and material-artifact consumers. A new source snapshot MUST NOT reuse a result solely because its stock name or path matches an old snapshot.
+- Identity checks MUST use the actual preparation device, not a backend wrapper's address. A device change MUST invalidate dependent numerical references as well as device tables.
+- Input projections SHOULD borrow existing values. Reuse MUST NOT require copying profiles, hashing complete tables on each edit, or allocating a second parameter document for each component.
+- This boundary MUST NOT add file watching, a persistent preparation cache, or a per-field version registry. A runtime retains its accepted source snapshot; constructing a runtime from newly loaded sources starts a new preparation identity.
+
+### Component ownership
+
+- Material preparation, the spectral front end, the convert-film inverse, middle-gray references, print calibration, and output gamut preparation MUST own separate reusable results where their dependencies differ.
+- Cold construction and parameter updates MUST use the same component builders and reuse rules.
+- Material-only and exposure-reference updates MUST retain compatible spectral tables. Spectral-input, route, or device changes MUST rebuild the affected preparation.
+- The spectral representation MUST distinguish TC and Mallett algorithms. TC preparation MUST distinguish host samples from a device table and its descriptor; an absent optional update MUST NOT double as an algorithm choice.
+- The converted-film inverse MUST remain independent of the spectral algorithm choice. A converted-film route MAY still consume the spectral front end for its reference calibration.
+- The inverse's material view MUST contain the dye spectra, base density, and density-curve range it consumes. Its control view MUST contain conversion illumination, calibration, exposure, input color space, and transfer decoding.
+- Middle-gray and print-reference preparation MUST preserve current arithmetic order, f64 neutral-filter values, exposure-tracking semantics, and backend-specific numerical boundaries.
+- Updates on `input` and `input > film` MUST NOT prepare or validate unused print density-curve models. Input-only preparation MUST NOT construct unused film spectral tables or gray-card references.
+- Print curve morphing and model-less print gamma MUST retain their render-time ownership.
+
+### Commit and lifetime
+
+- A parameter-update candidate MUST describe the complete resulting prepared state. Absence MUST mean that a component is not used, not that a caller retains unspecified old fields.
+- Unchanged immutable preparation MUST be shared rather than deep-copied. A rejected candidate MUST NOT mutate or destroy the committed state.
+- All fallible preparation, including grain record configuration, MUST finish before commit. Commit MUST perform no fallible work.
+- Replacing committed preparation MUST NOT invalidate resources still owned by an in-flight operation. Rust ownership and shared immutable handles MUST carry this lifetime; image operations MUST NOT acquire generic undo callbacks.
+- Prepared-state reuse and image-prefix reuse MUST remain separate. Image caches retain their source, geometry, seed, and operation-specific dependency checks.
+- Request scheduling and image publication remain frontend responsibilities under [GUI worker ownership](../gui-workflow/design.md). Successful preparation alone MUST NOT mark a new image as published.
+

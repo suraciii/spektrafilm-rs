@@ -387,8 +387,11 @@ impl Pipeline {
                         "converting",
                         spektrafilm_backend::telemetry::CpuReason::BackendDefault,
                     );
-                    let converted =
-                        crate::stages::converting::process(&working, &self.film, &self.params)?;
+                    let converted = self
+                        .convert_converter
+                        .as_ref()
+                        .expect("convert-film route has a prepared converter")
+                        .process(&working);
                     drop(observation);
                     converted
                 } else {

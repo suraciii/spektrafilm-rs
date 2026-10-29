@@ -367,23 +367,23 @@ fn edited_material_stage_round_trip_preserves_sources_and_continuation() {
     params.workflow.route = "input > film".into();
     params.film_render.density_curve_gamma = base.params.film_render.density_curve_gamma;
     let producing = full.clone().with_params(params).unwrap();
-    let prior_midgray = producing.midgray_density.clone();
+    let prior_midgray = producing.midgray_density().to_vec();
     let mut params = producing.params.clone();
     params.film_render.density_curve_gamma = full.params.film_render.density_curve_gamma;
     let producing = producing.with_params(params).unwrap();
     let fresh = fresh_material_pipeline(&base, producing.params.clone());
     assert!(
         producing
-            .midgray_density
+            .midgray_density()
             .iter()
             .zip(&prior_midgray)
             .any(|(a, b)| a.is_finite() && b.is_finite() && (a - b).abs() > 1e-8)
     );
     for (actual, expected) in [
-        (&producing.midgray_density, &fresh.midgray_density),
+        (producing.midgray_density(), fresh.midgray_density()),
         (
-            &producing.compensated_midgray_density,
-            &fresh.compensated_midgray_density,
+            producing.compensated_midgray_density(),
+            fresh.compensated_midgray_density(),
         ),
     ] {
         assert_eq!(actual.len(), expected.len());
@@ -496,8 +496,7 @@ fn input_preparation_and_route_changes_preserve_pixels_and_material_calibration(
         &data_dir(),
     )
     .unwrap();
-    assert!(input.tc_lut.is_none() && input.prepared_tc_lut.is_none());
-    assert!(input.mallett_core.is_none());
+    assert!(input.spectral.is_none());
     let output = input.process(image.clone(), &backend).unwrap();
     for (actual, expected) in output.data.iter().zip(&image.data) {
         assert!((to_f64(*actual) - to_f64(*expected)).abs() < 1e-6);
@@ -505,10 +504,10 @@ fn input_preparation_and_route_changes_preserve_pixels_and_material_calibration(
 
     params.camera.filter_uv = [0.5, 415.0, 9.0];
     let input = input.with_params(params.clone()).unwrap();
-    assert!(input.tc_lut.is_none() && input.prepared_tc_lut.is_none());
+    assert!(input.spectral.is_none());
     params.workflow.route = base.params.workflow.route.clone();
     let film = input.with_params(params.clone()).unwrap();
-    assert!(film.tc_lut.is_some());
+    assert!(film.tc_lut().is_some());
     let fresh = Pipeline::new_with_spectral(
         (*base.original_film).clone(),
         (*base.original_print).clone(),
@@ -522,7 +521,7 @@ fn input_preparation_and_route_changes_preserve_pixels_and_material_calibration(
     );
     params.workflow.route = "input".into();
     let input = film.with_params(params).unwrap();
-    assert!(input.tc_lut.is_none() && input.prepared_tc_lut.is_none());
+    assert!(input.spectral.is_none());
     assert_eq!(input.process(image, &backend).unwrap().data, output.data);
 }
 
@@ -658,7 +657,7 @@ impl spektrafilm_backend::ComputeBackend for OvertaxedGpu {
 #[test]
 fn selected_gpu_fails_when_the_device_cannot_allocate_retained_input() {
     let base = build();
-    let mut pipeline = Pipeline::new(base.film, base.print, base.params);
+    let mut pipeline = Pipeline::new((*base.film).clone(), (*base.print).clone(), base.params);
     pipeline.params.film_render.grain.active = false;
     let err = pipeline
         .process(ImageBuf::new(8, 6), &OvertaxedGpu { explicit: true })
@@ -864,7 +863,7 @@ fn selected_automatic_gpu_conversion_decline_never_returns_host_pixels() {
 #[test]
 fn selected_automatic_gpu_retention_failure_does_not_enter_host_stages() {
     let base = build();
-    let mut pipeline = Pipeline::new(base.film, base.print, base.params);
+    let mut pipeline = Pipeline::new((*base.film).clone(), (*base.print).clone(), base.params);
     pipeline.params.workflow.route = "input".into();
     pipeline.params.film_render.grain.active = false;
     let backend = DecliningSelectedGpu::default();
@@ -882,7 +881,7 @@ fn selected_automatic_gpu_retention_failure_does_not_enter_host_stages() {
 #[test]
 fn public_gpu_diagnostic_retention_errors_never_enter_host_tap_stages() {
     let base = build();
-    let mut pipeline = Pipeline::new(base.film, base.print, base.params);
+    let mut pipeline = Pipeline::new((*base.film).clone(), (*base.print).clone(), base.params);
     pipeline.params.film_render.grain.active = false;
     pipeline.params.camera.auto_exposure = true;
     let backend = DecliningSelectedGpu::default();
@@ -1169,6 +1168,400 @@ fn with_params_reuses_lut_on_non_spectral_change() {
         "non-spectral change must not rebuild the TC LUT"
     );
 }
+
+#[test]
+fn preparation_components_share_only_compatible_results() {
+    let shared = build();
+    let base = shared
+        .clone()
+        .with_params(deterministic_material_params(&shared))
+        .unwrap();
+    let mut params = base.params.clone();
+    params.io.output_gamut_compress.knee[0] = 0.8;
+    let output = base.clone().with_params(params).unwrap();
+    assert!(Arc::ptr_eq(&base.film, &output.film));
+    assert!(Arc::ptr_eq(&base.print, &output.print));
+    assert!(Arc::ptr_eq(
+        base.spectral.as_ref().unwrap(),
+        output.spectral.as_ref().unwrap()
+    ));
+    assert!(Arc::ptr_eq(
+        base.gray.as_ref().unwrap(),
+        output.gray.as_ref().unwrap()
+    ));
+    assert!(Arc::ptr_eq(
+        base.print_calibration.as_ref().unwrap(),
+        output.print_calibration.as_ref().unwrap()
+    ));
+    assert!(!Arc::ptr_eq(&base.output_gamut, &output.output_gamut));
+
+    let mut params = output.params.clone();
+    params.enlarger.m_filter_shift += 3.0;
+    let print = output.clone().with_params(params).unwrap();
+    assert!(Arc::ptr_eq(
+        output.gray.as_ref().unwrap(),
+        print.gray.as_ref().unwrap()
+    ));
+    assert!(!Arc::ptr_eq(
+        output.print_calibration.as_ref().unwrap(),
+        print.print_calibration.as_ref().unwrap()
+    ));
+
+    let mut params = print.params.clone();
+    params.film_render.base.scale *= 1.1;
+    let material = print.clone().with_params(params).unwrap();
+    assert!(Arc::ptr_eq(
+        print.spectral.as_ref().unwrap(),
+        material.spectral.as_ref().unwrap()
+    ));
+    assert!(!Arc::ptr_eq(&print.film, &material.film));
+    assert!(Arc::ptr_eq(&print.print, &material.print));
+    assert!(!Arc::ptr_eq(
+        print.gray.as_ref().unwrap(),
+        material.gray.as_ref().unwrap()
+    ));
+    let backend = spektrafilm_backend::cpu_backend::CpuBackend;
+    let image = material_probe();
+    for (name, updated) in [
+        ("output", &output),
+        ("print", &print),
+        ("material", &material),
+    ] {
+        let cold = fresh_material_pipeline(&base, updated.params.clone());
+        let actual = updated.process(image.clone(), &backend).unwrap();
+        let expected = cold.process(image.clone(), &backend).unwrap();
+        assert_material_pixels_close(&actual, &expected, name);
+    }
+    let mut params = base.params.clone();
+    params.settings.rgb_to_raw_method = "mallett2019".into();
+    let mallett = base.clone().with_params(params).unwrap();
+    let mut params = mallett.params.clone();
+    params.settings.apply_hanatos2025_adaptation_window =
+        !params.settings.apply_hanatos2025_adaptation_window;
+    params.settings.apply_hanatos2025_adaptation_surface =
+        !params.settings.apply_hanatos2025_adaptation_surface;
+    params.settings.spectral_gaussian_blur = 8.0;
+    params.io.input_gamut_compress.algorithm = "oklch".into();
+    params.io.input_gamut_compress.knee[0] = 0.7;
+    let mallett_edited = mallett.clone().with_params(params).unwrap();
+    assert!(Arc::ptr_eq(
+        mallett.spectral.as_ref().unwrap(),
+        mallett_edited.spectral.as_ref().unwrap()
+    ));
+    assert!(Arc::ptr_eq(
+        mallett.gray.as_ref().unwrap(),
+        mallett_edited.gray.as_ref().unwrap()
+    ));
+    assert!(Arc::ptr_eq(
+        mallett.print_calibration.as_ref().unwrap(),
+        mallett_edited.print_calibration.as_ref().unwrap()
+    ));
+    assert_eq!(
+        mallett.process(image.clone(), &backend).unwrap().data,
+        mallett_edited
+            .process(image.clone(), &backend)
+            .unwrap()
+            .data,
+    );
+
+    let mut params = deterministic_material_params(&shared);
+    params.film_render.base.active = false;
+    params.print_render.base.active = false;
+    params.film_render.chemistry.active = false;
+    let base = shared.with_params(params).unwrap();
+    let mut params = base.params.clone();
+    params.film_render.base.scale = 1.7;
+    params.print_render.base.cyan = 0.7;
+    params.film_render.chemistry.gamma_factor = 1.5;
+    let inactive = base.clone().with_params(params.clone()).unwrap();
+    assert!(Arc::ptr_eq(&base.film, &inactive.film));
+    assert!(Arc::ptr_eq(&base.print, &inactive.print));
+    assert!(Arc::ptr_eq(
+        base.gray.as_ref().unwrap(),
+        inactive.gray.as_ref().unwrap()
+    ));
+    assert!(Arc::ptr_eq(
+        base.print_calibration.as_ref().unwrap(),
+        inactive.print_calibration.as_ref().unwrap()
+    ));
+    assert_material_pixels_close(
+        &inactive.process(image.clone(), &backend).unwrap(),
+        &base.process(image.clone(), &backend).unwrap(),
+        "inactive material controls",
+    );
+    let fresh_inactive = fresh_material_pipeline(&base, inactive.params.clone());
+    assert_material_pixels_close(
+        &inactive.process(image.clone(), &backend).unwrap(),
+        &fresh_inactive.process(image.clone(), &backend).unwrap(),
+        "inactive material controls fresh",
+    );
+
+    params.film_render.base.active = true;
+    params.print_render.base.active = true;
+    params.film_render.chemistry.active = true;
+    let active = inactive.clone().with_params(params).unwrap();
+    assert!(!Arc::ptr_eq(&inactive.film, &active.film));
+    assert!(!Arc::ptr_eq(&inactive.print, &active.print));
+    let fresh = fresh_material_pipeline(&base, active.params.clone());
+    let backend = spektrafilm_backend::cpu_backend::CpuBackend;
+    let image = material_probe();
+    assert_material_pixels_close(
+        &active.process(image.clone(), &backend).unwrap(),
+        &fresh.process(image, &backend).unwrap(),
+        "re-enabled material controls",
+    );
+}
+
+#[test]
+fn inactive_camera_filters_keep_preparation_and_pixels() {
+    let shared = build();
+    let backend = spektrafilm_backend::cpu_backend::CpuBackend;
+    let image = material_probe();
+    for method in ["hanatos2025", "mallett2019"] {
+        for amplitudes in [[0.0, 0.0], [0.5, 0.0], [0.0, 0.5]] {
+            let mut params = deterministic_material_params(&shared);
+            params.settings.rgb_to_raw_method = method.into();
+            params.camera.filter_uv[0] = amplitudes[0];
+            params.camera.filter_ir[0] = amplitudes[1];
+            let base = shared.clone().with_params(params).unwrap();
+            let mut params = base.params.clone();
+            if amplitudes[0] == 0.0 {
+                params.camera.filter_uv[1] = 450.0;
+                params.camera.filter_uv[2] = 11.0;
+            }
+            if amplitudes[1] == 0.0 {
+                params.camera.filter_ir[1] = 620.0;
+                params.camera.filter_ir[2] = 29.0;
+            }
+            let updated = base.clone().with_params(params).unwrap();
+            assert!(
+                Arc::ptr_eq(
+                    base.spectral.as_ref().unwrap(),
+                    updated.spectral.as_ref().unwrap()
+                ),
+                "{method}: {amplitudes:?}"
+            );
+            assert_eq!(
+                base.process(image.clone(), &backend).unwrap().data,
+                updated.process(image.clone(), &backend).unwrap().data
+            );
+        }
+    }
+}
+
+#[test]
+fn cpu_cat16_updates_only_dependent_references() {
+    let shared = build();
+    let backend = spektrafilm_backend::cpu_backend::CpuBackend;
+    let image = material_probe();
+    for method in ["hanatos2025", "mallett2019"] {
+        let mut params = deterministic_material_params(&shared);
+        params.settings.rgb_to_raw_method = method.into();
+        let base = shared.clone().with_params(params).unwrap();
+        let mut params = base.params.clone();
+        params.settings.use_cat16 = !params.settings.use_cat16;
+        let updated = base.clone().with_params(params).unwrap();
+        assert!(
+            Arc::ptr_eq(
+                base.spectral.as_ref().unwrap(),
+                updated.spectral.as_ref().unwrap()
+            ),
+            "{method}"
+        );
+        assert_eq!(
+            Arc::ptr_eq(base.gray.as_ref().unwrap(), updated.gray.as_ref().unwrap()),
+            method == "mallett2019"
+        );
+        let cold = fresh_material_pipeline(&base, updated.params.clone());
+        assert_material_pixels_close(
+            &updated.process(image.clone(), &backend).unwrap(),
+            &cold.process(image.clone(), &backend).unwrap(),
+            method,
+        );
+    }
+}
+
+#[test]
+fn model_less_film_ignores_chemistry_for_reuse() {
+    let shared = build();
+    let mut film = (*shared.original_film).clone();
+    film.data.density_curves_model = None;
+    let params = deterministic_material_params(&shared);
+    let base =
+        Pipeline::new_with_spectral(film, (*shared.original_print).clone(), params, &data_dir())
+            .unwrap();
+    let mut params = base.params.clone();
+    params.film_render.chemistry.gamma_factor = 1.5;
+    params.film_render.chemistry.active = !params.film_render.chemistry.active;
+    let updated = base.clone().with_params(params).unwrap();
+    assert!(Arc::ptr_eq(&base.film, &updated.film));
+    assert!(Arc::ptr_eq(
+        base.gray.as_ref().unwrap(),
+        updated.gray.as_ref().unwrap()
+    ));
+}
+
+#[test]
+fn input_only_skips_print_model_and_neutral_database() {
+    let shared = build();
+    let mut print = (*shared.original_print).clone();
+    print.data.density_curves_model.as_mut().unwrap().model_type = "invalid-model".into();
+    let mut params = deterministic_material_params(&shared);
+    params.workflow.route = "input".into();
+    params.settings.neutral_print_filters_from_database = true;
+    let empty = tempfile::tempdir().unwrap();
+    std::fs::create_dir(empty.path().join("filters")).unwrap();
+    std::fs::write(
+        empty.path().join("filters/neutral_print_filters.json"),
+        "not json",
+    )
+    .unwrap();
+    let input = Pipeline::new_with_spectral(
+        (*shared.original_film).clone(),
+        print,
+        params.clone(),
+        empty.path(),
+    )
+    .unwrap();
+    assert!(Arc::ptr_eq(&input.print, &input.original_print));
+    assert!(input.spectral.is_none());
+    assert!(input.gray.is_none());
+    assert!(input.print_calibration.is_none());
+    params.print_render.base.scale = 1.5;
+    let updated = input.clone().with_params(params.clone()).unwrap();
+    assert!(Arc::ptr_eq(&input.print, &updated.print));
+    params.workflow.route = "input > film > print > scan".into();
+    let error = match updated.with_params(params) {
+        Ok(_) => panic!("print route must validate the print model"),
+        Err(error) => error,
+    };
+    assert!(
+        error.contains("invalid print density-curve model"),
+        "{error}"
+    );
+}
+
+#[test]
+fn updated_bw_scan_validates_new_development_time() {
+    let shared = build();
+    let mut film = crate::profile::load_profile_by_name(&data_dir(), "kodak_doublex").unwrap();
+    film.data.density_curves_model = None;
+    film.data.density_curves[0][0] = f64::NAN;
+    let mut params = deterministic_material_params(&shared);
+    params.workflow.route = "input > film > scan".into();
+    params.scanner.scan_output = "direct_scan".into();
+    params.film_render.development_time = Some(4.0);
+    let first =
+        Pipeline::new_with_spectral(film, (*shared.original_print).clone(), params, &data_dir())
+            .unwrap();
+    assert!(!first.film.data.density_curves[0][0].is_finite());
+    let mut params = first.params.clone();
+    params.film_render.development_time = Some(12.0);
+    params.scanner.scan_output = "negative_to_positive".into();
+    let updated = first.with_params(params.clone()).unwrap();
+    let cold = fresh_material_pipeline(&updated, params);
+    assert_eq!(
+        updated.film.data.density_curves,
+        cold.film.data.density_curves
+    );
+}
+
+#[test]
+fn scan_checks_resolved_curves_before_chemistry_on_cold_and_warm_paths() {
+    let shared = build();
+    let mut film = (*shared.original_film).clone();
+    film.data.density_curves[0][0] = f64::NAN;
+    let mut params = deterministic_material_params(&shared);
+    params.workflow.route = "input > film > scan".into();
+    params.scanner.scan_output = "direct_scan".into();
+    let first = Pipeline::new_with_spectral(
+        film.clone(),
+        (*shared.original_print).clone(),
+        params.clone(),
+        &data_dir(),
+    )
+    .unwrap();
+    assert!(first.film.data.density_curves[0][0].is_finite());
+    params.scanner.scan_output = "negative_to_positive".into();
+    let warm_error = match first.with_params(params.clone()) {
+        Ok(_) => panic!("raw non-finite curve must reject the update"),
+        Err(error) => error,
+    };
+    let cold_error = match Pipeline::new_with_spectral(
+        film,
+        (*shared.original_print).clone(),
+        params,
+        &data_dir(),
+    ) {
+        Ok(_) => panic!("raw non-finite curve must reject construction"),
+        Err(error) => error,
+    };
+    assert!(
+        warm_error.contains("requires finite density curves"),
+        "{warm_error}"
+    );
+    assert_eq!(warm_error, cold_error);
+}
+
+#[test]
+fn positive_scan_rejection_precedes_invalid_film_model() {
+    let shared = build();
+    let mut film =
+        crate::profile::load_profile_by_name(&data_dir(), "fujifilm_velvia_100").unwrap();
+    film.data.density_curves_model.as_mut().unwrap().model_type = "invalid-model".into();
+    let mut params = deterministic_material_params(&shared);
+    params.workflow.route = "input > film > scan".into();
+    params.scanner.scan_output = "negative_to_positive".into();
+    let error = match Pipeline::new_with_spectral(
+        film,
+        (*shared.original_print).clone(),
+        params,
+        &data_dir(),
+    ) {
+        Ok(_) => panic!("positive film must be rejected"),
+        Err(error) => error,
+    };
+    assert!(
+        error.contains("requires a negative filming-stage film profile"),
+        "{error}"
+    );
+}
+
+#[test]
+fn rejected_candidate_preserves_preparation_and_pixels() {
+    let shared = build();
+    let mut initial = deterministic_material_params(&shared);
+    initial.workflow.route = "input > film > scan".into();
+    initial.scanner.scan_output = "negative_to_positive".into();
+    let pipeline = shared.clone().with_params(initial).unwrap();
+    let backend = spektrafilm_backend::cpu_backend::CpuBackend;
+    let image = material_probe();
+    let before = pipeline.process(image.clone(), &backend).unwrap();
+    let film = Arc::clone(&pipeline.film);
+    let print = Arc::clone(&pipeline.print);
+    let spectral = pipeline.spectral.clone().unwrap();
+    let gray = pipeline.gray.clone().unwrap();
+    let print_calibration = pipeline.print_calibration.clone().unwrap();
+    let mut params = pipeline.params.clone();
+    params.film_render.base.scale = 1.5;
+    params.scanner.conversion_style = "missing-preparation-regression-style".into();
+    let error = match pipeline.prepare_parameter_update(params, &backend) {
+        Ok(_) => panic!("missing style must reject the candidate"),
+        Err(error) => error,
+    };
+    assert!(error.contains("scanner.conversion_style"), "{error}");
+    assert!(Arc::ptr_eq(&film, &pipeline.film));
+    assert!(Arc::ptr_eq(&print, &pipeline.print));
+    assert!(Arc::ptr_eq(&spectral, pipeline.spectral.as_ref().unwrap()));
+    assert!(Arc::ptr_eq(&gray, pipeline.gray.as_ref().unwrap()));
+    assert!(Arc::ptr_eq(
+        &print_calibration,
+        pipeline.print_calibration.as_ref().unwrap()
+    ));
+    assert_ne!(pipeline.params.film_render.base.scale, 1.5);
+    let after = pipeline.process(image, &backend).unwrap();
+    assert_eq!(before.data, after.data);
+}
 #[test]
 fn with_params_rejects_failed_calibration_rebuild() {
     let base = build();
@@ -1269,9 +1662,13 @@ fn with_params_recalibrates_print_exposure_for_camera_ev() {
         let mut params = base.params.clone();
         params.camera.exposure_compensation_ev = ev;
         let updated = base.clone().with_params(params.clone()).unwrap();
-        let fresh =
-            Pipeline::new_with_spectral(base.film.clone(), base.print.clone(), params, &dir)
-                .unwrap();
+        let fresh = Pipeline::new_with_spectral(
+            (*base.original_film).clone(),
+            (*base.original_print).clone(),
+            params,
+            &dir,
+        )
+        .unwrap();
 
         assert!(
             (updated.print_exposure_factor() - fresh.print_exposure_factor()).abs() < 1e-12,
@@ -1301,6 +1698,15 @@ fn inactive_capture_illuminant_does_not_change_convert_film_calibration() {
         Pipeline::new_with_spectral(film.clone(), print.clone(), base.clone(), &dir).unwrap();
     let mut explicit = base;
     explicit.camera.capture_illuminant = Some("BB4000".into());
+    let updated = inherited.clone().with_params(explicit.clone()).unwrap();
+    assert!(Arc::ptr_eq(
+        inherited.spectral.as_ref().unwrap(),
+        updated.spectral.as_ref().unwrap()
+    ));
+    assert!(Arc::ptr_eq(
+        inherited.gray.as_ref().unwrap(),
+        updated.gray.as_ref().unwrap()
+    ));
     let overridden = Pipeline::new_with_spectral(film, print, explicit, &dir).unwrap();
     assert_eq!(
         inherited.print_exposure_factor(),
@@ -1317,9 +1723,13 @@ fn input_gamut_active_toggle_matches_fresh_lut() {
         let mut params = base.params.clone();
         params.io.input_gamut_compress.active = active;
         let rebuilt = updated.with_params(params.clone()).unwrap();
-        let fresh =
-            Pipeline::new_with_spectral(base.film.clone(), base.print.clone(), params, &data_dir())
-                .unwrap();
+        let fresh = Pipeline::new_with_spectral(
+            (*base.original_film).clone(),
+            (*base.original_print).clone(),
+            params,
+            &data_dir(),
+        )
+        .unwrap();
         assert_eq!(lut_data(&rebuilt), lut_data(&fresh));
         assert_eq!(
             rebuilt.print_exposure_factor(),

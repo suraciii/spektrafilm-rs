@@ -607,41 +607,45 @@ mod parity_tests {
         let pipeline =
             crate::pipeline::Pipeline::new_with_spectral(film, print, params, &dir).unwrap();
 
-        let (w, h) = (16u32, 16u32);
-        let data: Vec<_> = (0..w * h * 3)
-            .map(|i| from_f64(0.05 + 0.5 * ((i * 37) % 256) as f64 / 255.0))
-            .collect();
-        let img = ImageBuf::from_data(w, h, data);
+        for (w, h) in [(16u32, 16u32), (48, 33)] {
+            let data: Vec<_> = (0..w * h * 3)
+                .map(|i| from_f64(0.05 + 0.5 * ((i * 37) % 256) as f64 / 255.0))
+                .collect();
+            let img = ImageBuf::from_data(w, h, data);
 
-        let out_gpu = pipeline.process(img.clone(), gpu.backend()).unwrap();
-        let out_cpu = pipeline
-            .process(img, &spektrafilm_backend::cpu_backend::CpuBackend)
-            .unwrap();
+            let out_gpu = pipeline.process(img.clone(), gpu.backend()).unwrap();
+            let out_cpu = pipeline
+                .process(img, &spektrafilm_backend::cpu_backend::CpuBackend)
+                .unwrap();
 
-        let mut max_diff = 0.0f64;
-        let mut max_at = (0usize, 0.0f64, 0.0f64);
-        let mut sum_diff = 0.0f64;
-        for (i, (g, c)) in out_gpu.data.iter().zip(out_cpu.data.iter()).enumerate() {
-            let d = (*g as f64 - *c as f64).abs();
-            if d > max_diff {
-                max_diff = d;
-                max_at = (i, *g as f64, *c as f64);
+            let mut max_diff = 0.0f64;
+            let mut max_at = (0usize, 0.0f64, 0.0f64);
+            let mut sum_diff = 0.0f64;
+            for (i, (g, c)) in out_gpu.data.iter().zip(out_cpu.data.iter()).enumerate() {
+                let d = (*g as f64 - *c as f64).abs();
+                if d > max_diff {
+                    max_diff = d;
+                    max_at = (i, *g as f64, *c as f64);
+                }
+                sum_diff += d;
             }
-            sum_diff += d;
+            let mean_diff = sum_diff / out_cpu.data.len() as f64;
+            // Keep both aggregate and per-pixel bounds: a local optical-filter
+            // boundary error can pass the mean while exceeding the maximum after
+            // sharpening and output encoding. No default optical effects are
+            // disabled to make this comparison pass.
+            assert!(
+                mean_diff < 5e-3,
+                "{w}x{h} mean GPU↔CPU divergence: {mean_diff}"
+            );
+            assert!(
+                max_diff < 5e-2,
+                "{w}x{h} max GPU↔CPU divergence: {max_diff} at idx {} (gpu {} vs cpu {})",
+                max_at.0,
+                max_at.1,
+                max_at.2
+            );
         }
-        let mean_diff = sum_diff / out_cpu.data.len() as f64;
-        // Keep both aggregate and per-pixel bounds: a local optical-filter
-        // boundary error can pass the mean while exceeding the maximum after
-        // sharpening and output encoding. No default optical effects are
-        // disabled to make this comparison pass.
-        assert!(mean_diff < 5e-3, "mean GPU↔CPU divergence: {mean_diff}");
-        assert!(
-            max_diff < 5e-2,
-            "max GPU↔CPU divergence: {max_diff} at idx {} (gpu {} vs cpu {})",
-            max_at.0,
-            max_at.1,
-            max_at.2
-        );
     }
 
     /// An unknown upsampler method is rejected at calibration (mirrors upstream).
