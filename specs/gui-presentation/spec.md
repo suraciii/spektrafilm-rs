@@ -125,11 +125,11 @@ Expanded modules MUST use a quiet bounded surface. Collapsed modules MUST remain
 
 ## Module headers and resets
 
-A module header MUST present its collapse control, title, modified state, and the module's factory reset action. Rows, sliders, and dialog options MUST NOT present their own reset actions; Undo reverses an individual adjustment. Reset actions MUST be keyboard reachable and MUST identify their target and factory baseline in accessible help.
+A module header MUST present its collapse control, title, modified state, and module reset action. Rows, sliders, and dialog options MUST NOT present their own reset actions; Undo reverses an individual adjustment. Reset actions MUST be keyboard reachable and MUST identify their target and baseline in accessible help.
 
 Reset scope follows [complete control access](../gui-workflow/spec.md#complete-control-access), and reset transactions follow [edit history](../gui-workflow/spec.md#edit-history). A module reset MUST identify the module's owned controls, not imply a reset of the whole serialized preset section.
 
-A row whose value differs from its projected factory value MUST present a non-color modified marker. A module header MUST present the aggregate modified state of its owned rows. Markers MUST NOT change the row's accessible label.
+A row whose value differs from its [reset baseline](../gui-workflow/spec.md#section-reset) MUST present a non-color modified marker. A module header MUST present the aggregate modified state of its owned rows. Markers MUST NOT change the row's accessible label.
 
 The [presentation design](design.md#factory-projection-and-modified-state) owns the comparison and projection boundary.
 

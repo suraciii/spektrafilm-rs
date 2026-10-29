@@ -68,7 +68,7 @@ A pending result for an abandoned intermediate state MUST NOT replace the accept
 
 Search MUST inspect control descriptions without invoking editor mutations, material loading, or rendering. It MUST include inactive and folded controls in the index. A locator for another surface MUST open that owner and focus its control rather than constructing a filtered editor copy.
 
-Normal disclosure state and query-induced disclosure MUST be separate. Clearing a query MUST remove only the query-induced expansion. Only modified MUST read the same factory comparison as row markers, not a separately maintained dirty flag.
+Normal disclosure state and query-induced disclosure MUST be separate. Clearing a query MUST remove only the query-induced expansion. Only modified MUST read the same reset-baseline comparison as row markers, not a separately maintained dirty flag.
 
 Search text, temporary result selection, and adjustment history remain session-local. Browser metadata and any persisted layout values retain their existing GUI-state ownership. Inspector organization MUST NOT leak into look presets, runtime recipes, CLI parameter documents, or Python-compatible GUI sections.
 
@@ -88,4 +88,4 @@ The native cutover MUST remove the old mutually exclusive page navigation rather
 
 The implementation MUST integrate the inspector, preset browser search, editing/history boundary, settings and Export owners, and control coverage in the production entry point. A static HTML page, duplicated test-only editors, or an inventory with disconnected rows does not satisfy the target.
 
-Verification MUST cover actual parameter transitions, factory reset scope, preset scope, history provenance, stale-worker rejection, and retained Save versus independent Export. Native layout and keyboard review MUST complement existing offscreen coverage. Image and backend checks MUST use the owning numerical contracts; layout work MUST NOT change those tolerances or claim new rendering parity.
+Verification MUST cover actual parameter transitions, reset scope and baseline, preset scope, history provenance, stale-worker rejection, and retained Save versus independent Export. Native layout and keyboard review MUST complement existing offscreen coverage. Image and backend checks MUST use the owning numerical contracts; layout work MUST NOT change those tolerances or claim new rendering parity.

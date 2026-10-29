@@ -46,15 +46,15 @@ The slider MUST NOT represent an unaccepted text draft as a committed parameter 
 
 ## Factory projection and modified state
 
-The module reset target MUST be the factory projection of only the visible controls that the module owns under [complete control access](../gui-workflow/spec.md#complete-control-access). A route-inactive owned row remains part of that scope.
+The module reset target MUST use the [reset baseline](../gui-workflow/spec.md#section-reset) for only the editable controls that the module owns. A route-inactive owned row remains part of that scope.
 
 Collapse and search visibility MUST NOT redefine ownership or reset scope.
 
-The projection MUST NOT use the selected preset, loaded state, startup default, or whole serialized preset section as its baseline. Runtime-only editable controls, including the grain selector and engine-specific controls, MUST retain factory targets even when no persisted section carries them.
+The projection MUST NOT use the selected preset, loaded state, startup default, or whole serialized preset section as its baseline. Runtime-only editable controls, including the grain selector and engine-specific controls, remain in scope even when no persisted section carries them.
 
 The canonical ownership mapping MUST be the source of module scope; the numeric range table MUST NOT define scope because it excludes nonnumeric controls.
 
-The modified marker MUST be derived rather than persisted or serialized. Numeric comparisons MUST use exact bits against the factory projection. Tuple components, optional values, extra controls, choices, and booleans MUST participate in the same row and module scope.
+The modified marker MUST be derived rather than persisted or serialized. Numeric comparisons MUST use exact bits against the reset baseline. Tuple components, optional values, extra controls, choices, and booleans MUST participate in the same row and module scope.
 
 A module's marker MUST aggregate only its owned rows. A marker MUST use a non-color cue and MUST NOT change the row's accessible label.
 

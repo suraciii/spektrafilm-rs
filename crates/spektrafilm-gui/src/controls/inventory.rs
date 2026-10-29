@@ -85,18 +85,18 @@ impl ControlEntry {
         self.search_text.contains(query)
     }
 
-    pub(crate) fn is_modified(&self, runtime: &Value, extras: &Value) -> bool {
+    pub(crate) fn is_modified(&self, runtime: &Value, extras: &Value, baseline: &Value) -> bool {
         if self.path == "preference.interface_language"
             || matches!(self.editor, EditorKind::Action | EditorKind::Excluded(_))
         {
             return false;
         }
         if self.affected_paths.is_empty() {
-            crate::section_reset::path_modified(&self.path, runtime, extras)
+            crate::section_reset::path_modified(&self.path, runtime, extras, baseline)
         } else {
             self.affected_paths
                 .iter()
-                .any(|path| crate::section_reset::path_modified(path, runtime, extras))
+                .any(|path| crate::section_reset::path_modified(path, runtime, extras, baseline))
         }
     }
 
@@ -321,9 +321,13 @@ pub(crate) fn section_matches(
         entry.section == section
             && entry.searchable()
             && entry.matches(&query)
-            && projection
-                .as_ref()
-                .is_none_or(|projection| entry.is_modified(&projection.runtime, &projection.extras))
+            && projection.as_ref().is_none_or(|projection| {
+                entry.is_modified(
+                    &projection.runtime,
+                    &projection.extras,
+                    &projection.baseline,
+                )
+            })
     })
 }
 

@@ -228,7 +228,7 @@ Actions MUST use one stable verb and one explicit target:
 | `Load from file` | Load GUI state from a selected state file. |
 | `Save current as default` | Replace the startup GUI state. |
 | `Restore factory default` | Restore factory GUI state and remove the saved startup default. |
-| `reset <module>` | Restore one module's editable controls to their factory projection. |
+| `reset <module>` | Restore one module's editable controls to its [reset baseline](../gui-workflow/spec.md#section-reset). |
 
 Action labels MAY use uppercase casing. Tooltips and status messages MUST preserve the meanings in this table.
 
@@ -250,11 +250,11 @@ A status that reports route or profile normalization MUST identify which stored 
 
 ## State, reset, and search language
 
-In row and module state, `Modified` MUST mean that the control differs from its exact factory reset projection. It MUST NOT mean that the value differs from the selected preset or startup default. This state is distinct from the viewer's Modified image selection.
+In row and module state, `Modified` MUST mean that the control differs from its exact reset baseline. It MUST NOT mean that the value differs from the selected preset or startup default. This state is distinct from the viewer's Modified image selection.
 
-Factory comparison follows [presentation design](../gui-presentation/design.md#factory-projection-and-modified-state). Reset behavior follows [Section reset](../gui-workflow/spec.md#section-reset).
+Reset-baseline comparison follows [presentation design](../gui-presentation/design.md#factory-projection-and-modified-state). Reset behavior follows [Section reset](../gui-workflow/spec.md#section-reset).
 
-A module reset MUST name its module and the factory baseline in its action label, accessible help, and history description under the core-term table. A grouped settings reset MUST name its settings section instead of a photographic module.
+A module reset MUST name its module and the reset baseline in its action label, accessible help, and history description under the core-term table. A grouped settings reset MUST name its settings section instead of a photographic module.
 
 The inspector stage names MUST be `Input and capture`, `Film`, `Print`, `Scan`, and `Output`. A stage jump MUST identify the heading it reaches, not a page it replaces. `Settings` and `Export` MUST name dialogs rather than additional stages.
 

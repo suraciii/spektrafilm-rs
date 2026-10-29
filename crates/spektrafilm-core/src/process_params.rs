@@ -5,9 +5,12 @@ use crate::params::sources::lookup;
 use crate::params::sources::{ParameterEdits, validate_finite};
 use crate::params::validation::REMOVED_MAGAZINE_ROUTE;
 use crate::params::{GrainEngine, RuntimeParams};
+#[cfg(test)]
+use crate::params_builder::digest_params;
 use crate::params_builder::{
-    apply_database_neutral_print_filters_protected, apply_film_specifics,
-    apply_runtime_constraints, digest_params, normalize_runtime_topology,
+    FilmSpecificsPolicy, apply_database_neutral_print_filters_protected, apply_film_specifics,
+    apply_film_specifics_with_policy, apply_runtime_constraints, digest_params_with_stock_policy,
+    normalize_runtime_topology,
 };
 use crate::presets;
 use crate::profile::{self, Profile};
@@ -164,6 +167,13 @@ fn resolve_with_preview_mode(
         return Err("--preset conflicts with --film, --paper and --params when it supplies their profile references".into());
     }
     let (mut params, baseline_granularity_authored) = load_baseline(request.params_file)?;
+    let stock_policy = (request.digest_mode == DigestMode::ApplyStockSpecifics).then_some(
+        if request.params_file.is_some() {
+            FilmSpecificsPolicy::LegacyOverrides
+        } else {
+            FilmSpecificsPolicy::MaterialDefaults
+        },
+    );
     let mut declarations = baseline_declarations(request.params_file)?;
     let mut winning = BTreeMap::new();
     // A saved removed route must be reported before any explicit route
@@ -337,9 +347,9 @@ fn resolve_with_preview_mode(
             ));
         }
         if (added_sources || profile_sources)
-            && request.digest_mode == DigestMode::ApplyStockSpecifics
+            && let Some(policy) = stock_policy
         {
-            apply_film_specifics(&mut params, &film);
+            apply_film_specifics_with_policy(&mut params, &film, policy);
         }
         (film, print, name.to_owned(), print_name)
     };
@@ -450,13 +460,8 @@ fn resolve_with_preview_mode(
             params.settings.preview_mode = mode;
         }
         let neutral = NeutralFilters::load(data_dir)?;
-        params = digest_params(
-            params,
-            &film,
-            &print,
-            Some(&neutral),
-            request.digest_mode == DigestMode::ApplyStockSpecifics,
-        );
+        params =
+            digest_params_with_stock_policy(params, &film, &print, Some(&neutral), stock_policy);
     } else {
         let mut protected = params.neutral_print_filters_protected;
         for edits in &parsed_sources {

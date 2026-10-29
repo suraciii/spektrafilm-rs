@@ -102,7 +102,7 @@ Multi-photograph application follows [Photograph work](../gui-product-design/pho
 - Application clears transient Scan-for-print state, invalidates dependent render state, and schedules automatic Preview.
 - Applying a look preset normalizes the scanner output: when the resolved film is positive or the selected workflow route is not a film-scan route, the output becomes the direct-scan mode. A route the caller already declared as `input > film > scan` or `input > convert-film > scan` is preserved, so a document that selects the negative conversion keeps that selection on those routes.
 - `core` owns that rule once for the GUI and the CLI.
-- Applying a look preset does not change recorded explicit-leaf ownership. Only a section preset or a sparse parameter source marks its own leaves explicit, and those marks survive a later look application.
+- Applying a look preset does not change recorded explicit-leaf ownership. Section presets and sparse parameter sources mark their supplied leaves explicit; those marks survive a later look application.
 - Applying a section preset replaces exactly the controls of its section, and those values count as explicit. Every other control retains its value, including explicit values from an earlier preset or parameter source, so the result does not re-derive them from stock defaults.
 - It clears transient Scan-for-print state, invalidates dependent render state, and schedules automatic Preview.
 - Applying a section preset that would introduce a scanner-output, workflow-route, scan-film, film-profile, or grain-engine combination the pipeline rejects MUST fail without changing any control. A state that already fails that check MAY still receive an unrelated section edit.
@@ -127,9 +127,31 @@ flowchart LR
     W --> R["Resolved RuntimeParams"]
 ```
 
-A profile change MUST NOT apply hidden stock-specific look values. The workflow selector remains editable until the next film profile change. The positive path does not execute print stages; its explicit print profile remains part of the portable pair.
+Film selection refreshes unowned stock-derived controls under [Material defaults](#material-defaults). It MUST NOT apply other hidden stock-specific look values. The workflow selector remains editable until the next film profile change.
+
+The positive path does not execute print stages; its explicit print profile remains part of the portable pair.
 
 A serialized `route` or `workflow` field is unknown and rejected.
+
+### Material defaults
+
+Selecting a film MUST refresh unowned stock-derived leaves from the selected film's defaults. Fresh GUI and CLI initialization MUST use the same stock defaults for the same film.
+
+| Group | Stock-derived leaves |
+| --- | --- |
+| Grain | `rms_granularity`, `density_min`, `uniformity`, `particle_scale_sublayers` |
+| DIR couplers | `gamma_samelayer_rgb`, `gamma_interlayer_r_to_gb`, `gamma_interlayer_g_to_rb`, `gamma_interlayer_b_to_rg` |
+| Halation | `halation_first_sigma_um`, `halation_strength` |
+
+Explicitly owned leaves MUST retain their values, even when equal to the previous film's default. Each vector is one atomic leaf; ownership MUST NOT be inferred separately for its components.
+
+Selection MUST preserve enable switches, intensity, unrelated controls, and existing explicit ownership. Material defaults MUST retain the applicable stock, cine, and class/polarity lookup precedence under [Preset design](design.md#material-defaults).
+
+When that lookup provides no applicable value for a stock-derived leaf, its schema default MUST replace the previous stock's value.
+
+Ordinary rendering, complete GUI-state or photograph restoration, and history replay MUST NOT reapply material defaults. They MUST preserve the restored or accepted controls exactly.
+
+Legacy baseline preparation MUST retain its existing initialization policy under [CLI composition](../cli/spec.md#composition) and [compatibility](../cli/spec.md#compatibility). Legacy values MUST NOT acquire new explicit ownership to preserve that policy.
 
 ### Look ownership
 

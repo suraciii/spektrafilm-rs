@@ -18,6 +18,18 @@
 - `SPEKTRAFILM_CONFIG_DIR` MUST override it; there is no separate preset directory override. The library directory MUST NOT require a data directory.
 - Reusable combinations of controls that are already preset-owned belong in the existing look or section preset. They use the preset library, ownership table, strict validators, and shared resolver; there is no second cross-domain configuration document or selector.
 
+## Material defaults
+
+Core MUST own one implementation of [material defaults](spec.md#material-defaults) shared by GUI material selection and CLI preparation. It MUST retain the existing stock → cine → class/polarity lookup where applicable, including partial stock entries, before using schema fallback.
+
+The implementation MUST use existing explicit-leaf metadata, not comparison with a default value. It MUST preserve the metadata while refreshing unowned leaves; a vector is one leaf.
+
+Stock initialization MUST distinguish fresh material defaults from legacy overrides at the shared lookup boundary. The existing batch digest and legacy baselines retain missing-stock grain values, partial-array remainders, and unmatched halation values. Fresh initialization resolves class/schema defaults instead.
+
+The process resolver MUST select this policy from baseline origin, not from the presence of later presets, feature profiles, or `--set` sources. Both policies MUST share the digest ordering and lookup helpers.
+
+This behavior MUST NOT add a wire field or format version. Reset ownership and complete-state restoration follow [GUI workflow](../gui-workflow/spec.md#section-reset).
+
 ## Sections
 
 A section is a named set of look-owned parameter paths. This table is authoritative for routing, and a section preset carries exactly its section's paths.

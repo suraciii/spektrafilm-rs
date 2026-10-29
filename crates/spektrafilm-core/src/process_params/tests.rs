@@ -429,7 +429,7 @@ fn sparse_baseline_resolves_omitted_rms_without_rewriting_authored_zero() {
 }
 
 #[test]
-fn unknown_stock_dye_uses_omitted_baseline_fallback_but_preserves_authored_values() {
+fn unlisted_stock_uses_class_defaults_but_preserves_restored_authored_values() {
     let path = std::env::temp_dir().join(format!(
         "spektrafilm-unknown-dye-baseline-{}.json",
         std::process::id()
@@ -439,7 +439,26 @@ fn unknown_stock_dye_uses_omitted_baseline_fallback_but_preserves_authored_value
     bare.film = Some("fujifilm_velvia_50");
     bare.scan_film = true;
     let bare = resolve(bare, &data_dir()).unwrap();
-    assert_eq!(bare.params.film_render.grain.rms_granularity, [0.0; 3]);
+    let table: toml::Value =
+        toml::from_str(include_str!("../../../../data/presets/grain.toml")).unwrap();
+    let class_rms: Vec<f64> = table["defaults"]["color"]["positive"]["rms_granularity"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|value| value.as_float().unwrap())
+        .collect();
+    assert_eq!(
+        bare.params.film_render.grain.rms_granularity.as_slice(),
+        class_rms
+    );
+    let mut unsourced = request(&[]);
+    unsourced.film = Some("fujifilm_velvia_50");
+    unsourced.scan_film = true;
+    let unsourced = resolve(unsourced, &data_dir()).unwrap();
+    assert_eq!(
+        unsourced.params.film_render.grain,
+        bare.params.film_render.grain
+    );
 
     for (document, expected) in [
         (r#"{"film_render":{"grain":{"engine":"dye"}}}"#, [0.0; 3]),
@@ -456,6 +475,36 @@ fn unknown_stock_dye_uses_omitted_baseline_fallback_but_preserves_authored_value
         req.digest_mode = DigestMode::PreserveUserEdits;
         let resolved = resolve(req, &data_dir()).unwrap();
         assert_eq!(resolved.params.film_render.grain.rms_granularity, expected);
+    }
+    std::fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn legacy_missing_stock_grain_values_survive_without_new_explicit_ownership() {
+    let path = std::env::temp_dir().join(format!(
+        "spektrafilm-legacy-grain-fallback-{}.json",
+        std::process::id()
+    ));
+    std::fs::write(&path, r#"{"film_render":{"grain":{"engine":"dye","rms_granularity":[1,2,3],"density_min":[0.01,0.02,0.03],"uniformity":[0.81,0.82,0.83],"particle_scale_sublayers":[1,0.2,0.3]}}}"#).unwrap();
+    for sources in [vec![], vec!["camera.auto_exposure=false".to_owned()]] {
+        let mut req = request(&sources);
+        req.params_file = Some(&path);
+        req.film = Some("fujifilm_velvia_50");
+        req.scan_film = true;
+        let resolved = resolve(req, &data_dir()).unwrap();
+        let grain = &resolved.params.film_render.grain;
+        assert_eq!(grain.rms_granularity, [1.0, 2.0, 3.0]);
+        assert_eq!(grain.density_min, [0.01, 0.02, 0.03]);
+        assert_eq!(grain.uniformity, [0.81, 0.82, 0.83]);
+        assert_eq!(grain.particle_scale_sublayers, [1.0, 0.2, 0.3]);
+        assert!(
+            !resolved
+                .params
+                .render_preparation_state()
+                .explicit_section_paths
+                .iter()
+                .any(|path| path.starts_with("film_render.grain."))
+        );
     }
     std::fs::remove_file(path).unwrap();
 }

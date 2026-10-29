@@ -88,7 +88,11 @@ fn build_with_projection(
             || !entry.matches(&query)
             || exact_path.is_some_and(|path| entry.path != path)
             || projection.is_some_and(|projection| {
-                !entry.is_modified(&projection.runtime, &projection.extras)
+                !entry.is_modified(
+                    &projection.runtime,
+                    &projection.extras,
+                    &projection.baseline,
+                )
             })
         {
             continue;
@@ -126,6 +130,7 @@ pub(crate) struct SearchIndex {
     medium: Option<ScanMedium>,
     only_modified: bool,
     modified_extras: Option<Arc<Value>>,
+    modified_baseline: Option<Arc<Value>>,
     preview_max_size: u32,
     built: bool,
     results: Vec<SearchResult>,
@@ -150,6 +155,7 @@ impl SearchIndex {
         let preferences_changed = projection.as_ref().is_some_and(|projection| {
             self.preview_max_size != params.settings.preview_max_size
                 || self.modified_extras.as_deref() != Some(projection.extras.as_ref())
+                || self.modified_baseline.as_deref() != Some(projection.baseline.as_ref())
         });
         if !self.built
             || self.query != query
@@ -164,6 +170,9 @@ impl SearchIndex {
             self.medium = Some(medium);
             self.only_modified = only_modified;
             self.results = build_with_projection(query, projection.as_ref());
+            self.modified_baseline = projection
+                .as_ref()
+                .map(|projection| projection.baseline.clone());
             self.modified_extras = projection.map(|projection| projection.extras);
             self.preview_max_size = params.settings.preview_max_size;
             self.built = true;
@@ -176,6 +185,7 @@ impl SearchIndex {
         self.results.clear();
         self.medium = None;
         self.modified_extras = None;
+        self.modified_baseline = None;
         self.built = false;
     }
 }
@@ -377,7 +387,8 @@ mod tests {
         assert!(crate::section_reset::reset(
             &mut params,
             &mut extras,
-            "Scanner"
+            "Scanner",
+            crate::section_reset::factory_root()
         ));
         assert_eq!(params.scanner.operator, Default::default());
         assert_eq!(params.camera.exposure_compensation_ev, camera_exposure);
@@ -392,12 +403,16 @@ mod tests {
         assert!(build_filtered("Operator correction", &params, &extras, true).is_empty());
         params.scanner.operator.exposure_ev = 0.5;
         assert!(crate::section_reset::is_modified(
-            "Scanner", &params, &extras
+            "Scanner",
+            &params,
+            &extras,
+            crate::section_reset::factory_root()
         ));
         assert!(crate::section_reset::reset(
             &mut params,
             &mut extras,
-            "Scanner"
+            "Scanner",
+            crate::section_reset::factory_root()
         ));
         assert_eq!(params.scanner.operator, Default::default());
         assert_eq!(params.camera.exposure_compensation_ev, camera_exposure);
@@ -557,8 +572,13 @@ mod tests {
         let root = serde_json::to_value(&params).unwrap();
         let entry = lookup("film_render.halation.halation_amount").unwrap();
         assert_eq!(
-            entry.is_modified(&root, &extras),
-            crate::section_reset::path_modified(&entry.path, &root, &extras)
+            entry.is_modified(&root, &extras, crate::section_reset::factory_root()),
+            crate::section_reset::path_modified(
+                &entry.path,
+                &root,
+                &extras,
+                crate::section_reset::factory_root()
+            )
         );
         let found = build_filtered("halation", &params, &extras, true);
         assert_eq!(found.len(), 1);
@@ -578,7 +598,12 @@ mod tests {
             } else {
                 original_preview_max_size
             };
-            super::super::begin_control_frame(&ctx, &params, &extras);
+            super::super::begin_control_frame(
+                &ctx,
+                &params,
+                &extras,
+                Arc::new(crate::section_reset::factory_root().clone()),
+            );
             let found = index.results_filtered(
                 "Session",
                 &params,
@@ -610,10 +635,15 @@ mod tests {
         extras["load_raw"]["temperature"] = serde_json::json!(6200.0);
         let root = serde_json::to_value(&params).unwrap();
         let entry = lookup("extras.load_raw.temperature").unwrap();
-        assert!(entry.is_modified(&root, &extras));
+        assert!(entry.is_modified(&root, &extras, crate::section_reset::factory_root()));
         assert_eq!(
-            entry.is_modified(&root, &extras),
-            crate::section_reset::path_modified(&entry.path, &root, &extras)
+            entry.is_modified(&root, &extras, crate::section_reset::factory_root()),
+            crate::section_reset::path_modified(
+                &entry.path,
+                &root,
+                &extras,
+                crate::section_reset::factory_root()
+            )
         );
         let found = build_filtered("temperature", &params, &extras, true);
         assert_eq!(found.len(), 1);
