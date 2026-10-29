@@ -101,7 +101,7 @@ fn grain_defaults_distinguish_authored_sparse_and_versioned_legacy_states() {
         for runtime in [
             json!({}),
             json!({"film_render": {}}),
-            json!({"film_render": {"grain": {"v3_event_area_um2": 2.25}}}),
+            json!({"film_render": {"grain": {"dye_event_area_um2": 2.25}}}),
         ] {
             let state =
                 GuiState::from_value(json!({"rust": {"version": version, "runtime": runtime}}))
@@ -139,7 +139,7 @@ fn explicit_grain_engines_survive_every_state_boundary() {
     ] {
         for version in 1..=CURRENT_STATE_VERSION {
             for source in [
-                json!({"rust": {"version": version, "runtime": {"film_render": {"grain": {"engine": name, "v3_event_area_um2": 2.25}}}}}),
+                json!({"rust": {"version": version, "runtime": {"film_render": {"grain": {"engine": name, "dye_event_area_um2": 2.25}}}}}),
                 json!({"rust": {"version": version}, "grain": {"engine": name}}),
             ] {
                 let state = GuiState::from_value(source).unwrap();
@@ -815,13 +815,13 @@ fn fotufilm_effective_controls_roundtrip_only_in_rust_extension() {
 #[test]
 fn partial_fotufilm_state_keeps_nested_defaults_and_old_engine_controls() {
     let state = GuiState::from_value(json!({"rust": {"version": 1, "runtime": {
-        "film_render": {"grain": {"engine": "fotufilm", "fotufilm": {"amount": 0.0}, "v3_dye_support_um": 4.5}}
+        "film_render": {"grain": {"engine": "fotufilm", "fotufilm": {"amount": 0.0}, "dye_support_um": 4.5}}
     }}})).unwrap();
     let grain = state.runtime_params().unwrap().film_render.grain;
     assert_eq!(grain.fotufilm.amount, 0.0);
     assert_eq!(grain.fotufilm.rms_density, 0.009);
     assert_eq!(grain.fotufilm.sublayer_shares, [0.25; 4]);
-    assert_eq!(grain.v3_dye_support_um, 4.5);
+    assert_eq!(grain.dye_support_um, 4.5);
 }
 
 #[test]
@@ -831,10 +831,10 @@ fn runtime_extensions_roundtrip_without_overriding_upstream_selection() {
     params.io.output_cctf_encoding = false;
     params.film_render.development_time = Some(9.0);
     params.film_render.grain.engine = spektrafilm_core::params::GrainEngine::Dye;
-    params.film_render.grain.v3_dye_support_um = 4.5;
-    params.film_render.grain.v3_event_area_um2 = 0.6;
-    params.film_render.grain.v2_profile = "8mm500".into();
-    params.film_render.grain.v2_amount = Some(0.0);
+    params.film_render.grain.dye_support_um = 4.5;
+    params.film_render.grain.dye_event_area_um2 = 0.6;
+    params.film_render.grain.procedural_profile = "8mm500".into();
+    params.film_render.grain.procedural_amount = Some(0.0);
     let mut extras = factory.sections.clone();
     extras["rust"] = json!({"version":1,"viewer":{"zoom":3.0}});
     let saved =
@@ -844,7 +844,7 @@ fn runtime_extensions_roundtrip_without_overriding_upstream_selection() {
         "dye"
     );
     assert_eq!(
-        saved.sections["rust"]["runtime"]["film_render"]["grain"]["v3_dye_support_um"],
+        saved.sections["rust"]["runtime"]["film_render"]["grain"]["dye_support_um"],
         4.5
     );
     let recipe = serde_json::from_slice(&serde_json::to_vec(&saved.sections).unwrap()).unwrap();
@@ -856,10 +856,17 @@ fn runtime_extensions_roundtrip_without_overriding_upstream_selection() {
         restored.film_render.grain.engine,
         spektrafilm_core::params::GrainEngine::Dye
     );
-    assert_eq!(restored.film_render.grain.v3_dye_support_um, 4.5);
-    assert_eq!(restored.film_render.grain.v3_event_area_um2, 0.6);
-    assert_eq!(restored.film_render.grain.v2_profile, "8mm500");
-    assert_eq!(restored.film_render.grain.resolved_grain_v2().amount, 0.0);
+    assert_eq!(restored.film_render.grain.dye_support_um, 4.5);
+    assert_eq!(restored.film_render.grain.dye_event_area_um2, 0.6);
+    assert_eq!(restored.film_render.grain.procedural_profile, "8mm500");
+    assert_eq!(
+        restored
+            .film_render
+            .grain
+            .resolved_grain_procedural()
+            .amount,
+        0.0
+    );
     assert_eq!(loaded.sections["rust"]["viewer"]["zoom"], 3.0);
     let serialized_saved: Value =
         serde_json::from_slice(&serde_json::to_vec(&saved.sections).unwrap()).unwrap();
@@ -908,14 +915,14 @@ fn retired_grain_controls_fail_in_every_state_carrier() {
     }
 }
 #[test]
-fn grain_v2_canonical_fields_roundtrip_through_state_and_runtime() {
+fn grain_procedural_canonical_fields_roundtrip_through_state_and_runtime() {
     let factory = GuiState::factory();
     let mut params = factory.runtime_params().unwrap();
     let grain = &mut params.film_render.grain;
     grain.engine = spektrafilm_core::params::GrainEngine::Procedural;
-    grain.v2_profile = "custom".into();
-    grain.v2_resolution_type = 0;
-    grain.v2_timer = 0.375;
+    grain.procedural_profile = "custom".into();
+    grain.procedural_resolution_type = 0;
+    grain.procedural_timer = 0.375;
     grain.active = false;
     grain.rms_granularity = [11.0, 13.0, 17.0];
     grain.density_min = [0.11, 0.22, 0.33];
@@ -938,8 +945,8 @@ fn grain_v2_canonical_fields_roundtrip_through_state_and_runtime() {
     let restored = loaded.runtime_params().unwrap().film_render.grain;
 
     assert!(!restored.active);
-    assert_eq!(restored.v2_resolution_type, 0);
-    assert_eq!(restored.v2_timer, 0.375);
+    assert_eq!(restored.procedural_resolution_type, 0);
+    assert_eq!(restored.procedural_timer, 0.375);
     assert_eq!(restored.rms_granularity, [11.0, 13.0, 17.0]);
     assert_eq!(restored.density_min, [0.11, 0.22, 0.33]);
     assert_eq!(restored.uniformity, [0.91, 0.92, 0.93]);
@@ -1419,4 +1426,72 @@ fn extension_only_capture_light_survives_legacy_and_current_state_projection() {
         .unwrap();
         assert_eq!(saved.sections["convert"]["scan_illuminant"], "T");
     }
+}
+
+#[test]
+fn historical_grain_control_names_migrate_before_factory_overlay() {
+    for nested in [false, true] {
+        let mut value = json!({"rust":{"version":CURRENT_STATE_VERSION}});
+        let controls = json!({"engine":"procedural","v2_profile":"custom",
+            "v2_mode":"noise","v2_amount":27.0,"v2_timer":0.25,
+            "v3_dye_support_um":4.5,"v3_event_area_um2":0.6});
+        if nested {
+            value["rust"]["runtime"] = json!({"film_render":{"grain":controls}});
+        } else {
+            value["grain"] = controls;
+        }
+        let directory = tempfile::tempdir().unwrap();
+        let input = directory.path().join("historical.json");
+        std::fs::write(&input, serde_json::to_vec(&value).unwrap()).unwrap();
+        let state = GuiState::load(&input).unwrap();
+        let saved_path = directory.path().join("canonical.json");
+        state.save(&saved_path).unwrap();
+        let state = GuiState::load(&saved_path).unwrap();
+        let stored: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(saved_path).unwrap()).unwrap();
+        assert!(
+            stored["rust"]["runtime"]["film_render"]["grain"]
+                .get("v2_amount")
+                .is_none()
+        );
+        let params = state.runtime_params().unwrap();
+        let grain = &params.film_render.grain;
+        assert_eq!(grain.procedural_profile, "custom");
+        assert_eq!(
+            grain.procedural_mode,
+            spektrafilm_core::params::grain::ProceduralGrainMode::Noise
+        );
+        assert_eq!(grain.procedural_amount, Some(27.0));
+        assert_eq!(grain.procedural_timer, 0.25);
+        assert_eq!(grain.dye_support_um, 4.5);
+        assert_eq!(grain.dye_event_area_um2, 0.6);
+        let saved = serde_json::to_value(params).unwrap();
+        assert!(saved["film_render"]["grain"].get("v2_amount").is_none());
+        assert_eq!(
+            saved["film_render"]["grain"]["procedural_amount"],
+            json!(27.0)
+        );
+    }
+    for pointer in ["/grain", "/rust/runtime/film_render/grain"] {
+        let value = if pointer == "/grain" {
+            json!({"grain":{"v2_amount":20.0,"procedural_amount":30.0}})
+        } else {
+            json!({"rust":{"version":CURRENT_STATE_VERSION,"runtime":{"film_render":{"grain":{"v2_amount":20.0,"procedural_amount":30.0}}}}})
+        };
+        assert!(GuiState::from_value(value).is_err());
+    }
+}
+
+#[test]
+fn cross_carrier_grain_aliases_retain_top_level_precedence_and_ownership() {
+    let value = json!({"grain":{"engine":"procedural","v2_amount":27.0},"rust":{"version":CURRENT_STATE_VERSION,
+        "runtime":{"film_render":{"grain":{"procedural_amount":42.0}}},
+        "render_preparation":{"explicit_section_paths":["film_render.grain.v2_amount"],"neutral_print_filters_protected":[false,false,false]}}});
+    let state = GuiState::from_value(value).unwrap();
+    let params = state.runtime_params().unwrap();
+    assert_eq!(params.film_render.grain.procedural_amount, Some(27.0));
+    assert_eq!(
+        params.render_preparation_state().explicit_section_paths,
+        ["film_render.grain.procedural_amount"]
+    );
 }

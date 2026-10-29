@@ -43,7 +43,7 @@ EXEMPT = {
 
 CONSTRUCTOR = re.compile(r"WgpuBackend::new(?:_explicit)?\s*\(")
 # An integration test can bypass the backend entirely and drive wgpu directly.
-# `tests/grain_v2_shader.rs` did exactly that before run #8, so these patterns
+# `tests/procedural_shader.rs` did exactly that before run #8, so these patterns
 # are checked with the same strictness as the backend constructor.
 RAW_DEVICE = re.compile(
     r"(?:\.request_device\s*\(|Instance::new\s*\(|Instance::default\s*\(|\.request_adapter\s*\()"

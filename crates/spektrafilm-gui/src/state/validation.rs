@@ -26,6 +26,19 @@ pub(super) fn normalize_grain_section(section: &mut Value) {
 }
 
 pub(super) fn validate_state_parameters(value: &mut Value, version: Option<u64>) -> Result<()> {
+    // Normalize both stored representations before defaults or overlays can
+    // introduce the canonical spelling beside a historical control.
+    for pointer in ["/grain", "/rust/runtime/film_render/grain"] {
+        if let Some(grain) = value.pointer_mut(pointer) {
+            spektrafilm_core::params::normalize_grain_control_names(grain)
+                .map_err(anyhow::Error::msg)?;
+        }
+    }
+    if let Some(preparation) = value.pointer_mut("/rust/render_preparation") {
+        let canonical: spektrafilm_core::params::RenderPreparationState =
+            serde_json::from_value(preparation.clone())?;
+        *preparation = serde_json::to_value(canonical)?;
+    }
     // Version 1 states may still carry the retired lightness leaf; versions
     // 1 and 2 carry the pre-v4 conversion-control paths. Current documents
     // must fail unknown-field validation instead of being migrated.

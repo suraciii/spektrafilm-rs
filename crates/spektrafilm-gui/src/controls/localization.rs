@@ -1272,7 +1272,7 @@ fn key(label: &str) -> Option<&'static str> {
         "film_render.grain.engine = procedural" => Some("controls.condition.procedural"),
         "film_render.grain.engine = spektra" => Some("controls.condition.spektra"),
         "film_render.grain.engine = spektra or dye" => Some("controls.condition.spektra_dye"),
-        "film_render.grain.v2_profile = custom; select custom to use this control" => {
+        "film_render.grain.procedural_profile = custom; select custom to use this control" => {
             Some("controls.condition.custom")
         }
         "film_render.halation.active = true" => Some("controls.condition.halation"),
@@ -1913,7 +1913,7 @@ mod tests {
             for predicate in [
                 "film_render.grain.active = true; stochastic effects enabled",
                 "film_render.grain.engine = procedural",
-                "film_render.grain.v2_profile = custom; select custom to use this control",
+                "film_render.grain.procedural_profile = custom; select custom to use this control",
                 "camera.diffusion_filter.active = true; strength and spatial_scale positive",
                 "film_render.chemistry.active = true; supported fitted density_curves_model required",
                 "print_render.density_curves_morph.active = true; supported fitted density_curves_model required",

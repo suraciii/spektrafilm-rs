@@ -3,22 +3,22 @@ use super::*;
 
 /// The transport geometry is always the original film geometry. Storage
 /// windows only transport samples and never redefine film coordinates.
-pub(in crate::wgpu_backend) struct GrainV2State {
+pub(in crate::wgpu_backend) struct ProceduralGrainState {
     output: Vec<super::super::paged::ImagePage>,
     commands: RasterCommands,
     pub(super) n_bytes: u64,
 }
 
-pub(in crate::wgpu_backend) fn build_grain_v2_state(
+pub(in crate::wgpu_backend) fn build_grain_procedural_state(
     _device: &ObservedDevice,
-    params: &spektrafilm_backend::GrainV2GpuParams,
+    params: &spektrafilm_backend::ProceduralGrainGpuParams,
     width: u32,
     height: u32,
     input: &(impl RasterStorage + ?Sized),
     output_space: Option<&spektrafilm_math::colorspace::RgbColorSpace>,
     backend: &WgpuBackend,
-) -> Result<GrainV2State, String> {
-    build_bounded_grain_v2(
+) -> Result<ProceduralGrainState, String> {
+    build_bounded_grain_procedural(
         params,
         width,
         height,
@@ -29,19 +29,20 @@ pub(in crate::wgpu_backend) fn build_grain_v2_state(
     )
 }
 
-fn build_bounded_grain_v2(
-    params: &spektrafilm_backend::GrainV2GpuParams,
+fn build_bounded_grain_procedural(
+    params: &spektrafilm_backend::ProceduralGrainGpuParams,
     width: u32,
     height: u32,
     input: &(impl RasterStorage + ?Sized),
     output_space: Option<&spektrafilm_math::colorspace::RgbColorSpace>,
     backend: &WgpuBackend,
     limit: u64,
-) -> Result<GrainV2State, String> {
+) -> Result<ProceduralGrainState, String> {
     let n = width
         .checked_mul(height)
         .filter(|&n| n > 0 && n <= u32::MAX / 3)
         .ok_or("procedural grain dimensions overflow")?;
+    validate_coordinate_scale(params)?;
     // A caller may offer a budget larger than the device can bind; the band
     // plan must respect the device either way.
     let limit = limit.min(super::super::bounded::storage_binding_limit(backend)?);
@@ -136,10 +137,13 @@ fn build_bounded_grain_v2(
     let storage = wgpu::BufferBindingType::Storage { read_only: true };
     let writable = wgpu::BufferBindingType::Storage { read_only: false };
     let canvas_layout = [wgpu::BufferBindingType::Uniform, storage, writable];
-    let canvas_pass =
-        backend.cached_pipeline_at(include_str!("grain_v2.wgsl"), &canvas_layout, "canvas_main");
+    let canvas_pass = backend.cached_pipeline_at(
+        include_str!("procedural.wgsl"),
+        &canvas_layout,
+        "canvas_main",
+    );
     let grain = backend.cached_pipeline_at(
-        include_str!("grain_v2.wgsl"),
+        include_str!("procedural.wgsl"),
         &[
             wgpu::BufferBindingType::Uniform,
             storage,
@@ -369,7 +373,7 @@ fn build_bounded_grain_v2(
             }
         }
     }
-    Ok(GrainV2State {
+    Ok(ProceduralGrainState {
         output,
         commands,
         n_bytes,
@@ -379,7 +383,7 @@ fn build_bounded_grain_v2(
 fn resolution_weights(
     width: u32,
     height: u32,
-    params: &spektrafilm_backend::GrainV2GpuParams,
+    params: &spektrafilm_backend::ProceduralGrainGpuParams,
 ) -> (f32, bool, Vec<[f32; 2]>) {
     let amount = params.amount.clamp(0.0, 1.0);
     let gsf = (5200.0 / width as f32).max(3100.0 / height as f32);
@@ -413,18 +417,20 @@ impl WgpuBackend {
         &self,
         width: u32,
         height: u32,
-        params: &spektrafilm_backend::GrainV2GpuParams,
+        params: &spektrafilm_backend::ProceduralGrainGpuParams,
     ) -> Result<u64, String> {
         let n = width
             .checked_mul(height)
             .filter(|&n| n > 0 && n <= u32::MAX / 3)
             .ok_or("procedural grain dimensions overflow")?;
+        validate_coordinate_scale(params)?;
         let limit = super::super::bounded::storage_binding_limit(self)?;
         let page = (limit / 12).min(u64::from(n));
         let (radius, optical, weights) = resolution_weights(width, height, params);
         let pages = u64::from(n).div_ceil(page);
         let mut bytes = u128::from(n) * 48 + u128::from(page) * 24 + 8;
-        bytes += u128::from(pages) * 96 + u128::from(pages) * 48;
+        bytes += u128::from(pages) * std::mem::size_of::<ShaderParams>() as u128
+            + u128::from(pages) * 48;
         if params.mode == 0 {
             let (cw, ch) = canvas_cells(width, height, params);
             // A resident canvas costs its full extent; a banded one costs the
@@ -480,11 +486,23 @@ impl WgpuBackend {
     }
 }
 
+// Analogue divide_normal_f32's canvas divisor is virtual_size * clamp(raw_scale,
+// .5, 1.4). The dimension guard in build_bounded_grain_procedural bounds virtual_size
+// below 2^43. Reject an undefined scale before allocations or device work.
+pub(super) fn validate_coordinate_scale(
+    params: &spektrafilm_backend::ProceduralGrainGpuParams,
+) -> Result<(), String> {
+    if params.mode == 0 && !params.raw_scale.is_finite() {
+        return Err("procedural analogue grain scale must be finite".into());
+    }
+    Ok(())
+}
+
 /// Canvas cells the scan addresses, matching the host model's table.
 fn canvas_cells(
     width: u32,
     height: u32,
-    params: &spektrafilm_backend::GrainV2GpuParams,
+    params: &spektrafilm_backend::ProceduralGrainGpuParams,
 ) -> (u32, u32) {
     let size = canvas_size(width, height);
     let scale = 1.0 + (params.raw_scale - 1.0) / 47.0 * 1.5;
@@ -495,7 +513,10 @@ fn canvas_cells(
 }
 
 /// Whether the canvas needs its own band buffer rather than the resident one.
-fn canvas_transport_needed(params: &spektrafilm_backend::GrainV2GpuParams, resident: bool) -> bool {
+fn canvas_transport_needed(
+    params: &spektrafilm_backend::ProceduralGrainGpuParams,
+    resident: bool,
+) -> bool {
     // Digital grain has no table; analogue composes from the resident buffer.
     params.mode == 0 && !resident
 }
@@ -524,7 +545,7 @@ fn canvas_bands(
     cells_w: u32,
     cells_h: u32,
     limit: u64,
-    params: &spektrafilm_backend::GrainV2GpuParams,
+    params: &spektrafilm_backend::ProceduralGrainGpuParams,
 ) -> Result<Vec<CanvasBand>, String> {
     let row_bytes = u64::from(cells_w) * 8;
     // The canvas pass stages whole source rows, so a window narrower than the
@@ -616,7 +637,7 @@ fn build_canvas_band(
     backend: &WgpuBackend,
     width: u32,
     height: u32,
-    params: &spektrafilm_backend::GrainV2GpuParams,
+    params: &spektrafilm_backend::ProceduralGrainGpuParams,
     original: &[super::super::paged::ImagePage],
     source_window: &wgpu::Buffer,
     cells_w: u32,
@@ -1052,7 +1073,7 @@ fn build_resolution(
     Ok(())
 }
 
-impl GrainV2State {
+impl ProceduralGrainState {
     pub(in crate::wgpu_backend) fn submit(
         &self,
         backend: &WgpuBackend,
@@ -1067,7 +1088,45 @@ impl GrainV2State {
 
 #[cfg(test)]
 mod logic_tests {
+    #[test]
+    fn analogue_coordinate_scale_rejects_nonfinite_before_dispatch() {
+        let mut params = test_params();
+        params.mode = 0;
+        for scale in [f32::NEG_INFINITY, f32::INFINITY, f32::NAN] {
+            params.raw_scale = scale;
+            assert!(super::validate_coordinate_scale(&params).is_err());
+        }
+        for scale in [-f32::MAX, -0.0, 0.0, f32::MIN_POSITIVE, 0.5, 1.4, f32::MAX] {
+            params.raw_scale = scale;
+            assert!(super::validate_coordinate_scale(&params).is_ok());
+        }
+    }
+
     use super::*;
+
+    #[test]
+    fn rectangular_canvas_and_generator_geometry_share_host_dimensions() {
+        let mut params = test_params();
+        params.raw_scale = 1.1;
+        params.cluster_size = 0.8;
+        for (width, height, size) in [
+            (768, 512, [5200.0f32, 3466.0]),
+            (512, 768, [5200.0f32, 7800.0]),
+        ] {
+            let uniform = shader_params(width, height, &params);
+            assert_eq!(&uniform.flags[..2], &size);
+            let scaled = size.map(|v| v * params.raw_scale);
+            assert_eq!(
+                uniform.generator_geometry,
+                [
+                    scaled[0] / params.cluster_size / params.raw_scale,
+                    scaled[1] / params.cluster_size / params.raw_scale,
+                    scaled[0] / scaled[1],
+                    1.0f32 / 256.0 / params.cluster_size,
+                ]
+            );
+        }
+    }
 
     /// The band plan decides between one bulk pass and a command per pixel, so
     /// pin the geometries that used to fall to the slow side.
@@ -1091,7 +1150,7 @@ mod logic_tests {
     /// pixel reads a neighbour's buffer.
     #[test]
     fn canvas_bands_tile_the_frame_and_keep_their_margins() {
-        let params = spektrafilm_backend::GrainV2GpuParams {
+        let params = spektrafilm_backend::ProceduralGrainGpuParams {
             mode: 0,
             resolution_type: 0,
             amount: 1.0,
@@ -1133,8 +1192,8 @@ mod logic_tests {
         assert_eq!(bands.last().unwrap().stored.1, ch);
     }
 
-    pub(super) fn test_params() -> spektrafilm_backend::GrainV2GpuParams {
-        spektrafilm_backend::GrainV2GpuParams {
+    pub(super) fn test_params() -> spektrafilm_backend::ProceduralGrainGpuParams {
+        spektrafilm_backend::ProceduralGrainGpuParams {
             mode: 0,
             resolution_type: 0,
             amount: 1.0,
@@ -1208,7 +1267,7 @@ mod logic_tests {
             let (cw, ch) = canvas_cells(
                 w,
                 h,
-                &spektrafilm_backend::GrainV2GpuParams {
+                &spektrafilm_backend::ProceduralGrainGpuParams {
                     mode: 0,
                     resolution_type: 0,
                     amount: 1.0,
@@ -1227,7 +1286,7 @@ mod logic_tests {
                 },
             );
             for limit in [1 << 20, 4 << 20, 16 << 20, 1 << 40] {
-                let params = spektrafilm_backend::GrainV2GpuParams {
+                let params = spektrafilm_backend::ProceduralGrainGpuParams {
                     mode: 0,
                     resolution_type: 0,
                     amount: 1.0,
@@ -1332,7 +1391,7 @@ mod tests {
         let canvas = transport(&gpu, 3 * 13600 * 8, "procedural_row_copy_canvas").unwrap();
         let params = super::logic_tests::test_params();
         let canvas_pass = gpu.cached_pipeline_at(
-            include_str!("grain_v2.wgsl"),
+            include_str!("procedural.wgsl"),
             &[
                 wgpu::BufferBindingType::Uniform,
                 wgpu::BufferBindingType::Storage { read_only: true },
@@ -1551,7 +1610,7 @@ mod tests {
                     }),
             })
             .collect();
-        let mut params = spektrafilm_backend::GrainV2GpuParams {
+        let mut params = spektrafilm_backend::ProceduralGrainGpuParams {
             mode: 0,
             resolution_type: 0,
             amount: 0.7,
@@ -1568,9 +1627,10 @@ mod tests {
             colored: true,
             clustered: true,
         };
-        let run = |params: &spektrafilm_backend::GrainV2GpuParams, limit| {
+        let run = |params: &spektrafilm_backend::ProceduralGrainGpuParams, limit| {
             let state =
-                build_bounded_grain_v2(params, width, height, &input, None, &gpu, limit).unwrap();
+                build_bounded_grain_procedural(params, width, height, &input, None, &gpu, limit)
+                    .unwrap();
             let readback = gpu.device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("procedural_boundary_readback"),
                 size: state.n_bytes,
@@ -1613,7 +1673,8 @@ mod tests {
         );
         // Only a single canvas row that cannot fit one binding is refused.
         assert!(
-            build_bounded_grain_v2(&params, width, height, &input, None, &gpu, 1024).is_err(),
+            build_bounded_grain_procedural(&params, width, height, &input, None, &gpu, 1024)
+                .is_err(),
             "a canvas row wider than the window must be refused"
         );
         params.mode = 1;
@@ -1623,5 +1684,255 @@ mod tests {
             run(&params, 1728),
             "digital grain must not depend on the transport window"
         );
+    }
+}
+#[cfg(test)]
+mod parity_tests {
+    use super::*;
+
+    // Exercise the production WGSL helper, not a Rust transcription of it.
+    #[test]
+    fn procedural_coordinate_division_matches_binary32() {
+        let gpu = crate::test_support::restricted_adapter();
+        let mut pairs: Vec<[f32; 2]> = vec![
+            [0.0, 5200.0],
+            [1.0, f32::from_bits((171u32 << 23) - 1)],
+            [-1.0, f32::from_bits((171u32 << 23) - 1)],
+            [f32::from_bits(0x3fffffff), f32::from_bits(0x3ffffffe)],
+            [-0.0, 7280.0],
+            [1.0, 7280.0],
+            [37.0, 7280.0],
+            [f32::from_bits(0x3fffffff), 1.0],
+            [1.0, f32::from_bits(0x3f800001)],
+            [i32::MAX as f32, 2.0f32.powi(43)],
+            [-2147483648.0, 1550.0],
+        ];
+        for extent in [7280.0, 5005.0, 3101.0 * 1.4, u32::MAX as f32 * 5200.0] {
+            for position in [0.0, 1.0, 255.0, 5200.0, 1048575.0, 16777215.0] {
+                pairs.push([position, extent]);
+            }
+        }
+        for index in 0..257u32 {
+            pairs.push([(index * 104729 % 5201) as f32, 4800.0 + index as f32 * 1.4]);
+        }
+        let mut state = 90210u32;
+        for _ in 0..4096 {
+            state ^= state << 13;
+            state ^= state >> 17;
+            state ^= state << 5;
+            let a = (state as i32) as f32;
+            state ^= state << 13;
+            state ^= state >> 17;
+            state ^= state << 5;
+            let b = f32::from_bits(((137 + state % 33) << 23) | (state & 0x7fffff));
+            pairs.push([a, b]);
+        }
+        let mut shader = include_str!("procedural.wgsl").to_owned();
+        shader.push_str("\n@compute @workgroup_size(64) fn division_test(@builtin(global_invocation_id) id:vec3<u32>){if(id.x<arrayLength(&canvas_cells)){canvas_cells[id.x]=bitcast<u32>(divide_normal_f32(source_rgb[2u*id.x],source_rgb[2u*id.x+1u]));}}");
+        let module = gpu
+            .device
+            .create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("procedural_division_test"),
+                source: wgpu::ShaderSource::Wgsl(shader.into()),
+            });
+        let pipeline = gpu
+            .device
+            .create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some("procedural_division_test"),
+                layout: None,
+                module: &module,
+                entry_point: Some("division_test"),
+                compilation_options: Default::default(),
+                cache: None,
+            });
+        let input = gpu
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: None,
+                contents: bytemuck::cast_slice(&pairs),
+                usage: wgpu::BufferUsages::STORAGE,
+            });
+        let bytes = pairs.len() as u64 * 4;
+        let output = transport(&gpu, bytes, "division_output").unwrap();
+        let readback = gpu.device.create_buffer(&wgpu::BufferDescriptor {
+            label: None,
+            size: bytes,
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let bg = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: None,
+            layout: &pipeline.get_bind_group_layout(0),
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: input.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: output.as_entire_binding(),
+                },
+            ],
+        });
+        let mut encoder = gpu.device.create_command_encoder(&Default::default());
+        {
+            let mut pass = encoder.begin_compute_pass(&Default::default());
+            pass.set_pipeline(&pipeline);
+            pass.set_bind_group(0, &bg, &[]);
+            pass.dispatch_workgroups((pairs.len() as u32).div_ceil(64), 1, 1);
+        }
+        encoder.copy_buffer_to_buffer(&output, 0, &readback, 0, bytes);
+        gpu.queue.submit(Some(encoder.finish()));
+        let values = gpu.read_mapped_f32(&readback, bytes);
+        for (i, (pair, value)) in pairs.iter().zip(values).enumerate() {
+            assert_eq!(
+                value.to_bits(),
+                (pair[0] / pair[1]).to_bits(),
+                "pair {i}: {pair:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn procedural_planner_rejects_nonfinite_scale_before_weights() {
+        let gpu = crate::test_support::adapter();
+        let mut params = super::logic_tests::test_params();
+        params.mode = 0;
+        params.resolution_factor = 0.0;
+        params.amount = 1.0;
+        for resolution in [0, 1] {
+            params.resolution_type = resolution;
+            for scale in [f32::NAN, f32::NEG_INFINITY, f32::INFINITY] {
+                params.raw_scale = scale;
+                assert!(gpu.procedural_workspace_bytes(17, 7, &params).is_err());
+            }
+        }
+    }
+
+    // Uninstrumented production canvas entry: keep the compiler context that
+    // exposed the (11,50) nested-hash regression. CPU Procedural generator reference,
+    // seed42, RGB/luma=.6, virtual sizes5200x5200 and5200x3466. Goldens
+    // are half-rounded current CPU Procedural generator outputs at (i%64,i/64).
+    // The second case exercises the unclustered vector*rotation*scale chain.
+    #[test]
+    fn procedural_canvas_hash_sentinels() {
+        let gpu = crate::test_support::adapter();
+        let mut params = super::logic_tests::test_params();
+        params.seed = 42;
+        params.timer = None;
+        params.raw_scale = 12.0;
+        params.cluster_size = 1.6;
+        params.rotation = 1.0;
+        params.color = 0.65;
+        params.colored = true;
+        params.clustered = true;
+        check_canvas_sentinels(
+            &gpu,
+            params,
+            512,
+            512,
+            [
+                [14333, 14343, 46399],
+                [15196, 14518, 11404],
+                [15871, 14679, 45977],
+                [14275, 12932, 14452],
+                [11465, 11770, 15140],
+            ],
+        );
+        params.rotation = 0.7;
+        params.clustered = false;
+        check_canvas_sentinels(
+            &gpu,
+            params,
+            384,
+            256,
+            [
+                [15005, 14418, 15785],
+                [14286, 43709, 15024],
+                [14292, 14426, 14899],
+                [44485, 46450, 14098],
+                [48416, 46571, 45389],
+            ],
+        );
+    }
+
+    fn check_canvas_sentinels(
+        gpu: &WgpuBackend,
+        params: spektrafilm_backend::ProceduralGrainGpuParams,
+        width: u32,
+        height: u32,
+        expected: [[u32; 3]; 5],
+    ) {
+        let mut packed = super::super::shader_params(width, height, &params);
+        packed.window = [0, 4096, 0, height];
+        packed.canvas = [64, 64, 0, 0];
+        let source = gpu
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: None,
+                contents: bytemuck::cast_slice(&vec![0.6f32; (width * height * 3) as usize]),
+                usage: wgpu::BufferUsages::STORAGE,
+            });
+        let buffer = transport(gpu, 4096 * 8, "canvas_sentinels").unwrap();
+        let uniform = uniform(gpu, &packed);
+        let pipeline = gpu.cached_pipeline_at(
+            include_str!("procedural.wgsl"),
+            &[
+                wgpu::BufferBindingType::Uniform,
+                wgpu::BufferBindingType::Storage { read_only: true },
+                wgpu::BufferBindingType::Storage { read_only: false },
+            ],
+            "canvas_main",
+        );
+        let bg = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: None,
+            layout: &pipeline.layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: uniform.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: source.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: buffer.as_entire_binding(),
+                },
+            ],
+        });
+        let readback = gpu.device.create_buffer(&wgpu::BufferDescriptor {
+            label: None,
+            size: 4096 * 8,
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let mut encoder = gpu.device.create_command_encoder(&Default::default());
+        {
+            let mut pass = encoder.begin_compute_pass(&Default::default());
+            pass.set_pipeline(&pipeline.pipeline);
+            pass.set_bind_group(0, &bg, &[]);
+            pass.dispatch_workgroups(16, 1, 1);
+        }
+        encoder.copy_buffer_to_buffer(&buffer, 0, &readback, 0, 4096 * 8);
+        gpu.queue.submit(Some(encoder.finish()));
+        let words: Vec<_> = gpu
+            .read_mapped_f32(&readback, 4096 * 8)
+            .into_iter()
+            .map(f32::to_bits)
+            .collect();
+        for (i, rgb) in [0, 37, 563, 3211, 4095].into_iter().zip(expected) {
+            assert_eq!(
+                [
+                    words[2 * i] & 65535,
+                    words[2 * i] >> 16,
+                    words[2 * i + 1] & 65535
+                ],
+                rgb,
+                "cell {i}"
+            );
+            assert_eq!(words[2 * i + 1] >> 16, 0);
+        }
     }
 }

@@ -195,9 +195,9 @@ impl Pipeline {
                 || (!params.io.scan_film && glare.active && glare.percent > 0.0);
             let print_spatial = printing && params.enlarger.diffusion_filter.active;
             if !scan_spatial && !print_spatial && !header.geometry.print_spatial_completed {
-                density = crate::stages::grain_v3::crop_output(
+                density = crate::stages::grain_dye::crop_output(
                     density,
-                    crate::stages::grain_v3::SourceRect {
+                    crate::stages::grain_dye::SourceRect {
                         x,
                         y,
                         width,
@@ -308,9 +308,9 @@ impl Pipeline {
             })));
         }
         if let Some([x, y, width, height]) = header.geometry.pending_crop {
-            output = crate::stages::grain_v3::crop_output(
+            output = crate::stages::grain_dye::crop_output(
                 output,
-                crate::stages::grain_v3::SourceRect {
+                crate::stages::grain_dye::SourceRect {
                     x,
                     y,
                     width,

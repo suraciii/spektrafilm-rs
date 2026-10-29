@@ -50,14 +50,14 @@ The candidate carries only the declared scope:
 
 ```text
 ProceduralProfileValues {
-    v2_profile,
-    v2_size,
-    v2_amount,
-    v2_shadows,
-    v2_midtones,
-    v2_highlights,
-    v2_chroma,
-    v2_resolution_factor,
+    procedural_profile,
+    procedural_size,
+    procedural_amount,
+    procedural_shadows,
+    procedural_midtones,
+    procedural_highlights,
+    procedural_chroma,
+    procedural_resolution_factor,
 }
 
 HalationProfileValues {
@@ -85,9 +85,9 @@ Halation derives `custom` by exact comparison and leaves its scoped values uncha
 
 ### Procedural
 
-The existing `spektrafilm_model::grain::v2::PROFILES` table is the single code owner for the standard rows. The feature resolver MUST use that owner rather than copying numeric literals into callers.
+The existing `spektrafilm_model::grain::procedural::PROFILES` table is the single code owner for the standard rows. The feature resolver MUST use that owner rather than copying numeric literals into callers.
 
-Applying a named row MUST preserve the existing `v2_profile` behavior: the named profile supplies its standard values and optional overrides are cleared when exact selection is requested. The resolver MUST NOT alter `v2_mode`, `v2_film_type`, `v2_resolution_type`, `v2_timer`, seed, `engine`, or `active`.
+Applying a named row MUST preserve the existing `procedural_profile` behavior: the named profile supplies its standard values and optional overrides are cleared when exact selection is requested. The resolver MUST NOT alter `procedural_mode`, `procedural_film_type`, `procedural_resolution_type`, `procedural_timer`, seed, `engine`, or `active`.
 
 The family is narrower than all Procedural controls. Cluster, color, timer, and mode controls are algorithm controls, not standard format/speed profile leaves.
 
@@ -118,7 +118,7 @@ Direct leaves remain allowed after selection. The dry-run report MUST show the p
 
 ## GUI composition
 
-The selector is a projection of current parameter values plus an action. It MUST NOT add a second persisted identity for Halation. Procedural's existing `v2_profile` remains persisted because it is already a public runtime selector.
+The selector is a projection of current parameter values plus an action. It MUST NOT add a second persisted identity for Halation. Procedural's existing `procedural_profile` remains persisted because it is already a public runtime selector.
 
 The GUI control writes through the same typed resolver as the CLI. It MUST validate the candidate before updating state, invalidating render state, and scheduling preview. A disabled selector MUST retain its value and display the applicability reason.
 
@@ -126,7 +126,7 @@ The GUI control writes through the same typed resolver as the CLI. It MUST valid
 
 Feature-profile selection is not serialized as a new top-level or nested field. A saved look or section contains resolved runtime leaves under its existing schema. A document MUST NOT require a catalog entry because it stores leaves rather than feature-profile names.
 
-The existing Procedural `v2_profile` wire behavior remains authoritative for that engine. Halation documents continue to carry their resolved arrays. Catalog changes require an explicit product revision and MUST NOT silently reinterpret stored resolved values.
+The existing Procedural `procedural_profile` wire behavior remains authoritative for that engine. Halation documents continue to carry their resolved arrays. Catalog changes require an explicit product revision and MUST NOT silently reinterpret stored resolved values.
 
 ## Verification design
 

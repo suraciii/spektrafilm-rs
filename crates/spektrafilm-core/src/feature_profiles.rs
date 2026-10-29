@@ -1,5 +1,5 @@
 use crate::params::RuntimeParams;
-use spektrafilm_model::grain::v2::{self, PROFILE_NAMES};
+use spektrafilm_model::grain::procedural::{self, PROFILE_NAMES};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct HalationProfile {
@@ -120,7 +120,7 @@ pub fn resolve(family: FeatureProfileFamily, name: &str) -> Result<ResolvedFeatu
                     values: FeatureProfileValues::GrainProcedural { name: "custom" },
                 });
             }
-            if v2::profile_index(name).is_none() {
+            if procedural::profile_index(name).is_none() {
                 return Err(unknown_name(family, name, PROFILE_NAMES.iter().copied()));
             }
             let canonical = name_static(&PROFILE_NAMES, name);
@@ -209,12 +209,13 @@ pub fn apply_with_requests(
 pub fn effective_name(family: FeatureProfileFamily, params: &RuntimeParams) -> &'static str {
     match family {
         FeatureProfileFamily::GrainProcedural => {
-            if params.film_render.grain.v2_profile == "custom" {
+            if params.film_render.grain.procedural_profile == "custom" {
                 "custom"
-            } else if v2::profile_index(&params.film_render.grain.v2_profile).is_some()
+            } else if procedural::profile_index(&params.film_render.grain.procedural_profile)
+                .is_some()
                 && optional_procedural_overrides_clear(params)
             {
-                name_static(&PROFILE_NAMES, &params.film_render.grain.v2_profile)
+                name_static(&PROFILE_NAMES, &params.film_render.grain.procedural_profile)
             } else {
                 "custom"
             }
@@ -251,16 +252,16 @@ fn apply_profile(params: &mut RuntimeParams, profile: ResolvedFeatureProfile, cu
     match profile.values {
         FeatureProfileValues::GrainProcedural { name } => {
             if custom {
-                params.film_render.grain.select_custom_grain_v2();
+                params.film_render.grain.select_custom_grain_procedural();
             } else {
-                params.film_render.grain.v2_profile = name.to_owned();
-                params.film_render.grain.v2_size = None;
-                params.film_render.grain.v2_amount = None;
-                params.film_render.grain.v2_shadows = None;
-                params.film_render.grain.v2_midtones = None;
-                params.film_render.grain.v2_highlights = None;
-                params.film_render.grain.v2_chroma = None;
-                params.film_render.grain.v2_resolution_factor = None;
+                params.film_render.grain.procedural_profile = name.to_owned();
+                params.film_render.grain.procedural_size = None;
+                params.film_render.grain.procedural_amount = None;
+                params.film_render.grain.procedural_shadows = None;
+                params.film_render.grain.procedural_midtones = None;
+                params.film_render.grain.procedural_highlights = None;
+                params.film_render.grain.procedural_chroma = None;
+                params.film_render.grain.procedural_resolution_factor = None;
             }
         }
         FeatureProfileValues::Halation {
@@ -296,14 +297,14 @@ pub fn effective_values(family: FeatureProfileFamily, params: &RuntimeParams) ->
 fn profile_scope(family: FeatureProfileFamily) -> &'static [&'static str] {
     match family {
         FeatureProfileFamily::GrainProcedural => &[
-            "film_render.grain.v2_profile",
-            "film_render.grain.v2_size",
-            "film_render.grain.v2_amount",
-            "film_render.grain.v2_shadows",
-            "film_render.grain.v2_midtones",
-            "film_render.grain.v2_highlights",
-            "film_render.grain.v2_chroma",
-            "film_render.grain.v2_resolution_factor",
+            "film_render.grain.procedural_profile",
+            "film_render.grain.procedural_size",
+            "film_render.grain.procedural_amount",
+            "film_render.grain.procedural_shadows",
+            "film_render.grain.procedural_midtones",
+            "film_render.grain.procedural_highlights",
+            "film_render.grain.procedural_chroma",
+            "film_render.grain.procedural_resolution_factor",
         ],
         FeatureProfileFamily::Halation => &[
             "film_render.halation.halation_first_sigma_um",
@@ -320,13 +321,13 @@ fn family_index(family: FeatureProfileFamily) -> usize {
 
 fn optional_procedural_overrides_clear(params: &RuntimeParams) -> bool {
     let grain = &params.film_render.grain;
-    grain.v2_size.is_none()
-        && grain.v2_amount.is_none()
-        && grain.v2_shadows.is_none()
-        && grain.v2_midtones.is_none()
-        && grain.v2_highlights.is_none()
-        && grain.v2_chroma.is_none()
-        && grain.v2_resolution_factor.is_none()
+    grain.procedural_size.is_none()
+        && grain.procedural_amount.is_none()
+        && grain.procedural_shadows.is_none()
+        && grain.procedural_midtones.is_none()
+        && grain.procedural_highlights.is_none()
+        && grain.procedural_chroma.is_none()
+        && grain.procedural_resolution_factor.is_none()
 }
 
 fn name_static(names: &[&'static str], name: &str) -> &'static str {
@@ -397,8 +398,8 @@ mod tests {
             let token = format!("grain.procedural={name}");
             let selection = parse_selection(&token, 1).unwrap();
             apply(&mut params, &[selection]).unwrap();
-            let expected = v2::GrainV2Params::for_profile(index);
-            let resolved = params.film_render.grain.resolved_grain_v2();
+            let expected = procedural::ProceduralGrainParams::for_profile(index);
+            let resolved = params.film_render.grain.resolved_grain_procedural();
             assert_eq!(resolved.size, expected.size, "{name}");
             assert_eq!(resolved.amount, expected.amount, "{name}");
             assert_eq!(resolved.shadows, expected.shadows, "{name}");

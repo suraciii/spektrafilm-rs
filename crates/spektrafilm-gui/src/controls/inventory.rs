@@ -342,7 +342,7 @@ fn runtime_entry(path: &str, validation: Value) -> ControlEntry {
         EditorKind::Excluded(reason)
     } else if !LABELS.iter().any(|(candidate, _)| *candidate == path) {
         EditorKind::Unconnected
-    } else if path == "film_render.grain.v2_profile" || path.ends_with("development_time") {
+    } else if path == "film_render.grain.procedural_profile" || path.ends_with("development_time") {
         EditorKind::Profile
     } else if path == "camera.film_format_mm" {
         EditorKind::Choice
@@ -1503,24 +1503,33 @@ const LABELS: &[(&str, &str)] = &[
     ),
     ("film_render.grain.rms_granularity", "rms granularity"),
     ("film_render.grain.uniformity", "uniformity"),
-    ("film_render.grain.v2_amount", "Amount"),
-    ("film_render.grain.v2_chroma", "Chroma"),
-    ("film_render.grain.v2_film_type", "Film Type"),
-    ("film_render.grain.v2_highlights", "Highlights"),
-    ("film_render.grain.v2_midtones", "Midtones"),
-    ("film_render.grain.v2_mode", "Processing Mode"),
-    ("film_render.grain.v2_profile", "Procedural Grain Profiles"),
-    ("film_render.grain.v2_resolution_factor", "Film Resolution"),
-    ("film_render.grain.v2_resolution_type", "Resolution Type"),
-    ("film_render.grain.v2_shadows", "Shadows"),
-    ("film_render.grain.v2_size", "Size"),
-    ("film_render.grain.v2_timer", "Timer"),
+    ("film_render.grain.procedural_amount", "Amount"),
+    ("film_render.grain.procedural_chroma", "Chroma"),
+    ("film_render.grain.procedural_film_type", "Film Type"),
+    ("film_render.grain.procedural_highlights", "Highlights"),
+    ("film_render.grain.procedural_midtones", "Midtones"),
+    ("film_render.grain.procedural_mode", "Processing Mode"),
     (
-        "film_render.grain.v3_dye_support_um",
+        "film_render.grain.procedural_profile",
+        "Procedural Grain Profiles",
+    ),
+    (
+        "film_render.grain.procedural_resolution_factor",
+        "Film Resolution",
+    ),
+    (
+        "film_render.grain.procedural_resolution_type",
+        "Resolution Type",
+    ),
+    ("film_render.grain.procedural_shadows", "Shadows"),
+    ("film_render.grain.procedural_size", "Size"),
+    ("film_render.grain.procedural_timer", "Timer"),
+    (
+        "film_render.grain.dye_support_um",
         "Dye support (spatial formation)",
     ),
     (
-        "film_render.grain.v3_event_area_um2",
+        "film_render.grain.dye_event_area_um2",
         "Event area (strength)",
     ),
     ("film_render.halation.active", "Enable halation"),

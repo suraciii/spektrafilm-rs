@@ -1,11 +1,11 @@
-//! Film-coordinate grain Dye integration (`specs/film-grain/v3/`).
+//! Film-coordinate grain Dye integration (`specs/film-grain/dye/`).
 //!
 //! The pipeline develops the *full* source and hands the developed CMY
 //! density to this module. The module owns Dye field resolution and the
 //! readout to the requested output geometry — on the device through
 //! `dye_field` when the backend has one and the request is
 //! device-representable, otherwise with the CPU realization
-//! ([`spektrafilm_model::grain::v3::apply`]); scanner interpretation and
+//! ([`spektrafilm_model::grain::dye::apply`]); scanner interpretation and
 //! encoding stay with their owners.
 //!
 //! Film coordinates come from the profile and the geometry: a crop selects
@@ -15,14 +15,14 @@ use crate::WorkflowRoute;
 
 use rayon::prelude::*;
 use spektrafilm_math::image::ImageBuf;
-use spektrafilm_model::grain::v3::{self, GrainV3Params, ReadoutGrid};
+use spektrafilm_model::grain::dye::{self, DyeGrainParams, ReadoutGrid};
 
 use crate::params::RuntimeParams;
 use crate::params::grain::GrainEngine;
 use crate::profile::Profile;
 
 /// Relative granularity reference of `kodak_portra_800`. A channel at this
-/// preset keeps the configured `v3_event_area_um2`; this reference does not
+/// preset keeps the configured `dye_event_area_um2`; this reference does not
 /// certify an absolute material event area or optical RMS.
 const GRANULARITY_REFERENCE: f64 = 6.0;
 /// Reference route: the film exposes the print paper, which is scanned.
@@ -33,24 +33,24 @@ const FILM_SCAN_ROUTE: &str = "input > film > scan";
 /// `support_um / 2`; numerical certification may ask for a finer globally
 /// fixed pitch (the model rejects a coarser one). It never changes the
 /// recipe.
-const CELL_UM_ENV: &str = "SPEKTRAFILM_GRAIN_V3_CELL_UM";
+const CELL_UM_ENV: &str = "SPEKTRAFILM_GRAIN_DYE_CELL_UM";
 /// Diagnostic expected-value render: every Poisson count is replaced by its
 /// conditional mean. It never changes the recipe.
-const EXPECTATION_ENV: &str = "SPEKTRAFILM_GRAIN_V3_EXPECTATION";
+const EXPECTATION_ENV: &str = "SPEKTRAFILM_GRAIN_DYE_EXPECTATION";
 /// Exact formed-cell optical response experiment.
 /// The exact-cell optical response experiment was retired with the cell field: the
 /// engine now has one continuous law whose readout is a density resample, so there is
 /// no per-cell optical integral left to drive. A request for the old mode must fail
 /// loudly rather than silently rendering without it.
-const CELL_SPECTRAL_ENV: &str = "SPEKTRAFILM_GRAIN_V3_CELL_SPECTRAL";
+const CELL_SPECTRAL_ENV: &str = "SPEKTRAFILM_GRAIN_DYE_CELL_SPECTRAL";
 
 pub fn validate_cell_spectral(params: &RuntimeParams) -> Result<bool, String> {
     if !active(params) {
         return Ok(false);
     }
-    match std::env::var_os(CELL_SPECTRAL_ENV) {
-        None => Ok(false),
-        Some(_) => Err(format!(
+    match spektrafilm_model::grain::dye::diagnostic_env(CELL_SPECTRAL_ENV) {
+        Err(std::env::VarError::NotPresent) => Ok(false),
+        _ => Err(format!(
             "{CELL_SPECTRAL_ENV} was retired with the exact-cell Dye field; the engine's \
              continuous law has no per-cell optical response"
         )),
@@ -470,7 +470,7 @@ fn channel_event_scale(rms_granularity: [f64; 3]) -> [f64; 3] {
 /// maxima, composite curves, layer curves, film polarity) so every caller
 /// — render, expectation diagnostic, certification — feeds the model the
 /// same data.
-pub fn resolve(film: &Profile, params: &RuntimeParams) -> Result<GrainV3Params, String> {
+pub fn resolve(film: &Profile, params: &RuntimeParams) -> Result<DyeGrainParams, String> {
     validate_supported(film, params)?;
     let grain = &params.film_render.grain;
     let monochrome = film.is_bw();
@@ -485,12 +485,12 @@ pub fn resolve(film: &Profile, params: &RuntimeParams) -> Result<GrainV3Params, 
         ));
     }
     let layer_max = spektrafilm_model::density_curves::density_max_layers_f64(&layer_curves);
-    let support_um = grain.v3_dye_support_um as f64;
-    Ok(GrainV3Params {
+    let support_um = grain.dye_support_um as f64;
+    Ok(DyeGrainParams {
         monochrome,
         support_um,
         cell_um: cell_um_override(),
-        event_area_um2: grain.v3_event_area_um2,
+        event_area_um2: grain.dye_event_area_um2,
         channel_correlation: grain.channel_correlation,
         channel_scale: channel_event_scale(if monochrome {
             [grain.rms_granularity[0]; 3]
@@ -544,7 +544,7 @@ pub fn readout(
     if backend.is_gpu() {
         match device_params(&resolved, source_pitch_um, grid) {
             Ok(device) => {
-                let observation = super::StageObservation::new(backend, "grain_v3_field");
+                let observation = super::StageObservation::new(backend, "grain_dye_field");
                 let observed = observation.backend(backend);
                 tracing::info!(
                     stock = film.info.stock.as_deref().unwrap_or(""),
@@ -594,14 +594,14 @@ fn cpu_field(
     source: &ImageBuf,
     source_pitch_um: f64,
     grid: ReadoutGrid,
-    resolved: &GrainV3Params,
+    resolved: &DyeGrainParams,
     backend: &dyn spektrafilm_backend::ComputeBackend,
 ) -> Result<ImageBuf, String> {
     // The observation records the host executor and its published reason.
     let _observation = super::StageObservation::cpu(
         backend,
-        "grain_v3_field",
-        spektrafilm_backend::telemetry::CpuReason::GrainV3FieldCpu,
+        "grain_dye_field",
+        spektrafilm_backend::telemetry::CpuReason::DyeGrainFieldCpu,
     );
     // The Dye grain law: the record density is built from a correlated, band-limited
     // field whose amplitude follows the derived granularity curve. Parameters are part
@@ -611,14 +611,14 @@ fn cpu_field(
     // constants; the resolved seed selects the realization and the expectation
     // diagnostic replaces every draw by its conditional mean. The device reads the same
     // two resolved fields, so both executors realize the same law.
-    let mut params = spektrafilm_model::grain::dye::ClumpParams::delivered();
+    let mut params = spektrafilm_model::grain::dye::texture::ClumpParams::delivered();
     params.seed = resolved.seed;
     params.expectation = resolved.expectation;
     params.monochrome = resolved.monochrome;
-    spektrafilm_model::grain::dye::apply(
+    spektrafilm_model::grain::dye::texture::apply(
         source,
         source_pitch_um,
-        &spektrafilm_model::grain::dye::ReadoutGeometry {
+        &spektrafilm_model::grain::dye::texture::ReadoutGeometry {
             origin_um: grid.origin_um,
             pitch_um: grid.pitch_um,
             width: grid.width,
@@ -649,7 +649,7 @@ pub fn readout_with_response(
     if backend.is_gpu() {
         match device_params(&resolved, source_pitch_um, grid) {
             Ok(device) => {
-                let observation = super::StageObservation::new(backend, "grain_v3_field");
+                let observation = super::StageObservation::new(backend, "grain_dye_field");
                 let observed = observation.backend(backend);
                 match observed.dye_field_with_response(source, &device, device_response) {
                     Some(result) => return result,
@@ -668,11 +668,11 @@ pub fn readout_with_response(
     }
     let observation = super::StageObservation::cpu(
         backend,
-        "grain_v3_field",
-        spektrafilm_backend::telemetry::CpuReason::GrainV3FieldCpu,
+        "grain_dye_field",
+        spektrafilm_backend::telemetry::CpuReason::DyeGrainFieldCpu,
     );
     let backend = observation.backend(backend);
-    v3::apply_with_response(source, source_pitch_um, grid, &resolved, |cells| {
+    dye::apply_with_response(source, source_pitch_um, grid, &resolved, |cells| {
         response(cells, backend)
     })
 }
@@ -687,7 +687,7 @@ pub fn readout_with_response(
 /// device count law and is rejected by name; expectation mode and the
 /// field-pitch override are part of the production law and map through.
 fn device_params(
-    resolved: &GrainV3Params,
+    resolved: &DyeGrainParams,
     source_pitch_um: f64,
     grid: ReadoutGrid,
 ) -> Result<spektrafilm_backend::dye_params::DyeGpuParams, String> {
@@ -774,9 +774,9 @@ fn host_field_reason(gpu_backend: bool) -> Option<String> {
     if !gpu_backend {
         return Some("the selected backend has no device field path".to_owned());
     }
-    if v3::check_device_mass_law().is_err() {
+    if dye::check_device_mass_law().is_err() {
         return Some(
-            "the experimental SPEKTRAFILM_GRAIN_V3_MASS_LAW mass law has no device field path"
+            "the experimental SPEKTRAFILM_GRAIN_DYE_MASS_LAW mass law has no device field path"
                 .to_owned(),
         );
     }
@@ -824,14 +824,14 @@ pub fn effective_backend_note(film: &Profile, params: &RuntimeParams, gpu_backen
 }
 
 fn cell_um_override() -> Option<f64> {
-    std::env::var(CELL_UM_ENV)
+    spektrafilm_model::grain::dye::diagnostic_env(CELL_UM_ENV)
         .ok()
         .and_then(|value| value.parse::<f64>().ok())
         .filter(|value| value.is_finite() && *value > 0.0)
 }
 
 fn expectation_requested() -> bool {
-    std::env::var(EXPECTATION_ENV).is_ok_and(|value| value == "1")
+    spektrafilm_model::grain::dye::diagnostic_env(EXPECTATION_ENV).is_ok_and(|value| value == "1")
 }
 
 #[cfg(test)]
@@ -954,12 +954,12 @@ mod tests {
                 .dye_field(&source, &device)
                 .expect("device field path")
                 .expect("device field runs");
-            let mut law = spektrafilm_model::grain::dye::ClumpParams::delivered();
+            let mut law = spektrafilm_model::grain::dye::texture::ClumpParams::delivered();
             law.seed = resolved.seed;
-            let cpu = spektrafilm_model::grain::dye::apply(
+            let cpu = spektrafilm_model::grain::dye::texture::apply(
                 &source,
                 pitch,
-                &spektrafilm_model::grain::dye::ReadoutGeometry {
+                &spektrafilm_model::grain::dye::texture::ReadoutGeometry {
                     origin_um: grid.origin_um,
                     pitch_um: grid.pitch_um,
                     width: n,
@@ -1072,16 +1072,17 @@ mod tests {
                     spektrafilm_backend::ComputeBackend::dye_field(&*backend, &source, &device)
                         .expect("the backend exposes a device field path")
                         .expect("the device field runs");
-                // The reference is the engine's law, not the retired v3 capacity
+                // The reference is the engine's law, not the retired capacity
                 // field: the device must reproduce the host model exactly in
                 // expectation, for every readout grid.
-                let mut reference = spektrafilm_model::grain::dye::ClumpParams::delivered();
+                let mut reference =
+                    spektrafilm_model::grain::dye::texture::ClumpParams::delivered();
                 reference.expectation = resolved.expectation;
                 reference.seed = resolved.seed;
-                let cpu_out = spektrafilm_model::grain::dye::apply(
+                let cpu_out = spektrafilm_model::grain::dye::texture::apply(
                     &source,
                     2.0,
-                    &spektrafilm_model::grain::dye::ReadoutGeometry {
+                    &spektrafilm_model::grain::dye::texture::ReadoutGeometry {
                         origin_um: grid.origin_um,
                         pitch_um: grid.pitch_um,
                         width: grid.width,
@@ -1247,7 +1248,7 @@ mod tests {
             width: 8,
             height: 6,
         };
-        let formed_cells = v3::apply(&source, cell * 2.0, fine_grid, &model).unwrap();
+        let formed_cells = dye::apply(&source, cell * 2.0, fine_grid, &model).unwrap();
         let gamut = crate::gamut_compression::OutputGamutCompress::identity();
         let illuminant =
             crate::spectral_service::select_illuminant_f64(&print.info.reference_illuminant);
@@ -1267,7 +1268,7 @@ mod tests {
             let fine = expose(&formed_cells).unwrap();
             let expected = block_average_linear(&fine, 4);
             let actual =
-                v3::apply_with_response(&source, cell * 2.0, coarse_grid, &model, expose).unwrap();
+                dye::apply_with_response(&source, cell * 2.0, coarse_grid, &model, expose).unwrap();
             assert!(max_abs_diff(&actual, &expected) < read_tolerance());
         }
         params.io.scan_film = true;
@@ -1280,7 +1281,8 @@ mod tests {
             let fine_capture = capture(&formed_cells).unwrap();
             let expected = block_average_linear(&fine_capture, 4);
             let actual =
-                v3::apply_with_response(&source, cell * 2.0, coarse_grid, &model, capture).unwrap();
+                dye::apply_with_response(&source, cell * 2.0, coarse_grid, &model, capture)
+                    .unwrap();
             assert!(max_abs_diff(&actual, &expected) < read_tolerance());
             let finish = |rgb| {
                 super::super::scanning::finish_capture(rgb, &film, &params, &backend, &gamut)
@@ -1294,7 +1296,7 @@ mod tests {
                 ..coarse_grid
             };
             let cropped =
-                v3::apply_with_response(&source, cell * 2.0, crop_grid, &model, capture).unwrap();
+                dye::apply_with_response(&source, cell * 2.0, crop_grid, &model, capture).unwrap();
             assert!(max_abs_diff_at(&actual, &cropped, 2, 1) < read_tolerance());
         }
     }
@@ -1323,7 +1325,7 @@ mod tests {
                 width: 2,
                 height: 2,
             };
-            let actual = v3::apply(&source, 2.0, grid, &resolved).unwrap();
+            let actual = dye::apply(&source, 2.0, grid, &resolved).unwrap();
             for pixel in actual.pixels() {
                 assert_eq!(pixel[0], pixel[1], "{stock} time {time}");
                 assert_eq!(pixel[0], pixel[2], "{stock} time {time}");
@@ -1473,7 +1475,7 @@ mod tests {
                 width: 2,
                 height: 2,
             };
-            let output = v3::apply(&source, 2.0, grid, &resolved).unwrap();
+            let output = dye::apply(&source, 2.0, grid, &resolved).unwrap();
             for value in output.data {
                 assert!((value as f64 - 0.4).abs() < read_tolerance(), "{stock}");
             }
@@ -1493,7 +1495,7 @@ mod tests {
         let film = load("kodak_portra_800");
         let mut params = supported_params();
         params.film_render.grain.rms_granularity = [6.0, 6.0, 12.0];
-        params.film_render.grain.v3_event_area_um2 = 1.28;
+        params.film_render.grain.dye_event_area_um2 = 1.28;
         let resolved = resolve(&film, &params).unwrap();
         assert_eq!(resolved.channel_scale, [1.0, 1.0, 4.0]);
         assert_eq!(resolved.event_area_um2, 1.28);
@@ -1596,8 +1598,8 @@ mod tests {
         assert_eq!((keep.x, keep.y, keep.width, keep.height), (2, 2, 8, 8));
         let film = load("kodak_portra_800");
         let resolved = resolve(&film, &params).unwrap();
-        let full = v3::apply(&source, 2.0, grid, &resolved).unwrap();
-        let crop = v3::apply(&source, 2.0, requested.grid(), &resolved).unwrap();
+        let full = dye::apply(&source, 2.0, grid, &resolved).unwrap();
+        let crop = dye::apply(&source, 2.0, requested.grid(), &resolved).unwrap();
         assert!(max_abs_diff_at(&full, &crop, keep.x, keep.y) <= read_tolerance());
     }
 
@@ -1609,7 +1611,7 @@ mod tests {
         // Fractional source-to-field footprints, across two output bands.
         let pitch = 3.1;
         let source = density_target(96, 160);
-        let full = v3::apply(
+        let full = dye::apply(
             &source,
             pitch,
             ReadoutGrid {
@@ -1621,7 +1623,7 @@ mod tests {
             &resolved,
         )
         .unwrap();
-        let crop = v3::apply(
+        let crop = dye::apply(
             &source,
             pitch,
             ReadoutGrid {
@@ -1660,8 +1662,8 @@ mod tests {
         expected_a.expectation = true;
         let mut expected_b = expected_a.clone();
         expected_b.event_area_um2 = expected_a.event_area_um2 * 10.0;
-        let a = v3::apply(&source, pitch, grid, &expected_a).unwrap();
-        let b = v3::apply(&source, pitch, grid, &expected_b).unwrap();
+        let a = dye::apply(&source, pitch, grid, &expected_a).unwrap();
+        let b = dye::apply(&source, pitch, grid, &expected_b).unwrap();
         let mean_diff = max_abs_diff(&a, &b);
         assert!(
             mean_diff <= 1e-5,
@@ -1671,8 +1673,8 @@ mod tests {
         // Realized field: the same support, different statistical strength.
         let mut realized_b = coarser.clone();
         realized_b.event_area_um2 *= 10.0;
-        let ra = v3::apply(&source, pitch, grid, &coarser).unwrap();
-        let rb = v3::apply(&source, pitch, grid, &realized_b).unwrap();
+        let ra = dye::apply(&source, pitch, grid, &coarser).unwrap();
+        let rb = dye::apply(&source, pitch, grid, &realized_b).unwrap();
         let noise_diff = max_abs_diff(&ra, &rb);
         assert!(
             noise_diff > 1e-4,
@@ -1733,14 +1735,14 @@ mod tests {
                 width: 16,
                 height: 8,
             };
-            let all = v3::apply(&target, q, full, &model).unwrap();
+            let all = dye::apply(&target, q, full, &model).unwrap();
             for x in [0, 8] {
                 let tile = ReadoutGrid {
                     origin_um: [(10 + x) as f64 * q, 8.0 * q],
                     width: 8,
                     ..full
                 };
-                let part = v3::apply(&target, q, tile, &model).unwrap();
+                let part = dye::apply(&target, q, tile, &model).unwrap();
                 assert!(max_abs_diff_at(&all, &part, x, 0) <= read_tolerance());
             }
             let crop = ReadoutGrid {
@@ -1749,7 +1751,7 @@ mod tests {
                 height: 4,
                 ..full
             };
-            let part = v3::apply(&target, q, crop, &model).unwrap();
+            let part = dye::apply(&target, q, crop, &model).unwrap();
             assert!(max_abs_diff_at(&all, &part, 3, 2) <= read_tolerance());
         }
     }

@@ -60,7 +60,7 @@ impl Condition {
             Self::Fotufilm => "film_render.grain.engine = fotufilm",
             Self::SpektraOrDye => "film_render.grain.engine = spektra or dye",
             Self::Custom => {
-                "film_render.grain.v2_profile = custom; select custom to use this control"
+                "film_render.grain.procedural_profile = custom; select custom to use this control"
             }
             Self::Spatial => "spatial effects enabled",
             Self::Diffusion(false) => {
@@ -124,11 +124,12 @@ impl Condition {
                     || film.map_or(!g.monochrome, Profile::is_color)
             }
             Self::Analogue => {
-                g.v2_profile != "custom" || g.v2_mode == crate::params::grain::GrainV2Mode::Analogue
+                g.procedural_profile != "custom"
+                    || g.procedural_mode == crate::params::grain::ProceduralGrainMode::Analogue
             }
             Self::Fotufilm => g.engine == GrainEngine::Fotufilm,
             Self::SpektraOrDye => matches!(g.engine, GrainEngine::Spektra | GrainEngine::Dye),
-            Self::Custom => g.v2_profile == "custom",
+            Self::Custom => g.procedural_profile == "custom",
 
             Self::Spatial => !p.debug.deactivate_spatial_effects,
             Self::Diffusion(print) => {
@@ -185,22 +186,33 @@ fn grain_conditions(path: &str, component: Option<usize>) -> [Option<Condition>;
     out[0] = Some(Grain);
     if path.starts_with("film_render.grain.fotufilm.") {
         out[1] = Some(Fotufilm);
-    } else if path.contains(".v2_") {
+    } else if path.contains(".procedural_") {
         out[1] = Some(Procedural);
-        if path.ends_with(".v2_film_type") {
+        if path.ends_with(".procedural_film_type") {
             out[2] = Some(MetadataNoOp);
         } else {
-            if !["v2_profile", "v2_amount", "v2_timer", "v2_resolution_type"]
-                .iter()
-                .any(|field| path.ends_with(field))
+            if ![
+                "procedural_profile",
+                "procedural_amount",
+                "procedural_timer",
+                "procedural_resolution_type",
+            ]
+            .iter()
+            .any(|field| path.ends_with(field))
             {
                 out[2] = Some(Custom);
             }
-            if path.ends_with(".v2_resolution_factor") || path.ends_with(".v2_resolution_type") {
+            if path.ends_with(".procedural_resolution_factor")
+                || path.ends_with(".procedural_resolution_type")
+            {
                 out[3] = Some(Analogue);
             }
         }
-    } else if path.contains(".v3_") || path.ends_with(".channel_correlation") {
+    } else if matches!(
+        path,
+        "film_render.grain.dye_support_um" | "film_render.grain.dye_event_area_um2"
+    ) || path.ends_with(".channel_correlation")
+    {
         out[1] = Some(Dye);
         if path.ends_with(".channel_correlation") {
             out[2] = Some(ColorRecords);
@@ -372,7 +384,7 @@ pub fn inactive_reason(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::params::grain::GrainV2Mode;
+    use crate::params::grain::ProceduralGrainMode;
 
     fn film(color: bool, sublayers: bool) -> Profile {
         serde_json::from_value(serde_json::json!({
@@ -391,30 +403,36 @@ mod tests {
     fn procedural_resolution_follows_effective_mode_and_profile_ownership() {
         let mut params = RuntimeParams::default();
         params.film_render.grain.engine = GrainEngine::Procedural;
-        params.film_render.grain.v2_profile = "custom".into();
-        let factor = "film_render.grain.v2_resolution_factor";
-        let method = "film_render.grain.v2_resolution_type";
+        params.film_render.grain.procedural_profile = "custom".into();
+        let factor = "film_render.grain.procedural_resolution_factor";
+        let method = "film_render.grain.procedural_resolution_type";
         for path in [factor, method] {
             assert_eq!(grain_control_inactive_reason(path, &params, None), None);
         }
-        params.film_render.grain.v2_mode = GrainV2Mode::Noise;
+        params.film_render.grain.procedural_mode = ProceduralGrainMode::Noise;
         for path in [factor, method] {
             assert_eq!(
                 grain_control_inactive_reason(path, &params, None),
                 Some(Condition::Analogue.description())
             );
         }
-        params.film_render.grain.v2_profile = "35mm250".into();
+        params.film_render.grain.procedural_profile = "35mm250".into();
         // Named profiles are Analogue even when a stored Custom request is Noise.
         assert_eq!(grain_control_inactive_reason(method, &params, None), None);
         assert_eq!(
             grain_control_inactive_reason(factor, &params, None),
             Some(Condition::Custom.description())
         );
-        for path in ["film_render.grain.v2_amount", "film_render.grain.v2_timer"] {
+        for path in [
+            "film_render.grain.procedural_amount",
+            "film_render.grain.procedural_timer",
+        ] {
             assert_eq!(grain_control_inactive_reason(path, &params, None), None);
         }
-        for path in ["film_render.grain.v2_mode", "film_render.grain.v2_size"] {
+        for path in [
+            "film_render.grain.procedural_mode",
+            "film_render.grain.procedural_size",
+        ] {
             assert_eq!(
                 grain_control_inactive_reason(path, &params, None),
                 Some(Condition::Custom.description())
@@ -431,11 +449,11 @@ mod tests {
     fn procedural_film_type_is_metadata_in_every_processing_mode() {
         let mut params = RuntimeParams::default();
         params.film_render.grain.engine = GrainEngine::Procedural;
-        let path = "film_render.grain.v2_film_type";
+        let path = "film_render.grain.procedural_film_type";
         for profile in ["35mm250", "custom"] {
-            params.film_render.grain.v2_profile = profile.into();
-            for mode in [GrainV2Mode::Analogue, GrainV2Mode::Noise] {
-                params.film_render.grain.v2_mode = mode;
+            params.film_render.grain.procedural_profile = profile.into();
+            for mode in [ProceduralGrainMode::Analogue, ProceduralGrainMode::Noise] {
+                params.film_render.grain.procedural_mode = mode;
                 assert_eq!(
                     grain_control_inactive_reason(path, &params, None),
                     Some(Condition::MetadataNoOp.description())
@@ -583,7 +601,7 @@ mod tests {
         let mut params = RuntimeParams::default();
         params.film_render.grain.engine = GrainEngine::Dye;
         params.settings.preview_mode = true;
-        let path = "film_render.grain.v3_event_area_um2";
+        let path = "film_render.grain.dye_event_area_um2";
         assert_eq!(grain_control_inactive_reason(path, &params, None), None);
         params.debug.deactivate_stochastic_effects = true;
         assert_eq!(

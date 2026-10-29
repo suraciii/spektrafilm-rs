@@ -26,7 +26,7 @@ fn collected_report() -> Report {
     let phase = operation.scope("simulation", ObservationKind::Phase, Purpose::Image);
     let stage = phase
         .context()
-        .scope("grain_v1", ObservationKind::Stage, Purpose::Image);
+        .scope("grain_spektra", ObservationKind::Stage, Purpose::Image);
     stage.finish(Outcome::Succeeded);
     phase.finish(Outcome::Succeeded);
     let mut report = operation.finish(Outcome::Succeeded).unwrap();
@@ -350,7 +350,7 @@ fn root_work_and_retained_descendants_keep_distinct_counter_totals() {
     let phase = operation.scope("simulation", ObservationKind::Phase, Purpose::Image);
     let stage = phase
         .context()
-        .scope("grain_v1", ObservationKind::Stage, Purpose::Image);
+        .scope("grain_spektra", ObservationKind::Stage, Purpose::Image);
     stage.context().record_work(&WorkCounters {
         telemetry_copy_bytes: Some(1),
         omitted_pass_count: None,
@@ -452,7 +452,7 @@ fn gpu_timing_measurements_total_actual_batch_values() {
     let phase = operation.scope("simulation", ObservationKind::Phase, Purpose::Image);
     let batch = phase
         .context()
-        .scope("grain_v2", ObservationKind::Batch, Purpose::Image);
+        .scope("grain_procedural", ObservationKind::Batch, Purpose::Image);
     let measurement = BatchMeasurements {
         host_prepare: Measurement::unavailable(AvailabilityReason::NotReached),
         submit_to_map_ready: Measurement::unavailable(AvailabilityReason::NotReached),
@@ -511,7 +511,7 @@ fn resident_route_facts_remain_available_outside_observation_detail() {
     let phase = operation.scope("simulation", ObservationKind::Phase, Purpose::Image);
     let stage = phase
         .context()
-        .scope("grain_v2", ObservationKind::Stage, Purpose::Image);
+        .scope("grain_procedural", ObservationKind::Stage, Purpose::Image);
     stage
         .context()
         .record_executor(spektrafilm_core::telemetry::Executor::Gpu, None);
@@ -535,7 +535,7 @@ fn resident_route_facts_remain_available_outside_observation_detail() {
 }
 
 #[test]
-fn mixed_grain_v1_stage_reports_cpu_reason() {
+fn mixed_grain_spektra_stage_reports_cpu_reason() {
     let operation = Operation::new(OperationKind::Render, CollectionMode::Summary);
     operation
         .context()
@@ -543,10 +543,10 @@ fn mixed_grain_v1_stage_reports_cpu_reason() {
     let phase = operation.scope("simulation", ObservationKind::Phase, Purpose::Image);
     let stage = phase
         .context()
-        .scope("grain_v1", ObservationKind::Stage, Purpose::Image);
+        .scope("grain_spektra", ObservationKind::Stage, Purpose::Image);
     stage.context().record_executor(
         spektrafilm_core::telemetry::Executor::Cpu,
-        Some(spektrafilm_core::telemetry::CpuReason::GrainV1Sampler),
+        Some(spektrafilm_core::telemetry::CpuReason::SpektraGrainSampler),
     );
     stage
         .context()
@@ -562,8 +562,8 @@ fn mixed_grain_v1_stage_reports_cpu_reason() {
     assert_eq!(
         report.summary().cpu_stage_reasons,
         vec![(
-            "grain_v1".to_owned(),
-            spektrafilm_core::telemetry::CpuReason::GrainV1Sampler,
+            "grain_spektra".to_owned(),
+            spektrafilm_core::telemetry::CpuReason::SpektraGrainSampler,
         )]
     );
 }
@@ -882,7 +882,7 @@ fn grain_configuration_describes_effective_sampler_branches() {
 }
 
 #[test]
-fn v3_grain_configuration_reports_engine_and_field_mode() {
+fn dye_grain_configuration_reports_engine_and_field_mode() {
     use spektrafilm_core::{params, profile, telemetry};
     let profile: profile::Profile = serde_json::from_value(serde_json::json!({
         "metadata": {}, "info": {}, "data": {}
@@ -890,7 +890,7 @@ fn v3_grain_configuration_reports_engine_and_field_mode() {
     .unwrap();
     let mut params = params::RuntimeParams::default();
     params.film_render.grain.engine = params::GrainEngine::Dye;
-    params.film_render.grain.v3_dye_support_um = 8.0;
+    params.film_render.grain.dye_support_um = 8.0;
     params.settings.use_fast_stats = true;
     let grain = telemetry::RenderConfiguration::from_runtime(&params, &profile, &profile).grain;
     assert!(grain.active);
@@ -1047,4 +1047,42 @@ fn scalar_record_reports_validate_constraints_and_keep_historical_reports_compat
         report.validate(),
         Err(telemetry::ValidationError::NonFinite(_))
     ));
+}
+
+#[test]
+fn historical_grain_telemetry_names_read_and_emit_canonical_engine_names() {
+    for (old, new, reason) in [
+        ("grain_v1", "grain_spektra", "grain_v1_sampler"),
+        (
+            "grain_v1_sampler",
+            "grain_spektra_sampler",
+            "grain_v1_sampler",
+        ),
+        ("grain_v2", "grain_procedural", "grain_v2_unsupported"),
+        (
+            "grain_v2_cpu",
+            "grain_procedural_cpu",
+            "grain_v2_unsupported",
+        ),
+        ("grain_v3_field", "grain_dye_field", "grain_v3_field_cpu"),
+    ] {
+        let mut value = serde_json::to_value(collected_report()).unwrap();
+        value["stages"][0]["name"] = serde_json::json!(old);
+        value["stages"][0]["executor"] = serde_json::json!("cpu");
+        value["stages"][0]["cpu_reason"] = serde_json::json!(reason);
+        let restored = Report::from_json(&value.to_string()).unwrap();
+        assert_eq!(restored.stages[0].name, new);
+        let output = restored.to_json().unwrap();
+        assert!(
+            !output.contains("grain_v1")
+                && !output.contains("grain_v2")
+                && !output.contains("grain_v3")
+        );
+        let decoded: spektrafilm_backend::telemetry::ResidentDeclineReason =
+            serde_json::from_str("\"grain_v3_field_cpu\"").unwrap();
+        assert_eq!(
+            serde_json::to_string(&decoded).unwrap(),
+            "\"dye_grain_field_cpu\""
+        );
+    }
 }

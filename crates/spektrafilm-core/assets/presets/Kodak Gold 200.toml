@@ -64,11 +64,11 @@ developer_exhaustion = 0.0
 [parameters.film_render.grain]
 active = true
 engine = "spektra"
-v2_profile = "35mm250"
-v2_film_type = "negative"
-v2_mode = "analogue"
-v2_resolution_type = 1
-v2_timer = 0.0
+procedural_profile = "35mm250"
+procedural_film_type = "negative"
+procedural_mode = "analogue"
+procedural_resolution_type = 1
+procedural_timer = 0.0
 particle_scale_sublayers = [
     1.0,
     0.4,

@@ -30,7 +30,7 @@ impl WgpuBackend {
             return Err("GPU stage requires a nonempty RGB working set".into());
         }
         let gaussian =
-            super::super::grain::v1::blur::bounded::workspace_bytes(width, height, limit)?;
+            super::super::grain::spektra::blur::bounded::workspace_bytes(width, height, limit)?;
         let pointwise = ADAPTER_WORKSPACE_BYTES;
         // At most sixteen static bindings in these kernels. The static preflight
         // supplies the largest active coefficient/uniform allocation, not a sum.
@@ -112,12 +112,12 @@ impl WgpuBackend {
                 // bounded independently of hardware binding size by its owner.
                 mul(super::super::resources::WORKSPACE_BINDING_BYTES / 8, 21)?
             }
-            "grain_spektra_v1" => {
+            super::super::grain::spektra::GRAIN_SPEKTRA_STAGE_NAME => {
                 let gp = p
-                    .grain_v1
+                    .grain_spektra
                     .as_ref()
                     .ok_or("Spektra grain parameters missing")?;
-                let window_limit = super::super::grain::v1::transport_window_limit(limit);
+                let window_limit = super::super::grain::spektra::transport_window_limit(limit);
                 let window = image.min(window_limit / 12 * 12);
                 if !(1..=3).contains(&gp.layer_count) {
                     return Err("Spektra grain requires 1..=3 active layers".into());
@@ -140,9 +140,10 @@ impl WgpuBackend {
                     )?;
                 }
                 if gp.micro_sigma > 0.05 && gp.micro_blur_px > 0.4 {
-                    let gaussian_f64 = super::super::grain::v1::blur::bounded::workspace_bytes_f64(
-                        width, height, limit,
-                    )?;
+                    let gaussian_f64 =
+                        super::super::grain::spektra::blur::bounded::workspace_bytes_f64(
+                            width, height, limit,
+                        )?;
                     bytes = add(bytes, add(mul(clump_image, 2)?, gaussian_f64)?)?;
                 }
                 // Finishing retains its windows, filtered/sharpened fields,
@@ -186,7 +187,7 @@ impl WgpuBackend {
                 }
                 bytes
             }
-            "grain_v2" => {
+            "grain_procedural" => {
                 // The procedural owner validates its resolution support. Four
                 // full rasters and eight capped sample/filter windows coexist.
                 // Its retained command metadata is budgeted by the actual
@@ -194,7 +195,7 @@ impl WgpuBackend {
                 self.procedural_workspace_bytes(
                     width,
                     height,
-                    p.grain_v2
+                    p.grain_procedural
                         .as_ref()
                         .ok_or("procedural grain parameters missing")?,
                 )?

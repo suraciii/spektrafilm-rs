@@ -1808,7 +1808,7 @@ fn persistent_taps_and_explicit_precedence_follow_topology() {
     assert_eq!(normal.data, default.data);
 }
 #[test]
-fn v3_final_crop_preserves_scanner_and_print_boundaries() {
+fn dye_final_crop_preserves_scanner_and_print_boundaries() {
     let dir = data_dir();
     let film = crate::profile::load_profile_by_name(&dir, "kodak_portra_800").unwrap();
     let print = crate::profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap();
@@ -2361,7 +2361,7 @@ fn output_mix_source_matches_deferred_field_crop_rounding() {
         for scale in [0.5, 1.5, 2.1] {
             pipeline.params.io.upscale_factor = scale;
             let geometry =
-                crate::stages::grain_v3::geometry(&source, &pipeline.params, 2.0).unwrap();
+                crate::stages::grain_dye::geometry(&source, &pipeline.params, 2.0).unwrap();
             let prepared = pipeline
                 .prepare_output_mix_source(&source, &spektrafilm_backend::cpu_backend::CpuBackend)
                 .unwrap();
@@ -2371,7 +2371,7 @@ fn output_mix_source_matches_deferred_field_crop_rounding() {
             );
             let (full, crop) = geometry.full_film_grid(&source).unwrap();
             let cropped =
-                crate::stages::grain_v3::crop_output(ImageBuf::new(full.width, full.height), crop);
+                crate::stages::grain_dye::crop_output(ImageBuf::new(full.width, full.height), crop);
             assert_eq!(
                 (prepared.width, prepared.height),
                 (cropped.width, cropped.height)

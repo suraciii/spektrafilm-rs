@@ -194,6 +194,20 @@ impl GuiState {
             }
         }
         validate_state_parameters(&mut value, version)?;
+        // Engine-specific imports belong to the runtime extension. The shared
+        // upstream mirror retains only its own controls when canonicalized.
+        if let Some(grain) = value.get("grain").and_then(Value::as_object).cloned() {
+            let mut mirror = Value::Object(grain.clone());
+            canonicalize_grain_state(&mut mirror);
+            for (key, selection) in grain {
+                if key != "engine" && mirror.get(&key).is_none() {
+                    if value.get("rust").is_none() {
+                        value["rust"] = json!({"version": CURRENT_STATE_VERSION});
+                    }
+                    value["rust"]["runtime"]["film_render"]["grain"][key] = selection;
+                }
+            }
+        }
         // The upstream mirror has no engine owner. Promote an explicit import
         // before canonicalizing it; only versioned historical omission means
         // Spektra. Unversioned sparse requests use the new runtime default.

@@ -150,8 +150,8 @@ The following TOML document is a sparse parameter file:
 ```toml
 [film_render.grain]
 engine = "procedural"
-v2_profile = "35mm250"
-v2_amount = 25.0
+procedural_profile = "35mm250"
+procedural_amount = 25.0
 
 [film_render.halation]
 halation_amount = 0.6
@@ -163,7 +163,7 @@ exposure_compensation_ev = 0.5
 The following JSON document clears one optional parameter:
 
 ```json
-{"film_render":{"grain":{"v2_amount":null}}}
+{"film_render":{"grain":{"procedural_amount":null}}}
 ```
 
 ### Inline assignments
@@ -189,7 +189,7 @@ Quoted strings MUST NOT be coerced into numbers or booleans. Type errors MUST id
 The following source is valid:
 
 ```text
-film_render.grain.engine=procedural,film_render.grain.v2_profile=custom,film_render.grain.v2_amount=25,camera.auto_exposure=false
+film_render.grain.engine=procedural,film_render.grain.procedural_profile=custom,film_render.grain.procedural_amount=25,camera.auto_exposure=false
 ```
 
 For a POSIX shell, quote a source containing brackets, spaces, or shell-significant characters:
@@ -211,13 +211,13 @@ Repetition MUST fail at argument parsing rather than silently select a value.
 
 ### Editable paths and conditional controls
 
-Paths MUST use the runtime parameter vocabulary, such as `film_render.grain.v2_amount`. The command MUST NOT add shortened paths such as `grain.amount`. It MUST NOT infer a grain engine or change `v2_profile` to `custom` from the presence of a control.
+Paths MUST use the runtime parameter vocabulary, such as `film_render.grain.procedural_amount`. The command MUST NOT add shortened paths such as `grain.amount`. It MUST NOT infer a grain engine or change `procedural_profile` to `custom` from the presence of a control.
 
 `workflow.route` MUST use `--route`; `io.scan_film` MUST remain derived from the selected workflow. Neither path MAY appear in a parameter file or inline assignment. Random seed MUST remain outside this language.
 
-Pipeline-derived `film_render.grain.monochrome` MUST NOT be an editable path. Other runtime controls MUST use the shared editable parameter description. Removed Spektra controls MUST follow the [Spektra contract](../film-grain/v1/spec.md).
+Pipeline-derived `film_render.grain.monochrome` MUST NOT be an editable path. Other runtime controls MUST use the shared editable parameter description. Removed Spektra controls MUST follow the [Spektra contract](../film-grain/spektra/spec.md).
 
-Controls for inactive effects or engines MAY be stored without affecting output. [Procedural grain](../film-grain/v2/spec.md) MUST retain its named-profile and Custom behavior. Spektra RMS granularity and Procedural Amount MUST remain distinct controls.
+Controls for inactive effects or engines MAY be stored without affecting output. [Procedural grain](../film-grain/procedural/spec.md) MUST retain its named-profile and Custom behavior. Spektra RMS granularity and Procedural Amount MUST remain distinct controls.
 
 A parameter-file leaf or inline assignment MUST NOT change another control to make itself effective. The [Output mix and material controls contract](../output-mix/spec.md) defines use of existing preflash and chemistry controls and owns `output_mix`. Simulation blend uses the existing canonical assignment `--set output_mix.amount=0.5`, without an alias or dedicated process flag.
 
@@ -441,7 +441,7 @@ Selector-free JSON MUST retain its existing render contract. Discovery MUST dist
 
 Existing Cyan neutral calibration remains a calibration control rather than a new creative Cyan shift. Scanner lens blur discovery MUST identify linear readout optics before interpretation and gamut processing. Unsharp mask MUST identify digital scan sharpening.
 
-`print_render.glare` MUST identify print viewing/readout stray light, not preflash or density formation. Grain descriptions MUST distinguish material grain from [Procedural post-scan appearance](../film-grain/v2/spec.md), including Film Resolution's appearance-only meaning. These descriptions MUST NOT rename canonical paths or introduce aliases.
+`print_render.glare` MUST identify print viewing/readout stray light, not preflash or density formation. Grain descriptions MUST distinguish material grain from [Procedural post-scan appearance](../film-grain/procedural/spec.md), including Film Resolution's appearance-only meaning. These descriptions MUST NOT rename canonical paths or introduce aliases.
 
 Dry run MUST report the selected model/version and optical route without claiming that the pixels or kernel were exercised.
 
@@ -471,9 +471,9 @@ film_format_mm = 36.0
 [film_render.grain]
 active = true
 engine = "procedural"
-v2_profile = "custom"
-v2_size = 12.0
-v2_amount = 25.0
+procedural_profile = "custom"
+procedural_size = 12.0
+procedural_amount = 25.0
 ```
 
 The following command MUST inspect a composed configuration:

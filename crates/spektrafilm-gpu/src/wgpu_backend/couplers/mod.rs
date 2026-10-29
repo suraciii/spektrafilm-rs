@@ -1,6 +1,6 @@
 use super::blur::{GaussianBuffers, GaussianScratch};
 use super::grain::raster::RasterStorage;
-use super::grain::v1::blur::build_grain_blur_paged_with_scratch;
+use super::grain::spektra::blur::build_grain_blur_paged_with_scratch;
 use super::page_views::{Access, ViewPlan};
 use super::paged::ImagePage;
 use super::*;

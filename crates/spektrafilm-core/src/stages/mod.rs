@@ -1,7 +1,7 @@
 pub mod converting;
 pub mod filming;
+pub mod grain_dye;
 pub mod grain_fotufilm;
-pub mod grain_v3;
 pub mod printing;
 pub mod scanning;
 
@@ -158,8 +158,8 @@ mod integration_tests {
     use spektrafilm_math::precision::{Scalar, from_f64};
 
     #[test]
-    fn grain_v2_uses_scan_encoding_and_preserves_linear_export() {
-        use crate::params::grain::{GrainEngine, GrainV2Mode};
+    fn grain_procedural_uses_scan_encoding_and_preserves_linear_export() {
+        use crate::params::grain::{GrainEngine, ProceduralGrainMode};
         use spektrafilm_math::colorspace;
         let dir = data_dir();
         let film = profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();
@@ -192,12 +192,13 @@ mod integration_tests {
                 let encoded_base = render(params.clone());
                 params.film_render.grain.active = true;
                 params.film_render.grain.engine = GrainEngine::Procedural;
-                params.film_render.grain.select_custom_grain_v2();
-                for mode in [GrainV2Mode::Analogue, GrainV2Mode::Noise] {
-                    params.film_render.grain.v2_mode = mode;
-                    let mut grain = params.film_render.grain.resolved_grain_v2();
+                params.film_render.grain.select_custom_grain_procedural();
+                for mode in [ProceduralGrainMode::Analogue, ProceduralGrainMode::Noise] {
+                    params.film_render.grain.procedural_mode = mode;
+                    let mut grain = params.film_render.grain.resolved_grain_procedural();
                     grain.seed = 5489;
-                    let expected = spektrafilm_model::grain::v2::apply_cpu(&encoded_base, grain);
+                    let expected =
+                        spektrafilm_model::grain::procedural::apply_cpu(&encoded_base, grain);
                     params.io.output_cctf_encoding = true;
                     let encoded = render(params.clone());
                     params.io.output_cctf_encoding = false;
@@ -437,7 +438,7 @@ mod scan_semantics_tests {
         assert!(!any_darker, "glare darkened pixels — wrong sign");
     }
     #[test]
-    fn cmyk_appearance_runs_after_v2_grain_and_preserves_transfer_state() {
+    fn cmyk_appearance_runs_after_procedural_grain_and_preserves_transfer_state() {
         let dir = data_dir();
         let film = profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();
         let backend = CpuBackend;

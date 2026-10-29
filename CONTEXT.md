@@ -75,3 +75,16 @@ _Avoid_: Chart group
 **Feature profile family**: The named alternatives for one feature, including the feature's `custom` state when the feature exposes editable overrides. A family owns one parameter schema and one resolver; its entries do not become film profiles or look presets.
 
 **Feature profile application**: The operation that resolves one feature profile and replaces exactly that feature's controls. It preserves every control outside the feature and fails transactionally when the resolved values are invalid or incompatible with the active route.
+
+## Grain engines
+
+**Spektra**: The upstream density-domain particle grain model.
+_Avoid_: Grain V1
+
+**Procedural**: The Dehancer-derived encoded-RGB grain model with Analogue and Noise modes.
+_Avoid_: Grain V2
+
+**Dye**: The self-developed film-coordinate dye-field grain model.
+_Avoid_: Grain V3
+
+**Fotufilm Film**: The independent appearance population model fitted to resolved film curves.

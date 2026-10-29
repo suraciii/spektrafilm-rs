@@ -144,7 +144,7 @@ Scanner lens blur MUST model readout optics on linear transmitted or reflected l
 - It MUST NOT change print exposure, chemistry, or developed print density. It remains eligible only on the existing print-scan routes, with its existing controls and seed behavior.
 - Film-scan routes MUST NOT acquire this effect through `film_render.glare` or another alias.
 
-Unsharp mask is digital scan sharpening, not lens resolution. It remains downstream of interpretation and output gamut processing. Procedural grain retains its separate [post-scan boundary](../film-grain/v2/spec.md); it MUST NOT be moved into optical acquisition to make the grain engines appear equivalent.
+Unsharp mask is digital scan sharpening, not lens resolution. It remains downstream of interpretation and output gamut processing. Procedural grain retains its separate [post-scan boundary](../film-grain/procedural/spec.md); it MUST NOT be moved into optical acquisition to make the grain engines appear equivalent.
 
 ## Film halation source response
 

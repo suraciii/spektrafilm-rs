@@ -263,6 +263,8 @@ Sparse curve and lattice dispatches MUST complete their output ownership before 
 
 The actual injection and collection span MUST determine the resource plan before large allocations. Stages outside that span MUST NOT construct execution resources.
 
+Resource planning and execution MUST use the same canonical stage identities.
+
 The plan MUST separate retained carriers and caches, live cross-stage data, temporary workspaces, and submitted resources awaiting retirement. Aliased views of one physical buffer MUST count once within an owner inventory.
 
 Stage resources MUST be constructed when needed and released after their last required use. Shared Gaussian storage MUST follow the first and last active spatial consumer, not the complete chain lifetime.

@@ -533,7 +533,7 @@ fn dye_dry_run_does_not_claim_an_unchecked_executor() {
         "--input-cctf-decoding",
         "true",
         "--set",
-        "film_render.grain.engine=dye,film_render.grain.v3_dye_support_um=8",
+        "film_render.grain.engine=dye,film_render.grain.dye_support_um=8",
         "--dry-run",
     ]);
     assert_eq!(report["film_grain_dye"]["active"], true);
@@ -643,21 +643,33 @@ fn fixed_input_precedence_and_winning_edit_feedback_are_observable() {
     let report = f.report(&[
         "--input-color-space", "sRGB", "--input-cctf-decoding", "true",
         "--set", "io.input_color_space=ProPhoto RGB,io.input_cctf_decoding=false",
-        "--set", "film_render.grain.engine=procedural,film_render.grain.v2_profile=35mm250,film_render.grain.v2_size=12",
-        "--set", "film_render.grain.v2_size=15,film_render.grain.v2_amount=25", "--dry-run",
+        "--set", "film_render.grain.engine=procedural,film_render.grain.procedural_profile=35mm250,film_render.grain.procedural_size=12",
+        "--set", "film_render.grain.procedural_size=15,film_render.grain.procedural_amount=25", "--dry-run",
     ]);
     assert_eq!(report["parameters"]["io"]["input_color_space"], "sRGB");
     let edits = report["edits"].as_array().unwrap();
     let field = |path: &str| edits.iter().find(|entry| entry["path"] == path).unwrap();
     assert_eq!(field("io.input_color_space")["status"], "overridden");
-    assert_eq!(field("film_render.grain.v2_size")["requested"], 15.0);
-    assert_eq!(field("film_render.grain.v2_size")["source"]["index"], 3);
-    assert_eq!(field("film_render.grain.v2_size")["status"], "inactive");
-    assert_eq!(field("film_render.grain.v2_amount")["status"], "active");
+    assert_eq!(
+        field("film_render.grain.procedural_size")["requested"],
+        15.0
+    );
+    assert_eq!(
+        field("film_render.grain.procedural_size")["source"]["index"],
+        3
+    );
+    assert_eq!(
+        field("film_render.grain.procedural_size")["status"],
+        "inactive"
+    );
+    assert_eq!(
+        field("film_render.grain.procedural_amount")["status"],
+        "active"
+    );
     assert_eq!(
         edits
             .iter()
-            .filter(|entry| entry["path"] == "film_render.grain.v2_size")
+            .filter(|entry| entry["path"] == "film_render.grain.procedural_size")
             .count(),
         1
     );
@@ -680,7 +692,7 @@ fn feature_profiles_report_typed_values_precedence_and_inactive_status() {
         "--set",
         "film_render.halation.active=false",
         "--set",
-        "film_render.grain.v2_amount=25",
+        "film_render.grain.procedural_amount=25",
         "--dry-run",
     ]);
     let profiles = report["feature_profiles"].as_array().unwrap();
@@ -688,20 +700,20 @@ fn feature_profiles_report_typed_values_precedence_and_inactive_status() {
     assert_eq!(profiles[0]["status"], "overridden");
     assert_eq!(profiles[1]["status"], "overridden");
     assert_eq!(
-        profiles[1]["requested"]["film_render.grain.v2_profile"],
+        profiles[1]["requested"]["film_render.grain.procedural_profile"],
         "35mm250"
     );
     assert_eq!(
-        profiles[1]["requested"]["film_render.grain.v2_amount"],
+        profiles[1]["requested"]["film_render.grain.procedural_amount"],
         Value::Null
     );
     assert_eq!(
-        profiles[1]["resolved"]["film_render.grain.v2_profile"],
+        profiles[1]["resolved"]["film_render.grain.procedural_profile"],
         "35mm250"
     );
     assert_eq!(profiles[2]["status"], "inactive");
     assert_eq!(
-        report["parameters"]["film_render"]["grain"]["v2_amount"],
+        report["parameters"]["film_render"]["grain"]["procedural_amount"],
         25.0
     );
 }
@@ -778,7 +790,7 @@ fn seed_repeats_stochastic_pixels_and_benchmark_attempts() {
         let raw = f.0.join(format!("{index}.raw"));
         let result = f.run(&format!("{index}.tif"), &[
             "--input-color-space", "sRGB", "--input-cctf-decoding", "true",
-            "--set", "camera.auto_exposure=false,film_render.grain.engine=procedural,film_render.grain.v2_profile=custom,film_render.grain.v2_amount=75",
+            "--set", "camera.auto_exposure=false,film_render.grain.engine=procedural,film_render.grain.procedural_profile=custom,film_render.grain.procedural_amount=75",
             "--seed", seed, "--iters", iters, "--raw-out", raw.to_str().unwrap(),
         ]);
         assert!(

@@ -4,11 +4,20 @@ Use this page to select a grain engine and configure its controls. It also descr
 
 ## Select an engine
 
-`film_render.grain.engine` accepts `spektra`, `procedural`, `dye`, or `fotufilm`. Replace explicit old selectors `v1`, `v2`, and `v3` with `spektra`, `procedural`, and `dye`, respectively. Old selectors are invalid. Existing `v2_*` and `v3_*` control keys, internal module paths, and diagnostic environment variable names remain unchanged.
+`film_render.grain.engine` accepts `spektra`, `procedural`, `dye`, or `fotufilm`.
+Use `procedural_*` for Procedural controls and `dye_support_um` / `dye_event_area_um2` for Dye controls.
+
+Historical numbered control keys remain readable; saved documents and parameter descriptions emit only canonical names.
+Supplying both spellings of one control in the same grain object is an error.
+For GUI imports, an authored top-level control retains precedence over the runtime extension after each carrier is normalized.
+Historical numbered engine selectors remain invalid.
+
+Dye diagnostics use `SPEKTRAFILM_GRAIN_DYE_*`. Historical numbered diagnostic names remain readable when the canonical variable is absent; the canonical variable takes precedence when both are set.
+
 
 - Spektra is the upstream experimental original.
 - Procedural derives from Dehancer. It provides Analogue/Noise grain with twelve format/speed profiles. Its controls include Size, Amount, Shadows, Midtones, Highlights, Chroma, and Film Resolution. Pixel parity with Dehancer is not claimed.
-- Dye is the default self-developed experimental film-coordinate dye field. `v3_dye_support_um`, `v3_event_area_um2`, and `channel_correlation` control it.
+- Dye is the default self-developed experimental film-coordinate dye field. `dye_support_um`, `dye_event_area_um2`, and `channel_correlation` control it.
 - Fotufilm Film is an adapted appearance population model fitted to resolved film curves. It is opt-in. `film_render.grain.fotufilm.*` controls it.
 
 Explicit engines in existing looks remain unchanged. To keep the historical engine in a sparse source, set `film_render.grain.engine = spektra`. See [default compatibility](../specs/film-grain/spec.md#defaults-and-compatibility) for omitted-engine and GUI state migration rules.
@@ -41,30 +50,30 @@ The composite is tone-neutral: it subtracts the displacement its zoned bases pro
 
 ### Profiles and controls
 
-`v2_profile` defaults to `"35mm250"`. Presets are:
+`procedural_profile` defaults to `"35mm250"`. Presets are:
 
 - `8mm50`, `8mm250`, and `8mm500`.
 - `16mm50`, `16mm250`, and `16mm500`.
 - `35mm50`, `35mm250`, and `35mm500`.
 - `65mm50`, `65mm250`, and `65mm500`.
 
-Presets supply the grain configuration. Amount remains adjustable through `v2_amount` (0–100).
+Presets supply the grain configuration. Amount remains adjustable through `procedural_amount` (0–100).
 
 Select `"custom"` to edit these controls:
 
-- `v2_mode`: `"analogue"` or `"noise"`.
-- `v2_size`: 1–48.
-- `v2_shadows`, `v2_midtones`, `v2_highlights`, `v2_chroma`, and `v2_resolution_factor`: all 0–100.
+- `procedural_mode`: `"analogue"` or `"noise"`.
+- `procedural_size`: 1–48.
+- `procedural_shadows`, `procedural_midtones`, `procedural_highlights`, `procedural_chroma`, and `procedural_resolution_factor`: all 0–100.
 
-`v2_film_type` retains `"negative"` or `"positive"` metadata. Rendering does not consume it, and the ordinary GUI does not expose it as a creative editor.
+`procedural_film_type` retains `"negative"` or `"positive"` metadata. Rendering does not consume it, and the ordinary GUI does not expose it as a creative editor.
 
 Custom values omitted or null inherit `35mm250`. Switching to Custom in the GUI copies the current preset and Amount. Selecting a preset restores its Amount. All numeric controls must be finite and within their stated ranges.
 
 Film Resolution 100 preserves detail. Lower values increase resolution blur.
 
-`v2_resolution_type` selects Film Resolution for Analogue only. `0` selects OpticalResolution. `1` selects FastBlur. Noise uses the single-pass image-resolution path and ignores Film Resolution controls.
+`procedural_resolution_type` selects Film Resolution for Analogue only. `0` selects OpticalResolution. `1` selects FastBlur. Noise uses the single-pass image-resolution path and ignores Film Resolution controls.
 
-`v2_resolution_type` and nonzero `v2_timer` are explicit runtime controls. `v2_timer` is a nonzero explicit phase override. Legacy `v2_timer: 0.0` derives the phase from the recipe seed.
+`procedural_resolution_type` and nonzero `procedural_timer` are explicit runtime controls. `procedural_timer` is a nonzero explicit phase override. Legacy `procedural_timer: 0.0` derives the phase from the recipe seed.
 
 ### Encoded RGB and sampling
 
@@ -72,7 +81,7 @@ Procedural consumes and returns native display-encoded RGB without an internal t
 
 Procedural restores the recovered RGBA content hash, sine permutation, gradient noise, texture sampling, and half-storage boundaries. Positive/Negative Film Type remains profile metadata. It is separate from `resolution_type`. For Analogue, `resolution_type` selects folded Gaussian FastBlur (`1`) or OpticalResolution (`0`). Noise uses the direct image-resolution path.
 
-CPU/WGSL share portable trigonometry, host-resolved canvas dimensions, and binary32 coordinate rounding before the clustered-noise hash. Random realizations can differ from vendor device arithmetic. Amount and tone controls use the reference effective-control polynomial. This includes its nonzero intercept at zero. Disable Grain with `active: false` for an exact bypass.
+CPU/WGSL share portable trigonometry, host-resolved canvas dimensions and Analogue generator coefficients, and binary32 coordinate rounding before the clustered-noise hash. The rotation quotient also uses exact binary32 division for normal values within its supported exponent range. Random realizations can differ from vendor device arithmetic. Amount and tone controls use the reference effective-control polynomial. This includes its nonzero intercept at zero. Disable Grain with `active: false` for an exact bypass.
 
 The unmasked photo path implements no overscan/damage-mask input or device-specific virtual-texture cap.
 
@@ -86,13 +95,13 @@ Grain Dye is selected with `film_render.grain.engine: "dye"`.
 
 ### Field controls
 
-Dye's grain law is part of the engine: the relative amplitude, the three correlation lengths, the band limit, the event area, the fog baseline, and the development taper are constants, not controls. Recipes that carry `v3_dye_support_um`, `v3_event_area_um2`, `rms_granularity`, `density_min`, `uniformity`, or `channel_correlation` still load; those values do not change the field.
+Dye's grain law is part of the engine: the relative amplitude, the three correlation lengths, the band limit, the event area, the fog baseline, and the development taper are constants, not controls. Recipes that carry `dye_support_um`, `dye_event_area_um2`, `rms_granularity`, `density_min`, `uniformity`, or `channel_correlation` still load; those values do not change the field.
 
 The seed selects the realization. `random_seed` is the only grain input that changes the image, and the same seed, geometry, and executor reproduce the same field.
 
 Dye realizes a band-limited correlated field on the film lattice and reads it out through the requested grid. A finer grid interpolates a lattice cell centre; a coarser grid integrates the cells it covers. Cropping, preview scaling, and stage splitting therefore sample one film rather than starting a second realization.
 
-Expectation mode (`SPEKTRAFILM_GRAIN_V3_EXPECTATION=1`) replaces every draw by its conditional mean and returns the target density. It is a diagnostic; it does not change the recipe and is not a production grain law.
+Expectation mode (`SPEKTRAFILM_GRAIN_DYE_EXPECTATION=1`) replaces every draw by its conditional mean and returns the target density. It is a diagnostic; it does not change the recipe and is not a production grain law.
 
 ### Black-and-white material
 
@@ -100,7 +109,7 @@ A resolved `channel_model=bw` filming profile uses one effective record: the rea
 
 Both CPU and GPU validate the original BW samples across the full source, including samples outside the requested crop. Invalid samples there still reject the render. A BW profile may contain one or several development-time curves; negative-to-positive scanning accepts the single-time case without requiring three stored columns.
 
-CPU material export retains the formed field in the existing `.sfstage` representation. Continuation does not generate a second field. Material export and continuation remain CPU-only. See the [Dye design](../specs/film-grain/v3/design.md#density-law) for the law.
+CPU material export retains the formed field in the existing `.sfstage` representation. Continuation does not generate a second field. Material export and continuation remain CPU-only. See the [Dye design](../specs/film-grain/dye/design.md#density-law) for the law.
 
 ### Film geometry and routes
 
@@ -114,13 +123,13 @@ Format changes alter physical footprints and workload. Crop/resize determine out
 
 The diagnostic film-scan route `input > film > scan` with `io.scan_film = true` runs with `direct_scan` for both negative and positive film, and with `negative_to_positive` for negative film. Positive film retains its native polarity; Dye uses the profile's positive density-curve direction rather than selecting a separate grain model. Another chemistry or an unsupported route fails with an actionable unsupported-condition error.
 
-When downstream spatial processing is active, Dye extends the output grid to cover the full film before those stages. It extracts the requested crop afterward. Physical optical controls use the actual output pitch. Scanner blur and unsharp masking remain pixel controls. See [film geometry](../specs/film-grain/v3/design.md#film-geometry) for the full-film, global-coordinate, and fractional-footprint rules.
+When downstream spatial processing is active, Dye extends the output grid to cover the full film before those stages. It extracts the requested crop afterward. Physical optical controls use the actual output pitch. Scanner blur and unsharp masking remain pixel controls. See [film geometry](../specs/film-grain/dye/design.md#film-geometry) for the full-film, global-coordinate, and fractional-footprint rules.
 
 ### Execution
 
 Dye resolves its field on the selected executor. On the resident route the device evaluates the count law, formation, and readout as bounded per-band passes on the developed full-source film density. Crop and upscale use the resolved readout grid. A crop that needs surrounding film context runs on the enclosing lattice and is extracted on the device after downstream spatial processing. The gated exact-cell spectral response runs between cell formation and fractional readout. It subtracts `density_min` before the response and averages linear exposure or linear scan RGB. The aperture probe runs print exposure on a fine grid and collapses `log10(mean(10^log_exposure))` before paper development. The existing route and optical restrictions of both probes still apply.
 
-A backend without a device field path and the experimental `SPEKTRAFILM_GRAIN_V3_MASS_LAW` selector use the host reference and name that reason. Any selected GPU request fails by name instead of demoting a device-incapable request silently; host-only laws require selecting CPU. Device resource limits also fail by name; they never change cell pitch, support, or the count law. The CLI/GUI report the effective executor. Preview, LUT, stochastic, and spatial deactivation bypass Dye.
+A backend without a device field path and the experimental `SPEKTRAFILM_GRAIN_DYE_MASS_LAW` selector use the host reference and name that reason. Any selected GPU request fails by name instead of demoting a device-incapable request silently; host-only laws require selecting CPU. Device resource limits also fail by name; they never change cell pitch, support, or the count law. The CLI/GUI report the effective executor. Preview, LUT, stochastic, and spatial deactivation bypass Dye.
 
 Device carriers page full-source and output samples. Dye copies each source window on the device and partitions output rectangles along both axes when binding limits require it. An oversized individual footprint is split into formed-cell rectangles with complete formation halos. Their responses accumulate on the device with the original fractional weights; density readout subtracts its base only once after the final piece. Page and band boundaries do not change film coordinates or the stochastic address.
 
@@ -128,9 +137,9 @@ The CPU reference uses the same partition rule: reduce output rectangles along b
 
 When both optical probes are enabled, the exact-cell response reads the fine aperture grid. Linear-light collapse restores the requested raster before paper development. This also corrects the previous combined-probe CPU path, which skipped aperture collapse and delivered the fine raster.
 
-The `SPEKTRAFILM_GRAIN_V3_EXPECTATION=1` diagnostic replaces Poisson counts with their conditional means. It retains field formation and readout, so it is not a grain-off render. It is also not the ensemble mean of final RGB: nonlinear optical conversion, negative interpretation, and encoding can shift the rendered population mean. Dye does not automatically match brightness or normalize RMS from the current image.
+The `SPEKTRAFILM_GRAIN_DYE_EXPECTATION=1` diagnostic replaces Poisson counts with their conditional means. It retains field formation and readout, so it is not a grain-off render. It is also not the ensemble mean of final RGB: nonlinear optical conversion, negative interpretation, and encoding can shift the rendered population mean. Dye does not automatically match brightness or normalize RMS from the current image.
 
-See [the Dye specification](../specs/film-grain/v3/spec.md) for experimental readouts and diagnostic controls.
+See [the Dye specification](../specs/film-grain/dye/spec.md) for experimental readouts and diagnostic controls.
 
 ### Cine limits
 
@@ -142,7 +151,7 @@ The independent `DyeOpticalOracle` measures declared fixed CMY realizations. Nor
 
 Population `measure` now requires at least two realizations. A one-seed protocol still supports `read_realization`. Descriptive covariance and RMS keep divisor `N`; the mean-density SEM now uses `sqrt(C_pop[j,j] / (N - 1))`. For readings `[0, 2]`, the mean, RMS, and SEM are each `1 D`. SEM assumes independent realizations and does not bound systematic error or uncertainty in the RMS. Convert explicitly when comparing with manufacturer granularity in `1000 sigma_D`.
 
-New records automatically carry `dye-measurement-v2:` before the caller's algorithm revision in the existing `protocol.algorithm_revision` field. Old JSON fields remain readable without changing their stored revision or uncertainty. The prior estimator was `rms_density / sqrt(N)`; old records must retain that interpretation according to their generating version. No measurement field, runtime parameter, preset value, formation law, or random stream changes in this repair. See [the measurement contract](../specs/film-grain/v3/design.md#measurement-statistics-and-revision).
+New records automatically carry `dye-measurement-v2:` before the caller's algorithm revision in the existing `protocol.algorithm_revision` field. Old JSON fields remain readable without changing their stored revision or uncertainty. The prior estimator was `rms_density / sqrt(N)`; old records must retain that interpretation according to their generating version. No measurement field, runtime parameter, preset value, formation law, or random stream changes in this repair. See [the measurement contract](../specs/film-grain/dye/design.md#measurement-statistics-and-revision).
 
 
 ## Fotufilm Film
@@ -162,4 +171,4 @@ Each Gaussian cloud term prepares its normalized binary32 taps once on the devic
 - [Backend and parity evidence](parity.md)
 - [Attribution](attribution.md)
 - [Grain specification](../specs/film-grain/spec.md)
-- [Dye design](../specs/film-grain/v3/design.md)
+- [Dye design](../specs/film-grain/dye/design.md)

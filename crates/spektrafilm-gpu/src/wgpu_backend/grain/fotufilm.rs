@@ -379,25 +379,30 @@ impl FotufilmPagedState {
         self.output_pages.clone()
     }
 
-    pub(in crate::wgpu_backend) fn submit(&self, backend: &WgpuBackend) -> Result<(), String> {
-        backend.check_cancelled()?;
-        let p = &self.params;
-        let status = backend.fotufilm_scratch(4, "fotufilm_status");
-        let mut bank = Vec::with_capacity(p.records.len());
-        for (r, record) in p.records.iter().enumerate() {
+    fn readback(&self, backend: &WgpuBackend) -> Result<ImageBuf, String> {
+        let mut data = Vec::with_capacity(self.width as usize * self.height as usize * 3);
+        for page in &self.output_pages {
             backend.check_cancelled()?;
-            bank.push(backend.form_record(record, r as u32, p, &status)?);
+            data.extend(f32_to_scalars(backend.pipe.readback_buffer_cancellable(
+                &page.buffer,
+                u64::from(page.n_pixels) * 12,
+            )?));
         }
-        // Execution status is the sole bounded orchestration readback.
         backend.check_cancelled()?;
-        let flags = backend
-            .pipe
-            .readback_buffer_cancellable::<u32>(&status, 4)?;
-        match flags[0] {
-            0 => {}
-            1 => return Err("Fotufilm formation exceeded its crystal-count bound".into()),
-            _ => return Err("Fotufilm formation deposit exceeded its reserved cell region".into()),
-        }
+        Ok(ImageBuf::from_data(self.width, self.height, data))
+    }
+
+    pub(in crate::wgpu_backend) fn submit(&self, backend: &WgpuBackend) -> Result<(), String> {
+        let bank = backend.prepare_fotufilm_bank(&self.params)?;
+        self.submit_prepared(backend, &bank)
+    }
+
+    fn submit_prepared(
+        &self,
+        backend: &WgpuBackend,
+        bank: &[ResidentRecord],
+    ) -> Result<(), String> {
+        let p = &self.params;
         let capacity = u64::from(self.window_side) * u64::from(self.window_side);
         let accumulated = backend.fotufilm_scratch(capacity * 24, "fotufilm_resample_accumulator");
         let resampled = backend.fotufilm_scratch(capacity * 12, "fotufilm_resampled");
@@ -695,6 +700,16 @@ impl WgpuBackend {
         img: &ImageBuf,
         params: &FotufilmGpuParams,
     ) -> Result<ImageBuf, String> {
+        let state = self.prepare_fotufilm_image(img, params)?;
+        state.submit(self)?;
+        state.readback(self)
+    }
+
+    fn prepare_fotufilm_image(
+        &self,
+        img: &ImageBuf,
+        params: &FotufilmGpuParams,
+    ) -> Result<FotufilmPagedState, String> {
         self.check_cancelled()?;
         let pages = self.allocate_image_pages(img.width, img.height, "fotufilm_source")?;
         for page in &pages {
@@ -706,18 +721,32 @@ impl WgpuBackend {
                 .write_buffer(&page.buffer, 0, bytemuck::cast_slice(samples.as_ref()));
         }
         let input = BufferPayload::from_pages(self.backend_id(), pages, img.width, img.height);
-        let state = self.prepare_fotufilm_paged(img.width, img.height, &input, params)?;
-        state.submit(self)?;
-        let mut data = Vec::with_capacity(params.width as usize * params.height as usize * 3);
-        for page in &state.output_pages {
-            self.check_cancelled()?;
-            data.extend(f32_to_scalars(self.pipe.readback_buffer_cancellable(
-                &page.buffer,
-                u64::from(page.n_pixels) * 12,
-            )?));
-        }
+        self.prepare_fotufilm_paged(img.width, img.height, &input, params)
+    }
+
+    /// Form device records and their footprint-specific pitch tables.
+    /// Reuse requires the same backend, records, formation seed, monochrome
+    /// mode, and both footprint axes. Raster extents and page layouts may vary.
+    fn prepare_fotufilm_bank(
+        &self,
+        params: &FotufilmGpuParams,
+    ) -> Result<Vec<ResidentRecord>, String> {
         self.check_cancelled()?;
-        Ok(ImageBuf::from_data(params.width, params.height, data))
+        let status = self.fotufilm_scratch(4, "fotufilm_status");
+        let mut bank = Vec::with_capacity(params.records.len());
+        for (r, record) in params.records.iter().enumerate() {
+            self.check_cancelled()?;
+            bank.push(self.form_record(record, r as u32, params, &status)?);
+        }
+        // Execution status is the sole bounded orchestration readback.
+        self.check_cancelled()?;
+        let flags = self.pipe.readback_buffer_cancellable::<u32>(&status, 4)?;
+        match flags[0] {
+            0 => {}
+            1 => return Err("Fotufilm formation exceeded its crystal-count bound".into()),
+            _ => return Err("Fotufilm formation deposit exceeded its reserved cell region".into()),
+        }
+        Ok(bank)
     }
 
     fn form_record(
@@ -1363,14 +1392,17 @@ mod tests {
     fn compare(
         backend: &WgpuBackend,
         bank: &spektrafilm_model::grain::fotufilm::Bank,
-        records: &[DeviceRecord],
-        size: (u32, u32),
+        device_bank: &[ResidentRecord],
+        params: &FotufilmGpuParams,
     ) -> (f64, f64, usize) {
-        let image = source_image(size);
-        let params = device_params(records, size, size);
-        let device = backend
-            .fotufilm_grain_inner(&image, &params)
+        let image = source_image((params.width, params.height));
+        let state = backend
+            .prepare_fotufilm_image(&image, params)
+            .expect("source preparation");
+        state
+            .submit_prepared(backend, device_bank)
             .expect("the device readout completes");
+        let device = state.readback(backend).expect("device readback");
         let expected = host_reference(bank, &image);
         assert_eq!(device.width, expected.width);
         assert_eq!(device.height, expected.height);
@@ -1394,9 +1426,17 @@ mod tests {
     fn device_multi_sublayer_readout_matches_the_host_reference() {
         let fixture = &*HOST_FIXTURE;
         let backend = crate::test_support::adapter();
+        let mut params = device_params(&fixture.records, (32, 24), (32, 24));
+        let device_bank = backend
+            .prepare_fotufilm_bank(&params)
+            .expect("device bank preparation");
+        // Only raster extents change; bank and footprint calibration are shared.
         for (width, height) in [(32, 24), (400, 300), (1600, 1200)] {
-            let (mean, max, samples) =
-                compare(&backend, &fixture.bank, &fixture.records, (width, height));
+            params.source_width = width;
+            params.source_height = height;
+            params.width = width;
+            params.height = height;
+            let (mean, max, samples) = compare(&backend, &fixture.bank, &device_bank, &params);
             println!(
                 "fotufilm device vs host at {width}x{height}: \
                  mean {mean:.6e}, max {max:.6e} over {samples} samples"
@@ -1629,9 +1669,18 @@ mod tests {
         params.softness = look.softness;
         params.color = look.color;
         params.layers = look.layers;
-        let contiguous = backend
-            .fotufilm_grain_inner(&input, &params)
-            .expect("contiguous readout");
+        let device_bank = backend
+            .prepare_fotufilm_bank(&params)
+            .expect("device bank preparation");
+        let contiguous = {
+            let state = backend
+                .prepare_fotufilm_image(&input, &params)
+                .expect("source preparation");
+            state
+                .submit_prepared(&backend, &device_bank)
+                .expect("contiguous readout");
+            state.readback(&backend).expect("contiguous readback")
+        };
         let mut pages = Vec::new();
         for pixel in 0..16 {
             let buffer = backend.fotufilm_scratch(12, "fotufilm_test_source_page");
@@ -1662,7 +1711,9 @@ mod tests {
                 }
             })
             .collect();
-        split.submit(&backend).expect("split readout");
+        split
+            .submit_prepared(&backend, &device_bank)
+            .expect("split readout");
         let mut paged = Vec::new();
         for page in &split.output_pages {
             paged.extend(

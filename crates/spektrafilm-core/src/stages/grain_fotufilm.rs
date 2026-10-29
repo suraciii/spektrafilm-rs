@@ -14,8 +14,8 @@ use crate::profile::Profile;
 use rayon::prelude::*;
 use spektrafilm_math::image::ImageBuf;
 use spektrafilm_math::precision::{from_f64, to_f64};
+use spektrafilm_model::grain::dye::ReadoutGrid;
 use spektrafilm_model::grain::fotufilm as model;
-use spektrafilm_model::grain::v3::ReadoutGrid;
 use std::sync::{Arc, Mutex};
 
 /// Upstream Fotufilm revision this engine adapts. The model's `PROVENANCE`

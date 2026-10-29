@@ -481,13 +481,13 @@ fn carrier_validation_and_precision() {
 }
 #[test]
 fn explicit_null_is_json_only_and_never_discarded() {
-    let text = r#"{"schema_version":2,"name":"Clear amount","parameters":{"film_render":{"grain":{"v2_amount":null}}},"provenance":{"implementation_version":"test","model_version":"test"}}"#;
+    let text = r#"{"schema_version":2,"name":"Clear amount","parameters":{"film_render":{"grain":{"procedural_amount":null}}},"provenance":{"implementation_version":"test","model_version":"test"}}"#;
     let preset = Preset::from_json_str(text).unwrap();
     let exported = preset.to_json().unwrap();
     let exported_value: Value = serde_json::from_str(&exported).unwrap();
     assert_eq!(
         exported_value["parameters"],
-        serde_json::json!({"film_render":{"grain":{"v2_amount":null}}})
+        serde_json::json!({"film_render":{"grain":{"procedural_amount":null}}})
     );
     let reloaded = Preset::from_json_str(&exported).unwrap();
     assert_eq!(
@@ -495,12 +495,12 @@ fn explicit_null_is_json_only_and_never_discarded() {
         PresetKind::Section(Section::Grain)
     );
     let error = preset.to_toml().unwrap_err();
-    assert!(error.contains("film_render.grain.v2_amount"));
+    assert!(error.contains("film_render.grain.procedural_amount"));
     assert!(error.contains("--format json"));
     let mut current = RuntimeParams::default();
-    current.film_render.grain.v2_amount = Some(42.0);
+    current.film_render.grain.procedural_amount = Some(42.0);
     let applied = preset.apply_section(&current, &test_film()).unwrap();
-    assert_eq!(applied.film_render.grain.v2_amount, None);
+    assert_eq!(applied.film_render.grain.procedural_amount, None);
     assert!(section_matches(&preset, &applied).unwrap());
     let temp = Temp::new();
     let source = temp.0.join("external.json");
@@ -660,19 +660,19 @@ fn preparation_state_roundtrip_restores_explicit_values_and_drops_stale_paths() 
 #[test]
 fn captured_optional_section_controls_restore_unset_and_set_values() {
     let mut current = RuntimeParams::default();
-    current.film_render.grain.v2_amount = None;
+    current.film_render.grain.procedural_amount = None;
     let unset =
         Preset::capture_section("Unset grain", Section::Grain, &current, provenance()).unwrap();
     let json = unset.to_json().unwrap();
     let value: Value = serde_json::from_str(&json).unwrap();
     assert_eq!(
-        value.pointer("/parameters/film_render/grain/v2_amount"),
+        value.pointer("/parameters/film_render/grain/procedural_amount"),
         Some(&Value::Null)
     );
     let unset = Preset::from_json_str(&json).unwrap();
-    current.film_render.grain.v2_amount = Some(42.0);
+    current.film_render.grain.procedural_amount = Some(42.0);
     let applied = unset.apply_section(&current, &test_film()).unwrap();
-    assert_eq!(applied.film_render.grain.v2_amount, None);
+    assert_eq!(applied.film_render.grain.procedural_amount, None);
     assert_eq!(
         Preset::capture_section("Unset grain", Section::Grain, &applied, provenance()).unwrap(),
         unset
@@ -683,7 +683,7 @@ fn captured_optional_section_controls_restore_unset_and_set_values() {
             .unwrap()
             .film_render
             .grain
-            .v2_amount,
+            .procedural_amount,
         Some(42.0)
     );
     for section in [Section::Film, Section::Print] {
@@ -706,16 +706,16 @@ fn captured_optional_section_controls_restore_unset_and_set_values() {
 fn section_matching_compares_typed_carried_values() {
     for (payload, mismatch) in [
         (
-            serde_json::json!({"film_render":{"grain":{"v2_amount":25}}}),
-            serde_json::json!({"film_render":{"grain":{"v2_amount":26}}}),
+            serde_json::json!({"film_render":{"grain":{"procedural_amount":25}}}),
+            serde_json::json!({"film_render":{"grain":{"procedural_amount":26}}}),
         ),
         (
             serde_json::json!({"film_render":{"halation":{"boost_ev":0.1}}}),
             serde_json::json!({"film_render":{"halation":{"boost_ev":0.2}}}),
         ),
         (
-            serde_json::json!({"film_render":{"grain":{"v2_amount":null}}}),
-            serde_json::json!({"film_render":{"grain":{"v2_amount":26}}}),
+            serde_json::json!({"film_render":{"grain":{"procedural_amount":null}}}),
+            serde_json::json!({"film_render":{"grain":{"procedural_amount":26}}}),
         ),
     ] {
         let preset = Preset::from_json_str(
@@ -1200,4 +1200,61 @@ fn scanner_cutover_migrates_legacy_lamp_and_canonicalizes_sparse_style_without_f
     section["schema_version"] = 5.into();
     section["parameters"]["scanner"]["lamp"] = "D65".into();
     Preset::from_json_str(&section.to_string()).unwrap();
+}
+
+#[test]
+fn complete_look_reads_historical_grain_controls_and_writes_engine_names() {
+    let preset = builtin_presets().remove(0);
+    let mut value = serde_json::to_value(&preset).unwrap();
+    let grain = value["parameters"]["film_render"]["grain"]
+        .as_object_mut()
+        .unwrap();
+    grain.remove("procedural_profile");
+    grain.remove("procedural_amount");
+    grain.insert("v2_profile".into(), serde_json::json!("custom"));
+    grain.insert("v2_amount".into(), serde_json::json!(27.0));
+    let restored: super::Preset = serde_json::from_value(value.clone()).unwrap();
+    let saved = serde_json::to_value(restored).unwrap();
+    assert_eq!(
+        saved["parameters"]["film_render"]["grain"]["procedural_amount"],
+        serde_json::json!(27.0)
+    );
+    assert!(
+        saved["parameters"]["film_render"]["grain"]
+            .get("v2_amount")
+            .is_none()
+    );
+    value["parameters"]["film_render"]["grain"]["procedural_amount"] = serde_json::json!(30.0);
+    assert!(serde_json::from_value::<super::Preset>(value).is_err());
+}
+
+#[test]
+fn historical_sparse_grain_presets_write_canonical_and_match_actual_values() {
+    for amount in [serde_json::json!(27.0), serde_json::Value::Null] {
+        let value = serde_json::json!({"schema_version":PRESET_SCHEMA_VERSION,"name":"Historical grain",
+            "parameters":{"film_render":{"grain":{"v2_amount":amount}}},
+            "provenance":{"implementation_version":"test","model_version":"test"}});
+        let mut documents = vec![value.to_string()];
+        if !amount.is_null() {
+            documents.push(toml::to_string(&value).unwrap());
+        }
+        for text in documents {
+            let preset = if text.starts_with('{') {
+                Preset::from_json_str(&text)
+            } else {
+                Preset::from_toml_str(&text)
+            }
+            .unwrap();
+            let saved: Value = serde_json::from_str(&preset.to_json().unwrap()).unwrap();
+            let grain = &saved["parameters"]["film_render"]["grain"];
+            assert_eq!(grain.as_object().unwrap().len(), 1);
+            assert_eq!(grain["procedural_amount"], amount);
+            assert!(grain.get("v2_amount").is_none() && grain.get("engine").is_none());
+            let mut params = RuntimeParams::default();
+            params.film_render.grain.procedural_amount = Some(42.0);
+            assert!(!section_matches(&preset, &params).unwrap());
+            let applied = preset.overlay_section(&params).unwrap();
+            assert!(section_matches(&preset, &applied).unwrap());
+        }
+    }
 }

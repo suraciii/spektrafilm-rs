@@ -244,9 +244,13 @@ impl ComputeBackend for ObservedBackend<'_> {
         self.cpu();
         self.backend.density_curve_interp(i, x, y, g)
     }
-    fn grain_v2(&self, i: &ImageBuf, p: &GrainV2GpuParams) -> Result<Option<ImageBuf>, String> {
+    fn grain_procedural(
+        &self,
+        i: &ImageBuf,
+        p: &ProceduralGrainGpuParams,
+    ) -> Result<Option<ImageBuf>, String> {
         self.cpu();
-        self.backend.grain_v2(i, p)
+        self.backend.grain_procedural(i, p)
     }
     fn dye_field(
         &self,

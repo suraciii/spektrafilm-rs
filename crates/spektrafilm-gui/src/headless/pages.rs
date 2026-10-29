@@ -878,8 +878,8 @@ fn ordinary_grain_controls_follow_engine_and_enable_without_losing_values() {
     assert!(h.query_by_label("blur").is_none());
     edit(h, "Amount", "2.25");
     choose(h, "Engine", "Dye");
-    assert_eq!(h.state().params.film_render.grain.v3_event_area_um2, 0.64);
-    assert_eq!(h.state().params.film_render.grain.v3_dye_support_um, 4.5);
+    assert_eq!(h.state().params.film_render.grain.dye_event_area_um2, 0.64);
+    assert_eq!(h.state().params.film_render.grain.dye_support_um, 4.5);
     assert_eq!(h.state().params.film_render.grain.channel_correlation, 0.21);
     choose(h, "Engine", "Spektra");
     assert_eq!(h.state().params.film_render.grain.blur, 1.05);
@@ -890,15 +890,21 @@ fn ordinary_grain_controls_follow_engine_and_enable_without_losing_values() {
 
 #[test]
 fn procedural_named_amount_custom_and_noise_follow_effective_controls() {
-    use spektrafilm_core::params::grain::GrainV2Mode;
+    use spektrafilm_core::params::grain::ProceduralGrainMode;
     let mut s = grain_session();
     let h = &mut s.harness;
     open_grain(h);
     choose(h, "Engine", "Procedural");
     choose(h, "Procedural Grain Profiles", "35mm250");
     edit(h, "Amount", "44");
-    assert_eq!(h.state().params.film_render.grain.v2_profile, "35mm250");
-    assert_eq!(h.state().params.film_render.grain.v2_amount, Some(44.0));
+    assert_eq!(
+        h.state().params.film_render.grain.procedural_profile,
+        "35mm250"
+    );
+    assert_eq!(
+        h.state().params.film_render.grain.procedural_amount,
+        Some(44.0)
+    );
     for label in [
         "Processing Mode",
         "Size",
@@ -916,15 +922,18 @@ fn procedural_named_amount_custom_and_noise_follow_effective_controls() {
     assert!(!h.get_by_label("Timer").node().is_disabled());
     assert!(h.query_by_label("Film Resolution").is_none());
     choose(h, "Procedural Grain Profiles", "Custom");
-    assert_eq!(h.state().params.film_render.grain.v2_profile, "custom");
+    assert_eq!(
+        h.state().params.film_render.grain.procedural_profile,
+        "custom"
+    );
     edit(h, "Size", "18");
     edit(h, "Film Resolution", "88");
     edit(h, "Resolution Type", "0");
     edit(h, "Shadows", "42");
     choose(h, "Processing Mode", "Noise");
     assert_eq!(
-        h.state().params.film_render.grain.v2_mode,
-        GrainV2Mode::Noise
+        h.state().params.film_render.grain.procedural_mode,
+        ProceduralGrainMode::Noise
     );
     assert!(h.query_by_label("Film Resolution").is_none());
     assert!(h.query_by_label("Resolution Type").is_none());
@@ -932,8 +941,14 @@ fn procedural_named_amount_custom_and_noise_follow_effective_controls() {
     assert!(!h.get_by_label("Shadows").node().is_disabled());
     let noise = h.state().params.film_render.grain.clone();
     for (path, label) in [
-        ("film_render.grain.v2_resolution_factor", "Film Resolution"),
-        ("film_render.grain.v2_resolution_type", "Resolution Type"),
+        (
+            "film_render.grain.procedural_resolution_factor",
+            "Film Resolution",
+        ),
+        (
+            "film_render.grain.procedural_resolution_type",
+            "Resolution Type",
+        ),
     ] {
         reveal_control(h, path);
         assert!(h.get_by_label(label).node().is_disabled());
@@ -942,10 +957,21 @@ fn procedural_named_amount_custom_and_noise_follow_effective_controls() {
     open_grain(h);
     choose(h, "Processing Mode", "Analogue");
     assert_eq!(
-        h.state().params.film_render.grain.v2_resolution_factor,
+        h.state()
+            .params
+            .film_render
+            .grain
+            .procedural_resolution_factor,
         Some(88.0)
     );
-    assert_eq!(h.state().params.film_render.grain.v2_resolution_type, 0);
+    assert_eq!(
+        h.state()
+            .params
+            .film_render
+            .grain
+            .procedural_resolution_type,
+        0
+    );
     assert!(!h.get_by_label("Film Resolution").node().is_disabled());
     let analogue = h.state().params.film_render.grain.clone();
     choose(h, "Engine", "Dye");
@@ -1005,10 +1031,10 @@ fn canonical_search_reveals_unselected_grain_engines_without_mutating_values() {
     for (path, label) in [
         ("film_render.grain.fotufilm.rms_density", "RMS density"),
         (
-            "film_render.grain.v3_event_area_um2",
+            "film_render.grain.dye_event_area_um2",
             "Event area (strength)",
         ),
-        ("film_render.grain.v2_timer", "Timer"),
+        ("film_render.grain.procedural_timer", "Timer"),
     ] {
         reveal_control(h, path);
         assert!(
@@ -1094,7 +1120,7 @@ fn dye_bw_hides_color_records_without_losing_edits_or_saved_state() {
     // An ordinary edit must retain the material-derived single-record layout.
     open_grain(h);
     edit(h, "Event area (strength)", "0.5");
-    retained.v3_event_area_um2 = 0.5;
+    retained.dye_event_area_um2 = 0.5;
     edit(h, "rms granularity R", "6.5");
     retained.rms_granularity[0] = 6.5;
     edit(h, "particle scale sublayers 2", "0.6");
@@ -1130,7 +1156,7 @@ fn dye_bw_hides_color_records_without_losing_edits_or_saved_state() {
     save_mutate_and_reload(&mut s, "hidden-bw-grain.json", |h| {
         edit_control(
             h,
-            "film_render.grain.v3_event_area_um2",
+            "film_render.grain.dye_event_area_um2",
             "Event area (strength)",
             "0.75",
         );

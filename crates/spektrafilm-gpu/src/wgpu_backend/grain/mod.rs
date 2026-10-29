@@ -6,9 +6,9 @@ mod dye_law_paged;
 pub(in crate::wgpu_backend) mod fotufilm;
 pub(in crate::wgpu_backend) mod mt19937;
 pub(in crate::wgpu_backend) mod raster;
-pub mod v1;
+pub mod spektra;
 pub(in crate::wgpu_backend) use raster::RasterStorage;
-pub(in crate::wgpu_backend) use v1::{GRAIN_V1_STAGE_NAME, build_spektra_grain_state};
+pub(in crate::wgpu_backend) use spektra::{GRAIN_SPEKTRA_STAGE_NAME, build_spektra_grain_state};
 
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
@@ -19,6 +19,7 @@ struct ShaderParams {
     flags: [f32; 4],
     window: [u32; 4],
     canvas: [u32; 4],
+    generator_geometry: [f32; 4],
 }
 
 // Resolve once in host binary32 arithmetic. A device's approximate division
@@ -31,12 +32,22 @@ fn canvas_size(width: u32, height: u32) -> [f32; 2] {
 fn shader_params(
     width: u32,
     height: u32,
-    params: &spektrafilm_backend::GrainV2GpuParams,
+    params: &spektrafilm_backend::ProceduralGrainGpuParams,
 ) -> ShaderParams {
     let timer = params
         .timer
         .unwrap_or_else(|| spektrafilm_math::grain::seeded_phase(params.seed));
     let size = canvas_size(width, height);
+    let scale = params.raw_scale.clamp(0.5, 1.4);
+    let scaled = size.map(|v| v * scale);
+    // Image-independent generator coefficients retain CPU stepwise f32
+    // division. Native Vulkan division can change the rnm hash lattice.
+    let generator_geometry = [
+        scaled[0] / params.cluster_size / scale,
+        scaled[1] / params.cluster_size / scale,
+        scaled[0] / scaled[1],
+        1.0f32 / 256.0 / params.cluster_size,
+    ];
     ShaderParams {
         dimensions: [width, height, timer.to_bits(), params.mode],
         controls: [
@@ -59,30 +70,32 @@ fn shader_params(
         ],
         window: [0, width * height, 0, 0],
         canvas: [0; 4],
+        generator_geometry,
     }
 }
 
 impl WgpuBackend {
-    pub fn grain_v2_gpu(
+    pub fn grain_procedural_gpu(
         &self,
         img: &ImageBuf,
-        params: &spektrafilm_backend::GrainV2GpuParams,
+        params: &spektrafilm_backend::ProceduralGrainGpuParams,
     ) -> Result<ImageBuf, String> {
         if !self.device.context.enabled() || img.width == 0 || img.height == 0 {
-            return self.grain_v2_gpu_inner(img, params);
+            return self.grain_procedural_gpu_inner(img, params);
         }
-        let (backend, _batch) = self.observed_batch("grain_v2");
-        backend.grain_v2_gpu_inner(img, params)
+        let (backend, _batch) = self.observed_batch("grain_procedural");
+        backend.grain_procedural_gpu_inner(img, params)
     }
     /// Execute Grain Procedural on native encoded RGB with no transfer or primaries conversion.
-    fn grain_v2_gpu_inner(
+    fn grain_procedural_gpu_inner(
         &self,
         img: &ImageBuf,
-        params: &spektrafilm_backend::GrainV2GpuParams,
+        params: &spektrafilm_backend::ProceduralGrainGpuParams,
     ) -> Result<ImageBuf, String> {
         if img.width == 0 || img.height == 0 {
             return Ok(img.clone());
         }
+        procedural::validate_coordinate_scale(params)?;
         let input = scalars_to_f32(&img.data);
         let original = self.allocate_image_pages(img.width, img.height, "grain_encoded_input")?;
         for page in &original {
@@ -91,7 +104,7 @@ impl WgpuBackend {
             self.queue
                 .write_buffer(&page.buffer, 0, bytemuck::cast_slice(&input[first..end]));
         }
-        let state = build_grain_v2_state(
+        let state = build_grain_procedural_state(
             &self.device,
             params,
             img.width,
@@ -235,7 +248,7 @@ impl WgpuBackend {
 }
 
 mod procedural;
-pub(super) use procedural::build_grain_v2_state;
+pub(super) use procedural::build_grain_procedural_state;
 
 #[cfg(test)]
 mod tests {
@@ -319,101 +332,6 @@ mod tests {
                     "{cctf:?} at {v}: device {got} != reference {reference}"
                 );
             }
-        }
-    }
-
-    #[test]
-    fn clustered_coordinates_match_binary32_division_without_f64() {
-        let backend = crate::test_support::restricted_adapter();
-        let mut samples = Vec::<[f32; 2]>::new();
-        for extent in [7280.0, 5005.0, 3101.0 * 1.4, u32::MAX as f32 * 5200.0] {
-            for position in [0.0, 1.0, 255.0, 5200.0, 1048575.0, 16777215.0] {
-                samples.push([position, extent]);
-            }
-        }
-        for index in 0..257u32 {
-            samples.push([(index * 104729 % 5201) as f32, 4800.0 + index as f32 * 1.4]);
-        }
-        let shader = [
-            include_str!("grain_v2.wgsl"),
-            r#"
-@compute @workgroup_size(64)
-fn coordinate_probe(@builtin(global_invocation_id) id:vec3<u32>) {
- if(id.x<arrayLength(&source_rgb)/2u) {
-  output_rgb[id.x]=canvas_coordinate(source_rgb[id.x*2u],source_rgb[id.x*2u+1u]);
- }
-}
-"#,
-        ]
-        .concat();
-        let module = backend
-            .device
-            .create_shader_module(wgpu::ShaderModuleDescriptor {
-                label: Some("grain_coordinate_probe"),
-                source: wgpu::ShaderSource::Wgsl(shader.into()),
-            });
-        let pipeline = backend
-            .device
-            .create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                label: Some("grain_coordinate_probe"),
-                layout: None,
-                module: &module,
-                entry_point: Some("coordinate_probe"),
-                compilation_options: Default::default(),
-                cache: None,
-            });
-        let source = backend
-            .device
-            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("grain_coordinate_inputs"),
-                contents: bytemuck::cast_slice(&samples),
-                usage: wgpu::BufferUsages::STORAGE,
-            });
-        let bytes = samples.len() as u64 * 4;
-        let output = backend.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("grain_coordinate_output"),
-            size: bytes,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
-            mapped_at_creation: false,
-        });
-        let readback = backend.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("grain_coordinate_readback"),
-            size: bytes,
-            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        let group = backend
-            .device
-            .create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("grain_coordinate_probe"),
-                layout: &pipeline.get_bind_group_layout(0),
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: source.as_entire_binding(),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 5,
-                        resource: output.as_entire_binding(),
-                    },
-                ],
-            });
-        let mut commands = backend.device.create_command_encoder(&Default::default());
-        {
-            let mut pass = commands.begin_compute_pass(&Default::default());
-            pass.set_pipeline(&pipeline);
-            pass.set_bind_group(0, &group, &[]);
-            pass.dispatch_workgroups((samples.len() as u32).div_ceil(64), 1, 1);
-        }
-        commands.copy_buffer_to_buffer(&output, 0, &readback, 0, bytes);
-        backend.queue.submit(Some(commands.finish()));
-        let actual = backend.read_mapped_f32(&readback, bytes);
-        for ([position, extent], actual) in samples.into_iter().zip(actual) {
-            assert_eq!(
-                actual.to_bits(),
-                (position / extent).to_bits(),
-                "{position} / {extent}"
-            );
         }
     }
 }

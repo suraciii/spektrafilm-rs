@@ -1,9 +1,10 @@
-// Grain V2: independent deterministic noise, native encoded RGB composition.
+// Procedural grain: independent deterministic noise, native encoded RGB composition.
 // Uniform layout: dimensions [width,height,phase_bits,mode], controls [amount,shadows,
 // midtones,highlights], geometry [raw_scale,cluster_size,rotation,color], flags
 // [canvas_width,canvas_height,colored,clustered], window [first,count,row_base,rows],
-// canvas [cells_wide,cells_high,chunk_cell_base,row_base].
-struct Params { dimensions:vec4<u32>, controls:vec4<f32>, geometry:vec4<f32>, flags:vec4<f32>, window:vec4<u32>, canvas:vec4<u32> }
+// canvas [cells_wide,cells_high,chunk_cell_base,row_base], generator_geometry
+// [analogue_mult_x,analogue_mult_y,analogue_aspect,analogue_texel].
+struct Params { dimensions:vec4<u32>, controls:vec4<f32>, geometry:vec4<f32>, flags:vec4<f32>, window:vec4<u32>, canvas:vec4<u32>, generator_geometry:vec4<f32> }
 @group(0) @binding(0) var<uniform> p:Params;
 // A window of the unblurred encoded source rows, which the canvas pass samples.
 @group(0) @binding(1) var<storage,read> source_rgb:array<f32>;
@@ -16,6 +17,8 @@ struct Params { dimensions:vec4<u32>, controls:vec4<f32>, geometry:vec4<f32>, fl
 @group(0) @binding(5) var<storage,read_write> output_rgb:array<f32>;
 // The local WGPU HAL uses this named function to select strict Metal math.
 fn spektrafilm_strict_float(v:f32)->f32{return v;}
+// Vulkan selects this module only; Spektra/MT19937 retain their own math contract.
+fn spektrafilm_procedural_no_contraction(v:f32)->f32{return v;}
 fn hash(x0:u32)->u32 {
  var x=x0; x+=x<<10u; x^=x>>6u; x+=x<<3u; x^=x>>11u; x+=x<<15u; return x;
 }
@@ -39,13 +42,13 @@ fn snoise(timer:f32,v:vec4<f32>)->vec4<f32> {
  let q=floor(fract(0.5*ip)*7.)*ip-1.;
  return vec4(q,q,q,1.5-(abs(q)+abs(q)+abs(q)));
 }
-// Independent Taylor trig and mathematical 2/pi reduction, shared with v2.rs.
+// Independent Taylor trig and mathematical 2/pi reduction, shared with procedural.rs.
 // Split constants avoid depending on device-specific FMA fusion below 8192.
 // The integer fallback covers all finite binary32 magnitudes.
 // The sine hash amplifies a one-ULP trig change into a different permutation.
 // Keep the CPU's binary32 product boundaries through Metal contraction.
 fn trig_product(a:f32,b:f32)->f32 {
- let split=frexp(spektrafilm_strict_float(a*b));return ldexp(split.fract,split.exp);
+ let split=frexp(spektrafilm_procedural_no_contraction(spektrafilm_strict_float(a*b)));return ldexp(split.fract,split.exp);
 }
 fn trig_word(words:vec3<u32>,bit:u32)->u32 {
  let i=bit/32u;let offset=bit%32u;
@@ -158,7 +161,7 @@ fn pn(q:vec3<f32>,timer:f32,texel:f32)->f32 {
  let nxy=nx.xy+(nx.zw-nx.xy)*u.y;
  return nxy.x+(nxy.y-nxy.x)*u.z;
 }
-fn rotate(pos:vec2<f32>,angle:f32,aspect:f32)->vec2<f32>{let x=(pos.x*2.-1.)*aspect;let y=pos.y*2.-1.;let sine=grain_sin(angle);let cosine=grain_cos(angle);return vec2<f32>((x*cosine-y*sine)/aspect*0.5+0.5,(y*cosine+x*sine)*0.5+0.5);}
+fn rotate(pos:vec2<f32>,angle:f32,aspect:f32)->vec2<f32>{let x=(pos.x*2.-1.)*aspect;let y=pos.y*2.-1.;let sine=grain_sin(angle);let cosine=grain_cos(angle);return vec2<f32>(rounded_normal_divide(x*cosine-y*sine,aspect)*0.5+0.5,(y*cosine+x*sine)*0.5+0.5);}
 fn half_round(v:f32)->f32 {
  let bits=bitcast<u32>(v);let sign=bits&0x80000000u;let exponent=(bits>>23u)&255u;let mantissa=bits&0x7fffffu;
  if(exponent==255u){return v;}
@@ -174,37 +177,39 @@ fn half_round(v:f32)->f32 {
  let rounded=truncated+select(0u,1u,remainder>midpoint || (remainder==midpoint && (truncated&1u)!=0u));
  return bitcast<f32>(sign|bitcast<u32>(f32(rounded)*0.000000059604644775390625));
 }
-// Canvas positions are finite integers; extents are positive normal floats and
-// every nonzero coordinate quotient is normal. Generate its 24-bit significand
-// with bounded integer division: native divide may use a reciprocal, while WGSL
-// fma need not fuse, so neither guarantees the bits consumed by the noise hash.
-fn canvas_coordinate(position:f32,extent:f32)->f32 {
- let a=bitcast<u32>(position);let b=bitcast<u32>(extent);
- if((a&0x7fffffffu)==0u){return position;}
- var exponent=i32((a>>23u)&255u)-i32((b>>23u)&255u)+127;
- var numerator=(a&0x7fffffu)|0x800000u;
- let denominator=(b&0x7fffffu)|0x800000u;
- if(numerator<denominator){numerator<<=1u;exponent-=1;}
- var remainder=numerator-denominator;var quotient=1u;
- // remainder < 2^24, so eight more bits always fit one u32.
- for(var part=0u;part<3u;part++){
-  let bits=select(8u,7u,part==2u);
-  let word=remainder<<bits;let digit=word/denominator;
-  remainder=word-digit*denominator;quotient=(quotient<<bits)|digit;
- }
- let twice=remainder<<1u;
- quotient+=select(0u,1u,twice>denominator || (twice==denominator && (quotient&1u)!=0u));
- // Addition also carries a rounded significand into the next exponent.
- let magnitude=(u32(exponent)<<23u)+(quotient-0x800000u);
- return bitcast<f32>((a&0x80000000u)|magnitude);
+// Correctly rounded binary32 division for finite normal operands and a
+// finite normal result (zero numerator is also supported). At each step
+// rem < n < 2^24; doubled rem and q fit in u32. Callers establish the domain.
+fn divide_normal_f32(a:f32,b:f32)->f32{
+ let aa=bitcast<u32>(a);let bb=bitcast<u32>(b);let sign=(aa^bb)&0x80000000u;
+ if((aa&0x7fffffffu)==0u){return bitcast<f32>(sign);}
+ var m=(aa&0x7fffffu)|0x800000u;let n=(bb&0x7fffffu)|0x800000u;
+ var e=i32((aa>>23u)&255u)-i32((bb>>23u)&255u)+127;
+ if(m<n){m<<=1u;e-=1;}
+ var rem=m-n;var q=1u;
+ for(var i=0u;i<23u;i++){rem<<=1u;q<<=1u;if(rem>=n){rem-=n;q|=1u;}}
+ let twice=rem<<1u;
+ if(twice>n || (twice==n && (q&1u)!=0u)){q+=1u;}
+ if(q==0x1000000u){q>>=1u;e+=1;}
+ return bitcast<f32>(sign|(u32(e)<<23u)|(q&0x7fffffu));
 }
+// Rotation can cancel to zero or approach the subnormal/overflow boundaries.
+// Use the integer path only when exponent bounds guarantee a normal result;
+// otherwise retain the existing device operation. This is not an IEEE library.
+fn rounded_normal_divide(a:f32,b:f32)->f32 {
+ let ea=(bitcast<u32>(a)>>23u)&255u;let eb=(bitcast<u32>(b)>>23u)&255u;
+ let e=i32(ea)-i32(eb)+127;
+ if(ea>0u && ea<255u && eb>0u && eb<255u && e>1 && e<254){return divide_normal_f32(a,b);}
+ return a/b;
+}
+
 fn generator(pos:vec2<f32>,size:vec2<f32>,luma:f32,rgb:vec3<f32>,digital:bool)->vec3<f32>{
  var timer=bitcast<f32>(p.dimensions.z);let scale=clamp(p.geometry.x,0.5,1.4);
  let scaled_size=size*scale;var coords=pos;var mult=size;var aspect=size.x/size.y;
- if(!digital){
-  coords=vec2(canvas_coordinate(pos.x,scaled_size.x),canvas_coordinate(pos.y,scaled_size.y));
-  mult=scaled_size/p.geometry.y/scale;aspect=scaled_size.x/scaled_size.y;
- }
+ // Integer cell coordinates are zero or |pos| >= 1. Host dimensions bound
+ // size below 2^43; finite scale is clamped to [.5,1.4]. These quotients are
+ // normal and finite, so the unchecked private divider is valid here.
+ if(!digital){coords=vec2(divide_normal_f32(pos.x,scaled_size.x),divide_normal_f32(pos.y,scaled_size.y));mult=p.generator_geometry.xy;aspect=p.generator_geometry.z;}
  var angles=vec3<f32>(1.425,3.892,5.835)*p.geometry.z*scale;
  if(p.flags.w!=0. && !digital){angles=snoise(timer,vec4(coords.x,timer,coords.y,timer)).xyz*p.geometry.z;}
  if(digital){
@@ -214,7 +219,7 @@ fn generator(pos:vec2<f32>,size:vec2<f32>,luma:f32,rgb:vec3<f32>,digital:bool)->
  var n=vec3<f32>(0.);
  for(var c=0u;c<3u;c++){
   var angle=angles[c];if(digital){angle=timer+vec3<f32>(1.425,3.892,5.835)[c];}
-  let q=rotate(coords,angle,aspect);let v=vec3<f32>(q*mult,f32(c));let texel=select(1./256./p.geometry.y,p.geometry.y/256.,digital);n[c]=pn(v,timer,texel);
+  let q=rotate(coords,angle,aspect);let v=vec3<f32>(q*mult,f32(c));let texel=select(p.generator_geometry.w,p.geometry.y/256.,digital);n[c]=pn(v,timer,texel);
   if(c==0u && !digital){n[c]=noise_mix(n[c],pn(vec3<f32>(v.xy,1.),timer*0.5,texel),luma);}
  }
  let color=select(0.,clamp(p.geometry.w,0.,1.),p.flags.z!=0.);

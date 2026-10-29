@@ -8,7 +8,7 @@ use serde_json::Value;
 use spektrafilm_core::feature_profiles::{self, FeatureProfileFamily, FeatureProfileSelection};
 use spektrafilm_core::params::{
     PrintCurvesMorphParams, PrintExposureEvTracking, PrintExposureMode, RuntimeParams,
-    grain::{FotufilmMaterial, GrainEngine, GrainV2FilmType, GrainV2Mode},
+    grain::{FotufilmMaterial, GrainEngine, ProceduralGrainFilmType, ProceduralGrainMode},
 };
 use spektrafilm_core::profile::Profile;
 use std::path::Path;
@@ -1139,7 +1139,7 @@ mod tests {
         let ctx = egui::Context::default();
         let mut params = RuntimeParams::default();
         params.film_render.grain.engine = GrainEngine::Fotufilm;
-        let old_dye_support = params.film_render.grain.v3_dye_support_um;
+        let old_dye_support = params.film_render.grain.dye_support_um;
         let mut frame = |events| {
             let mut flags = ChangeFlags::default();
             let output = ctx.run(
@@ -1180,7 +1180,7 @@ mod tests {
         let (changed, grain, _) = frame(replace_text("2.25"));
         assert!(changed);
         assert_eq!(grain.fotufilm.amount, 2.25);
-        assert_eq!(grain.v3_dye_support_um, old_dye_support);
+        assert_eq!(grain.dye_support_um, old_dye_support);
     }
 
     #[test]

@@ -9,13 +9,13 @@ use spektrafilm_math::{
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum GrainV2Mode {
+pub enum ProceduralGrainMode {
     #[default]
     Analogue,
     Noise,
 }
 #[derive(Debug, Clone, Copy)]
-pub struct GrainV2Profile {
+pub struct ProceduralGrainProfile {
     pub name: &'static str,
     pub scale: f32,
     pub amount: f32,
@@ -25,8 +25,8 @@ pub struct GrainV2Profile {
     pub color: f32,
     pub resolution_factor: f32,
 }
-const fn profile(name: &'static str, values: [f32; 7]) -> GrainV2Profile {
-    GrainV2Profile {
+const fn profile(name: &'static str, values: [f32; 7]) -> ProceduralGrainProfile {
+    ProceduralGrainProfile {
         name,
         scale: values[0],
         amount: values[1] / 100.0,
@@ -41,7 +41,7 @@ pub const PROFILE_NAMES: [&str; 12] = [
     "8mm50", "8mm250", "8mm500", "16mm50", "16mm250", "16mm500", "35mm50", "35mm250", "35mm500",
     "65mm50", "65mm250", "65mm500",
 ];
-pub const PROFILES: [GrainV2Profile; 12] = [
+pub const PROFILES: [ProceduralGrainProfile; 12] = [
     profile("8mm50", [40., 25., 30., 50., 50., 50., 50.]),
     profile("8mm250", [48., 50., 25., 45., 65., 65., 70.]),
     profile("8mm500", [48., 70., 30., 45., 65., 90., 75.]),
@@ -59,8 +59,8 @@ pub fn profile_index(name: &str) -> Option<usize> {
     PROFILE_NAMES.iter().position(|&n| n == name)
 }
 #[derive(Debug, Clone, Copy)]
-pub struct GrainV2Params {
-    pub mode: GrainV2Mode,
+pub struct ProceduralGrainParams {
+    pub mode: ProceduralGrainMode,
     pub profile: usize,
     /// Profile metadata: 0 = Negative, 1 = Positive.
     ///
@@ -84,16 +84,16 @@ pub struct GrainV2Params {
     pub colored: bool,
     pub clustered: bool,
 }
-impl Default for GrainV2Params {
+impl Default for ProceduralGrainParams {
     fn default() -> Self {
         Self::for_profile(7)
     }
 }
-impl GrainV2Params {
+impl ProceduralGrainParams {
     pub fn for_profile(index: usize) -> Self {
         let p = PROFILES[index.min(11)];
         Self {
-            mode: GrainV2Mode::Analogue,
+            mode: ProceduralGrainMode::Analogue,
             profile: index.min(11),
             // Bundled profile metadata is type=0 (Negative); Film Resolution
             // remains a separate profile field.
@@ -114,7 +114,7 @@ impl GrainV2Params {
             clustered: true,
         }
     }
-    pub fn profile_data(self) -> GrainV2Profile {
+    pub fn profile_data(self) -> ProceduralGrainProfile {
         PROFILES[self.profile.min(11)]
     }
     pub fn profile_name(self) -> &'static str {
@@ -130,7 +130,7 @@ impl GrainV2Params {
     }
     /// Film Resolution radius in output pixels; Noise deliberately returns zero.
     pub fn resolution_radius(self, width: u32, height: u32) -> f32 {
-        if self.mode == GrainV2Mode::Noise {
+        if self.mode == ProceduralGrainMode::Noise {
             return 0.;
         }
         let gsf = (5200.0 / width.max(1) as f32).max(3100.0 / height.max(1) as f32);
@@ -333,7 +333,7 @@ fn generator(
     size: [f32; 2],
     luma: f32,
     rgb: [f32; 3],
-    p: GrainV2Params,
+    p: ProceduralGrainParams,
     digital: bool,
     phase: f32,
 ) -> [f32; 3] {
@@ -451,7 +451,7 @@ fn composed(b: f32, g: f32, weight: [f32; 3]) -> f32 {
 fn canvas_mean(
     table: &CanvasTable,
     size: [f32; 2],
-    p: GrainV2Params,
+    p: ProceduralGrainParams,
     width: u32,
     height: u32,
 ) -> [f32; 3] {
@@ -618,7 +618,7 @@ struct CanvasTable {
 }
 
 impl CanvasTable {
-    fn build(source: &ImageBuf, size: [f32; 2], p: GrainV2Params, phase: f32) -> Self {
+    fn build(source: &ImageBuf, size: [f32; 2], p: ProceduralGrainParams, phase: f32) -> Self {
         let used = |extent: f32| (extent / p.resampler_scale()).ceil() as i32 + 2;
         let width = used(size[0]).clamp(1, size[0].max(1.) as i32);
         let height = used(size[1]).clamp(1, size[1].max(1.) as i32);
@@ -668,7 +668,7 @@ impl CanvasTable {
     }
 }
 
-pub fn apply_cpu(input: &ImageBuf, p: GrainV2Params) -> ImageBuf {
+pub fn apply_cpu(input: &ImageBuf, p: ProceduralGrainParams) -> ImageBuf {
     if input.width == 0 || input.height == 0 {
         return input.clone();
     }
@@ -685,7 +685,7 @@ pub fn apply_cpu(input: &ImageBuf, p: GrainV2Params) -> ImageBuf {
     // Analogue's generator samples the original working image, while its
     // composition uses the Film Resolution result. Noise is single-pass and
     // consumes the prepared input directly.
-    let original = (radius > 0. && p.mode == GrainV2Mode::Analogue).then(|| source.clone());
+    let original = (radius > 0. && p.mode == ProceduralGrainMode::Analogue).then(|| source.clone());
     if radius > 0. {
         if optical {
             // OpticalResolution retains float precision between H and V.
@@ -702,7 +702,7 @@ pub fn apply_cpu(input: &ImageBuf, p: GrainV2Params) -> ImageBuf {
         (input.height as f32 * gsf).floor(),
     ];
     let canvas_source = original.as_ref().unwrap_or(&source);
-    let canvas = (p.mode == GrainV2Mode::Analogue)
+    let canvas = (p.mode == ProceduralGrainMode::Analogue)
         .then(|| CanvasTable::build(canvas_source, size, p, phase));
     // The exact mean of every grain value this scan composes. Digital grain has
     // no canvas, so its displacement is measured at the neutral grain value.
@@ -743,7 +743,7 @@ pub fn apply_cpu(input: &ImageBuf, p: GrainV2Params) -> ImageBuf {
                 };
                 let a_raw = p.amount.clamp(0., 1.);
                 let a = effective_control(a_raw)
-                    * if p.mode == GrainV2Mode::Noise {
+                    * if p.mode == ProceduralGrainMode::Noise {
                         0.5
                     } else {
                         1.
@@ -787,7 +787,7 @@ mod tests {
         );
         let size = [23., 19.];
         for profile in [0, 7, 9] {
-            let mut p = GrainV2Params::for_profile(profile);
+            let mut p = ProceduralGrainParams::for_profile(profile);
             p.seed = 42;
             let phase = p.resolved_timer();
             let used = |extent: f32| {
@@ -832,8 +832,8 @@ mod tests {
                     .collect(),
             );
             for resolution_type in [0, 1] {
-                let mut p = GrainV2Params::for_profile(7);
-                p.mode = GrainV2Mode::Noise;
+                let mut p = ProceduralGrainParams::for_profile(7);
+                p.mode = ProceduralGrainMode::Noise;
                 p.seed = 42;
                 p.resolution_type = resolution_type;
                 let mut source = input.clone();
@@ -929,15 +929,15 @@ mod tests {
         );
         for (mode, fixture) in [
             (
-                GrainV2Mode::Analogue,
+                ProceduralGrainMode::Analogue,
                 include_str!("fixtures/analogue_normalized_half.txt"),
             ),
             (
-                GrainV2Mode::Noise,
+                ProceduralGrainMode::Noise,
                 include_str!("fixtures/noise_normalized_half.txt"),
             ),
         ] {
-            let mut params = GrainV2Params::for_profile(0);
+            let mut params = ProceduralGrainParams::for_profile(0);
             params.seed = 5489;
             params.mode = mode;
             params.resolution_factor = 100.;
@@ -959,14 +959,14 @@ mod tests {
                 .data
                 .iter_mut()
                 .for_each(|value| *value = from_f32(half::f16::from_f32(to_f32(*value)).to_f32()));
-            let mean = if mode == GrainV2Mode::Analogue {
+            let mean = if mode == ProceduralGrainMode::Analogue {
                 let table = CanvasTable::build(&rounded, canvas, params, params.resolved_timer());
                 canvas_mean(&table, canvas, params, 37, 19)
             } else {
                 [0.5; 3]
             };
             let a = effective_control(params.amount.clamp(0., 1.))
-                * if params.mode == GrainV2Mode::Noise {
+                * if params.mode == ProceduralGrainMode::Noise {
                     0.5
                 } else {
                     1.
@@ -1006,8 +1006,8 @@ mod tests {
                 .map(|v| from_f32((v % 11) as f32 / 11.0))
                 .collect(),
         );
-        let mut seeded = GrainV2Params::for_profile(0);
-        seeded.mode = GrainV2Mode::Noise;
+        let mut seeded = ProceduralGrainParams::for_profile(0);
+        seeded.mode = ProceduralGrainMode::Noise;
         seeded.resolution_factor = 100.0;
         seeded.seed = 42;
         let mut explicit = seeded;
@@ -1045,7 +1045,7 @@ mod tests {
         }
         for profile in [0usize, 7, 11] {
             for size in [1.0f32, 12.0, 48.0] {
-                let mut p = GrainV2Params::for_profile(profile);
+                let mut p = ProceduralGrainParams::for_profile(profile);
                 p.size = size;
                 // Radius zero keeps the reference free of the Film Resolution pass.
                 p.resolution_factor = 100.0;
@@ -1156,8 +1156,8 @@ mod tests {
                 .collect(),
         );
 
-        let mut analogue = GrainV2Params {
-            mode: GrainV2Mode::Analogue,
+        let mut analogue = ProceduralGrainParams {
+            mode: ProceduralGrainMode::Analogue,
             size: 48.,
             amount: 1.,
             resolution_factor: 0.,
@@ -1173,7 +1173,7 @@ mod tests {
         assert_eq!(apply_cpu(&image, analogue).data, fast.data);
 
         let mut noise = analogue;
-        noise.mode = GrainV2Mode::Noise;
+        noise.mode = ProceduralGrainMode::Noise;
         noise.resolution_type = 0;
         noise.resolution_factor = 0.;
         let optical_noise = apply_cpu(&image, noise);
@@ -1201,8 +1201,8 @@ mod tests {
 
     #[test]
     fn noise_scale_preserves_relative_grain_size() {
-        let p = GrainV2Params {
-            mode: GrainV2Mode::Noise,
+        let p = ProceduralGrainParams {
+            mode: ProceduralGrainMode::Noise,
             ..Default::default()
         };
         let phase = spektrafilm_math::grain::seeded_phase(p.seed);
@@ -1213,7 +1213,7 @@ mod tests {
     #[test]
     fn middle_gray_responds_to_midtones_not_shadows() {
         let image = ImageBuf::from_data(64, 32, vec![from_f32(0.5); 64 * 32 * 3]);
-        let mut params = GrainV2Params {
+        let mut params = ProceduralGrainParams {
             resolution_factor: 100.,
             highlights: 0.,
             shadows: 0.,
@@ -1247,7 +1247,7 @@ mod tests {
                 data.extend([from_f32(0.25 + 0.55 * y as f32 / (h - 1) as f32); 3]);
             }
         }
-        let p = GrainV2Params {
+        let p = ProceduralGrainParams {
             seed: 42,
             ..Default::default()
         };
@@ -1298,9 +1298,9 @@ mod tests {
         );
         for profile in 0..PROFILES.len() {
             for resolution_type in [0, 1] {
-                for mode in [GrainV2Mode::Analogue, GrainV2Mode::Noise] {
+                for mode in [ProceduralGrainMode::Analogue, ProceduralGrainMode::Noise] {
                     for control in [0., 1.] {
-                        let mut params = GrainV2Params::for_profile(profile);
+                        let mut params = ProceduralGrainParams::for_profile(profile);
                         params.resolution_type = resolution_type;
                         params.mode = mode;
                         params.seed = 42;
@@ -1311,13 +1311,13 @@ mod tests {
                         params.color = control;
                         if profile == 0
                             && resolution_type == 0
-                            && mode == GrainV2Mode::Noise
+                            && mode == ProceduralGrainMode::Noise
                             && control == 1.
                         {
                             params.timer = Some(0.25);
                         }
                         let cpu = apply_cpu(&image, params);
-                        let gpu_params = spektrafilm_backend::GrainV2GpuParams {
+                        let gpu_params = spektrafilm_backend::ProceduralGrainGpuParams {
                             mode: params.mode as u32,
                             resolution_type: params.resolution_type,
                             amount: params.amount,
@@ -1335,7 +1335,7 @@ mod tests {
                             clustered: params.clustered,
                         };
                         let gpu_image = gpu
-                            .grain_v2_gpu(&image, &gpu_params)
+                            .grain_procedural_gpu(&image, &gpu_params)
                             .expect("device Grain Procedural reference must execute");
                         assert!(
                             cpu.data.iter().all(|v| to_f32(*v).is_finite()),

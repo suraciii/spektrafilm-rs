@@ -106,7 +106,7 @@ These items move from `spektrafilm-gpu` to `spektrafilm-backend` without behavio
 - the `timing` module
 - `observed_backend`, `bind_backend`, and `bind_cpu_fallback`
 - `FilmChainParams`, `FrontPass`, and the `*GpuParams` records
-- `GrainV2GpuParams`, `CpuStageFn`, and `Lut3D`
+- `ProceduralGrainGpuParams`, `CpuStageFn`, and `Lut3D`
 - `DyeGpuParams` and its type chain: `DyeReadoutGrid`, `DyeChannelTablesGpu`, `DyeChannelTableGpu`, and `DyeChannelParts`
 
 `DyeGpuParams` currently lives under `wgpu_backend` but holds only plain data: channel tables, a cell size, taps, a readout grid, a seed, a correlation, and an expectation flag. No field is a device type. `spektrafilm-core` already constructs it directly.
@@ -115,7 +115,7 @@ It is a misplaced device-independent parameter record, and the trait cannot move
 
 Its type chain is also device-free, but those types share a file with `LayerPass`, which encodes device passes. Moving them requires splitting `dye_layers.rs` so the plain records leave and the device passes stay. This split is the first concrete step of the migration, not a later cleanup.
 
-`DyeChannelParts` and `DyeChannelTablesGpu::pack` MUST move with them. `spektrafilm-core` constructs `DyeChannelParts` in production code at `stages/grain_v3.rs` and passes it to `pack`, which converts f64 model tables to f32 device records without touching a device. Leaving either behind would keep a device import in the domain code that builds them.
+`DyeChannelParts` and `DyeChannelTablesGpu::pack` MUST move with them. `spektrafilm-core` constructs `DyeChannelParts` in production code at `stages/grain_dye.rs` and passes it to `pack`, which converts f64 model tables to f32 device records without touching a device. Leaving either behind would keep a device import in the domain code that builds them.
 
 Every moving item MUST be free of device references before it moves. `CpuBackend` imports only `rayon`, `spektrafilm-math`, and `blas_src`. The telemetry vocabulary imports only `serde`, `tracing`, and `parking_lot`.
 
@@ -167,7 +167,7 @@ The dependency graph MUST be checked mechanically: no rule in this document MAY 
 
 The `ComputeBackend` trait is referenced at about 93 call sites across four crates. Each site changes only its import path. A mechanical rename risk is a missed site, which the compiler catches.
 
-`spektrafilm-core` keeps its `spektrafilm-gpu` dependency for two reasons: it constructs `FilmChainParams` for the device route, and it names `WgpuBackend` directly in `stages/grain_v3.rs`. This is correct: core owns route selection, and route selection requires knowledge of what the device can do.
+`spektrafilm-core` keeps its `spektrafilm-gpu` dependency for two reasons: it constructs `FilmChainParams` for the device route, and it names `WgpuBackend` directly in `stages/grain_dye.rs`. This is correct: core owns route selection, and route selection requires knowledge of what the device can do.
 
 The telemetry vocabulary moves, but its ownership rules do not. [Telemetry](../telemetry/design.md) keeps authority over observation semantics; this document only relocates the code.
 
@@ -175,7 +175,7 @@ The telemetry vocabulary moves, but its ownership rules do not. [Telemetry](../t
 
 The move MUST proceed in this order, because each step MUST compile before the next begins:
 
-1. Create `spektrafilm-backend` with no device feature. Move the device-independent parameter records first — `DyeGpuParams` and its type chain, `GrainV2GpuParams`, `CpuStageFn`, `Lut3D`, `FilmChainParams`, `FrontPass`, and the `*GpuParams` records — because the trait signature references them.
+1. Create `spektrafilm-backend` with no device feature. Move the device-independent parameter records first — `DyeGpuParams` and its type chain, `ProceduralGrainGpuParams`, `CpuStageFn`, `Lut3D`, `FilmChainParams`, `FrontPass`, and the `*GpuParams` records — because the trait signature references them.
    Splitting `dye_layers.rs` is part of this step, since those records share a file with device pass code. `spektrafilm-gpu` re-exports them so the tree still compiles.
 2. Move the `ComputeBackend` trait and its default implementations, `CpuBackend`, telemetry, timing, and observation binding into `spektrafilm-backend`. Keep the re-exports.
 3. Move `spektrafilm-model` to depend on `spektrafilm-backend` only.

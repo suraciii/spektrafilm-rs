@@ -161,12 +161,13 @@ impl Pipeline {
         // Spektra supports the profile's sublayers or its single-curve model
         // on the device. Actual preparation errors are operation failures.
         let grain_reachable = route != crate::WorkflowRoute::Input;
-        let dye_gap = crate::stages::grain_v3::active(p)
-            && crate::stages::grain_v3::published_host_field_reason(p).is_some();
+        let dye_gap = crate::stages::grain_dye::active(p)
+            && crate::stages::grain_dye::published_host_field_reason(p).is_some();
         if grain_reachable && dye_gap {
             stages.push(UnsupportedStage {
                 name: "film grain distribution",
-                reason: crate::stages::grain_v3::published_host_field_reason(p).unwrap_or_default(),
+                reason: crate::stages::grain_dye::published_host_field_reason(p)
+                    .unwrap_or_default(),
             });
         }
         // A Fotufilm request is device-covered: the population formation and
@@ -177,8 +178,8 @@ impl Pipeline {
         // Dye crop tails and optical probes are device stages. Keep the
         // geometry authority's remaining coverage decision, rather than
         // permitting a per-stage host route when it cannot assemble them.
-        if crate::stages::grain_v3::active(p)
-            && !crate::stages::grain_v3::resident_fence_supported(&self.film, p)
+        if crate::stages::grain_dye::active(p)
+            && !crate::stages::grain_dye::resident_fence_supported(&self.film, p)
         {
             stages.push(UnsupportedStage {
                 name: "film grain route",
@@ -500,7 +501,7 @@ mod tests {
         p.camera.film_format_mm = 8.0;
         p.film_render.grain.active = true;
         p.film_render.grain.engine = crate::params::grain::GrainEngine::Dye;
-        p.film_render.grain.v3_dye_support_um = 8.0;
+        p.film_render.grain.dye_support_um = 8.0;
         p.io.crop = true;
         p.io.crop_size = [0.5, 0.5];
         p.scanner.unsharp_mask = [0.7, 0.7];
@@ -518,7 +519,7 @@ mod tests {
         p.scanner.unsharp_mask = [0.0; 2];
         p.film_render.grain.active = true;
         p.film_render.grain.engine = crate::params::grain::GrainEngine::Dye;
-        p.film_render.grain.v3_dye_support_um = 8.0;
+        p.film_render.grain.dye_support_um = 8.0;
         p.io.crop = true;
         p.io.crop_size = [0.5, 0.5];
         p.io.upscale_factor = 1.5;

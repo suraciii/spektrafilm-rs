@@ -143,7 +143,7 @@ impl Pipeline {
         let decision = match self.resident_decision() {
             ResidentDecision::PerStage { mut reasons } => {
                 reasons.retain(|reason| match reason {
-                    ResidentFallbackReason::FilmGrainV3FieldCpu => develop,
+                    ResidentFallbackReason::FilmDyeGrainFieldCpu => develop,
                     ResidentFallbackReason::MissingResidentFrontPass => expose,
                     ResidentFallbackReason::UnsupportedOutputGamut => scan,
                     _ => true,
@@ -165,7 +165,7 @@ impl Pipeline {
                         let reason = match reason {
                             ResidentFallbackReason::WorkflowRoute => R::WorkflowRoute,
 
-                            ResidentFallbackReason::FilmGrainV3FieldCpu => R::GrainV3FieldCpu,
+                            ResidentFallbackReason::FilmDyeGrainFieldCpu => R::DyeGrainFieldCpu,
                             ResidentFallbackReason::UnsupportedOutputGamut => {
                                 R::UnsupportedOutputGamut
                             }
@@ -191,13 +191,13 @@ impl Pipeline {
                     // than a capability gap. A request the device cannot
                     // realize at all stays capability-missing.
                     let host_field =
-                        crate::stages::grain_v3::published_host_field_reason(&self.params)
+                        crate::stages::grain_dye::published_host_field_reason(&self.params)
                             .is_some();
                     let capability_missing = reasons.iter().any(|r| match r {
                         ResidentFallbackReason::WorkflowRoute
                         | ResidentFallbackReason::MissingResidentFrontPass
                         | ResidentFallbackReason::UnsupportedOutputGamut => false,
-                        ResidentFallbackReason::FilmGrainV3FieldCpu => host_field,
+                        ResidentFallbackReason::FilmDyeGrainFieldCpu => host_field,
                         _ => true,
                     });
                     if capability_missing {
@@ -476,7 +476,7 @@ impl Pipeline {
         } else {
             None
         };
-        let grain_v2 = if scan
+        let grain_procedural = if scan
             && self.params.film_render.grain.active
             && matches!(
                 self.params.film_render.grain.engine,
@@ -499,13 +499,13 @@ impl Pipeline {
         // Recovered convert-film CMY is already developed; neither optical
         // engine may generate a new field or apply its readout geometry there.
         let dye_readout =
-            if develop && !convert_route && crate::stages::grain_v3::active(&self.params) {
-                crate::stages::grain_v3::validate_supported(&self.film, &self.params)?;
+            if develop && !convert_route && crate::stages::grain_dye::active(&self.params) {
+                crate::stages::grain_dye::validate_supported(&self.film, &self.params)?;
                 let spatial_context = (scan
-                    && crate::stages::grain_v3::scanner_spatial_context(&self.params))
+                    && crate::stages::grain_dye::scanner_spatial_context(&self.params))
                     || (collect != Tap::CmyFilm
-                        && crate::stages::grain_v3::print_spatial_context(&self.params));
-                Some(crate::stages::grain_v3::readout_plan(
+                        && crate::stages::grain_dye::print_spatial_context(&self.params));
+                Some(crate::stages::grain_dye::readout_plan(
                     input.width(),
                     input.height(),
                     &self.params,
@@ -518,7 +518,7 @@ impl Pipeline {
         let grain_dye = dye_readout
             .as_ref()
             .map(|plan| {
-                crate::stages::grain_v3::resident_device_params_for_grid(
+                crate::stages::grain_dye::resident_device_params_for_grid(
                     &self.film,
                     &self.params,
                     pixel_size_um,
@@ -529,10 +529,10 @@ impl Pipeline {
         let fotufilm_readout =
             if develop && !convert_route && crate::stages::grain_fotufilm::active(&self.params) {
                 let spatial_context = (scan
-                    && crate::stages::grain_v3::scanner_spatial_context(&self.params))
+                    && crate::stages::grain_dye::scanner_spatial_context(&self.params))
                     || (collect != Tap::CmyFilm
-                        && crate::stages::grain_v3::print_spatial_context(&self.params));
-                Some(crate::stages::grain_v3::readout_plan(
+                        && crate::stages::grain_dye::print_spatial_context(&self.params));
+                Some(crate::stages::grain_dye::readout_plan(
                     input.width(),
                     input.height(),
                     &self.params,
@@ -558,7 +558,7 @@ impl Pipeline {
             .transpose()?;
         // Spektra realizes either upstream sampling regime on the device.
         // Preparation errors propagate instead of becoming a host fallback.
-        let grain_v1 = if develop
+        let grain_spektra = if develop
             && !convert_route
             && self.params.film_render.grain.active
             && matches!(
@@ -581,7 +581,7 @@ impl Pipeline {
         // transferring 2 + 2 × fence count times total. Spektra resolves its
         // field from the normalized density; Dye reads the same buffer with
         // the identity readout geometry only when its field has no device
-        // path (`stages::grain_v3::resident_device_params`).
+        // path (`stages::grain_dye::resident_device_params`).
         let density_cpu_stage = if !develop || convert_route {
             None
         } else {
@@ -590,7 +590,7 @@ impl Pipeline {
                 backend,
                 pixel_size_um,
                 grain_dye.is_some(),
-                grain_v1.is_some(),
+                grain_spektra.is_some(),
             )
         };
 
@@ -668,30 +668,31 @@ impl Pipeline {
         // Procedural-grain pass hasn't already emitted encoded samples, or
         // restore linear when it has and no encoding was requested. This
         // moved the former post-readback host encode/decode onto the device.
-        let grain_v2_active = scan && self.grain_emits_encoded();
+        let grain_procedural_active = scan && self.grain_emits_encoded();
         let cctf_kind = spektrafilm_backend::cctf_kind(scan_output_space.cctf);
         let identity_f32: [[f32; 3]; 3] = std::array::from_fn(|i| {
             std::array::from_fn(|j| scan_output_space.rgb_to_rgb_identity()[i][j] as f32)
         });
-        let output_transfer = if scan && !grain_v2_active && self.params.io.output_cctf_encoding {
-            Some(spektrafilm_backend::OutputTransferGpuParams {
-                decode: false,
-                cctf_kind,
-                matrix: identity_f32,
-            })
-        } else if grain_v2_active && !self.params.io.output_cctf_encoding {
-            Some(spektrafilm_backend::OutputTransferGpuParams {
-                decode: true,
-                cctf_kind,
-                matrix: identity_f32,
-            })
-        } else {
-            None
-        };
+        let output_transfer =
+            if scan && !grain_procedural_active && self.params.io.output_cctf_encoding {
+                Some(spektrafilm_backend::OutputTransferGpuParams {
+                    decode: false,
+                    cctf_kind,
+                    matrix: identity_f32,
+                })
+            } else if grain_procedural_active && !self.params.io.output_cctf_encoding {
+                Some(spektrafilm_backend::OutputTransferGpuParams {
+                    decode: true,
+                    cctf_kind,
+                    matrix: identity_f32,
+                })
+            } else {
+                None
+            };
         // CMYK runs after the encoded grain domain when Procedural grain is
         // active, even for a linear output; the final decode is appended
         // after CMYK to match the CPU scanner order exactly.
-        let cmyk_encoded = grain_v2_active || self.params.io.output_cctf_encoding;
+        let cmyk_encoded = grain_procedural_active || self.params.io.output_cctf_encoding;
         let cmyk = if scan && self.params.cmyk.active && self.params.cmyk.strength > 0.0 {
             let (to_lab, from_lab) =
                 crate::cmyk::CmykTransform::new(scan_output_space).gpu_matrices();
@@ -806,7 +807,7 @@ impl Pipeline {
                 None
             },
             unsharp,
-            grain_v2,
+            grain_procedural,
             camera_lens_blur_px,
             camera_diffusion: camera_diffusion.as_ref().map(|resolved| {
                 spektrafilm_backend::OpticalDiffusionGpuParams {
@@ -831,7 +832,7 @@ impl Pipeline {
                 .and_then(|plan| plan.deferred_crop)
                 .map(|r| [r.x as u32, r.y as u32, r.width as u32, r.height as u32]),
             grain_fotufilm,
-            grain_v1,
+            grain_spektra,
             density_cpu_stage,
             scan_acquisition_cpu_stage,
             scan_readout: scan_readout.as_ref(),

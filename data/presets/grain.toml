@@ -53,7 +53,7 @@ rms_granularity = [2.919, 3.5, 4.284]
 rms_granularity = [5.6385, 4.5, 5.544]
 
 # Reference stock for Dye's relative scale: `k_c = (G_c / 6)^2 = 1` here keeps
-# the configured `v3_event_area_um2`, not a validated absolute material area.
+# the configured `dye_event_area_um2`, not a validated absolute material area.
 # The reference stock and its pushes retain uniform channel presets.
 [kodak_portra_800]
 rms_granularity = [6.0, 6.0, 6.0]

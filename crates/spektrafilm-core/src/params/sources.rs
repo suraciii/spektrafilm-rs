@@ -330,6 +330,8 @@ fn retired_lightness_error_detailed() -> Error {
     )
 }
 
+use super::grain_compat::canonical_grain_path;
+
 /// Ordered sparse edits to runtime parameter leaves.
 #[derive(Debug, Clone, Default)]
 pub struct ParameterEdits {
@@ -359,6 +361,8 @@ impl ParameterEdits {
                 format!("expected PATH=VALUE or a .toml/.json file, got {item:?}; example: --set film_render.grain.engine=procedural")
             })?;
             let path = item[..eq].trim();
+            let canonical = canonical_grain_path(path);
+            let path = canonical.as_ref();
             let raw = item[eq + 1..].trim();
             validate_path(path)?;
             if raw.is_empty() {
@@ -374,7 +378,12 @@ impl ParameterEdits {
         Self::from_value_detailed(value).map_err(|error| error.to_string())
     }
 
-    pub(crate) fn from_value_detailed(value: Value) -> Result<Self, Error> {
+    pub(crate) fn from_value_detailed(mut value: Value) -> Result<Self, Error> {
+        if let Some(grain) = value.pointer_mut("/film_render/grain") {
+            super::normalize_grain_control_names(grain).map_err(|detail| {
+                Error::new(Reason::LegacyConflict, "film_render.grain", detail)
+            })?;
+        }
         let root = value.as_object().ok_or_else(|| {
             Error::new(
                 Reason::DocumentObject,
@@ -393,6 +402,8 @@ impl ParameterEdits {
     }
 
     fn push_detailed(&mut self, path: &str, value: Value) -> Result<(), Error> {
+        let canonical = canonical_grain_path(path);
+        let path = canonical.as_ref();
         let expected = lookup(schema_value(), path).ok_or_else(|| unknown_path_detailed(path))?;
         validate_leaf(path, &value, expected)?;
         self.edits.push((path.to_owned(), value));
@@ -652,7 +663,7 @@ mod inline_value_tests {
 
     #[test]
     fn plain_values_follow_parameter_types_and_preserve_quoted_forms() {
-        let source = "film_render.grain.engine=procedural,film_render.grain.v2_profile=custom,io.output_color_space=ProPhoto RGB,camera.auto_exposure=false,camera.exposure_compensation_ev=+.5,camera.filter_uv=[1,2,3],film_render.grain.v2_amount=null";
+        let source = "film_render.grain.engine=procedural,film_render.grain.procedural_profile=custom,io.output_color_space=ProPhoto RGB,camera.auto_exposure=false,camera.exposure_compensation_ev=+.5,camera.filter_uv=[1,2,3],film_render.grain.procedural_amount=null";
         let mut params = RuntimeParams::default();
         ParameterEdits::parse(source)
             .unwrap()
@@ -662,12 +673,12 @@ mod inline_value_tests {
             params.film_render.grain.engine,
             super::super::grain::GrainEngine::Procedural
         );
-        assert_eq!(params.film_render.grain.v2_profile, "custom");
+        assert_eq!(params.film_render.grain.procedural_profile, "custom");
         assert_eq!(params.io.output_color_space, "ProPhoto RGB");
         assert!(!params.camera.auto_exposure);
         assert_eq!(params.camera.exposure_compensation_ev, 0.5);
         assert_eq!(params.camera.filter_uv, [1.0, 2.0, 3.0]);
-        assert_eq!(params.film_render.grain.v2_amount, None);
+        assert_eq!(params.film_render.grain.procedural_amount, None);
         ParameterEdits::parse(r#"io.output_color_space="sRGB",film_render.grain.engine="spektra""#)
             .unwrap()
             .apply(&mut params)
@@ -859,9 +870,9 @@ fn range_check(path: &str, value: &Value) -> Result<(), Error> {
         super::validation::validate_gamut_triplet_detailed(path, values)?;
         return Ok(());
     }
-    if path == "film_render.grain.v2_timer" {
+    if path == "film_render.grain.procedural_timer" {
         if let Some(n) = value.as_f64() {
-            super::validation::validate_v2_timer_detailed(f64::from(n as f32))?;
+            super::validation::validate_procedural_timer_detailed(f64::from(n as f32))?;
         }
         return Ok(());
     }
@@ -1196,13 +1207,16 @@ pub fn validate_finite_detailed(params: &RuntimeParams) -> Result<(), Error> {
     check("", &value)?;
     let grain = &params.film_render.grain;
     for (path, value) in [
-        ("v2_size", grain.v2_size),
-        ("v2_amount", grain.v2_amount),
-        ("v2_shadows", grain.v2_shadows),
-        ("v2_midtones", grain.v2_midtones),
-        ("v2_highlights", grain.v2_highlights),
-        ("v2_chroma", grain.v2_chroma),
-        ("v2_resolution_factor", grain.v2_resolution_factor),
+        ("procedural_size", grain.procedural_size),
+        ("procedural_amount", grain.procedural_amount),
+        ("procedural_shadows", grain.procedural_shadows),
+        ("procedural_midtones", grain.procedural_midtones),
+        ("procedural_highlights", grain.procedural_highlights),
+        ("procedural_chroma", grain.procedural_chroma),
+        (
+            "procedural_resolution_factor",
+            grain.procedural_resolution_factor,
+        ),
     ] {
         if value.is_some_and(|v| !v.is_finite()) {
             return Err(Error::new(
@@ -1580,24 +1594,24 @@ mod tests {
         assert!(
             ParameterEdits::parse("camera.diffusion_filter.filter_family=\"unknown\"").is_err()
         );
-        assert!(ParameterEdits::parse("film_render.grain.v2_timer=1.0").is_err());
+        assert!(ParameterEdits::parse("film_render.grain.procedural_timer=1.0").is_err());
         assert!(
             ParameterEdits::parse(
-                "film_render.grain.v2_timer=0.999999999,film_render.grain.v2_timer=0.5"
+                "film_render.grain.procedural_timer=0.999999999,film_render.grain.procedural_timer=0.5"
             )
             .is_err()
         );
-        assert!(ParameterEdits::parse("film_render.grain.v2_size=200").is_err());
+        assert!(ParameterEdits::parse("film_render.grain.procedural_size=200").is_err());
     }
 
     #[test]
     fn nullable_leaves_accept_null_and_finite_values() {
-        let edits = ParameterEdits::parse("film_render.grain.v2_amount=null,film_render.grain.v2_amount=25,film_render.grain.v2_timer=0.5").unwrap();
+        let edits = ParameterEdits::parse("film_render.grain.procedural_amount=null,film_render.grain.procedural_amount=25,film_render.grain.procedural_timer=0.5").unwrap();
         let mut params = RuntimeParams::default();
         edits.apply(&mut params).unwrap();
-        assert_eq!(params.film_render.grain.v2_amount, Some(25.0));
-        assert_eq!(params.film_render.grain.v2_timer, 0.5);
-        assert!(ParameterEdits::parse("film_render.grain.v2_amount=nan").is_err());
+        assert_eq!(params.film_render.grain.procedural_amount, Some(25.0));
+        assert_eq!(params.film_render.grain.procedural_timer, 0.5);
+        assert!(ParameterEdits::parse("film_render.grain.procedural_amount=nan").is_err());
     }
 
     #[test]
@@ -1688,7 +1702,7 @@ mod tests {
         assert!(
             fields
                 .iter()
-                .any(|f| f["path"] == "film_render.grain.v2_amount"
+                .any(|f| f["path"] == "film_render.grain.procedural_amount"
                     && f["nullable"] == true
                     && f["minimum"] == 0.0
                     && f["maximum"] == 100.0)
@@ -1756,12 +1770,29 @@ mod tests {
     #[test]
     fn apply_rejects_optional_overflow_in_legacy_baseline_before_serialization() {
         let mut params = RuntimeParams::default();
-        params.film_render.grain.v2_amount = Some(f32::INFINITY);
-        assert!(params.film_render.grain.v2_amount.unwrap().is_infinite());
+        params.film_render.grain.procedural_amount = Some(f32::INFINITY);
+        assert!(
+            params
+                .film_render
+                .grain
+                .procedural_amount
+                .unwrap()
+                .is_infinite()
+        );
         let edits = ParameterEdits::parse("camera.auto_exposure=false").unwrap();
         let error = edits.apply(&mut params).unwrap_err();
-        assert!(error.contains("film_render.grain.v2_amount"), "{error}");
-        assert!(params.film_render.grain.v2_amount.unwrap().is_infinite());
+        assert!(
+            error.contains("film_render.grain.procedural_amount"),
+            "{error}"
+        );
+        assert!(
+            params
+                .film_render
+                .grain
+                .procedural_amount
+                .unwrap()
+                .is_infinite()
+        );
         assert!(params.camera.auto_exposure);
     }
 
@@ -1771,12 +1802,12 @@ mod tests {
         // type. Correctly rounded JSON decoding rejects overflow before merging.
         assert!(
             serde_json::from_str::<RuntimeParams>(
-                r#"{"film_render":{"grain":{"v2_amount":1e100}}}"#
+                r#"{"film_render":{"grain":{"procedural_amount":1e100}}}"#
             )
             .is_err()
         );
-        let params: RuntimeParams = serde_json::from_str(r#"{"film_render":{"grain":{"v2_amount":42.5}},"camera":{"exposure_compensation_ev":0.5}}"#).unwrap();
-        assert_eq!(params.film_render.grain.v2_amount, Some(42.5));
+        let params: RuntimeParams = serde_json::from_str(r#"{"film_render":{"grain":{"procedural_amount":42.5}},"camera":{"exposure_compensation_ev":0.5}}"#).unwrap();
+        assert_eq!(params.film_render.grain.procedural_amount, Some(42.5));
         assert_eq!(params.camera.exposure_compensation_ev, 0.5);
     }
 
@@ -2076,8 +2107,8 @@ mod tests {
     fn dye_only_controls_carry_the_dye_engine_condition() {
         use super::effects::conditions;
         for path in [
-            "film_render.grain.v3_dye_support_um",
-            "film_render.grain.v3_event_area_um2",
+            "film_render.grain.dye_support_um",
+            "film_render.grain.dye_event_area_um2",
             "film_render.grain.channel_correlation",
         ] {
             let found = conditions(path);
@@ -2151,8 +2182,8 @@ mod tests {
         assert_eq!(inactive_reason(path, &params, &color, &bw), None);
         assert_eq!(params.film_render.grain.channel_correlation, 0.35);
         for other in [
-            "film_render.grain.v3_event_area_um2",
-            "film_render.grain.v3_dye_support_um",
+            "film_render.grain.dye_event_area_um2",
+            "film_render.grain.dye_support_um",
         ] {
             assert_eq!(inactive_reason(other, &params, &bw, &color), None);
         }

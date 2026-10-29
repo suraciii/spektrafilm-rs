@@ -508,7 +508,7 @@ fn finish_tail(
 
     // Grain consumes native display-encoded RGB, with no internal transfer
     // or primaries conversion. The scanned image supplies its output space.
-    let grain_v2_active = params.film_render.grain.active
+    let grain_procedural_active = params.film_render.grain.active
         && matches!(
             params.film_render.grain.engine,
             crate::params::grain::GrainEngine::Procedural
@@ -516,7 +516,7 @@ fn finish_tail(
     // CMYK ink style is optional finishing, not a route: it applies to
     // any scanned base workflow after the scanner-domain effects.
     let cmyk_active = params.cmyk.active && params.cmyk.strength > 0.0;
-    let encoded_domain = params.io.output_cctf_encoding || grain_v2_active;
+    let encoded_domain = params.io.output_cctf_encoding || grain_procedural_active;
     if encoded_domain {
         let _encoding = super::StageObservation::cpu(
             backend,
@@ -531,10 +531,10 @@ fn finish_tail(
             px[2] = from_f64(encoded[2]);
         });
     }
-    if grain_v2_active {
-        let grain_observation = super::StageObservation::new(backend, "grain_v2");
+    if grain_procedural_active {
+        let grain_observation = super::StageObservation::new(backend, "grain_procedural");
         let backend = grain_observation.backend(backend);
-        let mut grain = params.film_render.grain.resolved_grain_v2();
+        let mut grain = params.film_render.grain.resolved_grain_procedural();
         if params.debug.deactivate_spatial_effects {
             grain.resolution_factor = 100.0;
         }
@@ -543,18 +543,18 @@ fn finish_tail(
             .film_render
             .grain
             .gpu_params(params.random_seed, params.debug.deactivate_spatial_effects);
-        rgb = match backend.grain_v2(&rgb, &gpu_params)? {
+        rgb = match backend.grain_procedural(&rgb, &gpu_params)? {
             Some(image) => image,
             None if backend.is_gpu() => {
-                return Err("grain_v2: selected GPU has no device operation".into());
+                return Err("grain_procedural: selected GPU has no device operation".into());
             }
             None => {
                 let _cpu = super::StageObservation::cpu(
                     backend,
-                    "grain_v2_cpu",
-                    spektrafilm_backend::telemetry::CpuReason::GrainV2Unsupported,
+                    "grain_procedural_cpu",
+                    spektrafilm_backend::telemetry::CpuReason::ProceduralGrainUnsupported,
                 );
-                spektrafilm_model::grain::v2::apply_cpu(&rgb, grain)
+                spektrafilm_model::grain::procedural::apply_cpu(&rgb, grain)
             }
         };
     }
@@ -571,7 +571,7 @@ fn finish_tail(
     }
     // Linear exports retain the same grain realization as encoded exports.
     // Decode only the transfer; the stored same-space matrix ran above once.
-    if grain_v2_active && !params.io.output_cctf_encoding {
+    if grain_procedural_active && !params.io.output_cctf_encoding {
         let _encoding = super::StageObservation::cpu(
             backend,
             "output_transfer",

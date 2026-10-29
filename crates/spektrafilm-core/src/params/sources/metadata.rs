@@ -34,13 +34,13 @@ fn types() -> &'static BTreeMap<String, String> {
 fn nullable_inner(path: &str) -> Option<&'static str> {
     Some(match path {
         "film_render.development_time" | "print_render.development_time" => "f64",
-        "film_render.grain.v2_size"
-        | "film_render.grain.v2_amount"
-        | "film_render.grain.v2_shadows"
-        | "film_render.grain.v2_midtones"
-        | "film_render.grain.v2_highlights"
-        | "film_render.grain.v2_chroma"
-        | "film_render.grain.v2_resolution_factor" => "f32",
+        "film_render.grain.procedural_size"
+        | "film_render.grain.procedural_amount"
+        | "film_render.grain.procedural_shadows"
+        | "film_render.grain.procedural_midtones"
+        | "film_render.grain.procedural_highlights"
+        | "film_render.grain.procedural_chroma"
+        | "film_render.grain.procedural_resolution_factor" => "f32",
         "taps.inject" | "taps.collect" => "String",
         "neutral_print_filters_protected" => "[bool; 3]",
         "camera.capture_illuminant" => "String",
@@ -484,22 +484,22 @@ fn description(path: &str) -> Option<&'static str> {
         "io.crop_size" => Some(
             "Both components are fractions of the uncropped source long edge, not independent width and height fractions.",
         ),
-        "film_render.grain.v2_size" => {
+        "film_render.grain.procedural_size" => {
             Some("Grain Procedural Size; used only with engine procedural and profile custom.")
         }
-        "film_render.grain.v2_film_type" => Some(
+        "film_render.grain.procedural_film_type" => Some(
             "Preserved Procedural profile metadata; not passed to the rendering kernels and has no visual effect.",
         ),
-        "film_render.grain.v2_resolution_factor" => Some(
+        "film_render.grain.procedural_resolution_factor" => Some(
             "Film Resolution override for Custom Analogue mode; Noise does not execute the resolution stage.",
         ),
-        "film_render.grain.v2_resolution_type" => Some(
+        "film_render.grain.procedural_resolution_type" => Some(
             "Film Resolution method for named profiles and Custom Analogue mode; inactive in Custom Noise mode.",
         ),
         "film_render.grain.particle_scale_sublayers" => Some(
             "Three numerical-component scales, not RGB records; all three remain active for monochrome Dye. Spektra scales its curve-derived emulsion sublayers.",
         ),
-        "film_render.grain.v2_amount" => Some(
+        "film_render.grain.procedural_amount" => Some(
             "Grain Procedural Amount in percent; used with named and custom Procedural profiles, distinct from RMS granularity.",
         ),
         "film_render.grain.rms_granularity" => Some(

@@ -4,7 +4,7 @@ use super::chain_chunks::PointwisePass;
 use super::grain::{
     RasterStorage,
     raster::RasterCommands,
-    v1::blur::{GrainBlurState, build_grain_blur_paged},
+    spektra::blur::{GrainBlurState, build_grain_blur_paged},
 };
 use super::page_views::Access;
 use spektrafilm_backend::{ConvertSolverGpuParams, ScannerDensityGpuParams};
@@ -756,8 +756,8 @@ mod direct_tests {
             glare: None,
             gamut: None,
             unsharp: None,
-            grain_v2: None,
-            grain_v1: None,
+            grain_procedural: None,
+            grain_spektra: None,
             scan_output_space: &spektrafilm_math::colorspace::SRGB,
             camera_lens_blur_px: None,
             camera_diffusion: None,

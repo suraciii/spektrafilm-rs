@@ -59,7 +59,7 @@ fn active_layers_fast_stats_match_reference_across_workgroups() {
                 })
             })
             .collect();
-        let prepared = spektrafilm_model::grain::v1::prepare_grain(
+        let prepared = spektrafilm_model::grain::spektra::prepare_grain(
             &layers,
             layer_count,
             pixel_size_um,
@@ -69,7 +69,7 @@ fn active_layers_fast_stats_match_reference_across_workgroups() {
             [0.97, 0.99, 0.95],
         )
         .unwrap();
-        let mut params = GrainV1GpuParams {
+        let mut params = SpektraGrainGpuParams {
             base_seed: 17,
             layer_count,
             density_min: prepared.density_min,
@@ -116,7 +116,7 @@ fn active_layers_fast_stats_match_reference_across_workgroups() {
                 .flat_map(|row| row.map(|v| v * f64::from(sign)))
                 .collect();
             params.curve_layers = case_layers.iter().flatten().flatten().copied().collect();
-            let reference = spektrafilm_model::grain::v1::apply_grain(
+            let reference = spektrafilm_model::grain::spektra::apply_grain(
                 &image,
                 &case_curve,
                 &case_layers,
@@ -227,7 +227,7 @@ fn active_layers_fast_stats_match_reference_across_workgroups() {
 #[test]
 fn spektra_reports_the_missing_f64_and_int64_capability() {
     let gpu = crate::test_support::restricted_adapter();
-    let params = GrainV1GpuParams {
+    let params = SpektraGrainGpuParams {
         base_seed: 0,
         layer_count: 1,
         density_min: [0.0; 3],
