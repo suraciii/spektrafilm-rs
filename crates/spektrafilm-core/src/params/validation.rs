@@ -238,6 +238,8 @@ pub(crate) fn leaf_numeric_bounds(path: &str) -> Option<(f64, Option<f64>)> {
         "film_render.grain.dye_support_um" | "film_render.grain.dye_event_area_um2" => {
             Some((0.0, None))
         }
+        "film_render.grain.dye_strength" => Some((0.0, Some(4.0))),
+        "film_render.grain.dye_scale" => Some((0.5, Some(4.0))),
         "film_render.grain.channel_correlation" => Some((
             0.0,
             Some(super::grain::MEASURED_CHANNEL_CORRELATION_CEILING),
@@ -793,6 +795,26 @@ pub(super) fn validate_detailed(params: &RuntimeParams) -> Result<(), Validation
     if !grain.dye_event_area_um2.is_finite() || grain.dye_event_area_um2 <= 0.0 {
         return Err(ValidationError::new(Reason::EventArea, "film_render.grain.dye_event_area_um2",
             "film_render.grain.dye_event_area_um2: must be finite and strictly positive (square micrometers)").arg("value", grain.dye_event_area_um2));
+    }
+    if !grain.dye_strength.is_finite() || !(0.0..=4.0).contains(&grain.dye_strength) {
+        return Err(ValidationError::new(
+            Reason::NumericRange,
+            "film_render.grain.dye_strength",
+            "film_render.grain.dye_strength: must be finite and in [0, 4]",
+        )
+        .arg("min", 0.0)
+        .arg("max", 4.0)
+        .arg("value", grain.dye_strength));
+    }
+    if !grain.dye_scale.is_finite() || !(0.5..=4.0).contains(&grain.dye_scale) {
+        return Err(ValidationError::new(
+            Reason::NumericRange,
+            "film_render.grain.dye_scale",
+            "film_render.grain.dye_scale: must be finite and in [0.5, 4]",
+        )
+        .arg("min", 0.5)
+        .arg("max", 4.0)
+        .arg("value", grain.dye_scale));
     }
     // Preserve the historical supported and acceptance range. This ceiling
     // is not a certified material limit or scanner-processing attribution;

@@ -45,6 +45,24 @@ fn sparse_dye_state_preserves_omitted_and_authored_strength() {
 }
 
 #[test]
+fn flat_grain_state_preserves_dye_look_controls() {
+    let state = GuiState::from_value(json!({
+        "rust": {"version": CURRENT_STATE_VERSION},
+        "grain": {"dye_strength": 0.5, "dye_scale": 2.0}
+    }))
+    .unwrap();
+    let params = state.runtime_params().unwrap();
+    assert_eq!(params.film_render.grain.dye_strength, 0.5);
+    assert_eq!(params.film_render.grain.dye_scale, 2.0);
+    let saved =
+        GuiState::from_runtime(&params, state.film(), state.paper(), &state.sections).unwrap();
+    let reopened = GuiState::from_value(saved.sections.clone()).unwrap();
+    let restored = reopened.runtime_params().unwrap();
+    assert_eq!(restored.film_render.grain.dye_strength, 0.5);
+    assert_eq!(restored.film_render.grain.dye_scale, 2.0);
+}
+
+#[test]
 fn sparse_startup_preferences_and_factory_reset_keep_the_authored_dye_default() {
     use spektrafilm_core::params::GrainEngine;
 
@@ -958,10 +976,12 @@ fn grain_procedural_canonical_fields_roundtrip_through_state_and_runtime() {
     assert_eq!(restored.micro_structure, [0.4, 24.0]);
 
     let object = loaded.sections["grain"].as_object().unwrap();
-    assert_eq!(object.len(), 11);
+    assert_eq!(object.len(), 13);
     for key in [
         "active",
         "rms_granularity",
+        "dye_strength",
+        "dye_scale",
         "density_min",
         "uniformity",
         "particle_scale_sublayers",

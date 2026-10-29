@@ -140,11 +140,11 @@ The `input` workflow color-manages an already rendered image to the output space
 
 **Film → Grain** starts with **Enable grain** and **Engine**. It shows only the selected engine's effective controls. Turning Grain off hides numerical controls without clearing stored values.
 
-Dye exposes **Event area (strength)** in µm² and **Dye support (spatial formation)** in µm. Open **Dye Advanced** for secondary controls. Support changes field formation and image detail, not just grain diameter.
+Dye exposes **Grain strength** and **Grain scale** as its only editors. Strength 1 keeps the delivered look and 0 removes random grain, including residual count noise. Scale 1 keeps the delivered texture and larger values coarsen it; it is a film-coordinate texture scale, not a crystal diameter or scanner blur.
 
-Black-and-white Spektra and Dye show only record 0 for RMS or relative strength, density minimum, and uniformity. Hidden G/B requests stay stored and reactivate for color material.
+Black-and-white Spektra shows only record 0 for RMS or relative strength, density minimum, and uniformity. Hidden G/B requests stay stored and reactivate for color material.
 
-Dye also retains hidden color-only channel correlation. The three numerical-component scales remain independently editable in both material models; they are not RGB lanes.
+Dye retains channel correlation and the shared material requests without editors; they report inactive for Dye. The three numerical-component scales remain independent editors for Spektra; they are not RGB lanes.
 
 **Procedural Grain Profiles** appears only for Procedural. Named profiles retain editable **Amount**; choose **Custom** to expose custom controls. Noise hides **Film Resolution** and **Resolution Type** without clearing their requests.
 

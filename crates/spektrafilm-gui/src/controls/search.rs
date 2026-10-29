@@ -270,10 +270,7 @@ mod tests {
         let (params, extras) = factory();
         for (query, label) in [
             ("FILM_RENDER.GRAIN.FOTUFILM.SIZE", "Size"),
-            (
-                "Dye support (spatial formation)",
-                "Dye support (spatial formation)",
-            ),
+            ("rms granularity", "rms granularity"),
             (
                 "film_render.grain.procedural_resolution_factor",
                 "Film Resolution",

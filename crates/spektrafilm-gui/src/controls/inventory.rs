@@ -447,6 +447,11 @@ fn exclusion(path: &str, description: &Value) -> Option<&'static str> {
         "settings.spectral_shape" => {
             Some("core params::validation admits only the bundled wavelength grid")
         }
+        "film_render.grain.dye_support_um"
+        | "film_render.grain.dye_event_area_um2"
+        | "film_render.grain.channel_correlation" => {
+            Some("retained legacy Dye value; the delivered Dye law does not read it")
+        }
         "settings.preview_mode" => {
             Some("render.rs derives this request flag from Preview versus Scan")
         }
@@ -1462,10 +1467,6 @@ const LABELS: &[(&str, &str)] = &[
     ("film_render.grain.active", "Enable grain"),
     ("film_render.grain.blur", "blur"),
     ("film_render.grain.blur_dye_clouds_um", "dye-cloud blur"),
-    (
-        "film_render.grain.channel_correlation",
-        "Channel correlation",
-    ),
     ("film_render.grain.density_min", "density min"),
     ("film_render.grain.engine", "Engine"),
     ("film_render.grain.fotufilm.amount", "Amount"),
@@ -1502,6 +1503,8 @@ const LABELS: &[(&str, &str)] = &[
         "particle scale sublayers",
     ),
     ("film_render.grain.rms_granularity", "rms granularity"),
+    ("film_render.grain.dye_strength", "Grain strength"),
+    ("film_render.grain.dye_scale", "Grain scale"),
     ("film_render.grain.uniformity", "uniformity"),
     ("film_render.grain.procedural_amount", "Amount"),
     ("film_render.grain.procedural_chroma", "Chroma"),
@@ -1524,14 +1527,6 @@ const LABELS: &[(&str, &str)] = &[
     ("film_render.grain.procedural_shadows", "Shadows"),
     ("film_render.grain.procedural_size", "Size"),
     ("film_render.grain.procedural_timer", "Timer"),
-    (
-        "film_render.grain.dye_support_um",
-        "Dye support (spatial formation)",
-    ),
-    (
-        "film_render.grain.dye_event_area_um2",
-        "Event area (strength)",
-    ),
     ("film_render.halation.active", "Enable halation"),
     ("film_render.halation.boost_ev", "boost ev"),
     ("film_render.halation.boost_range", "boost range"),

@@ -98,6 +98,8 @@ fn canonicalize_grain_state(section: &mut Value) {
     const CANONICAL: &[&str] = &[
         "active",
         "rms_granularity",
+        "dye_strength",
+        "dye_scale",
         "density_min",
         "uniformity",
         "particle_scale_sublayers",

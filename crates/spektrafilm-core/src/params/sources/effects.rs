@@ -10,11 +10,10 @@ pub(super) enum Condition {
     Spektra,
     Procedural,
     Dye,
-    ColorRecords,
+    Retained,
     MaterialRecord(Option<usize>),
     Analogue,
     Fotufilm,
-    SpektraOrDye,
     Custom,
     Spatial,
     Diffusion(bool),
@@ -48,9 +47,7 @@ impl Condition {
             Self::Spektra => "film_render.grain.engine = spektra",
             Self::Procedural => "film_render.grain.engine = procedural",
             Self::Dye => "film_render.grain.engine = dye; supported stock, format and route",
-            Self::ColorRecords => {
-                "selected film has color records; channel_correlation is retained but inactive for single-record black-and-white material"
-            }
+            Self::Retained => "retained legacy Dye value; the delivered Dye law does not read it",
             Self::MaterialRecord(_) => {
                 "Spektra and Dye use record 0 for black-and-white material; G/B values remain stored and inactive"
             }
@@ -58,7 +55,6 @@ impl Condition {
                 "effective Procedural mode = analogue; Noise does not use Film Resolution or its method"
             }
             Self::Fotufilm => "film_render.grain.engine = fotufilm",
-            Self::SpektraOrDye => "film_render.grain.engine = spektra or dye",
             Self::Custom => {
                 "film_render.grain.procedural_profile = custom; select custom to use this control"
             }
@@ -118,7 +114,7 @@ impl Condition {
             Self::Spektra => g.engine == GrainEngine::Spektra,
             Self::Procedural => g.engine == GrainEngine::Procedural,
             Self::Dye => g.engine == GrainEngine::Dye,
-            Self::ColorRecords => film.map_or(!g.monochrome, Profile::is_color),
+            Self::Retained => false,
             Self::MaterialRecord(component) => {
                 component.is_none_or(|component| component == 0)
                     || film.map_or(!g.monochrome, Profile::is_color)
@@ -128,7 +124,6 @@ impl Condition {
                     || g.procedural_mode == crate::params::grain::ProceduralGrainMode::Analogue
             }
             Self::Fotufilm => g.engine == GrainEngine::Fotufilm,
-            Self::SpektraOrDye => matches!(g.engine, GrainEngine::Spektra | GrainEngine::Dye),
             Self::Custom => g.procedural_profile == "custom",
 
             Self::Spatial => !p.debug.deactivate_spatial_effects,
@@ -208,15 +203,14 @@ fn grain_conditions(path: &str, component: Option<usize>) -> [Option<Condition>;
                 out[3] = Some(Analogue);
             }
         }
-    } else if matches!(
-        path,
-        "film_render.grain.dye_support_um" | "film_render.grain.dye_event_area_um2"
-    ) || path.ends_with(".channel_correlation")
+    } else if path.ends_with(".dye_strength") || path.ends_with(".dye_scale") {
+        out[1] = Some(Dye);
+    } else if path.ends_with(".dye_support_um")
+        || path.ends_with(".dye_event_area_um2")
+        || path.ends_with(".channel_correlation")
     {
         out[1] = Some(Dye);
-        if path.ends_with(".channel_correlation") {
-            out[2] = Some(ColorRecords);
-        }
+        out[2] = Some(Retained);
     } else if [
         "rms_granularity",
         "density_min",
@@ -226,7 +220,7 @@ fn grain_conditions(path: &str, component: Option<usize>) -> [Option<Condition>;
     .iter()
     .any(|field| path.ends_with(field))
     {
-        out[1] = Some(SpektraOrDye);
+        out[1] = Some(Spektra);
         if !path.ends_with(".particle_scale_sublayers") {
             out[2] = Some(MaterialRecord(component));
         }
@@ -474,11 +468,10 @@ mod tests {
     }
 
     #[test]
-    fn monochrome_dye_hides_record_lanes_but_not_numerical_components() {
+    fn monochrome_dye_marks_shared_material_controls_inactive() {
         let mut params = RuntimeParams::default();
         params.film_render.grain.engine = GrainEngine::Dye;
         params.film_render.grain.monochrome = true;
-        let before = params.clone();
         let bw = film(false, true);
         let color = film(true, true);
         for path in [
@@ -486,81 +479,37 @@ mod tests {
             "film_render.grain.density_min",
             "film_render.grain.uniformity",
         ] {
-            for component in [None, Some(0)] {
+            for component in [None, Some(0), Some(1), Some(2)] {
                 assert_eq!(
                     grain_control_inactive_reason(path, &params, component),
-                    None
+                    Some(Condition::Spektra.description())
                 );
-            }
-            for component in [Some(1), Some(2)] {
                 assert_eq!(
-                    grain_control_inactive_reason(path, &params, component),
-                    Some(Condition::MaterialRecord(component).description())
+                    grain_control_inactive_reason_with_profile(path, &params, &bw, component),
+                    Some(Condition::Spektra.description())
                 );
-                // Loaded material wins over a stale runtime monochrome flag.
                 assert_eq!(
                     grain_control_inactive_reason_with_profile(path, &params, &color, component),
-                    None
+                    Some(Condition::Spektra.description())
                 );
             }
         }
-        let coupling = "film_render.grain.channel_correlation";
-        assert_eq!(
-            grain_control_inactive_reason(coupling, &params, None),
-            Some(Condition::ColorRecords.description())
-        );
-        assert_eq!(
-            grain_control_inactive_reason_with_profile(coupling, &params, &color, None),
-            None
-        );
-        for component in [Some(0), Some(1), Some(2)] {
-            assert_eq!(
-                grain_control_inactive_reason_with_profile(
-                    "film_render.grain.particle_scale_sublayers",
-                    &params,
-                    &bw,
-                    component
-                ),
-                None
-            );
-        }
-        assert_eq!(
-            params, before,
-            "applicability must not mutate stored requests"
-        );
-        params.film_render.grain.monochrome = false;
-        assert_eq!(grain_control_inactive_reason(coupling, &params, None), None);
-        assert_eq!(
-            grain_control_inactive_reason_with_profile(coupling, &params, &bw, None),
-            Some(Condition::ColorRecords.description())
-        );
-        assert!(
-            grain_control_inactive_reason_with_profile(
-                "film_render.grain.uniformity",
-                &params,
-                &bw,
-                Some(1)
-            )
-            .is_some()
-        );
+        // Spektra keeps its record-0 behavior for the same shared fields.
         params.film_render.grain.engine = GrainEngine::Spektra;
         for path in [
             "film_render.grain.rms_granularity",
             "film_render.grain.density_min",
             "film_render.grain.uniformity",
         ] {
-            assert_eq!(
-                grain_control_inactive_reason_with_profile(path, &params, &bw, Some(0)),
-                None
-            );
+            assert_eq!(grain_control_inactive_reason(path, &params, None), None);
             for component in [Some(1), Some(2)] {
-                assert_eq!(
-                    grain_control_inactive_reason_with_profile(path, &params, &bw, component),
-                    Some(Condition::MaterialRecord(component).description())
-                );
                 assert_eq!(
                     grain_control_inactive_reason_with_profile(path, &params, &color, component),
                     None
+                );
+                assert_eq!(
+                    grain_control_inactive_reason_with_profile(path, &params, &bw, component),
+                    Some(Condition::MaterialRecord(component).description())
                 );
             }
         }
@@ -591,7 +540,7 @@ mod tests {
             params.film_render.grain.engine = engine;
             assert_eq!(
                 grain_control_inactive_reason("film_render.grain.rms_granularity", &params, None),
-                Some(Condition::SpektraOrDye.description())
+                Some(Condition::Spektra.description())
             );
         }
     }
@@ -601,7 +550,7 @@ mod tests {
         let mut params = RuntimeParams::default();
         params.film_render.grain.engine = GrainEngine::Dye;
         params.settings.preview_mode = true;
-        let path = "film_render.grain.dye_event_area_um2";
+        let path = "film_render.grain.dye_strength";
         assert_eq!(grain_control_inactive_reason(path, &params, None), None);
         params.debug.deactivate_stochastic_effects = true;
         assert_eq!(

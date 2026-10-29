@@ -281,6 +281,14 @@ pub fn coordinate_uniform(seed: u32, stream: u32, x: u32, y: u32, n: u32) -> f64
     f64::from(h >> 8) * (1.0 / 16_777_216.0)
 }
 
+/// Coordinate-addressed standard normal. Consumes ordinals 1 and 2, the same
+/// samples the device's large-rate draw uses.
+pub fn normal01_coordinate(seed: u32, stream: u32, x: u32, y: u32) -> f64 {
+    let u1 = coordinate_uniform(seed, stream, x, y, 1).max(1e-12);
+    let u2 = coordinate_uniform(seed, stream, x, y, 2);
+    (-2.0 * u1.ln()).sqrt() * (std::f64::consts::TAU * u2).cos()
+}
+
 /// `poisson_exact` over [`coordinate_uniform`] samples: the device's law and
 /// iteration caps, with f64 arithmetic and shared sample addresses.
 pub fn poisson_exact_coordinate(lambda: f64, seed: u32, stream: u32, x: u32, y: u32) -> u64 {

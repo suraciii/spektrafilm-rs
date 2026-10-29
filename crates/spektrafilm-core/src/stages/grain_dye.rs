@@ -488,6 +488,8 @@ pub fn resolve(film: &Profile, params: &RuntimeParams) -> Result<DyeGrainParams,
     let support_um = grain.dye_support_um as f64;
     Ok(DyeGrainParams {
         monochrome,
+        dye_strength: grain.dye_strength,
+        dye_scale: grain.dye_scale,
         support_um,
         cell_um: cell_um_override(),
         event_area_um2: grain.dye_event_area_um2,
@@ -604,17 +606,11 @@ fn cpu_field(
         spektrafilm_backend::telemetry::CpuReason::DyeGrainFieldCpu,
     );
     // The Dye grain law: the record density is built from a correlated, band-limited
-    // field whose amplitude follows the derived granularity curve. Parameters are part
-    // of the engine (ClumpParams::delivered), not of the caller's environment, and the
-    // mean is preserved exactly: E[D] = t for every strength.
-    // The law's amplitude, correlation lengths, event area and fog baseline are engine
-    // constants; the resolved seed selects the realization and the expectation
-    // diagnostic replaces every draw by its conditional mean. The device reads the same
-    // two resolved fields, so both executors realize the same law.
-    let mut params = spektrafilm_model::grain::dye::texture::ClumpParams::delivered();
-    params.seed = resolved.seed;
-    params.expectation = resolved.expectation;
-    params.monochrome = resolved.monochrome;
+    // field whose amplitude follows the derived granularity curve. The engine's law
+    // constants come from ClumpParams::delivered; the recipe's strength and scale map
+    // onto them in `law_params`, and the mean is preserved exactly: E[D] = t for every
+    // strength. The device receives the same mapped law, so both executors realize it.
+    let params = law_params(resolved);
     spektrafilm_model::grain::dye::texture::apply(
         source,
         source_pitch_um,
@@ -646,6 +642,14 @@ pub fn readout_with_response(
     + Sync,
 ) -> Result<ImageBuf, String> {
     let resolved = resolve(film, params)?;
+    if resolved.dye_strength != 1.0 || resolved.dye_scale != 1.0 {
+        return Err(
+            "film grain Dye: the exact-cell optical response path realizes the capacity model \
+             and does not implement grain strength or grain scale; use the density-only field \
+             or the default look values"
+                .into(),
+        );
+    }
     if backend.is_gpu() {
         match device_params(&resolved, source_pitch_um, grid) {
             Ok(device) => {
@@ -677,6 +681,40 @@ pub fn readout_with_response(
     })
 }
 
+/// The delivered law with the recipe's two effective Dye look controls
+/// applied. This is the one mapping both executors consume.
+///
+/// The look strength scales the correlated field's amplitude and the event
+/// count's standard deviation together: the field amplitude scales `white`
+/// and `base`, while the event mass `q` enters the count variance as its
+/// square root, so `q` scales by the square. The per-record ratio and the
+/// derived density taper are untouched. A zero strength is the deterministic
+/// limit: the law replaces every draw by its conditional mean, so no random
+/// grain or residual count noise remains.
+fn law_params(resolved: &DyeGrainParams) -> spektrafilm_model::grain::dye::texture::ClumpParams {
+    let mut params = spektrafilm_model::grain::dye::texture::ClumpParams::delivered();
+    let strength = resolved.dye_strength;
+    let mut zero = strength == 0.0;
+    if strength > 0.0 {
+        // The mapped event area must stay representable on both executors.
+        // Below the f32 normal minimum the device would read zero, so the
+        // request resolves to the deterministic limit on both.
+        let q = params.q * strength * strength;
+        if q >= f64::from(f32::MIN_POSITIVE) {
+            params.base *= strength;
+            params.white *= strength;
+            params.q = q;
+        } else {
+            zero = true;
+        }
+    }
+    params.length_scale = resolved.dye_scale;
+    params.seed = resolved.seed;
+    params.expectation = resolved.expectation || zero;
+    params.monochrome = resolved.monochrome;
+    params
+}
+
 /// Device parameters for one readout of the resolved model: the channel
 /// tables and formation taps the device evaluates against, and the output
 /// grid.
@@ -691,6 +729,7 @@ fn device_params(
     source_pitch_um: f64,
     grid: ReadoutGrid,
 ) -> Result<spektrafilm_backend::dye_params::DyeGpuParams, String> {
+    let law = law_params(resolved);
     Ok(spektrafilm_backend::dye_params::DyeGpuParams {
         source_pitch_um,
         grid: spektrafilm_backend::dye_params::DyeReadoutGrid {
@@ -699,9 +738,12 @@ fn device_params(
             width: grid.width,
             height: grid.height,
         },
-        seed: resolved.seed,
-        expectation: resolved.expectation,
-        monochrome: resolved.monochrome,
+        seed: law.seed,
+        expectation: law.expectation,
+        monochrome: law.monochrome,
+        white: law.white,
+        event_area_um2: law.q,
+        length_scale: law.length_scale,
     })
 }
 
@@ -941,8 +983,9 @@ mod tests {
         for pixel in source.data.chunks_mut(3) {
             pixel.iter_mut().for_each(|value| *value = from_f64(0.3));
         }
-        // Event rate lambda = (t + fog) * pitch^2 / q; these pitches span 0.5 to 7500.
-        for (label, pitch) in [("0.5", 0.041), ("4", 0.115), ("30", 0.316), ("7500", 5.0)] {
+        // Event rate lambda = (t + fog) * pitch^2 / q. The supported tap
+        // radius bounds the finest representable pitch.
+        for (label, pitch) in [("170", 0.75), ("300", 1.0), ("7500", 5.0)] {
             let grid = ReadoutGrid {
                 origin_um: [0.0, 0.0],
                 pitch_um: [pitch, pitch],
@@ -1754,5 +1797,246 @@ mod tests {
             let part = dye::apply(&target, q, crop, &model).unwrap();
             assert!(max_abs_diff_at(&all, &part, 3, 2) <= read_tolerance());
         }
+    }
+    /// Zero strength is the deterministic limit: the realized density is the
+    /// target, with no random field and no residual count noise.
+    #[test]
+    fn zero_dye_strength_returns_the_target() {
+        use spektrafilm_model::grain::dye::texture::{ClumpParams, ReadoutGeometry, apply};
+        let film = load("kodak_portra_400");
+        let mut params = supported_params();
+        params.film_render.grain.dye_strength = 0.0;
+        let resolved = resolve(&film, &params).unwrap();
+        let law = law_params(&resolved);
+        assert!(law.expectation, "zero strength resolves to the mean law");
+        let target = density_target(32, 24);
+        let pitch = 3.5;
+        let whole = ReadoutGeometry {
+            origin_um: [0.0, 0.0],
+            pitch_um: [pitch, pitch],
+            width: 32,
+            height: 24,
+        };
+        let out = apply(&target, pitch, &whole, &law).unwrap();
+        assert!(max_abs_diff(&target, &out) <= 1e-5);
+
+        for grid in [
+            ReadoutGeometry {
+                origin_um: [7.0, 3.5],
+                pitch_um: [5.25, 4.75],
+                width: 9,
+                height: 8,
+            },
+            ReadoutGeometry {
+                origin_um: [-3.5, -7.0],
+                pitch_um: [1.75, 2.25],
+                width: 13,
+                height: 21,
+            },
+        ] {
+            let mut expectation = law.clone();
+            expectation.expectation = true;
+            let random = apply(&target, pitch, &grid, &law).unwrap();
+            let expected = apply(&target, pitch, &grid, &expectation).unwrap();
+            assert!(max_abs_diff(&random, &expected) <= 1e-5);
+        }
+        let coarse = ReadoutGeometry {
+            origin_um: [0.0, 0.0],
+            pitch_um: [50_000.0, 50_000.0],
+            width: 2,
+            height: 2,
+        };
+        let out = apply(&target, 50_000.0, &coarse, &law).unwrap();
+        for value in out.data.iter() {
+            assert!(value.is_finite());
+        }
+        let mut expectation = law.clone();
+        expectation.expectation = true;
+        let expected = apply(&target, 50_000.0, &coarse, &expectation).unwrap();
+        assert!(max_abs_diff(&out, &expected) <= 1e-5);
+
+        let delivered = ClumpParams::delivered();
+        assert_eq!(delivered.strength, [1.0, 1.0, 1.18]);
+    }
+
+    /// A tiny positive strength maps to a huge count rate. Both executors
+    /// must keep the target mean instead of overflowing or capping the rate.
+    #[test]
+    fn tiny_dye_strength_keeps_the_target_on_both_executors() {
+        use spektrafilm_backend::ComputeBackend as _;
+        use spektrafilm_model::grain::dye::texture::{ReadoutGeometry, apply};
+        let film = load("kodak_portra_400");
+        let mut params = supported_params();
+        params.film_render.grain.dye_strength = 1e-5;
+        let resolved = resolve(&film, &params).unwrap();
+        let law = law_params(&resolved);
+        assert!(!law.expectation, "a positive strength stays stochastic");
+        let target = density_target(32, 24);
+        let pitch = 3.5;
+        let grid = ReadoutGrid {
+            origin_um: [0.0, 0.0],
+            pitch_um: [pitch, pitch],
+            width: 32,
+            height: 24,
+        };
+        let cpu = apply(
+            &target,
+            pitch,
+            &ReadoutGeometry {
+                origin_um: grid.origin_um,
+                pitch_um: grid.pitch_um,
+                width: grid.width,
+                height: grid.height,
+            },
+            &law,
+        )
+        .unwrap();
+        assert!(max_abs_diff(&target, &cpu) <= 1e-4);
+
+        let backend = spektrafilm_gpu::test_support::adapter();
+        let device = device_params(&resolved, pitch, grid).unwrap();
+        let gpu = backend
+            .dye_field(&target, &device)
+            .expect("device field path")
+            .expect("device field runs");
+        assert!(max_abs_diff(&target, &gpu) <= 1e-3);
+        assert!(max_abs_diff(&cpu, &gpu) <= 1e-3);
+    }
+
+    /// Stronger look strength raises the realized standard deviation while
+    /// the density mean stays at the target; weaker strength lowers it.
+    #[test]
+    fn dye_strength_scales_the_realized_amplitude() {
+        use spektrafilm_model::grain::dye::texture::{ReadoutGeometry, apply};
+        let film = load("kodak_portra_400");
+        let target = {
+            let mut image = ImageBuf::new(48, 48);
+            image.data.iter_mut().for_each(|v| *v = from_f64(0.62));
+            image
+        };
+        let pitch = 3.5;
+        let grid = ReadoutGeometry {
+            origin_um: [0.0, 0.0],
+            pitch_um: [pitch, pitch],
+            width: 48,
+            height: 48,
+        };
+        let moments = |strength: f64| {
+            let mut params = supported_params();
+            params.film_render.grain.dye_strength = strength;
+            let resolved = resolve(&film, &params).unwrap();
+            let out = apply(&target, pitch, &grid, &law_params(&resolved)).unwrap();
+            let values: Vec<f64> = out.data.chunks(3).map(|p| p[1] as f64).collect();
+            let mean = values.iter().sum::<f64>() / values.len() as f64;
+            let var = values.iter().map(|v| (v - mean).powi(2)).sum::<f64>() / values.len() as f64;
+            (mean, var.sqrt())
+        };
+        let (weak_mean, weak) = moments(0.5);
+        let (base_mean, base) = moments(1.0);
+        let (strong_mean, strong) = moments(2.0);
+        for mean in [weak_mean, base_mean, strong_mean] {
+            assert!((mean - 0.62).abs() < 5e-3, "mean {mean} left the target");
+        }
+        assert!(weak < 0.8 * base, "weak {weak} vs base {base}");
+        assert!(strong > 1.2 * base, "strong {strong} vs base {base}");
+    }
+
+    /// The scale control moves the texture's correlation length.
+    #[test]
+    fn dye_scale_changes_the_texture_correlation_length() {
+        use spektrafilm_model::grain::dye::texture::{ReadoutGeometry, apply};
+        let film = load("kodak_portra_400");
+        let target = {
+            let mut image = ImageBuf::new(64, 64);
+            image.data.iter_mut().for_each(|v| *v = from_f64(0.55));
+            image
+        };
+        let pitch = 3.5;
+        let grid = ReadoutGeometry {
+            origin_um: [0.0, 0.0],
+            pitch_um: [pitch, pitch],
+            width: 64,
+            height: 64,
+        };
+        let adjacent_energy = |scale: f64| {
+            let mut params = supported_params();
+            params.film_render.grain.dye_scale = scale;
+            let resolved = resolve(&film, &params).unwrap();
+            let out = apply(&target, pitch, &grid, &law_params(&resolved)).unwrap();
+            let mut sum = 0.0;
+            let mut count = 0usize;
+            for y in 0..64usize {
+                for x in 0..63usize {
+                    let a = out.data[(y * 64 + x) * 3 + 1] as f64;
+                    let b = out.data[(y * 64 + x + 1) * 3 + 1] as f64;
+                    sum += (a - b).abs();
+                    count += 1;
+                }
+            }
+            sum / count as f64
+        };
+        let fine = adjacent_energy(0.5);
+        let reference = adjacent_energy(1.0);
+        let coarse = adjacent_energy(2.0);
+        assert!(
+            fine > reference && reference > coarse,
+            "adjacent energy must fall as the scale coarsens: {fine} > {reference} > {coarse}"
+        );
+    }
+
+    /// The device realizes the mapped non-default look law with the same
+    /// amplitude and mean as the CPU reference.
+    #[test]
+    fn device_field_realizes_the_mapped_look_law() {
+        use spektrafilm_backend::ComputeBackend as _;
+        use spektrafilm_model::grain::dye::texture::{ReadoutGeometry, apply};
+        let backend = spektrafilm_gpu::test_support::adapter();
+        let film = load("kodak_portra_800");
+        let mut params = supported_params();
+        params.film_render.grain.dye_strength = 1.6;
+        params.film_render.grain.dye_scale = 1.5;
+        let resolved = resolve(&film, &params).unwrap();
+        let source = density_target(64, 48);
+        let pitch = 3.5;
+        let grid = ReadoutGrid {
+            origin_um: [0.0, 0.0],
+            pitch_um: [pitch, pitch],
+            width: 64,
+            height: 48,
+        };
+        let device = device_params(&resolved, pitch, grid).unwrap();
+        let gpu = backend
+            .dye_field(&source, &device)
+            .expect("device field path")
+            .expect("device field runs");
+        let cpu = apply(
+            &source,
+            pitch,
+            &ReadoutGeometry {
+                origin_um: grid.origin_um,
+                pitch_um: grid.pitch_um,
+                width: grid.width,
+                height: grid.height,
+            },
+            &law_params(&resolved),
+        )
+        .unwrap();
+        let moments = |image: &ImageBuf| {
+            let values: Vec<f64> = image.data.chunks(3).map(|p| p[1] as f64).collect();
+            let mean = values.iter().sum::<f64>() / values.len() as f64;
+            let var = values.iter().map(|v| (v - mean).powi(2)).sum::<f64>() / values.len() as f64;
+            (mean, var.sqrt())
+        };
+        let (gpu_mean, gpu_sd) = moments(&gpu);
+        let (cpu_mean, cpu_sd) = moments(&cpu);
+        assert!(
+            (gpu_mean - cpu_mean).abs() <= 0.02 * cpu_mean.abs(),
+            "mean: device {gpu_mean:.5}, host {cpu_mean:.5}"
+        );
+        let ratio = gpu_sd.max(1e-12) / cpu_sd.max(1e-12);
+        assert!(
+            (ratio - 1.0).abs() <= 0.15,
+            "amplitude: device is {ratio:.3} of the host"
+        );
     }
 }

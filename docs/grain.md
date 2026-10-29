@@ -5,7 +5,7 @@ Use this page to select a grain engine and configure its controls. It also descr
 ## Select an engine
 
 `film_render.grain.engine` accepts `spektra`, `procedural`, `dye`, or `fotufilm`.
-Use `procedural_*` for Procedural controls and `dye_support_um` / `dye_event_area_um2` for Dye controls.
+Use `procedural_*` for Procedural controls and `dye_strength` / `dye_scale` for Dye look controls.
 
 Historical numbered control keys remain readable; saved documents and parameter descriptions emit only canonical names.
 Supplying both spellings of one control in the same grain object is an error.
@@ -17,7 +17,7 @@ Dye diagnostics use `SPEKTRAFILM_GRAIN_DYE_*`. Historical numbered diagnostic na
 
 - Spektra is the upstream experimental original.
 - Procedural derives from Dehancer. It provides Analogue/Noise grain with twelve format/speed profiles. Its controls include Size, Amount, Shadows, Midtones, Highlights, Chroma, and Film Resolution. Pixel parity with Dehancer is not claimed.
-- Dye is the default self-developed experimental film-coordinate dye field. `dye_support_um`, `dye_event_area_um2`, and `channel_correlation` control it.
+- Dye is the default self-developed experimental film-coordinate dye field. `dye_strength` and `dye_scale` control it.
 - Fotufilm Film is an adapted appearance population model fitted to resolved film curves. It is opt-in. `film_render.grain.fotufilm.*` controls it.
 
 Explicit engines in existing looks remain unchanged. To keep the historical engine in a sparse source, set `film_render.grain.engine = spektra`. See [default compatibility](../specs/film-grain/spec.md#defaults-and-compatibility) for omitted-engine and GUI state migration rules.
@@ -95,9 +95,16 @@ Grain Dye is selected with `film_render.grain.engine: "dye"`.
 
 ### Field controls
 
-Dye's grain law is part of the engine: the relative amplitude, the three correlation lengths, the band limit, the event area, the fog baseline, and the development taper are constants, not controls. Recipes that carry `dye_support_um`, `dye_event_area_um2`, `rms_granularity`, `density_min`, `uniformity`, or `channel_correlation` still load; those values do not change the field.
+Dye's grain law is part of the engine. Two relative recipe controls tune it:
 
-The seed selects the realization. `random_seed` is the only grain input that changes the image, and the same seed, geometry, and executor reproduce the same field.
+- **Grain strength** (`dye_strength`, 0..4) scales the correlated field amplitude and the event count together. `1` keeps the delivered look. `0` returns the target density with no random grain, including residual count noise. The density response and the per-record ratio do not change. It is not a certified optical RMS target.
+- **Grain scale** (`dye_scale`, 0.5..4) scales the texture's correlation lengths and band limit in film coordinates. `1` keeps the delivered look. It is not a crystal diameter, scanner blur, or output-pixel size.
+
+Omitting either key resolves to `1.0`, so recipes authored before these controls existed keep the delivered look.
+
+The remaining law values — per-record relative amplitude, record coupling, octave weights, fog baseline, saturation density, and development taper — are engine constants. Recipes that carry `dye_support_um`, `dye_event_area_um2`, `rms_granularity`, `density_min`, `uniformity`, `particle_scale_sublayers`, or `channel_correlation` load and save unchanged; those values do not change the delivered Dye field.
+
+The seed selects the realization. `random_seed`, `dye_strength`, and `dye_scale` are the grain inputs that change the image, and the same seed, inputs, geometry, and executor reproduce the same field.
 
 Dye realizes a band-limited correlated field on the film lattice and reads it out through the requested grid. A finer grid interpolates a lattice cell centre; a coarser grid integrates the cells it covers. Cropping, preview scaling, and stage splitting therefore sample one film rather than starting a second realization.
 
