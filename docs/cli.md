@@ -245,6 +245,12 @@ Add `--gpu-timings` to collect compute-pass timestamps when the adapter supports
 The final report includes operation outcomes, repeated simulation attempts, saving attribution, actual GPU work, and explicit availability reasons.
 Diagnostics do not change image parameters or machine-readable render output.
 
+`process --timings` prints human timing information to stderr without requiring a report. Pipeline simulation covers the same attempt boundary as the JSON simulation observation; Runtime preparation is reported separately.
+
+GPU timing reports group submitted compute passes by semantic stage, pass kind, and purpose. An unclassified stage or pass kind appears as `other`. Each group shows executed, timed, and valid pass counts, a complete sum when coverage is complete, and a separately labeled partial sum when available. Truncated pass detail does not itself make aggregate timing incomplete; missing timestamps can make aggregate timing incomplete even when detail is not truncated. Missing or pending timestamps remain unavailable, not zero. `query_capacity` means the bounded query pool or per-command capacity was exhausted. A compute-pass sum is not GPU utilization or the whole operation's GPU duration, and subtracting it from host elapsed time does not measure CPU time.
+
+Reports also include directly observed host intervals for resource creation, uploads, command encoding, submission, and existing submission or readback waits. Encoding can overlap resource creation and uploads; nested scopes are inclusive. Do not add these intervals as exclusive CPU costs. Older reports can lack the new attribution fields.
+
 Report and progress-write errors are reported separately from the image result.
 Neither destination may replace an existing file or alias input, output, or configuration files.
 Without `--diagnostics`, the CLI starts no progress writer and creates no diagnostics files.

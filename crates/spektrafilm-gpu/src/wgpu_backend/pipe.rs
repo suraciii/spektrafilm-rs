@@ -340,9 +340,9 @@ impl GpuPipe {
         );
         let binding_types: Vec<wgpu::BufferBindingType> =
             bindings.iter().map(|b| b.binding_type).collect();
-        let (cached, hit) =
-            self.cache
-                .get_or_compile(&self.device.raw, shader_source, &binding_types);
+        let (cached, hit) = self
+            .cache
+            .get_or_compile(&self.device, shader_source, &binding_types);
         if self.device.context.enabled() {
             let mut work = WorkCounters::default();
             if hit {
@@ -472,9 +472,9 @@ impl GpuPipe {
             resources.iter().map(|b| b.binding_type).collect();
         binding_types.push(wgpu::BufferBindingType::Storage { read_only: true });
         binding_types.push(wgpu::BufferBindingType::Storage { read_only: false });
-        let (cached, _hit) =
-            self.cache
-                .get_or_compile(&self.device.raw, shader_source, &binding_types);
+        let (cached, _hit) = self
+            .cache
+            .get_or_compile(&self.device, shader_source, &binding_types);
 
         let resource_buffers: Vec<wgpu::Buffer> = resources
             .iter()

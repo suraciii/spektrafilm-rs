@@ -231,7 +231,7 @@ fn build_spektra_grain_state_with_limit(
             0,
             u64::from(count) * 12,
         );
-        dispatch.dispatch(
+        dispatch.dispatch_named(
             &pipe,
             &[
                 &params_buf,
@@ -243,6 +243,7 @@ fn build_spektra_grain_state_with_limit(
             count,
             false,
             backend,
+            Some("spektra_particle_formation"),
         );
         if !params.mt19937_regime {
             for sl in 0..n_layers {
@@ -340,12 +341,13 @@ fn build_spektra_grain_state_with_limit(
             );
         }
         let params_buf = compose_params(count);
-        compose.dispatch(
+        compose.dispatch_named(
             &compose_pipe,
             &[&params_buf, &layers_window, &clump_window, &density_window],
             count,
             false,
             backend,
+            Some("spektra_compose"),
         );
         compose.copy(
             &density_window,

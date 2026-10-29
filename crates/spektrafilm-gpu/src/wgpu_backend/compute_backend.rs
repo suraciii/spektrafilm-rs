@@ -18,7 +18,11 @@ impl ComputeBackend for WgpuBackend {
             // host in reference precision and uploads it.
             return Ok(None);
         }
-        self.prepare_spectral_table_device(p).map(Some)
+        let (backend, _stage) = self.observed_stage(
+            "spectral_prepare",
+            spektrafilm_backend::telemetry::GpuStage::SpectralPrepare,
+        );
+        backend.prepare_spectral_table_device(p).map(Some)
     }
     fn prepare_spectral_tc_lut_from_host(
         &self,
@@ -38,7 +42,11 @@ impl ComputeBackend for WgpuBackend {
             // in reference precision and uploads it.
             return Ok(None);
         }
-        self.prepare_gamut_table_device(p).map(Some)
+        let (backend, _stage) = self.observed_stage(
+            "gamut_prepare",
+            spektrafilm_backend::telemetry::GpuStage::GamutPrepare,
+        );
+        backend.prepare_gamut_table_device(p).map(Some)
     }
     fn prepare_gamut_table_from_host(
         &self,
@@ -53,7 +61,11 @@ impl ComputeBackend for WgpuBackend {
         source: &spektrafilm_backend::PreparedTable,
         p: &spektrafilm_backend::InputGamutTableParams<'_>,
     ) -> Result<spektrafilm_backend::PreparedTable, String> {
-        self.remap_input_gamut_table_gpu(source, p)
+        let (backend, _stage) = self.observed_stage(
+            "gamut_prepare",
+            spektrafilm_backend::telemetry::GpuStage::GamutPrepare,
+        );
+        backend.remap_input_gamut_table_gpu(source, p)
     }
     fn observation_context(&self) -> Option<&ObservationContext> {
         Some(&self.device.context)
@@ -760,20 +772,12 @@ impl ComputeBackend for WgpuBackend {
         image: &ImageBuf,
         params: &spektrafilm_backend::MeterAutoexposureParams,
     ) -> Result<Option<f64>, String> {
-        let scope = if self.device.context.enabled() {
-            Some(self.device.context.scope(
-                "metering",
-                ObservationKind::Stage,
-                self.device.context.purpose(),
-            ))
-        } else {
-            None
-        };
-        if let Some(s) = &scope {
-            s.context().record_executor(Executor::Gpu, None);
-        }
-        let state = build_meter_state(&self.device, params, image, self)?;
-        Ok(Some(state.meter(&self.pipe)?))
+        let (backend, _stage) = self.observed_stage(
+            "metering",
+            spektrafilm_backend::telemetry::GpuStage::Metering,
+        );
+        let state = build_meter_state(&backend.device, params, image, &backend)?;
+        Ok(Some(state.meter(&backend.pipe)?))
     }
 
     fn convert_colorspace(
@@ -854,24 +858,16 @@ impl ComputeBackend for WgpuBackend {
         image: &spektrafilm_backend::DeviceImage,
         params: &spektrafilm_backend::OutputSampleGpuParams,
     ) -> Result<Option<spektrafilm_backend::OutputSampleData>, String> {
-        let scope = if self.device.context.enabled() {
-            Some(self.device.context.scope(
-                "saving_convert",
-                ObservationKind::Stage,
-                self.device.context.purpose(),
-            ))
-        } else {
-            None
-        };
-        if let Some(scope) = &scope {
-            scope.context().record_executor(Executor::Gpu, None);
-        }
+        let (backend, _stage) =
+            self.observed_stage("saving", spektrafilm_backend::telemetry::GpuStage::Saving);
         if !image.is_retained() {
             return Err(
                 "saving conversion: retained samples were requested for a host carrier".to_owned(),
             );
         }
-        self.output_samples_from_retained(image, params).map(Some)
+        backend
+            .output_samples_from_retained(image, params)
+            .map(Some)
     }
 
     /// Saving sample conversion of host samples: one upload of the final
@@ -881,19 +877,9 @@ impl ComputeBackend for WgpuBackend {
         image: &ImageBuf,
         params: &spektrafilm_backend::OutputSampleGpuParams,
     ) -> Result<Option<spektrafilm_backend::OutputSampleData>, String> {
-        let scope = if self.device.context.enabled() {
-            Some(self.device.context.scope(
-                "saving_convert",
-                ObservationKind::Stage,
-                self.device.context.purpose(),
-            ))
-        } else {
-            None
-        };
-        if let Some(scope) = &scope {
-            scope.context().record_executor(Executor::Gpu, None);
-        }
-        self.output_samples_from_host(image, params).map(Some)
+        let (backend, _stage) =
+            self.observed_stage("saving", spektrafilm_backend::telemetry::GpuStage::Saving);
+        backend.output_samples_from_host(image, params).map(Some)
     }
 
     /// The RAW sensor pipeline on device: LibRaw's post-unpack stages, black
@@ -1385,9 +1371,6 @@ impl ComputeBackend for WgpuBackend {
         image: &spektrafilm_backend::DeviceImage,
         params: &spektrafilm_backend::MeterAutoexposureParams,
     ) -> Result<Option<f64>, String> {
-        if !self.device.context.enabled() {
-            // No batch scope: the meter reads its bounded scalar back here.
-        }
         let payload = self.buffer_payload(image)?;
         if image.width() != params.width || image.height() != params.height {
             return Err(format!(
@@ -1398,8 +1381,12 @@ impl ComputeBackend for WgpuBackend {
                 params.height
             ));
         }
-        let state = super::metering::build_meter_state_from_payload(self, params, payload)?;
-        Ok(Some(state.meter(&self.pipe)?))
+        let (backend, _stage) = self.observed_stage(
+            "metering",
+            spektrafilm_backend::telemetry::GpuStage::Metering,
+        );
+        let state = super::metering::build_meter_state_from_payload(&backend, params, payload)?;
+        Ok(Some(state.meter(&backend.pipe)?))
     }
 
     fn is_gpu(&self) -> bool {

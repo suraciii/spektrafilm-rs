@@ -9,17 +9,23 @@ A report describes one operation as defined in the [contract](../spec.md). Owner
 - Integer counters MUST preserve u64 values through serialization and parsing. `build` identifies the application version and source revision when available.
 - `operation` contains a session-local `id`, stable `kind`, `outcome`, and optional `input_revision` and `parameter_revision`. Report readers MUST ignore unknown fields within a supported schema version.
 - A change to a field's meaning or unit requires a new schema version.
+- Schema-one additions MUST be optional or defaulted on input. Readers MUST accept reports written before GPU groups, host timing totals, and semantic stage totals were added; absence MUST NOT be interpreted as measured zero.
 - Each measurement has a `status`: `available`, `unavailable`, or `not_applicable`. An `available` measurement contains a finite numeric `value`.
 - Other statuses contain a stable `reason` and no value. Zero means measured absence of work or elapsed time; it never means missing instrumentation.
 - Duration units are seconds (`s`), byte units are bytes (`By`), and counts are nonnegative integers. Unexecuted phases MUST be omitted rather than fabricated as zero-duration work.
 - `phases`, `stages`, and `gpu_batches` are flat arrays of observations with unique local identifiers, a `parent_id`, and a stable `name`. Every retained child's parent MUST be retained.
-- Attempts parent to the operation; phases parent to the operation, attempt, or enclosing phase; stages parent to a phase or enclosing stage; batches parent to a stage or phase; GPU passes parent to a batch. Repeated names MUST retain distinct occurrences.
+- Attempts parent to the operation; phases parent to the operation, attempt, or enclosing phase. Stages parent to a phase, stage, or batch; batches parent to a stage or phase.
+- GPU pass detail parents to a batch. Typed GPU groups attribute passes to semantic stages independently of that ancestry.
+- This hierarchy preserves host nesting and inclusive ancestor work. Repeated names MUST retain distinct occurrences.
 - Host observations use `start_offset` relative to operation acceptance and inclusive `duration`, both in seconds. CPU and GPU clocks MUST NOT be compared as if they shared an epoch.
-- GPU pass durations are measurements attached to their batch, without host start offsets derived from device ticks.
+- GPU pass durations are measurements attached to their batch, without host start offsets derived from device ticks. Their device intervals MUST NOT be constrained by host batch lifetimes.
 - `attempts` is empty for Save and contains indexed simulation attempts for rendering operations. Each attempt owns its route, simulation observations, and GPU batches.
 - An attempt that failed before simulation MUST identify that boundary. The root execution summary MUST identify differing attempt routes instead of selecting the last route silently.
 - Invocation totals aggregate actual work from all attempts; final saving phases reference only the saved attempt. Details beyond the record limit follow [collection limits](../design.md#collection-and-signals).
 - `coverage` identifies `detail_limit`, retained and omitted observation counts, and truncation. Fixed-category totals MUST remain available even when occurrence details are omitted.
+- `coverage.stage_totals` contains `name`, `count`, and `total_duration`, keyed by the bounded host observation vocabulary rather than GPU pass categories. Like `coverage.phase_totals`, it updates independently of retained details.
+- Phase and stage totals MUST include elapsed time from closed observations, including failed or cancelled work. Their counts identify closed observations, not successful completions.
+- Phase and stage totals use inclusive host wall durations and MUST NOT be summed across nested scopes.
 - Omitted or truncated observations do not establish an unobserved stage's executor or prove complete computation coverage.
 - `coverage.omitted_high_level_observations` counts omitted attempts, phases, and stages, including children of omitted parents. Its value MUST NOT exceed the total omitted observation count.
 - Zero means that every emitted high-level observation was retained, even when batch or pass detail was truncated. Zero does not prove that every numerical stage was instrumented or that an observation's executor was recorded.
@@ -122,9 +128,24 @@ These measurements answer where an operation spent time and whether work crossed
 
 ### Backend batch wall time
 - Each backend batch MUST report `host_prepare`, `submit_to_map_ready`, `host_materialize`, and total batch duration. Their boundaries follow [routing and timing](../design.md#routing-and-timing).
-- Values MUST come from direct monotonic observations rather than subtracting rounded log values. A backend operation with no host result readback MUST identify the completion boundary it actually observed.
+- Values MUST come from direct monotonic observations, not subtraction of rounded logs. A batch uses `device_poll_complete` after an existing device poll, or `commands_submitted` otherwise.
+- Neither boundary claims `image_map_ready`. Unobserved `submit_to_map_ready` and `host_materialize` intervals MUST be `not_applicable`, not fabricated durations.
 - `host_prepare` explains conversion, setup, and command-encoding cost. `submit_to_map_ready` explains the interval in which the host awaited a result.
 - `host_materialize` explains mapped data copying and result construction. These are elapsed intervals, not processor utilization, pure kernel duration, or physical transfer duration.
+
+### Host timing categories
+
+`measurements.host_timings` is an optional array of totals. Each entry contains `kind`, `count`, and `total_duration` in seconds.
+
+The kinds are `resource_create`, `upload`, `command_encoding`, `queue_submit`, `submission_wait`, and `readback_wait`. Retained observations MAY contain `host_timings` for inclusive ancestor attribution.
+
+Enabled reports contain an array, which MAY be empty. Absence or `null` in an older report means unknown, not zero.
+
+`coverage.host_timing_overflow` reports invalid host timing input or arithmetic overflow. When true, host timing totals MUST be discarded and coverage MUST be marked truncated rather than presenting stale totals as valid. The field defaults to `false` when absent in historical reports; absent historical host totals still mean unknown, not zero.
+
+These categories measure host elapsed intervals, not CPU utilization. Command encoding covers encoder lifetime, including discarded encoders, and MAY overlap resource creation and upload.
+
+Wait categories cover only existing blocking waits. Consumers MUST NOT add overlapping categories or inclusive ancestors and descendants as exclusive costs.
 
 ### Actual GPU work
 - GPU work counters MUST be recorded per operation and per observed batch. Their scope and `purpose` MUST be explicit.
@@ -151,11 +172,30 @@ Queue writes to uniform buffers MUST count as uniform uploads, not image uploads
 
 `gpu.pass.duration` measures the beginning-to-end timestamp interval for one actual compute pass. Each observation identifies a stable pass name, occurrence, parent batch, and `purpose`. The pass names MUST identify the executed work, including front transform, blur axes, spectral integration, density interpolation, DIR, grain, and output processing where those passes execute.
 
-- `gpu.compute_pass_sum` is the sum of available compute-pass intervals within its stated scope. Coverage MUST identify executed, timed, valid, and omitted passes.
-- The full-scope sum MUST be unavailable as `incomplete` when any executed pass lacks a valid timestamp; an observed subset MAY retain a separately labeled partial sum. It excludes queue residence before the first pass, commands outside the measured passes, host preparation, host wakeup, and host result construction.
-- It MUST NOT be used to calculate GPU utilization or a CPU/GPU percentage of operation time.
+- `measurements.gpu_timing.compute_pass_sum` is the sum of valid compute-pass intervals within the operation. Coverage MUST identify executed, timed, valid, and omitted passes independently of retained pass detail.
+- The full-scope sum MUST be unavailable when any executed pass lacks a valid timestamp. Pending-only timing MUST report `not_ready`.
+- A group with complete query coverage and failed completion MUST preserve the failure reason. Missing query coverage MUST report its known reason, or `incomplete` when no specific reason is available.
+- An operation sum combining valid and unavailable intervals MUST report `incomplete`. An observed subset MAY retain a separately labeled `partial_compute_pass_sum`.
+- Both sums exclude queue residence before the first pass, unmeasured commands, host preparation, wakeup, and result construction.
+- Consumers MUST NOT use either sum to calculate GPU utilization or a CPU/GPU percentage of operation time. Consumers MUST NOT subtract GPU pass sums from host time to estimate CPU time.
 
 Each timed report MUST identify whether timestamp support was available, whether the device enabled it, and the timestamp period in nanoseconds per tick. Query allocation, resolution, and query result copies MUST have separate `telemetry` work counters. An unavailable pass time MUST NOT be replaced with `submit_to_map_ready`.
+
+`measurements.gpu_timing.groups` contains encountered combinations of `stage`, `kind`, and `purpose`. Each group has `executed_pass_count`, `timed_pass_count`, `valid_pass_count`, `compute_pass_sum`, and `partial_compute_pass_sum`.
+
+Group counts describe submitted passes and valid completed timestamps, independently of retained detail. Group sums obey the operation sum's complete and partial coverage rules.
+
+Omitted pass nodes do not make aggregate timing incomplete. Missing timestamps can make it incomplete without detail truncation.
+
+Query-pool or per-command exhaustion MUST report `query_capacity` as an unavailable reason. Missing historical `groups` defaults to an empty array, which does not prove that no passes executed.
+
+GPU stages are `other`, `spectral_prepare`, `gamut_prepare`, `input`, `metering`, `geometry`, `film_expose`, `halation`, `film_develop`, `dir`, `grain_spektra`, `grain_procedural`, `dye_formation`, `dye_readout`, `fotufilm_formation`, `fotufilm_statistics`, `fotufilm_readout`, `print_expose`, `print_develop`, `glare`, `scan`, `negative_to_positive`, `unsharp`, `gamut`, `output`, `saving`, and `display`.
+
+Pass kinds are `other`, `pointwise`, `gather`, `scatter`, `copy`, `filter`, `reduction`, `prefix_sum`, `spectral`, `formation`, and `readout`. Purpose is `image`, `calibration`, or `telemetry`.
+
+These categories MUST use finite typed vocabularies, not shader labels or user strings. An unclassified stage or pass kind MUST use `other`.
+
+Validation MUST reject invalid category values, nonfinite or negative host totals, inconsistent pass counts, and full or partial sums inconsistent with their coverage. It MUST preserve unavailable reasons and MUST NOT represent arithmetic overflow as a valid timing.
 
 ## Supporting measurements
 
@@ -188,7 +228,7 @@ A diagnostic comparison MUST hold input pixels, dimensions, effective parameters
 
 A useful diagnosis first identifies the executed route and CPU stages, then compares stage wall time, batch waits, and logical boundary counts. GPU pass durations can distinguish expensive device passes when explicitly collected. CPU instruction hotspots, hardware transfer bandwidth, and device utilization require independent profilers.
 
-- The implementation MUST define one typed report model and deterministic validator for the JSON contract. Validation MUST reject nonfinite durations, negative counts, missing parents, duplicate identifiers, invalid availability/value combinations, and completed child intervals outside their completed parent scope.
+- The implementation MUST define one typed report model and deterministic validator for the JSON contract. Validation MUST reject nonfinite durations, negative counts, missing parents, duplicate identifiers, invalid availability/value combinations, and completed host-clock child intervals outside their completed parent scope.
 - Schema fixtures MUST include failed-before-load, CPU, resident, mixed Spektra grain, Save without source diagnostics, and truncated reports. Round-trip validation MUST preserve a counter above 2^53.
 - Validation and serialization MUST NOT parse human log wording.
 

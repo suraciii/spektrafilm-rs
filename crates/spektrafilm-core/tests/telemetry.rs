@@ -40,6 +40,262 @@ fn collected_report() -> Report {
     report.stages[0].duration = 0.1;
     report
 }
+#[test]
+fn historical_reports_and_streamed_coverage_round_trip() {
+    use spektrafilm_core::telemetry::{
+        GpuPassKind, GpuStage, HostTimingKind, Measurement, ValidationError,
+    };
+    let operation = Operation::new(OperationKind::Preview, CollectionMode::GpuTiming);
+    let phase = operation.scope("simulation", ObservationKind::Phase, Purpose::Image);
+    let batch = phase
+        .context()
+        .scope("compute", ObservationKind::Batch, Purpose::Image);
+    let stage = batch.context().with_gpu_stage(GpuStage::Scan).scope(
+        "scan",
+        ObservationKind::Stage,
+        Purpose::Image,
+    );
+    stage
+        .context()
+        .record_host_timing(HostTimingKind::CommandEncoding, 0.2);
+    stage
+        .context()
+        .record_gpu_pass_submission(GpuStage::Scan, GpuPassKind::Filter, 2, 2);
+    stage.context().record_gpu_pass_duration(
+        GpuStage::Scan,
+        GpuPassKind::Filter,
+        Measurement::available(0.1),
+    );
+    stage.finish(Outcome::Succeeded);
+    batch.finish(Outcome::Succeeded);
+    phase.finish(Outcome::Succeeded);
+    let report = operation.finish(Outcome::Succeeded).unwrap();
+    let decoded = Report::from_json(&report.to_json().unwrap()).unwrap();
+    assert_eq!(
+        decoded.measurements.gpu_timing.groups[0].valid_pass_count,
+        1
+    );
+    assert_eq!(
+        decoded.measurements.gpu_timing.compute_pass_sum.reason,
+        Some(AvailabilityReason::Incomplete)
+    );
+    assert_eq!(
+        decoded
+            .measurements
+            .gpu_timing
+            .partial_compute_pass_sum
+            .value,
+        Some(0.1)
+    );
+    assert_eq!(
+        decoded.measurements.host_timings.as_ref().unwrap()[0].total_duration,
+        0.2
+    );
+    assert_eq!(decoded.coverage.stage_totals[0].name, "scan");
+
+    let mut outside = decoded.clone();
+    outside.stages[0].start_offset =
+        outside.gpu_batches[0].start_offset + outside.gpu_batches[0].duration + 1.0;
+    assert!(matches!(
+        outside.validate(),
+        Err(ValidationError::OutsideParentScope(_))
+    ));
+    let mut invalid = decoded.clone();
+    invalid.measurements.gpu_timing.groups[0].valid_pass_count = 3;
+    assert_eq!(invalid.validate(), Err(ValidationError::InvalidCoverage));
+    let mut invalid = decoded.clone();
+    invalid.measurements.gpu_timing.groups[0].compute_pass_sum = Measurement::available(0.1);
+    assert_eq!(invalid.validate(), Err(ValidationError::InvalidCoverage));
+    let mut invalid = serde_json::to_value(&decoded).unwrap();
+    invalid["measurements"]["gpu_timing"]["groups"][0]["stage"] = "private_label".into();
+    assert!(Report::from_json(&invalid.to_string()).is_err());
+    let mut invalid = decoded.clone();
+    invalid.measurements.host_timings.as_mut().unwrap()[0].total_duration = -1.0;
+    assert!(invalid.validate().is_err());
+
+    let mut historical = serde_json::to_value(collected_report()).unwrap();
+    historical["measurements"]
+        .as_object_mut()
+        .unwrap()
+        .remove("host_timings");
+    historical["measurements"]["gpu_timing"]
+        .as_object_mut()
+        .unwrap()
+        .remove("groups");
+    historical["coverage"]
+        .as_object_mut()
+        .unwrap()
+        .remove("stage_totals");
+    for key in ["attempts", "phases", "stages", "gpu_batches"] {
+        for observation in historical[key].as_array_mut().unwrap() {
+            observation.as_object_mut().unwrap().remove("host_timings");
+        }
+    }
+    let historical = Report::from_json(&historical.to_string()).unwrap();
+    assert!(historical.measurements.host_timings.is_none());
+    assert!(historical.measurements.gpu_timing.groups.is_empty());
+    assert!(historical.coverage.stage_totals.is_empty());
+    assert!(historical.stages[0].host_timings.is_none());
+    Report::from_json(&historical.to_json().unwrap()).unwrap();
+}
+
+#[test]
+fn host_stage_names_survive_truncation_and_gpu_hint() {
+    use spektrafilm_core::telemetry::{GpuPassKind, GpuStage, Measurement, ValidationError};
+
+    let operation = Operation::new(OperationKind::Process, CollectionMode::GpuTiming);
+    for _ in 0..300 {
+        operation
+            .scope("simulation", ObservationKind::Phase, Purpose::Image)
+            .finish(Outcome::Succeeded);
+    }
+    let hinted = operation.context().with_gpu_stage(GpuStage::Scan);
+    for name in ["grain_dye_field", "grain_fotufilm", "printing", "post_scan"] {
+        let stage = hinted.scope(name, ObservationKind::Stage, Purpose::Image);
+        assert!(!stage.context().retained());
+        assert_eq!(stage.context().gpu_stage(), GpuStage::Scan);
+        stage
+            .context()
+            .record_gpu_pass_submission(GpuStage::Scan, GpuPassKind::Filter, 1, 1);
+        stage.context().record_gpu_pass_duration(
+            GpuStage::Scan,
+            GpuPassKind::Filter,
+            Measurement::available(0.25),
+        );
+        stage.finish(Outcome::Succeeded);
+    }
+    hinted
+        .scope("private_label", ObservationKind::Stage, Purpose::Image)
+        .finish(Outcome::Succeeded);
+    let report = operation.finish(Outcome::Succeeded).unwrap();
+    assert!(report.coverage.truncated);
+    for name in ["grain_dye_field", "grain_fotufilm", "printing", "post_scan"] {
+        let total = report
+            .coverage
+            .stage_totals
+            .iter()
+            .find(|total| total.name == name)
+            .unwrap();
+        assert_eq!(total.count, 1);
+    }
+    let other = report
+        .coverage
+        .stage_totals
+        .iter()
+        .find(|total| total.name == "other")
+        .unwrap();
+    assert_eq!(other.count, 1);
+    assert_eq!(report.measurements.gpu_timing.groups.len(), 1);
+    assert_eq!(
+        report.measurements.gpu_timing.groups[0].stage,
+        GpuStage::Scan
+    );
+    assert_eq!(report.measurements.gpu_timing.groups[0].valid_pass_count, 4);
+    let decoded = Report::from_json(&report.to_json().unwrap()).unwrap();
+    let mut historical = decoded.clone();
+    historical.coverage.stage_totals[0].name = "dye_formation".into();
+    historical.validate().unwrap();
+    let mut private = decoded;
+    private.coverage.stage_totals[0].name = "private_label".into();
+    assert_eq!(private.validate(), Err(ValidationError::PrivacyField));
+}
+
+#[test]
+fn root_partial_zero_requires_a_valid_group_sample() {
+    use spektrafilm_core::telemetry::{GpuPassKind, GpuStage, Measurement, ValidationError};
+
+    let operation = Operation::new(OperationKind::Process, CollectionMode::GpuTiming);
+    operation
+        .context()
+        .record_gpu_pass_submission(GpuStage::Scan, GpuPassKind::Filter, 1, 1);
+    let mut report = operation.finish(Outcome::Succeeded).unwrap();
+    report.validate().unwrap();
+    report.measurements.gpu_timing.partial_compute_pass_sum = Measurement::available(0.0);
+    assert_eq!(report.validate(), Err(ValidationError::InvalidCoverage));
+
+    report.measurements.gpu_timing.groups.clear();
+    report.validate().unwrap();
+}
+
+#[test]
+fn closed_failed_and_cancelled_stages_contribute_to_host_totals() {
+    let operation = Operation::new(OperationKind::Process, CollectionMode::Summary);
+    let phase = operation.scope("simulation", ObservationKind::Phase, Purpose::Image);
+    for outcome in [Outcome::Failed, Outcome::Cancelled] {
+        let stage = phase
+            .context()
+            .scope("printing", ObservationKind::Stage, Purpose::Image);
+        std::thread::sleep(std::time::Duration::from_millis(1));
+        stage.finish(outcome);
+    }
+    phase.finish(Outcome::Failed);
+    let report = operation.finish(Outcome::Failed).unwrap();
+    report.validate().unwrap();
+    let total = report
+        .coverage
+        .stage_totals
+        .iter()
+        .find(|total| total.name == "printing")
+        .unwrap();
+    assert_eq!(total.count, 2);
+    assert!(report.stages.iter().all(|stage| stage.duration > 0.0));
+    assert_eq!(
+        total.total_duration,
+        report
+            .stages
+            .iter()
+            .map(|stage| stage.duration)
+            .sum::<f64>()
+    );
+}
+
+#[test]
+fn device_pass_interval_does_not_use_host_batch_containment() {
+    use spektrafilm_core::telemetry::Measurement;
+    let operation = Operation::new(OperationKind::Preview, CollectionMode::GpuTiming);
+    let phase = operation.scope("runtime_prepare", ObservationKind::Phase, Purpose::Image);
+    let batch = phase
+        .context()
+        .scope("compute", ObservationKind::Batch, Purpose::Image);
+    let pass = batch
+        .context()
+        .scope("compute", ObservationKind::Pass, Purpose::Image);
+    pass.context().record_pass(0, Measurement::available(1.0));
+    drop(pass);
+    drop(batch);
+    drop(phase);
+    let mut report = operation.finish(Outcome::Succeeded).unwrap();
+    report.operation.duration = Some(2.0);
+    report.phases[0].start_offset = 0.0;
+    report.phases[0].duration = 0.5;
+    let batch = report
+        .gpu_batches
+        .iter_mut()
+        .find(|o| o.kind == ObservationKind::Batch)
+        .unwrap();
+    batch.start_offset = 0.1;
+    batch.duration = 0.1;
+    let pass = report
+        .gpu_batches
+        .iter_mut()
+        .find(|o| o.kind == ObservationKind::Pass)
+        .unwrap();
+    pass.start_offset = 0.19;
+    let restored = Report::from_json(&report.to_json().unwrap()).unwrap();
+    assert_eq!(
+        restored
+            .gpu_batches
+            .iter()
+            .find(|o| o.kind == ObservationKind::Pass)
+            .unwrap()
+            .pass
+            .as_ref()
+            .unwrap()
+            .duration
+            .value,
+        Some(1.0)
+    );
+}
 
 #[test]
 fn disabled_operation_preserves_identity_without_report_state() {

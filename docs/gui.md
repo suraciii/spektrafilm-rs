@@ -353,7 +353,11 @@ The collapsed **Advanced details** panel contains collection modes, the latest 2
 
 Search for `diagnostics.collection_mode` to reveal **Collection mode** inside Advanced details, even before the first report exists.
 
-Reports distinguish measured values from unsupported or uncollected measurements. Host waits are not shader execution time. Buffer creation bytes are cumulative allocation traffic, not live storage, process RSS, or dedicated/shared GPU residency. Software WGPU runs do not establish Windows hardware performance. See the [telemetry specification](../specs/telemetry/spec.md) for report semantics.
+Reports distinguish measured values from unsupported or uncollected measurements. Expanded details show GPU timing groups by stage, pass kind, and purpose, with executed, timed, and valid pass counts. An unclassified stage or pass kind appears as `other`. Truncated pass detail does not itself make aggregate timing incomplete; missing timestamps can make aggregate timing incomplete even when detail is not truncated. The availability reason `query_capacity` identifies exhausted query-pool or per-command capacity. A complete compute-pass sum requires complete timing coverage; a partial sum is not the total GPU duration or GPU utilization. Older reports can lack these groups.
+
+`not_ready` means a timestamp result was still pending when the report was finalized. A successful Preview or Scan can therefore have an incomplete GPU sum, including pending display passes. Diagnostics do not add a GPU wait to complete these measurements. Later query results do not rewrite a finalized report.
+
+Host timing categories show directly observed elapsed intervals, not CPU utilization. Command encoding can overlap resource creation and uploads, and nested scope totals are inclusive. Do not add them as exclusive costs or subtract GPU pass sums to estimate CPU time. Host waits are not shader execution time. Buffer creation bytes are cumulative allocation traffic, not live storage, process RSS, or dedicated/shared GPU residency. Software WGPU runs do not establish Windows hardware performance. See the [telemetry specification](../specs/telemetry/spec.md) for report semantics.
 
 For controlled launches, `SPEKTRAFILM_GUI_DIAGNOSTICS_DIR` can override the automatic session destination. Ordinary GUI use does not need it.
 

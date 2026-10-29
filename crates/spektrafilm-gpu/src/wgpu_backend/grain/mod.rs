@@ -77,7 +77,11 @@ impl WgpuBackend {
         if !self.device.context.enabled() || img.width == 0 || img.height == 0 {
             return self.grain_procedural_gpu_inner(img, params);
         }
-        let (backend, _batch) = self.observed_batch("grain_procedural");
+        let (stage, _stage) = self.observed_stage(
+            "grain_procedural",
+            spektrafilm_backend::telemetry::GpuStage::GrainProcedural,
+        );
+        let (backend, _batch) = stage.observed_batch("grain_procedural");
         backend.grain_procedural_gpu_inner(img, params)
     }
     /// Execute Grain Procedural on native encoded RGB with no transfer or primaries conversion.

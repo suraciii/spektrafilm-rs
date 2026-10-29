@@ -393,8 +393,15 @@ impl FotufilmPagedState {
     }
 
     pub(in crate::wgpu_backend) fn submit(&self, backend: &WgpuBackend) -> Result<(), String> {
-        let bank = backend.prepare_fotufilm_bank(&self.params)?;
-        self.submit_prepared(backend, &bank)
+        use spektrafilm_backend::telemetry::GpuStage;
+        let bank = {
+            let (formation, _stage) =
+                backend.observed_stage("fotufilm_formation", GpuStage::FotufilmFormation);
+            formation.prepare_fotufilm_bank(&self.params)?
+        };
+        let (readout, _stage) =
+            backend.observed_stage("fotufilm_readout", GpuStage::FotufilmReadout);
+        self.submit_prepared(&readout, &bank)
     }
 
     fn submit_prepared(
@@ -851,9 +858,15 @@ impl WgpuBackend {
                 self.submit_commands(Some(encoder.finish()))?;
             }
             self.check_cancelled()?;
-            let mut encoder = self.device.create_command_encoder(&Default::default());
-            let uniform = self.uniform_buffer(bytemuck::cast_slice(&[0u32; 4]));
-            self.fotufilm_encode(
+            let (statistics, _stage) = self.observed_stage(
+                "fotufilm_statistics",
+                spektrafilm_backend::telemetry::GpuStage::FotufilmStatistics,
+            );
+            let mut encoder = statistics
+                .device
+                .create_command_encoder(&Default::default());
+            let uniform = statistics.uniform_buffer(bytemuck::cast_slice(&[0u32; 4]));
+            statistics.fotufilm_encode(
                 &mut encoder,
                 DOWNSAMPLE_SHADER,
                 &DOWNSAMPLE_BINDINGS,
@@ -861,13 +874,13 @@ impl WgpuBackend {
                 &[&uniform, &log_light, &tile],
                 (TILE.div_ceil(GRID_WORKGROUP), TILE.div_ceil(GRID_WORKGROUP)),
             );
-            let uniform = self.uniform_buffer(bytemuck::bytes_of(&SumsUniform {
+            let uniform = statistics.uniform_buffer(bytemuck::bytes_of(&SumsUniform {
                 tile_offset: 0,
                 sums_offset: level * SUMS_LEVEL,
                 mean_offset: level,
                 pad0: 0,
             }));
-            self.fotufilm_encode(
+            statistics.fotufilm_encode(
                 &mut encoder,
                 TILE_SHADER,
                 &SUMS_BINDINGS,
@@ -875,7 +888,7 @@ impl WgpuBackend {
                 &[&uniform, &tile, &bank.sums, &bank.tile_means],
                 (1, 1),
             );
-            self.submit_commands(Some(encoder.finish()))?;
+            statistics.submit_commands(Some(encoder.finish()))?;
         }
         self.check_cancelled()?;
         let density = self.fotufilm_scratch(
@@ -888,7 +901,13 @@ impl WgpuBackend {
             record: r,
             pad0: 0,
         }));
-        let mut encoder = self.device.create_command_encoder(&Default::default());
+        let (statistics, _stage) = self.observed_stage(
+            "fotufilm_statistics",
+            spektrafilm_backend::telemetry::GpuStage::FotufilmStatistics,
+        );
+        let mut encoder = statistics
+            .device
+            .create_command_encoder(&Default::default());
         let buffers = [
             &uniform,
             &bank.sums,
@@ -897,7 +916,7 @@ impl WgpuBackend {
             &bank.correlation,
             &bank.probe_means,
         ];
-        self.fotufilm_encode(
+        statistics.fotufilm_encode(
             &mut encoder,
             RESIDUAL_SHADER,
             &PITCH_BINDINGS,
@@ -909,7 +928,7 @@ impl WgpuBackend {
             ),
         );
         self.check_cancelled()?;
-        self.fotufilm_encode(
+        statistics.fotufilm_encode(
             &mut encoder,
             RESIDUAL_SHADER,
             &PITCH_BINDINGS,
@@ -917,7 +936,7 @@ impl WgpuBackend {
             &buffers,
             (LEVELS, 1),
         );
-        self.submit_commands(Some(encoder.finish()))?;
+        statistics.submit_commands(Some(encoder.finish()))?;
         Ok(bank)
     }
 
@@ -1175,9 +1194,10 @@ impl WgpuBackend {
         buffers: &[&wgpu::Buffer],
         groups: (u32, u32),
     ) {
-        let (cached, _) =
+        let (cached, hit) =
             self.pipeline_cache
-                .get_or_compile_at(&self.device.raw, shader, bindings, entry_point);
+                .get_or_compile_at(&self.device, shader, bindings, entry_point);
+        self.record_pipeline_cache_lookup(hit);
         let entries: Vec<_> = buffers
             .iter()
             .enumerate()
@@ -1191,8 +1211,28 @@ impl WgpuBackend {
             layout: &cached.layout,
             entries: &entries,
         });
+        // Shared shader entry points do not identify the work of a pass.
+        let label = match (shader, entry_point) {
+            (RESAMPLE_SHADER, "main") => "fotufilm_resample_gather",
+            (RESAMPLE_SHADER, "finalize") => "fotufilm_resample_finalize",
+            (COMPOSE_SHADER, "main") => "fotufilm_compose",
+            (FORM_SHADER, "main") => "fotufilm_form",
+            (FORM_SHADER, "reduce") => "fotufilm_form_reduce",
+            (DOWNSAMPLE_SHADER, "downsample") => "fotufilm_downsample",
+            (TILE_SHADER, "transmittance") => "fotufilm_transmittance",
+            (TILE_SHADER, "running_sums") => "fotufilm_running_sums",
+            (RESIDUAL_SHADER, "pitch") => "fotufilm_pitch",
+            (RESIDUAL_SHADER, "correlate") => "fotufilm_correlate",
+            (RESIDUAL_SHADER, "residual") => "fotufilm_residual",
+            (CLOUD_SHADER, "tent") => "fotufilm_cloud_tent",
+            (CLOUD_SHADER, "prepare_kernel") => "fotufilm_cloud_prepare_kernel",
+            (CLOUD_SHADER, "main") => "fotufilm_cloud_filter",
+            (CLOUD_SHADER, "accumulate") => "fotufilm_cloud_accumulate",
+            (CLOUD_SHADER, "upsample_add") => "fotufilm_cloud_upsample",
+            _ => "fotufilm_other",
+        };
         let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-            label: Some(entry_point),
+            label: Some(label),
             timestamp_writes: None,
         });
         pass.set_pipeline(&cached.pipeline);

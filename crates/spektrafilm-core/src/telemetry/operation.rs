@@ -359,6 +359,7 @@ impl Operation {
             measurements: Measurements {
                 work: snapshot.totals,
                 gpu_timing: snapshot.gpu_timing,
+                host_timings: snapshot.host_timings,
             },
             attempts,
             phases,

@@ -1117,7 +1117,11 @@ impl BoundedBlur {
             let mut pass = submission
                 .encoder
                 .begin_compute_pass(&wgpu::ComputePassDescriptor {
-                    label: Some("gaussian_raw_transport"),
+                    label: Some(if params.scatter != 0 {
+                        "gaussian_scatter"
+                    } else {
+                        "gaussian_gather"
+                    }),
                     timestamp_writes: None,
                 });
             pass.set_pipeline(&self.copy_pipeline.pipeline);
