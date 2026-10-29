@@ -29,6 +29,8 @@ flowchart LR
 
 [Photograph work](photo-work/spec.md) owns Original/Modified inspection, adjustment records, and multi-photograph work.
 
+[Image analysis](image-analysis/spec.md) owns tone and color inspection, subject comparison, and analysis regions.
+
 These are target capabilities, not a statement of implementation. Delivery schedules and research candidates are not product contracts.
 
 ## Workspace
@@ -47,7 +49,9 @@ The inspector MUST present Input and capture, Film, Print, Scan, and Output in t
 
 Several stages and modules MUST be able to remain open together.
 
-The inspector MUST keep search and stage navigation visible while its controls scroll. The tonal-distribution readout remains collapsible above them. Preset and inspector scrolling MUST NOT move or resize the photograph.
+The inspector MUST keep search and stage navigation visible while its controls scroll. It MUST NOT contain image analysis or reserve space for it.
+
+[Image analysis](image-analysis/spec.md#workspace-and-controls) is an optional viewer workspace below the photograph. Preset and inspector scrolling MUST NOT move or resize the photograph.
 
 Application settings MUST contain general application preferences, startup-state actions, display configuration, and diagnostics. General replaces the visible Session group and includes the [interface language selector](../gui-language/spec.md#interface-language). Export options MUST remain in the independent Export dialog.
 

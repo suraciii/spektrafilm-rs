@@ -397,8 +397,20 @@ impl ComputeBackend for ObservedBackend<'_> {
     fn inspect_retained_pixel(&self, i: &DeviceImage, x: u32, y: u32) -> Result<[f32; 3], String> {
         self.backend.inspect_retained_pixel(i, x, y)
     }
-    fn retained_histogram(&self, image: &DeviceImage) -> Result<[[f32; 64]; 3], String> {
-        self.backend.retained_histogram(image)
+    fn analyze_retained(
+        &self,
+        image: &DeviceImage,
+        request: &crate::analysis::AnalysisRequest,
+    ) -> Result<crate::analysis::AnalysisData, String> {
+        self.backend.analyze_retained(image, request)
+    }
+    fn inspect_analysis_pixel(
+        &self,
+        image: &DeviceImage,
+        x: u32,
+        y: u32,
+    ) -> Result<crate::analysis::AnalysisPixel, String> {
+        self.backend.inspect_analysis_pixel(image, x, y)
     }
     fn viewer_icc_retained(
         &self,

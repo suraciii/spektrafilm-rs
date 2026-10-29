@@ -410,11 +410,11 @@ impl GpuBuffer {
 }
 
 #[cfg(feature = "wgpu-backend")]
+mod analysis;
+#[cfg(feature = "wgpu-backend")]
 mod compute_backend;
 #[cfg(test)]
 mod failure_tests;
-#[cfg(feature = "wgpu-backend")]
-mod histogram;
 #[cfg(feature = "wgpu-backend")]
 mod viewer;
 #[cfg(feature = "wgpu-backend")]

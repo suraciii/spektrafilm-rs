@@ -18,6 +18,8 @@ A read-only material summary, a preset card, and a search result MAY identify a 
 
 Independent module disclosure is preferred to basic/expert modes because it preserves a single complete control inventory. Stage jumps are preferred to retaining both old tabs and a new sidebar because a control needs one stable location. These choices do not change pipeline stage execution or preset serialization scope.
 
+The viewer's analysis workspace MUST use the [image-analysis boundary](image-analysis/design.md). Its regions and measurements MUST NOT become photographic editors or another subject-selection model.
+
 ## Control inventory and shared metadata
 
 One GUI-owned control inventory MUST bind canonical paths to their visual owners, supported editor or named action, and applicability presentation. It MUST reuse existing typed field descriptions, validators, units, ranges, and feature-profile resolvers. It MUST NOT copy numeric defaults, bounds, enum lists, or profile tables from the web prototype.

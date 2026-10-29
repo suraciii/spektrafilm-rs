@@ -143,6 +143,8 @@ pub(super) struct DisplayResponse {
     pub(super) status: Option<crate::app::Message>,
     pub(super) error: Option<String>,
     pub(super) prepared: Option<PreparedDisplay>,
+    /// Raw Original upload made for full-source viewing, shared with analysis.
+    pub(super) uploaded_input: Option<spektrafilm_backend::DeviceImage>,
 }
 impl DisplayResponse {
     pub(super) fn matches(&self, generation: u64, key: &[u64]) -> bool {
@@ -791,6 +793,7 @@ fn compose_display_cancellable(
         status,
         error,
         prepared: current_prepared,
+        uploaded_input: None,
     }
 }
 
@@ -804,6 +807,7 @@ fn compose_display_device(
 ) -> DisplayResponse {
     let mut status = None;
     let mut prepared = None;
+    let mut uploaded_input = None;
     let result = (|| -> Result<egui::ColorImage, String> {
         let cancellable = request.backend.with_cancellation(cancellation);
         let backend = cancellable.as_deref().unwrap_or(request.backend.as_ref());
@@ -981,6 +985,9 @@ fn compose_display_device(
                 }
                 slot.as_ref().expect("full source uploaded").image.clone()
             };
+            if request.layer == ViewLayer::Input && request.retained_source.is_none() {
+                uploaded_input = Some(raw.clone());
+            }
             // Pointwise viewing transform before interpolation, exactly as the
             // CPU full-source tap cache. Same-size resampling is an identity.
             let slot = &mut cache.device_fit[2 + usize::from(request.layer == ViewLayer::Output)];
@@ -1099,6 +1106,7 @@ fn compose_display_device(
         status,
         error,
         prepared,
+        uploaded_input,
     }
 }
 
@@ -1293,6 +1301,24 @@ mod tests {
             "backend replacement invalidates the upload"
         );
         assert_eq!(replaced.image.pixels, rebound.image.pixels);
+    }
+
+    #[test]
+    fn original_full_source_upload_is_shared_with_analysis() {
+        let gpu = spektrafilm_gpu::test_support::explicit_adapter();
+        let mut current = request(1);
+        current.layer = ViewLayer::Input;
+        current.backend = Arc::new(gpu.derived_explicit());
+        current.max_size = 4;
+        let mut cache = CompositionCache::default();
+        let response = compose_display(current, &mut cache);
+        assert!(response.error.is_none(), "{:?}", response.error);
+        let shared = response.uploaded_input.unwrap();
+        let cached = &cache.device_source[0].as_ref().unwrap().image;
+        assert!(Arc::ptr_eq(
+            shared.payload().unwrap(),
+            cached.payload().unwrap()
+        ));
     }
 
     #[test]

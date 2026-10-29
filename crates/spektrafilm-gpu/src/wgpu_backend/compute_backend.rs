@@ -972,11 +972,20 @@ impl ComputeBackend for WgpuBackend {
     ) -> Result<[f32; 3], String> {
         self.viewer_inspect_gpu(i, x, y)
     }
-    fn retained_histogram(
+    fn analyze_retained(
         &self,
         image: &spektrafilm_backend::DeviceImage,
-    ) -> Result<[[f32; 64]; 3], String> {
-        self.retained_histogram_gpu(image)
+        request: &spektrafilm_backend::analysis::AnalysisRequest,
+    ) -> Result<spektrafilm_backend::analysis::AnalysisData, String> {
+        self.analyze_retained_gpu(image, request)
+    }
+    fn inspect_analysis_pixel(
+        &self,
+        image: &spektrafilm_backend::DeviceImage,
+        x: u32,
+        y: u32,
+    ) -> Result<spektrafilm_backend::analysis::AnalysisPixel, String> {
+        self.inspect_analysis_pixel_gpu(image, x, y)
     }
     fn viewer_icc_retained(
         &self,

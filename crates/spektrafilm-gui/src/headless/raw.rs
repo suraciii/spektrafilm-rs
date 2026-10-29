@@ -395,7 +395,6 @@ fn gpu_raw_import_preview_scan_and_export_reuse_retained_samples() {
             h.state().output_image.is_none(),
             "GPU render must not publish a host compatibility raster"
         );
-        assert!(h.state().output_histogram.is_some());
         assert!(h.state().image.as_ref().unwrap().same_source(&source));
         let output = h.state().output_retained.as_ref().unwrap();
         let report = assert_retained_gpu_report(
@@ -414,6 +413,22 @@ fn gpu_raw_import_preview_scan_and_export_reuse_retained_samples() {
             Some(0),
             "RAW carrier is never reuploaded"
         );
+        if kind == "preview" {
+            click(&mut h, "Image analysis");
+        }
+        wait_until(&mut h, analysis_output_ready);
+        let result = h.state().analysis.result.as_ref().unwrap();
+        let data = result.data[1]
+            .as_ref()
+            .unwrap()
+            .as_ref()
+            .expect("GPU RAW analysis");
+        let output = h.state().output_retained.as_ref().unwrap();
+        assert_eq!(
+            data.total,
+            u64::from(output.width()) * u64::from(output.height())
+        );
+        assert!(h.state().output_image.is_none());
         settle_animation(&mut h);
     }
     let scan = h.state().output_retained.clone().unwrap();
