@@ -1,7 +1,82 @@
 //! Vocabulary enums and bounded measurement data types for telemetry observations.
 use serde::{Deserialize, Serialize};
 
-macro_rules! vocabulary { ($name:ident { $( $(#[$attr:meta])* $variant:ident),* $(,)? }) => { #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)] #[serde(rename_all="snake_case")] pub enum $name { $( $(#[$attr])* $variant),* } }; }
+macro_rules! vocabulary { ($(#[$enum_attr:meta])* $name:ident { $( $(#[$attr:meta])* $variant:ident),* $(,)? }) => { #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)] $(#[$enum_attr])* #[serde(rename_all="snake_case")] pub enum $name { $( $(#[$attr])* $variant),* } }; }
+// These finite vocabularies are also the aggregate keys; shader labels never
+// become report keys.
+macro_rules! named_vocabulary {
+    ($(#[$enum_attr:meta])* $name:ident { $($(#[$attr:meta])* $variant:ident => $wire:literal),+ $(,)? }) => {
+        vocabulary!($(#[$enum_attr])* $name { $($(#[$attr])* $variant),+ });
+        impl $name {
+            pub const ALL: &'static [Self] = &[$(Self::$variant),+];
+            pub const fn as_str(self) -> &'static str {
+                match self { $(Self::$variant => $wire),+ }
+            }
+        }
+    };
+}
+named_vocabulary!(#[derive(Default)] GpuStage {
+    #[default] Other => "other", SpectralPrepare => "spectral_prepare", GamutPrepare => "gamut_prepare",
+    Input => "input", Metering => "metering", Geometry => "geometry", FilmExpose => "film_expose",
+    Halation => "halation", FilmDevelop => "film_develop", Dir => "dir", GrainSpektra => "grain_spektra",
+    GrainProcedural => "grain_procedural", DyeFormation => "dye_formation", DyeReadout => "dye_readout",
+    FotufilmFormation => "fotufilm_formation", FotufilmStatistics => "fotufilm_statistics",
+    FotufilmReadout => "fotufilm_readout", PrintExpose => "print_expose", PrintDevelop => "print_develop",
+    Glare => "glare", Scan => "scan", NegativeToPositive => "negative_to_positive", Unsharp => "unsharp",
+    Gamut => "gamut", Output => "output", Saving => "saving", Display => "display"
+});
+impl GpuStage {
+    pub fn from_scope_name(name: &str) -> Self {
+        match name {
+            "spectral_prepare" | "enlarger_lut" => Self::SpectralPrepare,
+            "gamut_prepare" | "input_gamut_prepare" => Self::GamutPrepare,
+            "input"
+            | "input_prepare"
+            | "input_decode"
+            | "convert_inverse_solver"
+            | "front_transform"
+            | "highlight_boost"
+            | "camera_diffusion"
+            | "camera_lens_blur" => Self::Input,
+            "metering" => Self::Metering,
+            "geometry" => Self::Geometry,
+            "film_expose" | "filming_expose" | "log_exposure" => Self::FilmExpose,
+            "halation" => Self::Halation,
+            "film_develop" | "filming_develop" | "film_density" => Self::FilmDevelop,
+            "dir" | "dir_couplers" => Self::Dir,
+            "grain_spektra" | "grain_spektra_sampler" => Self::GrainSpektra,
+            "grain_procedural" | "grain_procedural_cpu" => Self::GrainProcedural,
+            "dye_formation" => Self::DyeFormation,
+            "dye_readout" => Self::DyeReadout,
+            "fotufilm_formation" => Self::FotufilmFormation,
+            "fotufilm_statistics" => Self::FotufilmStatistics,
+            "fotufilm_readout" => Self::FotufilmReadout,
+            "print_expose" | "print_lut_roundtrip" | "print_spectral" | "enlarger_diffusion" => {
+                Self::PrintExpose
+            }
+            "print_develop" | "print_density" => Self::PrintDevelop,
+            "glare" => Self::Glare,
+            "scan" | "scanning" | "scanner_density" | "scanner_lut" | "scan_spectral"
+            | "scanner_lens_blur" => Self::Scan,
+            "negative_to_positive" => Self::NegativeToPositive,
+            "unsharp" | "unsharp_mask" => Self::Unsharp,
+            "gamut" | "output_gamut" => Self::Gamut,
+            "output" | "output_transfer" | "cmyk" => Self::Output,
+            "saving" | "saving_convert" => Self::Saving,
+            "display" | "display_prepare" => Self::Display,
+            _ => Self::Other,
+        }
+    }
+}
+named_vocabulary!(GpuPassKind {
+    Other => "other", Pointwise => "pointwise", Gather => "gather", Scatter => "scatter", Copy => "copy",
+    Filter => "filter", Reduction => "reduction", PrefixSum => "prefix_sum", Spectral => "spectral",
+    Formation => "formation", Readout => "readout"
+});
+named_vocabulary!(HostTimingKind {
+    ResourceCreate => "resource_create", Upload => "upload", CommandEncoding => "command_encoding",
+    QueueSubmit => "queue_submit", SubmissionWait => "submission_wait", ReadbackWait => "readback_wait"
+});
 vocabulary!(CollectionMode {
     Off,
     Summary,
@@ -21,6 +96,75 @@ vocabulary!(ObservationKind {
     Batch,
     Pass
 });
+
+/// Allowlisted host stage scope names used by observations and streamed totals.
+pub const STAGE_NAMES: &[&str] = &[
+    "metering",
+    "geometry",
+    "color_reference",
+    "spectral_prepare",
+    "film_chain",
+    "filming_expose",
+    "filming_develop",
+    "converting",
+    "grain_spektra",
+    "grain_spektra_sampler",
+    "grain_procedural",
+    "grain_procedural_cpu",
+    "grain_dye_field",
+    "grain_fotufilm",
+    "printing",
+    "scanning",
+    "post_scan",
+    "cmyk",
+    "output_mix",
+    "negative_to_positive",
+    "negative_reconstruction",
+    "negative_to_positive_tone",
+    "standard_setup",
+    "input_transfer",
+    "colorspace_convert",
+    "output_transfer",
+    "rgb_to_raw",
+    "highlight_boost",
+    "optical_diffusion",
+    "scanner_lut",
+    "enlarger_lut_prepare",
+    "enlarger_lut_interpolate",
+    "glare",
+    "output_gamut",
+    "pipeline_create",
+    "raw_sensor",
+    "saving_convert",
+    "retained_histogram",
+    "viewer_resample",
+    "viewer_display_transform",
+    "viewer_full_source",
+    "gamut_prepare",
+    "input_gamut_prepare",
+    "fotufilm_formation",
+    "fotufilm_statistics",
+    "fotufilm_readout",
+    "input_decode",
+    "convert_inverse_solver",
+    "front_transform",
+    "camera_diffusion",
+    "camera_lens_blur",
+    "halation",
+    "log_exposure",
+    "film_density",
+    "dir_couplers",
+    "grain_dye",
+    "enlarger_lut",
+    "print_lut_roundtrip",
+    "print_spectral",
+    "enlarger_diffusion",
+    "print_density",
+    "scanner_density",
+    "scan_spectral",
+    "scanner_lens_blur",
+    "unsharp_mask",
+];
 
 pub const PHASE_NAMES: &[&str] = &[
     "input_load",
@@ -61,6 +205,7 @@ vocabulary!(AvailabilityReason {
     FeatureRequestFailed,
     NotEnabledOnDevice,
     QueryFailed,
+    QueryCapacity,
     NotReady,
     InvalidTimestamp,
     DetailLimit,
@@ -325,6 +470,8 @@ pub struct Observation {
     pub batch: Option<BatchMeasurements>,
     pub pass: Option<PassMeasurement>,
     pub execution: Option<ExecutionFacts>,
+    #[serde(default)]
+    pub host_timings: Option<Vec<HostTimingTotal>>,
 }
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct PhaseTotal {
@@ -347,6 +494,11 @@ pub struct Coverage {
     pub counter_overflow_fields: Vec<String>,
     pub fixed_duration_totals: [f64; 5],
     pub phase_totals: Vec<PhaseTotal>,
+    #[serde(default)]
+    pub stage_totals: Vec<PhaseTotal>,
+    /// Host interval totals were discarded after an arithmetic or input overflow.
+    #[serde(default)]
+    pub host_timing_overflow: bool,
 }
 impl Default for Coverage {
     fn default() -> Self {
@@ -362,16 +514,44 @@ impl Default for Coverage {
             counter_overflow_fields: Vec::new(),
             fixed_duration_totals: [0.0; 5],
             phase_totals: Vec::new(),
+            stage_totals: Vec::new(),
+            host_timing_overflow: false,
         }
     }
 }
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct GpuTimingMeasurements {
+pub struct HostTimingTotal {
+    pub kind: HostTimingKind,
+    pub count: u64,
+    pub total_duration: f64,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct GpuTimingGroup {
+    pub stage: GpuStage,
+    pub kind: GpuPassKind,
+    pub purpose: Purpose,
+    pub executed_pass_count: u64,
+    pub timed_pass_count: u64,
+    pub valid_pass_count: u64,
     pub compute_pass_sum: Measurement,
     pub partial_compute_pass_sum: Measurement,
 }
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct GpuTimingMeasurements {
+    pub compute_pass_sum: Measurement,
+    pub partial_compute_pass_sum: Measurement,
+    #[serde(default)]
+    pub groups: Vec<GpuTimingGroup>,
+}
 impl GpuTimingMeasurements {
     pub(super) fn add(&mut self, compute: &Measurement, partial: &Measurement) {
+        if self.compute_pass_sum.reason == Some(AvailabilityReason::CounterOverflow)
+            || self.partial_compute_pass_sum.reason == Some(AvailabilityReason::CounterOverflow)
+        {
+            return;
+        }
         let incomplete = Measurement::unavailable(AvailabilityReason::Incomplete);
         let compute = if compute.status != MeasurementStatus::Available
             && partial.status == MeasurementStatus::Available
@@ -408,6 +588,17 @@ impl GpuTimingMeasurements {
             (MeasurementStatus::Available, _) => self.partial_compute_pass_sum.clone(),
             _ => partial.clone(),
         };
+        if [&self.compute_pass_sum, &self.partial_compute_pass_sum]
+            .iter()
+            .any(|m| {
+                m.status == MeasurementStatus::Available
+                    && m.value.is_none_or(|v| !v.is_finite() || v < 0.0)
+            })
+        {
+            self.compute_pass_sum = Measurement::unavailable(AvailabilityReason::CounterOverflow);
+            self.partial_compute_pass_sum =
+                Measurement::unavailable(AvailabilityReason::CounterOverflow);
+        }
     }
 }
 impl Default for GpuTimingMeasurements {
@@ -415,6 +606,7 @@ impl Default for GpuTimingMeasurements {
         Self {
             compute_pass_sum: Measurement::unavailable(AvailabilityReason::NotCollected),
             partial_compute_pass_sum: Measurement::unavailable(AvailabilityReason::NotCollected),
+            groups: Vec::new(),
         }
     }
 }
@@ -426,6 +618,8 @@ pub struct ObservationSnapshot {
     pub observations: Vec<Observation>,
     pub totals: WorkCounters,
     pub gpu_timing: GpuTimingMeasurements,
+    #[serde(default)]
+    pub host_timings: Option<Vec<HostTimingTotal>>,
     pub coverage: Coverage,
     pub execution: ExecutionFacts,
     pub issues: Vec<DiagnosticIssue>,

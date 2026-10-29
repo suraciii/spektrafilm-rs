@@ -1,3 +1,4 @@
+use super::observation::ObservedDevice;
 use std::{borrow::Cow, collections::HashMap};
 
 use parking_lot::Mutex;
@@ -61,7 +62,7 @@ pub(super) struct PipelineCache {
 impl PipelineCache {
     pub(super) fn get_or_compile(
         &self,
-        device: &wgpu::Device,
+        device: &ObservedDevice,
         shader_source: &'static str,
         binding_types: &[wgpu::BufferBindingType],
     ) -> (CachedPipelineRef, bool) {
@@ -74,7 +75,7 @@ impl PipelineCache {
     /// names the cache entry alongside the source and the binding types.
     pub(super) fn get_or_compile_at(
         &self,
-        device: &wgpu::Device,
+        device: &ObservedDevice,
         shader_source: &'static str,
         binding_types: &[wgpu::BufferBindingType],
         entry_point: &'static str,
@@ -89,7 +90,7 @@ impl PipelineCache {
 
     pub(super) fn get_or_compile_pointwise(
         &self,
-        device: &wgpu::Device,
+        device: &ObservedDevice,
         original: &'static str,
         binding_types: &[wgpu::BufferBindingType],
         images: &[(usize, &'static str)],
@@ -104,7 +105,7 @@ impl PipelineCache {
 
     fn get_or_compile_key(
         &self,
-        device: &wgpu::Device,
+        device: &ObservedDevice,
         key: PipelineKey,
         binding_types: &[wgpu::BufferBindingType],
         source: impl FnOnce() -> Cow<'static, str>,

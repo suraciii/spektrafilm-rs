@@ -108,6 +108,34 @@ impl ChainStep {
         }
     }
 
+    fn gpu_stage(self) -> spektrafilm_backend::telemetry::GpuStage {
+        use spektrafilm_backend::telemetry::GpuStage;
+        match self {
+            Self::InputDecode | Self::Inverse => GpuStage::Input,
+            Self::Front
+            | Self::Highlight
+            | Self::CameraDiffusion
+            | Self::CameraBlur
+            | Self::Log => GpuStage::FilmExpose,
+            Self::Halation => GpuStage::Halation,
+            Self::FilmDensity => GpuStage::FilmDevelop,
+            Self::Dir => GpuStage::Dir,
+            Self::SpektraGrain => GpuStage::GrainSpektra,
+            // Both engines contain more than one semantic stage.
+            Self::Dye | Self::Fotufilm => GpuStage::Other,
+            Self::EnlargerLut | Self::PrintRoundtrip | Self::Print | Self::EnlargerDiffusion => {
+                GpuStage::PrintExpose
+            }
+            Self::PrintDensity => GpuStage::PrintDevelop,
+            Self::Readout | Self::ScannerLut | Self::Scan | Self::ScannerBlur => GpuStage::Scan,
+            Self::Glare => GpuStage::Glare,
+            Self::Gamut => GpuStage::Gamut,
+            Self::Unsharp => GpuStage::Unsharp,
+            Self::ProceduralGrain => GpuStage::GrainProcedural,
+            Self::Transfer | Self::Cmyk => GpuStage::Output,
+        }
+    }
+
     fn name(self) -> &'static str {
         match self {
             Self::InputDecode => "input_decode",
@@ -736,52 +764,56 @@ impl WgpuBackend {
                 name: step.name(),
                 execute: Box::new(|| {
                     use ChainStep::*;
+                    let stage = step.gpu_stage();
+                    let (backend, _stage) = self.observed_stage(stage.as_str(), stage);
+                    let backend = &backend;
                     if step.source_stage() {
                         if !matches!(
                             step,
                             Log | Highlight | CameraDiffusion | CameraBlur | Halation | FilmDensity
                         ) {
-                            ensure_pages(self, &mut rasters.a, geometry.source, "chain_work_a")?;
+                            ensure_pages(backend, &mut rasters.a, geometry.source, "chain_work_a")?;
                         }
                         if !matches!(step, InputDecode | SpektraGrain | Dye | Fotufilm) {
-                            ensure_pages(self, &mut rasters.b, geometry.source, "chain_work_b")?;
+                            ensure_pages(backend, &mut rasters.b, geometry.source, "chain_work_b")?;
                         }
                         if step == FilmDensity {
-                            ensure_pages(self, &mut rasters.a, geometry.source, "chain_work_a")?;
+                            ensure_pages(backend, &mut rasters.a, geometry.source, "chain_work_a")?;
                         }
                     } else {
-                        rasters.enter_tail(self, geometry)?;
+                        rasters.enter_tail(backend, geometry)?;
                     }
                     match step {
                         InputDecode => build_input_decode_state(
-                            &self.device,
+                            &backend.device,
                             p.input_decode.as_ref().ok_or("input decode missing")?,
                             &rasters.a,
                             n,
-                            self,
+                            backend,
                         )?
-                        .submit(self),
+                        .submit(backend),
                         Inverse => {
                             let spektrafilm_backend::FrontPass::ScanInverse(params) = &p.front
                             else {
                                 unreachable!()
                             };
-                            self.build_convert_inverse_state(params, &rasters.a, &rasters.b, n)?
-                                .submit(self)?;
+                            backend
+                                .build_convert_inverse_state(params, &rasters.a, &rasters.b, n)?
+                                .submit(backend)?;
                             let mut copy = super::super::grain::raster::RasterCommands::default();
                             copy.copy(&rasters.b, 0, &rasters.a, 0, raster_bytes(geometry.source)?);
-                            copy.submit(self)
+                            copy.submit(backend)
                         }
-                        Front => self.chain_front(p, &rasters, n),
+                        Front => backend.chain_front(p, &rasters, n),
                         Highlight => build_highlight_boost_state(
-                            &self.device,
+                            &backend.device,
                             p.highlight_boost.as_ref().ok_or("highlight missing")?,
                             n,
                             &rasters.b,
-                            self,
+                            backend,
                         )?
-                        .submit(self),
-                        CameraDiffusion => self.diffusion_transport(
+                        .submit(backend),
+                        CameraDiffusion => backend.diffusion_transport(
                             width,
                             height,
                             &rasters.b,
@@ -807,9 +839,9 @@ impl WgpuBackend {
                                     "scanner_lens",
                                 )
                             };
-                            let buffers = scratch.buffers(self, extent.0, extent.1)?;
+                            let buffers = scratch.buffers(backend, extent.0, extent.1)?;
                             build_simple_blur_state(
-                                self,
+                                backend,
                                 sigma,
                                 extent.0,
                                 extent.1,
@@ -818,7 +850,7 @@ impl WgpuBackend {
                                 &buffers.intermediate,
                                 label,
                             )?
-                            .submit(self, image)
+                            .submit(backend, image)
                         }
                         Halation => build_halation_state(
                             p.halation.as_ref().ok_or("halation missing")?,
@@ -826,28 +858,29 @@ impl WgpuBackend {
                             height,
                             &rasters.b,
                             &mut scratch,
-                            self,
+                            backend,
                         )?
-                        .submit(self),
+                        .submit(backend),
                         Log => {
                             let params = buffers::uniform(
-                                self,
+                                backend,
                                 "log10_params",
                                 bytemuck::cast_slice(&[n, 0, 0, 0, 0, 0, 0, 0]),
                             );
-                            let pipe = self.cached_pointwise_pipeline(include_str!("../../../../spektrafilm-shaders/wgsl/spectral/log10_inplace.wgsl"),
+                            let pipe = backend.cached_pointwise_pipeline(include_str!("../../../../spektrafilm-shaders/wgsl/spectral/log10_inplace.wgsl"),
                                 &[wgpu::BufferBindingType::Uniform, wgpu::BufferBindingType::Storage { read_only: false }], &[(1, "data")]);
-                            self.chain_pointwise(
-                                pipe,
-                                &[&params, &rasters.b],
-                                &[(1, ReadWrite)],
-                                n,
-                                false,
-                                "log_exposure",
-                            )?
-                            .submit(self)
+                            backend
+                                .chain_pointwise(
+                                    pipe,
+                                    &[&params, &rasters.b],
+                                    &[(1, ReadWrite)],
+                                    n,
+                                    false,
+                                    "log_exposure",
+                                )?
+                                .submit(backend)
                         }
-                        FilmDensity => self.chain_density(
+                        FilmDensity => backend.chain_density(
                             &rasters.b,
                             &rasters.a,
                             geometry.source,
@@ -859,64 +892,65 @@ impl WgpuBackend {
                             "film_density",
                         ),
                         Dir => build_dir_state(
-                            &self.device,
+                            &backend.device,
                             p.dir_couplers.as_ref().ok_or("DIR missing")?,
                             width,
                             height,
                             &rasters.a,
                             &rasters.b,
                             &mut scratch,
-                            self,
+                            backend,
                         )?
-                        .submit_passes(self),
+                        .submit_passes(backend),
                         SpektraGrain => build_spektra_grain_state(
-                            &self.device,
+                            &backend.device,
                             width,
                             height,
                             &rasters.a,
                             p.grain_spektra.as_ref().ok_or("grain missing")?,
-                            self,
+                            backend,
                         )?
-                        .submit(self),
+                        .submit(backend),
                         Dye => {
                             let source = super::device_image::BufferPayload::from_pages(
-                                self.backend_id(),
+                                backend.backend_id(),
                                 rasters.a.clone(),
                                 width,
                                 height,
                             );
                             let dye_params = p.grain_dye.as_ref().ok_or("Dye missing")?;
-                            let law = self.prepare_dye_law(width, height, &source, dye_params)?;
-                            law.submit(self)?;
-                            self.check_dye_status(&law.status_buffer())?;
+                            let law =
+                                backend.prepare_dye_law(width, height, &source, dye_params)?;
+                            law.submit(backend)?;
+                            backend.check_dye_status(&law.status_buffer())?;
                             rasters.field = law.output_pages();
                             Ok(())
                         }
                         Fotufilm => {
                             let source = super::device_image::BufferPayload::from_pages(
-                                self.backend_id(),
+                                backend.backend_id(),
                                 rasters.a.clone(),
                                 width,
                                 height,
                             );
-                            let state = self.prepare_fotufilm_paged(
+                            let state = backend.prepare_fotufilm_paged(
                                 width,
                                 height,
                                 &source,
                                 p.grain_fotufilm.as_ref().ok_or("Fotufilm missing")?,
                             )?;
-                            state.submit(self)?;
+                            state.submit(backend)?;
                             rasters.field = state.output_pages();
                             Ok(())
                         }
                         EnlargerLut => {
-                            rasters.fine_output(self, geometry)?;
-                            self.spectral_lut_transport(
+                            rasters.fine_output(backend, geometry)?;
+                            backend.spectral_lut_transport(
                                 &rasters.field,
                                 &rasters.fine,
                                 geometry.field.0 * geometry.field.1,
                                 |source, output, count| {
-                                    self.execute_enlarger_lut_resident(
+                                    backend.execute_enlarger_lut_resident(
                                         source,
                                         output,
                                         count,
@@ -925,40 +959,41 @@ impl WgpuBackend {
                                 },
                             )
                         }
-                        PrintRoundtrip => self
+                        PrintRoundtrip => backend
                             .print_lut_roundtrip(
                                 &rasters.fine,
                                 geometry.field.0 * geometry.field.1,
                                 p.print_exposure_scale,
                             )?
-                            .submit(self),
+                            .submit(backend),
                         Print => {
-                            rasters.fine_output(self, geometry)?;
+                            rasters.fine_output(backend, geometry)?;
                             let [params, cd, bd, illuminant, sensitivity] =
-                                buffers::print(self, p, geometry.field.0, geometry.field.1);
+                                buffers::print(backend, p, geometry.field.0, geometry.field.1);
                             let ro = wgpu::BufferBindingType::Storage { read_only: true };
                             let rw = wgpu::BufferBindingType::Storage { read_only: false };
-                            let pipe = self.cached_pointwise_pipeline(include_str!("../../../../spektrafilm-shaders/wgsl/spectral/print_spectral_calibrated.wgsl"),
+                            let pipe = backend.cached_pointwise_pipeline(include_str!("../../../../spektrafilm-shaders/wgsl/spectral/print_spectral_calibrated.wgsl"),
                                 &[wgpu::BufferBindingType::Uniform, ro, ro, ro, ro, ro, rw], &[(1, "density_cmy"), (6, "output")]);
-                            self.chain_pointwise(
-                                pipe,
-                                &[
-                                    &params,
-                                    &rasters.field,
-                                    &cd,
-                                    &bd,
-                                    &illuminant,
-                                    &sensitivity,
-                                    &rasters.fine,
-                                ],
-                                &[(1, Read), (6, Write)],
-                                geometry.field.0 * geometry.field.1,
-                                true,
-                                "print_spectral",
-                            )?
-                            .submit(self)
+                            backend
+                                .chain_pointwise(
+                                    pipe,
+                                    &[
+                                        &params,
+                                        &rasters.field,
+                                        &cd,
+                                        &bd,
+                                        &illuminant,
+                                        &sensitivity,
+                                        &rasters.fine,
+                                    ],
+                                    &[(1, Read), (6, Write)],
+                                    geometry.field.0 * geometry.field.1,
+                                    true,
+                                    "print_spectral",
+                                )?
+                                .submit(backend)
                         }
-                        EnlargerDiffusion => self.diffusion_transport(
+                        EnlargerDiffusion => backend.diffusion_transport(
                             geometry.field.0,
                             geometry.field.1,
                             &rasters.fine,
@@ -970,12 +1005,12 @@ impl WgpuBackend {
                         ),
                         PrintDensity => {
                             ensure_pages(
-                                self,
+                                backend,
                                 &mut rasters.tail_a,
                                 geometry.tail,
                                 "field_tail_density",
                             )?;
-                            self.chain_density(
+                            backend.chain_density(
                                 &rasters.tail_b,
                                 &rasters.tail_a,
                                 geometry.tail,
@@ -991,7 +1026,7 @@ impl WgpuBackend {
                             } else {
                                 &rasters.tail_a
                             };
-                            let state = self.build_scan_density_state(
+                            let state = backend.build_scan_density_state(
                                 params,
                                 source,
                                 &rasters.tail_b,
@@ -999,24 +1034,25 @@ impl WgpuBackend {
                                 geometry.tail.1,
                                 p.scan_preparation_key,
                             )?;
-                            self.pipe
-                                .run_chain(vec![super::super::pipe::ChainStage::Device {
+                            backend.pipe.run_chain(vec![
+                                super::super::pipe::ChainStage::Device {
                                     name: "scanner_optics",
-                                    execute: Box::new(|| state.submit_optics(self)),
-                                }])?;
+                                    execute: Box::new(|| state.submit_optics(backend)),
+                                },
+                            ])?;
                             if state.has_setup() {
-                                self.pipe.run_chain(vec![
+                                backend.pipe.run_chain(vec![
                                     super::super::pipe::ChainStage::Device {
                                         name: "standard_setup",
                                         execute: Box::new(|| {
-                                            state.submit_setup_observed(self, setup_context)
+                                            state.submit_setup_observed(backend, setup_context)
                                         }),
                                     },
                                 ])?;
                             }
-                            state.submit_inverse(self)?;
+                            state.submit_inverse(backend)?;
                             state.check(
-                                self,
+                                backend,
                                 params,
                                 p.scan_preparation_key,
                                 geometry.tail.0,
@@ -1029,12 +1065,12 @@ impl WgpuBackend {
                             } else {
                                 &rasters.tail_a
                             };
-                            self.spectral_lut_transport(
+                            backend.spectral_lut_transport(
                                 source,
                                 &rasters.tail_b,
                                 geometry.tail.0 * geometry.tail.1,
                                 |source, output, count| {
-                                    self.execute_scanner_lut_resident(
+                                    backend.execute_scanner_lut_resident(
                                         source,
                                         output,
                                         count,
@@ -1049,60 +1085,61 @@ impl WgpuBackend {
                             } else {
                                 &rasters.tail_a
                             };
-                            self.build_scan_direct_state(
-                                p,
-                                source,
-                                &rasters.tail_b,
-                                geometry.tail.0,
-                                geometry.tail.1,
-                            )?
-                            .submit(self)
+                            backend
+                                .build_scan_direct_state(
+                                    p,
+                                    source,
+                                    &rasters.tail_b,
+                                    geometry.tail.0,
+                                    geometry.tail.1,
+                                )?
+                                .submit(backend)
                         }
                         Glare => build_glare_state(
-                            &self.device,
+                            &backend.device,
                             p.glare.as_ref().ok_or("glare missing")?,
                             geometry.tail.0,
                             geometry.tail.1,
                             &rasters.tail_b,
                             &mut scratch,
-                            self,
+                            backend,
                         )?
-                        .submit(self),
+                        .submit(backend),
                         Gamut => build_gamut_state(
-                            &self.device,
+                            &backend.device,
                             p.gamut.as_ref().ok_or("gamut missing")?,
                             &rasters.tail_b,
                             geometry.tail.0 * geometry.tail.1,
-                            self,
+                            backend,
                         )?
-                        .submit(self),
+                        .submit(backend),
                         Unsharp => {
                             let state = build_unsharp_state(
-                                &self.device,
+                                &backend.device,
                                 p.unsharp.as_ref().ok_or("unsharp missing")?,
                                 geometry.tail.0,
                                 geometry.tail.1,
                                 &rasters.tail_b,
                                 &mut scratch,
-                                self,
+                                backend,
                             )?;
-                            state.submit(self)?;
+                            state.submit(backend)?;
                             // The combine writes the idle Gaussian intermediate, so
                             // every binding is distinct; later stages read that buffer.
                             rasters.tail_b = state.destination().to_vec();
                             Ok(())
                         }
                         ProceduralGrain => build_grain_procedural_state(
-                            &self.device,
+                            &backend.device,
                             p.grain_procedural.as_ref().ok_or("grain missing")?,
                             geometry.tail.0,
                             geometry.tail.1,
                             &rasters.tail_b,
                             Some(p.scan_output_space),
-                            self,
+                            backend,
                         )?
-                        .submit(self, &rasters.tail_b),
-                        Transfer => self
+                        .submit(backend, &rasters.tail_b),
+                        Transfer => backend
                             .chain_output_transfer(
                                 &rasters.tail_b,
                                 geometry.tail.0 * geometry.tail.1,
@@ -1110,14 +1147,14 @@ impl WgpuBackend {
                                     .as_ref()
                                     .ok_or("output transfer missing")?,
                             )?
-                            .submit(self),
-                        Cmyk => self
+                            .submit(backend),
+                        Cmyk => backend
                             .chain_cmyk(
                                 &rasters.tail_b,
                                 geometry.tail.0 * geometry.tail.1,
                                 p.cmyk.as_ref().ok_or("CMYK missing")?,
                             )?
-                            .submit(self),
+                            .submit(backend),
                     }
                 }),
             };

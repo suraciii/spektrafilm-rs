@@ -3,7 +3,9 @@
 mod observation;
 #[cfg(feature = "wgpu-backend")]
 mod page_views;
+mod profiling;
 mod resources;
+mod timestamps;
 use observation::{ObservedDevice, ObservedEncoder, ObservedPass, ObservedQueue};
 use spektrafilm_backend::telemetry::*;
 
@@ -355,7 +357,7 @@ impl WgpuBackend {
         entry_point: &'static str,
     ) -> CachedPipelineRef {
         let (cached, hit) = self.pipeline_cache.get_or_compile_at(
-            &self.device.raw,
+            &self.device,
             shader_source,
             binding_types,
             entry_point,

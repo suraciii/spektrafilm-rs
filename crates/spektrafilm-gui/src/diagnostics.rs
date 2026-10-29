@@ -358,6 +358,15 @@ impl Diagnostics {
                     ))
                     .id_salt("diagnostics.stages")
                     .show(ui, |ui| {
+                        ui.small(crate::i18n::text(
+                            ui.ctx(),
+                            "surfaces.diagnostics.nested_help",
+                        ));
+                        ui.label(crate::i18n::text(
+                            ui.ctx(),
+                            "surfaces.diagnostics.stage_totals",
+                        ));
+                        details(ui, &report.coverage.stage_totals);
                         details(ui, &report.stages);
                     });
                     egui::CollapsingHeader::new(crate::i18n::text(
@@ -374,11 +383,24 @@ impl Diagnostics {
                     });
                     egui::CollapsingHeader::new(crate::i18n::text(
                         ui.ctx(),
+                        "surfaces.diagnostics.host_timings",
+                    ))
+                    .id_salt("diagnostics.host_timings")
+                    .show(ui, |ui| show_host_timings(ui, report));
+                    egui::CollapsingHeader::new(crate::i18n::text(
+                        ui.ctx(),
                         "surfaces.diagnostics.gpu",
                     ))
                     .id_salt("diagnostics.gpu")
                     .show(ui, |ui| {
                         ui.small(crate::i18n::text(ui.ctx(), "surfaces.diagnostics.gpu_help"));
+                        show_gpu_groups(ui, report);
+                        if report.coverage.truncated {
+                            ui.label(crate::i18n::text(
+                                ui.ctx(),
+                                "surfaces.diagnostics.truncated",
+                            ));
+                        }
                         details(ui, &report.gpu_batches);
                         details(ui, &report.execution);
                         details(ui, &report.coverage);
@@ -422,6 +444,112 @@ fn optional_words<T: serde::Serialize>(ctx: &egui::Context, value: Option<T>) ->
         crate::i18n::text(ctx, "surfaces.diagnostics.not_applicable").into_owned()
     })
 }
+fn show_host_timings(ui: &mut egui::Ui, report: &Report) {
+    ui.small(crate::i18n::text(
+        ui.ctx(),
+        "surfaces.diagnostics.host_timings_help",
+    ));
+    if report.coverage.host_timing_overflow {
+        ui.label(measurement_text(
+            ui.ctx(),
+            &spektrafilm_backend::telemetry::Measurement::unavailable(
+                spektrafilm_backend::telemetry::AvailabilityReason::CounterOverflow,
+            ),
+        ));
+        return;
+    }
+    match &report.measurements.host_timings {
+        None => {
+            ui.label(crate::i18n::text(
+                ui.ctx(),
+                "surfaces.diagnostics.historical_host",
+            ));
+        }
+        Some(timings) if timings.is_empty() => {
+            ui.label(crate::i18n::text(
+                ui.ctx(),
+                "surfaces.diagnostics.no_observations",
+            ));
+        }
+        Some(timings) => {
+            for timing in timings {
+                ui.label(crate::tr!(
+                    ui.ctx(),
+                    "surfaces.diagnostics.host_row",
+                    kind = timing.kind.as_str(),
+                    count = timing.count,
+                    ms = format!("{:.3}", timing.total_duration * 1000.0)
+                ));
+            }
+        }
+    }
+}
+
+fn measurement_text(
+    ctx: &egui::Context,
+    measurement: &spektrafilm_backend::telemetry::Measurement,
+) -> String {
+    match measurement.value {
+        Some(value) => format!("{:.3} ms", value * 1000.0),
+        None => match measurement.reason {
+            Some(reason) => format!(
+                "{} ({})",
+                crate::i18n::text(ctx, "surfaces.diagnostics.value_unavailable"),
+                words(&reason)
+            ),
+            None => crate::i18n::text(ctx, "surfaces.diagnostics.value_unavailable").into_owned(),
+        },
+    }
+}
+
+fn show_gpu_groups(ui: &mut egui::Ui, report: &Report) {
+    let timing = &report.measurements.gpu_timing;
+    ui.label(crate::i18n::text(
+        ui.ctx(),
+        "surfaces.diagnostics.gpu_totals",
+    ));
+    ui.label(crate::tr!(
+        ui.ctx(),
+        "surfaces.diagnostics.gpu_sums",
+        full = measurement_text(ui.ctx(), &timing.compute_pass_sum),
+        partial = measurement_text(ui.ctx(), &timing.partial_compute_pass_sum)
+    ));
+    ui.label(crate::i18n::text(
+        ui.ctx(),
+        "surfaces.diagnostics.gpu_groups",
+    ));
+    let groups = &timing.groups;
+    if groups.is_empty() {
+        ui.label(crate::i18n::text(
+            ui.ctx(),
+            "surfaces.diagnostics.no_gpu_groups",
+        ));
+    }
+    for group in groups {
+        ui.group(|ui| {
+            ui.label(format!(
+                "{} · {} · {}",
+                group.stage.as_str(),
+                group.kind.as_str(),
+                words(&group.purpose)
+            ));
+            ui.label(crate::tr!(
+                ui.ctx(),
+                "surfaces.diagnostics.gpu_coverage",
+                executed = group.executed_pass_count,
+                timed = group.timed_pass_count,
+                valid = group.valid_pass_count
+            ));
+            ui.label(crate::tr!(
+                ui.ctx(),
+                "surfaces.diagnostics.gpu_sums",
+                full = measurement_text(ui.ctx(), &group.compute_pass_sum),
+                partial = measurement_text(ui.ctx(), &group.partial_compute_pass_sum)
+            ));
+        });
+    }
+}
+
 fn details(ui: &mut egui::Ui, value: &impl serde::Serialize) {
     match serde_json::to_value(value) {
         Ok(value) => show_value(ui, None, &value),
@@ -473,6 +601,134 @@ fn show_value(ui: &mut egui::Ui, key: Option<&str>, value: &serde_json::Value) {
 mod tests {
     use super::*;
     use spektrafilm_core::telemetry::{OperationKind, SourceRender};
+
+    #[test]
+    fn timing_panels_show_incomplete_coverage_and_direct_host_intervals() {
+        use egui_kittest::{Harness, kittest::Queryable};
+        use spektrafilm_backend::telemetry::{
+            AvailabilityReason, GpuPassKind, GpuStage, HostTimingKind, Measurement,
+        };
+
+        let operation = Operation::new(OperationKind::Preview, CollectionMode::GpuTiming);
+        let context = operation.context();
+        context.record_gpu_pass_submission(
+            GpuStage::FotufilmFormation,
+            GpuPassKind::Formation,
+            3,
+            2,
+        );
+        context.record_gpu_pass_duration(
+            GpuStage::FotufilmFormation,
+            GpuPassKind::Formation,
+            Measurement::available(0.012),
+        );
+        context.record_gpu_pass_duration(
+            GpuStage::FotufilmFormation,
+            GpuPassKind::Formation,
+            Measurement::unavailable(AvailabilityReason::NotReady),
+        );
+        context.record_host_timing(HostTimingKind::QueueSubmit, 0.004);
+        let report = operation.finish(Outcome::Succeeded).unwrap();
+        let harness = Harness::new_ui_state(
+            |ui, report: &mut Report| {
+                show_gpu_groups(ui, report);
+                show_host_timings(ui, report);
+            },
+            report,
+        );
+        assert!(
+            harness
+                .query_by_label("fotufilm_formation · formation · image")
+                .is_some()
+        );
+        assert!(
+            harness
+                .query_by_label("Executed 3 · timed 2 · valid 1")
+                .is_some()
+        );
+        assert!(
+            harness
+                .query_all_by_label(
+                    "Complete sum: unavailable (incomplete) · partial sum: 12.000 ms"
+                )
+                .next()
+                .is_some()
+        );
+        assert!(
+            harness
+                .query_by_label("queue_submit: 1 intervals · 4.000 ms total")
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn overflowed_host_intervals_are_unavailable_not_empty() {
+        use egui_kittest::{Harness, kittest::Queryable};
+        use spektrafilm_backend::telemetry::HostTimingKind;
+
+        let operation = Operation::new(OperationKind::Preview, CollectionMode::Summary);
+        operation
+            .context()
+            .record_host_timing(HostTimingKind::Upload, 0.002);
+        operation
+            .context()
+            .record_host_timing(HostTimingKind::Upload, f64::INFINITY);
+        let report = operation.finish(Outcome::Succeeded).unwrap();
+        let harness = Harness::new_ui_state(
+            |ui, report: &mut Report| show_host_timings(ui, report),
+            report,
+        );
+        assert!(
+            harness
+                .query_by_label("unavailable (counter_overflow)")
+                .is_some()
+        );
+        assert!(
+            harness
+                .query_by_label("No observations in this scope.")
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn historical_report_timing_panels_remain_usable_in_chinese() {
+        use egui_kittest::{Harness, kittest::Queryable};
+
+        let operation = Operation::new(OperationKind::Preview, CollectionMode::Summary);
+        let report = operation.finish(Outcome::Succeeded).unwrap();
+        let mut json = serde_json::to_value(report).unwrap();
+        json["measurements"]
+            .as_object_mut()
+            .unwrap()
+            .remove("host_timings");
+        json["measurements"]["gpu_timing"]
+            .as_object_mut()
+            .unwrap()
+            .remove("groups");
+        json["coverage"]
+            .as_object_mut()
+            .unwrap()
+            .remove("stage_totals");
+        let report = Report::from_json(&json.to_string()).unwrap();
+        let harness = Harness::new_ui_state(
+            |ui, report: &mut Report| {
+                crate::i18n::Locale::SimplifiedChinese.install(ui.ctx());
+                show_gpu_groups(ui, report);
+                show_host_timings(ui, report);
+            },
+            report,
+        );
+        assert!(
+            harness
+                .query_by_label("没有记录分组通道数据；旧报告可能不包含分组。")
+                .is_some()
+        );
+        assert!(
+            harness
+                .query_by_label("此报告未记录主机区间类别。")
+                .is_some()
+        );
+    }
 
     fn wait_for_publications(diagnostics: &Diagnostics) {
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);

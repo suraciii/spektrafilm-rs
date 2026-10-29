@@ -1134,6 +1134,7 @@ fn cmd_process(
             })
         },
     )?;
+    eprintln!("Runtime preparation: {} ms", t.elapsed().as_millis());
     if context.enabled() {
         invocation
             .operation
@@ -1282,22 +1283,26 @@ fn cmd_process(
         // Warm-cache bench: process the image `iters` times in the same backend
         // instance. The first iteration pays shader-compile cost; subsequent ones
         // hit the cache and reflect "GUI live preview" performance.
+        let t = Instant::now();
         let mut last = run_once(&image, 1)?;
-        let iter1_ms = t.elapsed().as_millis();
-        eprintln!("Pipeline (iter 1): {} ms (cold)", iter1_ms);
+        eprintln!(
+            "Pipeline simulation (iter 1): {} ms (cold)",
+            t.elapsed().as_millis()
+        );
         for i in 2..=iters {
             let ti = Instant::now();
             last = run_once(&image, i as u64)?;
             eprintln!(
-                "Pipeline (iter {}): {} ms (warm)",
+                "Pipeline simulation (iter {}): {} ms (warm)",
                 i,
                 ti.elapsed().as_millis()
             );
         }
         last
     } else {
+        let t = Instant::now();
         let r = run_once(&image, 1)?;
-        eprintln!("Pipeline: {} ms", t.elapsed().as_millis());
+        eprintln!("Pipeline simulation: {} ms", t.elapsed().as_millis());
         r
     };
     let plan = plan.context("internal error: missing output plan for rendering")?;

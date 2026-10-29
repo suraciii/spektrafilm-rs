@@ -40,9 +40,9 @@ Diagnostics MUST offer `Open log folder` for the current session. Collection mod
 
 Automatic writing MUST keep the interface responsive. Normal shutdown MUST finish accepted report writes. Diagnostics settings MUST remain session-local and outside saved GUI states, presets, and recipes.
 
-The GUI summary MUST show operation kind, outcome, working dimensions, elapsed time, requested and selected backend, actual route, and the largest observed phase. It MUST show CPU-stage reasons and software-adapter status in plain language. Phase durations, logical transfers, and GPU pass timing MUST be available in expanded detail.
+The GUI summary MUST show operation kind, outcome, working dimensions, elapsed time, requested and selected backend, actual route, and the largest observed phase. It MUST show CPU-stage reasons and software-adapter status in plain language. Expanded detail MUST include phase durations, logical transfers, typed GPU timing groups with pass coverage, and observed host timing categories.
 
-The UI MUST NOT rank nested phases as independent costs or diagnose an unmeasured shader bottleneck from a host wait. An empty history MUST explain that collection applies to the next operation; exporting a report MUST NOT rerun the image.
+The UI MUST identify incomplete GPU timing and inclusive or overlapping host intervals. It MUST NOT rank nested phases as independent costs or diagnose an unmeasured shader bottleneck from a host wait. An empty history MUST explain that collection applies to the next operation; exporting a report MUST NOT rerun the image.
 
 The GUI MUST retain the latest 20 terminal reports in memory, newest first. It MUST label superseded operations separately from accepted output. The retained output MUST keep a small render reference independently of history eviction.
 
@@ -53,6 +53,8 @@ Automatic writing MUST publish each collected terminal report as a new `operatio
 Publication MUST NOT replace an existing file, MUST NOT change the operation outcome, and MUST NOT enter the operation duration. A publication failure MUST surface as a status diagnostic without failing the operation.
 
 The `process` and `render` CLI commands MUST accept `--diagnostics PATH` for one UTF-8 JSON report. `--gpu-timings` MUST require `--diagnostics` and select GPU timing; a report request without it selects summary. Existing `process --timings` MUST keep its human timing output and MUST NOT require a report path.
+
+For `process --timings`, the human Pipeline simulation duration MUST cover the same attempt boundary as the JSON simulation observation. Runtime preparation MUST be reported separately. Human timing output MUST remain on stderr.
 
 `--help` MUST describe these options and explain that GPU timing MAY be unavailable. Other subcommands MUST NOT accept these options.
 
@@ -69,6 +71,8 @@ A report MUST contain a schema version, application build identity, operation id
 A failure before loading, parameter resolution, or device selection MUST retain only the configuration observed before failure. Required fields that were not reached MUST report availability rather than guess their values.
 
 Summary collection MUST include operation duration, phase durations, execution path, actual routing and CPU-stage reasons, logical GPU transfers, submissions, and dispatches. GPU timestamp collection MUST be explicit. CPU profiling, driver profiling, and operating-system memory sampling are separate measurements; summary collection MUST NOT claim to supply them.
+
+GPU timing aggregates MUST cover submitted compute passes independently of retained pass detail. Reports MUST distinguish complete sums from partial sums and preserve unavailable reasons. Typed GPU stage and pass categories and directly observed host intervals are defined in [metrics](metrics/spec.md#explicit-gpu-timing).
 
 Reports MUST remain valid for historical and explicit CPU execution, WGPU resident execution, and WGPU per-stage execution with CPU or GPU stages. Historical mixed-path validity MUST NOT authorize CPU image stages or a CPU restart after GPU selection under the [backend-selection contract](../gpu-execution/spec.md#backend-selection). Save MUST report writing costs without claiming a new simulation.
 
@@ -111,6 +115,8 @@ Collection MUST NOT block on an external consumer.
 ## Acceptance
 
 With identical inputs and effective parameters, enabling summary collection MUST preserve output pixels and publication outcomes. Enabling GPU timestamps MUST preserve the same image passes and execution route.
+
+Acceptance MUST cover timing coverage when detail retention is truncated, unavailable or pending GPU queries, late query completion after publication, and historical reports without the additive attribution fields. It MUST check that disabled collection creates no telemetry resources or records.
 
 Resident and per-stage scenarios MUST show different observed GPU boundary counts. A Spektra grain or film-coordinate grain scenario that actually executes CPU image sampling MUST identify that CPU work and its reason. The reason MUST include a Dye field stage or `grain_fotufilm` when applicable.
 

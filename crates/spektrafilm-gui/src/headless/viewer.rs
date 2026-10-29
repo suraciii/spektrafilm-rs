@@ -1459,13 +1459,17 @@ fn gpu_gui_scan_view_transition_and_save_keep_the_accepted_device_samples() {
     let saved = directory.path().join("accepted.tiff");
     save_retained(&mut h, &saved);
     assert!(saved.exists(), "{}", h.state().status);
-    let bytes = std::fs::read(&saved).unwrap();
+    let saved_before = image_io::load(&saved).unwrap().image;
     h.state_mut().viewer.set_zoom_percent(100.0);
     composed(&mut h, time + 2.0);
     save_retained(&mut h, &saved);
+    let saved_after = image_io::load(&saved).unwrap().image;
     assert_eq!(
-        std::fs::read(&saved).unwrap(),
-        bytes,
+        (saved_after.width, saved_after.height),
+        (saved_before.width, saved_before.height)
+    );
+    assert_eq!(
+        saved_after.data, saved_before.data,
         "view changes must not change Save samples"
     );
     assert_eq!(

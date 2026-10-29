@@ -23,9 +23,9 @@ pub use report::{
 pub use spektrafilm_backend::telemetry::{
     AdapterDescription, AdapterDeviceType, AvailabilityReason, BackendSelected, BatchMeasurements,
     CollectionMode, Coverage, CpuReason, DiagnosticIssue, ExecutionFacts, ExecutionPath, Executor,
-    GpuTimingMeasurements, IssueBoundary, IssueCategory, Measurement, MeasurementStatus,
-    Observation, ObservationContext, ObservationKind, ObservationScope, ObservationSnapshot,
-    Outcome, PassMeasurement, PhaseTotal, Purpose, ResidentDeclineReason, UploadCategory,
-    WorkCounters,
+    GpuPassKind, GpuStage, GpuTimingGroup, GpuTimingMeasurements, HostTimingKind, HostTimingTotal,
+    IssueBoundary, IssueCategory, Measurement, MeasurementStatus, Observation, ObservationContext,
+    ObservationKind, ObservationScope, ObservationSnapshot, Outcome, PassMeasurement, PhaseTotal,
+    Purpose, ResidentDeclineReason, UploadCategory, WorkCounters,
 };
 pub use validator::ValidationError;

@@ -15,12 +15,28 @@ struct Collector {
     retained_summaries: u64,
     detail_bytes: u64,
     detail_byte_limit: u64,
+    group_state: Vec<GroupState>,
+}
+#[derive(Default)]
+struct GroupState {
+    completed: u64,
+    failure: Option<AvailabilityReason>,
+    overflow: bool,
 }
 // Root facts, bounded issues, fixed phase totals and overflow field names reserve
 // enough space independently of detailed observation admission.
-const ROOT_BYTES: u64 = 16 * 1024;
-const OBSERVATION_LIMIT: usize = 1024;
-const SUMMARY_LIMIT: u64 = 512;
+const MAX_GROUPS: usize = GpuStage::ALL.len() * GpuPassKind::ALL.len() * 3;
+const MAX_STAGE_TOTALS: usize = STAGE_NAMES.len() + GpuStage::ALL.len();
+const ROOT_BYTES: u64 = 16 * 1024
+    + (MAX_GROUPS * (std::mem::size_of::<GpuTimingGroup>() + std::mem::size_of::<GroupState>()))
+        as u64
+    + ((OBSERVATION_LIMIT + 1) * HostTimingKind::ALL.len() * std::mem::size_of::<HostTimingTotal>())
+        as u64
+    + (MAX_STAGE_TOTALS * (std::mem::size_of::<PhaseTotal>() + 64)) as u64;
+// Reserve space for per-observation inclusive host totals and the complete finite
+// GPU key space before admitting details, within the existing one MiB budget.
+const OBSERVATION_LIMIT: usize = 512;
+const SUMMARY_LIMIT: u64 = 256;
 const INITIAL_BYTES: u64 =
     ROOT_BYTES + (OBSERVATION_LIMIT * std::mem::size_of::<Observation>()) as u64;
 // Leave half the dynamic storage for late attempts, phases, and stages.
@@ -48,6 +64,110 @@ fn observation_bytes(observation: &Observation) -> u64 {
             .as_ref()
             .map_or(0, |batch| batch.completion_boundary.capacity() as u64)
 }
+fn add_host_timing(totals: &mut Vec<HostTimingTotal>, kind: HostTimingKind, seconds: f64) -> bool {
+    if let Some(total) = totals.iter_mut().find(|total| total.kind == kind) {
+        let Some(count) = total.count.checked_add(1) else {
+            return false;
+        };
+        let duration = total.total_duration + seconds;
+        if !duration.is_finite() {
+            return false;
+        }
+        total.count = count;
+        total.total_duration = duration;
+    } else {
+        if totals.capacity() == 0 {
+            totals.reserve_exact(HostTimingKind::ALL.len());
+        }
+        totals.push(HostTimingTotal {
+            kind,
+            count: 1,
+            total_duration: seconds,
+        });
+    }
+    true
+}
+
+fn refresh_gpu_totals(collector: &mut Collector) {
+    let unavailable = if collector.mode != CollectionMode::GpuTiming {
+        Some(AvailabilityReason::NotCollected)
+    } else {
+        collector
+            .snapshot
+            .execution
+            .adapter
+            .as_ref()
+            .and_then(|adapter| adapter.timestamp_reason)
+    };
+    let timing = &mut collector.snapshot.gpu_timing;
+    let mut partial = 0.0;
+    let mut valid = false;
+    let mut complete = true;
+    let mut reason = None;
+    let mut has_failure = false;
+    let mut group_overflow = false;
+    for (group, state) in timing.groups.iter_mut().zip(&collector.group_state) {
+        let pending = state.completed < group.timed_pass_count;
+        let group_reason = if state.overflow {
+            AvailabilityReason::CounterOverflow
+        } else if let Some(reason) = unavailable {
+            reason
+        } else if let Some(reason) = state.failure {
+            reason
+        } else if group.executed_pass_count > group.timed_pass_count {
+            AvailabilityReason::Incomplete
+        } else if pending {
+            AvailabilityReason::NotReady
+        } else {
+            AvailabilityReason::Incomplete
+        };
+        if group.valid_pass_count == 0 && !state.overflow {
+            group.partial_compute_pass_sum = Measurement::unavailable(group_reason);
+        }
+        let full = !state.overflow
+            && group.executed_pass_count > 0
+            && group.valid_pass_count == group.executed_pass_count;
+        group.compute_pass_sum = if full {
+            group.partial_compute_pass_sum.clone()
+        } else {
+            Measurement::unavailable(group_reason)
+        };
+        if let Some(value) = group.partial_compute_pass_sum.value {
+            partial += value;
+            valid = true;
+        }
+        complete &= full;
+        group_overflow |= state.overflow;
+        let group_has_failure = state.failure == Some(group_reason);
+        if !full
+            && (reason.is_none()
+                || (!has_failure && group_has_failure)
+                || (!has_failure
+                    && reason == Some(AvailabilityReason::NotReady)
+                    && group_reason != AvailabilityReason::NotReady))
+        {
+            reason = Some(group_reason);
+            has_failure = group_has_failure;
+        }
+    }
+    let overflow = group_overflow || !partial.is_finite();
+    timing.partial_compute_pass_sum = if overflow {
+        Measurement::unavailable(AvailabilityReason::CounterOverflow)
+    } else if valid {
+        Measurement::available(partial)
+    } else {
+        Measurement::unavailable(reason.unwrap_or(AvailabilityReason::NotCollected))
+    };
+    timing.compute_pass_sum = if overflow {
+        Measurement::unavailable(AvailabilityReason::CounterOverflow)
+    } else if complete && valid {
+        Measurement::available(partial)
+    } else if valid {
+        Measurement::unavailable(AvailabilityReason::Incomplete)
+    } else {
+        Measurement::unavailable(reason.unwrap_or(AvailabilityReason::NotCollected))
+    };
+}
 
 fn bounded_description(value: &mut String) -> bool {
     if let Some((end, _)) = value.char_indices().nth(256) {
@@ -72,6 +192,8 @@ pub struct ObservationContext {
     root: u64,
     retained: bool,
     purpose: Option<Purpose>,
+    gpu_stage: GpuStage,
+    explicit_gpu_stage: bool,
     meta: Option<ScopeMeta>,
     span: Option<tracing::Span>,
     progress: Option<super::progress::ProgressSender>,
@@ -102,6 +224,7 @@ impl ObservationContext {
                 retained_summaries: 0,
                 detail_bytes: 0,
                 detail_byte_limit: DETAIL_BYTE_LIMIT,
+                group_state: Vec::new(),
                 snapshot: ObservationSnapshot {
                     root_id,
                     duration: 0.0,
@@ -109,7 +232,9 @@ impl ObservationContext {
                     observations: Vec::with_capacity(OBSERVATION_LIMIT),
                     totals: WorkCounters::default(),
                     gpu_timing: GpuTimingMeasurements::default(),
+                    host_timings: Some(Vec::new()),
                     coverage: Coverage {
+                        detail_limit: OBSERVATION_LIMIT as u64,
                         retained_bytes: INITIAL_BYTES,
                         ..Coverage::default()
                     },
@@ -129,6 +254,8 @@ impl ObservationContext {
             root: root_id,
             retained: true,
             purpose: Some(Purpose::Image),
+            gpu_stage: GpuStage::Other,
+            explicit_gpu_stage: false,
             meta: Some(ScopeMeta {
                 name: "operation",
                 kind: ObservationKind::Attempt,
@@ -241,6 +368,15 @@ impl ObservationContext {
     pub fn purpose(&self) -> Purpose {
         self.purpose.unwrap_or(Purpose::Image)
     }
+    pub fn with_gpu_stage(&self, stage: GpuStage) -> Self {
+        let mut context = self.clone();
+        context.gpu_stage = stage;
+        context.explicit_gpu_stage = true;
+        context
+    }
+    pub fn gpu_stage(&self) -> GpuStage {
+        self.gpu_stage
+    }
     pub fn scope(
         &self,
         name: &'static str,
@@ -268,6 +404,9 @@ impl ObservationContext {
             return ObservationScope::default();
         };
         let mut c = c.lock();
+        if c.snapshot.outcome.is_some() {
+            return ObservationScope::default();
+        }
         let id = c.next;
         c.next = c.next.saturating_add(1);
         let bytes = name.len() as u64;
@@ -301,6 +440,7 @@ impl ObservationContext {
                 work: WorkCounters::default(),
                 batch: None,
                 pass: None,
+                host_timings: Some(Vec::new()),
                 execution: if kind == ObservationKind::Attempt {
                     Some(ExecutionFacts::default())
                 } else {
@@ -339,6 +479,15 @@ impl ObservationContext {
                 root: self.root,
                 retained: retain,
                 purpose: Some(purpose),
+                gpu_stage: if self.explicit_gpu_stage {
+                    self.gpu_stage
+                } else {
+                    match GpuStage::from_scope_name(name) {
+                        GpuStage::Other => self.gpu_stage,
+                        stage => stage,
+                    }
+                },
+                explicit_gpu_stage: self.explicit_gpu_stage,
                 meta: Some(ScopeMeta { name, kind }),
                 progress: self.progress.clone(),
                 span: Some(
@@ -405,6 +554,9 @@ impl ObservationContext {
         if let Some(c) = &self.collector {
             let _entered = self.span.as_ref().map(|span| span.enter());
             let mut c = c.lock();
+            if c.snapshot.outcome.is_some() {
+                return;
+            }
             c.snapshot.duration = c.start.elapsed().as_secs_f64();
             c.snapshot.outcome = Some(outcome);
             tracing::debug!(target:"spektrafilm::telemetry",parent:self.span.as_ref().and_then(|s|s.id()),event="operation_finish",observation_root_id=self.root,outcome=?outcome,duration=c.snapshot.duration);
@@ -416,7 +568,10 @@ impl ObservationContext {
     fn mutate(&self, f: impl FnOnce(&mut ObservationSnapshot)) {
         if let Some(c) = &self.collector {
             let _entered = self.span.as_ref().map(|span| span.enter());
-            f(&mut c.lock().snapshot)
+            let mut c = c.lock();
+            if c.snapshot.outcome.is_none() {
+                f(&mut c.snapshot);
+            }
         }
     }
     pub fn set_backend_selected(&self, value: BackendSelected) {
@@ -493,6 +648,9 @@ impl ObservationContext {
     fn attempt_fact(&self, f: impl FnOnce(&mut ExecutionFacts)) {
         if let Some(c) = &self.collector {
             let mut c = c.lock();
+            if c.snapshot.outcome.is_some() {
+                return;
+            }
             let mut id = self.retained_id;
             loop {
                 let Some(o) = c.snapshot.observations.iter_mut().find(|o| o.id == id) else {
@@ -575,6 +733,193 @@ impl ObservationContext {
             tracing::debug!(target:"spektrafilm::telemetry",parent:self.span.as_ref().and_then(|s|s.id()),event="work",observation_root_id=self.root,observation_id=self.id,dispatch_count=work.dispatch_count,submit_count=work.submit_count,command_buffer_count=work.command_buffer_count,host_wait_count=work.host_wait_count,upload_count=work.upload_count,upload_bytes=work.upload_bytes,readback_count=work.readback_count,readback_bytes=work.readback_bytes,executed_pass_count=work.executed_pass_count,timed_pass_count=work.timed_pass_count,valid_pass_count=work.valid_pass_count,omitted_pass_count=work.omitted_pass_count);
         }
     }
+    /// Records inclusive host intervals. Categories may overlap and are not exclusive CPU time.
+    pub fn record_host_timing(&self, kind: HostTimingKind, seconds: f64) {
+        let Some(c) = &self.collector else { return };
+        let mut c = c.lock();
+        if c.snapshot.outcome.is_some() || c.snapshot.coverage.host_timing_overflow {
+            return;
+        }
+        let s = &mut c.snapshot;
+        let mut ok = seconds.is_finite() && seconds >= 0.0;
+        if ok {
+            ok = add_host_timing(s.host_timings.as_mut().unwrap(), kind, seconds);
+            let mut id = self.retained_id;
+            while id != s.root_id {
+                let Some(o) = s.observations.iter_mut().find(|o| o.id == id) else {
+                    break;
+                };
+                ok &= add_host_timing(o.host_timings.as_mut().unwrap(), kind, seconds);
+                id = o.parent_id;
+            }
+        }
+        if !ok {
+            s.coverage.truncated = true;
+            s.coverage.host_timing_overflow = true;
+            s.host_timings.as_mut().unwrap().clear();
+            for observation in &mut s.observations {
+                observation.host_timings.as_mut().unwrap().clear();
+            }
+        }
+    }
+
+    /// Registers only submitted work; callers separately record the work counters.
+    pub fn record_gpu_pass_submission(
+        &self,
+        stage: GpuStage,
+        kind: GpuPassKind,
+        executed: u64,
+        timed: u64,
+    ) {
+        let Some(c) = &self.collector else { return };
+        let mut c = c.lock();
+        if c.snapshot.outcome.is_some() || executed == 0 {
+            return;
+        }
+        let purpose = self.purpose();
+        let index = match c
+            .snapshot
+            .gpu_timing
+            .groups
+            .iter()
+            .position(|g| g.stage == stage && g.kind == kind && g.purpose == purpose)
+        {
+            Some(index) => index,
+            None => {
+                if c.group_state.is_empty() {
+                    c.group_state.reserve_exact(MAX_GROUPS);
+                    c.snapshot.gpu_timing.groups.reserve_exact(MAX_GROUPS);
+                }
+                c.group_state.push(GroupState::default());
+                c.snapshot.gpu_timing.groups.push(GpuTimingGroup {
+                    stage,
+                    kind,
+                    purpose,
+                    executed_pass_count: 0,
+                    timed_pass_count: 0,
+                    valid_pass_count: 0,
+                    compute_pass_sum: Measurement::unavailable(AvailabilityReason::NotReady),
+                    partial_compute_pass_sum: Measurement::unavailable(
+                        AvailabilityReason::NotReady,
+                    ),
+                });
+                c.group_state.len() - 1
+            }
+        };
+        let group = &mut c.snapshot.gpu_timing.groups[index];
+        let next_executed = group.executed_pass_count.checked_add(executed);
+        let next_timed = group.timed_pass_count.checked_add(timed);
+        group.executed_pass_count = next_executed.unwrap_or(u64::MAX);
+        group.timed_pass_count = next_timed
+            .unwrap_or(u64::MAX)
+            .min(group.executed_pass_count);
+        if next_executed.is_none() || next_timed.is_none() || timed > executed {
+            c.group_state[index].overflow = true;
+        }
+        refresh_gpu_totals(&mut c);
+    }
+
+    /// Records why submitted passes could not receive queries, without completing a timed pass.
+    pub fn record_gpu_pass_unavailable(
+        &self,
+        stage: GpuStage,
+        kind: GpuPassKind,
+        reason: AvailabilityReason,
+    ) {
+        let Some(c) = &self.collector else { return };
+        let mut c = c.lock();
+        if c.snapshot.outcome.is_some() {
+            return;
+        }
+        let Some(index) = c
+            .snapshot
+            .gpu_timing
+            .groups
+            .iter()
+            .position(|g| g.stage == stage && g.kind == kind && g.purpose == self.purpose())
+        else {
+            return;
+        };
+        c.group_state[index].failure = Some(reason);
+        refresh_gpu_totals(&mut c);
+    }
+
+    /// Completes one registered timed pass, updating inclusive valid-pass counters once.
+    pub fn record_gpu_pass_duration(
+        &self,
+        stage: GpuStage,
+        kind: GpuPassKind,
+        duration: Measurement,
+    ) {
+        let Some(c) = &self.collector else { return };
+        let mut c = c.lock();
+        if c.snapshot.outcome.is_some() {
+            return;
+        }
+        let Some(index) = c
+            .snapshot
+            .gpu_timing
+            .groups
+            .iter()
+            .position(|g| g.stage == stage && g.kind == kind && g.purpose == self.purpose())
+        else {
+            return;
+        };
+        if c.group_state[index].completed >= c.snapshot.gpu_timing.groups[index].timed_pass_count {
+            return;
+        }
+        c.group_state[index].completed += 1;
+        let value = duration.value.filter(|v| {
+            v.is_finite()
+                && *v >= 0.0
+                && duration.status == MeasurementStatus::Available
+                && duration.reason.is_none()
+        });
+        if let Some(value) = value {
+            let was_overflow = c.group_state[index].overflow;
+            let group = &mut c.snapshot.gpu_timing.groups[index];
+            let sum = group.partial_compute_pass_sum.value.unwrap_or(0.0) + value;
+            group.valid_pass_count += 1;
+            if !was_overflow && sum.is_finite() {
+                group.partial_compute_pass_sum = Measurement::available(sum);
+            } else {
+                group.partial_compute_pass_sum =
+                    Measurement::unavailable(AvailabilityReason::CounterOverflow);
+                c.group_state[index].overflow = true;
+            }
+            let work = WorkCounters {
+                valid_pass_count: Some(1),
+                ..Default::default()
+            };
+            let s = &mut c.snapshot;
+            let mut overflow = s.totals.add(&work);
+            let mut id = self.retained_id;
+            while id != s.root_id {
+                let Some(o) = s.observations.iter_mut().find(|o| o.id == id) else {
+                    break;
+                };
+                overflow.extend(o.work.add(&work));
+                id = o.parent_id;
+            }
+            for field in overflow {
+                if !s
+                    .coverage
+                    .counter_overflow_fields
+                    .iter()
+                    .any(|f| f == field)
+                {
+                    s.coverage.counter_overflow_fields.push(field.into());
+                }
+            }
+        } else {
+            c.group_state[index].failure = Some(
+                duration
+                    .reason
+                    .unwrap_or(AvailabilityReason::InvalidTimestamp),
+            );
+        }
+        refresh_gpu_totals(&mut c);
+    }
     pub fn record_batch(&self, mut batch: BatchMeasurements) {
         let Some(c) = &self.collector else {
             return;
@@ -584,9 +929,14 @@ impl ObservationContext {
         bounded_description(&mut batch.completion_boundary);
         tracing::debug!(target:"spektrafilm::telemetry",parent:self.span.as_ref().and_then(|s|s.id()),event="batch",observation_root_id=self.root,observation_id=self.id,host_prepare_status=?batch.host_prepare.status,host_prepare=batch.host_prepare.value,submit_to_map_ready_status=?batch.submit_to_map_ready.status,submit_to_map_ready=batch.submit_to_map_ready.value,host_materialize_status=?batch.host_materialize.status,host_materialize=batch.host_materialize.value,compute_pass_sum_status=?batch.compute_pass_sum.status,compute_pass_sum=batch.compute_pass_sum.value,partial_compute_pass_sum_status=?batch.partial_compute_pass_sum.status,partial_compute_pass_sum=batch.partial_compute_pass_sum.value,completion_boundary=batch.completion_boundary.as_str());
         let mut c = c.lock();
-        c.snapshot
-            .gpu_timing
-            .add(&batch.compute_pass_sum, &batch.partial_compute_pass_sum);
+        if c.snapshot.outcome.is_some() {
+            return;
+        }
+        if c.group_state.is_empty() {
+            c.snapshot
+                .gpu_timing
+                .add(&batch.compute_pass_sum, &batch.partial_compute_pass_sum);
+        }
         if let Some(index) = c.snapshot.observations.iter().position(|o| o.id == self.id) {
             let o = &c.snapshot.observations[index];
             let old_bytes = observation_bytes(o);
@@ -684,6 +1034,42 @@ impl Drop for ObservationScope {
                 t.total_duration += duration;
                 t.count = t.count.saturating_add(1);
             }
+            if kind == ObservationKind::Stage {
+                let name = self.context.meta.as_ref().map_or("other", |meta| {
+                    if STAGE_NAMES.contains(&meta.name)
+                        || GpuStage::ALL
+                            .iter()
+                            .any(|stage| stage.as_str() == meta.name)
+                    {
+                        meta.name
+                    } else {
+                        "other"
+                    }
+                });
+                if let Some(total) = s
+                    .coverage
+                    .stage_totals
+                    .iter_mut()
+                    .find(|total| total.name == name)
+                {
+                    let sum = total.total_duration + duration;
+                    if sum.is_finite() {
+                        total.total_duration = sum;
+                        total.count = total.count.saturating_add(1);
+                    } else {
+                        s.coverage.truncated = true;
+                    }
+                } else {
+                    if s.coverage.stage_totals.capacity() == 0 {
+                        s.coverage.stage_totals.reserve_exact(MAX_STAGE_TOTALS);
+                    }
+                    s.coverage.stage_totals.push(PhaseTotal {
+                        name: name.into(),
+                        total_duration: duration,
+                        count: 1,
+                    });
+                }
+            }
             let Some(o) = s.observations.iter_mut().find(|o| o.id == self.context.id) else {
                 return;
             };
@@ -715,6 +1101,237 @@ mod tests {
             compute_pass_sum: compute,
             partial_compute_pass_sum: partial,
         }
+    }
+    #[test]
+    fn streamed_timings_survive_detail_truncation_and_ignore_late_completion() {
+        let root = ObservationContext::new(CollectionMode::GpuTiming);
+        let phase = root.scope("simulation", ObservationKind::Phase, Purpose::Image);
+        let stage = phase
+            .context()
+            .scope("grain_spektra", ObservationKind::Stage, Purpose::Image);
+        for _ in 0..OBSERVATION_LIMIT as u64 - SUMMARY_LIMIT {
+            drop(
+                stage
+                    .context()
+                    .scope("batch", ObservationKind::Batch, Purpose::Image),
+            );
+        }
+        let omitted = stage
+            .context()
+            .scope("batch", ObservationKind::Batch, Purpose::Image);
+        assert!(!omitted.context().retained());
+        let ctx = omitted.context();
+        ctx.record_host_timing(HostTimingKind::Upload, 0.25);
+        ctx.record_gpu_pass_submission(GpuStage::GrainSpektra, GpuPassKind::Gather, 3, 2);
+        ctx.record_gpu_pass_duration(
+            GpuStage::GrainSpektra,
+            GpuPassKind::Gather,
+            Measurement::available(0.125),
+        );
+        let pending = root.snapshot();
+        assert_eq!(
+            pending.gpu_timing.groups[0].compute_pass_sum.reason,
+            Some(AvailabilityReason::Incomplete)
+        );
+        assert_eq!(
+            pending.gpu_timing.groups[0].partial_compute_pass_sum.value,
+            Some(0.125)
+        );
+        assert_eq!(pending.totals.valid_pass_count, Some(1));
+        for observation in &pending.observations[..2] {
+            assert_eq!(observation.work.valid_pass_count, Some(1));
+            assert_eq!(
+                observation.host_timings.as_ref().unwrap()[0].total_duration,
+                0.25
+            );
+        }
+        ctx.record_gpu_pass_duration(
+            GpuStage::GrainSpektra,
+            GpuPassKind::Gather,
+            Measurement::unavailable(AvailabilityReason::QueryFailed),
+        );
+        root.finish(Outcome::Succeeded);
+        let published = root.snapshot();
+        ctx.record_gpu_pass_duration(
+            GpuStage::GrainSpektra,
+            GpuPassKind::Gather,
+            Measurement::available(1.0),
+        );
+        assert_eq!(root.snapshot().gpu_timing, published.gpu_timing);
+        assert_eq!(root.snapshot().totals, published.totals);
+        assert!(published.coverage.retained_bytes <= published.coverage.byte_limit);
+    }
+
+    #[test]
+    fn pending_failure_and_concurrent_completions_are_truthful() {
+        let root = ObservationContext::new(CollectionMode::GpuTiming);
+        root.record_gpu_pass_submission(GpuStage::Scan, GpuPassKind::Filter, 64, 64);
+        assert_eq!(
+            root.snapshot().gpu_timing.compute_pass_sum.reason,
+            Some(AvailabilityReason::NotReady)
+        );
+        std::thread::scope(|threads| {
+            for _ in 0..8 {
+                let context = root.clone();
+                threads.spawn(move || {
+                    for _ in 0..8 {
+                        context.record_gpu_pass_duration(
+                            GpuStage::Scan,
+                            GpuPassKind::Filter,
+                            Measurement::available(0.5),
+                        );
+                    }
+                });
+            }
+        });
+        let snapshot = root.snapshot();
+        assert_eq!(snapshot.gpu_timing.compute_pass_sum.value, Some(32.0));
+        assert_eq!(snapshot.gpu_timing.groups[0].valid_pass_count, 64);
+        assert_eq!(snapshot.totals.valid_pass_count, Some(64));
+        root.record_batch(batch(
+            Measurement::available(32.0),
+            Measurement::available(32.0),
+        ));
+        assert_eq!(
+            root.snapshot().gpu_timing.compute_pass_sum.value,
+            Some(32.0)
+        );
+        let other = ObservationContext::new(CollectionMode::GpuTiming);
+        other.record_gpu_pass_submission(GpuStage::Scan, GpuPassKind::Filter, 1, 1);
+        other.record_gpu_pass_duration(
+            GpuStage::Scan,
+            GpuPassKind::Filter,
+            Measurement::unavailable(AvailabilityReason::QueryFailed),
+        );
+        assert_eq!(
+            other.snapshot().gpu_timing.groups[0]
+                .compute_pass_sum
+                .reason,
+            Some(AvailabilityReason::QueryFailed)
+        );
+    }
+
+    #[test]
+    fn known_gpu_failure_wins_over_pending_queries() {
+        for failure in [
+            AvailabilityReason::QueryFailed,
+            AvailabilityReason::InvalidTimestamp,
+        ] {
+            for pending_group_first in [false, true] {
+                let root = ObservationContext::new(CollectionMode::GpuTiming);
+                if pending_group_first {
+                    root.record_gpu_pass_submission(GpuStage::Input, GpuPassKind::Copy, 1, 1);
+                }
+                root.record_gpu_pass_submission(GpuStage::Scan, GpuPassKind::Filter, 2, 2);
+                if !pending_group_first {
+                    root.record_gpu_pass_submission(GpuStage::Input, GpuPassKind::Copy, 1, 1);
+                }
+                root.record_gpu_pass_duration(
+                    GpuStage::Scan,
+                    GpuPassKind::Filter,
+                    Measurement::unavailable(failure),
+                );
+                let timing = root.snapshot().gpu_timing;
+                let failed = timing
+                    .groups
+                    .iter()
+                    .find(|group| group.stage == GpuStage::Scan)
+                    .unwrap();
+                assert_eq!(failed.compute_pass_sum.reason, Some(failure));
+                assert_eq!(failed.partial_compute_pass_sum.reason, Some(failure));
+                assert_eq!(timing.compute_pass_sum.reason, Some(failure));
+                assert_eq!(timing.partial_compute_pass_sum.reason, Some(failure));
+
+                root.record_gpu_pass_duration(
+                    GpuStage::Input,
+                    GpuPassKind::Copy,
+                    Measurement::available(0.25),
+                );
+                let timing = root.snapshot().gpu_timing;
+                assert_eq!(
+                    timing.compute_pass_sum.reason,
+                    Some(AvailabilityReason::Incomplete)
+                );
+                assert_eq!(timing.partial_compute_pass_sum.value, Some(0.25));
+                let failed = timing
+                    .groups
+                    .iter()
+                    .find(|group| group.stage == GpuStage::Scan)
+                    .unwrap();
+                assert_eq!(failed.compute_pass_sum.reason, Some(failure));
+            }
+        }
+    }
+
+    #[test]
+    fn stage_totals_include_omitted_scopes_and_explicit_context_inherits() {
+        let root = ObservationContext::new(CollectionMode::Summary);
+        let phase = root.scope("simulation", ObservationKind::Phase, Purpose::Image);
+        for _ in 0..(SUMMARY_LIMIT + 5) {
+            let stage = phase.context().with_gpu_stage(GpuStage::Scan).scope(
+                "scan",
+                ObservationKind::Stage,
+                Purpose::Image,
+            );
+            assert_eq!(stage.context().gpu_stage(), GpuStage::Scan);
+            let child = stage
+                .context()
+                .scope("metering", ObservationKind::Stage, Purpose::Image);
+            assert_eq!(child.context().gpu_stage(), GpuStage::Scan);
+        }
+        let snapshot = root.snapshot();
+        let total = snapshot
+            .coverage
+            .stage_totals
+            .iter()
+            .find(|t| t.name == "scan")
+            .unwrap();
+        assert_eq!(total.count, SUMMARY_LIMIT + 5);
+        let metering = snapshot
+            .coverage
+            .stage_totals
+            .iter()
+            .find(|t| t.name == "metering")
+            .unwrap();
+        assert_eq!(metering.count, SUMMARY_LIMIT + 5);
+        assert!(snapshot.coverage.omitted_observations > 0);
+    }
+    #[test]
+    fn aggregate_overflow_is_not_a_valid_duration_and_batches_do_not_double_count() {
+        let root = ObservationContext::new(CollectionMode::GpuTiming);
+        root.record_host_timing(HostTimingKind::Upload, f64::MAX);
+        root.record_host_timing(HostTimingKind::Upload, f64::MAX);
+        root.record_host_timing(HostTimingKind::Upload, 1.0);
+        let snapshot = root.snapshot();
+        assert!(snapshot.coverage.host_timing_overflow);
+        assert!(snapshot.coverage.truncated);
+        assert!(snapshot.host_timings.unwrap().is_empty());
+
+        root.record_gpu_pass_submission(GpuStage::Scan, GpuPassKind::Filter, 2, 2);
+        root.record_gpu_pass_duration(
+            GpuStage::Scan,
+            GpuPassKind::Filter,
+            Measurement::available(f64::MAX),
+        );
+        root.record_gpu_pass_duration(
+            GpuStage::Scan,
+            GpuPassKind::Filter,
+            Measurement::available(f64::MAX),
+        );
+        root.record_batch(batch(
+            Measurement::available(1.0),
+            Measurement::available(1.0),
+        ));
+        let snapshot = root.snapshot();
+        assert_eq!(
+            snapshot.gpu_timing.compute_pass_sum.reason,
+            Some(AvailabilityReason::CounterOverflow)
+        );
+        assert_eq!(
+            snapshot.gpu_timing.partial_compute_pass_sum.reason,
+            Some(AvailabilityReason::CounterOverflow)
+        );
+        assert_eq!(snapshot.gpu_timing.groups[0].valid_pass_count, 2);
     }
 
     #[test]

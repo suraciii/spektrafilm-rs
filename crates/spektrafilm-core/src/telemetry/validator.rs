@@ -1,6 +1,7 @@
 use super::report::{OperationKind, Report};
 use spektrafilm_backend::telemetry::{
-    MeasurementStatus, Observation, ObservationKind, PHASE_NAMES,
+    GpuStage, HostTimingKind, HostTimingTotal, MeasurementStatus, Observation, ObservationKind,
+    PHASE_NAMES, STAGE_NAMES,
 };
 use std::collections::{HashMap, HashSet};
 use thiserror::Error;
@@ -178,6 +179,89 @@ fn validate_report(report: &Report) -> Result<(), ValidationError> {
     )?;
     validate_measurement(&report.measurements.gpu_timing.compute_pass_sum)?;
     validate_measurement(&report.measurements.gpu_timing.partial_compute_pass_sum)?;
+    validate_host_timings(report.measurements.host_timings.as_deref())?;
+    if report.coverage.host_timing_overflow
+        && (!report.coverage.truncated
+            || report
+                .measurements
+                .host_timings
+                .as_ref()
+                .is_some_and(|totals| !totals.is_empty()))
+    {
+        return Err(ValidationError::InvalidCoverage);
+    }
+    let timing = &report.measurements.gpu_timing;
+    let mut group_keys = HashSet::new();
+    for group in &timing.groups {
+        if !group_keys.insert((group.stage, group.kind, group.purpose))
+            || group.executed_pass_count == 0
+            || group.timed_pass_count > group.executed_pass_count
+            || group.valid_pass_count > group.timed_pass_count
+        {
+            return Err(ValidationError::InvalidCoverage);
+        }
+        validate_measurement(&group.compute_pass_sum)?;
+        validate_measurement(&group.partial_compute_pass_sum)?;
+        let complete = group.valid_pass_count == group.executed_pass_count;
+        if group.compute_pass_sum.status == MeasurementStatus::Available {
+            if !complete || group.compute_pass_sum != group.partial_compute_pass_sum {
+                return Err(ValidationError::InvalidCoverage);
+            }
+        } else if complete
+            && group.compute_pass_sum.reason
+                != Some(spektrafilm_backend::telemetry::AvailabilityReason::CounterOverflow)
+        {
+            return Err(ValidationError::InvalidCoverage);
+        }
+        if group.partial_compute_pass_sum.status == MeasurementStatus::Available
+            && group.valid_pass_count == 0
+        {
+            return Err(ValidationError::InvalidCoverage);
+        }
+        if group.valid_pass_count > 0
+            && group.partial_compute_pass_sum.status != MeasurementStatus::Available
+            && group.partial_compute_pass_sum.reason
+                != Some(spektrafilm_backend::telemetry::AvailabilityReason::CounterOverflow)
+        {
+            return Err(ValidationError::InvalidCoverage);
+        }
+    }
+    if !timing.groups.is_empty() {
+        let all_complete = timing
+            .groups
+            .iter()
+            .all(|g| g.compute_pass_sum.status == MeasurementStatus::Available);
+        let overflow = timing.compute_pass_sum.reason
+            == Some(spektrafilm_backend::telemetry::AvailabilityReason::CounterOverflow);
+        if (timing.compute_pass_sum.status == MeasurementStatus::Available) != all_complete
+            && !overflow
+        {
+            return Err(ValidationError::InvalidCoverage);
+        }
+        let sum = timing
+            .groups
+            .iter()
+            .filter_map(|g| g.partial_compute_pass_sum.value)
+            .sum::<f64>();
+        let any_valid = timing.groups.iter().any(|g| g.valid_pass_count > 0);
+        if any_valid
+            && timing.partial_compute_pass_sum.value.is_none()
+            && timing.partial_compute_pass_sum.reason
+                != Some(spektrafilm_backend::telemetry::AvailabilityReason::CounterOverflow)
+        {
+            return Err(ValidationError::InvalidCoverage);
+        }
+        if let Some(value) = timing.partial_compute_pass_sum.value
+            && (!any_valid
+                || !sum.is_finite()
+                || (value - sum).abs() > 1e-12 * value.abs().max(sum.abs()).max(1.0))
+        {
+            return Err(ValidationError::InvalidCoverage);
+        }
+        if all_complete && !overflow && timing.compute_pass_sum != timing.partial_compute_pass_sum {
+            return Err(ValidationError::InvalidCoverage);
+        }
+    }
     if report.diagnostic_issues.len() > 64 {
         return Err(ValidationError::IssueLimitExceeded);
     }
@@ -202,6 +286,15 @@ fn validate_report(report: &Report) -> Result<(), ValidationError> {
         validate_finite(observation.duration, "observation.duration")?;
         if observation.start_offset < 0.0 || observation.duration < 0.0 {
             return Err(ValidationError::NonFinite("observation.duration"));
+        }
+        validate_host_timings(observation.host_timings.as_deref())?;
+        if report.coverage.host_timing_overflow
+            && observation
+                .host_timings
+                .as_ref()
+                .is_some_and(|totals| !totals.is_empty())
+        {
+            return Err(ValidationError::InvalidCoverage);
         }
         if let Some(execution) = &observation.execution {
             if observation.kind != ObservationKind::Attempt {
@@ -265,7 +358,10 @@ fn validate_report(report: &Report) -> Result<(), ValidationError> {
                 ObservationKind::Attempt | ObservationKind::Phase
             ),
             ObservationKind::Stage => {
-                matches!(parent.kind, ObservationKind::Phase | ObservationKind::Stage)
+                matches!(
+                    parent.kind,
+                    ObservationKind::Phase | ObservationKind::Stage | ObservationKind::Batch
+                )
             }
             ObservationKind::Batch => {
                 matches!(parent.kind, ObservationKind::Phase | ObservationKind::Stage)
@@ -275,7 +371,9 @@ fn validate_report(report: &Report) -> Result<(), ValidationError> {
         if !valid_parent_kind {
             return Err(ValidationError::InvalidParentKind(observation.id));
         }
-        if parent.complete
+        // Pass intervals use the device clock; a host batch can close before retirement.
+        if observation.kind != ObservationKind::Pass
+            && parent.complete
             && observation.complete
             && (observation.start_offset < parent.start_offset
                 || observation.start_offset + observation.duration
@@ -343,6 +441,37 @@ fn validate_report(report: &Report) -> Result<(), ValidationError> {
             return Err(ValidationError::InvalidCoverage);
         }
     }
+    let mut stage_names = HashSet::new();
+    for total in &report.coverage.stage_totals {
+        validate_finite(total.total_duration, "coverage.stage_totals.total_duration")?;
+        if total.total_duration < 0.0 || total.count == 0 {
+            return Err(ValidationError::InvalidMeasurement);
+        }
+        if !STAGE_NAMES.contains(&total.name.as_str())
+            && !GpuStage::ALL
+                .iter()
+                .any(|stage| stage.as_str() == total.name)
+        {
+            return Err(ValidationError::PrivacyField);
+        }
+        if !stage_names.insert(total.name.as_str()) {
+            return Err(ValidationError::InvalidCoverage);
+        }
+    }
+    Ok(())
+}
+fn validate_host_timings(totals: Option<&[HostTimingTotal]>) -> Result<(), ValidationError> {
+    let Some(totals) = totals else { return Ok(()) };
+    if totals.len() > HostTimingKind::ALL.len() {
+        return Err(ValidationError::InvalidCoverage);
+    }
+    let mut kinds = HashSet::new();
+    for total in totals {
+        validate_finite(total.total_duration, "host_timings.total_duration")?;
+        if total.count == 0 || total.total_duration < 0.0 || !kinds.insert(total.kind) {
+            return Err(ValidationError::InvalidCoverage);
+        }
+    }
     Ok(())
 }
 
@@ -368,53 +497,15 @@ fn validate_counter_overflow(report: &Report) -> Result<(), ValidationError> {
 }
 
 fn validate_observation_name(observation: &Observation) -> Result<(), ValidationError> {
-    const STAGES: &[&str] = &[
-        "metering",
-        "geometry",
-        "color_reference",
-        "spectral_prepare",
-        "film_chain",
-        "filming_expose",
-        "filming_develop",
-        "converting",
-        "grain_spektra",
-        "grain_spektra_sampler",
-        "grain_procedural",
-        "grain_procedural_cpu",
-        "grain_dye_field",
-        "grain_fotufilm",
-        "printing",
-        "scanning",
-        "post_scan",
-        "cmyk",
-        "output_mix",
-        "negative_to_positive",
-        "negative_reconstruction",
-        "negative_to_positive_tone",
-        "standard_setup",
-        "input_transfer",
-        "colorspace_convert",
-        "output_transfer",
-        "rgb_to_raw",
-        "highlight_boost",
-        "optical_diffusion",
-        "scanner_lut",
-        "enlarger_lut_prepare",
-        "enlarger_lut_interpolate",
-        "glare",
-        "output_gamut",
-        "pipeline_create",
-        "raw_sensor",
-        "saving_convert",
-        "retained_histogram",
-        "viewer_resample",
-        "viewer_display_transform",
-        "viewer_full_source",
-    ];
     let valid = match observation.kind {
         ObservationKind::Attempt => observation.name == "attempt",
         ObservationKind::Phase => PHASE_NAMES.contains(&observation.name.as_str()),
-        ObservationKind::Stage => STAGES.contains(&observation.name.as_str()),
+        ObservationKind::Stage => {
+            STAGE_NAMES.contains(&observation.name.as_str())
+                || GpuStage::ALL
+                    .iter()
+                    .any(|stage| stage.as_str() == observation.name)
+        }
         ObservationKind::Batch | ObservationKind::Pass => stable_identifier(&observation.name),
     };
     if valid {

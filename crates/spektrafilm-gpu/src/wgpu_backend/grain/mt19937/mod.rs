@@ -245,7 +245,7 @@ pub(in crate::wgpu_backend) fn build_spektra_mt19937_state_with_limit(
                             u64::from(count) * 8,
                         );
                     }
-                    commands.dispatch(
+                    commands.dispatch_named(
                         &pipe,
                         &[
                             &params_buf,
@@ -260,6 +260,11 @@ pub(in crate::wgpu_backend) fn build_spektra_mt19937_state_with_limit(
                         1,
                         true,
                         backend,
+                        Some(if phase == 0 {
+                            "spektra_seed_formation"
+                        } else {
+                            "spektra_particle_formation"
+                        }),
                     );
                     if phase == 0 {
                         commands.copy(
@@ -290,7 +295,7 @@ pub(in crate::wgpu_backend) fn build_spektra_mt19937_state_with_limit(
             let first = segment * chunk;
             let count = chunk.min(n_pixels - first);
             let commands = &mut steps[(particle_steps + segment) as usize];
-            commands.dispatch(
+            commands.dispatch_named(
                 &pipe,
                 &[
                     &params_buf,
@@ -305,6 +310,7 @@ pub(in crate::wgpu_backend) fn build_spektra_mt19937_state_with_limit(
                 1,
                 true,
                 backend,
+                Some("spektra_clump_formation"),
             );
             commands.copy(
                 &clump_window,

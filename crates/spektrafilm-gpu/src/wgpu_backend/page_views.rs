@@ -417,7 +417,7 @@ impl WgpuBackend {
         let mut layout = types.to_vec();
         layout.push(wgpu::BufferBindingType::Uniform);
         let (cached, hit) = self.pipeline_cache.get_or_compile_pointwise(
-            &self.device.raw, shader, &layout, images, || {
+            &self.device, shader, &layout, images, || {
                 let mut source = address_shader(shader, images);
                 source.push_str(&format!("\nstruct PointwiseBases {{ values: array<vec4<u32>, 4>, }}\n@group(0) @binding({}) var<uniform> pointwise_bases: PointwiseBases;\n", types.len()));
                 source

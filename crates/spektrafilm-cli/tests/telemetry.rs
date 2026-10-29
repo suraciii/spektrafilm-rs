@@ -97,6 +97,36 @@ fn success(output: &Output) {
     );
 }
 
+fn assert_human_timing_matches(stderr: &str, prefix: &str, duration: &Value) {
+    let lines: Vec<_> = stderr
+        .lines()
+        .filter_map(|line| line.strip_prefix(prefix))
+        .collect();
+    assert_eq!(
+        lines.len(),
+        1,
+        "expected one timing for {prefix:?}: {stderr}"
+    );
+    let milliseconds: f64 = lines[0].split_whitespace().next().unwrap().parse().unwrap();
+    let reported_ms = duration.as_f64().unwrap() * 1000.0;
+    // Human times are rounded down to milliseconds and include the small
+    // amount of observation bookkeeping around the recorded scope.
+    assert!(
+        milliseconds + 1.0 >= reported_ms && milliseconds - reported_ms < 50.0,
+        "{prefix}: human {milliseconds} ms, report {reported_ms} ms"
+    );
+}
+
+fn assert_runtime_preparation_timing(stderr: &str, report: &Value) {
+    let phase = report["phases"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|phase| phase["name"] == "runtime_prepare")
+        .unwrap();
+    assert_human_timing_matches(stderr, "Runtime preparation: ", &phase["duration"]);
+}
+
 #[test]
 fn diagnostics_preserve_pixels_stdout_and_retain_indexed_attempts() {
     let fixture = Fixture::new();
@@ -132,6 +162,15 @@ fn diagnostics_preserve_pixels_stdout_and_retain_indexed_attempts() {
     for (index, attempt) in report["attempts"].as_array().unwrap().iter().enumerate() {
         assert_eq!(attempt["attempt_index"], (index + 1) as u64);
         assert_eq!(attempt["outcome"], "succeeded");
+    }
+    let stderr = String::from_utf8_lossy(&on.stderr);
+    assert_runtime_preparation_timing(&stderr, &report);
+    for (index, attempt) in report["attempts"].as_array().unwrap().iter().enumerate() {
+        assert_human_timing_matches(
+            &stderr,
+            &format!("Pipeline simulation (iter {}): ", index + 1),
+            &attempt["duration"],
+        );
     }
     assert!(
         report["phases"]
@@ -486,6 +525,13 @@ fn cpu_gpu_timing_request_retains_summary_and_valid_image() {
         "gpu_timing"
     );
     assert_eq!(report["execution"]["backend_selected"], "cpu");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_runtime_preparation_timing(&stderr, &report);
+    assert_human_timing_matches(
+        &stderr,
+        "Pipeline simulation: ",
+        &report["attempts"][0]["duration"],
+    );
 }
 
 #[cfg(target_os = "linux")]

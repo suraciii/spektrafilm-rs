@@ -6,7 +6,7 @@ use super::{
     ObservedQueue, WgpuBackend, film_chain::device_image::BufferPayload, scan::PreparedScan,
 };
 use parking_lot::{Condvar, Mutex};
-use spektrafilm_backend::telemetry::{ObservationContext, WorkCounters};
+use spektrafilm_backend::telemetry::{HostTimingKind, ObservationContext, WorkCounters};
 use std::{
     collections::VecDeque,
     sync::{
@@ -203,6 +203,7 @@ pub(super) struct DeviceResources {
     retained: Mutex<RetainedOwners>,
     submissions: Mutex<Submissions>,
     submitted: Condvar,
+    pub(super) timestamps: std::sync::LazyLock<Arc<super::timestamps::TimestampPool>>,
 }
 
 impl DeviceResources {
@@ -216,6 +217,9 @@ impl DeviceResources {
             retained: Mutex::new(RetainedOwners::default()),
             submissions: Mutex::new(Submissions::default()),
             submitted: Condvar::new(),
+            timestamps: std::sync::LazyLock::new(|| {
+                Arc::new(super::timestamps::TimestampPool::default())
+            }),
         }
     }
 
@@ -357,9 +361,16 @@ impl DeviceResources {
         // No application lock is held while wgpu runs map/completion callbacks.
         // Cancellation never bypasses this ownership boundary. This raw poll
         // intentionally does not publish observation batch/image readiness.
+        let start = context.enabled().then(std::time::Instant::now);
         self.device.poll(wgpu::Maintain::WaitForSubmissionIndex(
             retirement.index.clone(),
         ));
+        if let Some(start) = start {
+            context.record_host_timing(
+                HostTimingKind::SubmissionWait,
+                start.elapsed().as_secs_f64(),
+            );
+        }
         context.record_work(&WorkCounters {
             host_wait_count: Some(1),
             ..Default::default()
@@ -412,7 +423,11 @@ impl DeviceResources {
         // Neither submit nor poll may run with our locks held: wgpu can execute
         // user map/completion callbacks in either call.
         slot.raw_submit_started = true;
+        let start = context.enabled().then(std::time::Instant::now);
         let index = queue.submit(commands);
+        if let Some(start) = start {
+            context.record_host_timing(HostTimingKind::QueueSubmit, start.elapsed().as_secs_f64());
+        }
         let retirement = Retirement {
             index,
             complete: Arc::new(AtomicBool::new(false)),
