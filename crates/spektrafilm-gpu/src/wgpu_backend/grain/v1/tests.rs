@@ -2,12 +2,16 @@ use super::*;
 use spektrafilm_backend::cpu_backend::CpuBackend;
 use spektrafilm_math::precision::{from_f64, to_f64};
 
-#[test]
-fn transport_scratch_does_not_scale_with_hardware_binding_maximum() {
-    let cap = super::super::super::resources::WORKSPACE_BINDING_BYTES;
-    assert_eq!(transport_window_limit(u64::MAX), cap);
-    assert_eq!(transport_window_limit(cap * 8), cap);
-    assert_eq!(transport_window_limit(4096), 4096);
+mod logic_tests {
+    use super::*;
+
+    #[test]
+    fn transport_scratch_does_not_scale_with_hardware_binding_maximum() {
+        let cap = crate::wgpu_backend::resources::WORKSPACE_BINDING_BYTES;
+        assert_eq!(transport_window_limit(u64::MAX), cap);
+        assert_eq!(transport_window_limit(cap * 8), cap);
+        assert_eq!(transport_window_limit(4096), 4096);
+    }
 }
 
 #[test]

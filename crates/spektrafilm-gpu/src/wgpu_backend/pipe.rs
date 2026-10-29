@@ -732,6 +732,30 @@ fn bindings_exceed_device_limits(bindings: &[GpuBuffer], limits: &wgpu::Limits) 
 }
 
 #[cfg(all(test, feature = "wgpu-backend"))]
+mod logic_tests {
+    use super::*;
+
+    #[test]
+    fn bindings_over_the_device_limits_decline_instead_of_binding() {
+        let limits = wgpu::Limits {
+            max_storage_buffer_binding_size: 1024,
+            max_uniform_buffer_binding_size: 256,
+            max_buffer_size: 2048,
+            ..wgpu::Limits::default()
+        };
+        let fitting = [
+            GpuBuffer::uniform(&[0; 128]),
+            GpuBuffer::storage_ro(&[0; 512]),
+        ];
+        assert!(bindings_exceed_device_limits(&fitting, &limits).is_none());
+        let uniform_over = [GpuBuffer::uniform(&[0; 512])];
+        assert!(bindings_exceed_device_limits(&uniform_over, &limits).is_some());
+        let storage_over = [GpuBuffer::storage_ro(&[0; 2048])];
+        assert!(bindings_exceed_device_limits(&storage_over, &limits).is_some());
+    }
+}
+
+#[cfg(all(test, feature = "wgpu-backend"))]
 mod tests {
     use super::*;
 
@@ -817,25 +841,6 @@ mod tests {
 
     fn sample_image() -> Vec<f32> {
         (0..48).map(|i| i as f32 * 0.03 - 0.5).collect()
-    }
-
-    #[test]
-    fn bindings_over_the_device_limits_decline_instead_of_binding() {
-        let limits = wgpu::Limits {
-            max_storage_buffer_binding_size: 1024,
-            max_uniform_buffer_binding_size: 256,
-            max_buffer_size: 2048,
-            ..wgpu::Limits::default()
-        };
-        let fitting = [
-            GpuBuffer::uniform(&[0; 128]),
-            GpuBuffer::storage_ro(&[0; 512]),
-        ];
-        assert!(bindings_exceed_device_limits(&fitting, &limits).is_none());
-        let uniform_over = [GpuBuffer::uniform(&[0; 512])];
-        assert!(bindings_exceed_device_limits(&uniform_over, &limits).is_some());
-        let storage_over = [GpuBuffer::storage_ro(&[0; 2048])];
-        assert!(bindings_exceed_device_limits(&storage_over, &limits).is_some());
     }
 
     #[test]

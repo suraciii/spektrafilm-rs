@@ -112,8 +112,8 @@ impl WgpuBackend {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::chunk_elements;
+mod logic_tests {
+    use super::*;
 
     #[test]
     fn partition_keeps_last_pixel_when_limit_is_not_rgb_aligned() {

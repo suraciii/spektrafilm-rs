@@ -12,6 +12,12 @@
 
 **Long local gates:** Use `just ci-pr` as the first local gate. If `just ci` reaches the local shell timeout while a workspace test is still running, run `just test` and `just test-f64` as separate commands and report each result. A partial `just ci` run is not a full-gate pass.
 
+**GPU host logic — `test-gpu-logic`:** Run the audited `logic_tests::` modules in `spektrafilm-gpu` in both precisions. These tests cover small host-side calculations, validation, and execution planning without creating a WGPU instance or device. `test-fast` includes this lane; `ci-pr` remains unchanged.
+
+The recipe sets `SPEKTRAFILM_TEST_NO_DEVICE=1`. In GPU unit tests, this flag makes backend construction and device-lock acquisition fail before adapter enumeration or device work. A test that needs a device must stay outside `logic_tests::`; the flag must not turn device work into a skip or success.
+
+This lane still compiles the GPU unit-test binary and its dependencies. It does not replace shader, device, numerical-parity, or full-render acceptance. `cargo test -p spektrafilm-gpu --lib`, `test`, and main CI retain the complete test set without ignored or feature-gated device cases.
+
 Logic tests must use small deterministic in-memory inputs instead of unnecessary stock loading or environment setup. Persistence tests must use real IO in isolated temporary directories. Rendering and device tests must retain real execution.
 
 The [Justfile](../Justfile) defines test selection. The [README](../README.md#build) documents dependencies and verification commands.

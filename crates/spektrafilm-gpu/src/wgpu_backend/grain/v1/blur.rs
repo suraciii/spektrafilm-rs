@@ -1266,7 +1266,7 @@ mod tests {
 }
 
 #[cfg(test)]
-mod sigma_boundary_tests {
+mod logic_tests {
     use super::*;
 
     #[test]

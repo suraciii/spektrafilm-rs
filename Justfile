@@ -74,8 +74,15 @@ test-ci:
     cargo test --locked -p spektrafilm-core --test telemetry --features precision-f64
     cargo test --locked -p spektrafilm-gui --bin spektrafilm-gui --features precision-f64 -- state::tests:: numeric::tests::
 
+# Run audited GPU host logic in both precisions; device acquisition is an error.
+test-gpu-logic: (test-gpu-logic-precision "") (test-gpu-logic-precision "--features precision-f64")
+
+[private]
+test-gpu-logic-precision precision_args:
+    SPEKTRAFILM_TEST_NO_DEVICE=1 cargo test --locked -p spektrafilm-gpu --lib {{precision_args}} -- logic_tests::
+
 # Run measured deterministic logic and isolated file tests in both precisions.
-test-fast: (test-fast-precision "") (test-fast-precision "--features precision-f64")
+test-fast: test-gpu-logic (test-fast-precision "") (test-fast-precision "--features precision-f64")
 
 # Positive module selection keeps new rendering/device tests in main by default.
 [private]

@@ -18,18 +18,20 @@
 
 use super::*;
 
-#[test]
-fn diffusion_reservation_tracks_support_instead_of_hardware_capacity() {
-    let modest = super::bounded::workspace_plan(1, 1, 1, 128 << 20, false).unwrap();
-    let large = super::bounded::workspace_plan(1, 1, 1, 1 << 30, false).unwrap();
-    assert_eq!(large, modest);
-    assert!(
-        large < 1024,
-        "one-pixel identity diffusion must not reserve gigabytes"
-    );
-    let wider = super::bounded::workspace_plan(64, 48, 9, 1 << 30, true).unwrap();
-    assert!(wider > large);
-    assert!(wider < 1 << 20);
+mod logic_tests {
+    #[test]
+    fn diffusion_reservation_tracks_support_instead_of_hardware_capacity() {
+        let modest = super::super::bounded::workspace_plan(1, 1, 1, 128 << 20, false).unwrap();
+        let large = super::super::bounded::workspace_plan(1, 1, 1, 1 << 30, false).unwrap();
+        assert_eq!(large, modest);
+        assert!(
+            large < 1024,
+            "one-pixel identity diffusion must not reserve gigabytes"
+        );
+        let wider = super::super::bounded::workspace_plan(64, 48, 9, 1 << 30, true).unwrap();
+        assert!(wider > large);
+        assert!(wider < 1 << 20);
+    }
 }
 
 /// A deterministic RGB image with a bright corner block, exercising the

@@ -1073,7 +1073,7 @@ impl GrainV2State {
 }
 
 #[cfg(test)]
-mod tests {
+mod logic_tests {
     use super::*;
 
     /// The band plan decides between one bulk pass and a command per pixel, so
@@ -1139,6 +1139,11 @@ mod tests {
         assert_eq!(bands[0].stored.0, 0);
         assert_eq!(bands.last().unwrap().stored.1, ch);
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
 
     /// Every sample must be composed by exactly one band, and every band must
     /// store the rows its pixels read. Brute force over the same mapping the

@@ -1435,6 +1435,88 @@ mod tests {
         }
     }
 
+    mod logic_tests {
+        use super::*;
+
+        #[test]
+        fn tap_plan_limits_geometry_validation_to_actual_stage_span() {
+            let mut p = params(8, 4);
+            p.collect = Tap::LogEFilm;
+            p.scanner_lens_blur_px = Some(3.0);
+            let prefix = chain_steps(&p).unwrap();
+            assert_eq!(prefix, [ChainStep::Front, ChainStep::Log]);
+            assert_eq!(ChainGeometry::plan(&p, &prefix).unwrap().tail, (8, 4));
+            p.collect = Tap::RgbOut;
+            assert_eq!(
+                ChainGeometry::plan(&p, &chain_steps(&p).unwrap())
+                    .unwrap()
+                    .field,
+                (8, 4)
+            );
+            p.inject = Tap::LogEPrint;
+            p.collect = Tap::CmyPrint;
+            assert_eq!(chain_steps(&p).unwrap(), [ChainStep::PrintDensity]);
+            for extent in [(0, 1), (u32::MAX, 2), (u32::MAX / 3 + 1, 1)] {
+                assert!(
+                    raster_bytes(extent).is_err(),
+                    "accepted invalid geometry {extent:?}"
+                );
+            }
+        }
+
+        #[test]
+        fn diagnostic_taps_reject_absent_or_reversed_topology_boundaries() {
+            let mut p = params(1, 1);
+            p.inject = Tap::CmyFilm;
+            p.collect = Tap::LogEFilm;
+            assert!(validate_tap_span(&p).unwrap_err().contains("no node path"));
+            p.scan_film = true;
+            p.inject = Tap::LogEPrint;
+            p.collect = Tap::LogEPrint;
+            assert!(
+                validate_tap_span(&p)
+                    .unwrap_err()
+                    .contains("not part of this topology")
+            );
+        }
+
+        #[test]
+        fn required_chain_buffers_mirror_the_chain_arithmetic() {
+            const W: u32 = 8;
+            const H: u32 = 4;
+            let log_exp = [0.0f64; 5];
+            let tc_lut = spektrafilm_math::spectral::TcLut {
+                size: 16,
+                channels: 3,
+                data: vec![0.0; 16 * 16 * 3],
+            };
+            let p = FilmChainParams {
+                front: FrontPass::Hanatos2025 {
+                    tc_lut: &tc_lut,
+                    generated: None,
+                    rgb_to_adapted_xyz: MAT3,
+                },
+                film_log_exposure: &log_exp,
+                ..params(W, H)
+            };
+            let required = required_chain_buffers(&p);
+            // A non-empty `[[f64; 3]]` table narrows to 12 bytes per row and
+            // outgrows the fixed-aux bound, so the table path itself is pinned.
+            let density_rows = [[0.0f64; 3]; 400];
+            let table_params = FilmChainParams {
+                film_channel_density: &density_rows,
+                ..params(W, H)
+            };
+            assert_eq!(
+                required_chain_buffers(&table_params).static_bytes,
+                400u64 * 12
+            );
+            // Resource planning follows declared lattice geometry even when a
+            // generated retained table has no host sample vector.
+            assert_eq!(required.static_bytes, MAX_FIXED_AUX_BYTES);
+        }
+    }
+
     #[test]
     fn prefix_tap_does_not_allocate_or_validate_inactive_tail_resources() {
         use spektrafilm_backend::telemetry::{CollectionMode, ObservationContext};
@@ -1530,32 +1612,6 @@ mod tests {
             .zip(&expected.data)
         {
             assert!((*actual as f64 - *expected as f64).abs() < 2e-6);
-        }
-    }
-
-    #[test]
-    fn tap_plan_limits_geometry_validation_to_actual_stage_span() {
-        let mut p = params(8, 4);
-        p.collect = Tap::LogEFilm;
-        p.scanner_lens_blur_px = Some(3.0);
-        let prefix = chain_steps(&p).unwrap();
-        assert_eq!(prefix, [ChainStep::Front, ChainStep::Log]);
-        assert_eq!(ChainGeometry::plan(&p, &prefix).unwrap().tail, (8, 4));
-        p.collect = Tap::RgbOut;
-        assert_eq!(
-            ChainGeometry::plan(&p, &chain_steps(&p).unwrap())
-                .unwrap()
-                .field,
-            (8, 4)
-        );
-        p.inject = Tap::LogEPrint;
-        p.collect = Tap::CmyPrint;
-        assert_eq!(chain_steps(&p).unwrap(), [ChainStep::PrintDensity]);
-        for extent in [(0, 1), (u32::MAX, 2), (u32::MAX / 3 + 1, 1)] {
-            assert!(
-                raster_bytes(extent).is_err(),
-                "accepted invalid geometry {extent:?}"
-            );
         }
     }
 
@@ -1838,57 +1894,5 @@ mod tests {
             scalars_to_f32(&healthy.to_host(gpu.backend()).unwrap().data).as_ref(),
             &[0.125, 0.5, 0.75]
         );
-    }
-
-    #[test]
-    fn diagnostic_taps_reject_absent_or_reversed_topology_boundaries() {
-        let mut p = params(1, 1);
-        p.inject = Tap::CmyFilm;
-        p.collect = Tap::LogEFilm;
-        assert!(validate_tap_span(&p).unwrap_err().contains("no node path"));
-        p.scan_film = true;
-        p.inject = Tap::LogEPrint;
-        p.collect = Tap::LogEPrint;
-        assert!(
-            validate_tap_span(&p)
-                .unwrap_err()
-                .contains("not part of this topology")
-        );
-    }
-
-    #[test]
-    fn required_chain_buffers_mirror_the_chain_arithmetic() {
-        const W: u32 = 8;
-        const H: u32 = 4;
-        let log_exp = [0.0f64; 5];
-        let tc_lut = spektrafilm_math::spectral::TcLut {
-            size: 16,
-            channels: 3,
-            data: vec![0.0; 16 * 16 * 3],
-        };
-        let p = FilmChainParams {
-            front: FrontPass::Hanatos2025 {
-                tc_lut: &tc_lut,
-                generated: None,
-                rgb_to_adapted_xyz: MAT3,
-            },
-            film_log_exposure: &log_exp,
-            ..params(W, H)
-        };
-        let required = required_chain_buffers(&p);
-        // A non-empty `[[f64; 3]]` table narrows to 12 bytes per row and
-        // outgrows the fixed-aux bound, so the table path itself is pinned.
-        let density_rows = [[0.0f64; 3]; 400];
-        let table_params = FilmChainParams {
-            film_channel_density: &density_rows,
-            ..params(W, H)
-        };
-        assert_eq!(
-            required_chain_buffers(&table_params).static_bytes,
-            400u64 * 12
-        );
-        // Resource planning follows declared lattice geometry even when a
-        // generated retained table has no host sample vector.
-        assert_eq!(required.static_bytes, MAX_FIXED_AUX_BYTES);
     }
 }

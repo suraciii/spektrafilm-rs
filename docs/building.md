@@ -62,6 +62,7 @@ just check
 just test
 just test-f64
 just test-fast
+just test-gpu-logic
 just ci-pr
 just ci
 just package
