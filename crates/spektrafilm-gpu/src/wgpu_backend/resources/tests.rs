@@ -359,9 +359,14 @@ fn one_pending_operation_retirement_counts_waits_without_publishing_batch_ready(
             .find(|observation| observation.kind == ObservationKind::Batch)
             .unwrap();
         let measurements = batch.batch.as_ref().unwrap();
-        let incomplete = Measurement::unavailable(AvailabilityReason::Incomplete);
-        assert_eq!(measurements.submit_to_map_ready, incomplete);
-        assert_eq!(measurements.host_materialize, incomplete);
+        let not_materialized = Measurement {
+            status: spektrafilm_backend::telemetry::MeasurementStatus::NotApplicable,
+            value: None,
+            reason: Some(AvailabilityReason::NotApplicable),
+        };
+        assert_eq!(measurements.completion_boundary, "commands_submitted");
+        assert_eq!(measurements.submit_to_map_ready, not_materialized);
+        assert_eq!(measurements.host_materialize, not_materialized);
         assert_eq!(snapshot.totals.host_wait_count, Some(1));
         assert_eq!(batch.work.host_wait_count, Some(0));
         let request = snapshot

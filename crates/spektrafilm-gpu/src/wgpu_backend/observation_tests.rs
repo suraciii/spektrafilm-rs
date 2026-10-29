@@ -306,10 +306,16 @@ fn timestamps_match_pass_sum_and_preserve_real_compute_pixels() {
     let snapshot = context.snapshot();
     let batch = batch(&snapshot);
     let measurements = batch.batch.as_ref().expect("batch measurements");
-    assert_eq!(measurements.completion_boundary, "image_map_ready");
+    assert_eq!(measurements.completion_boundary, "device_poll_complete");
     seconds(&measurements.host_prepare);
-    seconds(&measurements.submit_to_map_ready);
-    seconds(&measurements.host_materialize);
+    for measurement in [
+        &measurements.submit_to_map_ready,
+        &measurements.host_materialize,
+    ] {
+        assert_eq!(measurement.status, MeasurementStatus::NotApplicable);
+        assert_eq!(measurement.value, None);
+        assert_eq!(measurement.reason, Some(AvailabilityReason::NotApplicable));
+    }
     let passes: Vec<_> = snapshot
         .observations
         .iter()
@@ -338,6 +344,82 @@ fn timestamps_match_pass_sum_and_preserve_real_compute_pixels() {
     assert_eq!(counters.telemetry_copy_bytes, Some(16));
     assert_eq!(counters.staging_copy_bytes, Some(BYTES));
     assert_eq!(counters.readback_bytes, Some(BYTES));
+}
+
+#[test]
+fn foreign_owner_retirement_completes_all_registered_timestamp_maps() {
+    let Some((_device, mut backend)) = fresh_backend(wgpu::Features::TIMESTAMP_QUERY) else {
+        return;
+    };
+    let (context, stage) = observed(&mut backend, CollectionMode::GpuTiming);
+    let (scoped, guard) = backend.observed_batch("compute");
+    let work = Workload::new(&scoped, false, &INPUT);
+
+    let first_owner = scoped.admit_operation(1024).unwrap();
+    let first_backend = first_owner.backend(&scoped);
+    let first = work.encode(&first_backend, 1, false).finish();
+    let first_weak = Arc::downgrade(first_backend.device.operation.as_ref().unwrap());
+    drop(first_backend);
+    drop(first_owner);
+
+    let second_owner = scoped.admit_operation(1024).unwrap();
+    let second_backend = second_owner.backend(&scoped);
+    let second = work.encode(&second_backend, 1, true).finish();
+    let second_weak = Arc::downgrade(second_backend.device.operation.as_ref().unwrap());
+    drop(second_backend);
+    drop(second_owner);
+
+    // The command buffers are now the owners' only strong references. The
+    // first owner's retirement poll must complete both already-registered maps.
+    scoped.queue.submit([first, second]);
+    assert!(first_weak.upgrade().is_none());
+    assert!(second_weak.upgrade().is_none());
+    let snapshot = context.snapshot();
+    assert_eq!(snapshot.totals.submit_count, Some(1));
+    assert_eq!(snapshot.totals.executed_pass_count, Some(2));
+    assert_eq!(snapshot.totals.timed_pass_count, Some(2));
+    assert_eq!(snapshot.totals.valid_pass_count, Some(2));
+    seconds(&snapshot.gpu_timing.compute_pass_sum);
+    let passes: Vec<_> = snapshot
+        .observations
+        .iter()
+        .filter(|o| o.kind == ObservationKind::Pass)
+        .collect();
+    assert_eq!(passes.len(), 2);
+    for pass in passes {
+        seconds(&pass.pass.as_ref().unwrap().duration);
+    }
+    assert_eq!(work.materialize(&scoped), INPUT.map(|pixel| pixel * 4.0));
+    drop(guard);
+    drop(stage);
+}
+
+#[test]
+fn submitted_batch_without_poll_has_no_map_or_materialization_intervals() {
+    let Some((_device, mut backend)) = fresh_backend(wgpu::Features::empty()) else {
+        return;
+    };
+    let (context, stage) = observed(&mut backend, CollectionMode::Summary);
+    let (scoped, guard) = backend.observed_batch("compute");
+    let work = Workload::new(&scoped, false, &INPUT);
+    scoped
+        .queue
+        .submit([work.encode(&scoped, 1, false).finish()]);
+    drop(guard);
+    drop(stage);
+    let snapshot = context.snapshot();
+    let measurements = batch(&snapshot).batch.as_ref().unwrap();
+    assert_eq!(measurements.completion_boundary, "commands_submitted");
+    seconds(&measurements.host_prepare);
+    for measurement in [
+        &measurements.submit_to_map_ready,
+        &measurements.host_materialize,
+    ] {
+        assert_eq!(measurement.status, MeasurementStatus::NotApplicable);
+        assert_eq!(measurement.value, None);
+        assert_eq!(measurement.reason, Some(AvailabilityReason::NotApplicable));
+    }
+    assert_eq!(snapshot.totals.host_wait_count, Some(0));
 }
 
 #[test]
@@ -473,73 +555,34 @@ fn fresh_baseline_device_reports_disabled_timestamps_without_changing_image_work
 }
 
 #[test]
-fn failed_and_pending_query_callbacks_preserve_completed_image() {
-    for reason in [
-        AvailabilityReason::QueryFailed,
-        AvailabilityReason::NotReady,
-    ] {
-        let Some((_device, mut backend)) = fresh_backend(wgpu::Features::TIMESTAMP_QUERY) else {
-            return;
-        };
-        let (context, stage) = observed(&mut backend, CollectionMode::GpuTiming);
-        let (scoped, guard) = backend.observed_batch("compute");
-        let work = Workload::new(&scoped, false, &INPUT);
-        scoped
-            .queue
-            .submit([work.encode(&scoped, 1, true).finish()]);
-        let image = work.materialize(&scoped);
-        let (tx, rx) = mpsc::channel();
-        if reason == AvailabilityReason::QueryFailed {
-            tx.send(Err(wgpu::BufferAsyncError)).unwrap();
-        }
-        // The batch boundary only requests the readback map when it has not
-        // been requested yet; this test injects the callback result directly,
-        // so it declares the request as made.
-        let mut state = scoped.device.batch.as_ref().unwrap().lock();
-        let queries = state.queries.as_mut().unwrap();
-        queries.map_requested = true;
-        queries.receiver = Some(rx);
-        drop(state);
-        // Keeping tx alive makes NotReady an empty live callback channel, not a disconnection.
-        drop(guard);
-        drop(tx);
-        drop(stage);
-        assert_eq!(image, INPUT.map(|pixel| pixel * 2.0));
-        let snapshot = context.snapshot();
-        let measurements = batch(&snapshot).batch.as_ref().unwrap();
-        assert_eq!(
-            measurements.compute_pass_sum,
-            Measurement::unavailable(reason)
-        );
-        assert_eq!(
-            measurements.partial_compute_pass_sum,
-            Measurement::unavailable(reason)
-        );
-        assert_eq!(
-            snapshot.gpu_timing.partial_compute_pass_sum,
-            Measurement::unavailable(reason)
-        );
-        assert_eq!(
-            snapshot.gpu_timing.compute_pass_sum,
-            Measurement::unavailable(reason)
-        );
-        let pass = snapshot
-            .observations
-            .iter()
-            .find(|o| o.kind == ObservationKind::Pass)
-            .unwrap();
-        assert_eq!(
-            pass.pass
-                .as_ref()
-                .expect("unavailable pass observation")
-                .duration,
-            Measurement::unavailable(reason)
-        );
-        assert_eq!(snapshot.totals.valid_pass_count, Some(0));
-        assert_eq!(snapshot.totals.readback_count, Some(1));
-        assert_eq!(snapshot.totals.host_wait_count, Some(1));
-        assert_eq!(snapshot.totals.submit_count, Some(1));
-    }
+fn cancelled_query_map_preserves_completed_image_and_reports_query_failure() {
+    let Some((_device, mut backend)) = fresh_backend(wgpu::Features::TIMESTAMP_QUERY) else {
+        return;
+    };
+    let (context, stage) = observed(&mut backend, CollectionMode::GpuTiming);
+    let (scoped, guard) = backend.observed_batch("compute");
+    let work = Workload::new(&scoped, false, &INPUT);
+    let command = work.encode(&scoped, 1, true).finish();
+    let query_readback = command.state.queries.as_ref().unwrap().readback().clone();
+    scoped.queue.submit([command]);
+    // Cancel only the real pending telemetry map. Image work and its map are unchanged.
+    query_readback.unmap();
+    assert_eq!(work.materialize(&scoped), INPUT.map(|pixel| pixel * 2.0));
+    drop(guard);
+    drop(stage);
+    let snapshot = context.snapshot();
+    assert_eq!(
+        snapshot.gpu_timing.compute_pass_sum,
+        Measurement::unavailable(AvailabilityReason::QueryFailed)
+    );
+    assert_eq!(
+        snapshot.gpu_timing.partial_compute_pass_sum,
+        Measurement::unavailable(AvailabilityReason::QueryFailed)
+    );
+    assert_eq!(snapshot.totals.valid_pass_count, Some(0));
+    assert_eq!(snapshot.totals.readback_count, Some(1));
+    assert_eq!(snapshot.totals.host_wait_count, Some(1));
+    assert_eq!(snapshot.totals.submit_count, Some(1));
 }
 
 #[test]
@@ -627,12 +670,30 @@ fn discarded_and_finished_unsubmitted_commands_contribute_no_executed_work() {
     let mut discarded = work.encode(&scoped, 2, true);
     discarded.copy_buffer_to_buffer(&work.pixels, 0, &scratch, 0, BYTES);
     drop(discarded);
+    let discarded_snapshot = context.snapshot();
+    let encoding = discarded_snapshot
+        .host_timings
+        .as_ref()
+        .unwrap()
+        .iter()
+        .find(|timing| timing.kind == HostTimingKind::CommandEncoding)
+        .expect("discarded encoder records host work");
+    assert_eq!(encoding.count, 1);
+    assert!(encoding.total_duration.is_finite() && encoding.total_duration >= 0.0);
     let mut unsubmitted = work.encode(&scoped, 3, true);
     unsubmitted.copy_buffer_to_buffer(&work.pixels, 0, &scratch, 0, BYTES);
     drop(unsubmitted.finish());
     drop(guard);
     drop(stage);
     let snapshot = context.snapshot();
+    let encoding = snapshot
+        .host_timings
+        .as_ref()
+        .unwrap()
+        .iter()
+        .find(|timing| timing.kind == HostTimingKind::CommandEncoding)
+        .expect("both encoder lifetimes record host work");
+    assert_eq!(encoding.count, 2, "finish must not record twice");
     assert!(
         snapshot
             .observations
@@ -657,9 +718,15 @@ fn discarded_and_finished_unsubmitted_commands_contribute_no_executed_work() {
     assert_eq!(counters.readback_count, Some(0));
     assert_eq!(counters.host_wait_count, Some(0));
     assert_eq!(
-        batch(&snapshot).batch.as_ref().unwrap().compute_pass_sum,
-        Measurement::unavailable(AvailabilityReason::Incomplete)
+        batch(&snapshot)
+            .batch
+            .as_ref()
+            .unwrap()
+            .compute_pass_sum
+            .status,
+        MeasurementStatus::Unavailable
     );
+    assert!(snapshot.gpu_timing.groups.is_empty());
 }
 
 #[test]
@@ -707,7 +774,7 @@ fn discarded_detail_reservations_leave_submitted_passes_and_pixels_intact() {
 }
 
 #[test]
-fn exhausted_details_report_detail_limit_on_timestamp_enabled_device() {
+fn exhausted_details_do_not_limit_timestamp_aggregation() {
     let Some((_device, mut backend)) = fresh_backend(wgpu::Features::TIMESTAMP_QUERY) else {
         return;
     };
@@ -728,17 +795,12 @@ fn exhausted_details_report_detail_limit_on_timestamp_enabled_device() {
     drop(guard);
     drop(stage);
     let snapshot = context.snapshot();
-    assert_eq!(
-        snapshot.gpu_timing.compute_pass_sum,
-        Measurement::unavailable(AvailabilityReason::DetailLimit)
-    );
-    assert_eq!(
-        snapshot.gpu_timing.partial_compute_pass_sum,
-        Measurement::unavailable(AvailabilityReason::DetailLimit)
-    );
+    assert!(snapshot.coverage.truncated);
+    let full = seconds(&snapshot.gpu_timing.compute_pass_sum);
+    assert_eq!(full, seconds(&snapshot.gpu_timing.partial_compute_pass_sum));
     assert_eq!(snapshot.totals.executed_pass_count, Some(1));
-    assert_eq!(snapshot.totals.timed_pass_count, Some(0));
-    assert_eq!(snapshot.totals.valid_pass_count, Some(0));
+    assert_eq!(snapshot.totals.timed_pass_count, Some(1));
+    assert_eq!(snapshot.totals.valid_pass_count, Some(1));
 }
 
 #[test]
@@ -778,7 +840,7 @@ fn one_submission_of_multiple_command_buffers_has_exact_work_sum() {
     assert_eq!(counters.readback_count, Some(1));
     assert_eq!(counters.telemetry_resolve_count, Some(2));
     assert_eq!(counters.telemetry_copy_count, Some(2));
-    assert_eq!(counters.telemetry_copy_bytes, Some(16 + 48));
+    assert_eq!(counters.telemetry_copy_bytes, Some(3 * 16));
     let parent = batch(&snapshot);
     let passes: Vec<_> = snapshot
         .observations
@@ -810,9 +872,11 @@ fn submitted_pass_pressure_preserves_late_cpu_stage_and_exact_counters() {
     let expected_adapter = context.snapshot().execution.adapter;
     let admitted_passes = scoped.device.context.detail_remaining() as u64;
     let work = Workload::new(&scoped, false, &[0.0; 4]);
-    scoped
-        .queue
-        .submit([work.encode(&scoped, PASSES, true).finish()]);
+    for i in 0..10 {
+        scoped
+            .queue
+            .submit([work.encode(&scoped, PASSES / 10, i == 9).finish()]);
+    }
     assert_eq!(work.materialize(&scoped), [0.0; 4]);
     drop(guard);
     drop(stage);
@@ -869,17 +933,18 @@ fn submitted_pass_pressure_preserves_late_cpu_stage_and_exact_counters() {
     assert_eq!(counters.executed_pass_count, Some(PASSES as u64));
     assert_eq!(counters.dispatch_count, Some(PASSES as u64));
     assert!(admitted_passes > 0 && admitted_passes < PASSES as u64);
-    assert_eq!(counters.timed_pass_count, Some(admitted_passes));
-    assert_eq!(counters.valid_pass_count, Some(admitted_passes));
-    assert_eq!(
-        counters.omitted_pass_count,
-        Some(PASSES as u64 - admitted_passes)
+    assert_eq!(counters.timed_pass_count, Some(PASSES as u64));
+    assert_eq!(counters.valid_pass_count, Some(PASSES as u64));
+    assert_eq!(counters.omitted_pass_count, Some(0));
+    assert_eq!(counters.command_buffer_count, Some(10));
+    assert_eq!(counters.submit_count, Some(10));
+    assert_eq!(counters.host_wait_count, Some(9));
+    assert!(
+        counters.telemetry_buffer_create_count.unwrap() <= 16,
+        "timestamp blocks must be reused under submission pressure"
     );
-    assert_eq!(counters.command_buffer_count, Some(1));
-    assert_eq!(counters.submit_count, Some(1));
-    assert_eq!(counters.host_wait_count, Some(1));
     assert_eq!(counters.readback_count, Some(1));
-    assert_eq!(counters.telemetry_copy_bytes, Some(admitted_passes * 16));
+    assert_eq!(counters.telemetry_copy_bytes, Some(PASSES as u64 * 16));
     let parent = batch(&snapshot);
     let passes: Vec<_> = snapshot
         .observations
@@ -894,13 +959,116 @@ fn submitted_pass_pressure_preserves_late_cpu_stage_and_exact_counters() {
         seconds(&pass.duration);
     }
     let measurements = parent.batch.as_ref().unwrap();
-    assert_eq!(
-        measurements.compute_pass_sum,
-        Measurement::unavailable(AvailabilityReason::Incomplete)
-    );
+    let full = seconds(&measurements.compute_pass_sum);
+    // Batch chunks and typed groups sum the same intervals in different orders.
+    assert!((full - seconds(&snapshot.gpu_timing.compute_pass_sum)).abs() < 1e-12);
     let sum: f64 = passes
         .iter()
         .map(|o| seconds(&o.pass.as_ref().unwrap().duration))
         .sum();
-    assert_eq!(seconds(&measurements.partial_compute_pass_sum), sum);
+    assert!(full >= sum);
+    assert_eq!(seconds(&measurements.partial_compute_pass_sum), full);
+}
+
+#[test]
+fn passes_without_an_explicit_batch_are_counted_and_timed() {
+    let Some((_device, mut backend)) = fresh_backend(wgpu::Features::TIMESTAMP_QUERY) else {
+        return;
+    };
+    let (context, stage) = observed(&mut backend, CollectionMode::GpuTiming);
+    let work = Workload::new(&backend, false, &INPUT);
+    backend
+        .queue
+        .submit([work.encode(&backend, 2, true).finish()]);
+    assert_eq!(work.materialize(&backend), INPUT.map(|pixel| pixel * 4.0));
+    drop(stage);
+    let snapshot = context.snapshot();
+    assert_eq!(snapshot.totals.executed_pass_count, Some(2));
+    assert_eq!(snapshot.totals.valid_pass_count, Some(2));
+    assert_eq!(snapshot.totals.host_wait_count, Some(1));
+    assert_eq!(
+        snapshot
+            .gpu_timing
+            .groups
+            .iter()
+            .map(|g| g.executed_pass_count)
+            .sum::<u64>(),
+        2
+    );
+    seconds(&snapshot.gpu_timing.compute_pass_sum);
+}
+
+#[test]
+fn closing_a_batch_does_not_wait_and_later_completion_updates_its_timing() {
+    let Some((_device, mut backend)) = fresh_backend(wgpu::Features::TIMESTAMP_QUERY) else {
+        return;
+    };
+    let (context, stage) = observed(&mut backend, CollectionMode::GpuTiming);
+    let (scoped, guard) = backend.observed_batch("compute");
+    let work = Workload::new(&scoped, false, &INPUT);
+    scoped
+        .queue
+        .submit([work.encode(&scoped, 1, true).finish()]);
+    drop(guard);
+    let before = context.snapshot();
+    assert_eq!(before.totals.host_wait_count, Some(0));
+    let pending_pass = before
+        .observations
+        .iter()
+        .find(|o| o.kind == ObservationKind::Pass)
+        .unwrap();
+    assert_eq!(
+        pending_pass.pass.as_ref().unwrap().duration.reason,
+        Some(AvailabilityReason::NotReady)
+    );
+    assert!(!pending_pass.complete);
+    let measurements = batch(&before).batch.as_ref().unwrap();
+    assert_eq!(measurements.completion_boundary, "commands_submitted");
+    assert_eq!(
+        measurements.submit_to_map_ready.status,
+        MeasurementStatus::NotApplicable
+    );
+    assert_eq!(
+        measurements.host_materialize.status,
+        MeasurementStatus::NotApplicable
+    );
+    assert_eq!(work.materialize(&backend), INPUT.map(|pixel| pixel * 2.0));
+    drop(stage);
+    let after = context.snapshot();
+    assert_eq!(after.totals.valid_pass_count, Some(1));
+    assert_eq!(after.totals.host_wait_count, Some(1));
+    seconds(&batch(&after).batch.as_ref().unwrap().compute_pass_sum);
+}
+
+#[test]
+fn query_capacity_exhaustion_preserves_pixels_and_explicit_partial_coverage() {
+    let Some((_device, mut backend)) = fresh_backend(wgpu::Features::TIMESTAMP_QUERY) else {
+        return;
+    };
+    let (context, stage) = observed(&mut backend, CollectionMode::GpuTiming);
+    let (scoped, guard) = backend.observed_batch("compute");
+    let work = Workload::new(&scoped, false, &[0.0; 4]);
+    let capacity = timestamps::QUERY_CAPACITY as usize / 2;
+    scoped
+        .queue
+        .submit([work.encode(&scoped, capacity + 1, true).finish()]);
+    assert_eq!(work.materialize(&scoped), [0.0; 4]);
+    drop(guard);
+    drop(stage);
+    let snapshot = context.snapshot();
+    assert_eq!(
+        snapshot.totals.executed_pass_count,
+        Some(capacity as u64 + 1)
+    );
+    assert_eq!(snapshot.totals.valid_pass_count, Some(capacity as u64));
+    assert_eq!(snapshot.totals.omitted_pass_count, Some(1));
+    assert_eq!(
+        snapshot.gpu_timing.compute_pass_sum.reason,
+        Some(AvailabilityReason::Incomplete)
+    );
+    assert_eq!(
+        snapshot.gpu_timing.groups[0].compute_pass_sum.reason,
+        Some(AvailabilityReason::QueryCapacity)
+    );
+    seconds(&snapshot.gpu_timing.partial_compute_pass_sum);
 }

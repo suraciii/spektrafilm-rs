@@ -15,7 +15,7 @@
 
 Counter aggregation, overflow reconciliation, and report validation MUST use one counter field definition. Phase recording and validation MUST use one ordered phase vocabulary.
 
-The authoritative stage-name privacy allowlist is `STAGES` in [report validation](../../crates/spektrafilm-core/src/telemetry/validator.rs). Device ingestion, saving conversion, histogram, and viewer stage producers MUST use that vocabulary so successful operations can persist their complete reports; arbitrary stage labels remain rejected.
+The authoritative stage-name privacy vocabulary is `STAGE_NAMES` and `GpuStage` in the [shared observation types](../../crates/spektrafilm-backend/src/telemetry/types.rs). Device ingestion, saving conversion, histogram, and viewer stage producers MUST use that vocabulary; arbitrary stage labels remain rejected.
 
 CLI saving sample conversion MUST bind the selected backend to its saving phase, just as loading and simulation bind their operation scopes. An identity saving colour transform still performs the device sample-conversion and terminal readback boundary; those actual executor and transfer observations MUST remain attached to saving rather than disappear through an unobserved backend.
 
@@ -25,9 +25,10 @@ CLI saving sample conversion MUST bind the selected backend to its saving phase,
 - Timing values MUST NOT be formatted strings. Span hierarchy MUST describe operation, phase, stage, and backend batch ownership.
 - Summary mode collects fixed-size counters, bounded phase observations, and routing facts. GPU timing mode adds timestamp queries to existing compute passes.
 - Neither mode MAY add image readbacks, image copies, retries, simulation passes, or synchronization points for observation. Query results MAY use a small auxiliary readback alongside an existing completion boundary; collection MUST NOT create per-pixel observations.
-- Each operation MUST retain at most 1,024 detailed observations across attempts, phases, stages, batches, and passes. Attempts, phases, and stages MUST use a separate budget of at most 512 observations; batches and passes MUST use the other 512 slots and MUST NOT consume the high-level budget.
-- Root outcome, configuration, exact total work counters, and fixed-category duration totals MUST remain outside this detail limit. Later observations MUST update those totals and mark omitted detail as truncated without allocating more detail; a child that cannot retain its parent MUST also be omitted.
-- Retained diagnostic data MUST occupy at most 1 MiB per operation, excluding temporary JSON serialization. After fixed storage, batches and passes MAY consume at most half the remaining byte budget; exhausting a slot or byte budget MUST stop the affected detail retention and report truncation.
+- Each operation MUST retain at most 512 observations across attempts, phases, stages, batches, and passes. Attempts, phases, and stages MUST use a separate budget of 256 slots; batches and passes MUST use the other 256 slots without consuming the high-level budget.
+- Root outcome, configuration, exact total work counters, and fixed-category phase, semantic-stage, host-interval, and GPU pass totals MUST remain outside this detail limit. Later observations MUST update those totals and mark omitted detail as truncated without allocating more detail; a child that cannot retain its parent MUST also be omitted.
+- Retained diagnostic data MUST occupy at most 1 MiB per operation, excluding temporary JSON serialization. Fixed-category aggregates MUST count against this budget.
+- After fixed storage, batches and passes MAY consume at most half the remaining byte budget. Exhausting a slot or byte budget MUST stop the affected detail retention and report truncation.
 - The report MUST identify its limits, retained and omitted observation counts, and covered timing scope. Counter overflow MUST report an unavailable value rather than wrap; the observation source MUST NOT allocate image-sized storage.
 - Disabled collection MUST NOT add telemetry records, formatted fields, query resources, or synchronization beyond existing public timing behavior. Existing Runtime timing maps are a separate compatibility cost; removing them requires a separate API decision.
 - Stage-level collection MUST NOT introduce a process-wide contended lock. Local structured telemetry events MUST use the report's field allowlist and privacy rules; existing human application logs remain outside the shareable report.
@@ -65,23 +66,35 @@ Journal creation MUST use exclusive file creation after protected-path validatio
 - Full-GPU scope and acceptance follow the [GPU execution contract](../gpu-execution/spec.md#computation-scope), including its [backend selection](../gpu-execution/spec.md#backend-selection), [algorithm alignment](../gpu-execution/spec.md#algorithm-alignment), and [acceptance](../gpu-execution/spec.md#acceptance) rules.
 - Device residency and numerical and stochastic evidence follow the GPU execution [device residency](../gpu-execution/design.md#device-residency), [numerical alignment](../gpu-execution/design.md#numerical-alignment), and [stochastic alignment](../gpu-execution/design.md#stochastic-alignment) design; telemetry reports actual work and retains its existing schema and path meanings.
 - Host durations use a monotonic clock. Each observation MUST name its boundary and parent.
-- Phase and stage durations are inclusive wall durations; backend batch durations nest within stages. Nested durations MUST NOT be summed as if they were disjoint; cross-thread overlaps MUST remain visible rather than be converted into a serial total.
+- Phase, stage, and backend batch durations are inclusive wall durations. Stages MAY nest within batches, phases, or stages; batches MAY nest within phases or stages.
+- Nested durations MUST NOT be summed as disjoint intervals. Cross-thread overlaps MUST remain visible rather than become a serial total.
+
+Direct host timing categories describe elapsed intervals, not exclusive CPU time. Resource creation covers buffer creation and initialization, shader compilation, and pipeline and binding creation; upload covers host uploads.
+
+Command encoding spans the encoder lifetime and MAY overlap resource creation and uploads. Queue submission measures actual submit calls.
+
+Submission and readback wait intervals MUST measure only existing blocking waits. Root and retained ancestor totals are inclusive; consumers MUST NOT sum ancestors with descendants.
 
 Each host observation MUST derive its start offset and duration from the same captured start instant. Computing the offset MUST NOT read the clock again, because scheduling delay between readings would inflate the reconstructed end time.
 
-- A backend batch covers host preparation, command submission, completion wait, and result materialization. Host preparation can include parameter conversion, cache lookup, resource creation, upload calls, and command encoding; it is not CPU utilization.
-- Submit-to-map-ready includes submission overhead, queue contention, device work, staging copies, driver scheduling, callback scheduling, and host wakeup. It is not kernel time; materialization covers mapped-range access, CPU copying, scalar conversion, result construction, and unmap work.
+- A backend batch covers host preparation, command submission, the observed completion boundary, and result materialization when present. Host preparation can include parameter conversion, cache lookup, resource creation, upload calls, and command encoding; it is not CPU utilization.
+- When map readiness is actually observed, submit-to-map-ready includes submission overhead, queue contention, device work, staging copies, driver scheduling, callback scheduling, and host wakeup. It is not kernel time; materialization covers mapped-range access, CPU copying, scalar conversion, result construction, and unmap work.
 - At compute-device creation, the backend MUST request adapter-supported `TIMESTAMP_QUERY` as an optional capability regardless of current collection mode. It MUST allocate query resources and write timestamps only for operations captured in GPU timing mode.
 - This allows session mode changes without recreating the active device; each Adapter object MUST receive at most one device request. If optional-feature device creation fails, initialization MUST request one fresh Adapter with the same selection options and make one baseline device request using the existing feature and limit policy.
 - A fresh adapter request does not guarantee the same physical device; the report MUST identify the final adapter actually used. This initialization policy MUST be identical in all collection modes and MUST NOT broaden adapter selection or required timestamp features.
 - Failed baseline initialization retains the existing backend-unavailable behavior; timing MUST remain unavailable as `feature_request_failed` after a successful baseline request. Summary mode and off mode MUST use unchanged image commands.
 - The backend MUST convert timestamp differences with that queue's timestamp period. Pass records MUST identify their batch and pass occurrence.
 - Query resolution and telemetry buffer copies are observation overhead and MUST be separate from application work counts. Invalid, unresolved, or unsupported queries MUST produce unavailable observations with reasons; timing MUST NOT request broader inside-pass or inside-encoder timestamp features when pass boundaries suffice.
-- Each timed compute pass uses two query slots. One batch MUST use at most 2,048 query slots, including only pass records admitted by the detail limit.
-- It MUST resolve the used contiguous range at offset zero into a `QUERY_RESOLVE | COPY_SRC` buffer, then copy its 8-byte results to a separate `COPY_DST | MAP_READ` buffer. Query resources MUST be owned by the batch until mapping ends; they MUST NOT be reused across in-flight batches.
-- Query counts, feature availability, resolve offset, and buffer sizes MUST be checked before encoding image commands; unavailable capability or exhausted detail budget MUST disable timestamps for that batch. Resource allocation or encoding errors that invalidate device work are real backend failures, not reasons to repeat image execution.
-- Image and query map callbacks MUST be registered before the existing completion poll; the result MUST NOT add a blocking wait or a second submission solely to obtain query results. Query results still pending at image completion MUST be unavailable as `not_ready`; batch-owned cleanup MUST release them safely without delaying publication.
-- A query map failure after valid image completion MUST be unavailable as `query_failed`. Both cases MUST preserve valid image results; actual command failure and device loss retain normal execution failure handling.
+- Each timed compute pass uses two query slots. Bounded query blocks MUST belong to the command or submission that uses them and MUST NOT be reused until mapping and unmapping complete.
+- Query resolve and copy commands MUST append to existing command buffers. Query maps MUST register after submission and complete through existing retirement or readback polls.
+- Collection MUST NOT add a submission or blocking poll solely to obtain timestamps.
+- Submitted passes MUST update typed stage, pass-kind, and purpose aggregates independently of detail retention. Discarded commands MUST NOT count as submitted work.
+- Timestamp completion MUST update valid counts and sums once. Pending results MUST remain unavailable rather than become zero.
+- Query-pool or per-command capacity exhaustion MUST leave image work unblocked and report `query_capacity`. Unsupported timestamp capability MUST also leave image work unblocked and report missing coverage.
+- A query map failure MUST report `query_failed`. Results pending at the terminal snapshot MUST report `not_ready` or incomplete coverage.
+- Command failure and device loss retain normal execution failure handling.
+- Completion callbacks MUST NOT retain an operation through an ownership cycle. Completion after operation finish MUST NOT mutate the published report.
+- A batch with an observed device poll uses `device_poll_complete`; otherwise it uses `commands_submitted`. Neither boundary claims image materialization; unobserved map-ready and materialization intervals MUST be `not_applicable`.
 
 A pass duration covers the device's pass interval. It does not measure isolated shader instructions, CPU work, queue delay before the pass, or physical transfer bandwidth. A sum of pass durations MUST be named `compute_pass_sum`; it MUST NOT be described as operation GPU duration or subtracted from host time to estimate CPU time.
 

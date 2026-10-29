@@ -34,223 +34,83 @@ impl Deref for ObservedQueue {
     }
 }
 pub(super) struct BatchState {
+    context: ObservationContext,
     start: Instant,
     submitted: Option<Instant>,
     ready: Option<Instant>,
-    queries: Option<QueryResources>,
-    /// Device the batch submits on, used to complete the telemetry readback
-    /// at the batch boundary.
-    device: Option<wgpu::Device>,
-    passes: Vec<PassObservation>,
     pending_details: u32,
-    query_slots: Vec<bool>,
     executed: u64,
     timed: u64,
-    period: f64,
+    valid: u64,
+    sum: f64,
+    reason: AvailabilityReason,
+    measurements: Option<BatchMeasurements>,
 }
-pub(super) struct PassObservation {
-    pub index: u32,
-    pub scope: Option<ObservationContext>,
-    pub has_queries: bool,
-    pub query_index: u32,
+struct PassObservation {
+    index: u64,
+    scope: Option<ObservationContext>,
+    query_index: Option<u32>,
     name: &'static str,
+    stage: GpuStage,
+    kind: GpuPassKind,
 }
-struct QueryResources {
-    set: wgpu::QuerySet,
-    resolve: wgpu::Buffer,
-    readback: wgpu::Buffer,
-    capacity: u32,
-    receiver: Option<std::sync::mpsc::Receiver<Result<(), wgpu::BufferAsyncError>>>,
-    map_requested: bool,
+impl BatchState {
+    fn update_timing(&mut self) {
+        let Some(measurements) = &mut self.measurements else {
+            return;
+        };
+        measurements.compute_pass_sum = if self.executed > 0
+            && self.valid == self.timed
+            && self.timed == self.executed
+            && self.sum.is_finite()
+        {
+            Measurement::available(self.sum)
+        } else {
+            Measurement::unavailable(if self.valid > 0 {
+                AvailabilityReason::Incomplete
+            } else {
+                self.reason
+            })
+        };
+        measurements.partial_compute_pass_sum = if self.valid > 0 && self.sum.is_finite() {
+            Measurement::available(self.sum)
+        } else {
+            Measurement::unavailable(self.reason)
+        };
+        self.context.record_batch(measurements.clone());
+    }
 }
 pub(super) struct BatchGuard {
-    scope: ObservationScope,
+    _scope: ObservationScope,
     state: Option<Arc<Mutex<BatchState>>>,
 }
 impl Drop for BatchGuard {
     fn drop(&mut self) {
         let Some(state) = &self.state else { return };
         let mut s = state.lock();
-        // Timestamp collection is completed here, at the batch boundary: the
-        // batch may hold several submissions, and a mapped readback must not
-        // outlive the submission that follows it. The blocking poll is
-        // confined to collected timings, which the batch already paid for.
-        if s.timed > 0
-            && let Some(q) = &mut s.queries
-            && !q.map_requested
-        {
-            let (tx, rx) = std::sync::mpsc::channel();
-            q.readback
-                .slice(..)
-                .map_async(wgpu::MapMode::Read, move |result| {
-                    let _ = tx.send(result);
-                });
-            q.receiver = Some(rx);
-            q.map_requested = true;
-        }
-        if s.queries.as_ref().is_some_and(|q| q.map_requested)
-            && let Some(device) = &s.device
-        {
-            device.poll(wgpu::Maintain::Wait);
-        }
-        let end = Instant::now();
         let prepare = s.submitted.map_or_else(
-            || Measurement::unavailable(AvailabilityReason::Incomplete),
+            || Measurement::unavailable(AvailabilityReason::NotReached),
             |t| Measurement::available(t.duration_since(s.start).as_secs_f64()),
         );
-        let wait = s.submitted.zip(s.ready).map_or_else(
-            || Measurement::unavailable(AvailabilityReason::Incomplete),
-            |(a, b)| Measurement::available(b.duration_since(a).as_secs_f64()),
-        );
-        let material = s.ready.map_or_else(
-            || Measurement::unavailable(AvailabilityReason::Incomplete),
-            |t| Measurement::available(end.duration_since(t).as_secs_f64()),
-        );
-        let mut sum = 0.0;
-        let mut valid = 0u64;
-        let mut any = false;
-        // A readback is only unmapped once its mapping actually completed; a
-        // failed map leaves the buffer unmapped and `unmap` would panic.
-        let mut map_completed = false;
-        let mut reason = self.scope.context().adapter_reason().unwrap_or_else(|| {
-            if self.scope.context().mode() == CollectionMode::GpuTiming {
-                if s.queries.is_none() {
-                    AvailabilityReason::DetailLimit
-                } else {
-                    AvailabilityReason::NotReady
-                }
-            } else {
-                AvailabilityReason::NotCollected
-            }
-        });
-        if let Some(q) = &s.queries {
-            reason = AvailabilityReason::NotReady;
-            if let Some(result) = q.receiver.as_ref().and_then(|r| r.try_recv().ok()) {
-                map_completed = result.is_ok();
-                if result.is_ok() {
-                    let mapped = q.readback.slice(..).get_mapped_range();
-                    let ticks: &[u64] = match bytemuck::try_cast_slice(&mapped) {
-                        Ok(ticks)
-                            if ticks.len()
-                                >= s.passes
-                                    .iter()
-                                    .filter(|p| p.has_queries)
-                                    .map(|p| p.query_index as usize + 2)
-                                    .max()
-                                    .unwrap_or(0) =>
-                        {
-                            ticks
-                        }
-                        _ => {
-                            drop(mapped);
-                            reason = AvailabilityReason::InvalidTimestamp;
-                            self.scope.context().record_batch(BatchMeasurements {
-                                host_prepare: prepare,
-                                submit_to_map_ready: wait,
-                                host_materialize: material,
-                                completion_boundary: "image_map_ready".into(),
-                                compute_pass_sum: Measurement::unavailable(reason),
-                                partial_compute_pass_sum: Measurement::unavailable(reason),
-                            });
-                            if q.map_requested {
-                                q.readback.unmap();
-                            }
-                            s.passes.clear();
-                            return;
-                        }
-                    };
-                    for p in s.passes.iter() {
-                        let i = p.query_index as usize;
-                        let d = if !p.has_queries {
-                            Measurement::unavailable(AvailabilityReason::DetailLimit)
-                        } else if ticks[i + 1] < ticks[i] {
-                            Measurement::unavailable(AvailabilityReason::InvalidTimestamp)
-                        } else {
-                            let d = (ticks[i + 1] - ticks[i]) as f64 * s.period * 1e-9;
-                            if d.is_finite() {
-                                any = true;
-                                sum += d;
-                                valid += 1;
-                                Measurement::available(d)
-                            } else {
-                                Measurement::unavailable(AvailabilityReason::InvalidTimestamp)
-                            }
-                        };
-                        if let Some(context) = &p.scope {
-                            context.record_pass(p.index as u64, d.clone());
-                        }
-                    }
-                    drop(mapped);
-                    if !any {
-                        reason = AvailabilityReason::InvalidTimestamp
-                    }
-                } else {
-                    reason = AvailabilityReason::QueryFailed;
-                }
-            }
-        }
-        if !any {
-            for pass in &s.passes {
-                if let Some(context) = &pass.scope {
-                    context.record_pass(pass.index as u64, Measurement::unavailable(reason));
-                }
-            }
-        }
-        let full = valid == s.timed && s.timed == s.executed && s.submitted.is_some();
-        let work = WorkCounters {
-            valid_pass_count: Some(valid),
-            ..Default::default()
+        let not_applicable = || Measurement {
+            status: MeasurementStatus::NotApplicable,
+            value: None,
+            reason: Some(AvailabilityReason::NotApplicable),
         };
-        self.scope.context().record_work(&work);
-        let compute = if full {
-            Measurement::available(sum)
-        } else {
-            Measurement::unavailable(if s.submitted.is_none() {
-                AvailabilityReason::Incomplete
-            } else if self.scope.context().mode() == CollectionMode::GpuTiming
-                && s.queries.is_some()
-            {
-                if any {
-                    AvailabilityReason::Incomplete
-                } else {
-                    reason
-                }
-            } else if self.scope.context().mode() == CollectionMode::GpuTiming {
-                if self.scope.context().adapter_reason().is_none() {
-                    AvailabilityReason::DetailLimit
-                } else {
-                    reason
-                }
-            } else {
-                AvailabilityReason::NotCollected
-            })
-        };
-        let partial = if any {
-            Measurement::available(sum)
-        } else {
-            Measurement::unavailable(
-                if self.scope.context().mode() == CollectionMode::GpuTiming {
-                    reason
-                } else {
-                    AvailabilityReason::NotCollected
-                },
-            )
-        };
-        self.scope.context().record_batch(BatchMeasurements {
+        s.measurements = Some(BatchMeasurements {
             host_prepare: prepare,
-            submit_to_map_ready: wait,
-            host_materialize: material,
-            completion_boundary: "image_map_ready".into(),
-            compute_pass_sum: compute,
-            partial_compute_pass_sum: partial,
+            submit_to_map_ready: not_applicable(),
+            host_materialize: not_applicable(),
+            completion_boundary: if s.ready.is_some() {
+                "device_poll_complete"
+            } else {
+                "commands_submitted"
+            }
+            .into(),
+            compute_pass_sum: Measurement::unavailable(s.reason),
+            partial_compute_pass_sum: Measurement::unavailable(s.reason),
         });
-        if let Some(q) = &s.queries
-            && q.map_requested
-            && map_completed
-        {
-            q.readback.unmap();
-        }
-        s.passes.clear();
+        s.update_timing();
     }
 }
 impl WgpuBackend {
@@ -269,6 +129,32 @@ impl WgpuBackend {
             .pipe
             .with_observed(self.device.clone(), self.queue.clone());
     }
+    pub(super) fn observed_stage(
+        &self,
+        name: &'static str,
+        stage: GpuStage,
+    ) -> (StageBackend<'_>, ObservationScope) {
+        let scope = self.device.context.with_gpu_stage(stage).scope(
+            name,
+            ObservationKind::Stage,
+            self.device.context.purpose(),
+        );
+        let observed = self.device.context.enabled().then(|| {
+            let mut backend = self.derived_explicit();
+            backend.explicit = self.explicit;
+            backend.device.batch = self.device.batch.clone();
+            backend.context_mut(scope.context().clone());
+            backend
+        });
+        (
+            StageBackend {
+                original: self,
+                observed,
+            },
+            scope,
+        )
+    }
+
     pub(super) fn observed_batch(&self, name: &'static str) -> (Self, BatchGuard) {
         let scope =
             self.device
@@ -277,62 +163,25 @@ impl WgpuBackend {
         let context = scope.context().clone();
         let state = if context.enabled() {
             context.record_executor(Executor::Gpu, None);
-            let capacity = (context.detail_remaining().min(1024) * 2).min(2048);
-            let queries = if context.mode() == CollectionMode::GpuTiming
-                && self
-                    .device
-                    .raw
-                    .features()
-                    .contains(wgpu::Features::TIMESTAMP_QUERY)
-                && capacity > 0
-            {
-                let size = capacity as u64 * 8;
-                let set = self.device.raw.create_query_set(&wgpu::QuerySetDescriptor {
-                    label: Some("telemetry_timestamps"),
-                    ty: wgpu::QueryType::Timestamp,
-                    count: capacity,
-                });
-                let resolve = self.device.raw.create_buffer(&wgpu::BufferDescriptor {
-                    label: Some("telemetry_resolve"),
-                    size,
-                    usage: wgpu::BufferUsages::QUERY_RESOLVE | wgpu::BufferUsages::COPY_SRC,
-                    mapped_at_creation: false,
-                });
-                let readback = self.device.raw.create_buffer(&wgpu::BufferDescriptor {
-                    label: Some("telemetry_readback"),
-                    size,
-                    usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-                    mapped_at_creation: false,
-                });
-                let w = WorkCounters {
-                    telemetry_buffer_create_count: Some(2),
-                    telemetry_buffer_create_bytes: Some(size * 2),
-                    ..Default::default()
-                };
-                context.record_work(&w);
-                Some(QueryResources {
-                    set,
-                    resolve,
-                    readback,
-                    capacity,
-                    receiver: None,
-                    map_requested: false,
-                })
+            let reason = if context.mode() != CollectionMode::GpuTiming {
+                AvailabilityReason::NotCollected
             } else {
-                None
+                context
+                    .adapter_reason()
+                    .unwrap_or(AvailabilityReason::NotReady)
             };
             Some(Arc::new(Mutex::new(BatchState {
+                context: context.clone(),
                 start: Instant::now(),
                 submitted: None,
                 ready: None,
-                device: queries.as_ref().map(|_| self.device.raw.clone()),
-                query_slots: vec![false; queries.as_ref().map_or(0, |q| q.capacity as usize / 2)],
-                queries,
-                passes: Vec::new(),
                 pending_details: 0,
                 executed: 0,
                 timed: 0,
-                period: self.queue.raw.get_timestamp_period() as f64,
+                valid: 0,
+                sum: 0.0,
+                reason,
+                measurements: None,
             })))
         } else {
             None
@@ -374,9 +223,27 @@ impl WgpuBackend {
             backend_id: self.backend_id,
             cancellation: self.cancellation.clone(),
         };
-        (backend, BatchGuard { scope, state })
+        (
+            backend,
+            BatchGuard {
+                _scope: scope,
+                state,
+            },
+        )
     }
 }
+/// Off mode borrows the backend: semantic scopes allocate no derivative resources.
+pub(super) struct StageBackend<'a> {
+    original: &'a WgpuBackend,
+    observed: Option<WgpuBackend>,
+}
+impl Deref for StageBackend<'_> {
+    type Target = WgpuBackend;
+    fn deref(&self) -> &Self::Target {
+        self.observed.as_ref().unwrap_or(self.original)
+    }
+}
+
 fn upload_category(d: &wgpu::util::BufferInitDescriptor<'_>) -> UploadCategory {
     if d.usage.contains(wgpu::BufferUsages::UNIFORM) {
         UploadCategory::Uniform
@@ -420,8 +287,46 @@ fn upload_category(d: &wgpu::util::BufferInitDescriptor<'_>) -> UploadCategory {
     }
 }
 impl ObservedDevice {
+    fn resource<T>(&self, create: impl FnOnce() -> T) -> T {
+        let start = self.context.enabled().then(Instant::now);
+        let result = create();
+        if let Some(start) = start {
+            self.context.record_host_timing(
+                HostTimingKind::ResourceCreate,
+                start.elapsed().as_secs_f64(),
+            );
+        }
+        result
+    }
+    pub fn create_shader_module(
+        &self,
+        descriptor: wgpu::ShaderModuleDescriptor<'_>,
+    ) -> wgpu::ShaderModule {
+        self.resource(|| self.raw.create_shader_module(descriptor))
+    }
+    pub fn create_bind_group_layout(
+        &self,
+        descriptor: &wgpu::BindGroupLayoutDescriptor<'_>,
+    ) -> wgpu::BindGroupLayout {
+        self.resource(|| self.raw.create_bind_group_layout(descriptor))
+    }
+    pub fn create_pipeline_layout(
+        &self,
+        descriptor: &wgpu::PipelineLayoutDescriptor<'_>,
+    ) -> wgpu::PipelineLayout {
+        self.resource(|| self.raw.create_pipeline_layout(descriptor))
+    }
+    pub fn create_compute_pipeline(
+        &self,
+        descriptor: &wgpu::ComputePipelineDescriptor<'_>,
+    ) -> wgpu::ComputePipeline {
+        self.resource(|| self.raw.create_compute_pipeline(descriptor))
+    }
+    pub fn create_bind_group(&self, descriptor: &wgpu::BindGroupDescriptor<'_>) -> wgpu::BindGroup {
+        self.resource(|| self.raw.create_bind_group(descriptor))
+    }
     pub fn create_buffer(&self, d: &wgpu::BufferDescriptor<'_>) -> wgpu::Buffer {
-        let b = self.raw.create_buffer(d);
+        let b = self.resource(|| self.raw.create_buffer(d));
         if self.context.enabled() {
             let w = WorkCounters {
                 buffer_create_count: Some(1),
@@ -434,8 +339,15 @@ impl ObservedDevice {
     }
     pub fn create_buffer_init(&self, d: &wgpu::util::BufferInitDescriptor<'_>) -> wgpu::Buffer {
         use wgpu::util::DeviceExt;
+        let start = self.context.enabled().then(Instant::now);
         let b = self.raw.create_buffer_init(d);
-        if self.context.enabled() {
+        if let Some(start) = start {
+            let seconds = start.elapsed().as_secs_f64();
+            // This API creates and initializes in one call; these intervals overlap.
+            self.context
+                .record_host_timing(HostTimingKind::ResourceCreate, seconds);
+            self.context
+                .record_host_timing(HostTimingKind::Upload, seconds);
             let w = WorkCounters {
                 buffer_create_count: Some(1),
                 buffer_create_bytes: Some(b.size()),
@@ -489,13 +401,41 @@ impl ObservedDevice {
         &self,
         d: &wgpu::CommandEncoderDescriptor<'_>,
     ) -> ObservedEncoder {
+        let timing = self.context.enabled().then(|| EncodingTiming {
+            context: self.context.clone(),
+            start: Instant::now(),
+        });
+        let queries = if self.context.mode() == CollectionMode::GpuTiming
+            && self
+                .raw
+                .features()
+                .contains(wgpu::Features::TIMESTAMP_QUERY)
+        {
+            self.resources.timestamps.acquire(self, &self.context)
+        } else {
+            None
+        };
+        let reason = if self.context.mode() != CollectionMode::GpuTiming {
+            AvailabilityReason::NotCollected
+        } else {
+            self.context
+                .adapter_reason()
+                .unwrap_or(if queries.is_some() {
+                    AvailabilityReason::NotReady
+                } else {
+                    AvailabilityReason::QueryCapacity
+                })
+        };
         let mut state = CommandState::default();
         state.batch = self.batch.clone();
         state.operation = self.operation.clone();
+        state.reason = Some(reason);
         ObservedEncoder {
             raw: self.raw.create_command_encoder(d),
             context: self.context.clone(),
             batch: self.batch.clone(),
+            timing,
+            queries,
             state,
         }
     }
@@ -504,25 +444,17 @@ impl ObservedDevice {
             maintain,
             wgpu::Maintain::Wait | wgpu::Maintain::WaitForSubmissionIndex(_)
         );
+        let start = (blocking && self.context.enabled()).then(Instant::now);
         let result = self.raw.poll(maintain);
-        if blocking && self.context.enabled() {
-            let first_wait = if let Some(batch) = &self.batch {
-                let mut batch = batch.lock();
-                if batch.ready.is_none() {
-                    batch.ready = Some(Instant::now());
-                    true
-                } else {
-                    false
-                }
-            } else {
-                true
-            };
-            if first_wait {
-                let work = WorkCounters {
-                    host_wait_count: Some(1),
-                    ..Default::default()
-                };
-                self.context.record_work(&work);
+        if let Some(start) = start {
+            self.context
+                .record_host_timing(HostTimingKind::ReadbackWait, start.elapsed().as_secs_f64());
+            self.context.record_work(&WorkCounters {
+                host_wait_count: Some(1),
+                ..Default::default()
+            });
+            if let Some(batch) = &self.batch {
+                batch.lock().ready = Some(Instant::now());
             }
         }
         result
@@ -530,8 +462,11 @@ impl ObservedDevice {
 }
 impl ObservedQueue {
     pub fn write_buffer(&self, b: &wgpu::Buffer, offset: u64, data: &[u8]) {
+        let start = self.context.enabled().then(Instant::now);
         self.raw.write_buffer(b, offset, data);
-        if self.context.enabled() {
+        if let Some(start) = start {
+            self.context
+                .record_host_timing(HostTimingKind::Upload, start.elapsed().as_secs_f64());
             let mut w = WorkCounters {
                 upload_count: Some(1),
                 upload_bytes: Some(data.len() as u64),
@@ -560,82 +495,25 @@ impl ObservedQueue {
         commands: impl IntoIterator<Item = ObservedCommand>,
         cancellation: Option<&Arc<AtomicBool>>,
     ) -> Result<wgpu::SubmissionIndex, String> {
-        // Encoded commands may outlive their originating backend/guard and be
-        // submitted through another derivative. Keep those owners alive until
-        // the resulting submission has acquired its retirement index.
+        // Commands carry their originating context and owner across backend derivatives.
+        // Only a successful submission registers executed work or starts a map.
         let mut owners: Vec<Arc<resources::OperationState>> = Vec::new();
-        let commands = commands.into_iter().map(|mut command| {
-            if let Some(owner) = command.state.operation.take()
-                && self
-                    .operation
-                    .as_ref()
-                    .is_none_or(|current| !Arc::ptr_eq(current, &owner))
-                && !owners.iter().any(|current| Arc::ptr_eq(current, &owner))
-            {
-                owners.push(owner);
-            }
-            command
-        });
-        if !self.context.enabled() {
-            let retirement = self.resources.submit(
-                &self.raw,
-                commands.map(|command| command.raw),
-                self.operation.as_ref(),
-                cancellation,
-                &self.context,
-            )?;
-            for owner in owners {
-                owner.retain_submission(retirement.clone());
-            }
-            return Ok(retirement.index);
-        }
+        let mut pending = Vec::new();
         let submitted = Instant::now();
-        let mut count = 0;
-        let mut passes = 0;
-        let mut timed = 0;
-        let mut dispatches = 0;
-        let mut staging_count = 0;
-        let mut staging_bytes = 0;
-        let mut device_count = 0;
-        let mut device_bytes = 0;
-        let mut resolve_count = 0;
-        let mut telemetry_bytes = 0;
         let result = self.resources.submit(
             &self.raw,
             commands.into_iter().map(|mut command| {
-                count += 1;
-                let state = &mut command.state;
-                passes += state.pass_count;
-                timed += state.timed_count;
-                dispatches += state.dispatch_count;
-                staging_count += state.stage_count;
-                staging_bytes += state.stage_bytes;
-                device_count += state.device_count;
-                device_bytes += state.device_bytes;
-                resolve_count += state.telemetry_resolve_count;
-                telemetry_bytes += state.telemetry_copy_bytes;
-                if let Some(batch) = &command.batch {
-                    let mut batch = batch.lock();
-                    batch.submitted.get_or_insert(submitted);
-                    self.context.record_omitted_details(
-                        state.pass_count.saturating_sub(state.passes.len() as u64),
-                    );
-                    batch.executed += state.pass_count;
-                    batch.timed += state.timed_count;
-                    batch.pending_details -= state.reservation_count;
-                    state.reservation_count = 0;
-                    for pass in &mut state.passes {
-                        pass.index = pass
-                            .index
-                            .saturating_add((batch.executed - state.pass_count) as u32);
-                        if let Some(parent) = &pass.scope {
-                            let scope =
-                                parent.scope(pass.name, ObservationKind::Pass, parent.purpose());
-                            pass.scope =
-                                scope.context().retained().then(|| scope.context().clone());
-                        }
-                    }
-                    batch.passes.append(&mut state.passes);
+                if let Some(owner) = command.state.operation.take()
+                    && self
+                        .operation
+                        .as_ref()
+                        .is_none_or(|current| !Arc::ptr_eq(current, &owner))
+                    && !owners.iter().any(|current| Arc::ptr_eq(current, &owner))
+                {
+                    owners.push(owner);
+                }
+                if command.context.enabled() {
+                    pending.push((command.context, command.state));
                 }
                 command.raw
             }),
@@ -643,33 +521,150 @@ impl ObservedQueue {
             cancellation,
             &self.context,
         )?;
-        for owner in owners {
+        for owner in &owners {
             owner.retain_submission(result.clone());
         }
-        let work = WorkCounters {
-            submit_count: Some(1),
-            command_buffer_count: Some(count),
-            dispatch_count: Some(dispatches),
-            executed_pass_count: Some(passes),
-            timed_pass_count: Some(timed),
-            omitted_pass_count: Some(passes.saturating_sub(timed)),
-            staging_copy_count: Some(staging_count),
-            staging_copy_bytes: Some(staging_bytes),
-            device_copy_count: Some(device_count),
-            device_copy_bytes: Some(device_bytes),
-            telemetry_resolve_count: Some(resolve_count),
-            telemetry_copy_count: Some(resolve_count),
-            telemetry_copy_bytes: Some(telemetry_bytes),
-            ..Default::default()
+        let submission_context = if self.context.enabled() {
+            Some(&self.context)
+        } else {
+            pending.first().map(|(context, _)| context)
         };
-        // The telemetry readback is mapped at the batch boundary, not here:
-        // a batch may hold several submissions (a host fence splits the
-        // resident chain), and a mapped readback must not outlive the
-        // submission that follows it.
-        if dispatches > 0 {
-            self.context.record_executor(Executor::Gpu, None);
+        if let Some(context) = submission_context {
+            context.record_work(&WorkCounters {
+                submit_count: Some(1),
+                ..Default::default()
+            });
         }
-        self.context.record_work(&work);
+        for (context, mut state) in pending {
+            let reason = state.reason.unwrap_or(AvailabilityReason::NotCollected);
+            let mut detail_attempts = 0;
+            if let Some(batch) = &state.batch {
+                let mut batch = batch.lock();
+                batch.submitted.get_or_insert(submitted);
+                let offset = batch.executed;
+                batch.executed += state.pass_count;
+                batch.timed += state.timed_count;
+                if state.timed_count < state.pass_count {
+                    batch.reason = reason;
+                }
+                batch.pending_details -= state.reservation_count;
+                state.reservation_count = 0;
+                let closed = batch.measurements.is_some();
+                for pass in &mut state.passes {
+                    pass.index += offset;
+                    if let Some(parent) = pass.scope.take()
+                        && !closed
+                    {
+                        detail_attempts += 1;
+                        let scope =
+                            parent.scope(pass.name, ObservationKind::Pass, parent.purpose());
+                        pass.scope = scope.context().retained().then(|| scope.context().clone());
+                    }
+                }
+            }
+            context.record_omitted_details(state.pass_count.saturating_sub(detail_attempts));
+            for group in &state.groups {
+                context.record_gpu_pass_submission(
+                    group.stage,
+                    group.kind,
+                    group.executed,
+                    group.timed,
+                );
+                if group.timed < group.executed {
+                    context.record_gpu_pass_unavailable(group.stage, group.kind, reason);
+                }
+            }
+            context.record_work(&WorkCounters {
+                command_buffer_count: Some(1),
+                dispatch_count: Some(state.dispatch_count),
+                executed_pass_count: Some(state.pass_count),
+                timed_pass_count: Some(state.timed_count),
+                omitted_pass_count: Some(state.pass_count - state.timed_count),
+                staging_copy_count: Some(state.stage_count),
+                staging_copy_bytes: Some(state.stage_bytes),
+                device_copy_count: Some(state.device_count),
+                device_copy_bytes: Some(state.device_bytes),
+                telemetry_resolve_count: Some(state.telemetry_resolve_count),
+                telemetry_copy_count: Some(state.telemetry_resolve_count),
+                telemetry_copy_bytes: Some(state.telemetry_copy_bytes),
+                ..Default::default()
+            });
+            if state.dispatch_count > 0 {
+                context.record_executor(Executor::Gpu, None);
+            }
+            for pass in &state.passes {
+                if let Some(scope) = &pass.scope {
+                    let reason = if pass.query_index.is_some() {
+                        AvailabilityReason::NotReady
+                    } else {
+                        reason
+                    };
+                    scope.record_pass(pass.index, Measurement::unavailable(reason));
+                }
+            }
+            if let Some(queries) = state.queries.take() {
+                let period = f64::from(self.raw.get_timestamp_period());
+                let passes = std::mem::take(&mut state.passes);
+                let batch = state.batch.clone();
+                queries.map(state.query_end, move |result| {
+                    let mut valid = 0;
+                    let mut sum = 0.0;
+                    let mut failure = None;
+                    for pass in passes {
+                        let Some(index) = pass.query_index else {
+                            continue;
+                        };
+                        let duration = match result {
+                            Ok(ticks) => {
+                                let i = index as usize;
+                                if i + 1 < ticks.len()
+                                    && ticks[i + 1] >= ticks[i]
+                                    && period.is_finite()
+                                    && period > 0.0
+                                {
+                                    let seconds = (ticks[i + 1] - ticks[i]) as f64 * period * 1e-9;
+                                    if seconds.is_finite() {
+                                        Measurement::available(seconds)
+                                    } else {
+                                        Measurement::unavailable(
+                                            AvailabilityReason::InvalidTimestamp,
+                                        )
+                                    }
+                                } else {
+                                    Measurement::unavailable(AvailabilityReason::InvalidTimestamp)
+                                }
+                            }
+                            Err(reason) => Measurement::unavailable(reason),
+                        };
+                        if let Some(value) = duration.value {
+                            valid += 1;
+                            sum += value;
+                        } else {
+                            failure = duration.reason;
+                        }
+                        context.record_gpu_pass_duration(pass.stage, pass.kind, duration.clone());
+                        if let Some(scope) = pass.scope {
+                            scope.record_pass(pass.index, duration);
+                        }
+                    }
+                    if let Some(batch) = batch {
+                        let mut batch = batch.lock();
+                        batch.valid += valid;
+                        batch.sum += sum;
+                        if let Some(reason) = failure {
+                            batch.reason = reason;
+                        }
+                        if !batch.sum.is_finite() {
+                            batch.reason = AvailabilityReason::CounterOverflow;
+                        }
+                        batch.update_timing();
+                    }
+                });
+            }
+        }
+        // A foreign owner's final drop can perform the retirement poll. Keep
+        // every owner alive until all maps from this submission are registered.
+        drop(owners);
         Ok(result.index)
     }
 }
@@ -683,6 +678,9 @@ struct CommandState {
     stage_bytes: u64,
     device_count: u64,
     device_bytes: u64,
+    groups: Vec<PassCounts>,
+    queries: Option<timestamps::QueryLease>,
+    reason: Option<AvailabilityReason>,
     passes: Vec<PassObservation>,
     query_end: u32,
     telemetry_resolve_count: u64,
@@ -695,23 +693,39 @@ impl Drop for CommandState {
         if let Some(batch) = &self.batch {
             let mut batch = batch.lock();
             batch.pending_details -= self.reservation_count;
-            for pass in &self.passes {
-                if pass.has_queries {
-                    batch.query_slots[pass.query_index as usize / 2] = false;
-                }
-            }
+            // An unsubmitted encoder releases its detail reservations and query lease.
         }
     }
 }
+struct PassCounts {
+    stage: GpuStage,
+    kind: GpuPassKind,
+    executed: u64,
+    timed: u64,
+}
+struct EncodingTiming {
+    context: ObservationContext,
+    start: Instant,
+}
+impl Drop for EncodingTiming {
+    fn drop(&mut self) {
+        self.context.record_host_timing(
+            HostTimingKind::CommandEncoding,
+            self.start.elapsed().as_secs_f64(),
+        );
+    }
+}
 pub(super) struct ObservedEncoder {
+    timing: Option<EncodingTiming>,
     raw: wgpu::CommandEncoder,
     context: ObservationContext,
     batch: Option<Arc<Mutex<BatchState>>>,
     state: CommandState,
+    queries: Option<timestamps::QueryLease>,
 }
 pub(super) struct ObservedCommand {
     raw: wgpu::CommandBuffer,
-    batch: Option<Arc<Mutex<BatchState>>>,
+    context: ObservationContext,
     state: CommandState,
 }
 pub(super) struct ObservedPass<'a> {
@@ -776,42 +790,63 @@ fn pass_name(label: Option<&str>) -> &'static str {
 }
 impl ObservedEncoder {
     pub fn begin_compute_pass(&mut self, d: &wgpu::ComputePassDescriptor<'_>) -> ObservedPass<'_> {
-        let mut query = None;
-        let mut query_index = 0;
-        if let Some(batch) = &self.batch {
-            let mut b = batch.lock();
-            let occurrence = self.state.pass_count as u32;
+        let mut query_index = None;
+        if self.context.enabled() {
+            let occurrence = self.state.pass_count;
             self.state.pass_count += 1;
-            let retained = b.pending_details < self.context.detail_remaining();
-            let slot = if retained {
-                b.query_slots.iter().position(|used| !used)
-            } else {
-                None
-            };
-            let has_queries = slot.is_some();
-            if let Some(slot) = slot {
-                b.query_slots[slot] = true;
-                query_index = slot as u32 * 2;
-                query = b.queries.as_ref().map(|q| q.set.clone());
+            let (stage, kind) = profiling::classify_pass(self.context.gpu_stage(), d.label);
+            if self.queries.is_some() && self.state.query_end + 2 <= timestamps::QUERY_CAPACITY {
+                query_index = Some(self.state.query_end);
+                self.state.query_end += 2;
                 self.state.timed_count += 1;
-                self.state.query_end = self.state.query_end.max(query_index + 2);
+            } else if self.queries.is_some() {
+                self.state.reason = Some(AvailabilityReason::QueryCapacity);
             }
-            if retained {
-                b.pending_details += 1;
-                self.state.reservation_count += 1;
+            if let Some(group) = self
+                .state
+                .groups
+                .iter_mut()
+                .find(|group| group.stage == stage && group.kind == kind)
+            {
+                group.executed += 1;
+                group.timed += u64::from(query_index.is_some());
+            } else {
+                self.state.groups.push(PassCounts {
+                    stage,
+                    kind,
+                    executed: 1,
+                    timed: u64::from(query_index.is_some()),
+                });
+            }
+            let parent = self.batch.as_ref().and_then(|batch| {
+                let mut b = batch.lock();
+                if b.pending_details < self.context.detail_remaining() {
+                    b.pending_details += 1;
+                    self.state.reservation_count += 1;
+                    Some(b.context.clone())
+                } else {
+                    None
+                }
+            });
+            if query_index.is_some() || parent.is_some() {
                 self.state.passes.push(PassObservation {
                     index: occurrence,
-                    scope: Some(self.context.clone()),
-                    name: pass_name(d.label),
-                    has_queries,
+                    scope: parent,
                     query_index,
+                    name: pass_name(d.label),
+                    stage,
+                    kind,
                 });
             }
         }
-        let writes = query.as_ref().map(|set| wgpu::ComputePassTimestampWrites {
-            query_set: set,
-            beginning_of_pass_write_index: Some(query_index),
-            end_of_pass_write_index: Some(query_index + 1),
+        let writes = query_index.map(|index| wgpu::ComputePassTimestampWrites {
+            query_set: self
+                .queries
+                .as_ref()
+                .expect("reserved timestamp lease")
+                .set(),
+            beginning_of_pass_write_index: Some(index),
+            end_of_pass_write_index: Some(index + 1),
         });
         let raw = self.raw.begin_compute_pass(&wgpu::ComputePassDescriptor {
             label: d.label,
@@ -845,22 +880,19 @@ impl ObservedEncoder {
         self.raw.clear_buffer(buffer, offset, size);
     }
     pub fn finish(mut self) -> ObservedCommand {
-        if let Some(batch) = &self.batch {
-            let b = batch.lock();
-            if let Some(q) = &b.queries {
-                let count = self.state.query_end.min(q.capacity);
-                if count > 0 {
-                    self.raw.resolve_query_set(&q.set, 0..count, &q.resolve, 0);
-                    self.raw
-                        .copy_buffer_to_buffer(&q.resolve, 0, &q.readback, 0, count as u64 * 8);
-                    self.state.telemetry_resolve_count = 1;
-                    self.state.telemetry_copy_bytes = count as u64 * 8;
-                }
-            }
+        if self.state.query_end > 0
+            && let Some(queries) = self.queries.take()
+        {
+            queries.resolve(&mut self.raw, self.state.query_end);
+            self.state.telemetry_resolve_count = 1;
+            self.state.telemetry_copy_bytes = u64::from(self.state.query_end) * 8;
+            self.state.queries = Some(queries);
         }
+        let raw = self.raw.finish();
+        drop(self.timing.take());
         ObservedCommand {
-            raw: self.raw.finish(),
-            batch: self.batch,
+            raw,
+            context: self.context,
             state: self.state,
         }
     }

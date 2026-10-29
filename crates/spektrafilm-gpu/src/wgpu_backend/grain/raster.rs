@@ -119,6 +119,7 @@ pub(in crate::wgpu_backend) enum RasterCommand {
         group: wgpu::BindGroup,
         count: u32,
         groups: bool,
+        label: Option<&'static str>,
     },
 }
 
@@ -165,6 +166,18 @@ impl RasterCommands {
         groups: bool,
         backend: &WgpuBackend,
     ) {
+        self.dispatch_named(pipeline, buffers, count, groups, backend, None);
+    }
+
+    pub(super) fn dispatch_named(
+        &mut self,
+        pipeline: &CachedPipelineRef,
+        buffers: &[&wgpu::Buffer],
+        count: u32,
+        groups: bool,
+        backend: &WgpuBackend,
+        label: Option<&'static str>,
+    ) {
         let entries: Vec<_> = buffers
             .iter()
             .enumerate()
@@ -185,6 +198,7 @@ impl RasterCommands {
             group,
             count,
             groups,
+            label,
         });
     }
     pub fn encode(&self, encoder: &mut ObservedEncoder) {
@@ -208,9 +222,10 @@ impl RasterCommands {
                     group,
                     count,
                     groups,
+                    label,
                 } => {
                     let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                        label: Some("grain_storage_window"),
+                        label: Some(label.unwrap_or("grain_storage_window")),
                         timestamp_writes: None,
                     });
                     pass.set_pipeline(&pipeline.pipeline);
@@ -256,9 +271,10 @@ impl RasterCommands {
                         group,
                         count,
                         groups,
+                        label: pass_label,
                     } => {
                         let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                            label: Some(label),
+                            label: Some(pass_label.unwrap_or(label)),
                             timestamp_writes: None,
                         });
                         pass.set_pipeline(&pipeline.pipeline);

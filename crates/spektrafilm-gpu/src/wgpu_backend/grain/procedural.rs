@@ -103,12 +103,13 @@ fn build_bounded_grain_procedural(
             0,
             u64::from(count) * 12,
         );
-        commands.dispatch(
+        commands.dispatch_named(
             &filter,
             &[&p, &source_window, &dummy_weights, &target_window],
             count,
             false,
             backend,
+            Some("procedural_input_transform"),
         );
         commands.copy(
             &target_window,
@@ -265,7 +266,14 @@ fn build_bounded_grain_procedural(
                         size[1].to_bits(),
                     ],
                 );
-                commands.dispatch(&mean_pass, &[&p, buffer, &partials], count, false, backend);
+                commands.dispatch_named(
+                    &mean_pass,
+                    &[&p, buffer, &partials],
+                    count,
+                    false,
+                    backend,
+                    Some("procedural_mean"),
+                );
                 base += u64::from(count).div_ceil(256) as u32;
                 written += u64::from(count).div_ceil(256) as u32;
                 first += count;
@@ -288,7 +296,14 @@ fn build_bounded_grain_procedural(
                 size[1].to_bits(),
             ],
         );
-        commands.dispatch(&reduce_pass, &[&p, &scratch, &partials], 1, true, backend);
+        commands.dispatch_named(
+            &reduce_pass,
+            &[&p, &scratch, &partials],
+            1,
+            true,
+            backend,
+            Some("procedural_reduce"),
+        );
     }
     let compose_pixel = |first: u32,
                          count: u32,
@@ -307,7 +322,7 @@ fn build_bounded_grain_procedural(
             0,
             u64::from(count) * 12,
         );
-        commands.dispatch(
+        commands.dispatch_named(
             &grain,
             &[
                 &p,
@@ -320,6 +335,7 @@ fn build_bounded_grain_procedural(
             count,
             false,
             backend,
+            Some("procedural_compose"),
         );
         commands.copy(
             &grain_output,
@@ -691,12 +707,13 @@ fn build_canvas_band(
             last_row - first_row,
         ];
         let p = uniform(backend, &p);
-        commands.dispatch(
+        commands.dispatch_named(
             canvas_pass,
             &[&p, source_window, buffer],
             chunk * cells_w,
             false,
             backend,
+            Some("procedural_canvas"),
         );
         row += chunk;
     }
@@ -820,12 +837,13 @@ fn build_resolution(
                     ]);
                     data[20..].copy_from_slice(&[first_row * width, rows * width, high - low, 2]);
                     let p = uniform(backend, &data);
-                    commands.dispatch(
+                    commands.dispatch_named(
                         &pipe,
                         &[&p, source_window, &weights_buf, &result],
                         rows * width,
                         false,
                         backend,
+                        Some("procedural_resolution_filter"),
                     );
                     commands.copy(
                         &result,
@@ -878,12 +896,13 @@ fn build_resolution(
                         ]);
                         data[20..].copy_from_slice(&[first, count, high - low, 1]);
                         let p = uniform(backend, &data);
-                        commands.dispatch(
+                        commands.dispatch_named(
                             &pipe,
                             &[&p, source_window, &weights_buf, &result],
                             count,
                             false,
                             backend,
+                            Some("procedural_resolution_filter"),
                         );
                         for position in 0..count {
                             commands.copy(
@@ -938,12 +957,13 @@ fn build_resolution(
                     ]);
                     data[20..].copy_from_slice(&[first, count, high - low, 1]);
                     let p = uniform(backend, &data);
-                    commands.dispatch(
+                    commands.dispatch_named(
                         &pipe,
                         &[&p, source_window, &weights_buf, &result],
                         count,
                         false,
                         backend,
+                        Some("procedural_resolution_filter"),
                     );
                     commands.copy(
                         &result,
@@ -1034,12 +1054,13 @@ fn build_resolution(
                         0,
                         u64::from(page_count) * 12,
                     );
-                    commands.dispatch(
+                    commands.dispatch_named(
                         &pipe,
                         &[&p, source_window, &weights_buf, &samples, &result],
                         count,
                         false,
                         backend,
+                        Some("procedural_resolution_gather"),
                     );
                 }
                 let p = uniform(
@@ -1059,12 +1080,13 @@ fn build_resolution(
                         u32::from(first_tap + count == taps),
                     ],
                 );
-                commands.dispatch(
+                commands.dispatch_named(
                     &pipe,
                     &[&p, source_window, &weights_buf, &samples, &result],
                     1,
                     false,
                     backend,
+                    Some("procedural_resolution_filter"),
                 );
             }
             commands.copy(&result, 0, destination, u64::from(pixel) * 12, 12);
@@ -1483,6 +1505,7 @@ mod tests {
                         group,
                         count,
                         groups,
+                        label,
                     } => {
                         let expected_rows = if canvas_job {
                             // Hand-derived source rows for canvas chunks
@@ -1514,6 +1537,7 @@ mod tests {
                             group: group.clone(),
                             count: *count,
                             groups: *groups,
+                            label: *label,
                         });
                     }
                 }

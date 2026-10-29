@@ -30,7 +30,6 @@ use super::super::paged::ImagePage;
 use super::super::{ObservedEncoder, WgpuBackend, dispatch_grid, dispatch_linear};
 use super::device_image::BufferPayload;
 use super::device_image::stage_output_buffer;
-use spektrafilm_backend::telemetry::{Executor, ObservationKind};
 use spektrafilm_backend::{DeviceImage, InputGeometryGpuParams, InputResizeMethod};
 
 const STATS_SHADER: &str =
@@ -315,30 +314,24 @@ impl WgpuBackend {
             ));
         }
 
-        let scope = self.device.context.enabled().then(|| {
-            self.device.context.scope(
-                "geometry",
-                ObservationKind::Stage,
-                self.device.context.purpose(),
-            )
-        });
-        if let Some(scope) = &scope {
-            scope.context().record_executor(Executor::Gpu, None);
-        }
+        let (backend, _stage) = self.observed_stage(
+            "geometry",
+            spektrafilm_backend::telemetry::GpuStage::Geometry,
+        );
 
-        let mut encoder = self.device.create_command_encoder(&Default::default());
+        let mut encoder = backend.device.create_command_encoder(&Default::default());
         // Pure copies preserve quarter-turn mapping and cross source pages.
         let cropped_pages = if turns == 0 && crop.is_none() {
             source.pages.clone()
         } else {
             let pages =
-                self.allocate_image_pages(cropped_width, cropped_height, "geometry_crop")?;
+                backend.allocate_image_pages(cropped_width, cropped_height, "geometry_crop")?;
             let [x0, y0, _, _] = crop.unwrap_or([0, 0, cropped_width, cropped_height]);
             for page in &pages {
-                self.check_cancelled()?;
+                backend.check_cancelled()?;
                 let mut local = 0;
                 while local < page.n_pixels {
-                    self.check_cancelled()?;
+                    backend.check_cancelled()?;
                     let pixel = page.first_pixel + local;
                     let x = pixel % cropped_width + x0;
                     let y = pixel / cropped_width + y0;
@@ -353,7 +346,7 @@ impl WgpuBackend {
                     } else {
                         1
                     };
-                    self.copy_samples_to(
+                    backend.copy_samples_to(
                         &mut encoder,
                         source,
                         (u64::from(sy) * u64::from(src_width) + u64::from(sx)) * 3,
@@ -363,12 +356,12 @@ impl WgpuBackend {
                     )?;
                     local += count;
                 }
-                self.geometry_submit_pending(&mut encoder)?;
+                backend.geometry_submit_pending(&mut encoder)?;
             }
             pages
         };
         let cropped = BufferPayload::from_pages(
-            self.backend_id(),
+            backend.backend_id(),
             cropped_pages,
             cropped_width,
             cropped_height,
@@ -380,7 +373,7 @@ impl WgpuBackend {
             }
             Some(resize) if resize.method == InputResizeMethod::PreviewTriangle => {
                 let mut pending_dispatches = 0;
-                let rows = self.geometry_triangle_axis(
+                let rows = backend.geometry_triangle_axis(
                     &mut encoder,
                     &cropped,
                     cropped_width,
@@ -389,9 +382,13 @@ impl WgpuBackend {
                     limit,
                     &mut pending_dispatches,
                 )?;
-                let rows =
-                    BufferPayload::from_pages(self.backend_id(), rows, cropped_width, out_height);
-                self.geometry_triangle_axis(
+                let rows = BufferPayload::from_pages(
+                    backend.backend_id(),
+                    rows,
+                    cropped_width,
+                    out_height,
+                );
+                backend.geometry_triangle_axis(
                     &mut encoder,
                     &rows,
                     out_width,
@@ -401,12 +398,16 @@ impl WgpuBackend {
                     &mut pending_dispatches,
                 )?
             }
-            Some(_) => {
-                self.encode_spline_resize(&mut encoder, &cropped, out_width, out_height, limit)?
-            }
+            Some(_) => backend.encode_spline_resize(
+                &mut encoder,
+                &cropped,
+                out_width,
+                out_height,
+                limit,
+            )?,
         };
-        self.geometry_submit_pending(&mut encoder)?;
-        Ok(Some(self.retain_image_pages(
+        backend.geometry_submit_pending(&mut encoder)?;
+        Ok(Some(backend.retain_image_pages(
             pages,
             out_width,
             out_height,

@@ -1227,9 +1227,27 @@ mod layout_snapshots {
         settle_animation(h);
         click(h, "Image analysis");
         wait_until(h, analysis_output_ready);
-        for mode in ["Histogram", "Waveform", "RGB parade", "Vectorscope"] {
-            choose(h, "Analysis mode", mode);
-            wait_until(h, analysis_output_ready);
+        use spektrafilm_backend::analysis::AnalysisMode;
+        for (mode, expected) in [
+            ("Histogram", AnalysisMode::Histogram),
+            ("Waveform", AnalysisMode::Waveform),
+            ("RGB parade", AnalysisMode::Parade),
+            ("Vectorscope", AnalysisMode::Vectorscope),
+        ] {
+            match expected {
+                AnalysisMode::Parade => choose(h, "Waveform display", mode),
+                _ => {
+                    click(h, "Analysis mode");
+                    if expected == AnalysisMode::Vectorscope {
+                        click(h, "Advanced");
+                    }
+                    click(h, mode);
+                }
+            }
+            wait_until(h, |app| {
+                analysis_output_ready(app)
+                    && app.analysis.result.as_ref().unwrap().identity.mode == expected
+            });
             h.run_steps(3);
             let image = h.render().expect("offscreen analysis render");
             assert_eq!((image.width(), image.height()), (1460, 980));

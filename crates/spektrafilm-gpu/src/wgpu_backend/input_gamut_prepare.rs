@@ -451,7 +451,22 @@ impl WgpuBackend {
             entries: &entries,
         });
         let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-            label: Some(entry),
+            label: Some(match entry {
+                "reach" => "input_gamut_reach",
+                "fft" => "input_gamut_fft",
+                "frequency_filter" => "input_gamut_frequency_filter",
+                "hull_scale" => "input_gamut_hull_scale",
+                "hull" => "input_gamut_hull",
+                "cmax" => "input_gamut_cmax",
+                "coordinates" => "input_gamut_coordinates",
+                "gather_cmax" => "input_gamut_gather_cmax",
+                "oklch_coordinates" => "input_gamut_oklch_coordinates",
+                "gather_rgb" => "input_gamut_gather_rgb",
+                "interpolate" => "input_gamut_interpolate",
+                "neutral_gather" => "input_gamut_neutral_gather",
+                "neutral_reduce" => "input_gamut_neutral_reduce",
+                _ => "input_gamut_other",
+            }),
             timestamp_writes: None,
         });
         pass.set_pipeline(&pipeline.pipeline);

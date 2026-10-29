@@ -277,7 +277,14 @@ impl WgpuBackend {
             let mut encoder = self.device.create_command_encoder(&Default::default());
             {
                 let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                    label: Some(entry),
+                    label: Some(match entry {
+                        "reference" => "spectral_prepare_reference",
+                        "normalize" => "spectral_prepare_normalize",
+                        "contract" => "spectral_prepare_contract",
+                        "gather_neutral" => "spectral_prepare_gather_neutral",
+                        "finish_neutral" => "spectral_prepare_finish_neutral",
+                        _ => "spectral_prepare_other",
+                    }),
                     timestamp_writes: None,
                 });
                 pass.set_pipeline(&pipeline.pipeline);

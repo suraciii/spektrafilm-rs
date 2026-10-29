@@ -94,6 +94,8 @@ pub struct Execution {
 pub struct Measurements {
     pub work: spektrafilm_backend::telemetry::WorkCounters,
     pub gpu_timing: spektrafilm_backend::telemetry::GpuTimingMeasurements,
+    #[serde(default)]
+    pub host_timings: Option<Vec<spektrafilm_backend::telemetry::HostTimingTotal>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

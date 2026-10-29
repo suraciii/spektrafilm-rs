@@ -34,4 +34,6 @@ Numerical shader tests should execute the production pipeline assembly instead o
 
 Persistence tests must use real IO in isolated temporary directories. Shader numerics, actual bindings, queue synchronization, and device ownership require real execution. Keep those device assertions and full-render acceptance; a mock dispatch or a duplicate host implementation of a shader is not equivalent coverage.
 
+When asserting pixel invariance, compare decoded dimensions and samples rather than container bytes that also carry write-time metadata.
+
 The [Justfile](../Justfile) defines test selection. The [README](../README.md#build) documents dependencies and verification commands.
