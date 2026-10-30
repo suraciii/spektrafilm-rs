@@ -88,12 +88,14 @@ impl RuntimePhotoParams {
 
     /// Resolve user-facing parameters using the shared digest precedence.
     pub fn digested_params(&self, mode: DigestMode) -> Result<RuntimeParams, String> {
+        self.params.validate_values()?;
         let neutral = crate::neutral_filters::NeutralFilters::load(&self.data_dir)?;
         Ok(self.digested_params_with_neutral(mode, &neutral))
     }
 
     /// Build a calibrated runtime after applying the selected digest policy.
     pub fn into_runtime(self, mode: DigestMode) -> Result<Runtime, String> {
+        self.params.validate_values()?;
         let neutral = crate::neutral_filters::NeutralFilters::load(&self.data_dir)?;
         let params =
             digest_params_with_neutral(self.params, &self.film, &self.print, &neutral, mode);
@@ -131,6 +133,7 @@ impl RuntimePhotoParams {
         mode: DigestMode,
         backend: &dyn ComputeBackend,
     ) -> Result<Runtime, String> {
+        self.params.validate_values()?;
         let neutral = crate::neutral_filters::NeutralFilters::load(&self.data_dir)?;
         let params =
             digest_params_with_neutral(self.params, &self.film, &self.print, &neutral, mode);
@@ -143,6 +146,7 @@ impl RuntimePhotoParams {
         backend: &dyn ComputeBackend,
         context: &ObservationContext,
     ) -> Result<Runtime, String> {
+        self.params.validate_values()?;
         let neutral = crate::neutral_filters::NeutralFilters::load(&self.data_dir)?;
         let params =
             digest_params_with_neutral(self.params, &self.film, &self.print, &neutral, mode);
@@ -1482,6 +1486,24 @@ mod tests {
         rejected.film_render.base.scale = 2.4;
         rejected.scanner.conversion_style = "missing-material-update-style".into();
         assert!(runtime.update(rejected).is_err());
+        assert_eq!(runtime.params(), &accepted);
+        assert_eq!(
+            runtime.process(image.clone(), &backend).unwrap().data,
+            baseline.data
+        );
+
+        let mut rejected = accepted.clone();
+        rejected.print_render.density_curves_morph.active = false;
+        rejected
+            .print_render
+            .density_curves_morph
+            .developer_exhaustion = 2.0;
+        assert!(
+            runtime
+                .update(rejected)
+                .unwrap_err()
+                .contains("print_render.density_curves_morph.developer_exhaustion")
+        );
         assert_eq!(runtime.params(), &accepted);
         assert_eq!(
             runtime.process(image.clone(), &backend).unwrap().data,

@@ -201,7 +201,6 @@ pub fn apply_with_requests(
             apply_profile(&mut candidate, resolved[index], selection.name == "custom");
         }
     }
-    crate::params::sources::validate_finite(&candidate)?;
     candidate.validate()?;
     Ok((candidate, requested))
 }

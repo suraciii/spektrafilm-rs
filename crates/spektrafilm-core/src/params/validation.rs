@@ -263,6 +263,77 @@ pub(crate) fn fotufilm_minimum_exclusive(path: &str) -> bool {
             | "film_render.grain.fotufilm.sublayer_shares"
     )
 }
+/// Validate scalar domains after conversion to the field's stored representation.
+pub(crate) fn validate_scalar_detailed(path: &str, value: f64) -> Result<(), ValidationError> {
+    if path == "camera.film_format_mm" {
+        return validate_film_format_mm_detailed(value);
+    }
+    if path.starts_with("scanner.operator.") {
+        return validate_scan_operator_value_detailed(path, value);
+    }
+    if path == "film_render.grain.procedural_timer" {
+        return validate_procedural_timer_detailed(value);
+    }
+    let chemistry_gamma = (path.starts_with("film_render.chemistry.")
+        || path.starts_with("print_render.density_curves_morph."))
+        && path
+            .rsplit('.')
+            .next()
+            .is_some_and(|name| name.starts_with("gamma_factor"));
+    let positive = chemistry_gamma
+        || matches!(
+            path,
+            "film_render.grain.dye_support_um"
+                | "film_render.grain.dye_event_area_um2"
+                | "io.input_gamut_compress.hull_detail"
+        );
+    if !value.is_finite() {
+        return Err(ValidationError::new(
+            Reason::Finite,
+            path,
+            format!("{path}: must be finite (got {value})"),
+        )
+        .arg("value", value));
+    }
+    if positive && value <= 0.0 {
+        let reason = match path {
+            "io.input_gamut_compress.hull_detail" => Reason::HullDetail,
+            "film_render.grain.dye_support_um" => Reason::DyeSupport,
+            "film_render.grain.dye_event_area_um2" => Reason::EventArea,
+            _ => Reason::FinitePositive,
+        };
+        return Err(ValidationError::new(
+            reason,
+            path,
+            format!("{path}: must be finite and strictly positive (got {value})"),
+        )
+        .arg("value", value));
+    }
+    if let Some((min, max)) = leaf_numeric_bounds(path)
+        && (value < min || max.is_some_and(|max| value > max))
+    {
+        let reason = match path {
+            "output_mix.amount" => Reason::OutputMix,
+            "cmyk.strength" => Reason::CmykStrength,
+            "film_render.grain.channel_correlation" => Reason::Correlation,
+            "film_render.grain.procedural_resolution_type" => Reason::Binary,
+            "film_render.halation.source_compression" => Reason::SourceCompression,
+            _ => Reason::NumericRange,
+        };
+        return Err(ValidationError::new(
+            reason,
+            path,
+            format!(
+                "{path}: value {value} outside [{min}, {}]",
+                max.map_or_else(|| "inf".into(), |v| v.to_string())
+            ),
+        )
+        .arg("min", min)
+        .arg("max", max.map_or_else(|| "inf".into(), |v| v.to_string()))
+        .arg("value", value));
+    }
+    Ok(())
+}
 
 /// Shared sparse-source and typed-runtime domains; shares are rejected, not normalized.
 pub(crate) fn validate_fotufilm_values_detailed(
@@ -558,12 +629,86 @@ pub(crate) fn enum_values(path: &str) -> Option<Vec<String>> {
     Some(values)
 }
 
-/// Per-leaf vocabulary validation, independent of cross-field state.
-pub(crate) fn validate_enum_value(path: &str, value: &str) -> Result<(), String> {
-    validate_enum_value_detailed(path, value).map_err(|error| error.to_string())
-}
-
 pub(crate) fn validate_enum_value_detailed(path: &str, value: &str) -> Result<(), ValidationError> {
+    if path == "workflow.route" {
+        if value == REMOVED_MAGAZINE_ROUTE {
+            return Err(ValidationError::new(
+                Reason::RemovedRoute,
+                path,
+                "workflow.route: the magazine route was removed; use input > film > scan and set cmyk.active = true",
+            ));
+        }
+        if crate::WorkflowRoute::parse(value) == crate::WorkflowRoute::Custom {
+            let suggestions = closest(
+                value,
+                SUPPORTED_ROUTES.iter().map(|route| (*route).to_owned()),
+                MAX_SUGGESTIONS,
+            );
+            let suffix = error_suffix(
+                &suggestions,
+                "use spektrafilm process --help to discover supported routes",
+            );
+            return Err(ValidationError::new(
+                Reason::Route,
+                path,
+                format!("workflow.route: unsupported route {value:?}; {suffix}"),
+            )
+            .arg("value", format!("{value:?}"))
+            .arg("supported", SUPPORTED_ROUTES.join(", "))
+            .arg("suggestions", suggestions.join(", ")));
+        }
+        return Ok(());
+    }
+    if path == "settings.rgb_to_raw_method" {
+        return RgbToRawMethod::parse_detailed(value).map(|_| ());
+    }
+    if path == "scanner.conversion_style" {
+        if value.is_empty()
+            || value.contains('/')
+            || value.contains('\\')
+            || value.contains("..")
+            || value.contains(':')
+        {
+            return Err(ValidationError::new(
+                Reason::StyleName,
+                path,
+                format!("{path}: {value:?} is not a valid style name"),
+            )
+            .arg("value", format!("{value:?}")));
+        }
+        return Ok(());
+    }
+    if path == "film_render.convert.calibration" {
+        let mut count = 0;
+        let mut all_finite = true;
+        for part in value
+            .split(|c: char| {
+                c.is_ascii_whitespace() || matches!(c, ',' | ';' | '[' | ']' | '(' | ')')
+            })
+            .filter(|part| !part.is_empty())
+        {
+            let number = part.parse::<f64>().map_err(|_| {
+                ValidationError::new(
+                    Reason::CalibrationToken,
+                    path,
+                    format!("{path} contains non-numeric token {part:?}"),
+                )
+                .arg("value", format!("{part:?}"))
+            })?;
+            count += 1;
+            all_finite &= number.is_finite();
+        }
+        if count != 9 || !all_finite {
+            return Err(ValidationError::new(
+                Reason::CalibrationCount,
+                path,
+                format!("{path} must contain exactly 9 finite numbers, got {count}"),
+            )
+            .arg("count", count)
+            .arg("value", value));
+        }
+        return Ok(());
+    }
     let valid = match path {
         "scanner.scan_output" => matches!(value, "direct_scan" | "negative_to_positive"),
         "film_render.grain.engine" => {
@@ -625,7 +770,17 @@ pub(crate) fn validate_enum_value_detailed(path: &str, value: &str) -> Result<()
             format!("; choose one of: {supported}")
         };
         Err(ValidationError::new(
-            Reason::UnsupportedValue,
+            match path {
+                "io.input_color_space" | "io.output_color_space" => Reason::ColorSpace,
+                "camera.color_filter" => Reason::ColorFilter,
+                "camera.capture_illuminant" | "enlarger.illuminant" => Reason::Illuminant,
+                "film_render.convert.scan_illuminant" => Reason::ScanIlluminant,
+                "film_render.grain.procedural_profile" => Reason::UnknownProfile,
+                "camera.diffusion_filter.filter_family"
+                | "enlarger.diffusion_filter.filter_family" => Reason::DiffusionFamily,
+                "taps.inject" | "taps.collect" => Reason::Tap,
+                _ => Reason::UnsupportedValue,
+            },
             path,
             format!("{path}: unsupported value {value:?}{options}"),
         )
@@ -680,40 +835,39 @@ impl super::ScanOperatorParams {
 
 impl super::PrintCurvesMorphParams {
     pub(crate) fn validate(&self) -> Result<(), String> {
-        self.validate_detailed().map_err(|error| error.to_string())
+        self.validate_detailed("film_render.chemistry")
+            .map_err(|error| error.to_string())
     }
 
-    fn validate_detailed(&self) -> Result<(), ValidationError> {
-        if !self.active {
-            return Ok(());
+    fn validate_detailed(&self, prefix: &str) -> Result<(), ValidationError> {
+        macro_rules! paths {
+            ($prefix:literal) => {
+                [
+                    concat!($prefix, ".gamma_factor"),
+                    concat!($prefix, ".gamma_factor_fast"),
+                    concat!($prefix, ".gamma_factor_slow"),
+                    concat!($prefix, ".gamma_factor_red"),
+                    concat!($prefix, ".gamma_factor_green"),
+                    concat!($prefix, ".gamma_factor_blue"),
+                    concat!($prefix, ".developer_exhaustion"),
+                ]
+            };
         }
-        for (name, value) in [
-            ("gamma_factor", self.gamma_factor),
-            ("gamma_factor_fast", self.gamma_factor_fast),
-            ("gamma_factor_slow", self.gamma_factor_slow),
-            ("gamma_factor_red", self.gamma_factor_red),
-            ("gamma_factor_green", self.gamma_factor_green),
-            ("gamma_factor_blue", self.gamma_factor_blue),
-        ] {
-            if !value.is_finite() || value <= 0.0 {
-                return Err(ValidationError::new(
-                    Reason::FinitePositive,
-                    name,
-                    format!("{name} must be finite and strictly positive (got {value})"),
-                )
-                .arg("value", value));
-            }
-        }
-        if !(0.0..=1.0).contains(&self.developer_exhaustion) {
-            return Err(ValidationError::new(
-                Reason::UnitInterval,
-                "developer_exhaustion",
-                format!(
-                    "developer_exhaustion must be in [0, 1] (got {})",
-                    self.developer_exhaustion
-                ),
-            )
-            .arg("value", self.developer_exhaustion));
+        let paths = if prefix == "print_render.density_curves_morph" {
+            paths!("print_render.density_curves_morph")
+        } else {
+            paths!("film_render.chemistry")
+        };
+        for (path, value) in paths.into_iter().zip([
+            self.gamma_factor,
+            self.gamma_factor_fast,
+            self.gamma_factor_slow,
+            self.gamma_factor_red,
+            self.gamma_factor_green,
+            self.gamma_factor_blue,
+            self.developer_exhaustion,
+        ]) {
+            validate_scalar_detailed(path, value)?;
         }
         Ok(())
     }
@@ -732,196 +886,464 @@ pub(crate) fn validate_film_format_mm_detailed(value: f64) -> Result<(), Validat
     Ok(())
 }
 
+pub(crate) fn validate_spectral_shape_detailed(bounds: [f64; 3]) -> Result<(), ValidationError> {
+    crate::spectral_service::SpectralShape::new_detailed(bounds)
+        .map(|_| ())
+        .map_err(|error| {
+            let mut error = error.prefix("settings.spectral_shape: ");
+            error.path = "settings.spectral_shape".into();
+            error
+        })
+}
+
 /// Validate cross-field runtime vocabulary before producing a pipeline artifact.
 pub(super) fn validate(params: &RuntimeParams) -> Result<(), String> {
     validate_detailed(params).map_err(|error| error.to_string())
 }
+/// Check every floating-point field without serializing or changing optional values.
+pub(super) fn validate_finite_values_detailed(
+    params: &RuntimeParams,
+) -> Result<(), ValidationError> {
+    fn finite(path: &str, value: f64) -> Result<(), ValidationError> {
+        if value.is_finite() {
+            Ok(())
+        } else {
+            Err(ValidationError::new(
+                Reason::Finite,
+                path,
+                format!("{path}: numeric value must be finite"),
+            )
+            .arg("value", value))
+        }
+    }
+    macro_rules! scalars {
+        ($object:expr, $prefix:literal, $($field:ident),+ $(,)?) => {
+            $(finite(concat!($prefix, ".", stringify!($field)), f64::from($object.$field))?;)+
+        };
+    }
+    macro_rules! arrays {
+        ($object:expr, $prefix:literal, $($field:ident),+ $(,)?) => {
+            $(for &value in &$object.$field {
+                finite(concat!($prefix, ".", stringify!($field)), f64::from(value))?;
+            })+
+        };
+    }
+    macro_rules! optional {
+        ($object:expr, $prefix:literal, $($field:ident),+ $(,)?) => {
+            $(if let Some(value) = $object.$field {
+                finite(concat!($prefix, ".", stringify!($field)), f64::from(value))?;
+            })+
+        };
+    }
+    let camera = &params.camera;
+    scalars!(
+        camera,
+        "camera",
+        exposure_compensation_ev,
+        lens_blur_um,
+        film_format_mm
+    );
+    arrays!(camera, "camera", filter_uv, filter_ir);
+    let enlarger = &params.enlarger;
+    scalars!(
+        enlarger,
+        "enlarger",
+        print_exposure,
+        y_filter_shift,
+        m_filter_shift,
+        y_filter_neutral,
+        m_filter_neutral,
+        c_filter_neutral,
+        lens_blur,
+        preflash_exposure,
+        preflash_y_filter_shift,
+        preflash_m_filter_shift
+    );
+    scalars!(
+        camera.diffusion_filter,
+        "camera.diffusion_filter",
+        strength,
+        spatial_scale,
+        halo_warmth,
+        core_intensity,
+        core_size,
+        halo_intensity,
+        halo_size,
+        bloom_intensity,
+        bloom_size
+    );
+    scalars!(
+        enlarger.diffusion_filter,
+        "enlarger.diffusion_filter",
+        strength,
+        spatial_scale,
+        halo_warmth,
+        core_intensity,
+        core_size,
+        halo_intensity,
+        halo_size,
+        bloom_intensity,
+        bloom_size
+    );
+    scalars!(params.scanner, "scanner", lens_blur);
+    arrays!(params.scanner, "scanner", unsharp_mask);
+    scalars!(
+        params.scanner.operator,
+        "scanner.operator",
+        exposure_ev,
+        warmth_ev,
+        tint_ev,
+        contrast
+    );
+    let film = &params.film_render;
+    let print = &params.print_render;
+    scalars!(film, "film_render", density_curve_gamma);
+    optional!(film, "film_render", development_time);
+    scalars!(print, "print_render", density_curve_gamma);
+    optional!(print, "print_render", development_time);
+    scalars!(
+        film.chemistry,
+        "film_render.chemistry",
+        gamma_factor,
+        gamma_factor_fast,
+        gamma_factor_slow,
+        gamma_factor_red,
+        gamma_factor_green,
+        gamma_factor_blue,
+        developer_exhaustion
+    );
+    scalars!(
+        print.density_curves_morph,
+        "print_render.density_curves_morph",
+        gamma_factor,
+        gamma_factor_fast,
+        gamma_factor_slow,
+        gamma_factor_red,
+        gamma_factor_green,
+        gamma_factor_blue,
+        developer_exhaustion
+    );
+    let grain = &film.grain;
+    scalars!(
+        grain,
+        "film_render.grain",
+        procedural_timer,
+        dye_support_um,
+        dye_event_area_um2,
+        dye_strength,
+        dye_scale,
+        channel_correlation,
+        mult_usm_sigma,
+        mult_usm_amount,
+        blur,
+        blur_dye_clouds_um
+    );
+    arrays!(
+        grain,
+        "film_render.grain",
+        particle_scale_sublayers,
+        rms_granularity,
+        density_min,
+        uniformity,
+        micro_structure
+    );
+    optional!(
+        grain,
+        "film_render.grain",
+        procedural_size,
+        procedural_amount,
+        procedural_shadows,
+        procedural_midtones,
+        procedural_highlights,
+        procedural_chroma,
+        procedural_resolution_factor
+    );
+    let fotufilm = &grain.fotufilm;
+    scalars!(
+        fotufilm,
+        "film_render.grain.fotufilm",
+        amount,
+        size,
+        softness,
+        color,
+        rms_density,
+        clump_radius_um,
+        radius_span,
+        coating_density_scale,
+        fog_density
+    );
+    arrays!(
+        fotufilm,
+        "film_render.grain.fotufilm",
+        layers,
+        layer_weights,
+        layer_size_ratio,
+        sublayer_shares
+    );
+    let halation = &film.halation;
+    scalars!(
+        halation,
+        "film_render.halation",
+        scatter_amount,
+        scatter_spatial_scale,
+        halation_amount,
+        halation_spatial_scale,
+        source_compression,
+        boost_ev,
+        boost_range,
+        protect_ev,
+        halation_bounce_decay
+    );
+    arrays!(
+        halation,
+        "film_render.halation",
+        scatter_core_um,
+        scatter_tail_um,
+        scatter_tail_weight,
+        halation_strength,
+        halation_first_sigma_um
+    );
+    let couplers = &film.dir_couplers;
+    scalars!(
+        couplers,
+        "film_render.dir_couplers",
+        amount,
+        inhibition_samelayer,
+        inhibition_interlayer,
+        diffusion_size_um,
+        diffusion_tail_um,
+        diffusion_tail_weight
+    );
+    arrays!(
+        couplers,
+        "film_render.dir_couplers",
+        gamma_samelayer_rgb,
+        gamma_interlayer_r_to_gb,
+        gamma_interlayer_g_to_rb,
+        gamma_interlayer_b_to_rg,
+        langmuir_donor_k_rgb,
+        langmuir_receiver_k_rgb
+    );
+    scalars!(film.glare, "film_render.glare", percent, roughness, blur);
+    scalars!(print.glare, "print_render.glare", percent, roughness, blur);
+    scalars!(
+        film.base,
+        "film_render.base",
+        scale,
+        tilt,
+        cyan,
+        magenta,
+        yellow
+    );
+    scalars!(
+        film.convert,
+        "film_render.convert",
+        exposure_compensation_ev,
+        base_percentile
+    );
+    scalars!(
+        print.base,
+        "print_render.base",
+        scale,
+        cyan,
+        magenta,
+        yellow
+    );
+    scalars!(params.io, "io", upscale_factor);
+    arrays!(params.io, "io", crop_center, crop_size);
+    scalars!(
+        params.io.input_gamut_compress,
+        "io.input_gamut_compress",
+        hull_detail
+    );
+    arrays!(
+        params.io.input_gamut_compress,
+        "io.input_gamut_compress",
+        knee
+    );
+    arrays!(
+        params.io.output_gamut_compress,
+        "io.output_gamut_compress",
+        knee
+    );
+    scalars!(params.cmyk, "cmyk", strength);
+    scalars!(params.output_mix, "output_mix", amount);
+    scalars!(params.settings, "settings", spectral_gaussian_blur);
+    arrays!(params.settings, "settings", spectral_shape);
+    Ok(())
+}
 
 pub(super) fn validate_detailed(params: &RuntimeParams) -> Result<(), ValidationError> {
+    validate_values_detailed(params)?;
+    validate_context_detailed(params)
+}
+
+pub(super) fn validate_values_detailed(params: &RuntimeParams) -> Result<(), ValidationError> {
+    validate_finite_values_detailed(params)?;
     validate_film_format_mm_detailed(f64::from(params.camera.film_format_mm))?;
     params.output_mix.validate_detailed()?;
-    if params.workflow.route == REMOVED_MAGAZINE_ROUTE {
-        return Err(ValidationError::new(
-            Reason::RemovedRoute,
-            "workflow.route",
-            "workflow.route: the magazine route was removed; use input > film > scan and set cmyk.active = true",
-        ));
+    validate_enum_value_detailed("workflow.route", &params.workflow.route)?;
+    for (path, value) in [
+        ("io.input_color_space", &params.io.input_color_space),
+        ("io.output_color_space", &params.io.output_color_space),
+        (
+            "io.input_gamut_compress.algorithm",
+            &params.io.input_gamut_compress.algorithm,
+        ),
+        (
+            "io.input_gamut_compress.boundary",
+            &params.io.input_gamut_compress.boundary,
+        ),
+        (
+            "io.output_gamut_compress.algorithm",
+            &params.io.output_gamut_compress.algorithm,
+        ),
+    ] {
+        validate_enum_value_detailed(path, value)?;
     }
-    params.validate_color_detailed()?;
+    validate_scalar_detailed(
+        "io.input_gamut_compress.hull_detail",
+        params.io.input_gamut_compress.hull_detail,
+    )?;
+    validate_gamut_triplet_detailed(
+        "io.input_gamut_compress.knee",
+        params.io.input_gamut_compress.knee,
+    )?;
+    validate_gamut_triplet_detailed(
+        "io.output_gamut_compress.knee",
+        params.io.output_gamut_compress.knee,
+    )?;
     params
         .film_render
         .chemistry
-        .validate_detailed()
-        .map_err(|error| error.prefix("film_render.chemistry."))?;
+        .validate_detailed("film_render.chemistry")?;
     params
         .print_render
         .density_curves_morph
-        .validate_detailed()
-        .map_err(|error| error.prefix("print_render.density_curves_morph."))?;
+        .validate_detailed("print_render.density_curves_morph")?;
     let grain = &params.film_render.grain;
     grain.fotufilm.validate_detailed()?;
-    if grain.procedural_profile != "custom"
-        && spektrafilm_model::grain::procedural::profile_index(&grain.procedural_profile).is_none()
-    {
-        return Err(ValidationError::new(
-            Reason::UnknownProfile,
-            "film_render.grain.procedural_profile",
-            format!(
-                "film_render.grain.procedural_profile: unknown profile {:?}",
-                grain.procedural_profile
-            ),
-        )
-        .arg("value", format!("{:?}", grain.procedural_profile)));
-    }
-    if grain.procedural_resolution_type > 1 {
-        return Err(ValidationError::new(
-            Reason::Binary,
-            "film_render.grain.procedural_resolution_type",
-            "film_render.grain.procedural_resolution_type: must be 0 or 1",
-        )
-        .arg("value", grain.procedural_resolution_type));
-    }
-    validate_procedural_timer_detailed(f64::from(grain.procedural_timer))?;
-    // Strict positivity is owned here: the metadata bound only reports a
-    // discovery range (`0..=inf`).
-    if !grain.dye_support_um.is_finite() || grain.dye_support_um <= 0.0 {
-        return Err(ValidationError::new(
-            Reason::DyeSupport,
-            "film_render.grain.dye_support_um",
-            "film_render.grain.dye_support_um: must be finite and strictly positive (micrometers)",
-        )
-        .arg("value", grain.dye_support_um));
-    }
-    if !grain.dye_event_area_um2.is_finite() || grain.dye_event_area_um2 <= 0.0 {
-        return Err(ValidationError::new(Reason::EventArea, "film_render.grain.dye_event_area_um2",
-            "film_render.grain.dye_event_area_um2: must be finite and strictly positive (square micrometers)").arg("value", grain.dye_event_area_um2));
-    }
-    if !grain.dye_strength.is_finite() || !(0.0..=4.0).contains(&grain.dye_strength) {
-        return Err(ValidationError::new(
-            Reason::NumericRange,
-            "film_render.grain.dye_strength",
-            "film_render.grain.dye_strength: must be finite and in [0, 4]",
-        )
-        .arg("min", 0.0)
-        .arg("max", 4.0)
-        .arg("value", grain.dye_strength));
-    }
-    if !grain.dye_scale.is_finite() || !(0.5..=4.0).contains(&grain.dye_scale) {
-        return Err(ValidationError::new(
-            Reason::NumericRange,
-            "film_render.grain.dye_scale",
-            "film_render.grain.dye_scale: must be finite and in [0.5, 4]",
-        )
-        .arg("min", 0.5)
-        .arg("max", 4.0)
-        .arg("value", grain.dye_scale));
-    }
-    // Preserve the historical supported and acceptance range. This ceiling
-    // is not a certified material limit or scanner-processing attribution;
-    // the Poisson split's structural domain is wider.
-    let ceiling = super::grain::MEASURED_CHANNEL_CORRELATION_CEILING;
-    if !grain.channel_correlation.is_finite()
-        || !(0.0..=ceiling).contains(&grain.channel_correlation)
-    {
-        return Err(ValidationError::new(
-            Reason::Correlation,
-            "film_render.grain.channel_correlation",
-            format!("film_render.grain.channel_correlation: must be finite and in [0, {ceiling}]"),
-        )
-        .arg("max", ceiling)
-        .arg("value", grain.channel_correlation));
-    }
-    for (name, value) in [
-        ("procedural_size", grain.procedural_size),
-        ("procedural_amount", grain.procedural_amount),
-        ("procedural_shadows", grain.procedural_shadows),
-        ("procedural_midtones", grain.procedural_midtones),
-        ("procedural_highlights", grain.procedural_highlights),
-        ("procedural_chroma", grain.procedural_chroma),
+    validate_enum_value_detailed(
+        "film_render.grain.procedural_profile",
+        &grain.procedural_profile,
+    )?;
+    validate_scalar_detailed(
+        "film_render.grain.procedural_resolution_type",
+        f64::from(grain.procedural_resolution_type),
+    )?;
+    for (path, value) in [
         (
-            "procedural_resolution_factor",
+            "film_render.grain.procedural_timer",
+            f64::from(grain.procedural_timer),
+        ),
+        (
+            "film_render.grain.dye_support_um",
+            f64::from(grain.dye_support_um),
+        ),
+        (
+            "film_render.grain.dye_event_area_um2",
+            grain.dye_event_area_um2,
+        ),
+        ("film_render.grain.dye_strength", grain.dye_strength),
+        ("film_render.grain.dye_scale", grain.dye_scale),
+        (
+            "film_render.grain.channel_correlation",
+            grain.channel_correlation,
+        ),
+    ] {
+        validate_scalar_detailed(path, value)?;
+    }
+    for (path, value) in [
+        ("film_render.grain.procedural_size", grain.procedural_size),
+        (
+            "film_render.grain.procedural_amount",
+            grain.procedural_amount,
+        ),
+        (
+            "film_render.grain.procedural_shadows",
+            grain.procedural_shadows,
+        ),
+        (
+            "film_render.grain.procedural_midtones",
+            grain.procedural_midtones,
+        ),
+        (
+            "film_render.grain.procedural_highlights",
+            grain.procedural_highlights,
+        ),
+        (
+            "film_render.grain.procedural_chroma",
+            grain.procedural_chroma,
+        ),
+        (
+            "film_render.grain.procedural_resolution_factor",
             grain.procedural_resolution_factor,
         ),
     ] {
-        let path = format!("film_render.grain.{name}");
-        let (min, max) = leaf_numeric_bounds(&path).expect("Procedural grain bounds");
         if let Some(value) = value {
-            let value = f64::from(value);
-            if !value.is_finite()
-                || !(min..=max.expect("Procedural grain maximum")).contains(&value)
-            {
-                return Err(ValidationError::new(
-                    Reason::NumericRange,
-                    &path,
-                    format!("{path}: must be finite and in {min}..={}", max.unwrap()),
-                )
-                .arg("min", min)
-                .arg("max", max.unwrap())
-                .arg("value", value));
-            }
+            validate_scalar_detailed(path, f64::from(value))?;
         }
     }
-    let spectral_shape =
-        crate::spectral_service::SpectralShape::new_detailed(params.settings.spectral_shape)
-            .map_err(|error| {
-                let mut error = error.prefix("settings.spectral_shape: ");
-                error.path = "settings.spectral_shape".into();
-                error
-            })?;
-    if spectral_shape.bounds != crate::spectral_service::default_spectral_shape() {
-        let expected = crate::spectral_service::default_spectral_shape();
-        return Err(ValidationError::new(Reason::SpectralBundled, "settings.spectral_shape", format!(
-            "settings.spectral_shape: only the bundled {expected:?} grid is supported by the current profile/CMF/LUT contract, got {:?}", spectral_shape.bounds
-        )).arg("expected", format!("{expected:?}")).arg("value", format!("{:?}", spectral_shape.bounds)));
-    }
-    let calibration_values = params
-        .film_render
-        .convert
-        .calibration
-        .split(|c: char| c.is_ascii_whitespace() || matches!(c, ',' | ';' | '[' | ']' | '(' | ')'))
-        .filter(|part| !part.is_empty())
-        .map(|part| {
-            part.parse::<f64>().map_err(|_| {
-                ValidationError::new(
-                    Reason::CalibrationToken,
-                    "film_render.convert.calibration",
-                    format!("film_render.convert.calibration contains non-numeric token {part:?}"),
-                )
-                .arg("value", format!("{part:?}"))
-            })
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    if calibration_values.len() != 9 || calibration_values.iter().any(|value| !value.is_finite()) {
-        return Err(ValidationError::new(
-            Reason::CalibrationCount,
-            "film_render.convert.calibration",
-            format!(
-                "film_render.convert.calibration must contain exactly 9 finite numbers, got {}",
-                calibration_values.len()
-            ),
-        )
-        .arg("count", calibration_values.len())
-        .arg("value", &params.film_render.convert.calibration));
-    }
-    if !crate::spectral_service::is_supported_color_filter(&params.camera.color_filter) {
-        let supported = crate::spectral_service::available_color_filters().join(", ");
-        return Err(ValidationError::new(
-            Reason::ColorFilter,
-            "camera.color_filter",
-            format!(
-                "camera.color_filter: unsupported filter {:?}; supported: {supported}",
-                params.camera.color_filter
-            ),
-        )
-        .arg("value", format!("{:?}", params.camera.color_filter))
-        .arg("supported", supported));
-    }
+    validate_spectral_shape_detailed(params.settings.spectral_shape)?;
+    validate_enum_value_detailed(
+        "film_render.convert.calibration",
+        &params.film_render.convert.calibration,
+    )?;
+    validate_enum_value_detailed("camera.color_filter", &params.camera.color_filter)?;
     validate_enum_value_detailed(
         "camera.auto_exposure_method",
         &params.camera.auto_exposure_method,
     )?;
     validate_enum_value_detailed("scanner.scan_output", &params.scanner.scan_output)?;
     params.scanner.operator.validate_detailed()?;
+    validate_enum_value_detailed("scanner.conversion_style", &params.scanner.conversion_style)?;
+    validate_scalar_detailed(
+        "film_render.halation.source_compression",
+        params.film_render.halation.source_compression,
+    )?;
+    validate_enum_value_detailed(
+        "settings.rgb_to_raw_method",
+        &params.settings.rgb_to_raw_method,
+    )?;
+    if let Some(value) = params.camera.capture_illuminant.as_deref() {
+        validate_enum_value_detailed("camera.capture_illuminant", value)?;
+    }
+    validate_enum_value_detailed(
+        "film_render.convert.scan_illuminant",
+        &params.film_render.convert.scan_illuminant,
+    )?;
+    validate_enum_value_detailed("enlarger.illuminant", &params.enlarger.illuminant)?;
+    for (path, value) in [
+        (
+            "camera.diffusion_filter.filter_family",
+            &params.camera.diffusion_filter.filter_family,
+        ),
+        (
+            "enlarger.diffusion_filter.filter_family",
+            &params.enlarger.diffusion_filter.filter_family,
+        ),
+    ] {
+        validate_enum_value_detailed(path, value)?;
+    }
+    validate_scalar_detailed("cmyk.strength", params.cmyk.strength)?;
+    if let Some(t) = params.taps.inject.as_deref() {
+        validate_enum_value_detailed("taps.inject", t)?;
+    }
+    if let Some(t) = params.taps.collect.as_deref() {
+        validate_enum_value_detailed("taps.collect", t)?;
+    }
+    Ok(())
+}
+
+fn validate_context_detailed(params: &RuntimeParams) -> Result<(), ValidationError> {
+    let bounds = params.settings.spectral_shape;
+    let expected = crate::spectral_service::default_spectral_shape();
+    if bounds != expected {
+        return Err(ValidationError::new(Reason::SpectralBundled, "settings.spectral_shape", format!(
+            "settings.spectral_shape: only the bundled {expected:?} grid is supported by the current profile/CMF/LUT contract, got {bounds:?}"
+        )).arg("expected", format!("{expected:?}")).arg("value", format!("{bounds:?}")));
+    }
+    params.validate_color_detailed()?;
     if !params.scanner.operator.is_default() {
         if !params.scanner.operator_eligible() {
             return Err(ValidationError::new(
@@ -942,20 +1364,6 @@ pub(super) fn validate_detailed(params: &RuntimeParams) -> Result<(), Validation
             "scanner.experimental_setup measures the whole frame and cannot be baked into a point-wise LUT; disable it",
         ));
     }
-    let style = &params.scanner.conversion_style;
-    if style.is_empty()
-        || style.contains('/')
-        || style.contains('\\')
-        || style.contains("..")
-        || style.contains(':')
-    {
-        return Err(ValidationError::new(
-            Reason::StyleName,
-            "scanner.conversion_style",
-            format!("scanner.conversion_style: {style:?} is not a valid style name"),
-        )
-        .arg("value", format!("{style:?}")));
-    }
     if params.scanner.experimental_setup && params.scanner.scan_output != "negative_to_positive" {
         return Err(ValidationError::new(
             Reason::StyleMode,
@@ -969,134 +1377,6 @@ pub(super) fn validate_detailed(params: &RuntimeParams) -> Result<(), Validation
             "scanner.conversion_style",
             "scanner.conversion_style requires scanner.scan_output=negative_to_positive",
         ));
-    }
-    if !params.film_render.halation.source_compression.is_finite()
-        || !(0.0..=0.999999).contains(&params.film_render.halation.source_compression)
-    {
-        return Err(ValidationError::new(
-            Reason::SourceCompression,
-            "film_render.halation.source_compression",
-            "film_render.halation.source_compression: must be finite and in 0..=0.999999",
-        )
-        .arg("value", params.film_render.halation.source_compression));
-    }
-    RgbToRawMethod::parse_detailed(&params.settings.rgb_to_raw_method)?;
-    if let Some(capture_illuminant) = params.camera.capture_illuminant.as_deref()
-        && !crate::spectral_service::is_supported_illuminant(capture_illuminant)
-    {
-        let supported = crate::spectral_service::available_illuminants().join(", ");
-        return Err(ValidationError::new(Reason::Illuminant, "camera.capture_illuminant", format!(
-            "camera.capture_illuminant: unsupported illuminant {capture_illuminant:?}; supported: {supported}"
-        )).arg("value", format!("{capture_illuminant:?}")).arg("supported", supported));
-    }
-    if !crate::spectral_service::is_supported_illuminant(
-        &params.film_render.convert.scan_illuminant,
-    ) {
-        return Err(ValidationError::new(
-            Reason::ScanIlluminant,
-            "film_render.convert.scan_illuminant",
-            format!(
-                "film_render.convert.scan_illuminant: unsupported capture illuminant {:?}",
-                params.film_render.convert.scan_illuminant
-            ),
-        )
-        .arg(
-            "value",
-            format!("{:?}", params.film_render.convert.scan_illuminant),
-        ));
-    }
-    if !crate::spectral_service::is_supported_illuminant(&params.enlarger.illuminant) {
-        let supported = crate::spectral_service::available_illuminants().join(", ");
-        return Err(ValidationError::new(
-            Reason::Illuminant,
-            "enlarger.illuminant",
-            format!(
-                "enlarger.illuminant: unsupported illuminant {:?}; supported: {supported}",
-                params.enlarger.illuminant
-            ),
-        )
-        .arg("value", format!("{:?}", params.enlarger.illuminant))
-        .arg("supported", supported));
-    }
-    const FILTER_FAMILIES: &str = "glimmerglass, black_pro_mist, pro_mist, cinebloom";
-    for (label, df) in [
-        (
-            "camera.diffusion_filter.filter_family",
-            &params.camera.diffusion_filter,
-        ),
-        (
-            "enlarger.diffusion_filter.filter_family",
-            &params.enlarger.diffusion_filter,
-        ),
-    ] {
-        if df.active
-            && df.strength > 0.0
-            && df.spatial_scale > 0.0
-            && !matches!(
-                df.filter_family.as_str(),
-                "glimmerglass" | "black_pro_mist" | "pro_mist" | "cinebloom"
-            )
-        {
-            return Err(ValidationError::new(
-                Reason::DiffusionFamily,
-                label,
-                format!(
-                    "{label}: unknown diffusion filter family {:?}; available: {FILTER_FAMILIES}",
-                    df.filter_family
-                ),
-            )
-            .arg("value", format!("{:?}", df.filter_family))
-            .arg("supported", FILTER_FAMILIES));
-        }
-    }
-    RgbToRawMethod::parse_detailed(&params.settings.rgb_to_raw_method)?;
-    let cmyk = &params.cmyk;
-    let (min, max) = leaf_numeric_bounds("cmyk.strength").unwrap();
-    if !cmyk.strength.is_finite() || !(min..=max.unwrap()).contains(&cmyk.strength) {
-        return Err(ValidationError::new(
-            Reason::CmykStrength,
-            "cmyk.strength",
-            "cmyk.strength: must be finite and in 0..=1",
-        )
-        .arg("value", cmyk.strength));
-    }
-    if let Some(t) = params.taps.inject.as_deref() {
-        Tap::parse(t).map_err(|error| {
-            ValidationError::new(Reason::Tap, "taps.inject", format!("taps.inject: {error}"))
-                .arg("value", format!("{t:?}"))
-        })?;
-    }
-    if params.workflow.route_enum() == crate::WorkflowRoute::Custom {
-        let suggestions = closest(
-            &params.workflow.route,
-            SUPPORTED_ROUTES.iter().map(|route| (*route).to_owned()),
-            MAX_SUGGESTIONS,
-        );
-        let suffix = error_suffix(
-            &suggestions,
-            "use spektrafilm process --help to discover supported routes",
-        );
-        return Err(ValidationError::new(
-            Reason::Route,
-            "workflow.route",
-            format!(
-                "workflow.route: unsupported route {:?}; {suffix}",
-                params.workflow.route
-            ),
-        )
-        .arg("value", format!("{:?}", params.workflow.route))
-        .arg("supported", SUPPORTED_ROUTES.join(", "))
-        .arg("suggestions", suggestions.join(", ")));
-    }
-    if let Some(t) = params.taps.collect.as_deref() {
-        Tap::parse(t).map_err(|error| {
-            ValidationError::new(
-                Reason::Tap,
-                "taps.collect",
-                format!("taps.collect: {error}"),
-            )
-            .arg("value", format!("{t:?}"))
-        })?;
     }
     Ok(())
 }

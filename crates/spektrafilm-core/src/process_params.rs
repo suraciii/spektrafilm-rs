@@ -1,8 +1,8 @@
 //! Process-only composition of legacy baselines, complete looks and sparse edits.
 use crate::WorkflowRoute;
 use crate::neutral_filters::NeutralFilters;
+use crate::params::sources::ParameterEdits;
 use crate::params::sources::lookup;
-use crate::params::sources::{ParameterEdits, validate_finite};
 use crate::params::validation::REMOVED_MAGAZINE_ROUTE;
 use crate::params::{GrainEngine, RuntimeParams};
 #[cfg(test)]
@@ -488,7 +488,6 @@ fn resolve_with_preview_mode(
         if let Some(mode) = preview_mode {
             params.settings.preview_mode = mode;
         }
-        validate_finite(&params)?;
         params.validate()?;
         crate::pipeline_calibration::validate_scan_output(&params, &film)?;
         let neutral = NeutralFilters::load(data_dir)?;
@@ -502,7 +501,6 @@ fn resolve_with_preview_mode(
         );
         params.neutral_print_filters_protected = protected;
         apply_runtime_constraints(&mut params);
-        validate_finite(&params)?;
         params.validate()?;
     }
 
@@ -595,29 +593,41 @@ fn resolve_with_preview_mode(
             }
         })
         .collect();
-    let edits = winning.into_iter().map(|(path, (requested, source))| {
-        let effective = lookup(&effective_params, &path).cloned().unwrap_or(Value::Null);
-        let override_option = match path.as_str() {
-            "io.input_color_space" if request.input_color_space.is_some() => Some("--input-color-space"),
-            "io.input_cctf_decoding" if request.input_cctf_decoding.is_some() => Some("--input-cctf-decoding"),
-            "scanner.scan_output" if request.scan_output.is_some() => Some("--scan-output"),
-            _ => None,
-        };
-        let (status, reason) = if let Some(option) = override_option {
-            (EditStatus::Overridden, Some(format!("replaced by {option}")))
-        } else if !equal_control_values(&path, &requested, &effective) {
-            let mut causes = Vec::new();
-            if params.settings.preview_mode { causes.push("settings.preview_mode"); }
-            if params.debug.lut_mode { causes.push("debug.lut_mode"); }
-            if params.debug.deactivate_spatial_effects { causes.push("debug.deactivate_spatial_effects"); }
-            if params.debug.deactivate_stochastic_effects { causes.push("debug.deactivate_stochastic_effects"); }
-            let reason = if causes.is_empty() { "runtime preparation changed the requested value for derived profile topology".into() } else { format!("runtime preparation changed the requested value with {} enabled; disable the applicable constraint to retain it", causes.join(", ")) };
-            (EditStatus::Constrained, Some(reason))
-        } else if let Some(reason) = crate::params::sources::inactive_reason(&path, &params, &film, &print) {
-            (EditStatus::Inactive, Some(reason))
-        } else { (EditStatus::Active, None) };
-        EditFeedback { path, requested, effective, source, status, reason }
-    }).collect();
+    let edits = winning
+        .into_iter()
+        .map(|(path, (requested, source))| {
+            let effective = lookup(&effective_params, &path)
+                .cloned()
+                .unwrap_or(Value::Null);
+            let override_option = match path.as_str() {
+                "io.input_color_space" if request.input_color_space.is_some() => {
+                    Some("--input-color-space")
+                }
+                "io.input_cctf_decoding" if request.input_cctf_decoding.is_some() => {
+                    Some("--input-cctf-decoding")
+                }
+                "scanner.scan_output" if request.scan_output.is_some() => Some("--scan-output"),
+                _ => None,
+            };
+            let (status, reason) = classify_edit(
+                &path,
+                &requested,
+                &effective,
+                override_option,
+                &params,
+                Some(&film),
+                Some(&print),
+            );
+            EditFeedback {
+                path,
+                requested,
+                effective,
+                source,
+                status,
+                reason,
+            }
+        })
+        .collect();
     Ok(ResolvedProcessParams {
         film,
         print,
@@ -628,6 +638,51 @@ fn resolve_with_preview_mode(
         edits,
         feature_profiles,
     })
+}
+
+fn classify_edit(
+    path: &str,
+    requested: &Value,
+    effective: &Value,
+    override_option: Option<&str>,
+    params: &RuntimeParams,
+    film: Option<&Profile>,
+    print: Option<&Profile>,
+) -> (EditStatus, Option<String>) {
+    if let Some(option) = override_option {
+        return (
+            EditStatus::Overridden,
+            Some(format!("replaced by {option}")),
+        );
+    }
+    if !equal_control_values(path, requested, effective) {
+        let mut causes = Vec::new();
+        if params.settings.preview_mode {
+            causes.push("settings.preview_mode");
+        }
+        if params.debug.lut_mode {
+            causes.push("debug.lut_mode");
+        }
+        if params.debug.deactivate_spatial_effects {
+            causes.push("debug.deactivate_spatial_effects");
+        }
+        if params.debug.deactivate_stochastic_effects {
+            causes.push("debug.deactivate_stochastic_effects");
+        }
+        let reason = if causes.is_empty() {
+            "runtime preparation changed the requested value for derived profile topology".into()
+        } else {
+            format!(
+                "runtime preparation changed the requested value with {} enabled; disable the applicable constraint to retain it",
+                causes.join(", ")
+            )
+        };
+        return (EditStatus::Constrained, Some(reason));
+    }
+    match crate::params::sources::inactive_reason_with_materials(path, params, film, print) {
+        Some(reason) => (EditStatus::Inactive, Some(reason)),
+        None => (EditStatus::Active, None),
+    }
 }
 
 fn load_baseline(path: Option<&Path>) -> Result<(RuntimeParams, bool), String> {
@@ -653,14 +708,8 @@ fn load_baseline(path: Option<&Path>) -> Result<(RuntimeParams, bool), String> {
             let params: RuntimeParams = serde_json::from_value(value)
                 .map_err(|e| format!("parsing params file {}: {e}", path.display()))?;
             params
-                .output_mix
-                .validate()
+                .validate_values()
                 .map_err(|e| format!("params file {}: {e}", path.display()))?;
-            crate::params::validation::validate_enum_value(
-                "scanner.scan_output",
-                &params.scanner.scan_output,
-            )
-            .map_err(|e| format!("params file {}: {e}", path.display()))?;
             Ok((params, granularity_authored))
         }
         None => Ok((RuntimeParams::default(), false)),

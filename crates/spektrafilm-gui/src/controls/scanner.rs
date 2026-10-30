@@ -201,28 +201,24 @@ pub(crate) fn sections(
     }
     if section == "Camera" {
         ui.scope(|ui| {
-            let capture_active = matches!(
-                params.workflow.route_enum(),
-                spektrafilm_core::WorkflowRoute::FilmScan
-                    | spektrafilm_core::WorkflowRoute::FilmPrintScan
-            );
+            let capture_active = crate::ui::control_inactive_reason(ui.ctx(), "camera.capture_illuminant", params).is_none();
             if !capture_active {
                 ui.label(localized(ui.ctx(), "Capture illuminant inactive on this route; stored values are retained."));
             }
             if filter_matches(filter, "exposure compensation ev") {
-                flags.runtime_changed |= param_numeric(ui, "exposure compensation ev", &mut params.camera.exposure_compensation_ev, "camera.exposure_compensation_ev", "Add a bias to the auto-exposure of the camera.");
+                flags.runtime_changed |= applicable_control(ui, params, "camera.exposure_compensation_ev", |ui, params| param_numeric(ui, "exposure compensation ev", &mut params.camera.exposure_compensation_ev, "camera.exposure_compensation_ev", "Add a bias to the auto-exposure of the camera."));
             }
             if filter_matches(filter, "auto exposure") {
-                flags.runtime_changed |= toggle(ui, "auto exposure", &mut params.camera.auto_exposure, "Use the auto-exposure feature of the virtual camera.");
+                flags.runtime_changed |= applicable_control(ui, params, "camera.auto_exposure", |ui, params| toggle(ui, "auto exposure", &mut params.camera.auto_exposure, "Use the auto-exposure feature of the virtual camera."));
             }
             if filter_matches(filter, "Film Format") {
                 flags.runtime_changed |= film_format(ui, &mut params.camera.film_format_mm);
             }
             if filter_matches(filter, "auto exposure method") {
-                flags.runtime_changed |= choice_tip(ui, "auto exposure method", &mut params.camera.auto_exposure_method, &["center_weighted", "matrix", "multi_zone", "partial", "highlight_weighted", "median", "average"], "Metering method used by the virtual camera's auto-exposure.");
+                flags.runtime_changed |= applicable_control(ui, params, "camera.auto_exposure_method", |ui, params| choice_tip(ui, "auto exposure method", &mut params.camera.auto_exposure_method, &["center_weighted", "matrix", "multi_zone", "partial", "highlight_weighted", "median", "average"], "Metering method used by the virtual camera's auto-exposure."));
             }
             if filter_matches(filter, "color filter") {
-                flags.runtime_changed |= choice_tip(ui, "color filter", &mut params.camera.color_filter, &["none", "hoya_x0", "hoya_x1", "hoya_y2", "hoya_ya3", "hoya_r1"], "Camera taking filter held in front of the lens. Its measured spectral transmittance multiplies the incoming light, so it both darkens and color-casts the exposure (e.g. Hoya Y2/YA3 yellow, R1 red, X0/X1 UV/haze). 'none' = no filter.");
+                flags.runtime_changed |= applicable_control(ui, params, "camera.color_filter", |ui, params| choice_tip(ui, "color filter", &mut params.camera.color_filter, &["none", "hoya_x0", "hoya_x1", "hoya_y2", "hoya_ya3", "hoya_r1"], "Camera taking filter held in front of the lens. Its measured spectral transmittance multiplies the incoming light, so it both darkens and color-casts the exposure (e.g. Hoya Y2/YA3 yellow, R1 red, X0/X1 UV/haze). 'none' = no filter."));
             }
             if filter_matches(filter, "capture illuminant") {
                 ui.add_enabled_ui(capture_active, |ui| {
@@ -244,7 +240,9 @@ pub(crate) fn sections(
         });
     }
     if section == "Enlarger" {
-        let print_active = params.workflow.route.contains(" > print > ");
+        let print_active =
+            crate::ui::control_inactive_reason(ui.ctx(), "enlarger.print_exposure", params)
+                .is_none();
         if !print_active {
             ui.label(localized(
                 ui.ctx(),
@@ -290,8 +288,9 @@ pub(crate) fn sections(
     }
     if section == "Scanner" {
         ui.scope(|ui| {
-            let medium = film_medium.for_route(&params.workflow.route);
-            let positive_route = medium.positive_output_eligible(&params.workflow.route);
+            let scan_active = crate::ui::control_inactive_reason(ui.ctx(), "scanner.scan_output", params).is_none();
+            let medium = if scan_active { film_medium.for_route(&params.workflow.route) } else { ScanMedium::None };
+            let positive_route = scan_active && medium.positive_output_eligible(&params.workflow.route);
             let medium_label = match medium {
                 ScanMedium::None => "Inactive",
                 ScanMedium::Paper => "Paper",
@@ -424,7 +423,16 @@ pub(crate) fn sections(
         }
     }
     if section == "Camera diffusion" || section == "Enlarger diffusion" {
-        ui.scope(|ui| {
+        let path = if section == "Camera diffusion" {
+            "camera.diffusion_filter.active"
+        } else {
+            "enlarger.diffusion_filter.active"
+        };
+        let inactive = crate::ui::control_inactive_reason(ui.ctx(), path, params);
+        if let Some(reason) = &inactive {
+            ui.label(localized(ui.ctx(), reason));
+        }
+        ui.add_enabled_ui(inactive.is_none(), |ui| {
             let (diffusion_filter, paths) = if section == "Camera diffusion" {
                 (&mut params.camera.diffusion_filter, &CAMERA_DIFFUSION_PATHS)
             } else {
@@ -537,7 +545,8 @@ fn preflash_controls(
     ) {
         return;
     }
-    let active = params.workflow.route.contains(" > print > ");
+    let active = crate::ui::control_inactive_reason(ui.ctx(), "enlarger.preflash_exposure", params)
+        .is_none();
     if !active {
         ui.label(localized(
             ui.ctx(),

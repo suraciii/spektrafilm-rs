@@ -137,6 +137,118 @@ impl WorkflowRoute {
         )
     }
 
+    // Non-full diagnostic endpoints run the ordinary tap topology, even on
+    // input and convert routes. Material endpoints reject taps separately.
+    fn diagnostic_span(self, taps: &crate::params::TapsParams) -> bool {
+        self.artifact_input().is_none()
+            && self.artifact_output().is_none()
+            && (taps.inject.as_deref().is_some_and(|tap| tap != "rgb_in")
+                || taps.collect.as_deref().is_some_and(|tap| tap != "rgb_out"))
+    }
+
+    /// Whether the selected span crosses a pipeline boundary. Artifact routes
+    /// start and end at their material boundary rather than at RGB taps.
+    fn crosses(self, taps: &crate::params::TapsParams, node: crate::params::Tap) -> bool {
+        use crate::params::Tap;
+        let start = taps
+            .inject
+            .as_deref()
+            .and_then(|s| Tap::parse(s).ok())
+            .unwrap_or(match self {
+                Self::StoredFilmScan | Self::StoredFilmPrint | Self::StoredFilmPrintScan => {
+                    Tap::CmyFilm
+                }
+                Self::StoredPrintScan => Tap::CmyPrint,
+                _ => Tap::RgbIn,
+            });
+        let end = taps
+            .collect
+            .as_deref()
+            .and_then(|s| Tap::parse(s).ok())
+            .unwrap_or(match self {
+                Self::Input if !self.diagnostic_span(taps) => Tap::RgbIn,
+                Self::InputFilm => Tap::CmyFilm,
+                Self::InputFilmPrint | Self::StoredFilmPrint => Tap::CmyPrint,
+                _ => Tap::RgbOut,
+            });
+        start.position() <= node.position() && node.position() < end.position()
+    }
+
+    /// Metering consumes the source before RGB preprocessing. Convert-film
+    /// bypasses that helper even when a diagnostic span reaches later taps.
+    pub fn executes_input_metering(self, taps: &crate::params::TapsParams) -> bool {
+        !self.is_convert_film() && self.crosses(taps, crate::params::Tap::RgbIn)
+    }
+
+    pub fn executes_film_exposure(self, taps: &crate::params::TapsParams) -> bool {
+        (self.exposes_film() || self.diagnostic_span(taps))
+            && self.crosses(taps, crate::params::Tap::RgbPre)
+    }
+
+    pub fn executes_film_development(self, taps: &crate::params::TapsParams) -> bool {
+        (self.exposes_film() || self.diagnostic_span(taps))
+            && self.crosses(taps, crate::params::Tap::LogEFilm)
+    }
+
+    pub fn executes_conversion(self, taps: &crate::params::TapsParams) -> bool {
+        self.is_convert_film()
+            && !self.diagnostic_span(taps)
+            && self.crosses(taps, crate::params::Tap::RgbIn)
+    }
+
+    pub fn executes_print_exposure(self, taps: &crate::params::TapsParams) -> bool {
+        (self.prints() || (self.diagnostic_span(taps) && !self.scans_film()))
+            && self.crosses(taps, crate::params::Tap::CmyFilm)
+    }
+
+    pub fn executes_print_development(self, taps: &crate::params::TapsParams) -> bool {
+        (self.prints() || (self.diagnostic_span(taps) && !self.scans_film()))
+            && self.crosses(taps, crate::params::Tap::LogEPrint)
+    }
+
+    pub fn executes_scan(self, taps: &crate::params::TapsParams) -> bool {
+        use crate::params::Tap;
+        if self.diagnostic_span(taps) {
+            return self.crosses(
+                taps,
+                if self.scans_film() {
+                    Tap::CmyFilm
+                } else {
+                    Tap::CmyPrint
+                },
+            );
+        }
+        match self {
+            Self::FilmScan
+            | Self::StoredFilmScan
+            | Self::ConvertFilmScan
+            | Self::ConvertFilmScanMinusBase => self.crosses(taps, Tap::CmyFilm),
+            Self::FilmPrintScan
+            | Self::StoredFilmPrintScan
+            | Self::StoredPrintScan
+            | Self::ConvertFilmPrintScan => self.crosses(taps, Tap::CmyPrint),
+            _ => false,
+        }
+    }
+
+    /// Terminal RGB finishing runs on the input passthrough or after scan
+    /// readout, but not on material outputs or earlier diagnostic taps.
+    pub fn executes_terminal_rgb_finishing(self, taps: &crate::params::TapsParams) -> bool {
+        (self == Self::Input && !self.diagnostic_span(taps)) || self.executes_scan(taps)
+    }
+
+    pub fn executes_print_readout(self, taps: &crate::params::TapsParams) -> bool {
+        (self.diagnostic_span(taps) && !self.scans_film()
+            || matches!(
+                self,
+                Self::FilmPrintScan
+                    | Self::StoredFilmPrintScan
+                    | Self::StoredPrintScan
+                    | Self::ConvertFilmPrintScan
+            ))
+            && self.executes_scan(taps)
+    }
+
     pub fn artifact_input(self) -> Option<crate::stage_artifact::MaterialKind> {
         use crate::stage_artifact::MaterialKind;
         match self {

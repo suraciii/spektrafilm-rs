@@ -871,7 +871,6 @@ impl Preset {
                 ));
             }
         }
-        crate::params::sources::validate_finite_detailed(&params)?;
         params.validate_detailed().map_err(|error| {
             PresetDocumentError::new(
                 PresetDocumentReason::Runtime(error.clone()),
