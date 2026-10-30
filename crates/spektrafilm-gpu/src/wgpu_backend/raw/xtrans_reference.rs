@@ -166,6 +166,61 @@ pub(crate) fn green_minmax(
     gminmax
 }
 
+/// `markesteijn_red_and_blue`: fills the channel opposite this pixel's one, taking
+/// the sample pair either one step along the axis that does not run through the
+/// green rows, or three steps along the other axis, whichever the green gradient
+/// makes cheaper.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn red_and_blue(
+    cfa: &[u8],
+    rows: usize,
+    cols: usize,
+    rgb: &mut [f32],
+    width: usize,
+    height: usize,
+    border: usize,
+    d: i32,
+    tables: &Tables,
+) {
+    let src = rgb.to_vec();
+    let at = |y: i32, x: i32, c: usize| -> f32 {
+        if y < 0 || x < 0 || y >= height as i32 || x >= width as i32 {
+            return 0.0;
+        }
+        src[(y as usize * width + x as usize) * RGB_STRIDE + c]
+    };
+    for y in border..height.saturating_sub(border) {
+        for x in border..width.saturating_sub(border) {
+            let (xi, yi) = (x as i32, y as i32);
+            let f = 2 - fcn(cfa, rows, cols, yi, xi);
+            if f == 1 {
+                continue;
+            }
+            let f = f as usize;
+            let horiz = (yi - tables.sgreen[1]) % 3 == 0;
+            let near = if horiz { (1, 0) } else { (0, 1) };
+            let far = if horiz { (0, 3) } else { (3, 0) };
+            let g = at(yi, xi, 1);
+            let gsum = |o: (i32, i32)| {
+                (g - at(yi + o.1, xi + o.0, 1)).abs() + (g - at(yi - o.1, xi - o.0, 1)).abs()
+            };
+            let off =
+                if d > 1 || (d == 0 && horiz) || (d == 1 && !horiz) || gsum(near) < 2.0 * gsum(far)
+                {
+                    near
+                } else {
+                    far
+                };
+            let idx = (y * width + x) * RGB_STRIDE;
+            rgb[idx + f] =
+                (at(yi + off.1, xi + off.0, f) + at(yi - off.1, xi - off.0, f) + 2.0 * g
+                    - at(yi + off.1, xi + off.0, 1)
+                    - at(yi - off.1, xi - off.0, 1))
+                    / 2.0;
+        }
+    }
+}
+
 /// `markesteijn_solitary_green`: one of the six ordered calls per pass. `aux`
 /// carries state between calls and `d` decides whether the previous result wins,
 /// so a single call is not independently meaningful.
@@ -845,5 +900,31 @@ mod tests {
             }
         }
         assert!(checked > 0, "no solitary green site in the fixture");
+    }
+
+    #[test]
+    fn red_and_blue_is_the_identity_on_a_flat_field() {
+        let (width, height) = (12usize, 12usize);
+        let tables = Tables::new(&PATTERN, 6, 6);
+        let v = 60.0f32;
+        let mut rgb = vec![v; width * height * RGB_STRIDE];
+        for d in 0..4 {
+            red_and_blue(&PATTERN, 6, 6, &mut rgb, width, height, 3, d, &tables);
+        }
+        // (V + V + 2V - V - V) / 2 == V for every selection of the sample pair.
+        for y in 3..height - 3 {
+            for x in 3..width - 3 {
+                if fcn(&PATTERN, 6, 6, y as i32, x as i32) == 1 {
+                    continue;
+                }
+                for c in 0..3 {
+                    assert_eq!(
+                        rgb[(y * width + x) * RGB_STRIDE + c],
+                        v,
+                        "({x},{y}) channel {c}"
+                    );
+                }
+            }
+        }
     }
 }
