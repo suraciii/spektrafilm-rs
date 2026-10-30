@@ -1072,7 +1072,7 @@ fn dye_bw_keeps_look_controls_and_retains_hidden_requests() {
 
     let bw = profile::load_profile_by_name(&data_dir(), "kodak_doublex").unwrap();
     select_film(h, bw.info.name.as_deref().unwrap_or("kodak_doublex"));
-    // Shared secondary requests have no Dye editors and survive unchanged.
+    // Secondary grain requests survive; density minimum has a shared LUT editor.
     {
         let grain = &mut h.state_mut().params.film_render.grain;
         grain.channel_correlation = 0.35;
@@ -1092,7 +1092,6 @@ fn dye_bw_keeps_look_controls_and_retains_hidden_requests() {
     for label in [
         "Channel correlation",
         "rms granularity R",
-        "density min R",
         "uniformity B",
         "particle scale sublayers 0",
     ] {
