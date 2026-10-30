@@ -727,7 +727,9 @@ fn key(label: &str) -> Option<&'static str> {
         "Micro-structure scale and clump size." => Some("controls.grain.micro_structure_help"),
         "Midtone grain amount." => Some("controls.grain.midtones_help"),
         "Midtones" => Some("controls.grain.midtones"),
-        "Minimum grain density for Spektra." => Some("controls.grain.density_min_help"),
+        "Minimum grain density for Spektra; also sets bounds for executing film-scanner and enlarger LUTs." => {
+            Some("controls.grain.density_min_help")
+        }
         "Multiplier on the cross-layer (off-diagonal) inhibition. Controls saturation enhancement from interlayer DIR effects." => {
             Some("controls.couplers.inhibition_interlayer_help")
         }

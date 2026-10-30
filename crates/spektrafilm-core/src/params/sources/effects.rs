@@ -11,6 +11,7 @@ pub(super) enum Condition {
     Procedural,
     Dye,
     Retained,
+    DensityMinimum(Option<usize>),
     MaterialRecord(Option<usize>),
     Analogue,
     Fotufilm,
@@ -64,6 +65,9 @@ impl Condition {
             Self::Procedural => "film_render.grain.engine = procedural",
             Self::Dye => "film_render.grain.engine = dye; supported stock, format and route",
             Self::Retained => "retained legacy Dye value; the delivered Dye law does not read it",
+            Self::DensityMinimum(_) => {
+                "Spektra grain on film development, or an executing film scanner or enlarger LUT; image input applies monochrome record and debug LUT-mode constraints"
+            }
             Self::MaterialRecord(_) => {
                 "Spektra and Dye use record 0 for black-and-white material; G/B values remain stored and inactive"
             }
@@ -151,6 +155,16 @@ impl Condition {
             Self::Spektra => g.engine == GrainEngine::Spektra,
             Self::Procedural => g.engine == GrainEngine::Procedural,
             Self::Dye => g.engine == GrainEngine::Dye,
+            Self::DensityMinimum(component) => {
+                (Self::density_min_lut(p)
+                    && (p.workflow.route_enum().artifact_input().is_some()
+                        || Self::MaterialRecord(component).holds_for(p, film)))
+                    || (!p.debug.lut_mode
+                        && Self::GrainOperation.holds_for(p, film)
+                        && Self::Grain.holds_for(p, film)
+                        && Self::Spektra.holds_for(p, film)
+                        && Self::MaterialRecord(component).holds_for(p, film))
+            }
             Self::Retained => false,
             Self::MaterialRecord(component) => {
                 component.is_none_or(|component| component == 0)
@@ -270,6 +284,18 @@ impl Condition {
             }
         }
     }
+
+    fn density_min_lut(p: &RuntimeParams) -> bool {
+        let route = p.workflow.route_enum();
+        // Material continuations reuse the artifact baseline without replaying
+        // image-input debug constraints; downstream LUT switches can be reset.
+        (route.artifact_input().is_some() || !p.debug.lut_mode)
+            && ((p.settings.use_enlarger_lut && route.executes_print_exposure(&p.taps))
+                || (p.settings.use_scanner_lut
+                    && p.scanner.scan_output != "negative_to_positive"
+                    && route.executes_scan(&p.taps)
+                    && !route.executes_print_readout(&p.taps)))
+    }
 }
 
 // Stack-resident so per-widget queries and field discovery share one rule owner.
@@ -369,6 +395,19 @@ fn grain_inactive_reason(
     film: Option<&Profile>,
     component: Option<usize>,
 ) -> Option<&'static str> {
+    if path == "film_render.grain.density_min" {
+        if Condition::density_min_lut(params) {
+            // Only image input broadcasts monochrome records before LUT use.
+            if params.workflow.route_enum().artifact_input().is_some() {
+                return None;
+            }
+            return (!Condition::MaterialRecord(component).holds_for(params, film))
+                .then(|| Condition::MaterialRecord(component).description());
+        }
+        if params.debug.lut_mode && params.workflow.route_enum().artifact_input().is_none() {
+            return Some(Condition::LutModeOff.description());
+        }
+    }
     if path.starts_with("film_render.grain.")
         && !path.ends_with(".engine")
         && !Condition::GrainOperation.holds_for(params, film)
@@ -407,6 +446,9 @@ pub(super) fn conditions(path: &str) -> Vec<Condition> {
             out.push(Chemistry(print));
         }
         return out;
+    }
+    if path == "film_render.grain.density_min" {
+        return vec![DensityMinimum(None)];
     }
     if path.starts_with("film_render.grain.") {
         if !path.ends_with(".engine") {
@@ -556,6 +598,9 @@ pub fn inactive_reason_with_materials(
         let reason = grain_inactive_reason(path, params, film, None);
         if reason.is_some() {
             return reason.map(str::to_owned);
+        }
+        if path == "film_render.grain.density_min" && Condition::density_min_lut(params) {
+            return None;
         }
         if film.is_none()
             && params.film_render.grain.engine != GrainEngine::Procedural
@@ -855,6 +900,360 @@ mod tests {
         assert!(active("film_render.development_time", &p));
         assert!(active("film_render.grain.rms_granularity", &p));
         assert!(!active("scanner.scan_output", &p));
+    }
+
+    #[test]
+    fn density_min_follows_executing_lut_consumers_across_routes_and_spans() {
+        let path = "film_render.grain.density_min";
+        let bw = film(false, true);
+        let color = film(true, true);
+        let mut p = RuntimeParams::default();
+        p.film_render.grain.active = false;
+        p.film_render.grain.engine = GrainEngine::Dye;
+        p.film_render.grain.monochrome = true;
+        p.debug.deactivate_stochastic_effects = true;
+        // Each row is route, inject, collect, scanner LUT, enlarger LUT, output, active.
+        for (route, inject, collect, scanner, enlarger, output, active) in [
+            (
+                "input > film > scan",
+                Some("cmy_film"),
+                Some("rgb_out"),
+                true,
+                false,
+                "direct_scan",
+                true,
+            ),
+            (
+                "input > film > scan",
+                Some("cmy_film"),
+                Some("rgb_out"),
+                true,
+                false,
+                "negative_to_positive",
+                false,
+            ),
+            (
+                "input > film > scan",
+                Some("cmy_film"),
+                Some("rgb_out"),
+                false,
+                true,
+                "direct_scan",
+                false,
+            ),
+            (
+                "input > film > scan",
+                Some("log_e_film"),
+                Some("cmy_film"),
+                true,
+                true,
+                "direct_scan",
+                false,
+            ),
+            ("film > scan", None, None, true, false, "direct_scan", true),
+            (
+                "film > scan",
+                None,
+                None,
+                false,
+                false,
+                "direct_scan",
+                false,
+            ),
+            (
+                "input > convert-film > scan",
+                None,
+                None,
+                true,
+                false,
+                "direct_scan",
+                true,
+            ),
+            (
+                "input > convert-film > scan-minus-base",
+                None,
+                None,
+                true,
+                false,
+                "direct_scan",
+                true,
+            ),
+            (
+                "input > convert-film > scan",
+                Some("cmy_print"),
+                Some("rgb_out"),
+                true,
+                false,
+                "direct_scan",
+                false,
+            ),
+            (
+                "input > film > print > scan",
+                Some("cmy_film"),
+                Some("log_e_print"),
+                false,
+                true,
+                "direct_scan",
+                true,
+            ),
+            (
+                "input > film > print > scan",
+                Some("cmy_print"),
+                Some("rgb_out"),
+                true,
+                true,
+                "direct_scan",
+                false,
+            ),
+            (
+                "input > film > print > scan",
+                Some("cmy_film"),
+                Some("log_e_print"),
+                true,
+                false,
+                "direct_scan",
+                false,
+            ),
+            ("film > print", None, None, false, true, "direct_scan", true),
+            (
+                "film > print > scan",
+                None,
+                None,
+                false,
+                true,
+                "direct_scan",
+                true,
+            ),
+            (
+                "input > convert-film > print > scan",
+                None,
+                None,
+                false,
+                true,
+                "direct_scan",
+                true,
+            ),
+            ("print > scan", None, None, true, true, "direct_scan", false),
+            ("input", None, None, true, true, "direct_scan", false),
+            (
+                "input",
+                Some("cmy_film"),
+                Some("log_e_print"),
+                false,
+                true,
+                "direct_scan",
+                true,
+            ),
+        ] {
+            p.workflow.route = route.into();
+            p.taps.inject = inject.map(str::to_owned);
+            p.taps.collect = collect.map(str::to_owned);
+            p.settings.use_scanner_lut = scanner;
+            p.settings.use_enlarger_lut = enlarger;
+            p.scanner.scan_output = output.into();
+            let case = format!(
+                "{route} {inject:?}..{collect:?}, scanner={scanner}, enlarger={enlarger}, {output}"
+            );
+            assert_eq!(
+                inactive_reason_without_profiles(path, &p).is_none(),
+                active,
+                "{case}"
+            );
+            assert_eq!(
+                inactive_reason_with_materials(path, &p, None, None).is_none(),
+                active,
+                "{case}"
+            );
+            assert_eq!(
+                inactive_reason(path, &p, &bw, &bw).is_none(),
+                active,
+                "{case}"
+            );
+            assert_eq!(
+                conditions(path)
+                    .into_iter()
+                    .all(|c| c.holds_for(&p, Some(&bw))),
+                active,
+                "{case}"
+            );
+            for component in [None, Some(0), Some(1), Some(2)] {
+                let component_active = active
+                    && (p.workflow.route_enum().artifact_input().is_some()
+                        || component.is_none_or(|index| index == 0));
+                assert_eq!(
+                    grain_control_inactive_reason(path, &p, component).is_none(),
+                    component_active,
+                    "{case} {component:?}"
+                );
+                assert_eq!(
+                    grain_control_inactive_reason_with_profile(path, &p, &bw, component).is_none(),
+                    component_active,
+                    "{case} {component:?}"
+                );
+                assert_eq!(
+                    grain_control_inactive_reason_with_profile(path, &p, &color, component)
+                        .is_none(),
+                    active,
+                    "{case} {component:?}"
+                );
+            }
+        }
+        // The reported case also remains active with Spektra enabled.
+        p.workflow.route = "input > film > scan".into();
+        p.taps.inject = Some("cmy_film".into());
+        p.taps.collect = Some("rgb_out".into());
+        p.settings.use_scanner_lut = true;
+        p.settings.use_enlarger_lut = false;
+        p.film_render.grain.active = true;
+        p.film_render.grain.engine = GrainEngine::Spektra;
+        p.debug.deactivate_stochastic_effects = false;
+        assert!(inactive_reason(path, &p, &bw, &bw).is_none());
+        assert!(grain_control_inactive_reason_with_profile(path, &p, &bw, Some(0)).is_none());
+        for component in [Some(1), Some(2)] {
+            assert_eq!(
+                grain_control_inactive_reason_with_profile(path, &p, &bw, component),
+                Some(Condition::MaterialRecord(component).description())
+            );
+        }
+        p.settings.use_scanner_lut = false;
+        assert!(inactive_reason(path, &p, &bw, &bw).is_some());
+    }
+
+    #[test]
+    fn density_min_retains_grain_only_record_and_switch_rules() {
+        let path = "film_render.grain.density_min";
+        let bw = film(false, true);
+        let color = film(true, true);
+        let mut p = RuntimeParams::default();
+        p.workflow.route = "input > film".into();
+        p.settings.use_scanner_lut = false;
+        p.settings.use_enlarger_lut = false;
+        p.film_render.grain.engine = GrainEngine::Spektra;
+        p.film_render.grain.active = true;
+        p.film_render.grain.monochrome = true;
+        p.debug.deactivate_stochastic_effects = false;
+        for component in [None, Some(0), Some(1), Some(2)] {
+            let bw_active = component.is_none_or(|index| index == 0);
+            assert_eq!(
+                grain_control_inactive_reason(path, &p, component).is_none(),
+                bw_active
+            );
+            assert_eq!(
+                grain_control_inactive_reason_with_profile(path, &p, &bw, component).is_none(),
+                bw_active
+            );
+            assert!(
+                grain_control_inactive_reason_with_profile(path, &p, &color, component).is_none()
+            );
+            assert_eq!(
+                Condition::DensityMinimum(component).holds_for(&p, Some(&bw)),
+                bw_active
+            );
+        }
+        p.film_render.grain.active = false;
+        assert!(grain_control_inactive_reason(path, &p, None).is_some());
+        p.film_render.grain.active = true;
+        p.debug.deactivate_stochastic_effects = true;
+        assert!(grain_control_inactive_reason(path, &p, None).is_some());
+        p.debug.deactivate_stochastic_effects = false;
+        p.film_render.grain.engine = GrainEngine::Procedural;
+        assert!(grain_control_inactive_reason(path, &p, None).is_some());
+    }
+
+    #[test]
+    fn density_min_is_inactive_in_debug_lut_mode() {
+        let path = "film_render.grain.density_min";
+        let color = film(true, true);
+        let mut p = RuntimeParams::default();
+        p.film_render.grain.engine = GrainEngine::Spektra;
+        p.debug.deactivate_stochastic_effects = false;
+        for (route, scanner, enlarger) in [
+            ("input > film > scan", true, false),
+            ("input > film > print > scan", false, true),
+            ("input > film", false, false),
+        ] {
+            p.workflow.route = route.into();
+            p.settings.use_scanner_lut = scanner;
+            p.settings.use_enlarger_lut = enlarger;
+            for grain in [false, true] {
+                p.film_render.grain.active = grain;
+                p.debug.lut_mode = false;
+                let active_without_lut_mode = scanner || enlarger || grain;
+                assert_eq!(
+                    inactive_reason(path, &p, &color, &color).is_none(),
+                    active_without_lut_mode,
+                    "{route} grain={grain}"
+                );
+                p.debug.lut_mode = true;
+                assert!(inactive_reason_without_profiles(path, &p).is_some());
+                assert!(inactive_reason_with_materials(path, &p, None, None).is_some());
+                assert!(inactive_reason(path, &p, &color, &color).is_some());
+                assert!(
+                    conditions(path)
+                        .into_iter()
+                        .any(|c| !c.holds_for(&p, Some(&color)))
+                );
+                for component in [None, Some(0), Some(1), Some(2)] {
+                    assert_eq!(
+                        grain_control_inactive_reason(path, &p, component),
+                        Some(Condition::LutModeOff.description())
+                    );
+                    assert_eq!(
+                        grain_control_inactive_reason_with_profile(path, &p, &color, component),
+                        Some(Condition::LutModeOff.description())
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn density_min_continuation_uses_restored_lut_values_without_image_preparation() {
+        let path = "film_render.grain.density_min";
+        let bw = film(false, true);
+        let mut p = RuntimeParams::default();
+        p.film_render.grain.engine = GrainEngine::Procedural;
+        p.film_render.grain.monochrome = true;
+        p.film_render.grain.active = false;
+        p.debug.lut_mode = true;
+        p.debug.deactivate_stochastic_effects = true;
+        // Continuations neither reapply the debug constraints nor broadcast
+        // monochrome density_min before a downstream LUT consumes its bounds.
+        for (route, scanner, enlarger) in [
+            ("film > scan", true, false),
+            ("film > print", false, true),
+            ("film > print > scan", false, true),
+        ] {
+            p.workflow.route = route.into();
+            p.settings.use_scanner_lut = scanner;
+            p.settings.use_enlarger_lut = enlarger;
+            assert!(inactive_reason_without_profiles(path, &p).is_none());
+            assert!(inactive_reason_with_materials(path, &p, None, None).is_none());
+            assert!(inactive_reason(path, &p, &bw, &bw).is_none());
+            assert!(
+                conditions(path)
+                    .into_iter()
+                    .all(|c| c.holds_for(&p, Some(&bw)))
+            );
+            for component in [None, Some(0), Some(1), Some(2)] {
+                assert!(grain_control_inactive_reason(path, &p, component).is_none());
+                assert!(
+                    grain_control_inactive_reason_with_profile(path, &p, &bw, component).is_none()
+                );
+                assert!(Condition::DensityMinimum(component).holds_for(&p, Some(&bw)));
+            }
+        }
+        p.workflow.route = "film > scan".into();
+        p.settings.use_scanner_lut = true;
+        p.settings.use_enlarger_lut = false;
+        p.scanner.scan_output = "negative_to_positive".into();
+        assert!(inactive_reason(path, &p, &bw, &bw).is_some());
+        p.scanner.scan_output = "direct_scan".into();
+        p.settings.use_scanner_lut = false;
+        assert!(inactive_reason(path, &p, &bw, &bw).is_some());
+        p.workflow.route = "print > scan".into();
+        p.settings.use_scanner_lut = true;
+        assert!(inactive_reason(path, &p, &bw, &bw).is_some());
     }
 
     #[test]

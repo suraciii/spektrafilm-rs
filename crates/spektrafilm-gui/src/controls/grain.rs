@@ -210,6 +210,14 @@ pub(crate) fn sections(
             "Select the grain engine: Spektra for material grain in developed film density, Procedural for post-scan grain appearance in encoded RGB, Dye for material grain formed in a film-coordinate dye field, Fotufilm Film for effective-appearance film population grain model.",
         );
     }
+    flags.runtime_changed |= vector!(
+        ui,
+        params,
+        filter,
+        density_min,
+        "density min",
+        "Minimum grain density for Spektra; also sets bounds for executing film-scanner and enlarger LUTs."
+    );
     if !params.film_render.grain.active && !filter.active() {
         notice(ui, "controls.grain.off");
         return;
@@ -276,14 +284,6 @@ fn shared_controls(
         rms_granularity,
         "rms granularity",
         "Per-channel granularity G: Spektra derives statistical particle area from the film density curves using upstream granularity. It is not a certified optical RMS target. Distinct from Procedural Amount."
-    );
-    changed |= vector!(
-        ui,
-        params,
-        filter,
-        density_min,
-        "density min",
-        "Minimum grain density for Spektra."
     );
     changed |= vector!(
         ui,
@@ -840,6 +840,51 @@ mod tests {
                     "{label}",
                 );
             }
+        }
+    }
+
+    #[test]
+    fn lut_density_min_is_editable_without_material_grain_and_retained_when_unused() {
+        for (engine, active) in [(GrainEngine::Dye, false), (GrainEngine::Procedural, true)] {
+            let mut params = RuntimeParams::default();
+            params.workflow.route = "input > film > scan".into();
+            params.taps.inject = Some("cmy_film".into());
+            params.settings.use_scanner_lut = true;
+            params.film_render.grain.engine = engine;
+            params.film_render.grain.active = active;
+            params.film_render.grain.monochrome = true;
+            params.film_render.grain.density_min = [0.1, 0.2, 0.3];
+            let mut harness = Harness::new_ui_state(
+                grain_ui,
+                GrainUi {
+                    params,
+                    query: String::new(),
+                },
+            );
+            assert!(!harness.get_by_label("density min R").node().is_disabled());
+            for label in ["density min G", "density min B"] {
+                assert!(harness.query_by_label(label).is_none());
+            }
+            harness.get_by_label("density min R").focus();
+            harness.run();
+            harness.press_key_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+            harness.get_by_label("density min R").type_text("0.4");
+            harness.run();
+            let grain = &harness.state().params.film_render.grain;
+            assert_eq!(grain.density_min, [0.4, 0.2, 0.3]);
+            assert_eq!(grain.engine, engine);
+            assert_eq!(grain.active, active);
+
+            harness.state_mut().params.settings.use_scanner_lut = false;
+            harness.run();
+            assert!(harness.query_by_label("density min R").is_none());
+            harness.state_mut().params.settings.use_scanner_lut = true;
+            harness.run();
+            assert!(!harness.get_by_label("density min R").node().is_disabled());
+            assert_eq!(
+                harness.state().params.film_render.grain.density_min,
+                [0.4, 0.2, 0.3]
+            );
         }
     }
 

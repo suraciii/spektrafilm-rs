@@ -815,6 +815,85 @@ fn camera_mirror_is_validated_before_dedicated_diffusion_overrides_it() {
     assert_eq!(camera.color_filter, "none");
     assert_eq!(camera.diffusion_filter.filter_family, "black_pro_mist");
 }
+
+#[test]
+fn invalid_enlarger_mirrors_are_rejected_before_later_overrides() {
+    let directory = tempfile::tempdir().unwrap();
+    let accepted_path = directory.path().join("accepted.json");
+    let source_path = directory.path().join("source.json");
+    GuiState::factory().save(&accepted_path).unwrap();
+    let accepted_bytes = std::fs::read(&accepted_path).unwrap();
+
+    for invalid in [
+        json!({
+            "preflashing": {"illuminant": "unknown"},
+            "simulation": {"enlarger": {"illuminant": "TH-KG3"}}
+        }),
+        json!({
+            "preflashing": {"illuminant": null},
+            "simulation": {"enlarger": {"illuminant": "TH-KG3"}}
+        }),
+        json!({
+            "preflashing": {"normalize_print_exposure": "yes"},
+            "enlarger": {"print_exposure_mode": "auto"}
+        }),
+        json!({
+            "preflashing": {"illuminant": "unknown"},
+            "enlarger": {"illuminant": "TH-KG3"}
+        }),
+        json!({
+            "enlarger": {"illuminant": "unknown"},
+            "simulation": {"enlarger": {"illuminant": "TH-KG3"}}
+        }),
+        json!({
+            "simulation": {"enlarger": {"print_exposure_compensation": "yes"}}
+        }),
+    ] {
+        let mut invalid = invalid;
+        invalid["rust"] = json!({"version": CURRENT_STATE_VERSION});
+        invalid["camera"] = json!({"exposure_compensation_ev": 1.25});
+        let source = serde_json::to_vec(&invalid).unwrap();
+        std::fs::write(&source_path, &source).unwrap();
+        assert!(GuiState::load(&source_path).is_err());
+        assert_eq!(std::fs::read(&source_path).unwrap(), source);
+        assert!(GuiState::from_value(invalid.clone()).is_err());
+        assert!(GuiState { sections: invalid }.save(&accepted_path).is_err());
+        assert_eq!(std::fs::read(&accepted_path).unwrap(), accepted_bytes);
+    }
+}
+
+#[test]
+fn valid_enlarger_mirror_precedence_survives_runtime_and_file_roundtrip() {
+    let state = GuiState::from_value(json!({
+        "rust": {"version": 2},
+        "preflashing": {
+            "illuminant": "D65",
+            "normalize_print_exposure": true,
+            "print_exposure_compensation": false
+        },
+        "enlarger": {"illuminant": "TH-KG3"},
+        "simulation": {"enlarger": {"illuminant": "BB4000"}}
+    }))
+    .unwrap();
+    assert_eq!(state.sections["preflashing"]["illuminant"], "D65");
+    let params = state.runtime_params().unwrap();
+    assert_eq!(params.enlarger.illuminant, "BB4000");
+    assert_eq!(params.enlarger.print_exposure_mode.as_str(), "auto");
+    assert_eq!(params.settings.print_exposure_ev_tracking.as_str(), "never");
+
+    let saved =
+        GuiState::from_runtime(&params, state.film(), state.paper(), &state.sections).unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("state.json");
+    saved.save(&path).unwrap();
+    let restored = GuiState::load(&path).unwrap().runtime_params().unwrap();
+    assert_eq!(restored.enlarger.illuminant, "BB4000");
+    assert_eq!(restored.enlarger.print_exposure_mode.as_str(), "auto");
+    assert_eq!(
+        restored.settings.print_exposure_ev_tracking.as_str(),
+        "never"
+    );
+}
 #[test]
 fn camera_capture_illuminant_roundtrips_through_gui_state() {
     let factory = GuiState::factory();
