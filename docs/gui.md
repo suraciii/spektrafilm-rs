@@ -232,6 +232,8 @@ Click a switch or focus it and press Enter to toggle its overlay. Blue marks bla
 
 Hold the secondary pointer button on a switch, or hold Space while it has keyboard focus, to inspect an isolated mask. Shadow inspection uses a white photograph area with black matches; highlight inspection uses a black photograph area with white matches. Release the hold to restore the requested overlays.
 
+Moving focus away from the switch also ends temporary inspection. Control search locates and focuses the switch without activating its overlay or isolated view.
+
 The warnings inspect the accepted **Original** or **Modified** in its native RGB interpretation before display conversion and ICC. They work with analysis closed and do not use its selection or sRGB range counts.
 
 All native linear channels must be at or below zero for a black warning. Any channel at or above one produces a white warning. Encoded images use the equivalent transfer-function endpoints; an endpoint is not proof of lost capture or export detail.

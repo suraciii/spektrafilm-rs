@@ -72,6 +72,122 @@ fn clipping_controls_are_independent_and_holds_restore_without_photo_edits() {
     let request = h.state().render_worker.next_request_id;
     let history = h.state().can_undo();
     assert!(!h.state().analysis.visible);
+    search_controls(h, "viewer.clipping.shadows");
+    let locator = locator_label(h, "viewer.clipping.shadows");
+    for key in [egui::Key::Space, egui::Key::Enter] {
+        h.get_by_label(&locator).focus();
+        h.step();
+        h.input_mut().events.push(egui::Event::Key {
+            key,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        });
+        h.step();
+        assert!(h.get_by_label("Shadow clipping warning").is_focused());
+        assert_eq!(h.state().viewer.observed_clipping(), ViewerClipping::Off);
+        assert!(!h.state().viewer.clipping.shadows);
+        // Repeated activation still belongs to the locator until release.
+        for _ in 0..3 {
+            h.input_mut().events.push(egui::Event::Key {
+                key,
+                physical_key: None,
+                pressed: true,
+                repeat: true,
+                modifiers: egui::Modifiers::NONE,
+            });
+            h.step();
+            assert_eq!(h.state().viewer.observed_clipping(), ViewerClipping::Off);
+            assert!(!h.state().viewer.clipping.shadows);
+        }
+        h.input_mut().events.push(egui::Event::Key {
+            key,
+            physical_key: None,
+            pressed: false,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        });
+        h.step();
+        assert_eq!(h.state().viewer.observed_clipping(), ViewerClipping::Off);
+    }
+    search_controls(h, "");
+
+    // The preset name prompt is a nonmodal Window: an overlapping Cancel
+    // button must own the right press instead of the warning underneath it.
+    h.state_mut().save_preset_as();
+    h.run_steps(6);
+    let warning = h
+        .get_by_label("Shadow clipping warning")
+        .raw_bounds()
+        .unwrap();
+    let cancel = h.get_by_label("Cancel").raw_bounds().unwrap();
+    let center = |r: egui::accesskit::Rect| {
+        egui::pos2(((r.x0 + r.x1) * 0.5) as f32, ((r.y0 + r.y1) * 0.5) as f32)
+    };
+    let area = egui::containers::AreaState::load(&h.ctx, egui::Id::new("Preset name"))
+        .expect("preset name window");
+    let title = area.rect().left_top() + egui::vec2(area.rect().width() * 0.5, 10.0);
+    let destination = title + (center(warning) - center(cancel));
+    h.input_mut().events.push(egui::Event::PointerMoved(title));
+    h.step();
+    h.input_mut().events.push(egui::Event::PointerButton {
+        pos: title,
+        button: egui::PointerButton::Primary,
+        pressed: true,
+        modifiers: egui::Modifiers::NONE,
+    });
+    h.step();
+    h.input_mut()
+        .events
+        .push(egui::Event::PointerMoved(destination));
+    h.step();
+    h.input_mut().events.push(egui::Event::PointerButton {
+        pos: destination,
+        button: egui::PointerButton::Primary,
+        pressed: false,
+        modifiers: egui::Modifiers::NONE,
+    });
+    h.run_steps(3);
+    let cancel = h.get_by_label("Cancel").raw_bounds().unwrap();
+    let overlap = egui::Rect::from_min_max(
+        egui::pos2(
+            warning.x0.max(cancel.x0) as f32,
+            warning.y0.max(cancel.y0) as f32,
+        ),
+        egui::pos2(
+            warning.x1.min(cancel.x1) as f32,
+            warning.y1.min(cancel.y1) as f32,
+        ),
+    );
+    assert!(
+        overlap.is_positive(),
+        "preset Cancel must cover the warning switch"
+    );
+    let position = overlap.center();
+    h.input_mut()
+        .events
+        .push(egui::Event::PointerMoved(position));
+    h.step();
+    h.input_mut().events.push(egui::Event::PointerButton {
+        pos: position,
+        button: egui::PointerButton::Secondary,
+        pressed: true,
+        modifiers: egui::Modifiers::NONE,
+    });
+    h.step();
+    assert_eq!(h.state().viewer.observed_clipping(), ViewerClipping::Off);
+    assert!(!h.state().viewer.clipping.shadows && !h.state().viewer.clipping.highlights);
+    h.input_mut().events.push(egui::Event::PointerButton {
+        pos: position,
+        button: egui::PointerButton::Secondary,
+        pressed: false,
+        modifiers: egui::Modifiers::NONE,
+    });
+    h.step();
+    h.get_by_label("Cancel").simulate_click();
+    h.run_steps(3);
+    assert!(h.state().presets.name_dialog.is_none());
     click(h, "Shadow clipping warning");
     assert_eq!(
         h.state().viewer.observed_clipping(),
@@ -158,6 +274,71 @@ fn clipping_controls_are_independent_and_holds_restore_without_photo_edits() {
         }
     );
 
+    // A secondary press must focus an initially unfocused switch. Losing that
+    // focus ends the hold even while the pointer button remains down.
+    let fit_label = crate::i18n::text(&h.ctx, "surfaces.viewer.fit").into_owned();
+    h.get_by_label(&fit_label).focus();
+    h.step();
+    h.input_mut().events.push(egui::Event::PointerButton {
+        pos: position,
+        button: egui::PointerButton::Secondary,
+        pressed: true,
+        modifiers: egui::Modifiers::NONE,
+    });
+    h.step();
+    assert!(h.get_by_label("Highlight clipping warning").is_focused());
+    assert_eq!(
+        h.state().viewer.observed_clipping(),
+        ViewerClipping::Highlights
+    );
+    h.get_by_label(&fit_label).focus();
+    // Fit is built after the warning, so its accessibility focus action
+    // becomes visible to the warning on the following frame.
+    h.run_steps(2);
+    assert!(h.get_by_label(&fit_label).is_focused());
+    assert_eq!(
+        h.state().viewer.observed_clipping(),
+        ViewerClipping::Overlay {
+            shadows: true,
+            highlights: true
+        }
+    );
+    h.input_mut().events.push(egui::Event::PointerButton {
+        pos: position,
+        button: egui::PointerButton::Secondary,
+        pressed: false,
+        modifiers: egui::Modifiers::NONE,
+    });
+    h.step();
+
+    h.input_mut().events.push(egui::Event::PointerButton {
+        pos: position,
+        button: egui::PointerButton::Secondary,
+        pressed: true,
+        modifiers: egui::Modifiers::NONE,
+    });
+    h.step();
+    assert_eq!(
+        h.state().viewer.observed_clipping(),
+        ViewerClipping::Highlights
+    );
+    h.input_mut().events.push(egui::Event::PointerGone);
+    h.step();
+    assert_eq!(
+        h.state().viewer.observed_clipping(),
+        ViewerClipping::Overlay {
+            shadows: true,
+            highlights: true
+        }
+    );
+    h.input_mut().events.push(egui::Event::PointerButton {
+        pos: position,
+        button: egui::PointerButton::Secondary,
+        pressed: false,
+        modifiers: egui::Modifiers::NONE,
+    });
+    h.step();
+
     h.get_by_label("Shadow clipping warning").focus();
     h.step();
     h.input_mut().events.push(egui::Event::Key {
@@ -173,6 +354,22 @@ fn clipping_controls_are_independent_and_holds_restore_without_photo_edits() {
         ViewerClipping::Shadows
     );
     h.get_by_label("Highlight clipping warning").focus();
+    h.step();
+    assert_eq!(
+        h.state().viewer.observed_clipping(),
+        ViewerClipping::Overlay {
+            shadows: true,
+            highlights: true
+        }
+    );
+    h.get_by_label("Shadow clipping warning").focus();
+    h.input_mut().events.push(egui::Event::Key {
+        key: egui::Key::Space,
+        physical_key: None,
+        pressed: true,
+        repeat: true,
+        modifiers: egui::Modifiers::NONE,
+    });
     h.step();
     assert_eq!(
         h.state().viewer.observed_clipping(),

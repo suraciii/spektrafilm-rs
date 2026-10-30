@@ -94,9 +94,28 @@ impl ClippingAxis {
 
     /// None denotes a viewport cell whose center is outside the photograph.
     pub fn bounds(&self, coordinate: u32) -> Option<[u32; 2]> {
+        self.bounds_impl(coordinate, false)
+    }
+
+    /// Include the narrow f32 compositor rounding fringe. The device apply
+    /// pass still checks its own actual photograph containment before painting.
+    pub fn bounds_with_compositor_roundoff(&self, coordinate: u32) -> Option<[u32; 2]> {
+        self.bounds_impl(coordinate, true)
+    }
+
+    fn bounds_impl(&self, coordinate: u32, compositor_roundoff: bool) -> Option<[u32; 2]> {
         let edge = self.origin + f64::from(coordinate) * self.cell;
         let center = edge + 0.5 * self.cell;
-        if center < self.image[0] || center >= self.image[1] {
+        let margin = if compositor_roundoff {
+            8.0 * f64::from(f32::EPSILON)
+                * (self.origin.abs()
+                    + (edge - self.origin).abs()
+                    + self.cell.abs()
+                    + self.image[0].abs().max(self.image[1].abs()))
+        } else {
+            0.0
+        };
+        if center < self.image[0] - margin || center >= self.image[1] + margin {
             return None;
         }
         if self.nearest {
