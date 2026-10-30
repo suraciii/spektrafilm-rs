@@ -18,6 +18,18 @@ pub(crate) fn validate_stored_runtime(params: &mut RuntimeParams) -> Result<()> 
     result.map_err(anyhow::Error::new)
 }
 
+/// Validate a normalized runtime carrier before another stored mirror can replace it.
+fn validate_runtime_values(value: Value, path: &str) -> Result<()> {
+    let params: RuntimeParams = serde_json::from_value(value).map_err(|error| {
+        crate::app::Message::new("operations.state.invalid_parameters")
+            .arg("path", path)
+            .context(error)
+    })?;
+    params
+        .validate_values_detailed()
+        .map_err(anyhow::Error::new)
+}
+
 pub(super) fn normalize_grain_section(section: &mut Value) {
     let Some(object) = section.as_object_mut() else {
         return;
@@ -208,20 +220,12 @@ pub(super) fn validate_state_parameters(value: &mut Value, version: Option<u64>)
                 .remove("magazine_print_color");
         }
     }
-    let _: RuntimeParams = serde_json::from_value(explicit.clone()).map_err(|error| {
-        crate::app::Message::new("operations.state.invalid_parameters")
-            .arg("path", "rust.runtime")
-            .context(error)
-    })?;
+    validate_runtime_values(explicit.clone(), "rust.runtime")?;
     if let Some(fields) = value.get("grain") {
         let mut grain = fields.clone();
         normalize_grain_section(&mut grain);
         let projected = json!({"film_render": {"grain": grain}});
-        let _: RuntimeParams = serde_json::from_value(projected).map_err(|error| {
-            crate::app::Message::new("operations.state.invalid_parameters")
-                .arg("path", "grain")
-                .context(error)
-        })?;
+        validate_runtime_values(projected, "grain")?;
     }
     for (section, group, leaf) in [
         ("output_gamut_compress", "io", "output_gamut_compress"),
@@ -304,11 +308,7 @@ pub(super) fn validate_state_parameters(value: &mut Value, version: Option<u64>)
                 )
             );
         }
-        let _: RuntimeParams = serde_json::from_value(projected.clone()).map_err(|error| {
-            crate::app::Message::new("operations.state.invalid_parameters")
-                .arg("path", "simulation.io")
-                .context(error)
-        })?;
+        validate_runtime_values(projected.clone(), "simulation.io")?;
         if legacy {
             value["simulation"]["io"] = projected["io"].clone();
         }
@@ -318,29 +318,11 @@ pub(super) fn validate_state_parameters(value: &mut Value, version: Option<u64>)
     // scanner keys fail the document instead of being silently dropped.
     if let Some(fields) = value.get("scanner") {
         let projected = json!({"scanner": fields});
-        let params: RuntimeParams = serde_json::from_value(projected).map_err(|error| {
-            crate::app::Message::new("operations.state.invalid_parameters")
-                .arg("path", "scanner")
-                .context(error)
-        })?;
-        params
-            .scanner
-            .operator
-            .validate_detailed()
-            .map_err(anyhow::Error::new)?;
+        validate_runtime_values(projected, "scanner")?;
     }
     if let Some(fields) = value["rust"]["runtime"].get("scanner") {
         let projected = json!({"scanner": fields});
-        let params: RuntimeParams = serde_json::from_value(projected).map_err(|error| {
-            crate::app::Message::new("operations.state.invalid_parameters")
-                .arg("path", "rust.runtime.scanner")
-                .context(error)
-        })?;
-        params
-            .scanner
-            .operator
-            .validate_detailed()
-            .map_err(anyhow::Error::new)?;
+        validate_runtime_values(projected, "rust.runtime.scanner")?;
     }
     if let Some(output) = value.get_mut("output_gamut_compress") {
         let mut projected = json!({"io": {"output_gamut_compress": output.clone()}});
@@ -350,11 +332,7 @@ pub(super) fn validate_state_parameters(value: &mut Value, version: Option<u64>)
             )
             .map_err(anyhow::Error::new)?;
         }
-        let _: RuntimeParams = serde_json::from_value(projected).map_err(|error| {
-            crate::app::Message::new("operations.state.invalid_parameters")
-                .arg("path", "io.output_gamut_compress")
-                .context(error)
-        })?;
+        validate_runtime_values(projected, "io.output_gamut_compress")?;
         if legacy {
             output
                 .as_object_mut()
@@ -416,10 +394,6 @@ pub(super) fn validate_state_parameters(value: &mut Value, version: Option<u64>)
                 .remove("magazine_print_color");
         }
     }
-    let _: RuntimeParams = serde_json::from_value(explicit).map_err(|error| {
-        crate::app::Message::new("operations.state.invalid_parameters")
-            .arg("path", "rust.runtime")
-            .context(error)
-    })?;
+    validate_runtime_values(explicit, "rust.runtime")?;
     Ok(())
 }

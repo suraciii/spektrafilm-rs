@@ -25,7 +25,7 @@ A preset document, a sparse parameter file, and inline assignments MUST remain d
 
 Explicit-axis ownership MUST survive runtime construction and calibration rebuilds. It MUST NOT change the user's database-calibration setting. Calibration MUST retain database f64 values for axes that remain database-owned.
 
-A prepared configuration MUST NOT receive another stock initialization step when the runtime is constructed. Applying preview, LUT-mode, or debug constraints MUST NOT corrupt the editable controls used to resolve a subsequent configuration. Legacy baseline decoding and numerical preparation MUST remain unchanged except for the explicit declaration and route changes in the [compatibility contract](spec.md#compatibility).
+A prepared configuration MUST NOT receive another stock initialization step when the runtime is constructed. Applying preview, LUT-mode, or debug constraints MUST NOT corrupt the editable controls used to resolve a subsequent configuration. Legacy baseline decoding and numerical preparation MUST retain their existing semantics while the [compatibility contract](spec.md#compatibility) governs canonical validation and other explicit cutovers.
 
 - Core MUST return the resolved profiles and effective parameters as one validated result. The CLI MUST resolve and validate writer options separately from scanner output parameters.
 - Writer resolution MUST NOT require an output artifact. A dry run without `--output` MUST resolve the writer defaults without inventing a destination path.
@@ -47,6 +47,22 @@ Array controls with distinct component domains MUST describe each component. Sou
 - Raster input MUST NOT report RAW controls as active. Reporting the selected directory MUST NOT reselect it or load image pixels.
 
 The [workflow design](#workflow-boundary) owns source-aware data selection, help, signed numeric argument handling, and corrective suggestions.
+
+## Shared value validation
+
+The [value-validity contract](spec.md#parameter-value-validity) separates input compatibility from the domain of a canonical value. Existing carrier decoders and versioned migrations MUST normalize their supported forms first. They MUST then use core-owned value rules without turning complete documents into sparse edits.
+
+`RuntimeParams` and its feature parameter types MUST remain the typed model. `params::validation` and the owning feature validators MUST own value domains. `leaf_numeric_bounds`, enum vocabularies, and component-domain declarations MUST remain shared facts, not values copied into adapters.
+
+Sparse leaf validation and typed parameter validation MUST call the same scalar, optional, or component rules where they validate the same domain. Numeric domain checks MUST retain inclusive or exclusive endpoints and the field's actual f32 or f64 representation.
+
+Domain validation MUST NOT depend on an enable switch. Cross-field and material-dependent checks MUST retain their owning context requirements rather than become unconditional resource checks.
+
+Validation of a sparse source MUST inspect supplied leaves without filling omissions. Validation of a complete candidate MUST include its decoded defaults without marking those defaults explicit. Validation MUST NOT alter neutral-filter protection, preset ownership, or the legacy baseline's stock-initialization policy.
+
+Typed runtime validation MUST NOT serialize the whole parameter object to JSON, call a CLI parser, or construct a second schema to reuse leaf rules. The implementation SHOULD extract small typed checks inside the existing validation modules. Human errors MUST retain the canonical path and semantic failure from the authoritative check; adapters supply source location and presentation.
+
+Current-schema writers MUST validate canonical runtime values before publication through their existing transaction. Reader normalization MUST remain read-only. A corrected value is an explicit user edit, not a validator fallback.
 
 ## Existing contracts
 The original `--params` decoder MUST remain the legacy baseline decoder. A recursive merge into Rust defaults is not an equivalent replacement: a supplied group can have field-level deserialization defaults that differ from the group's Rust defaults. New sparse parameter files MUST operate on the resolved baseline rather than changing this decoder.
@@ -71,11 +87,52 @@ RenderRecipe MUST remain the structured render contract. The resolution report M
 ## Resolution feedback
 - The shared resolver MUST retain winning explicit edits before constraints and compare them with the effective typed result. It MUST retain source identity only where the [report contract](spec.md#discovery-and-dry-run) requires it.
 - Tracking MUST NOT serialize a complete history or copy image buffers. One feedback evaluation MUST serve normal processing and both dry-run views.
-- The authoritative effect conditions MUST be evaluable against effective controls and selected workflow. Validators, discovery, and feedback MUST share these conditions.
+- The authoritative effect conditions MUST be evaluable against effective controls, the executed operation scope, and relevant resolved materials. Discovery, CLI feedback, and GUI disclosure MUST share these conditions under [Operation applicability](#operation-applicability).
 - Parsing human condition strings is not an effect evaluator. The CLI MUST NOT add a handwritten switch over every control.
-- Controls with no known disabling condition MAY be classified as active; this classification MUST NOT claim measured influence on output pixels.
+- A route-independent field MAY be active without an operation gate. An operation-owned field MUST NOT become route-independent merely because its condition was omitted.
 - When a source is invalid, validation MUST fail before feedback is emitted for a resolved configuration. When a valid edit is inactive, feedback MUST preserve it rather than activate another control.
 - Text rendering MUST format the same result as JSON. Diagnostics remain on stderr and telemetry remains independent.
+
+## Operation applicability
+
+The [applicability contract](spec.md#operation-applicability) MUST use the existing `params::sources::effects` condition owner. Extend its typed conditions and the existing `WorkflowRoute` operation predicates; do not add a plugin container, dependency graph, or user-authored condition language.
+
+The route and stage-execution owners MUST define which operations execute. Feature owners MUST define which of those operations consume their controls.
+
+Conditions MAY share a family default only where the controls share actual dependencies. Exceptions such as Procedural grain, print readout, and shared geometry MUST stay explicit beside the owning feature rules rather than be inferred from a storage prefix.
+
+Shared film-curve and spectral controls MUST account for downstream calibration consumers without requiring a new film exposure. Fresh automatic print exposure and explicit print exposure tracking consume calibrated references. Material continuation uses the artifact's frozen references instead.
+
+The same condition definitions MUST supply discovery descriptions and resolved evaluation. Queries MUST borrow existing parameters, the actual operation scope, and relevant cached material data.
+
+They MUST NOT perform IO, device creation, numerical preparation, per-row parameter serialization, or profile cloning. A route without print work MUST NOT load a print profile merely to explain an inactive control.
+
+Discovery without material context MUST describe the material requirement. Production disclosure MUST use resolved material context where a condition needs it; lack of context MUST NOT be presented as proof of applicability. The existing no-profile grain query remains a configured-context query, not a substitute for resolved material capability.
+
+Missing-operation conditions MUST precede suggestions to enable an effect on that operation. An enable selector's own applicability MUST NOT circularly depend on its current off value. Ordinary numerical controls retain their feature enable, engine, profile, and bypass conditions.
+
+GUI presentation and normal CLI feedback MUST use the configured final-render context. Operation-specific evaluation MUST use the actual requested span and owning bypass policy.
+
+A temporary Preview parameter copy MUST NOT become the GUI's accepted configuration. Existing tap and artifact owners supply remaining-operation and frozen-state facts without creating a second execution plan.
+
+Numerical stages and preparation MUST retain their typed dependencies and existing execution decisions. They MUST NOT call string-path metadata queries per pixel or obtain their algorithms from disclosure metadata. If a route fact is duplicated, its typed predicate belongs to the existing route owner and is reused by both execution and feedback.
+
+Model, artifact, LUT, and backend admission remain separate owners. Applicability MUST NOT reinterpret a required failure as a bypass, a fallback executor, or an inactive warning. Their named bypasses remain authoritative; this design does not enlarge any engine's supported domain.
+
+## Parameter-rule design choice
+
+The selected boundary accepts documented input variation and valid inactive state, but rejects invalid canonical values. A missing operation explains inactivity without changing the requested values. This applies the robustness principle without guessing how to repair user intent.
+
+| Alternative | Decision and trade-off |
+| --- | --- |
+| Keep invalid values only while inactive | Rejected. It gives a stored value context-dependent legality and lets a later route or enable edit expose a latent error. It also requires every carrier to preserve and diagnose that additional state. |
+| Clamp, clear, or default an invalid value | Rejected. It changes authored intent and can make an apparently successful load produce a different image. |
+| Shared canonical validation after existing normalization | Selected. It preserves documented input compatibility and gives one domain decision. Previously accepted out-of-domain inactive complete documents require explicit correction. |
+| Separate GUI and CLI applicability tables | Rejected. Adding a route, engine, or control requires repeating the same operation rule. |
+| Generic parameter registry or reactive component framework | Rejected. Existing typed parameters, feature validators, route predicates, and conditions provide the required boundaries without another schema or lifecycle system. |
+
+This cutover MUST NOT change numerical algorithms, parameter wire shapes, document versions, units, supported routes, preset scopes, cache identities, or resource lifetimes. GUI control-label identity is a separate concern and is not included. No permissive import flag, implicit repair, new report status, or new execution mode belongs to this work.
+
 
 ## Design choice and implementation dependencies
 - Canonical runtime paths and the existing sparse TOML/JSON language are retained. Short aliases would duplicate vocabulary and obscure distinct exposure and grain controls.

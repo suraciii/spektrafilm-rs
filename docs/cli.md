@@ -127,6 +127,10 @@ It checks the input path and supported file kind.
 Image decoding and compute-adapter availability remain unchecked.
 Saving color flags control writer conversion independently of scanner `io.output_color_space` and `io.output_cctf_encoding`.
 
+Canonical values use the same validation rules in complete parameters, sparse edits, presets, GUI state, recipes, LUT requests, and direct runtime updates. Disabled features still require valid stored values. For example, disabled chemistry accepts `developer_exhaustion=0.5` but rejects `2.0`; a later override cannot conceal the invalid source. Rejection does not rewrite the source or replace an existing output.
+
+An `inactive` edit remains stored but is not used by the selected operation. Feedback distinguishes an absent operation from a disabled feature or unsupported material. The `input` route does not expose film, and scanning a developed print does not print it again. Shared spectral and film-curve controls can still serve downstream calibration on fresh automatic-print routes. See [value validity](../specs/cli/spec.md#parameter-value-validity) and [operation applicability](../specs/cli/spec.md#operation-applicability).
+
 Recipe `seed` values are admitted in the unsigned 32-bit range (`0..=4_294_967_295`).
 
 ### Feature profiles

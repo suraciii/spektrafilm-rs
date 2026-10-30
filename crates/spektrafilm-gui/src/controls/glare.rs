@@ -11,7 +11,12 @@ pub(crate) fn sections(
 ) {
     if section == "Glare" {
         section_header(ui, filter, "Print viewing glare", |ui, filter| {
-            ui.add_enabled_ui(params.workflow.route.contains(" > print > "), |ui| {
+            let reason =
+                crate::ui::control_inactive_reason(ui.ctx(), "print_render.glare.active", params);
+            if let Some(reason) = &reason {
+                ui.label(localized(ui.ctx(), reason));
+            }
+            ui.add_enabled_ui(reason.is_none(), |ui| {
                 if filter_matches(filter, "enable print glare") {
                     flags.runtime_changed |= toggle(ui, "Enable print glare", &mut params.print_render.glare.active, "Add readout stray light after lens blur and before scanner correction. This does not change print exposure or developed density.");
                 }

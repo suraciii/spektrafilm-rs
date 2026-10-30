@@ -118,9 +118,11 @@ pub(crate) enum ScanMedium {
 
 impl ScanMedium {
     pub(crate) fn for_route(self, route: &str) -> Self {
-        if route.contains(" > print > scan") {
+        use spektrafilm_core::WorkflowRoute;
+        let route = WorkflowRoute::parse(route);
+        if route.executes_print_readout(&Default::default()) {
             Self::Paper
-        } else if route.ends_with(" > scan") || route.ends_with(" > scan-minus-base") {
+        } else if route.executes_scan(&Default::default()) {
             self
         } else {
             Self::None
@@ -128,8 +130,14 @@ impl ScanMedium {
     }
 
     pub(crate) fn positive_output_eligible(self, route: &str) -> bool {
+        use spektrafilm_core::WorkflowRoute;
         self == Self::Negative
-            && matches!(route, "input > film > scan" | "input > convert-film > scan")
+            && matches!(
+                WorkflowRoute::parse(route),
+                WorkflowRoute::FilmScan
+                    | WorkflowRoute::StoredFilmScan
+                    | WorkflowRoute::ConvertFilmScan
+            )
     }
 }
 
@@ -727,11 +735,27 @@ pub(crate) fn locate_row(ui: &Ui, path: &str, response: &egui::Response) {
     }
 }
 
+pub(crate) fn applicable_control(
+    ui: &mut Ui,
+    params: &mut RuntimeParams,
+    path: &str,
+    edit: impl FnOnce(&mut Ui, &mut RuntimeParams) -> bool,
+) -> bool {
+    let inactive = crate::ui::control_inactive_reason(ui.ctx(), path, params);
+    let changed = ui
+        .add_enabled_ui(inactive.is_none(), |ui| edit(ui, params))
+        .inner;
+    if let Some(reason) = inactive {
+        ui.label(localized(ui.ctx(), &reason));
+    }
+    changed
+}
+
 pub(crate) fn module_applicability(
     section: &str,
     params: &RuntimeParams,
     film: &Profile,
-    print: &Profile,
+    print: Option<&Profile>,
 ) -> Option<String> {
     // A module banner states that the whole module has no effect. Reporting
     // the first inactive control would promote an optional subfeature (the
@@ -748,9 +772,12 @@ pub(crate) fn module_applicability(
             && !entry.path.ends_with(".engine")
     }) {
         considered = true;
-        let Some(reason) =
-            spektrafilm_core::params::sources::inactive_reason(&entry.path, params, film, print)
-        else {
+        let Some(reason) = spektrafilm_core::params::sources::inactive_reason_with_materials(
+            &entry.path,
+            params,
+            Some(film),
+            print,
+        ) else {
             // One effective control means the module still has an effect.
             return None;
         };
@@ -802,15 +829,15 @@ mod tests {
             params.film_render.grain.active = true;
             params.debug.deactivate_stochastic_effects = false;
             assert_eq!(
-                module_applicability("Grain", &params, &film, &print),
+                module_applicability("Grain", &params, &film, Some(&print)),
                 None,
                 "{engine:?}"
             );
             params.film_render.grain.active = false;
-            assert!(module_applicability("Grain", &params, &film, &print).is_some());
+            assert!(module_applicability("Grain", &params, &film, Some(&print)).is_some());
             params.film_render.grain.active = true;
             params.debug.deactivate_stochastic_effects = true;
-            assert!(module_applicability("Grain", &params, &film, &print).is_some());
+            assert!(module_applicability("Grain", &params, &film, Some(&print)).is_some());
         }
     }
 
@@ -826,28 +853,31 @@ mod tests {
         // Default halation has a zero boost: only the boost sub-group is
         // inactive, so the module keeps no banner.
         assert_eq!(
-            module_applicability("Halation", &params, &film, &print),
+            module_applicability("Halation", &params, &film, Some(&print)),
             None
         );
-        assert_eq!(module_applicability("Camera", &params, &film, &print), None);
+        assert_eq!(
+            module_applicability("Camera", &params, &film, Some(&print)),
+            None
+        );
 
         // A disabled module still explains itself.
         params.film_render.halation.active = false;
         assert_eq!(
-            module_applicability("Halation", &params, &film, &print).as_deref(),
+            module_applicability("Halation", &params, &film, Some(&print)).as_deref(),
             Some("film_render.halation.active = true")
         );
         params.film_render.halation.active = true;
         params.film_render.halation.boost_ev = 1.0;
         assert_eq!(
-            module_applicability("Halation", &params, &film, &print),
+            module_applicability("Halation", &params, &film, Some(&print)),
             None
         );
 
         // A whole-module switch still reports when every dependent row is
         // inactive.
         assert!(
-            module_applicability("Camera diffusion", &params, &film, &print).is_some(),
+            module_applicability("Camera diffusion", &params, &film, Some(&print)).is_some(),
             "disabled diffusion must keep its module banner"
         );
     }

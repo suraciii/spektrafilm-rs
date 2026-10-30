@@ -447,6 +447,79 @@ fn dry_run_legacy_baseline_matches_original_digest() {
 }
 
 #[test]
+fn inactive_chemistry_domains_agree_across_complete_and_sparse_sources() {
+    let f = Fixture::new();
+    let output = f.root.join("output.tif");
+    std::fs::write(&output, b"accepted output").unwrap();
+    for (group, feature) in [
+        ("film_render", "chemistry"),
+        ("print_render", "density_curves_morph"),
+    ] {
+        let path = format!("{group}.{feature}.developer_exhaustion");
+        for value in [0.0, 0.5, 1.0, -0.1, 2.0] {
+            let mut wire = json!({});
+            wire[group] = json!({});
+            wire[group][feature] = json!({"active": false, "developer_exhaustion": value});
+            let json_path = f.root.join("chemistry.json");
+            let toml_path = f.root.join("chemistry.toml");
+            let json_text = serde_json::to_string(&wire).unwrap();
+            std::fs::write(&json_path, &json_text).unwrap();
+            std::fs::write(
+                &toml_path,
+                format!("[{group}.{feature}]\nactive = false\ndeveloper_exhaustion = {value:?}\n"),
+            )
+            .unwrap();
+            let inline = format!("{group}.{feature}.active=false,{path}={value}");
+            for (option, source) in [
+                ("--params", json_path.to_str().unwrap()),
+                ("--set", json_path.to_str().unwrap()),
+                ("--set", toml_path.to_str().unwrap()),
+                ("--set", inline.as_str()),
+            ] {
+                let mut args = vec![
+                    "--film",
+                    "kodak_portra_400",
+                    "--paper",
+                    "kodak_portra_endura",
+                    "--route",
+                    "input",
+                    "--backend",
+                    "cpu",
+                    "--set",
+                    "film_render.grain.active=false",
+                    option,
+                    source,
+                ];
+                let replacement = format!("{path}=0.5");
+                if (0.0..=1.0).contains(&value) {
+                    args.push("--dry-run");
+                    let result = f.process(&args);
+                    assert!(
+                        result.status.success(),
+                        "{}",
+                        String::from_utf8_lossy(&result.stderr)
+                    );
+                    let report: Value = serde_json::from_slice(&result.stdout).unwrap();
+                    assert_eq!(report["parameters"][group][feature]["active"], false);
+                    assert_eq!(
+                        report["parameters"][group][feature]["developer_exhaustion"],
+                        value
+                    );
+                } else {
+                    // Neither a later valid source nor an absent operation hides invalid input.
+                    args.extend(["--set", replacement.as_str()]);
+                    let result = f.process(&args);
+                    assert!(!result.status.success());
+                    assert!(String::from_utf8_lossy(&result.stderr).contains(&path));
+                }
+                assert_eq!(std::fs::read(&output).unwrap(), b"accepted output");
+                assert_eq!(std::fs::read_to_string(&json_path).unwrap(), json_text);
+            }
+        }
+    }
+}
+
+#[test]
 fn sparse_edits_protect_only_supplied_neutral_axes() {
     use spektrafilm_core::{neutral_filters::NeutralFilters, params::RuntimeParams, profile};
     let f = Fixture::new();
@@ -1858,17 +1931,6 @@ fn active_chemistry_domains_fail_before_image_decode_in_dry_run_and_render() {
                 assert!(!f.root.join("output.tif").exists());
             }
         }
-        let inactive =
-            format!("{group}.active=false,{group}.gamma_factor=0,{group}.developer_exhaustion=0.5");
-        let report = f.report(&[
-            "--preset",
-            "Kodak Portra 400",
-            "--set",
-            &inactive,
-            "--dry-run",
-        ]);
-        let pointer = format!("/parameters/{}/active", group.replace('.', "/"));
-        assert_eq!(report.pointer(&pointer), Some(&json!(false)));
         let invalid_inactive = format!("{group}.active=false,{group}.developer_exhaustion=2");
         let rejected = f.process(&[
             "--preset",
@@ -1887,88 +1949,33 @@ fn active_chemistry_domains_fail_before_image_decode_in_dry_run_and_render() {
 }
 
 #[test]
-fn chemistry_validation_runs_after_later_sources_and_looks() {
+fn invalid_inactive_preset_cannot_be_hidden_by_a_later_look_or_source() {
     let f = Fixture::new();
     let shown = f.run(&["preset", "show", "Kodak Portra 400", "--format", "json"]);
     assert!(shown.status.success());
     let mut look: Value = serde_json::from_slice(&shown.stdout).unwrap();
-    look["name"] = json!("Inactive chemistry");
     look["parameters"]["print_render"]["density_curves_morph"]["active"] = json!(false);
-    look["parameters"]["print_render"]["density_curves_morph"]["gamma_factor"] = json!(0.0);
-    let path = f.root.join("inactive.json");
-    std::fs::write(&path, serde_json::to_vec(&look).unwrap()).unwrap();
-    let base = ["--preset", path.to_str().unwrap()];
-    // A later source repairs the chemistry the look left inactive. The repair
-    // has to name `.active`: every other chemistry leaf is gated on it
-    // (`conditions()`), so editing only a gamma factor stores the value but
-    // leaves the domain off.
-    let mut repaired = base.to_vec();
-    repaired.extend_from_slice(&[
+    look["parameters"]["print_render"]["density_curves_morph"]["developer_exhaustion"] = json!(2.0);
+    let source = serde_json::to_vec(&look).unwrap();
+    let path = f.root.join("invalid-inactive.json");
+    std::fs::write(&path, &source).unwrap();
+    let output = f.root.join("output.tif");
+    std::fs::write(&output, b"accepted output").unwrap();
+    let result = f.process(&[
+        "--preset",
+        path.to_str().unwrap(),
+        "--preset",
+        "Kodak Portra 400",
         "--set",
-        "print_render.density_curves_morph.active=true",
-        "--set",
-        "print_render.density_curves_morph.gamma_factor=1",
-        "--dry-run",
+        "print_render.density_curves_morph.developer_exhaustion=0.5",
     ]);
-    let report = f.report(&repaired);
-    assert_eq!(
-        report["parameters"]["print_render"]["density_curves_morph"]["active"],
-        true
-    );
-    assert_eq!(
-        report["parameters"]["print_render"]["density_curves_morph"]["gamma_factor"],
-        1.0
-    );
-    // A gamma factor alone cannot switch the domain on: the edit is stored and
-    // reported inactive, and the run still fails.
-    let mut gated = base.to_vec();
-    gated.extend_from_slice(&[
-        "--set",
-        "print_render.density_curves_morph.gamma_factor=1",
-        "--dry-run",
-    ]);
-    let gated_report = f.report(&gated);
-    assert_eq!(
-        gated_report["parameters"]["print_render"]["density_curves_morph"]["active"],
-        false
-    );
-    assert_eq!(
-        gated_report["parameters"]["print_render"]["density_curves_morph"]["gamma_factor"],
-        1.0
-    );
-    // Applying the same look twice is idempotent.
-    let mut repeated = base.to_vec();
-    repeated.extend_from_slice(&["--preset", "Kodak Portra 400", "--dry-run"]);
-    assert_eq!(
-        f.report(&repeated),
-        f.report(&["--preset", "Kodak Portra 400", "--dry-run"])
-    );
-    // The unrepaired look is not a hard failure: `validate()` returns early
-    // while the domain is off, so the stored gamma factor is kept and the
-    // chemistry simply stays inactive. It is reported as an inactive edit,
-    // not rejected.
-    let mut invalid = base.to_vec();
-    invalid.push("--dry-run");
-    let accepted = f.process(&invalid);
-    assert!(accepted.status.success());
-    let inactive_report = f.report(&invalid);
-    assert_eq!(
-        inactive_report["parameters"]["print_render"]["density_curves_morph"]["active"],
-        false
-    );
-    // Activating the domain without repairing the gamma factor is what fails.
-    let mut unset = base.to_vec();
-    unset.extend_from_slice(&[
-        "--set",
-        "print_render.density_curves_morph.active=true",
-        "--dry-run",
-    ]);
-    let rejected = f.process(&unset);
-    assert!(!rejected.status.success());
+    assert!(!result.status.success());
     assert!(
-        String::from_utf8_lossy(&rejected.stderr)
-            .contains("print_render.density_curves_morph.gamma_factor")
+        String::from_utf8_lossy(&result.stderr)
+            .contains("print_render.density_curves_morph.developer_exhaustion")
     );
+    assert_eq!(std::fs::read(&path).unwrap(), source);
+    assert_eq!(std::fs::read(&output).unwrap(), b"accepted output");
 }
 
 #[test]

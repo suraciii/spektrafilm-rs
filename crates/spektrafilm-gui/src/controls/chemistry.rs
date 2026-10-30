@@ -10,7 +10,18 @@ pub(crate) fn sections(
     filter: &mut ControlFilter<'_>,
 ) {
     if section == "Film chemistry" {
-        render_chemistry(ui, &mut params.film_render.chemistry, flags, true, filter);
+        let inactive =
+            crate::ui::control_inactive_reason(ui.ctx(), "film_render.chemistry.active", params);
+        let values_inactive = crate::ui::control_inactive_reason(
+            ui.ctx(),
+            "film_render.chemistry.gamma_factor",
+            params,
+        );
+        if let Some(reason) = &inactive {
+            ui.label(localized(ui.ctx(), reason));
+        }
+        ui.add_enabled_ui(inactive.is_none(), |ui| {
+        render_chemistry(ui, &mut params.film_render.chemistry, flags, true, filter, values_inactive.as_deref());
         if filter_matches(filter, "density curve gamma") {
             flags.runtime_changed |= param_numeric(
                 ui,
@@ -20,14 +31,30 @@ pub(crate) fn sections(
                 "Gamma applied to the film density curves during development; 1.0 keeps the profile curves unchanged. Requires an actual film-development route.",
             );
         }
+        });
     }
     if section == "Print chemistry" {
+        let inactive = crate::ui::control_inactive_reason(
+            ui.ctx(),
+            "print_render.density_curves_morph.active",
+            params,
+        );
+        let values_inactive = crate::ui::control_inactive_reason(
+            ui.ctx(),
+            "print_render.density_curves_morph.gamma_factor",
+            params,
+        );
+        if let Some(reason) = &inactive {
+            ui.label(localized(ui.ctx(), reason));
+        }
+        ui.add_enabled_ui(inactive.is_none(), |ui| {
         render_chemistry(
             ui,
             &mut params.print_render.density_curves_morph,
             flags,
             false,
             filter,
+            values_inactive.as_deref(),
         );
         if filter_matches(filter, "density curve gamma") {
             flags.runtime_changed |= param_numeric(
@@ -38,6 +65,7 @@ pub(crate) fn sections(
                 "Gamma applied to the paper density curves during print development; 1.0 keeps the profile curves unchanged. Requires an admitted print-development route.",
             );
         }
+        });
     }
 }
 
@@ -79,6 +107,7 @@ fn render_chemistry(
     flags: &mut ChangeFlags,
     film: bool,
     filter: &mut ControlFilter<'_>,
+    values_inactive: Option<&str>,
 ) {
     let paths = if film {
         &FILM_CHEMISTRY_PATHS
@@ -102,6 +131,10 @@ fn render_chemistry(
             },
         );
     }
+    if let Some(reason) = values_inactive {
+        ui.label(localized(ui.ctx(), reason));
+    }
+    ui.add_enabled_ui(values_inactive.is_none(), |ui| {
     if filter_matches(filter, "gamma factor") {
         flags.runtime_changed |= param_numeric(
             ui,
@@ -173,4 +206,5 @@ fn render_chemistry(
             },
         );
     }
+    });
 }

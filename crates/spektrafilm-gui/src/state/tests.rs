@@ -1,6 +1,71 @@
 use super::*;
 
 #[test]
+fn inactive_chemistry_state_validates_mirrors_and_preserves_valid_values() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("state.json");
+    let factory = GuiState::factory();
+    for exhaustion in [0.0, 0.5, 1.0] {
+        let mut params = factory.runtime_params().unwrap();
+        params.film_render.chemistry.active = false;
+        params.film_render.chemistry.developer_exhaustion = exhaustion;
+        params.print_render.density_curves_morph.active = false;
+        params
+            .print_render
+            .density_curves_morph
+            .developer_exhaustion = exhaustion;
+        params.camera.film_format_mm = 2000.0;
+        let state =
+            GuiState::from_runtime(&params, factory.film(), factory.paper(), &factory.sections)
+                .unwrap();
+        state.save(&path).unwrap();
+        let restored = GuiState::load(&path).unwrap().runtime_params().unwrap();
+        assert!(!restored.film_render.chemistry.active);
+        assert!(!restored.print_render.density_curves_morph.active);
+        assert_eq!(
+            restored.film_render.chemistry.developer_exhaustion,
+            exhaustion
+        );
+        assert_eq!(
+            restored
+                .print_render
+                .density_curves_morph
+                .developer_exhaustion,
+            exhaustion
+        );
+        assert_eq!(restored.camera.film_format_mm, 2000.0);
+    }
+    let mut nonfinite = factory.runtime_params().unwrap();
+    nonfinite.film_render.grain.procedural_size = Some(f32::NAN);
+    assert!(
+        GuiState::from_runtime(
+            &nonfinite,
+            factory.film(),
+            factory.paper(),
+            &factory.sections,
+        )
+        .is_err()
+    );
+    let accepted = std::fs::read(&path).unwrap();
+    for (group, feature) in [
+        ("film_render", "chemistry"),
+        ("print_render", "density_curves_morph"),
+    ] {
+        for exhaustion in [-0.1, 2.0] {
+            let mut invalid = factory.sections.clone();
+            invalid["rust"]["runtime"][group][feature] =
+                json!({"active": false, "developer_exhaustion": exhaustion});
+            // A later GUI mirror with a valid value must not conceal invalid input.
+            invalid[group] = json!({});
+            invalid[group][feature] = json!({"active": false, "developer_exhaustion": 0.5});
+            assert!(GuiState::from_value(invalid.clone()).is_err());
+            assert!(GuiState { sections: invalid }.save(&path).is_err());
+            assert_eq!(std::fs::read(&path).unwrap(), accepted);
+        }
+    }
+}
+
+#[test]
 fn sparse_dye_state_preserves_omitted_and_authored_strength() {
     let inherited = GuiState::factory()
         .runtime_params()

@@ -54,6 +54,70 @@ fn preflash(ui: &mut egui::Ui, params: &mut RuntimeParams) {
     );
 }
 
+#[test]
+fn camera_rows_follow_route_without_losing_values() {
+    let mut params = scanner_params();
+    params.workflow.route = "input".into();
+    params.camera.exposure_compensation_ev = 0.75;
+    params.camera.film_format_mm = 50.0;
+    let mut harness = Harness::new_ui_state(camera, params);
+    assert!(
+        harness
+            .get_by_label("Exposure compensation")
+            .node()
+            .is_disabled()
+    );
+    assert!(!harness.get_by_label("Frame Long Edge").node().is_disabled());
+    harness.state_mut().workflow.route = "input > film > scan".into();
+    harness.run();
+    assert!(
+        !harness
+            .get_by_label("Exposure compensation")
+            .node()
+            .is_disabled()
+    );
+    assert_eq!(harness.state().camera.exposure_compensation_ev, 0.75);
+    assert_eq!(harness.state().camera.film_format_mm, 50.0);
+}
+
+#[test]
+fn glare_selector_follows_print_readout_not_print_creation() {
+    let mut params = scanner_params();
+    params.workflow.route = "input > film > print".into();
+    params.print_render.glare.active = false;
+    let mut harness = Harness::new_ui_state(
+        |ui, params: &mut RuntimeParams| {
+            super::show(
+                ui,
+                params,
+                &mut serde_json::Value::Null,
+                "Glare",
+                super::ScanMedium::Negative,
+                "",
+                &mut Default::default(),
+                "D65",
+                &crate::profiles::pick_data_dir(),
+            );
+        },
+        params,
+    );
+    assert!(
+        harness
+            .get_by_label("Enable print glare")
+            .node()
+            .is_disabled()
+    );
+    harness.state_mut().workflow.route = "print > scan".into();
+    harness.run();
+    assert!(
+        !harness
+            .get_by_label("Enable print glare")
+            .node()
+            .is_disabled()
+    );
+    assert!(!harness.state().print_render.glare.active);
+}
+
 #[cfg(test)]
 mod headless {
     use super::*;

@@ -233,6 +233,7 @@ impl Pipeline {
         backend: &dyn ComputeBackend,
         previous: Option<&Pipeline>,
     ) -> Result<ParameterUpdate, String> {
+        params.validate_values()?;
         use crate::pipeline_calibration::{
             FilmMaterialInputs, GrayInputs, PrintInputs, PrintMaterialInputs,
         };
