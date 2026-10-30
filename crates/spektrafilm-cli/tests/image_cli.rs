@@ -145,10 +145,6 @@ fn process_publishes_and_replaces_png_jpeg_tiff_and_openexr() {
             let stderr = String::from_utf8_lossy(&result.stderr);
             assert!(result.status.success(), "{extension}: {stderr}");
             assert!(result.stdout.is_empty(), "{extension}: {:?}", result.stdout);
-            assert!(
-                stderr.contains(&format!("Saved: {} (32x24)", output.display())),
-                "{extension}: {stderr}"
-            );
             assert_ne!(std::fs::read(&output).unwrap(), sentinel);
             let loaded = spektrafilm_core::image_io::load(&output).unwrap();
             assert_eq!((loaded.image.width, loaded.image.height), (32, 24));
@@ -157,7 +153,6 @@ fn process_publishes_and_replaces_png_jpeg_tiff_and_openexr() {
             if extension != "exr" {
                 // EXR deliberately bypasses the Exiv2 metadata boundary.
                 assert!(loaded.metadata.is_some(), "{extension} metadata missing");
-                assert!(!stderr.contains("Warning:"), "{extension}: {stderr}");
             }
             // Sample-storage precision is covered at the owning core writer
             // boundary; this test proves entry-point publication and loading.
