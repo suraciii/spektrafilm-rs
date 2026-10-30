@@ -34,6 +34,8 @@ mod tiled;
 mod tiled_demosaic;
 mod tiled_output;
 mod tiled_sensor;
+#[cfg(test)]
+mod xtrans_reference;
 const CBRT_SHADER: &str = concat!(
     include_str!("../../../../spektrafilm-shaders/wgsl/f64_math.wgsl"),
     include_str!("../../../../spektrafilm-shaders/wgsl/raw/raw_cbrt.wgsl")
