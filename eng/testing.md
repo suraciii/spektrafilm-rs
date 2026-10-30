@@ -38,4 +38,6 @@ When asserting pixel invariance, compare decoded dimensions and samples rather t
 
 For successful CLI image publication, assert decoded output, replacement behavior, supported metadata, and staging-file cleanup. Do not assert incidental progress-message wording or require warning-free stderr. Valid inactive-setting feedback can accompany a successful write.
 
+Built-in look changes must ship with regenerated reference thumbnails. Use the existing real-CPU asset producer, `cargo test --locked -p spektrafilm-gui --bin spektrafilm-gui presets::thumbnails::tests::generate_fixed_reference_thumbnails -- --ignored --exact`, then verify the distributed bundle. Do not update fingerprints without rendering their images.
+
 The [Justfile](../Justfile) defines test selection. The [README](../README.md#build) documents dependencies and verification commands.
