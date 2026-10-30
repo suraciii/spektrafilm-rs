@@ -81,6 +81,14 @@ test-gpu-logic: (test-gpu-logic-precision "") (test-gpu-logic-precision "--featu
 test-gpu-logic-precision precision_args:
     SPEKTRAFILM_TEST_NO_DEVICE=1 cargo test --locked -p spektrafilm-gpu --lib {{precision_args}} -- logic_tests::
 
+# Run the full suite on the software Vulkan adapter. This matches CI's adapter
+# and avoids the workstation amdgpu context loss (`radv/amdgpu: The CS has been
+# cancelled because the context is lost`), which turns every device call into a
+# multi-second fence wait and eventually aborts the run.
+[unix]
+test-software:
+    VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.json cargo test --locked --workspace
+
 # Run measured deterministic logic and isolated file tests in both precisions.
 test-fast: test-gpu-logic (test-fast-precision "") (test-fast-precision "--features precision-f64")
 

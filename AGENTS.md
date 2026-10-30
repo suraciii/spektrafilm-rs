@@ -18,6 +18,7 @@ SpektraFilm is a Rust spectral film simulation application with a native GUI, CL
 - Keep plans, research, probes, logs, build artifacts, and session state outside the repository, normally under `/data/workspaces/spektrafilm-project-context/`.
 - Put durable non-contract conclusions in the relevant Issue/PR. Never commit transient artifacts, even if ignored.
 - Write tests that catch meaningful failures. See [eng/testing.md](eng/testing.md) for test architecture and requirements.
+- A test that takes minutes has no value: an assertion nobody runs protects nothing. Measure a test's cost before adding it, and delete a slow test rather than quarantining it.
 
 ## Verification
 
