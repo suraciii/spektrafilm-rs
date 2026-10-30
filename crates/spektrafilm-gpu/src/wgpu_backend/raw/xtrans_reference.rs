@@ -214,6 +214,36 @@ pub(crate) fn interpolate_twoxtwo(
     }
 }
 
+/// `markesteijn_homo_set`: how many of the nine cells in the 3x3 neighbourhood have
+/// a derivative no larger than eight times the threshold, floored by the native
+/// epsilon guard.
+pub(crate) fn homo_set(
+    drv: &[f32],
+    thresh: &[f32],
+    homo: &mut [u8],
+    width: usize,
+    height: usize,
+    border: usize,
+) {
+    const EPS: f32 = 1e-10;
+    for y in border..height.saturating_sub(border) {
+        for x in border..width.saturating_sub(border) {
+            let i = y * width + x;
+            let tr = (8.0 * thresh[i]).max(EPS);
+            let mut accu = 0u8;
+            for v in -1i32..=1 {
+                for h in -1i32..=1 {
+                    let j = (y as i32 + v) as usize * width + (x as i32 + h) as usize;
+                    if drv[j] <= tr {
+                        accu += 1;
+                    }
+                }
+            }
+            homo[i] = accu;
+        }
+    }
+}
+
 /// `markesteijn_homo_threshold`: a running minimum over the directions. The first
 /// call seeds from `f32::MAX`, the rest reduce the value already stored.
 pub(crate) fn homo_threshold(
@@ -1217,5 +1247,27 @@ mod tests {
                 assert_eq!(thresh[y * width + x], 97.0, "({x},{y})");
             }
         }
+    }
+
+    #[test]
+    fn homo_set_counts_the_neighbourhood_below_the_threshold() {
+        let (width, height) = (8usize, 8usize);
+        let flat = vec![0.0f32; width * height];
+        let thresh = vec![1.0f32; width * height];
+        let mut homo = vec![0u8; width * height];
+        homo_set(&flat, &thresh, &mut homo, width, height, 1);
+        assert_eq!(
+            homo[3 * width + 4],
+            9,
+            "flat field with threshold 1 admits all nine"
+        );
+
+        let far = vec![10.0f32; width * height];
+        homo_set(&far, &thresh, &mut homo, width, height, 1);
+        assert_eq!(
+            homo[3 * width + 4],
+            0,
+            "derivative 10 against threshold 1 admits none"
+        );
     }
 }
