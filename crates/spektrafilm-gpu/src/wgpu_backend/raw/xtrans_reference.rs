@@ -255,17 +255,9 @@ pub(crate) fn interpolate_pass(
         i ^= 1;
         h ^= 2;
     }
-    for d in 0..4 {
+    for (d, plane) in dirs.iter_mut().enumerate() {
         red_and_blue(
-            cfa,
-            rows,
-            cols,
-            &mut dirs[d],
-            width,
-            height,
-            border,
-            d as i32,
-            tables,
+            cfa, rows, cols, plane, width, height, border, d as i32, tables,
         );
     }
     for (n, d) in (0..8).step_by(2).enumerate() {
