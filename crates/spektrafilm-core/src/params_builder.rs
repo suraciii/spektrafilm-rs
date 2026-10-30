@@ -19,6 +19,7 @@
 
 use crate::WorkflowRoute;
 use crate::neutral_filters::NeutralFilters;
+use crate::params::sources::ParameterEdits;
 use crate::params::{PrintExposureEvTracking, RuntimeParams};
 use crate::profile::Profile;
 type HalationPreset = ((&'static str, &'static str), &'static str);
@@ -242,11 +243,33 @@ pub(crate) fn apply_film_specifics_with_policy(
     film: &Profile,
     policy: FilmSpecificsPolicy,
 ) {
-    let explicit = crate::presets::explicit_stock_values(params);
+    let explicit = explicit_stock_values(params);
     apply_grain_preset(params, film, policy);
     apply_coupler_preset(params, film);
     apply_halation_preset(params, film, policy);
-    crate::presets::restore_explicit_stock_values(params, explicit);
+    restore_explicit_stock_values(params, explicit);
+}
+
+fn explicit_stock_values(params: &RuntimeParams) -> Option<ParameterEdits> {
+    if params.explicit_section_paths.is_empty() {
+        return None;
+    }
+    let root = serde_json::to_value(params).expect("runtime parameters serialize");
+    let mut payload = serde_json::json!({});
+    for path in &params.explicit_section_paths {
+        if let Some(value) = root.pointer(&format!("/{}", path.replace('.', "/"))) {
+            crate::params::sources::insert(&mut payload, path, value.clone());
+        }
+    }
+    Some(ParameterEdits::from_value(payload).expect("validated explicit paths"))
+}
+
+fn restore_explicit_stock_values(params: &mut RuntimeParams, edits: Option<ParameterEdits>) {
+    if let Some(edits) = edits {
+        edits
+            .apply(params)
+            .expect("retaining validated explicit controls");
+    }
 }
 
 #[derive(serde::Deserialize)]
@@ -718,12 +741,16 @@ mod tests {
         let mut params = RuntimeParams::default();
         apply_film_specifics(&mut params, &gold);
         let authored_gamma = params.film_render.dir_couplers.gamma_samelayer_rgb;
-        params
-            .explicit_section_paths
-            .insert("film_render.dir_couplers.gamma_samelayer_rgb".into());
-        params
-            .explicit_section_paths
-            .insert("film_render.grain.uniformity".into());
+        let mut fresh_slide = RuntimeParams::default();
+        apply_film_specifics(&mut fresh_slide, &slide);
+        assert_ne!(
+            authored_gamma,
+            fresh_slide.film_render.dir_couplers.gamma_samelayer_rgb
+        );
+        params.mark_explicit_paths([
+            "film_render.dir_couplers.gamma_samelayer_rgb",
+            "film_render.grain.uniformity",
+        ]);
         params.film_render.grain.uniformity = [0.81, 0.82, 0.83];
         let ownership = params.render_preparation_state();
 
@@ -744,6 +771,30 @@ mod tests {
         let digested = digest_params(params.clone(), &slide, &blank_profile(), None, false);
         assert_eq!(digested.film_render, params.film_render);
         assert_eq!(digested.render_preparation_state(), ownership);
+    }
+
+    #[test]
+    fn value_patch_does_not_own_material_leaf_during_selection() {
+        let gold = film_profile("kodak_gold_200", "negative", "still", "strong");
+        let slide = film_profile("kodak_kodachrome_64", "positive", "still", "weak");
+        let mut params = RuntimeParams::default();
+        apply_film_specifics(&mut params, &gold);
+        ParameterEdits::parse("film_render.grain.uniformity=[0.81,0.82,0.83]")
+            .unwrap()
+            .apply(&mut params)
+            .unwrap();
+        assert!(params.explicit_paths_match(&RuntimeParams::default()));
+        assert_eq!(params.neutral_print_filters_protected, None);
+
+        let mut fresh_slide = RuntimeParams::default();
+        apply_film_specifics(&mut fresh_slide, &slide);
+        apply_film_specifics(&mut params, &slide);
+        assert_eq!(
+            params.film_render.grain.uniformity,
+            fresh_slide.film_render.grain.uniformity
+        );
+        assert_ne!(params.film_render.grain.uniformity, [0.81, 0.82, 0.83]);
+        assert!(params.explicit_paths_match(&RuntimeParams::default()));
     }
 
     #[test]

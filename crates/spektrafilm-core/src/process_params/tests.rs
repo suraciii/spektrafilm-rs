@@ -282,6 +282,15 @@ fn explicit_stock_values_and_individual_filters_survive() {
     assert_eq!(result.params.enlarger.m_filter_neutral, 65.0);
     assert_ne!(result.params.enlarger.y_filter_neutral, 55.0);
     assert!(result.params.settings.neutral_print_filters_from_database);
+    assert!(
+        result
+            .params
+            .explicit_paths_match(&RuntimeParams::default())
+    );
+    assert_eq!(
+        result.params.neutral_print_filters_protected,
+        Some([false, true, false])
+    );
 }
 
 #[test]
@@ -503,12 +512,9 @@ fn legacy_missing_stock_grain_values_survive_without_new_explicit_ownership() {
         assert_eq!(grain.uniformity, [0.81, 0.82, 0.83]);
         assert_eq!(grain.particle_scale_sublayers, [1.0, 0.2, 0.3]);
         assert!(
-            !resolved
+            resolved
                 .params
-                .render_preparation_state()
-                .explicit_section_paths
-                .iter()
-                .any(|path| path.starts_with("film_render.grain."))
+                .explicit_paths_match(&RuntimeParams::default())
         );
     }
     std::fs::remove_file(path).unwrap();

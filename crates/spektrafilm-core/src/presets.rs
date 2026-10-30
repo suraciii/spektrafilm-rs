@@ -1168,9 +1168,7 @@ impl Preset {
         let edits = parameter_edits_detailed(payload)?;
         let mut params = current.clone();
         edits.apply_detailed(&mut params)?;
-        for path in edits.paths() {
-            params.explicit_section_paths.insert(path.to_owned());
-        }
+        params.mark_explicit_paths(edits.paths());
         Ok(params)
     }
 }
@@ -1341,29 +1339,6 @@ pub fn workflow_default(film: &Profile) -> String {
     }
 }
 
-pub(crate) fn explicit_stock_values(params: &RuntimeParams) -> Option<ParameterEdits> {
-    if params.explicit_section_paths.is_empty() {
-        return None;
-    }
-    let root = serde_json::to_value(params).expect("runtime parameters serialize");
-    let mut payload = serde_json::json!({});
-    for path in &params.explicit_section_paths {
-        if let Some(value) = root.pointer(&format!("/{}", path.replace('.', "/"))) {
-            crate::params::sources::insert(&mut payload, path, value.clone());
-        }
-    }
-    Some(ParameterEdits::from_value(payload).expect("validated explicit paths"))
-}
-pub(crate) fn restore_explicit_stock_values(
-    params: &mut RuntimeParams,
-    edits: Option<ParameterEdits>,
-) {
-    if let Some(edits) = edits {
-        edits
-            .apply(params)
-            .expect("retaining validated explicit controls");
-    }
-}
 #[cfg(test)]
 mod camera_tests;
 #[cfg(test)]
