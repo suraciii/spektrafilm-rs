@@ -92,6 +92,8 @@ The shared native tokens MUST use this baseline in logical points. Settings, Exp
 | Action height and reserved action area | 64 and 80 |
 | Header height | 64 |
 | Viewer status and footer height | 34 and 50 |
+| Analysis shelf total height: default, resize minimum, maximum | 152, 120, 320 |
+| Photograph canvas height reserved before analysis allocation | 300 |
 | Expanded module inset | 12 |
 | Dialog header height and region inset | 56 and 16 |
 
@@ -153,6 +155,8 @@ Locator results and destination cues MUST remain readable and keyboard accessibl
 ## Image-analysis presentation
 
 The [analysis product contract](../gui-product-design/image-analysis/spec.md#workspace-and-controls) owns panel composition. Its plot controls MUST reuse native components and visible focus states.
+
+Analysis shelf heights include the toolbar, plot, borders, and padding. The photograph reserve excludes the viewer status and footer. The [analysis layout boundary](../gui-product-design/image-analysis/design.md#layout-and-preference-boundary) owns constrained allocation.
 
 Analysis traces MUST use the series roles. Data-derived tint MAY represent measured hue, but MUST NOT imply action selection or a quality judgment.
 

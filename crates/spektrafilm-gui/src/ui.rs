@@ -2547,43 +2547,7 @@ impl eframe::App for App {
         egui::CentralPanel::default()
             .frame(egui::Frame::NONE)
             .show(ctx, |ui| {
-                if self.analysis.visible {
-                    egui::TopBottomPanel::bottom("image-analysis-workspace")
-                        .exact_height(
-                            self.analysis
-                                .preferences
-                                .height
-                                .clamp(100.0, 400.0)
-                                .min((ui.available_height() * 0.4).max(120.0))
-                                + 72.0,
-                        )
-                        .frame(egui::Frame::NONE.fill(theme::SURFACE))
-                        .show_inside(ui, |ui| self.show_image_analysis(ui));
-                }
-                egui::TopBottomPanel::bottom("viewer-footer")
-                    .exact_height(theme::HEIGHT_VIEWER_FOOTER)
-                    .frame(
-                        egui::Frame::NONE
-                            .fill(theme::SURFACE)
-                            .inner_margin(egui::Margin::symmetric(theme::SPACE_3 as i8, 9)),
-                    )
-                    .show_inside(ui, |ui| {
-                        self.viewer.footer_controls(ui, &mut self.analysis.visible)
-                    });
-                if !self.analysis.visible
-                    && (self.analysis.identity.is_some()
-                        || self.viewer.analysis.enabled
-                        || self.viewer.analysis.armed)
-                {
-                    self.viewer.analysis.enabled = false;
-                    self.viewer.analysis.selection = None;
-                    self.viewer.analysis.band = None;
-                    self.viewer.analysis.sample = None;
-                    self.viewer.cancel_analysis_selection();
-                    self.analysis.clear();
-                }
-                // Reserve the strip before the canvas and populate it after the
-                // viewer accepts composition and transition work for this frame.
+                // Reserve both fixed strips before allocating any of the shelf.
                 let status_rect = egui::TopBottomPanel::top("viewer-status")
                     .exact_height(theme::HEIGHT_VIEWER_STATUS)
                     .frame(
@@ -2593,6 +2557,176 @@ impl eframe::App for App {
                     )
                     .show_inside(ui, |ui| ui.available_rect_before_wrap())
                     .inner;
+                let available = (ui.available_height() - theme::HEIGHT_VIEWER_FOOTER).max(0.0);
+                let capacity = (available - theme::HEIGHT_PHOTOGRAPH_MIN)
+                    .clamp(0.0, theme::HEIGHT_ANALYSIS_MAX);
+                let space_available = capacity >= theme::HEIGHT_ANALYSIS_MIN;
+                let footer_id = egui::TopBottomPanel::bottom("viewer-footer")
+                    .exact_height(theme::HEIGHT_VIEWER_FOOTER)
+                    .frame(
+                        egui::Frame::NONE
+                            .fill(theme::SURFACE)
+                            .inner_margin(egui::Margin::symmetric(theme::SPACE_3 as i8, 9)),
+                    )
+                    .show_inside(ui, |ui| {
+                        self.viewer
+                            .footer_controls(ui, &mut self.analysis.visible, space_available)
+                    })
+                    .inner;
+
+                // Identify only controls removed with the shelf, not inspector focus.
+                let shelf_rect_id = egui::Id::new("analysis-shelf-previous-rect");
+                let viewer_controls_id = egui::Id::new("analysis-viewer-controls-previous-rect");
+                let focused_removed_control = |ctx: &egui::Context| {
+                    let focused = ctx.memory(|memory| memory.focused());
+                    let rect = focused.and_then(|id| ctx.read_response(id)).map(|r| r.rect);
+                    let (shelf, viewer_controls) = ctx.data(|data| {
+                        (
+                            data.get_temp::<egui::Rect>(shelf_rect_id),
+                            data.get_temp::<egui::Rect>(viewer_controls_id),
+                        )
+                    });
+                    rect.is_some_and(|rect| {
+                        shelf.is_some_and(|area| area.contains_rect(rect))
+                            || viewer_controls.is_some_and(|area| area.contains_rect(rect))
+                    })
+                };
+                let expanded = self.analysis.visible && space_available;
+                if self.analysis.expanded && !expanded {
+                    if focused_removed_control(ctx) {
+                        ctx.memory_mut(|memory| memory.request_focus(footer_id));
+                    }
+                    self.suspend_image_analysis();
+                }
+                self.analysis.expanded = expanded;
+                if expanded {
+                    let height = self
+                        .analysis
+                        .preferences
+                        .shelf_height
+                        .clamp(theme::HEIGHT_ANALYSIS_MIN, theme::HEIGHT_ANALYSIS_MAX)
+                        .min(capacity);
+                    let shelf = egui::TopBottomPanel::bottom("image-analysis-workspace")
+                        .exact_height(height)
+                        .show_separator_line(false)
+                        .frame(egui::Frame::NONE.fill(theme::SURFACE))
+                        .show_inside(ui, |ui| {
+                            let (rect, _) = ui.allocate_exact_size(
+                                egui::vec2(ui.available_width(), 6.0),
+                                egui::Sense::hover(),
+                            );
+                            let divider = ui
+                                .interact(
+                                    rect,
+                                    egui::Id::new("analysis-shelf-divider"),
+                                    egui::Sense::click_and_drag(),
+                                )
+                                .on_hover_cursor(egui::CursorIcon::ResizeVertical);
+                            let label = crate::i18n::text(ui.ctx(), "surfaces.analysis.resize");
+                            divider.widget_info(|| {
+                                egui::WidgetInfo::labeled(
+                                    egui::WidgetType::Button,
+                                    true,
+                                    label.as_ref(),
+                                )
+                            });
+                            ui.painter().hline(
+                                rect.x_range(),
+                                rect.center().y,
+                                theme::stroke(theme::FG_MUTED),
+                            );
+                            crate::controls::focus_feedback(ui, &divider);
+                            if divider.clicked() || divider.drag_started() {
+                                divider.request_focus();
+                            }
+                            let drag_id = divider.id.with("height-at-press");
+                            if divider.drag_started()
+                                && let Some(origin) = ui.input(|input| input.pointer.press_origin())
+                            {
+                                ctx.data_mut(|data| {
+                                    data.insert_temp(
+                                        drag_id,
+                                        (self.analysis.preferences.shelf_height, height, origin.y),
+                                    )
+                                });
+                            }
+                            if (divider.dragged() || divider.drag_stopped())
+                                && let Some(position) = divider.interact_pointer_pos()
+                                && let Some((requested, displayed, origin)) =
+                                    ctx.data(|data| data.get_temp::<(f32, f32, f32)>(drag_id))
+                            {
+                                let delta = origin - position.y;
+                                let resized = displayed + delta;
+                                self.analysis.preferences.shelf_height = if delta >= 0.0 {
+                                    requested.max(resized)
+                                } else {
+                                    resized
+                                }
+                                .clamp(theme::HEIGHT_ANALYSIS_MIN, theme::HEIGHT_ANALYSIS_MAX);
+                                ctx.request_repaint();
+                            }
+                            if divider.drag_stopped() {
+                                ctx.data_mut(|data| data.remove::<(f32, f32, f32)>(drag_id));
+                            }
+                            if divider.has_focus() {
+                                ui.memory_mut(|memory| {
+                                    memory.set_focus_lock_filter(
+                                        divider.id,
+                                        egui::EventFilter {
+                                            vertical_arrows: true,
+                                            ..Default::default()
+                                        },
+                                    )
+                                });
+                                let (up, down, reset) = ui.input(|input| {
+                                    (
+                                        input.key_pressed(egui::Key::ArrowUp),
+                                        input.key_pressed(egui::Key::ArrowDown),
+                                        input.key_pressed(egui::Key::Home),
+                                    )
+                                });
+                                let delta = (up as i32 - down as i32) as f32 * 8.0;
+                                if delta != 0.0 {
+                                    let resized = height + delta;
+                                    self.analysis.preferences.shelf_height = if delta > 0.0 {
+                                        self.analysis.preferences.shelf_height.max(resized)
+                                    } else {
+                                        resized
+                                    }
+                                    .clamp(theme::HEIGHT_ANALYSIS_MIN, theme::HEIGHT_ANALYSIS_MAX);
+                                    ctx.request_repaint();
+                                }
+                                if reset {
+                                    self.analysis.preferences.shelf_height =
+                                        theme::HEIGHT_ANALYSIS_DEFAULT;
+                                    ctx.request_repaint();
+                                }
+                            }
+                            if divider.double_clicked() {
+                                self.analysis.preferences.shelf_height =
+                                    theme::HEIGHT_ANALYSIS_DEFAULT;
+                                ctx.request_repaint();
+                            }
+                            self.show_image_analysis(ui);
+                        });
+                    ctx.data_mut(|data| data.insert_temp(shelf_rect_id, shelf.response.rect));
+                    if !self.analysis.visible {
+                        if focused_removed_control(ctx) {
+                            ctx.memory_mut(|memory| memory.request_focus(footer_id));
+                        }
+                        self.analysis.expanded = false;
+                        self.suspend_image_analysis();
+                        ctx.request_repaint();
+                    }
+                }
+                let viewer_rect = ui.available_rect_before_wrap();
+                let viewer_controls_rect = egui::Rect::from_min_size(
+                    viewer_rect.min + egui::Vec2::splat(theme::SPACE_2),
+                    egui::vec2(viewer_rect.width().max(1.0), theme::HEIGHT_CONTROL * 2.0),
+                );
+                ctx.data_mut(|data| data.insert_temp(viewer_controls_id, viewer_controls_rect));
+                // Populate status after the viewer accepts composition and transition work.
+
                 self.viewer
                     .set_display_max_size(self.params.settings.preview_max_size);
                 let displayed_output = self.operator_comparison.as_ref().map_or_else(

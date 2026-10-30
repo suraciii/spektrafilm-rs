@@ -269,7 +269,6 @@ fn analysis_follows_accepted_output_without_changing_the_photograph() {
     assert_eq!(parade.waveform, spatial_counts);
 
     click(h, "Analysis mode");
-    click(h, "Advanced");
     click(h, "Vectorscope");
     wait_until(h, |app| {
         analysis_output_ready(app)
@@ -445,7 +444,7 @@ fn expanded_analysis_keeps_inspector_and_delivery_actions_available() {
     h.run_steps(3);
     preview(h);
     settle_animation(h);
-    h.state_mut().analysis.preferences.height = 400.0;
+    h.state_mut().analysis.preferences.shelf_height = 320.0;
     click(h, "Image analysis");
     wait_until(h, analysis_output_ready);
     let image = composed(h, 30.0).image_rect;
@@ -457,7 +456,7 @@ fn expanded_analysis_keeps_inspector_and_delivery_actions_available() {
         .get_by_label("Analysis plot (arrow keys to inspect)")
         .raw_bounds()
         .unwrap();
-    h.state_mut().analysis.preferences.height = 100.0;
+    h.state_mut().analysis.preferences.shelf_height = 120.0;
     h.run_steps(3);
     let small = h
         .get_by_label("Analysis plot (arrow keys to inspect)")
@@ -467,7 +466,7 @@ fn expanded_analysis_keeps_inspector_and_delivery_actions_available() {
         large.y1 - large.y0 > small.y1 - small.y0,
         "plot must respond to requested height: {large:?} vs {small:?}"
     );
-    h.state_mut().analysis.preferences.height = 400.0;
+    h.state_mut().analysis.preferences.shelf_height = 320.0;
 
     for height in [980.0, 720.0] {
         h.set_size(egui::vec2(1460.0, height));
@@ -486,8 +485,388 @@ fn expanded_analysis_keeps_inspector_and_delivery_actions_available() {
             .raw_bounds()
             .unwrap();
         assert!(controls.y1 - controls.y0 >= 100.0);
-        assert_eq!(h.state().analysis.preferences.height, 400.0);
+        assert_eq!(h.state().analysis.preferences.shelf_height, 320.0);
     }
+}
+
+#[test]
+fn compact_analysis_toolbar_and_hover_fit_supported_sizes_and_languages() {
+    use crate::analysis_plot::{PlotMode, WaveformView};
+    use crate::i18n::LanguagePreference;
+
+    let mut s = session();
+    let h = &mut s.harness;
+    preview(h);
+    settle_animation(h);
+    h.state_mut().analysis.visible = true;
+    h.state_mut().analysis.selection = Some([0.2, 0.2, 0.8, 0.8]);
+    h.state_mut().analysis.preferences.histogram_rgb = true;
+    h.state_mut().analysis.preferences.waveform_view = WaveformView::RgbOverlay;
+    for language in [
+        LanguagePreference::English,
+        LanguagePreference::SimplifiedChinese,
+    ] {
+        let ctx = h.ctx.clone();
+        h.state_mut().select_language(&ctx, language).unwrap();
+        for size in [egui::vec2(1100.0, 760.0), egui::vec2(1460.0, 980.0)] {
+            h.set_size(size);
+            for mode in [PlotMode::Histogram, PlotMode::Waveform] {
+                h.state_mut().analysis.preferences.mode = mode;
+                h.run_steps(3);
+                wait_until(h, analysis_output_ready);
+                let viewport = h.state().viewer.observation().viewport;
+                let divider = crate::i18n::text(&h.ctx, "surfaces.analysis.resize").into_owned();
+                let divider_bounds = h.get_by_label(&divider).raw_bounds().unwrap();
+                let mut controls = Vec::new();
+                for key in [
+                    "analysis.mode",
+                    if mode == PlotMode::Histogram {
+                        "analysis.rgb"
+                    } else {
+                        "analysis.waveform_view"
+                    },
+                    "analysis.red",
+                    "analysis.green",
+                    "analysis.blue",
+                    "surfaces.analysis.select",
+                    "surfaces.analysis.full",
+                    "surfaces.analysis.close",
+                ] {
+                    let name = crate::i18n::text(&h.ctx, key);
+                    let bounds = h
+                        .query_all_by_label(name.as_ref())
+                        .filter_map(|node| node.raw_bounds())
+                        .find(|bounds| {
+                            bounds.x0 >= f64::from(viewport.left())
+                                && bounds.x1 <= f64::from(viewport.right())
+                                && bounds.y0 >= divider_bounds.y1
+                        })
+                        .unwrap_or_else(|| panic!("missing toolbar control {name} at {size:?}"));
+                    controls.push(bounds);
+                }
+                controls.sort_by(|a, b| a.x0.total_cmp(&b.x0));
+                let center_y = (controls[0].y0 + controls[0].y1) * 0.5;
+                for bounds in &controls {
+                    assert!(((bounds.y0 + bounds.y1) * 0.5 - center_y).abs() < 3.0);
+                }
+                for pair in controls.windows(2) {
+                    assert!(
+                        pair[0].x1 <= pair[1].x0,
+                        "overlapping toolbar controls: {pair:?}"
+                    );
+                }
+                for key in ["surfaces.analysis.title", "surfaces.viewer.fit"] {
+                    let name = crate::i18n::text(&h.ctx, key);
+                    assert!(h.query_by_label(name.as_ref()).is_some());
+                }
+            }
+        }
+    }
+
+    let plot_name = crate::i18n::text(&h.ctx, "analysis.plot_cursor").into_owned();
+    h.input_mut()
+        .events
+        .push(egui::Event::PointerMoved(egui::pos2(0.0, 0.0)));
+    h.run_steps(3);
+    let before_plot = h.get_by_label(&plot_name).raw_bounds().unwrap();
+    let before_view = h.state().viewer.observation().viewport;
+    let image = composed(h, 80.0).image_rect;
+    h.input_mut()
+        .events
+        .push(egui::Event::PointerMoved(image.center()));
+    wait_until(h, |app| app.analysis.sample.is_some());
+    let after_plot = h.get_by_label(&plot_name).raw_bounds().unwrap();
+    assert_eq!(before_plot, after_plot);
+    assert_eq!(before_view, h.state().viewer.observation().viewport);
+}
+
+#[test]
+fn analysis_shelf_respects_space_and_preserves_selection_and_focus() {
+    let mut s = session();
+    let h = &mut s.harness;
+    h.set_size(egui::vec2(1460.0, 980.0));
+    h.run_steps(3);
+    preview(h);
+    settle_animation(h);
+    let base = composed(h, 30.0).viewport.height();
+    click(h, "Image analysis");
+    wait_until(h, analysis_output_ready);
+    let expanded = composed(h, 31.0).viewport.height();
+    assert!((base - expanded - crate::theme::HEIGHT_ANALYSIS_DEFAULT).abs() < 1.0);
+
+    h.state_mut().analysis.preferences.shelf_height = 250.0;
+    let selection = [0.2, 0.2, 0.7, 0.7];
+    h.state_mut().analysis.selection = Some(selection);
+    h.run_steps(3);
+    click(h, "Select area");
+    h.get_by_label("Move selection (arrow keys; Enter commits, Escape cancels)")
+        .focus();
+    h.run_steps(3);
+    assert!(h.state().viewer.analysis.armed);
+
+    let threshold =
+        980.0 - base + crate::theme::HEIGHT_PHOTOGRAPH_MIN + crate::theme::HEIGHT_ANALYSIS_MIN;
+    h.set_size(egui::vec2(1460.0, threshold - 2.0));
+    h.run_steps(3);
+    assert!(h.state().analysis.visible);
+    assert!(!h.state().analysis.expanded);
+    assert_eq!(h.state().analysis.selection, Some(selection));
+    assert!(!h.state().viewer.analysis.armed);
+    assert!(!h.state().viewer.analysis.enabled);
+    assert!(h.state().analysis.result.is_none());
+    assert_eq!(h.state().analysis.preferences.shelf_height, 250.0);
+    assert!(h.get_by_label("Image analysis").is_focused());
+    let resize_label = crate::i18n::text(&h.ctx, "surfaces.analysis.resize").into_owned();
+    assert!(h.query_by_label(&resize_label).is_none());
+
+    h.set_size(egui::vec2(1460.0, threshold));
+    h.run_steps(3);
+    assert!(h.state().analysis.expanded);
+    assert_eq!(h.state().analysis.preferences.shelf_height, 250.0);
+    let viewport = composed(h, 32.0).viewport;
+    assert!((viewport.height() - crate::theme::HEIGHT_PHOTOGRAPH_MIN).abs() < 2.0);
+    assert!(h.query_by_label(&resize_label).is_some());
+
+    h.get_by_label("Search controls").focus();
+    h.run_steps(3);
+    h.set_size(egui::vec2(1460.0, threshold - 2.0));
+    h.run_steps(3);
+    assert!(h.get_by_label("Search controls").is_focused());
+    click(h, "Image analysis");
+    assert!(!h.state().analysis.visible);
+    click(h, "Image analysis");
+    assert!(h.state().analysis.visible);
+    assert!(!h.state().analysis.expanded);
+    click(h, "Image analysis");
+    assert!(!h.state().analysis.visible);
+    h.set_size(egui::vec2(1460.0, 980.0));
+    h.run_steps(3);
+    assert!(!h.state().analysis.expanded);
+    assert_eq!(h.state().analysis.selection, Some(selection));
+    assert_eq!(h.state().analysis.preferences.shelf_height, 250.0);
+}
+
+#[test]
+fn analysis_divider_resizes_and_preserves_pixel_scale_and_pan() {
+    let mut s = session();
+    let h = &mut s.harness;
+    h.set_size(egui::vec2(1460.0, 980.0));
+    h.run_steps(3);
+    let output = preview(h);
+    settle_animation(h);
+    let retained = h.state().output_image.as_ref().unwrap().clone();
+    let params = h.state().params.clone();
+    h.state_mut().viewer.pan = Vec2::new(12.0, 6.0);
+    for percent in [100.0, 200.0] {
+        h.state_mut().viewer.set_zoom_percent(percent);
+        let before = composed(h, 40.0 + f64::from(percent));
+        click(h, "Image analysis");
+        let after = composed(h, 41.0 + f64::from(percent));
+        let expected = output.width as f32 * percent / (100.0 * h.ctx.pixels_per_point());
+        assert!((before.image_rect.width() - expected).abs() < 0.01);
+        assert!((after.image_rect.width() - expected).abs() < 0.01);
+        h.state_mut().analysis.preferences.shelf_height = 260.0;
+        let resized = composed(h, 42.0 + f64::from(percent));
+        assert!((resized.image_rect.width() - expected).abs() < 0.01);
+        h.set_size(egui::vec2(1460.0, 500.0));
+        h.run_steps(3);
+        assert!(!h.state().analysis.expanded);
+        let collapsed = composed(h, 43.0 + f64::from(percent));
+        assert!((collapsed.image_rect.width() - expected).abs() < 0.01);
+        h.set_size(egui::vec2(1460.0, 980.0));
+        h.run_steps(3);
+        assert!(h.state().analysis.expanded);
+        let restored = composed(h, 44.0 + f64::from(percent));
+        assert!((restored.image_rect.width() - expected).abs() < 0.01);
+        assert_eq!(h.state().viewer.zoom_percent, Some(percent));
+        assert_eq!(h.state().viewer.pan, Vec2::new(12.0, 6.0));
+        click(h, "Image analysis");
+        h.state_mut().analysis.preferences.shelf_height = crate::theme::HEIGHT_ANALYSIS_DEFAULT;
+    }
+    h.set_size(egui::vec2(1800.0, 720.0));
+    h.run_steps(3);
+    h.state_mut().viewer.fit_view();
+    h.state_mut().viewer.zoom = 1.3;
+    let fitted = composed(h, 250.0);
+    click(h, "Image analysis");
+    let smaller = composed(h, 251.0);
+    assert!(smaller.image_rect.width() < fitted.image_rect.width());
+    assert_eq!(h.state().viewer.zoom, 1.3);
+    assert_eq!(h.state().viewer.pan, Vec2::new(12.0, 6.0));
+
+    let resize_label = crate::i18n::text(&h.ctx, "surfaces.analysis.resize").into_owned();
+    h.get_by_label(&resize_label).focus();
+    h.run_steps(3);
+    h.press_key(egui::Key::ArrowUp);
+    h.run_steps(3);
+    assert_eq!(
+        h.state().analysis.preferences.shelf_height,
+        crate::theme::HEIGHT_ANALYSIS_DEFAULT + 8.0
+    );
+    h.press_key(egui::Key::Home);
+    h.run_steps(3);
+    assert_eq!(
+        h.state().analysis.preferences.shelf_height,
+        crate::theme::HEIGHT_ANALYSIS_DEFAULT
+    );
+    h.state_mut().analysis.preferences.shelf_height = crate::theme::HEIGHT_ANALYSIS_MAX;
+    h.run_steps(3);
+    h.press_key(egui::Key::ArrowUp);
+    h.run_steps(3);
+    assert_eq!(
+        h.state().analysis.preferences.shelf_height,
+        crate::theme::HEIGHT_ANALYSIS_MAX
+    );
+    h.state_mut().analysis.preferences.shelf_height = crate::theme::HEIGHT_ANALYSIS_MIN;
+    h.run_steps(3);
+    h.press_key(egui::Key::ArrowDown);
+    h.run_steps(3);
+    assert_eq!(
+        h.state().analysis.preferences.shelf_height,
+        crate::theme::HEIGHT_ANALYSIS_MIN
+    );
+    let bounds = h.get_by_label(&resize_label).raw_bounds().unwrap();
+    let center = egui::pos2(
+        ((bounds.x0 + bounds.x1) * 0.5) as f32,
+        ((bounds.y0 + bounds.y1) * 0.5) as f32,
+    );
+    let time = h.ctx.input(|input| input.time) + 1.0;
+    pointer(h, center, true, time);
+    h.input_mut()
+        .events
+        .push(egui::Event::PointerMoved(center - Vec2::new(0.0, 30.0)));
+    frame(h, time + 0.1);
+    pointer(h, center - Vec2::new(0.0, 30.0), false, time + 0.2);
+    assert!(h.state().analysis.preferences.shelf_height > crate::theme::HEIGHT_ANALYSIS_MIN);
+    h.state_mut().analysis.preferences.shelf_height = 220.0;
+    h.run_steps(3);
+    let bounds = h.get_by_label(&resize_label).raw_bounds().unwrap();
+    let center = egui::pos2(
+        ((bounds.x0 + bounds.x1) * 0.5) as f32,
+        ((bounds.y0 + bounds.y1) * 0.5) as f32,
+    );
+    let time = h.ctx.input(|input| input.time) + 1.0;
+    pointer(h, center, true, time);
+    pointer(h, center, false, time + 0.05);
+    pointer(h, center, true, time + 0.1);
+    pointer(h, center, false, time + 0.15);
+    h.run_steps(3);
+    assert_eq!(
+        h.state().analysis.preferences.shelf_height,
+        crate::theme::HEIGHT_ANALYSIS_DEFAULT
+    );
+    assert_eq!(h.state().viewer.zoom, 1.3);
+    assert_eq!(h.state().viewer.pan, Vec2::new(12.0, 6.0));
+    assert!(Arc::ptr_eq(
+        &retained,
+        h.state().output_image.as_ref().unwrap()
+    ));
+    assert_eq!(h.state().params, params);
+}
+
+#[test]
+fn constrained_analysis_resize_keeps_upward_request_and_shrinks_immediately() {
+    let mut s = session();
+    let h = &mut s.harness;
+    h.set_size(egui::vec2(1460.0, 980.0));
+    h.run_steps(3);
+    preview(h);
+    settle_animation(h);
+    let full_height = composed(h, 30.0).viewport.height();
+    h.state_mut().analysis.visible = true;
+    h.state_mut().analysis.preferences.shelf_height = 320.0;
+    h.set_size(egui::vec2(1460.0, 980.0 - full_height + 300.0 + 150.0));
+    h.run_steps(3);
+    assert!(h.state().analysis.expanded);
+    let resize_label = crate::i18n::text(&h.ctx, "surfaces.analysis.resize").into_owned();
+    let bounds = h.get_by_label(&resize_label).raw_bounds().unwrap();
+    let center = egui::pos2(
+        ((bounds.x0 + bounds.x1) * 0.5) as f32,
+        ((bounds.y0 + bounds.y1) * 0.5) as f32,
+    );
+    let time = h.ctx.input(|input| input.time) + 1.0;
+    pointer(h, center, true, time);
+    h.input_mut()
+        .events
+        .push(egui::Event::PointerMoved(center - Vec2::new(0.0, 10.0)));
+    frame(h, time + 0.1);
+    pointer(h, center - Vec2::new(0.0, 10.0), false, time + 0.2);
+    assert_eq!(
+        h.state().analysis.preferences.shelf_height,
+        320.0,
+        "an upward drag must not shrink the request"
+    );
+    h.get_by_label(&resize_label).focus();
+    h.run_steps(3);
+    h.press_key(egui::Key::ArrowDown);
+    h.run_steps(3);
+    assert!(
+        (h.state().analysis.preferences.shelf_height - 142.0).abs() < 1.0,
+        "keyboard shrink must start at the displayed height"
+    );
+}
+
+#[test]
+fn analysis_divider_counts_pointer_motion_before_drag_threshold() {
+    let mut s = session();
+    let h = &mut s.harness;
+    h.set_size(egui::vec2(1460.0, 980.0));
+    h.run_steps(3);
+    preview(h);
+    settle_animation(h);
+    h.state_mut().analysis.visible = true;
+    h.state_mut().analysis.preferences.shelf_height = 200.0;
+    h.run_steps(3);
+    let label = crate::i18n::text(&h.ctx, "surfaces.analysis.resize").into_owned();
+    let bounds = h.get_by_label(&label).raw_bounds().unwrap();
+    let center = egui::pos2(
+        ((bounds.x0 + bounds.x1) * 0.5) as f32,
+        ((bounds.y0 + bounds.y1) * 0.5) as f32,
+    );
+    let time = h.ctx.input(|input| input.time) + 1.0;
+    pointer(h, center, true, time);
+    for step in 1..=10 {
+        h.input_mut().events.push(egui::Event::PointerMoved(
+            center - Vec2::new(0.0, 2.0 * step as f32),
+        ));
+        frame(h, time + 0.1 * f64::from(step));
+    }
+    pointer(h, center - Vec2::new(0.0, 22.0), false, time + 1.1);
+    assert!(
+        (h.state().analysis.preferences.shelf_height - 222.0).abs() < 0.5,
+        "all pointer displacement must contribute to resizing"
+    );
+}
+
+#[test]
+fn analysis_notice_does_not_capture_plot_pointer_or_keyboard_focus() {
+    let mut s = session();
+    let h = &mut s.harness;
+    preview(h);
+    settle_animation(h);
+    h.state_mut().analysis.visible = true;
+    wait_until(h, analysis_output_ready);
+    h.state_mut().analysis.result.as_mut().unwrap().data[1]
+        .as_mut()
+        .unwrap()
+        .as_mut()
+        .unwrap()
+        .above = 1;
+    h.run_steps(3);
+    let bounds = h
+        .get_by_label("Analysis plot (arrow keys to inspect)")
+        .raw_bounds()
+        .unwrap();
+    let inside_notice = egui::pos2(bounds.x0 as f32 + 20.0, bounds.y0 as f32 + 7.0);
+    let time = h.ctx.input(|input| input.time) + 1.0;
+    pointer(h, inside_notice, true, time);
+    pointer(h, inside_notice, false, time + 0.1);
+    h.run_steps(3);
+    assert!(
+        h.get_by_label("Analysis plot (arrow keys to inspect)")
+            .is_focused(),
+        "plot must receive clicks through its readout"
+    );
 }
 
 /// Compare the published distributions against independently chosen native

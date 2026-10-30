@@ -77,10 +77,9 @@ The bin index MUST be `min(255, floor(256 * clamp(v, 0, 1)))`. Histogram MUST re
 
 Let `p` be a bin count divided by that distribution's finite population. Let `P` be the largest `p` across Tone and RGB for both accepted photographic subjects at the declared region.
 
-| Presentation | Height fraction |
-| --- | --- |
-| Linear | `p / P` |
-| Logarithmic | `log1p(256 * p) / log1p(256 * P)` |
+The plotted height fraction MUST be `log1p(256 * p) / log1p(256 * P)`. This is the only histogram frequency mapping; there is no linear presentation branch.
+
+The logarithmic mapping exposes low-frequency populated bins without changing their counts. Linear height ratios can express relative frequency directly, but exact inspection already reports that frequency. The fixed mapping removes a presentation choice, not an analysis signal.
 
 The normalizer MUST include endpoint bins and hidden channels. Channel visibility and subject switching MUST NOT recompute it from only visible traces.
 
@@ -172,7 +171,7 @@ The host MAY receive bounded count grids, population totals, and inspection read
 
 The implementation MUST reuse accepted source carriers and shared color transforms. It MUST NOT retain an image-sized analysis clone or add a film-pipeline stage.
 
-Work MUST be demand-driven for the expanded panel. Collapsing it MUST invalidate pending analysis publication without canceling the photographic render.
+Work MUST be demand-driven for an actually expanded panel. A requested expanded state alone MUST NOT schedule analysis. Collapsing the panel MUST invalidate pending analysis publication without canceling the photographic render.
 
 Subject changes and region changes MUST supersede obsolete analysis. An accepted analysis result MUST match every dependency in its captured identity before publication.
 
@@ -182,18 +181,40 @@ Cancellation MUST follow the [GPU cancellation boundary](../../gpu-execution/des
 
 ## Layout and preference boundary
 
-The panel MUST reuse native inspector components and semantic tokens. It MUST NOT import darktable's theme, hide essential controls on hover, or create another settings destination.
+The panel MUST reuse native viewer components and semantic tokens. It MUST NOT import a prototype palette, hide essential controls on hover, or create another settings destination.
 
-Presentation MUST distinguish the selected analysis mode from the Waveform display choice. RGB parade MUST be a waveform layout, not a fourth presentation mode. The request mapping MUST derive the existing spatial reduction from these choices without changing counts, coordinates, density, or channel normalization.
+Presentation MUST distinguish the analysis mode from the Waveform display choice. RGB parade MUST remain a waveform layout, not a fourth mode. This mapping MUST preserve existing counts, coordinates, density, and channel normalization.
 
-Advanced MUST be navigation within the mode selector, not another persistent enable flag. The selected mode and waveform display MUST remain sufficient to restore the visible chart.
+The selected mode and waveform display MUST remain sufficient to restore the chart. The mode selector MUST NOT add a persistent advanced-state flag or an extra navigation boundary for Vectorscope.
 
-Plot height MUST clamp against available inspector space while retaining the person's requested height. A temporary window constraint MUST NOT overwrite that requested preference.
+### Space allocation
 
-Analysis preferences MUST remain separate from photographic records and runtime state. Reading legacy saved histogram visibility MUST migrate that visibility once without preserving a second histogram implementation.
+The viewer layout MUST be the single owner of total shelf allocation. Shared sizes MUST come from the [native layout baseline](../../gui-presentation/spec.md#native-layout-baseline), not independent constants in the toolbar and plot.
 
-The preference-loading boundary MUST convert the previous top-level parade choice and waveform-RGB boolean into the current waveform display. Current waveform-display values MUST take precedence over a retained obsolete boolean.
+Let `A` be the nonnegative central height remaining after reserving the viewer status and footer. Let `F` be the native photograph reserve. Let `M` be the native minimum shelf height.
 
-Successful migration MUST schedule publication through the existing independent preference writer. Runtime preferences and newly saved data MUST NOT retain the obsolete fields or mode.
+An explicit height request MUST clamp to the native shelf resize range. Let `R` be that request and `C = min(shelf_maximum, max(0, A - F))` be the effective maximum.
 
-Full-image mode and transient region state MUST use [Preference ownership](spec.md#preference-ownership). Presentation migration MUST NOT change photographic values or create adjustment history.
+The shelf MUST render only when expansion is requested and `C >= M`. Its total height MUST then be `min(R, C)`. Otherwise, the viewer MUST omit the shelf, its divider, and its controls, leaving all of `A` to the photograph.
+
+Effective visibility MUST derive from the requested expanded state and available space. It MUST NOT replace the stored request. Temporary collapse and restoration MUST follow [Height and interaction](spec.md#height-and-interaction).
+
+Toolbar, plot, borders, and padding MUST fit inside the allocated shelf. Components MUST NOT append another height allowance after that allocation. Remaining central space MUST belong to the photograph.
+
+Divider input MUST change only the requested shelf height. The plot MUST receive the remaining inner rectangle, not apply a second requested-height preference. Keyboard and pointer resizing MUST use the same allocation rule.
+
+Inspection readouts and conditional statuses MUST remain inside the assigned toolbar or plot rectangle. Their presence MUST NOT change the requested height or allocate an empty information strip.
+
+Layout changes MUST invalidate only affected presentation geometry or rasters. They MUST NOT change reduction identity, sample membership, bin counts, or the common frequency normalizer.
+
+### State and preference cutover
+
+Displayed plot data and its subject/population identity MUST remain one publication. Removing the ordinary scope line MUST NOT disconnect a pending or stale plot from the identity required by [Result identity and availability](spec.md#result-identity-and-availability).
+
+Analysis preferences MUST remain separate from photographic records and runtime state. Full-image mode, transient regions, retained choices, and compatibility behavior follow [Preference ownership](spec.md#preference-ownership).
+
+The loader MUST distinguish a current total-height request from a legacy plot-only height. It MUST NOT reinterpret the old number as a shelf height or recreate the removed toolbar allowance. Legacy scale values MUST be consumed only for migration, not retained as runtime choices.
+
+Reading legacy saved histogram visibility MUST migrate that visibility once without preserving a second histogram implementation. The loader MUST convert the previous top-level parade choice and waveform-RGB boolean into the current waveform display. Current waveform-display values MUST take precedence over a retained obsolete boolean.
+
+Successful migration MUST use the existing independent preference writer. Runtime preferences and newly saved data MUST NOT retain removed fields or duplicate mode representations. Migration MUST NOT change photographic values or create adjustment history.

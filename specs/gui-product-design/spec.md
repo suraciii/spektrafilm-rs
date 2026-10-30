@@ -6,7 +6,7 @@ This specification defines the photo-first desktop workspace and its user flows.
 
 [GUI product language](../gui-language/spec.md) owns labels and help. [The product design](design.md) defines the boundaries that implement these contracts.
 
-The GUI MUST reduce navigation and editing effort without removing supported controls. It MUST NOT replace independent parameters with a generic effect-strength slider. Folding a module MUST change its presentation only.
+The GUI MUST reduce navigation and editing effort without removing supported photographic controls. It MUST NOT replace independent parameters with a generic effect-strength slider. Folding a module MUST change its presentation only.
 
 This target replaces the MAIN, FILM, PRINT, ADVANCED, and CONFIG page navigation with a stage inspector and separate application settings. It does not change the film pipeline, canonical parameter paths, preset schemas, validation, or Save and Export pixel semantics.
 

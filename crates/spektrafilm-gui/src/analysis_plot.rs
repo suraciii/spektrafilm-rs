@@ -30,10 +30,9 @@ pub(crate) struct PlotPreferences {
     pub mode: PlotMode,
     pub histogram_rgb: bool,
     pub waveform_view: WaveformView,
-    pub logarithmic: bool,
     pub channels: [bool; 3],
     pub chroma_zoom: u32,
-    pub height: f32,
+    pub shelf_height: f32,
 }
 
 impl Default for PlotPreferences {
@@ -42,10 +41,9 @@ impl Default for PlotPreferences {
             mode: PlotMode::Histogram,
             histogram_rgb: false,
             waveform_view: WaveformView::Tone,
-            logarithmic: true,
             channels: [true; 3],
             chroma_zoom: 1,
-            height: 280.0,
+            shelf_height: theme::HEIGHT_ANALYSIS_DEFAULT,
         }
     }
 }
@@ -84,7 +82,6 @@ struct HistogramCache {
     data: usize,
     rect: Rect,
     peak: f64,
-    logarithmic: bool,
     signals: [usize; 3],
     signal_count: usize,
     mesh: std::sync::Arc<egui::Mesh>,
@@ -138,6 +135,11 @@ pub(crate) fn show_mode_controls(ui: &mut egui::Ui, prefs: &mut PlotPreferences)
                 "analysis.waveform",
                 "analysis.waveform_help",
             ),
+            (
+                PlotMode::Vectorscope,
+                "analysis.vectorscope",
+                "analysis.vectorscope_help",
+            ),
         ] {
             let name = label(ui, name);
             let help = label(ui, help);
@@ -149,25 +151,32 @@ pub(crate) fn show_mode_controls(ui: &mut egui::Ui, prefs: &mut PlotPreferences)
                 ui.close_menu();
             }
         }
-        egui::CollapsingHeader::new(label(ui, "analysis.advanced"))
-            .id_salt("analysis-advanced")
-            .default_open(prefs.mode == PlotMode::Vectorscope)
-            .show(ui, |ui| {
-                let name = label(ui, "analysis.vectorscope");
-                let help = label(ui, "analysis.vectorscope_help");
-                if ui
-                    .selectable_value(&mut prefs.mode, PlotMode::Vectorscope, name)
-                    .on_hover_text(help)
-                    .clicked()
-                {
-                    ui.close_menu();
-                }
-            });
     })
     .response;
+    let selected_name = label(ui, selected);
     let mode_label = label(ui, "analysis.mode");
-    ui.ctx()
-        .accesskit_node_builder(response.id, |node| node.set_label(mode_label.as_ref()));
+    let help_key = match prefs.mode {
+        PlotMode::Histogram => "analysis.histogram_help",
+        PlotMode::Waveform => "analysis.waveform_help",
+        PlotMode::Vectorscope => "analysis.vectorscope_help",
+    };
+    let help = format!(
+        "{}\n{}\n{}{}",
+        label(ui, help_key),
+        label(ui, "analysis.interpretation"),
+        label(ui, "surfaces.analysis.preview_limit"),
+        if prefs.mode == PlotMode::Histogram {
+            format!("\n{}", label(ui, "analysis.histogram_axes"))
+        } else {
+            String::new()
+        },
+    );
+    ui.ctx().accesskit_node_builder(response.id, |node| {
+        node.set_label(mode_label.as_ref());
+        node.set_description(help.as_str());
+        node.set_value(selected_name.as_ref());
+    });
+    response.on_hover_text(help);
 
     if prefs.mode == PlotMode::Histogram {
         let current = label(
@@ -179,14 +188,21 @@ pub(crate) fn show_mode_controls(ui: &mut egui::Ui, prefs: &mut PlotPreferences)
             },
         );
         let response = egui::ComboBox::from_id_salt("analysis-signal")
+            .width(72.0)
             .selected_text(current.clone())
             .show_ui(ui, |ui| {
-                ui.selectable_value(&mut prefs.histogram_rgb, false, label(ui, "analysis.tone"));
-                ui.selectable_value(&mut prefs.histogram_rgb, true, label(ui, "analysis.rgb"));
+                ui.selectable_value(&mut prefs.histogram_rgb, false, label(ui, "analysis.tone"))
+                    .on_hover_text(label(ui, "analysis.histogram_help"));
+                ui.selectable_value(&mut prefs.histogram_rgb, true, label(ui, "analysis.rgb"))
+                    .on_hover_text(label(ui, "analysis.histogram_help"));
             })
             .response;
-        ui.ctx()
-            .accesskit_node_builder(response.id, |node| node.set_label(current.as_ref()));
+        let help = label(ui, "analysis.histogram_help");
+        ui.ctx().accesskit_node_builder(response.id, |node| {
+            node.set_label(current.as_ref());
+            node.set_description(help.as_ref());
+        });
+        response.on_hover_text(help);
     } else if prefs.mode == PlotMode::Waveform {
         let views = [
             (
@@ -210,6 +226,7 @@ pub(crate) fn show_mode_controls(ui: &mut egui::Ui, prefs: &mut PlotPreferences)
             .find(|(view, _, _)| *view == prefs.waveform_view)
             .unwrap();
         let response = egui::ComboBox::from_id_salt("analysis-waveform-view")
+            .width(110.0)
             .selected_text(label(ui, selected.1))
             .show_ui(ui, |ui| {
                 for (view, name, help) in views {
@@ -221,8 +238,12 @@ pub(crate) fn show_mode_controls(ui: &mut egui::Ui, prefs: &mut PlotPreferences)
             })
             .response;
         let view_label = label(ui, "analysis.waveform_view");
-        ui.ctx()
-            .accesskit_node_builder(response.id, |node| node.set_label(view_label.as_ref()));
+        let help = label(ui, selected.2);
+        ui.ctx().accesskit_node_builder(response.id, |node| {
+            node.set_label(view_label.as_ref());
+            node.set_description(help.as_ref());
+        });
+        response.on_hover_text(help);
     }
     if (prefs.mode == PlotMode::Histogram && prefs.histogram_rgb)
         || (prefs.mode == PlotMode::Waveform && prefs.waveform_view == WaveformView::RgbOverlay)
@@ -245,29 +266,6 @@ pub(crate) fn show_mode_controls(ui: &mut egui::Ui, prefs: &mut PlotPreferences)
             response.on_hover_text(name);
         }
     }
-    if prefs.mode == PlotMode::Histogram {
-        let current = label(
-            ui,
-            if prefs.logarithmic {
-                "analysis.logarithmic"
-            } else {
-                "analysis.linear"
-            },
-        );
-        let response = egui::ComboBox::from_id_salt("analysis-scale")
-            .selected_text(current.clone())
-            .show_ui(ui, |ui| {
-                ui.selectable_value(&mut prefs.logarithmic, false, label(ui, "analysis.linear"));
-                ui.selectable_value(
-                    &mut prefs.logarithmic,
-                    true,
-                    label(ui, "analysis.logarithmic"),
-                );
-            })
-            .response;
-        ui.ctx()
-            .accesskit_node_builder(response.id, |node| node.set_label(current.as_ref()));
-    }
     if prefs.mode == PlotMode::Vectorscope {
         let zoom_help = label(ui, "analysis.chroma_zoom");
         for zoom in [1, 2, 4] {
@@ -275,11 +273,6 @@ pub(crate) fn show_mode_controls(ui: &mut egui::Ui, prefs: &mut PlotPreferences)
                 .on_hover_text(zoom_help.clone());
         }
     }
-}
-
-pub(crate) fn show_settings(ui: &mut egui::Ui, prefs: &mut PlotPreferences) {
-    let height_label = label(ui, "analysis.height");
-    ui.add(egui::Slider::new(&mut prefs.height, 100.0..=400.0).text(height_label));
 }
 
 fn active_signals(prefs: &PlotPreferences) -> ([usize; 3], usize) {
@@ -387,46 +380,34 @@ fn axes(painter: &egui::Painter, rect: Rect, mode: AnalysisMode, zoom: u32) {
             egui::Align2::LEFT_TOP,
             "b",
         );
-    } else {
-        if mode != AnalysisMode::Histogram {
-            for (fraction, text) in [(0.0, "0"), (0.5, "0.5"), (1.0, "1")] {
-                axis(
-                    Pos2::new(rect.left() - 4.0, rect.bottom() - fraction * rect.height()),
-                    egui::Align2::RIGHT_CENTER,
-                    text,
-                );
-            }
+    } else if mode != AnalysisMode::Histogram {
+        for (fraction, text) in [(0.0, "0"), (0.5, "0.5"), (1.0, "1")] {
+            axis(
+                Pos2::new(rect.left() - 4.0, rect.bottom() - fraction * rect.height()),
+                egui::Align2::RIGHT_CENTER,
+                text,
+            );
         }
-        if mode == AnalysisMode::Histogram {
-            for (fraction, text) in [(0.0, "0"), (0.5, "0.5"), (1.0, "1")] {
+        axis(
+            Pos2::new(rect.left(), rect.bottom() + 2.0),
+            egui::Align2::LEFT_TOP,
+            "L",
+        );
+        axis(
+            Pos2::new(rect.right(), rect.bottom() + 2.0),
+            egui::Align2::RIGHT_TOP,
+            "R",
+        );
+        if mode == AnalysisMode::Parade {
+            for (panel, name) in ["R", "G", "B"].into_iter().enumerate() {
                 axis(
-                    Pos2::new(rect.left() + fraction * rect.width(), rect.bottom() + 2.0),
+                    Pos2::new(
+                        rect.left() + (panel as f32 + 0.5) * rect.width() / 3.0,
+                        rect.top() + 3.0,
+                    ),
                     egui::Align2::CENTER_TOP,
-                    text,
+                    name,
                 );
-            }
-        } else {
-            axis(
-                Pos2::new(rect.left(), rect.bottom() + 2.0),
-                egui::Align2::LEFT_TOP,
-                "L",
-            );
-            axis(
-                Pos2::new(rect.right(), rect.bottom() + 2.0),
-                egui::Align2::RIGHT_TOP,
-                "R",
-            );
-            if mode == AnalysisMode::Parade {
-                for (panel, name) in ["R", "G", "B"].into_iter().enumerate() {
-                    axis(
-                        Pos2::new(
-                            rect.left() + (panel as f32 + 0.5) * rect.width() / 3.0,
-                            rect.top() + 3.0,
-                        ),
-                        egui::Align2::CENTER_TOP,
-                        name,
-                    );
-                }
             }
         }
     }
@@ -464,7 +445,6 @@ fn histogram(
     rect: Rect,
     data: &AnalysisData,
     other: Option<&AnalysisData>,
-    prefs: &PlotPreferences,
     (signals, signal_count): ([usize; 3], usize),
 ) {
     let peak = pair_peak(data, other);
@@ -476,20 +456,16 @@ fn histogram(
         cache.data != data_ptr
             || cache.rect != rect
             || cache.peak != peak
-            || cache.logarithmic != prefs.logarithmic
             || cache.signals != signals
             || cache.signal_count != signal_count
     });
     if stale {
         let mut heights = [[0.0_f32; BINS]; 3];
+        let normalizer = (256.0 * peak).ln_1p();
         for (channel, &signal) in signals[..signal_count].iter().enumerate() {
             for (i, &count) in data.histogram[signal].iter().take(BINS).enumerate() {
                 let p = fraction(count, data.finite);
-                heights[channel][i] = if prefs.logarithmic {
-                    ((256.0 * p).ln_1p() / (256.0 * peak).ln_1p()) as f32
-                } else {
-                    (p / peak) as f32
-                };
+                heights[channel][i] = ((256.0 * p).ln_1p() / normalizer) as f32;
             }
         }
         let mut mesh = egui::Mesh::default();
@@ -575,7 +551,6 @@ fn histogram(
             data: data_ptr,
             rect,
             peak,
-            logarithmic: prefs.logarithmic,
             signals,
             signal_count,
             mesh: std::sync::Arc::new(mesh),
@@ -770,17 +745,19 @@ fn inspection_band(painter: &egui::Painter, rect: Rect, start: f32, end: f32, pa
         );
         painter.rect_filled(band, 0, Color32::from_white_alpha(24));
         let stroke = Stroke::new(1.0_f32, theme::FG_SECONDARY);
-        painter.line_segment(
-            [Pos2::new(x, rect.top()), Pos2::new(x, rect.top() + 6.0)],
-            stroke,
-        );
-        painter.line_segment(
-            [
-                Pos2::new(x, rect.bottom() - 6.0),
-                Pos2::new(x, rect.bottom()),
-            ],
-            stroke,
-        );
+        for x in [band.left(), band.right()] {
+            painter.line_segment(
+                [Pos2::new(x, rect.top()), Pos2::new(x, rect.top() + 6.0)],
+                stroke,
+            );
+            painter.line_segment(
+                [
+                    Pos2::new(x, rect.bottom() - 6.0),
+                    Pos2::new(x, rect.bottom()),
+                ],
+                stroke,
+            );
+        }
     }
 }
 
@@ -802,9 +779,10 @@ fn sample_markers(
     prefs: &PlotPreferences,
     signals: &[usize],
     sample: PlotSample,
-) {
+) -> [Rect; 3] {
+    let mut occupied = [Rect::NOTHING; 3];
     if !sample.inside || !sample.pixel.valid {
-        return;
+        return occupied;
     }
     let mode = prefs.analysis_mode();
     let values = [
@@ -817,13 +795,15 @@ fn sample_markers(
         let extent = 0.4 / prefs.chroma_zoom.clamp(1, 4) as f64;
         let [a, b] = sample.pixel.ab;
         if a.abs() <= extent && b.abs() <= extent {
-            marker(painter, vector_pos(rect, a as f32, b as f32, extent as f32));
+            let position = vector_pos(rect, a as f32, b as f32, extent as f32);
+            marker(painter, position);
+            occupied[0] = Rect::from_center_size(position, Vec2::splat(10.0));
         }
-        return;
+        return occupied;
     }
     let width = sample.region[2].saturating_sub(sample.region[0]);
     if width == 0 {
-        return;
+        return occupied;
     }
     let columns = data.spatial_bins.max(1);
     let col = sample_column(sample.x, sample.region[0], width, columns);
@@ -835,6 +815,10 @@ fn sample_markers(
         if mode == AnalysisMode::Histogram {
             let bin = ((value * BINS as f64) as usize).min(BINS - 1);
             let x = rect.left() + (bin as f32 + 0.5) * rect.width() / BINS as f32;
+            occupied[panel] = Rect::from_min_max(
+                Pos2::new(x - 2.0, rect.top()),
+                Pos2::new(x + 2.0, rect.bottom()),
+            );
             painter.line_segment(
                 [Pos2::new(x, rect.top()), Pos2::new(x, rect.bottom())],
                 Stroke::new(2.0_f32, theme::ACCENT),
@@ -855,13 +839,102 @@ fn sample_markers(
             let bin = ((value * BINS as f64) as usize).min(BINS - 1);
             let y = rect.bottom() - (bin as f32 + 0.5) * rect.height() / BINS as f32;
             marker(painter, Pos2::new(x, y));
+            occupied[panel] = Rect::from_center_size(Pos2::new(x, y), Vec2::splat(10.0));
         }
     }
+    occupied
 }
 
-fn readout(ui: &mut egui::Ui, text: String) {
-    ui.add(egui::Label::new(egui::RichText::new(&text).monospace()).truncate())
-        .on_hover_text(text);
+/// At most three linked markers split the plot into at most 4³ clear rectangles.
+fn readout_rect(rect: Rect, occupied: [Rect; 3]) -> Rect {
+    if !occupied.iter().any(|marker| marker.is_positive()) {
+        return rect;
+    }
+    let mut free = [Rect::NOTHING; 64];
+    free[0] = rect;
+    let mut count = 1;
+    for marker in occupied {
+        if !marker.is_positive() {
+            continue;
+        }
+        let mut next = [Rect::NOTHING; 64];
+        let mut next_count = 0;
+        for region in &free[..count] {
+            let cut = region.intersect(marker.expand(2.0));
+            if !cut.is_positive() {
+                next[next_count] = *region;
+                next_count += 1;
+                continue;
+            }
+            for candidate in [
+                Rect::from_min_max(region.min, Pos2::new(region.right(), cut.top())),
+                Rect::from_min_max(Pos2::new(region.left(), cut.bottom()), region.max),
+                Rect::from_min_max(region.min, Pos2::new(cut.left(), region.bottom())),
+                Rect::from_min_max(Pos2::new(cut.right(), region.top()), region.max),
+            ] {
+                if candidate.is_positive() {
+                    next[next_count] = candidate;
+                    next_count += 1;
+                }
+            }
+        }
+        free = next;
+        count = next_count;
+    }
+    free[..count]
+        .iter()
+        .copied()
+        .max_by(|a, b| a.area().total_cmp(&b.area()))
+        .unwrap_or(Rect::NOTHING)
+}
+
+fn information_label(ui: &mut egui::Ui, text: String) -> egui::Response {
+    ui.add(
+        egui::Label::new(egui::RichText::new(text).monospace())
+            .wrap()
+            .selectable(false)
+            .sense(Sense::empty()),
+    )
+}
+
+fn overlay(
+    ui: &mut egui::Ui,
+    rect: Rect,
+    notices: &[String],
+    readout: &[String],
+    keyboard_scroll: f32,
+) -> Option<egui::scroll_area::ScrollAreaOutput<egui::Response>> {
+    if (notices.is_empty() && readout.is_empty()) || !rect.is_positive() {
+        return None;
+    }
+    let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect));
+    child.set_clip_rect(rect);
+    egui::Frame::new()
+        .fill(theme::SURFACE2)
+        .inner_margin(3)
+        .show(&mut child, |ui| {
+            if !readout.is_empty() {
+                information_label(ui, readout.join("  ·  "));
+            }
+            if notices.is_empty() {
+                return None;
+            }
+            Some(
+                egui::ScrollArea::vertical()
+                    .id_salt("analysis-notices")
+                    .max_height(ui.available_height().max(0.0))
+                    .min_scrolled_height(0.0)
+                    .auto_shrink([true, true])
+                    .drag_to_scroll(false)
+                    .show(ui, |ui| {
+                        if keyboard_scroll != 0.0 {
+                            ui.scroll_with_delta(Vec2::new(0.0, -keyboard_scroll));
+                        }
+                        information_label(ui, notices.join("  ·  "))
+                    }),
+            )
+        })
+        .inner
 }
 
 /// Renders a matching result and optional matching viewer sample. Counterpart must
@@ -875,32 +948,55 @@ pub(crate) fn show_plot(
     counterpart: Option<&AnalysisData>,
     sample: Option<PlotSample>,
     max_height: f32,
+    mut messages: Vec<String>,
 ) -> PlotResponse {
     let mode = prefs.analysis_mode();
     let mut result = PlotResponse::default();
-    if data.finite == 0 {
-        ui.label(label(ui, "analysis.no_valid"));
-        ui.label(format!(
-            "{}: {} / {}",
-            label(ui, "analysis.invalid"),
-            data.invalid,
-            data.total
+    let (allocated, allocation) = ui.allocate_exact_size(
+        Vec2::new(ui.available_width(), max_height.max(0.0)),
+        Sense::hover(),
+    );
+    if mode == AnalysisMode::Vectorscope && data.outside_window != 0 {
+        messages.push(format!(
+            "{}: {} ({:.2}%)",
+            label(ui, "analysis.outside_window"),
+            data.outside_window,
+            fraction(data.outside_window, data.finite) * 100.0
         ));
+    }
+    if data.below != 0 {
+        messages.push(format!("{}: {}", label(ui, "analysis.below"), data.below));
+    }
+    if data.above != 0 {
+        messages.push(format!("{}: {}", label(ui, "analysis.above"), data.above));
+    }
+    if data.invalid != 0 {
+        messages.push(
+            label(ui, "analysis.invalid_short")
+                .replace("{invalid}", &data.invalid.to_string())
+                .replace("{total}", &data.total.to_string()),
+        );
+    }
+    if data.finite == 0 {
+        messages.push(label(ui, "analysis.no_valid").into_owned());
+        let _ = overlay(ui, allocated, &messages, &[], 0.0);
         return result;
     }
     let (signal_array, signal_count) = active_signals(prefs);
     let signals = &signal_array[..signal_count];
     if signals.is_empty() && mode != AnalysisMode::Vectorscope {
-        ui.label(label(ui, "analysis.choose_channel"));
+        messages.push(label(ui, "analysis.choose_channel").into_owned());
+        let _ = overlay(ui, allocated, &messages, &[], 0.0);
         return result;
     }
-    let height = prefs.height.clamp(80.0, 400.0).min(max_height.max(40.0));
-    let (allocated, allocation) =
-        ui.allocate_exact_size(Vec2::new(ui.available_width(), height), Sense::hover());
-    let bounds = Rect::from_min_max(
-        allocated.min + Vec2::new(32.0, 8.0),
-        allocated.max - Vec2::new(8.0, 18.0),
-    );
+    let bounds = if mode == AnalysisMode::Histogram {
+        allocated.shrink2(Vec2::new(2.0, 2.0))
+    } else {
+        Rect::from_min_max(
+            allocated.min + Vec2::new(32.0, 8.0),
+            allocated.max - Vec2::new(8.0, 18.0),
+        )
+    };
     let rect = plot_rect(bounds, mode);
     let response = ui.interact(rect, allocation.id.with("plot"), Sense::click());
     let cursor_label = label(ui, "analysis.plot_cursor");
@@ -938,7 +1034,6 @@ pub(crate) fn show_plot(
             rect,
             data,
             counterpart,
-            prefs,
             (signal_array, signal_count),
         );
     } else {
@@ -1005,6 +1100,8 @@ pub(crate) fn show_plot(
     }
     state.column = state.column.min(bins - 1);
     state.row = state.row.min(BINS - 1);
+    let mut occupied = [Rect::NOTHING; 3];
+    let notice_count = messages.len();
     if result.inspecting {
         let start = state.column as f32 / bins as f32;
         let end = (state.column + 1) as f32 / bins as f32;
@@ -1018,10 +1115,11 @@ pub(crate) fn show_plot(
                 if mode == AnalysisMode::Parade { 3 } else { 1 },
             );
             let value = (state.row as f32 + 0.5) / BINS as f32;
-            readout(
-                ui,
-                format!("{:.1}–{:.1}%  {value:.3}", start * 100.0, end * 100.0),
-            );
+            messages.push(format!(
+                "{:.1}–{:.1}%  {value:.3}",
+                start * 100.0,
+                end * 100.0
+            ));
         } else if mode == AnalysisMode::Histogram {
             inspection_band(&painter, rect, start, end, 1);
             let mut text = format!("{start:.3}–{end:.3}");
@@ -1040,7 +1138,7 @@ pub(crate) fn show_plot(
                     fraction(count, data.finite) * 100.0
                 ));
             }
-            readout(ui, text);
+            messages.push(text);
         } else {
             let extent = 0.4 / prefs.chroma_zoom.clamp(1, 4) as f32;
             let a = -extent + (state.column as f32 + 0.5) * 2.0 * extent / BINS as f32;
@@ -1051,21 +1149,18 @@ pub(crate) fn show_plot(
                 .get(state.row * BINS + state.column)
                 .copied()
                 .unwrap_or(0);
-            readout(
-                ui,
-                format!(
-                    "a {a:.3}  b {b:.3}  {:.2}%",
-                    fraction(count, data.finite) * 100.0
-                ),
-            );
+            messages.push(format!(
+                "a {a:.3}  b {b:.3}  {:.2}%",
+                fraction(count, data.finite) * 100.0
+            ));
         }
     } else if let Some(sample) = sample {
-        sample_markers(&painter, rect, data, prefs, signals, sample);
+        occupied = sample_markers(&painter, rect, data, prefs, signals, sample);
         if !sample.pixel.valid {
-            ui.label(label(ui, "analysis.invalid_sample"));
+            messages.push(label(ui, "analysis.invalid_sample").into_owned());
         } else {
             if !sample.inside {
-                ui.label(label(ui, "analysis.outside_selection"));
+                messages.push(label(ui, "analysis.outside_selection").into_owned());
             }
             let mut text = format!("({}, {})", sample.x, sample.y);
             if mode == AnalysisMode::Vectorscope {
@@ -1086,7 +1181,7 @@ pub(crate) fn show_plot(
                     text.push_str(&format!("  {name} {value:.3}"));
                 }
             }
-            readout(ui, text);
+            messages.push(text);
             let off_scale = if mode == AnalysisMode::Vectorscope {
                 let extent = 0.4 / prefs.chroma_zoom.clamp(1, 4) as f64;
                 sample.pixel.ab.iter().any(|v| v.abs() > extent)
@@ -1101,36 +1196,39 @@ pub(crate) fn show_plot(
                 })
             };
             if off_scale {
-                ui.label(label(ui, "analysis.off_scale"));
+                messages.push(label(ui, "analysis.off_scale").into_owned());
             }
         }
     }
-    if mode == AnalysisMode::Vectorscope && data.outside_window != 0 {
-        ui.label(format!(
-            "{}: {} ({:.2}%)",
-            label(ui, "analysis.outside_window"),
-            data.outside_window,
-            fraction(data.outside_window, data.finite) * 100.0
-        ));
-    }
-    if data.below != 0 || data.above != 0 || data.invalid != 0 {
-        let mut text = String::new();
-        if data.below != 0 || data.above != 0 {
-            text = label(ui, "analysis.range_counts")
-                .replace("{below}", &data.below.to_string())
-                .replace("{above}", &data.above.to_string());
+    let readout_area = match mode {
+        AnalysisMode::Vectorscope => {
+            // Side space leaves hue references and the neutral center unobstructed.
+            Rect::from_min_max(
+                allocated.min,
+                Pos2::new(rect.left() - 32.0, allocated.bottom()),
+            )
         }
-        if data.invalid != 0 {
-            if !text.is_empty() {
-                text.push_str(" · ");
-            }
-            text.push_str(
-                &label(ui, "analysis.invalid_short")
-                    .replace("{invalid}", &data.invalid.to_string())
-                    .replace("{total}", &data.total.to_string()),
-            );
-        }
-        ui.label(text);
+        AnalysisMode::Parade => Rect::from_min_max(rect.min + Vec2::new(0.0, 16.0), rect.max),
+        _ => rect,
+    };
+    if !messages.is_empty() {
+        let area = readout_rect(readout_area, occupied);
+        let keyboard_scroll = if response.has_focus() {
+            ui.input(|input| {
+                (i32::from(input.key_pressed(egui::Key::PageDown))
+                    - i32::from(input.key_pressed(egui::Key::PageUp))) as f32
+                    * area.height()
+            })
+        } else {
+            0.0
+        };
+        let _ = overlay(
+            ui,
+            area,
+            &messages[..notice_count],
+            &messages[notice_count..],
+            keyboard_scroll,
+        );
     }
     result
 }
@@ -1257,5 +1355,104 @@ mod tests {
         assert_eq!(columns, [0, 0, 1, 1, 1, 2, 2]);
         let narrow: Vec<_> = (20..24).map(|x| sample_column(x, 20, 4, 4)).collect();
         assert_eq!(narrow, [0, 1, 2, 3]);
+    }
+
+    #[test]
+    fn linked_readouts_leave_endpoint_and_rgb_markers_visible() {
+        let ctx = egui::Context::default();
+        let painter = ctx.layer_painter(egui::LayerId::background());
+        let mut data = data(100);
+        data.spatial_bins = 100;
+        for height in [82.0, 110.0] {
+            let rect = Rect::from_min_size(Pos2::ZERO, Vec2::new(700.0, height));
+            for (mode, view, histogram_rgb) in [
+                (PlotMode::Histogram, WaveformView::Tone, false),
+                (PlotMode::Histogram, WaveformView::Tone, true),
+                (PlotMode::Waveform, WaveformView::Tone, false),
+                (PlotMode::Waveform, WaveformView::RgbOverlay, false),
+                (PlotMode::Waveform, WaveformView::RgbParade, false),
+            ] {
+                let prefs = PlotPreferences {
+                    mode,
+                    waveform_view: view,
+                    histogram_rgb,
+                    ..Default::default()
+                };
+                let (signals, count) = active_signals(&prefs);
+                for x in [0, 50, 99] {
+                    if mode == PlotMode::Histogram && x != 0 {
+                        continue;
+                    }
+                    let sample = PlotSample {
+                        pixel: AnalysisPixel {
+                            rgb: [0.0, 0.5, 1.0],
+                            tone: 1.0,
+                            ab: [0.0; 2],
+                            valid: true,
+                        },
+                        x,
+                        y: 0,
+                        region: [0, 0, 100, 1],
+                        inside: true,
+                    };
+                    let occupied =
+                        sample_markers(&painter, rect, &data, &prefs, &signals[..count], sample);
+                    let readout = readout_rect(rect, occupied);
+                    assert!(rect.contains_rect(readout));
+                    assert!(readout.width() >= 100.0 && readout.height() >= 16.0);
+                    for marker in occupied.into_iter().filter(|marker| marker.is_positive()) {
+                        assert!(
+                            !readout.intersects(marker),
+                            "readout covers a linked marker: {readout:?}, {marker:?}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn long_notices_scroll_without_hiding_active_pixel_values() {
+        use egui_kittest::kittest::Queryable;
+        let readout = vec!["(1024, 512) R 0.250 G 0.500 B 0.750".to_owned()];
+        let messages = vec![
+            "Earlier result; Original and Modified cover different source areas.".to_owned(),
+            "Below 10; Above 20; Invalid 1 / 100; Outside chroma window 25 (25%).".to_owned(),
+        ];
+        let mut h = egui_kittest::Harness::new_ui_state(
+            |ui, state: &mut (f32, f32, Rect, Rect, f32)| {
+                let bounds = Rect::from_min_size(ui.max_rect().min, Vec2::new(170.0, 82.0));
+                let scroll = std::mem::take(&mut state.4);
+                let output = overlay(ui, bounds, &messages, &readout, scroll).unwrap();
+                state.0 = output.state.offset.y;
+                state.1 = output.content_size.y - output.inner_rect.height();
+                state.2 = output.inner_rect;
+                state.3 = output.inner.rect;
+                assert!(bounds.contains_rect(output.inner_rect));
+            },
+            (0.0, 0.0, Rect::NOTHING, Rect::NOTHING, 0.0),
+        );
+        h.run_steps(5);
+        let before = h.state().2;
+        let pinned = h.get_by_label(&readout[0]).raw_bounds().unwrap();
+        assert!(pinned.y1 <= f64::from(before.top()));
+        assert!(h.state().1 > 0.0, "this case must require scrolling");
+        h.state_mut().4 = 10000.0;
+        h.run_steps(12);
+        assert!(
+            (h.state().0 - h.state().1).abs() < 1.0,
+            "the last readout line must remain reachable"
+        );
+        assert!(h.state().3.bottom() <= h.state().2.bottom() + 1.0);
+        assert_eq!(
+            before,
+            h.state().2,
+            "scrolling must not resize the plot region"
+        );
+        assert_eq!(
+            pinned,
+            h.get_by_label(&readout[0]).raw_bounds().unwrap(),
+            "scrolling notices must not hide the active sample"
+        );
     }
 }
