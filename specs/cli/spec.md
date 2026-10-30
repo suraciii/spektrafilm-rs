@@ -16,6 +16,8 @@ Every leaf carried by a preset MUST remain addressable through canonical `--set`
 
 Help, data-directory selection, command status, and human feedback belong to the [workflow contract](#workflow-contract).
 
+The [value-validity contract](#parameter-value-validity) and [operation-applicability contract](#operation-applicability) apply to canonical runtime controls across their existing carriers. They do not make a baseline, sparse source, preset, GUI state, recipe, or material artifact interchangeable.
+
 `film_channel_swap` and `print_channel_swap` are profile-data diagnostics. They reorder which density row feeds each RGB channel and exist to diagnose a profile whose channel assignment is wrong. They are not photographic controls.
 
 The GUI exposes them with an `(experimental)` suffix in FILM → Convert; the CLI `--film-channel-swap` and `--print-channel-swap` flags remain the primary surface. A swap value MUST be a permutation of `[0, 1, 2]`; the command MUST reject a non-permutation before rendering.
@@ -217,7 +219,7 @@ Paths MUST use the runtime parameter vocabulary, such as `film_render.grain.proc
 
 Pipeline-derived `film_render.grain.monochrome` MUST NOT be an editable path. Other runtime controls MUST use the shared editable parameter description. Removed Spektra controls MUST follow the [Spektra contract](../film-grain/spektra/spec.md).
 
-Controls for inactive effects or engines MAY be stored without affecting output. [Procedural grain](../film-grain/procedural/spec.md) MUST retain its named-profile and Custom behavior. Spektra RMS granularity and Procedural Amount MUST remain distinct controls.
+Valid controls for inactive effects or engines MAY be stored without affecting output. [Procedural grain](../film-grain/procedural/spec.md) MUST retain its named-profile and Custom behavior. Spektra RMS granularity and Procedural Amount MUST remain distinct controls.
 
 A parameter-file leaf or inline assignment MUST NOT change another control to make itself effective. The [Output mix and material controls contract](../output-mix/spec.md) defines use of existing preflash and chemistry controls and owns `output_mix`. Simulation blend uses the existing canonical assignment `--set output_mix.amount=0.5`, without an alias or dedicated process flag.
 
@@ -235,6 +237,53 @@ A versioned legacy complete-document migration MAY allow absence or null only; e
 
 Existing gamut algorithms otherwise stay unchanged. The unshipped `film_render.response`, `print_render.response`, `enlarger.c_filter_shift`, `reproduction.*`, and `io.finished_rgb_output_processing` paths MUST fail normal unknown-field validation without aliases, defaults, or migration, including in draft version 3 presets. Presets MUST reject the unshipped `output response` section.
 
+
+## Parameter value validity
+
+Value validity is independent of whether the selected operation uses a control. After the carrier's documented normalization, canonical runtime values MUST satisfy their owning type, nullability, finite-number, enum, and scalar or component-domain rules even when their feature is disabled, another engine is selected, or their operation is absent.
+
+Equivalent canonical values MUST receive the same domain decision in complete parameter documents, sparse sources, presets, GUI state, recipes, LUT requests, and direct runtime construction or update. Each carrier retains its own schema, supported fields, defaults, and composition semantics. Value-domain agreement MUST NOT turn a non-settable runtime field into a sparse editable path.
+
+Readers MUST retain documented legacy normalization and versioned migrations before canonical validation. They MUST preserve the distinction between sparse omission, optional null, and a complete-document default. An unsupported spelling, version, field, or value MUST NOT acquire a new migration merely because a feature is inactive.
+
+Validation MUST use the parameter's accepted document domain, not a GUI interaction range. A finite value outside the GUI editor range but inside the document domain MUST remain loadable and retain its precision. This contract MUST NOT invent new bounds or change units, defaults, floating-point representation rules, or existing field domains.
+
+Invalid values MUST NOT be clamped, cleared, replaced by defaults, or accepted with a warning. An enable switch, route change, later override, Preview constraint, or LUT bypass MUST NOT conceal an invalid supplied value. The [composition validation order](#export-and-execution-options) remains authoritative.
+
+Valid inactive values MUST remain stored under the owning persistence and material-default rules. Their validation MUST NOT require preparation, image decoding, a compute device, or loading a material or resource that the selected operation does not need. Model support and execution resources remain contextual checks under [Operation applicability](#operation-applicability).
+
+Writers MUST emit validated canonical values in the carrier's existing schema. Reading, inspecting, or rejecting a document MUST NOT rewrite its source. A rejected candidate MUST preserve accepted GUI controls, history, runtime, and retained output under their transaction contracts; a CLI failure MUST preserve existing output files.
+
+For example, disabled film or print chemistry with `developer_exhaustion = 0.5` is valid stored state. The same disabled control with value `2.0` MUST fail its declared `[0,1]` domain through every carrier. This is an intentional tightening of complete-document acceptance, not an automatic repair or a change to chemistry.
+
+## Operation applicability
+
+Applicability states whether a valid control can participate in the selected operation. It MUST consider the resolved route and executed span, effect or engine selection, relevant material capability, and the owning feature's bypass rules. It MUST NOT be inferred solely from a parameter prefix, GUI module, or `io.scan_film`.
+
+Field discovery MUST describe these conditions without loading profiles. CLI feedback and GUI disclosure MUST evaluate the same conditions for the same resolved context. A context-free description MUST NOT claim that a particular material or backend is supported.
+
+The following operation distinctions MUST hold alongside each feature's existing enable and model conditions:
+
+| Control or operation | Required distinction |
+| --- | --- |
+| Scene exposure compensation, camera diffusion, and Halation on `input` | None executes on the input-only route; valid stored requests are inactive. |
+| Capture illuminant and film exposure effects | New exposure of film is distinct from interpreting a captured negative or resuming developed film. |
+| Film chemistry | Actual film development is distinct from convert-film inversion and continuation of an already developed film state. |
+| Enlarger, Preflash, and print chemistry | New print exposure or development is distinct from scanning an already developed print. |
+| Print viewing glare | Print readout is required; producing a print artifact alone is insufficient, while `print > scan` supplies the readout without new printing. |
+| Material grain and Procedural grain | The selected model owns its operation; Procedural remains post-scan appearance rather than film development. |
+| Scan-only controls on a material terminal route | Downstream defaults MAY be retained, but the material output does not execute scanning. |
+| Shared geometry, color, and interpretation controls | Every actual consumer counts; a storage group MUST NOT impose a single-stage gate on a shared control. |
+
+Material continuation and admitted diagnostic endpoints MUST use their actual remaining span. Frozen interpretation context MUST remain available to its downstream consumers without replaying the operation that created it. [Frozen-state conflicts](stage-artifacts.md#frozen-state-and-editable-continuation) remain errors, not inactive edits.
+
+An absent operation MUST be explained as an operation or route condition, not as a suggestion to enable a feature on that route. A feature's enable control MUST NOT become unusable solely because that feature is off. Engine selectors MUST remain available for explicit correction under their owning GUI contract.
+
+Applicability feedback MUST NOT modify parameter values, choose an engine, activate a feature, change a route, or create a fitted material model. It MUST NOT replace execution admission: requests that an owning model, artifact, LUT, or selected-backend contract rejects MUST still fail rather than become successful inactive requests.
+
+GUI disclosure MUST describe configured final-render applicability. A temporary worker Preview bypass MUST NOT erase that configuration or imply that Scan and Export bypass the feature. Operation-specific feedback MUST retain the existing Preview, diagnostic, and LUT distinctions without adding a new execution mode.
+
+These rules refine the existing [edit feedback](#discovery-and-dry-run). They MUST NOT add a status, change classification precedence, or claim that active parameters necessarily change measured pixels. Missing applicability coverage for an operation-owned field MUST NOT be treated as proof that the field is route-independent.
 
 ## Composition
 
@@ -303,11 +352,11 @@ spektrafilm-f64 process input.png --output output.tif \
   --saving-color-space "ProPhoto RGB" --saving-cctf-encoding true
 ```
 
-Each file source and inline assignment source MUST pass syntax, field, type, finite-number, leaf-range, and enum validation. Each selected preset MUST pass document validation before `--set` sources apply. Cross-field validation MUST run on the composed controls before runtime constraints so constraints cannot conceal an invalid user configuration.
+Each file source and inline assignment source MUST pass syntax and field validation and the [shared value-validity rules](#parameter-value-validity) before a later source can replace a supplied leaf. Each selected preset MUST pass document validation before `--set` sources apply. Cross-field validation MUST run on the composed controls before runtime constraints so constraints cannot conceal an invalid user configuration.
 
 The runtime MUST also validate parameters after applying its constraints.
 
-Section composition MUST defer scan compatibility until explicit workflow and scan-output choices are applied. Active film and print chemistry MUST use the same control-domain validation in document validation, dry run, and runtime preparation.
+Section composition MUST defer scan compatibility until explicit workflow and scan-output choices are applied.
 
 Errors MUST identify the offending option or file, field path when available, supplied value when safe to display, and violated rule. Parse errors MUST include the parser location when available. Unknown paths MUST NOT create new fields; paths naming non-settable runtime fields MUST identify the out-of-band field and why it is unavailable.
 
@@ -405,7 +454,7 @@ Artifact input MUST report `input.declaration: null`; its native density interpr
 
 The report MUST add `edits` as an array of winning `--set` leaves sorted by canonical path. Each entry MUST contain `path`, `requested`, `effective`, `source`, `status`, and `reason`. `source` MUST use the declaration source record shape.
 
-Values MUST be typed JSON values. `status` MUST be `active`, `inactive`, `constrained`, or `overridden`. `active` means the edit remains effective and its known effect conditions hold.
+Values MUST be typed JSON values. `status` MUST be `active`, `inactive`, `constrained`, or `overridden`. `active` means the edit remains effective and its known effect conditions, including [operation applicability](#operation-applicability), hold.
 
 `inactive` means a known effect condition prevents use. `constrained` means runtime preparation changed the requested value. `overridden` means a dedicated flag replaced the winning edit.
 
@@ -509,17 +558,47 @@ Dry run for custom RAW white balance with temperature `6500` and tint `-5` MUST 
 
 Both MUST expose the selected data directory and source. None of these scenarios MAY decode input pixels, initialize a compute device, or write image or raw output. Existing runtime and writer fields MUST retain their meanings.
 
+### Parameter value-validity acceptance
+
+Exercise complete `--params`, sparse JSON, sparse TOML, inline assignments, preset application, GUI state load, recipe load, LUT parameter load, and direct runtime construction or update at their existing boundaries.
+
+| Scenario | Required evidence |
+| --- | --- |
+| Disabled film and print chemistry | `developer_exhaustion` values `0`, `0.5`, and `1` MUST remain valid and stored; `-0.1` and `2` MUST fail regardless of enable state or route. |
+| Scalar, optional, enum, and vector boundaries | Representative f32 and f64 controls MUST retain their declared inclusive, strict-positive, and per-component domains. Non-finite values MUST fail wherever the carrier or typed API can represent them. |
+| Inactive persistence | Valid inactive values MUST survive save/reload and a change back to an applicable context. |
+| Existing normalization | Legacy aliases, normalized legacy nulls, missing complete-document groups, sparse omission, and optional null MUST retain canonical values, field-level defaults, ownership, and unrelated controls. |
+| Invalid value followed by replacement | A later valid source MUST NOT conceal an invalid supplied leaf. |
+| Valid value outside an editor range | Inspecting or saving a value inside its document domain MUST preserve it without rounding or clamping. |
+| Unused feature resources | Value validation MUST NOT load an unused profile or prepare its numerical resources. |
+| Transactional rejection | Source documents, accepted controls, explicit ownership, history, retained runtime and image, and existing output sentinels MUST remain unchanged at their owning surfaces. Diagnostics MUST identify the canonical path and violated domain without requiring identical localized prose. |
+
+### Operation-applicability acceptance
+
+| Scenario | Required evidence |
+| --- | --- |
+| Input-only versus full-chain output | Legal scene exposure, Halation, and print-glare edits with grain disabled MUST report inactive with an operation reason on `input` in text and JSON. Paired CPU output dimensions and samples MUST remain identical; an admitted full-chain render of a nonuniform image MUST provide a positive control. |
+| Route boundaries | Representative controls MUST cover every admitted route's operations. Include `input > film > print` versus `print > scan`: print-glare defaults are inactive in the first and applicable in the second when enabled. |
+| Continuation and diagnostic spans | Convert-film, film-artifact continuation, and an admitted span that skips film exposure MUST NOT claim new exposure or redevelopment. Frozen-state conflicts MUST still fail; retained interpretation context MUST preserve the downstream result. |
+| Grain operation ownership | Material grain and Procedural post-scan appearance MUST remain distinct. Artifact output MUST NOT gain post-scan appearance because its controls are stored under `film_render.grain`. |
+| Conditional controls | Production controls MUST exercise feature off/on, engine selection, supported and unsupported materials, and named versus custom Procedural profiles. Shared geometry and color controls MUST remain applicable at their actual consumers; one inactive optional subfeature MUST NOT make its whole module inactive. |
+| GUI route round trip | A real GUI full-route to `input` to full-route transition and save/reopen MUST preserve values and explicit ownership subject to owning normalizations. Disclosure MUST track the route and distinguish Preview-only bypasses from final-render inactivity. |
+| Admission failures | Unsupported active grain, frozen-state mutation, incompatible LUT targets, and unsupported selected-GPU operations MUST retain their errors without fallback or successful output. |
+| Feedback and numerical stability | Existing overridden, constrained, inactive, and active precedence MUST remain intact. Unchanged admitted renders with the same effective parameters, seed, precision, and backend MUST remain within existing numerical budgets without changing algorithms or preparation dependencies. |
+
 ## Compatibility
 
-Legacy `--params` MUST retain its existing decoding and relationship to stock initialization and database calibration, except for the explicit [retired output-lightness migration](#editable-paths-and-conditional-controls). A sparse legacy file MUST NOT be reinterpreted as a sparse parameter override. A legacy baseline MAY be followed by `--set` sources.
+Legacy `--params` MUST retain its existing decoding and relationship to stock initialization and database calibration, except for the explicit [retired output-lightness migration](#editable-paths-and-conditional-controls) and post-normalization [value-validity checks](#parameter-value-validity). A sparse legacy file MUST NOT be reinterpreted as a sparse parameter override. A legacy baseline MAY be followed by `--set` sources.
 
 The declaration requirement and route normalization are intentional changes for all public `process` invocations. The absence of `--preset` or `--set` MUST NOT bypass them. Seed and report presentation alone MUST NOT select a different numerical preparation policy.
 
 For the same effective parameters, routing, seed, and backend, these interface changes MUST NOT alter numerical computation.
 
-`render --recipe`, `lut --params`, and GUI child-process protocols MUST retain their existing contracts except for the same versioned complete-document output-lightness retirement. They MUST NOT acquire the added process flags implicitly. A rejected migration or configuration MUST preserve the source file, active state, and existing image output.
+`render --recipe`, `lut --params`, and GUI child-process protocols MUST retain their existing carriers and execution contracts while sharing [canonical value validation](#parameter-value-validity) and the same versioned complete-document output-lightness retirement. They MUST NOT acquire the added process flags implicitly. A rejected migration or configuration MUST preserve the source file, active state, and existing image output.
 
 TOML support for presets and sparse parameter files MUST NOT imply TOML support for complete GUI states, legacy `--params`, or RenderRecipe.
+
+Previously accepted out-of-domain inactive values are not a supported legacy value domain. After documented carrier normalization, those values MUST fail with the offending path and accepted domain, leaving the source unchanged for explicit correction. No permissive mode, implicit clamp, or new schema version is introduced by this validation cutover.
 
 ## Image-processing acceptance
 

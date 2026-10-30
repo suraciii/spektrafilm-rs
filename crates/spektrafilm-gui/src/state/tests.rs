@@ -1,6 +1,71 @@
 use super::*;
 
 #[test]
+fn inactive_chemistry_state_validates_mirrors_and_preserves_valid_values() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("state.json");
+    let factory = GuiState::factory();
+    for exhaustion in [0.0, 0.5, 1.0] {
+        let mut params = factory.runtime_params().unwrap();
+        params.film_render.chemistry.active = false;
+        params.film_render.chemistry.developer_exhaustion = exhaustion;
+        params.print_render.density_curves_morph.active = false;
+        params
+            .print_render
+            .density_curves_morph
+            .developer_exhaustion = exhaustion;
+        params.camera.film_format_mm = 2000.0;
+        let state =
+            GuiState::from_runtime(&params, factory.film(), factory.paper(), &factory.sections)
+                .unwrap();
+        state.save(&path).unwrap();
+        let restored = GuiState::load(&path).unwrap().runtime_params().unwrap();
+        assert!(!restored.film_render.chemistry.active);
+        assert!(!restored.print_render.density_curves_morph.active);
+        assert_eq!(
+            restored.film_render.chemistry.developer_exhaustion,
+            exhaustion
+        );
+        assert_eq!(
+            restored
+                .print_render
+                .density_curves_morph
+                .developer_exhaustion,
+            exhaustion
+        );
+        assert_eq!(restored.camera.film_format_mm, 2000.0);
+    }
+    let mut nonfinite = factory.runtime_params().unwrap();
+    nonfinite.film_render.grain.procedural_size = Some(f32::NAN);
+    assert!(
+        GuiState::from_runtime(
+            &nonfinite,
+            factory.film(),
+            factory.paper(),
+            &factory.sections,
+        )
+        .is_err()
+    );
+    let accepted = std::fs::read(&path).unwrap();
+    for (group, feature) in [
+        ("film_render", "chemistry"),
+        ("print_render", "density_curves_morph"),
+    ] {
+        for exhaustion in [-0.1, 2.0] {
+            let mut invalid = factory.sections.clone();
+            invalid["rust"]["runtime"][group][feature] =
+                json!({"active": false, "developer_exhaustion": exhaustion});
+            // A later GUI mirror with a valid value must not conceal invalid input.
+            invalid[group] = json!({});
+            invalid[group][feature] = json!({"active": false, "developer_exhaustion": 0.5});
+            assert!(GuiState::from_value(invalid.clone()).is_err());
+            assert!(GuiState { sections: invalid }.save(&path).is_err());
+            assert_eq!(std::fs::read(&path).unwrap(), accepted);
+        }
+    }
+}
+
+#[test]
 fn sparse_dye_state_preserves_omitted_and_authored_strength() {
     let inherited = GuiState::factory()
         .runtime_params()
@@ -542,6 +607,52 @@ fn legacy_cmyk_state_migration_is_transactional_and_idempotent() {
 }
 
 #[test]
+fn legacy_runtime_and_simulation_routes_migrate_together() {
+    for version in [2, 3] {
+        let source = json!({
+            "rust": {"version": version, "runtime": {
+                "workflow": {"route": "input > film > scan > magazine"},
+                "magazine_print_color": {"strength": 0.75}
+            }},
+            "simulation": {"route": "input > film > scan > magazine"},
+            "magazine_print_color": {"strength": 0.75}
+        });
+        let state = GuiState::from_value(source).unwrap();
+        let params = state.runtime_params().unwrap();
+        assert_eq!(params.workflow.route, "input > film > scan");
+        assert!(params.cmyk.active);
+        assert_eq!(params.cmyk.strength, 0.75);
+        assert_eq!(
+            state.sections["rust"]["runtime"]["workflow"]["route"],
+            json!("input > film > scan")
+        );
+        assert_eq!(
+            state.sections["rust"]["runtime"]["cmyk"],
+            json!({"active": true, "strength": 0.75})
+        );
+        assert!(
+            state.sections["rust"]["runtime"]
+                .get("magazine_print_color")
+                .is_none()
+        );
+        let reloaded = GuiState::from_value(state.sections.clone()).unwrap();
+        assert_eq!(reloaded.runtime_params().unwrap().cmyk, params.cmyk);
+
+        let conflict = json!({"rust": {"version": version, "runtime": {
+            "workflow": {"route": "input > film > scan > magazine"},
+            "magazine_print_color": {"active": false}
+        }}});
+        assert!(GuiState::from_value(conflict).is_err());
+    }
+    assert!(
+        GuiState::from_value(json!({"rust": {"version": 4, "runtime": {
+            "workflow": {"route": "input > film > scan > magazine"}
+        }}}))
+        .is_err()
+    );
+}
+
+#[test]
 fn legacy_rust_grain_snapshot_preserves_supported_controls() {
     for retired in [None, Some(Value::Null)] {
         let mut source = json!({"rust":{"version":1,"runtime":{"film_render":{"grain":{"rms_granularity":[9.0,12.0,15.0],"particle_scale_sublayers":[2.0,1.0,0.5],"monochrome":true}}}}});
@@ -665,6 +776,44 @@ fn dedicated_diffusion_and_simulation_panels_win_over_passthrough_groups() {
     assert_eq!(params.camera.diffusion_filter.strength, 0.25);
     assert_eq!(params.enlarger.print_exposure, 1.75);
     assert_eq!(params.enlarger.preflash_exposure, 0.2);
+}
+
+#[test]
+fn camera_mirror_is_validated_before_dedicated_diffusion_overrides_it() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("state.json");
+    let invalid_path = directory.path().join("invalid.json");
+    let accepted = GuiState::factory();
+    accepted.save(&path).unwrap();
+    let accepted_bytes = std::fs::read(&path).unwrap();
+
+    for dedicated in [None, Some(json!({"filter_family": "black_pro_mist"}))] {
+        let mut invalid = json!({
+            "rust": {"version": CURRENT_STATE_VERSION},
+            "camera": {"diffusion_filter": {"active": false, "filter_family": "unknown"}}
+        });
+        if let Some(dedicated) = dedicated {
+            invalid["camera_diffusion"] = dedicated;
+        }
+        let source = serde_json::to_vec(&invalid).unwrap();
+        std::fs::write(&invalid_path, &source).unwrap();
+        assert!(GuiState::load(&invalid_path).is_err());
+        assert_eq!(std::fs::read(&invalid_path).unwrap(), source);
+        assert!(GuiState::from_value(invalid.clone()).is_err());
+        assert!(GuiState { sections: invalid }.save(&path).is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), accepted_bytes);
+    }
+
+    // Legacy null color filters normalize to the runtime's "none" value.
+    let state = GuiState::from_value(json!({
+        "rust": {"version": 2},
+        "camera": {"color_filter": null, "diffusion_filter": {"filter_family": "pro_mist"}},
+        "camera_diffusion": {"filter_family": "black_pro_mist"}
+    }))
+    .unwrap();
+    let camera = state.runtime_params().unwrap().camera;
+    assert_eq!(camera.color_filter, "none");
+    assert_eq!(camera.diffusion_filter.filter_family, "black_pro_mist");
 }
 #[test]
 fn camera_capture_illuminant_roundtrips_through_gui_state() {

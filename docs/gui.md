@@ -96,6 +96,8 @@ A boolean row is a switch that names the concept it enables. A choice row shows 
 
 **Only modified** filters against the reset baseline, independently of the applied preset. It can combine with search. The row marker, module `modified` chip, and this filter use the same exact comparison. The preset browser's applied/modified/missing marker has its own preset baseline.
 
+Inactive rows retain valid stored values and explain whether an operation is absent, a feature is disabled, or the selected material lacks support. Switching to `input` and back retains those requests and their explicit ownership. The temporary lightweight Preview bypass does not mark final-render controls permanently inactive. Numeric document domains remain separate from the editor's interaction range; loading a valid value outside that range does not clamp it. Invalid loaded state is rejected without replacing accepted controls, history, or the retained image.
+
 For Settings and Export, the filter compares accepted preferences with typed factory defaults. Unsubmitted Export drafts do not change these results.
 
 A module header's **reset** restores only that module's controls. Parameter rows, sliders, and Export options do not have separate reset buttons. Use **Undo** to reverse an adjustment. For example, resetting **Preflash** leaves main **Enlarger** exposure and filtration unchanged; resetting **Print viewing glare** leaves **Print chemistry** unchanged. Material-module reset restores its factory material selection and development time.

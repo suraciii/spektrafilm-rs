@@ -328,6 +328,45 @@ pub fn describe() -> Value {
 #[cfg(test)]
 mod tests {
     #[test]
+    fn recipe_inactive_chemistry_is_validated_without_rewriting_sources() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("recipe.json");
+        for version in ["spektrafilm-rs-params-1", PARAMETER_SCHEMA_VERSION] {
+            for exhaustion in [0.0, 0.5, 1.0, -0.1, 2.0] {
+                let parameters = json!({"print_render": {"density_curves_morph": {
+                    "active": false, "developer_exhaustion": exhaustion
+                }}});
+                let source = serde_json::to_vec(&json!({
+                    "schemaVersion": version, "filmProfile": "kodak_portra_400",
+                    "parameters": parameters, "output": default_output("jpeg")
+                }))
+                .unwrap();
+                std::fs::write(&path, &source).unwrap();
+                let result = read_recipe(&path);
+                if (0.0..=1.0).contains(&exhaustion) {
+                    let recipe = result.unwrap();
+                    assert_eq!(
+                        recipe.parameters["print_render"]["density_curves_morph"]["active"],
+                        false
+                    );
+                    assert_eq!(
+                        recipe.parameters["print_render"]["density_curves_morph"]["developer_exhaustion"],
+                        exhaustion
+                    );
+                } else {
+                    assert!(
+                        result
+                            .unwrap_err()
+                            .to_string()
+                            .contains("print_render.density_curves_morph.developer_exhaustion")
+                    );
+                }
+                assert_eq!(std::fs::read(&path).unwrap(), source);
+            }
+        }
+    }
+
+    #[test]
     fn recipe_versions_migrate_only_null_retired_values_and_preserve_source() {
         static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let root = std::env::temp_dir().join(format!(

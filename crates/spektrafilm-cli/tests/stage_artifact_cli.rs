@@ -200,6 +200,35 @@ fn all_six_stage_routes_continue_actual_material_and_preserve_direct_scan_pixels
                 .iter()
                 .any(|v| v == "artifact_integrity")
         );
+        let feedback = success(invoke(
+            bin,
+            root,
+            "film.sfstage",
+            &[
+                "--route",
+                "film > scan",
+                "--dry-run",
+                "--set",
+                "print_render.glare.percent=0.75,scanner.scan_output=direct_scan",
+                "--scan-output",
+                "direct_scan",
+            ],
+        ));
+        let feedback: Value = serde_json::from_slice(&feedback.stdout).unwrap();
+        let edits = feedback["edits"].as_array().unwrap();
+        let glare = edits
+            .iter()
+            .find(|edit| edit["path"] == "print_render.glare.percent")
+            .unwrap();
+        assert_eq!(glare["effective"], 0.75);
+        assert_eq!(glare["status"], "inactive");
+        assert!(!glare["reason"].is_null());
+        let scan = edits
+            .iter()
+            .find(|edit| edit["path"] == "scanner.scan_output")
+            .unwrap();
+        assert_eq!(scan["status"], "overridden");
+        assert!(feedback["print_profile"].is_null());
         let unresolved = success(invoke(
             bin,
             root,

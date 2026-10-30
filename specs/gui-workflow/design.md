@@ -29,8 +29,9 @@ The [GUI language design](../gui-language/design.md) owns localized presentation
 - Rejected retired settings likewise leave the accepted transaction intact under [Persistence and delivery](../output-mix/design.md#persistence-and-delivery).
 - Core runtime validation emits semantic reason, canonical parameter path, and value arguments at the authoritative rule. GUI state loading retains that typed error until localized presentation; the CLI keeps the existing English formatting through the same validator.
 - Validation MUST NOT be duplicated in the GUI or inferred by classifying English error text.
-- Grain disclosure MUST consume the core-owned applicability query. The GUI MUST NOT parse condition descriptions or maintain a second applicability table.
-- Production grain queries MUST reuse the cached actual film profile without per-row loading or copying. Isolated surfaces without material context MAY query configured applicability.
+- Runtime control disclosure MUST consume the core-owned [operation-applicability query](../cli/design.md#operation-applicability). The GUI MUST NOT parse condition descriptions or maintain another route, scan-film, engine, or material applicability table.
+- Production queries MUST borrow relevant cached material data without per-row loading or copying. Isolated surfaces without material context MAY describe configured conditions but MUST NOT claim resolved material support.
+- Grain's configured-versus-Preview distinction remains unchanged.
 - The profile selection module owns catalog discovery and stock and development-time pickers. The application owns selection state and render invalidation.
 - Viewer presentation uses disposable device or host display rasters under [GPU residency](../gpu-execution/design.md#device-residency). Save and Export consume retained floating output or invoke the export renderer and shared writer.
 - The private raster module owns interpolation kernels and pixel sampling. The viewer owns color transforms, caching, and presentation state.
@@ -56,8 +57,9 @@ The [GUI language design](../gui-language/design.md) owns localized presentation
 - Profile and development-time selectors associate their visible labels with the selection control.
 - Native Save and Export actions select a path before entering the shared output operation. Headless acceptance enters at that path boundary and executes the same worker and writer.
 - Headless App acceptance exercises production controls and real workers. CPU coverage, hardware-GPU computation coverage, offscreen layout checks, and native desktop acceptance have separate evidence scopes under [GPU acceptance](../gpu-execution/spec.md#acceptance) and the [GUI acceptance guide](../../scripts/parity/README.md#headless-gui-acceptance).
-- Numeric editing and validation share one control implementation under [numeric editor ranges](spec.md#numeric-editor-ranges); an editor cannot accept a value the validator rejects.
-- The editor range table follows [numeric editor ranges](spec.md#numeric-editor-ranges) and lives alongside the existing `unit()` and `leaf_numeric_bounds()` declarations in core, so the editor range, the validator range, and the discovery output cannot drift apart.
+- Numeric editing and validation share one control implementation under [numeric editor ranges](spec.md#numeric-editor-ranges); an editor cannot accept a value the validator rejects. State loading and runtime candidates use [shared canonical validation](../cli/design.md#shared-value-validation) after their existing normalization.
+- The GUI editor-range table owns interaction limits and steps, not parameter value domains. Core-owned typed validators and discovery share document bounds under [Field description](../cli/design.md#field-description).
+- Loading or displaying a valid value outside the editor range MUST NOT clamp it.
 - Channel-swap validation follows the [experimental controls](spec.md#experimental-controls) permutation rule and rejects a non-permutation before rendering in both the GUI state loader and the CLI.
 - Image analysis MUST follow the [analysis execution and publication boundary](../gui-product-design/image-analysis/design.md#execution-and-publication).
 - Normal GPU Preview and Scan MUST publish retained device output with carrier-owned dimensions rather than a compulsory host float raster.

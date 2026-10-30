@@ -215,6 +215,12 @@ The interface MUST NOT impose a blanket Custom-only restriction on a parameter w
 
 Module disable, unsupported material capability, source type, route, and selected engine are different applicability reasons. The GUI MUST name the actual reason and retain readable values. Expanding an inactive group MUST NOT activate it.
 
+Runtime control values MUST follow [shared value validity](../cli/spec.md#parameter-value-validity) after existing GUI-state normalization. Valid inactive values remain storable; an invalid loaded or edited value MUST NOT be repaired by clamping, clearing, or enabling another control. Rejection follows the existing accepted-state and history transaction.
+
+Rows, search results, and module notices MUST use [operation applicability](../cli/spec.md#operation-applicability) for the same configured final-render context. They MUST distinguish an absent operation from an off switch or unsupported material. An unavailable context MUST NOT be presented as proof that a control is active.
+
+Changing an admitted full route to `input` and back MUST retain valid inactive settings and their explicit ownership, except for existing owning normalizations. The GUI MUST expose the missing-operation reason without implying that an enable switch can add that operation to the route. A temporary Preview bypass MUST NOT make final-render controls appear permanently inactive.
+
 An inactive optional subfeature MUST NOT mark its whole module inactive. A module-level notice appears only when every dependent control in that module is inactive; the module's own enable switch is not evidence of its inactivity.
 
 A route or material change MUST preserve inactive values except for normalizations explicitly required by the owning contract and [material defaults](../presets/spec.md#material-defaults). The header MUST report route and scanner normalizations.
@@ -287,7 +293,7 @@ Loading a state or preset MUST NOT round a value to a specification or migrate t
 
 An editor range is a usability bound. It is not the parameter's document bound.
 
-Each numeric editor MUST declare a minimum, a maximum, and a step. The parameter discovery description MUST declare the same usable range. That usable range MAY be narrower than the accepted document range.
+Each numeric editor MUST declare a minimum, a maximum, and a step. That usable range MAY be narrower than the accepted document range. Parameter discovery MUST describe the accepted document domain; a GUI interaction range MUST NOT replace that domain.
 
 The editor MUST accept every value inside the usable range and MUST reject values outside it.
 
@@ -297,7 +303,7 @@ An editor MUST reject input that the validator would reject, before the value en
 
 The GUI editor reads the single declared range for `camera.film_format_mm` from the editor-range table. Recipes, presets, CLI parameters, and saved state MUST carry every strictly positive value accepted by the validator, including values outside the editor range. The [Film geometry](../film-grain/dye/design.md#film-geometry) contract owns the Dye-specific geometry consequence.
 
-The editor range is declared once per parameter path in a single table. The GUI editor reads that table; a missing entry is a defect, not a silent default to the machine range. The same table is the source for the CLI discovery `minimum`/`maximum` output.
+The editor range is declared once per parameter path in a single GUI table. The GUI editor reads that table; a missing entry is a defect, not a silent default to the machine range. The table MUST NOT duplicate or override the core-owned document-domain rules used by CLI discovery and validation.
 
 The editor range MUST be contained within the validator's accepted range and MUST be wide enough to reach the parameter's documented usable values. Where the validator bound is unbounded above, the editor MUST still declare a finite maximum derived from the parameter's typical operating range.
 

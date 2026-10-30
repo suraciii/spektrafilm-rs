@@ -54,6 +54,130 @@ fn preflash(ui: &mut egui::Ui, params: &mut RuntimeParams) {
     );
 }
 
+#[test]
+fn camera_rows_follow_route_without_losing_values() {
+    let mut params = scanner_params();
+    params.workflow.route = "input".into();
+    params.camera.exposure_compensation_ev = 0.75;
+    params.camera.film_format_mm = 50.0;
+    let mut harness = Harness::new_ui_state(camera, params);
+    assert!(
+        harness
+            .get_by_label("Exposure compensation")
+            .node()
+            .is_disabled()
+    );
+    assert!(!harness.get_by_label("Frame Long Edge").node().is_disabled());
+    harness.state_mut().workflow.route = "input > film > scan".into();
+    harness.run();
+    assert!(
+        !harness
+            .get_by_label("Exposure compensation")
+            .node()
+            .is_disabled()
+    );
+    assert_eq!(harness.state().camera.exposure_compensation_ev, 0.75);
+    assert_eq!(harness.state().camera.film_format_mm, 50.0);
+}
+
+#[test]
+fn glare_selector_follows_print_readout_not_print_creation() {
+    let mut params = scanner_params();
+    params.workflow.route = "input > film > print".into();
+    params.print_render.glare.active = false;
+    let mut harness = Harness::new_ui_state(
+        |ui, params: &mut RuntimeParams| {
+            super::show(
+                ui,
+                params,
+                &mut serde_json::Value::Null,
+                "Glare",
+                super::ScanMedium::Negative,
+                "",
+                &mut Default::default(),
+                "D65",
+                &crate::profiles::pick_data_dir(),
+            );
+        },
+        params,
+    );
+    assert!(
+        harness
+            .get_by_label("Enable print glare")
+            .node()
+            .is_disabled()
+    );
+    harness.state_mut().workflow.route = "print > scan".into();
+    harness.run();
+    assert!(
+        !harness
+            .get_by_label("Enable print glare")
+            .node()
+            .is_disabled()
+    );
+    assert!(!harness.state().print_render.glare.active);
+}
+
+#[test]
+fn film_gamma_remains_editable_for_auto_print_reference_without_film_chemistry() {
+    let mut params = RuntimeParams::default();
+    params.workflow.route = "input > convert-film > print > scan".into();
+    params.enlarger.print_exposure_mode = spektrafilm_core::params::PrintExposureMode::Auto;
+    params.settings.print_exposure_ev_tracking =
+        spektrafilm_core::params::PrintExposureEvTracking::Never;
+    params.film_render.density_curve_gamma = 1.25;
+    let mut harness = Harness::new_ui_state(
+        |ui, params: &mut RuntimeParams| {
+            super::show(
+                ui,
+                params,
+                &mut serde_json::Value::Null,
+                "Film chemistry",
+                super::ScanMedium::Negative,
+                "",
+                &mut Default::default(),
+                "D65",
+                &crate::profiles::pick_data_dir(),
+            );
+        },
+        params,
+    );
+    assert!(
+        harness
+            .get_by_label("Enable film density curves")
+            .node()
+            .is_disabled()
+    );
+    assert!(
+        !harness
+            .get_by_label("density curve gamma")
+            .node()
+            .is_disabled()
+    );
+
+    harness.state_mut().enlarger.print_exposure_mode =
+        spektrafilm_core::params::PrintExposureMode::Manual;
+    harness.run();
+    assert!(
+        harness
+            .get_by_label("density curve gamma")
+            .node()
+            .is_disabled()
+    );
+    assert_eq!(harness.state().film_render.density_curve_gamma, 1.25);
+
+    harness.state_mut().enlarger.print_exposure_mode =
+        spektrafilm_core::params::PrintExposureMode::Auto;
+    harness.run();
+    assert!(
+        !harness
+            .get_by_label("density curve gamma")
+            .node()
+            .is_disabled()
+    );
+    assert_eq!(harness.state().film_render.density_curve_gamma, 1.25);
+}
+
 #[cfg(test)]
 mod headless {
     use super::*;

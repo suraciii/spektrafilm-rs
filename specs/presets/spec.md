@@ -94,7 +94,7 @@ Multi-photograph application follows [Photograph work](../gui-product-design/pho
 
 ### Apply
 
-- Selecting a preset validates the document, or the section it carries, before changing active controls.
+- Selecting a preset validates the document, or the section it carries, before changing active controls. Its carried runtime values MUST follow [shared value validity](../cli/spec.md#parameter-value-validity) after the preset's existing versioned migration, without filling omitted section leaves.
 - A look preset identifies both film and print profiles. The resolver validates film=`support=film, stage=filming` and print=`support=paper, stage=printing`.
 - A preset does not store or directly apply a workflow. A look preset selects the corresponding workflow default: negative film selects `input > film > print > scan`, and positive film selects `input > film > scan`.
 - The user MAY then choose another supported workflow manually. A section preset carries no film reference and MUST NOT change the workflow.
@@ -281,6 +281,8 @@ The error MUST identify that exact path, state that no automatic replacement exi
 Current complete documents, sparse sources, and inline assignments MUST reject the retired leaf even when null. New writers MUST never emit it. The unshipped response and Cyan-shift fields MUST fail normal unknown-field validation rather than gain defaults or migration support.
 
 A migration failure MUST preserve the source document, active state, and existing output.
+
+Normalized runtime controls MUST follow [shared value validity](../cli/spec.md#parameter-value-validity). This check MUST NOT replace the GUI-state decoder, discard valid inactive settings, or infer explicit ownership from default-filled fields. Rejected canonical values retain the same transaction protection as rejected migration.
 
 Capturing a preset from the GUI MUST use the active look controls. Applying it MUST preserve the excluded context defined in [Look ownership](#look-ownership). A captured section MUST carry an unset optional control as an explicit null, so re-applying the capture restores the captured unset value; a capture that carries explicit nulls uses the JSON carrier.
 

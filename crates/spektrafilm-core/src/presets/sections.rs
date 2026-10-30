@@ -113,7 +113,7 @@ pub fn extract_section_detailed(
     section: Section,
     params: &RuntimeParams,
 ) -> Result<Value, PresetDocumentError> {
-    crate::params::sources::validate_finite_detailed(params)?;
+    params.validate_values_detailed()?;
     let root = serde_json::to_value(LookParameters::capture(params)).map_err(|e| {
         PresetDocumentError::new(
             PresetDocumentReason::Parser {
@@ -178,7 +178,7 @@ pub fn section_matches_detailed(
     let PresetParameters::Section(payload) = &preset.parameters else {
         unreachable!()
     };
-    crate::params::sources::validate_finite_detailed(params)?;
+    params.validate_values_detailed()?;
     let applied = preset.overlay_section_detailed(params)?;
     let expected = serde_json::to_value(LookParameters::capture(&applied)).map_err(|e| {
         PresetDocumentError::new(

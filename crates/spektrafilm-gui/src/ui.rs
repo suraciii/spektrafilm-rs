@@ -4,8 +4,8 @@ use std::sync::atomic::Ordering;
 struct InspectorMaterials {
     film_name: String,
     print_name: String,
-    film: profile::Profile,
-    print: profile::Profile,
+    film: Arc<profile::Profile>,
+    print: Option<Arc<profile::Profile>>,
 }
 
 pub(crate) fn grain_control_inactive_reason(
@@ -29,6 +29,26 @@ pub(crate) fn grain_control_inactive_reason(
         None => spektrafilm_core::params::sources::grain_control_inactive_reason(
             path, params, component,
         ),
+    }
+}
+
+pub(crate) fn control_inactive_reason(
+    ctx: &egui::Context,
+    path: &str,
+    params: &RuntimeParams,
+) -> Option<String> {
+    let materials = ctx.data(|data| {
+        data.get_temp::<Arc<InspectorMaterials>>(egui::Id::new("inspector-material-context"))
+    });
+    match materials {
+        Some(materials) => spektrafilm_core::params::sources::inactive_reason_with_materials(
+            path,
+            params,
+            Some(&materials.film),
+            materials.print.as_deref(),
+        ),
+        None => spektrafilm_core::params::sources::inactive_reason_without_profiles(path, params)
+            .map(str::to_owned),
     }
 }
 
@@ -882,7 +902,7 @@ impl App {
                     section,
                     &self.params,
                     &materials.film,
-                    &materials.print,
+                    materials.print.as_deref(),
                 ) {
                     ui.label(
                         egui::RichText::new(crate::tr!(
@@ -1207,9 +1227,14 @@ impl App {
             .show(ui, |ui| {
                 for result in results {
                     let label = result.localized_locator_label(ui.ctx());
-                    let response = ui
-                        .button(&label)
-                        .on_hover_text(result.localized_details(ui.ctx()));
+                    let mut details = result.localized_details(ui.ctx());
+                    if let Some(reason) =
+                        control_inactive_reason(ui.ctx(), &result.target_path, &self.params)
+                    {
+                        details.push('\n');
+                        details.push_str(controls::localized(ui.ctx(), &reason).as_ref());
+                    }
+                    let response = ui.button(&label).on_hover_text(details);
                     locator_ids.push(response.id);
                     if response.clicked() {
                         destination = Some((
@@ -1378,11 +1403,11 @@ impl App {
                 ))
             })
             .and_then(|materials| {
-                spektrafilm_core::params::sources::inactive_reason(
+                spektrafilm_core::params::sources::inactive_reason_with_materials(
                     path,
                     &self.params,
-                    &materials.film,
-                    &materials.print,
+                    Some(&materials.film),
+                    materials.print.as_deref(),
                 )
             });
         if let Some(reason) = &inactive {
@@ -1434,29 +1459,54 @@ impl App {
             self.params.io.input_cctf_decoding,
         );
         let cache_id = egui::Id::new("inspector-material-context");
-        let cache_current = ui
+        let route = self.params.workflow.route_enum();
+        let need_print = route.executes_print_exposure(&self.params.taps)
+            || route.executes_print_development(&self.params.taps)
+            || route.executes_print_readout(&self.params.taps);
+        let cached = ui
             .ctx()
-            .data(|data| data.get_temp::<Arc<InspectorMaterials>>(cache_id))
-            .is_some_and(|materials| {
-                materials.film_name == self.film_name && materials.print_name == self.print_name
-            });
-        if !cache_current
-            && let (Ok(film), Ok(print)) = (
-                profile::load_profile_by_name(&self.data_dir, &self.film_name),
-                profile::load_profile_by_name(&self.data_dir, &self.print_name),
-            )
-        {
-            ui.ctx().data_mut(|data| {
-                data.insert_temp(
-                    cache_id,
-                    Arc::new(InspectorMaterials {
-                        film_name: self.film_name.clone(),
-                        print_name: self.print_name.clone(),
-                        film,
-                        print,
-                    }),
-                )
-            });
+            .data(|data| data.get_temp::<Arc<InspectorMaterials>>(cache_id));
+        let cache_current = cached.as_ref().is_some_and(|materials| {
+            materials.film_name == self.film_name
+                && materials.print_name == self.print_name
+                && (!need_print || materials.print.is_some())
+        });
+        if !cache_current {
+            let film = cached
+                .as_ref()
+                .filter(|materials| materials.film_name == self.film_name)
+                .map(|materials| Arc::clone(&materials.film))
+                .or_else(|| {
+                    profile::load_profile_by_name(&self.data_dir, &self.film_name)
+                        .ok()
+                        .map(Arc::new)
+                });
+            let print = if need_print {
+                cached
+                    .as_ref()
+                    .filter(|materials| materials.print_name == self.print_name)
+                    .and_then(|materials| materials.print.as_ref().map(Arc::clone))
+                    .or_else(|| {
+                        profile::load_profile_by_name(&self.data_dir, &self.print_name)
+                            .ok()
+                            .map(Arc::new)
+                    })
+            } else {
+                None
+            };
+            if let Some(film) = film {
+                ui.ctx().data_mut(|data| {
+                    data.insert_temp(
+                        cache_id,
+                        Arc::new(InspectorMaterials {
+                            film_name: self.film_name.clone(),
+                            print_name: self.print_name.clone(),
+                            film,
+                            print,
+                        }),
+                    )
+                });
+            }
         }
         for &(stage, sections) in controls::STAGE_LAYOUT {
             let reveal_stage = self.pending_stage == Some(stage);

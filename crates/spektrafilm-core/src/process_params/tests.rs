@@ -928,7 +928,7 @@ fn material_feedback_retains_inactive_values_on_non_development_routes() {
                 "{} on {route}",
                 edit.path
             );
-            assert!(edit.reason.as_ref().unwrap().contains("development"));
+            assert!(edit.reason.is_some());
         }
     }
 }
@@ -1024,4 +1024,30 @@ fn capture_illuminant_edit_reports_inactive_on_input_route() {
             .as_deref()
             .is_some_and(|reason| reason.contains("film-exposure route"))
     );
+}
+
+#[test]
+fn route_transitions_keep_edits_while_reporting_executed_operations() {
+    let sources = vec!["camera.exposure_compensation_ev=0.5,camera.diffusion_filter.active=true,camera.diffusion_filter.strength=0.7,film_render.halation.active=true,film_render.halation.halation_amount=0.6".into()];
+    for (route, expected) in [
+        ("input", EditStatus::Inactive),
+        ("input > film > print > scan", EditStatus::Active),
+    ] {
+        let mut req = public_request(&sources);
+        req.route = Some(route);
+        req.paper = Some("kodak_portra_endura");
+        let result = resolve(req, &data_dir()).unwrap();
+        assert_eq!(result.params.camera.exposure_compensation_ev, 0.5);
+        assert_eq!(result.params.camera.diffusion_filter.strength, 0.7);
+        assert_eq!(result.params.film_render.halation.halation_amount, 0.6);
+        for path in [
+            "camera.exposure_compensation_ev",
+            "camera.diffusion_filter.strength",
+            "film_render.halation.halation_amount",
+        ] {
+            let edit = result.edits.iter().find(|edit| edit.path == path).unwrap();
+            assert_eq!(edit.status, expected, "{route}: {path}");
+            assert_eq!(edit.source.index, Some(1));
+        }
+    }
 }
