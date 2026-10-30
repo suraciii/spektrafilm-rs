@@ -1603,7 +1603,7 @@ mod tests {
                 }
                 copy.submit(&gpu).unwrap();
             }
-            let actual = gpu.read_mapped_f32(&readback, bytes * 2);
+            let actual = gpu.read_mapped_f32(&readback, bytes * 2).unwrap();
             let (bulk, rows) = actual.split_at(bytes as usize / 4);
             assert_eq!(
                 bulk.iter().map(|x| x.to_bits()).collect::<Vec<_>>(),
@@ -1662,7 +1662,7 @@ mod tests {
                 mapped_at_creation: false,
             });
             state.submit(&gpu, &readback).unwrap();
-            gpu.read_mapped_f32(&readback, state.n_bytes)
+            gpu.read_mapped_f32(&readback, state.n_bytes).unwrap()
         };
         // Analogue composes over a canvas table that must fit one storage
         // binding, so its limits start above the table. Digital grain has no
@@ -1807,7 +1807,7 @@ mod parity_tests {
         }
         encoder.copy_buffer_to_buffer(&output, 0, &readback, 0, bytes);
         gpu.queue.submit(Some(encoder.finish()));
-        let values = gpu.read_mapped_f32(&readback, bytes);
+        let values = gpu.read_mapped_f32(&readback, bytes).unwrap();
         for (i, (pair, value)) in pairs.iter().zip(values).enumerate() {
             assert_eq!(
                 value.to_bits(),
@@ -1943,6 +1943,7 @@ mod parity_tests {
         gpu.queue.submit(Some(encoder.finish()));
         let words: Vec<_> = gpu
             .read_mapped_f32(&readback, 4096 * 8)
+            .unwrap()
             .into_iter()
             .map(f32::to_bits)
             .collect();

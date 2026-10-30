@@ -211,7 +211,7 @@ mod tests {
         for page in &output {
             result.extend(
                 gpu.pipe
-                    .readback_buffer_as::<f32>(&page.buffer, u64::from(page.n_pixels) * 12),
+                    .readback_buffer_as::<f32>(&page.buffer, u64::from(page.n_pixels) * 12)?,
             );
         }
         Ok(result)

@@ -87,7 +87,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
     encoder.copy_buffer_to_buffer(&destination, 0, &readback, 0, bytes);
     gpu.queue.submit(Some(encoder.finish()));
-    let actual: Vec<f64> = gpu.pipe.read_mapped(&readback, bytes);
+    let actual: Vec<f64> = gpu.pipe.read_mapped(&readback, bytes).unwrap();
     for (i, x) in input.into_iter().enumerate() {
         let reference = [x.abs().ln(), x.exp(), x.powi(5), x.round()];
         for (operation, expected) in reference.into_iter().enumerate() {

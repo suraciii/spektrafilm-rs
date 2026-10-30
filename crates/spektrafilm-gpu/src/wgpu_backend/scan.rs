@@ -793,7 +793,8 @@ mod direct_tests {
             .unwrap();
         let actual = gpu
             .pipe
-            .readback_buffer_as::<f32>(&output, values.len() as u64 * 4);
+            .readback_buffer_as::<f32>(&output, values.len() as u64 * 4)
+            .unwrap();
         let image = ImageBuf::from_data(
             3,
             2,

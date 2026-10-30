@@ -102,6 +102,8 @@ Resource planning MUST support bounded chunking or tiling when a complete image 
 
 Unrepresentable dimensions, precision requirements, or minimum working sets MUST fail before publication. Each accepted GPU operation MUST have bounded temporary storage and cancellation boundaries between submitted chunks. Cancellation MUST discard incomplete output; it need not interrupt a submitted GPU pass.
 
+A failed readback mapping or a missing mapping completion MUST return an operation error instead of panicking. A readback failure MUST NOT be reported as a successful dispatch decline, publish partial samples, or replace accepted output.
+
 ## Acceptance
 
 Acceptance MUST freeze the CPU reference, input and data identities, effective controls, seeds, stage domains, and comparison budgets before judging GPU candidates. Each budget MUST state its metric, units, population, absolute and relative bounds where applicable, and source. Bounds MUST follow reference calculations, repeatability, or numerical sensitivity.

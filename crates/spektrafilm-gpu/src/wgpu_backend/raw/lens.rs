@@ -147,6 +147,7 @@ mod tests {
         gpu.queue.submit(Some(encoder.finish()));
         gpu.pipe
             .readback_buffer_as::<f32>(&output.buffer, source.len() as u64 * 4)
+            .unwrap()
     }
     #[test]
     fn channel_tca_precedes_nearest_edge_bilinear_resampling() {

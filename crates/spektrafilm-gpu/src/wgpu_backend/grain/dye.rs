@@ -92,7 +92,7 @@ impl WgpuBackend {
         let mut encoder = self.device.create_command_encoder(&Default::default());
         encoder.copy_buffer_to_buffer(status, 0, &readback, 0, 4);
         self.submit_commands(Some(encoder.finish()))?;
-        let code = self.read_mapped_u32(&readback, 4)[0];
+        let code = self.read_mapped_u32(&readback, 4)?[0];
         self.check_cancelled()?;
         if code == 0 {
             return Ok(());

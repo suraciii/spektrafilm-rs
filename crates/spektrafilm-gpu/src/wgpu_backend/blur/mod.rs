@@ -249,7 +249,7 @@ impl WgpuBackend {
         let mut encoder = self.device.create_command_encoder(&Default::default());
         encoder.copy_buffer_to_buffer(&buf_out, 0, &readback, 0, img_bytes);
         self.submit_commands(Some(encoder.finish()))?;
-        let out_f32 = self.read_mapped_f32(&readback, img_bytes);
+        let out_f32 = self.read_mapped_f32(&readback, img_bytes)?;
         Ok(ImageBuf::from_data(w, h, f32_to_scalars(out_f32)))
     }
 
@@ -334,20 +334,32 @@ impl WgpuBackend {
             encoder.copy_buffer_to_buffer(out, 0, readback, 0, img_bytes);
             self.submit_commands(Some(encoder.finish()))?;
         }
-        for rb in &readbacks {
-            let slice = rb.slice(..);
-            slice.map_async(wgpu::MapMode::Read, |r| r.unwrap());
-        }
+        let mut completions: Vec<_> = readbacks
+            .iter()
+            .map(|buffer| (self.pipe.start_readback_mapping(buffer), false))
+            .collect();
         self.device.poll(wgpu::Maintain::Wait);
+        let mut failure = None;
+        for (completion, mapped) in &mut completions {
+            match super::pipe::GpuPipe::readback_mapping_result(completion) {
+                Ok(()) => *mapped = true,
+                Err(error) => {
+                    failure.get_or_insert(error);
+                }
+            }
+        }
+        if let Some(error) = failure {
+            for (buffer, (_, mapped)) in readbacks.iter().zip(&completions) {
+                if *mapped {
+                    buffer.unmap();
+                }
+            }
+            return Err(error);
+        }
         let mut out_imgs = Vec::with_capacity(sigmas.len());
         for rb in &readbacks {
-            let slice = rb.slice(..);
-            let data = slice.get_mapped_range();
-            self.device.materialized(img_bytes);
-            let chunk: Vec<f32> = bytemuck::cast_slice(&data).to_vec();
+            let chunk: Vec<f32> = self.pipe.mapped_samples(rb, img_bytes);
             out_imgs.push(ImageBuf::from_data(w, h, f32_to_scalars(chunk)));
-            drop(data);
-            rb.unmap();
         }
         Ok(out_imgs)
     }
@@ -366,6 +378,23 @@ mod tests {
                     Some(value) => std::env::set_var("SPEKTRAFILM_GPU_BINDING_LIMIT_BYTES", value),
                     None => std::env::remove_var("SPEKTRAFILM_GPU_BINDING_LIMIT_BYTES"),
                 }
+            }
+        }
+    }
+    #[test]
+    fn aborted_batch_readback_returns_no_images_and_later_batch_succeeds() {
+        let gpu = crate::test_support::explicit_adapter();
+        let image = ImageBuf::from_data(4, 4, vec![0.25; 4 * 4 * 3]);
+        let sigmas = [0.8, 1.4, 2.0];
+        gpu.pipe.test_abort_next_mapping();
+        assert!(gpu.gaussian_blur_multi_gpu(&image, &sigmas).is_err());
+
+        let images = gpu.gaussian_blur_multi_gpu(&image, &sigmas).unwrap();
+        assert_eq!(images.len(), sigmas.len());
+        for result in images {
+            assert_eq!(result.data.len(), image.data.len());
+            for sample in result.data {
+                assert!((sample - 0.25).abs() < 2e-5, "sample {sample}");
             }
         }
     }
@@ -447,6 +476,7 @@ mod tests {
                 .flat_map(|page| {
                     gpu.pipe
                         .readback_buffer(&page.buffer, u64::from(page.n_pixels) * 12)
+                        .unwrap()
                 })
                 .collect();
             for (index, (&got, &want)) in actual.iter().zip(&expected.data).enumerate() {

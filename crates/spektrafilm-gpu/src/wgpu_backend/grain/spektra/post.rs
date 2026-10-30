@@ -485,7 +485,7 @@ mod tests {
         let mut encoder = gpu.device.create_command_encoder(&Default::default());
         encoder.copy_buffer_to_buffer(&density, 0, &readback, 0, bytes);
         gpu.queue.submit(Some(encoder.finish()));
-        gpu.read_mapped_f32(&readback, bytes)
+        gpu.read_mapped_f32(&readback, bytes).unwrap()
     }
 
     #[test]
@@ -524,7 +524,7 @@ mod tests {
             gpu.queue.submit(Some(encoder.finish()));
             assert_eq!(
                 expected,
-                gpu.read_mapped_f32(&readback, bytes),
+                gpu.read_mapped_f32(&readback, bytes).unwrap(),
                 "window {limit} changed complete-source USM mass"
             );
         }
@@ -922,7 +922,7 @@ mod tests {
                 let mut encoder = gpu.device.create_command_encoder(&Default::default());
                 encoder.copy_buffer_to_buffer(&pair, 0, &readback, 0, 24);
                 gpu.queue.submit(Some(encoder.finish()));
-                let actual: Vec<f32> = gpu.pipe.read_mapped(&readback, 24);
+                let actual: Vec<f32> = gpu.pipe.read_mapped(&readback, 24).unwrap();
                 for (plane, input) in [&values, &sharpened].into_iter().enumerate() {
                     for channel in 0..3 {
                         let expected = sum_f32(

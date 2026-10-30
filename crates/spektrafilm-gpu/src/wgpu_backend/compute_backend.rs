@@ -173,7 +173,7 @@ impl ComputeBackend for WgpuBackend {
             n_pixels,
             2,
             "colorspace_convert",
-        );
+        )?;
         let result = result.ok_or_else(|| {
             "colorspace_convert: device resource limits prevent dispatch".to_owned()
         })?;
@@ -215,7 +215,7 @@ impl ComputeBackend for WgpuBackend {
             n_pixels,
             2,
             "cctf_encode_srgb",
-        );
+        )?;
         let result = result.ok_or_else(|| {
             "cctf_encode_srgb: device resource limits prevent dispatch".to_owned()
         })?;
@@ -257,7 +257,7 @@ impl ComputeBackend for WgpuBackend {
             n_pixels,
             2,
             "cctf_decode_srgb",
-        );
+        )?;
         let result = result.ok_or_else(|| {
             "cctf_decode_srgb: device resource limits prevent dispatch".to_owned()
         })?;
@@ -346,7 +346,7 @@ impl ComputeBackend for WgpuBackend {
             n_pixels,
             4,
             "table_lookup",
-        );
+        )?;
         let result = result
             .ok_or_else(|| "table_lookup: device resource limits prevent dispatch".to_owned())?;
         if let Some(s) = &scope {
@@ -457,7 +457,7 @@ impl ComputeBackend for WgpuBackend {
             n_pixels,
             8, // output buffer index
             "scan_spectral",
-        );
+        )?;
         let result = result
             .ok_or_else(|| "scan_spectral: device resource limits prevent dispatch".to_owned())?;
 
@@ -625,7 +625,7 @@ impl ComputeBackend for WgpuBackend {
             n_pixels,
             3, // output buffer index
             "front_transform",
-        );
+        )?;
         let result = result.ok_or_else(|| {
             "hanatos2025_rgb_to_raw: device resource limits prevent dispatch".to_owned()
         })?;
@@ -689,7 +689,7 @@ impl ComputeBackend for WgpuBackend {
             n_pixels,
             4, // output buffer index
             "film_density",
-        );
+        )?;
         let result = result.ok_or_else(|| {
             "density_curve_interp: device resource limits prevent dispatch".to_owned()
         })?;
@@ -752,7 +752,7 @@ impl ComputeBackend for WgpuBackend {
             n_pixels,
             1,
             "output_mix",
-        );
+        )?;
         let mixed = mixed
             .ok_or_else(|| "output_mix: device resource limits prevent dispatch".to_owned())?;
         if let Some(s) = &scope {
@@ -836,7 +836,7 @@ impl ComputeBackend for WgpuBackend {
             n_pixels,
             1,
             "convert_colorspace",
-        );
+        )?;
         let converted = converted.ok_or_else(|| {
             "convert_colorspace: device resource limits prevent dispatch".to_owned()
         })?;
@@ -1047,7 +1047,7 @@ impl ComputeBackend for WgpuBackend {
             n_out,
             2,
             "viewer_resample",
-        );
+        )?;
         let Some(resampled) = resampled else {
             return Err("viewer_resample exceeds device resource limits".into());
         };
@@ -1118,7 +1118,7 @@ impl ComputeBackend for WgpuBackend {
             n_pixels,
             2,
             "viewer_display_transform",
-        );
+        )?;
         let Some(transformed) = transformed else {
             return Err("viewer_display_transform exceeds device resource limits".into());
         };
@@ -1266,7 +1266,7 @@ impl ComputeBackend for WgpuBackend {
             n_pixels,
             4,
             "viewer_full_source",
-        );
+        )?;
         let Some(composed) = composed else {
             return Err("viewer_full_source exceeds device resource limits".into());
         };

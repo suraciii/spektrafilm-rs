@@ -36,7 +36,8 @@ fn readback(backend: &WgpuBackend, pages: &[ImagePage]) -> Vec<f32> {
         values.extend(
             backend
                 .pipe
-                .readback_buffer(&page.buffer, u64::from(page.n_pixels) * 12),
+                .readback_buffer(&page.buffer, u64::from(page.n_pixels) * 12)
+                .unwrap(),
         );
     }
     values

@@ -618,7 +618,7 @@ mod tests {
                             count as u64 * 3,
                         );
                         gpu.queue.submit(Some(encoder.finish()));
-                        let actual = gpu.read_mapped_u32(&readback, bytes * 2);
+                        let actual = gpu.read_mapped_u32(&readback, bytes * 2).unwrap();
                         if let Some(expected) = &expected {
                             assert_eq!(
                                 &actual, expected,
@@ -670,7 +670,7 @@ mod tests {
                 "dir_matmul_test",
             )
             .expect("test bindings fit the device");
-        let got = b.pipe.readback_image(&out);
+        let got = b.pipe.readback_image(&out).unwrap();
         // silver = dmax - density; correction = M^T silver.
         let dmax = [2.511998f32, 2.8034478, 2.810454];
         let mut expected = Vec::new();
@@ -723,7 +723,7 @@ mod tests {
                 "dir_matmul_donor_test",
             )
             .expect("test bindings fit the device");
-        let got = b.pipe.readback_image(&out);
+        let got = b.pipe.readback_image(&out).unwrap();
         let mut expected = Vec::new();
         for px in 0..2 {
             // silver = density, then g(v) = v*(k+ref)/(k+v) per masked channel.
@@ -863,7 +863,7 @@ mod tests {
                         count as u64 * 3,
                     );
                     gpu.queue.submit(Some(encoder.finish()));
-                    let actual = gpu.read_mapped_f32(&readback, bytes * 2);
+                    let actual = gpu.read_mapped_f32(&readback, bytes * 2).unwrap();
                     let mut correction = vec![0.0_f32; density.len()];
                     for (pixel, input) in density.as_chunks::<3>().0.iter().enumerate() {
                         let mut silver = [0.0; 3];

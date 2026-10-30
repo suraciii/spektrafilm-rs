@@ -314,7 +314,7 @@ fn concurrent_admission_is_atomic_and_derivatives_share_one_queue_bound() {
                 }
                 operation.retire_pending();
                 assert_eq!(
-                    backend.read_mapped_u32(&output, output.size()),
+                    backend.read_mapped_u32(&output, output.size()).unwrap(),
                     [17, 29, 43, 71]
                 );
             });
@@ -508,7 +508,7 @@ fn encoded_command_keeps_its_originating_reservation_through_foreign_queue_submi
     assert_eq!(gpu.device.resources.reserved.lock().bytes, 0);
     assert!(gpu.device.resources.submissions.lock().pending.is_empty());
     assert_eq!(
-        gpu.read_mapped_u32(&output, output.size()),
+        gpu.read_mapped_u32(&output, output.size()).unwrap(),
         [17, 29, 43, 71]
     );
 }
@@ -584,7 +584,10 @@ fn portable_admission_counts_readbacks_after_their_image_owner_drops() {
             contents: bytemuck::cast_slice(&[1.0f32; 12]),
             usage: wgpu::BufferUsages::COPY_SRC,
         });
-    assert_eq!(gpu.pipe.readback_buffer(&input, 48), vec![1.0f32; 12]);
+    assert_eq!(
+        gpu.pipe.readback_buffer(&input, 48).unwrap(),
+        vec![1.0f32; 12]
+    );
     drop(input);
     gpu.device.raw.poll(wgpu::Maintain::Wait);
     let cached = gpu.pipe.retained_cache_bytes().unwrap();

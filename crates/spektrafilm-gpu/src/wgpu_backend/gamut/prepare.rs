@@ -192,7 +192,7 @@ impl WgpuBackend {
         }
         Ok(self
             .pipe
-            .readback_buffer(&payload.buffer, payload.buffer.size())
+            .readback_buffer(&payload.buffer, payload.buffer.size())?
             .into_iter()
             .map(f64::from)
             .collect())

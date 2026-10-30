@@ -274,9 +274,7 @@ fn apply_profile(params: &mut RuntimeParams, profile: ResolvedFeatureProfile, cu
             }
         }
     }
-    for path in profile_scope(profile.family) {
-        params.explicit_section_paths.insert((*path).to_owned());
-    }
+    params.mark_explicit_paths(profile_scope(profile.family).iter().copied());
 }
 
 /// Return the canonical serialized leaves owned by a family.

@@ -100,7 +100,7 @@ impl WgpuBackend {
             }
             bindings.push(GpuBuffer::storage_rw(&vec![0; input.len() * 4]));
             let result = self
-                .dispatch_compute(shader, &bindings, n, bindings.len() - 1, name)
+                .dispatch_compute(shader, &bindings, n, bindings.len() - 1, name)?
                 .ok_or_else(|| {
                     format!("{name}: bounded device dispatch could not represent its working set")
                 })?;

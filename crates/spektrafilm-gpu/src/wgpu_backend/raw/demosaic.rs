@@ -386,11 +386,15 @@ mod tests {
         }
         gpu.queue.submit(Some(encoder.finish()));
         if let Some(status) = status {
-            let metadata = gpu.pipe.readback_buffer_as::<i32>(&status.buffer, 147 * 4);
+            let metadata = gpu
+                .pipe
+                .readback_buffer_as::<i32>(&status.buffer, 147 * 4)
+                .unwrap();
             assert_eq!(metadata[146], 0, "synthetic X-Trans pattern is valid");
         }
         gpu.pipe
             .readback_buffer_as::<u32>(&image.buffer, u64::from(size * size) * 16)
+            .unwrap()
     }
 
     #[test]
@@ -594,10 +598,12 @@ mod tests {
         gpu.queue.submit(Some(encoder.finish()));
         let values = gpu
             .pipe
-            .readback_buffer_as::<u32>(&scratch.buffer, XTRANS_SCRATCH_BYTES);
+            .readback_buffer_as::<u32>(&scratch.buffer, XTRANS_SCRATCH_BYTES)
+            .unwrap();
         let image = gpu
             .pipe
-            .readback_buffer_as::<u32>(&image.buffer, 512 * 512 * 16);
+            .readback_buffer_as::<u32>(&image.buffer, 512 * 512 * 16)
+            .unwrap();
         for d in 0..8 {
             assert_eq!(
                 values[(d * 262144 + 1540) * 3],
@@ -775,12 +781,21 @@ mod tests {
             pass.encode(&mut encoder, "test_auto_wb_totals");
         }
         gpu.queue.submit(Some(encoder.finish()));
-        let observed_blocks = gpu.pipe.readback_buffer_as::<u32>(&blocks.buffer, 64);
+        let observed_blocks = gpu
+            .pipe
+            .readback_buffer_as::<u32>(&blocks.buffer, 64)
+            .unwrap();
         assert_eq!(&observed_blocks[..4], &sums);
         assert_eq!(&observed_blocks[4..8], &[16; 4]);
         assert_eq!(&observed_blocks[8..], &[0; 8]);
-        let observed = gpu.pipe.readback_buffer_as::<f32>(&scales.buffer, 16);
-        let observed_paged = gpu.pipe.readback_buffer_as::<f32>(&paged_scales.buffer, 16);
+        let observed = gpu
+            .pipe
+            .readback_buffer_as::<f32>(&scales.buffer, 16)
+            .unwrap();
+        let observed_paged = gpu
+            .pipe
+            .readback_buffer_as::<f32>(&paged_scales.buffer, 16)
+            .unwrap();
         assert_eq!(
             observed.iter().map(|v| v.to_bits()).collect::<Vec<_>>(),
             observed_paged

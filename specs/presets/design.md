@@ -30,6 +30,18 @@ The process resolver MUST select this policy from baseline origin, not from the 
 
 This behavior MUST NOT add a wire field or format version. Reset ownership and complete-state restoration follow [GUI workflow](../gui-workflow/spec.md#section-reset).
 
+## Explicit preparation ownership
+
+The runtime parameter owner MUST provide operations to record validated explicit leaf paths, release paths in a supplied scope, and compare explicit ownership without allocating. Scope membership MUST match a complete path segment, not an arbitrary string prefix. GUI edits, scoped copying, feature profiles, section presets, and module resets MUST use these operations rather than modify a serialized preparation snapshot.
+
+Explicit-path ownership and neutral-filter-axis protection MUST remain separate operations. The parameter owner MUST implement the canonical path-to-filter-axis mapping once. Source resolvers MUST retain their existing decisions about which operation applies; an internal value patch or a legacy complete parameter document MUST NOT acquire explicit ownership merely because it assigns a value.
+
+Material preparation MUST retain explicitly owned controls through the parameter-preparation boundary. It MUST NOT depend on preset document code to capture or restore those controls. `ParameterEdits` MUST remain the shared value-patching implementation and MUST NOT mark ownership implicitly.
+
+`RenderPreparationState` remains the persistence and restoration carrier. Recording, releasing, and comparing explicit paths MUST NOT normalize unrelated neutral-filter flags, including the distinction between absent flags and present all-false flags. Existing carrier fields, versions, migration rules, and numerical precision MUST remain unchanged.
+
+Acceptance MUST cover an authored value equal to a material default, scoped release with unrelated ownership retained, and legacy baseline preparation without newly inferred ownership. GUI metadata-only reset and history acceptance follow [Section reset](../gui-workflow/spec.md#section-reset).
+
 ## Sections
 
 A section is a named set of look-owned parameter paths. This table is authoritative for routing, and a section preset carries exactly its section's paths.

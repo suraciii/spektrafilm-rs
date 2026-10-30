@@ -68,19 +68,7 @@ pub fn resolve_continuation(
         let mut candidate = params.clone();
         edits.apply(&mut candidate)?;
         if header.state == MaterialKind::Film && protect_axes {
-            for path in edits.paths() {
-                let axis = match path {
-                    "enlarger.c_filter_neutral" => Some(0),
-                    "enlarger.m_filter_neutral" => Some(1),
-                    "enlarger.y_filter_neutral" => Some(2),
-                    _ => None,
-                };
-                if let Some(axis) = axis {
-                    candidate
-                        .neutral_print_filters_protected
-                        .get_or_insert([false; 3])[axis] = true;
-                }
-            }
+            candidate.protect_neutral_filter_axes(edits.paths());
         }
         crate::stage_execution::validate_frozen_controls(header, &candidate).map_err(|e| {
             format!(

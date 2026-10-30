@@ -406,7 +406,7 @@ fn scanner_generated_lut_matches_log_xyz_reference_with_bounded_aliasing() {
             backend.execute_scanner_lut_resident(source, output, count, &params)
         })
         .unwrap();
-    let alias = backend.pipe.readback_buffer(&retained, 9 * 12);
+    let alias = backend.pipe.readback_buffer(&retained, 9 * 12).unwrap();
     let mut worst_abs = 0.0f64;
     let mut worst_rel = 0.0f64;
     for (pixel, source) in image.data.as_chunks::<3>().0.iter().enumerate() {

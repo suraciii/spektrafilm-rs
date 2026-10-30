@@ -822,6 +822,52 @@ impl RuntimeParams {
         validation::validate_detailed(self)
     }
 
+    /// Record already-validated canonical leaf paths without changing filter protection.
+    pub fn mark_explicit_paths<'a>(
+        &mut self,
+        paths: impl IntoIterator<Item = impl Into<std::borrow::Cow<'a, str>>>,
+    ) {
+        for path in paths {
+            let path = path.into();
+            if !self.explicit_section_paths.contains(path.as_ref()) {
+                self.explicit_section_paths.insert(path.into_owned());
+            }
+        }
+    }
+
+    /// Release complete paths and their dot-delimited descendants.
+    pub fn clear_explicit_paths(&mut self, scopes: &[&str]) -> bool {
+        let before = self.explicit_section_paths.len();
+        self.explicit_section_paths.retain(|path| {
+            !scopes.iter().any(|scope| {
+                path.as_str() == *scope
+                    || path
+                        .strip_prefix(*scope)
+                        .is_some_and(|suffix| suffix.starts_with('.'))
+            })
+        });
+        before != self.explicit_section_paths.len()
+    }
+
+    /// Compare leaf ownership without copying or normalizing filter flags.
+    pub fn explicit_paths_match(&self, other: &Self) -> bool {
+        self.explicit_section_paths == other.explicit_section_paths
+    }
+
+    /// Protect neutral filter axes explicitly supplied by a source.
+    pub fn protect_neutral_filter_axes<'a>(&mut self, paths: impl IntoIterator<Item = &'a str>) {
+        for path in paths {
+            let axis = match path {
+                "enlarger.c_filter_neutral" => 0,
+                "enlarger.m_filter_neutral" => 1,
+                "enlarger.y_filter_neutral" => 2,
+                _ => continue,
+            };
+            self.neutral_print_filters_protected
+                .get_or_insert([false; 3])[axis] = true;
+        }
+    }
+
     /// Snapshot preparation ownership for state carriers that keep it beside
     /// the parameters. The filter flags also persist in the parameter
     /// document itself so replays reproduce their render.
@@ -1013,6 +1059,51 @@ fn default_route() -> String {
 #[cfg(test)]
 mod tests {
     use super::{CameraParams, RuntimeParams};
+
+    #[test]
+    fn explicit_path_scopes_preserve_unrelated_paths_and_optional_filter_flags() {
+        let mut params = RuntimeParams::default();
+        let borrowed = "camera.auto_exposure".to_owned();
+        params.mark_explicit_paths([borrowed.as_str(), "camera.auto_exposure_method"]);
+        params.mark_explicit_paths([
+            borrowed,
+            "film_render.grain.uniformity".to_owned(),
+            "film_render.halation.halation_strength".to_owned(),
+        ]);
+        let mut expected = RuntimeParams::default();
+        expected.mark_explicit_paths([
+            "camera.auto_exposure_method",
+            "film_render.halation.halation_strength",
+        ]);
+        expected.neutral_print_filters_protected = Some([false; 3]);
+        expected.mark_explicit_paths(["camera.auto_exposure"]);
+        assert!(expected.clear_explicit_paths(&["camera.auto_exposure"]));
+
+        assert!(params.clear_explicit_paths(&["camera.auto_exposure", "film_render.grain"]));
+        assert!(!params.clear_explicit_paths(&["film_render.grain", "camera.auto"]));
+        assert!(params.explicit_paths_match(&expected));
+        assert_eq!(params.neutral_print_filters_protected, None);
+        assert_eq!(expected.neutral_print_filters_protected, Some([false; 3]));
+
+        params.protect_neutral_filter_axes(["camera.auto_exposure_method"]);
+        assert_eq!(params.neutral_print_filters_protected, None);
+        params.protect_neutral_filter_axes([
+            "enlarger.m_filter_neutral",
+            "enlarger.c_filter_neutral",
+            "enlarger.m_filter_neutral",
+        ]);
+        assert_eq!(
+            params.neutral_print_filters_protected,
+            Some([true, true, false])
+        );
+        expected.protect_neutral_filter_axes(["enlarger.y_filter_neutral"]);
+        assert_eq!(
+            expected.neutral_print_filters_protected,
+            Some([false, false, true])
+        );
+        assert!(params.explicit_paths_match(&expected));
+    }
+
     #[test]
     fn operator_requires_finite_values_positive_contrast_and_standard_negative_route() {
         use super::ScanOperatorParams;

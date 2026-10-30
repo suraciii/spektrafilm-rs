@@ -1570,8 +1570,14 @@ mod tests {
                 (n.div_ceil(8), n.div_ceil(8)),
             );
             backend.queue.submit(Some(encoder.finish()));
-            let actual_taps = backend.pipe.readback_buffer(&kernel, taps.len() as u64 * 4);
-            let actual = backend.pipe.readback_buffer(&output, u64::from(n * n) * 4);
+            let actual_taps = backend
+                .pipe
+                .readback_buffer(&kernel, taps.len() as u64 * 4)
+                .unwrap();
+            let actual = backend
+                .pipe
+                .readback_buffer(&output, u64::from(n * n) * 4)
+                .unwrap();
             let tap_max = actual_taps
                 .iter()
                 .zip(&taps)
@@ -1759,7 +1765,8 @@ mod tests {
             paged.extend(
                 backend
                     .pipe
-                    .readback_buffer(&page.buffer, u64::from(page.n_pixels) * 12),
+                    .readback_buffer(&page.buffer, u64::from(page.n_pixels) * 12)
+                    .unwrap(),
             );
         }
         let mut max = 0.0f64;

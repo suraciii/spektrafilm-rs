@@ -76,7 +76,10 @@ fn device_input_decode_matches_the_cpu_reference() {
         let state = build_input_decode_state(&backend.device, &params, &image, n, &backend)
             .expect("the probe state stays within device binding limits");
         state.submit(&backend).expect("input decode submission");
-        let got = backend.pipe.readback_buffer(&image, u64::from(n) * 12);
+        let got = backend
+            .pipe
+            .readback_buffer(&image, u64::from(n) * 12)
+            .unwrap();
         let mut worst = 0.0f64;
         let mut worst_at = 0.0f64;
         for (i, &v) in values.iter().enumerate() {

@@ -570,7 +570,8 @@ fn main(@builtin(global_invocation_id) gid:vec3<u32>, @builtin(num_workgroups) g
         for page in pages {
             let values = backend
                 .pipe
-                .readback_buffer(&page.buffer, page.buffer.size());
+                .readback_buffer(&page.buffer, page.buffer.size())
+                .unwrap();
             let words: Vec<_> = values.into_iter().map(f32::to_bits).collect();
             let n = page.n_pixels as usize * 3;
             assert_eq!(

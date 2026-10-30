@@ -463,17 +463,13 @@ fn resolve_with_preview_mode(
         params =
             digest_params_with_stock_policy(params, &film, &print, Some(&neutral), stock_policy);
     } else {
-        let mut protected = params.neutral_print_filters_protected;
+        let protected = params.neutral_print_filters_protected;
         for edits in &parsed_sources {
             edits.apply(&mut params)?;
-            for path in edits.paths() {
-                match path {
-                    "enlarger.c_filter_neutral" => protected.get_or_insert([false; 3])[0] = true,
-                    "enlarger.m_filter_neutral" => protected.get_or_insert([false; 3])[1] = true,
-                    "enlarger.y_filter_neutral" => protected.get_or_insert([false; 3])[2] = true,
-                    _ => {}
-                }
-            }
+        }
+        params.neutral_print_filters_protected = protected;
+        for edits in &parsed_sources {
+            params.protect_neutral_filter_axes(edits.paths());
         }
         if let Some(value) = request.input_color_space {
             params.io.input_color_space = value.into();
@@ -496,6 +492,7 @@ fn resolve_with_preview_mode(
         params.validate()?;
         crate::pipeline_calibration::validate_scan_output(&params, &film)?;
         let neutral = NeutralFilters::load(data_dir)?;
+        let protected = params.neutral_print_filters_protected;
         params = apply_database_neutral_print_filters_protected(
             params,
             &film,

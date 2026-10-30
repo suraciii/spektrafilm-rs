@@ -66,6 +66,31 @@ The [GUI language design](../gui-language/design.md) owns localized presentation
 - A GUI surface has one owner. Duplicated rendering of one value from two surfaces is a defect, not a convenience.
 - Region, action, and editor ownership follow [Window layout](spec.md#window-layout) and [Stage and surface ownership](spec.md#stage-and-surface-ownership). The stage inspector replaces page tabs; neither application settings nor independent Export MAY create a second photographic editor.
 
+## Adjustment state ownership
+
+The existing frame-level adjustment transaction MUST detect explicit-ownership changes directly from accepted and candidate parameters. Detection MUST NOT require a control or reset caller to advance a render revision first.
+
+Idle-frame comparison MUST borrow the core-owned explicit paths without serializing parameters or cloning a preparation snapshot. Accepted changes retain the existing render-revision, calibration, cancellation, and publication rules.
+
+GUI edits MUST acquire explicit ownership only for core-discovered parameter leaves. Workflow selection and GUI-only fields MUST retain their existing persistence semantics without entering runtime explicit ownership.
+
+History and photograph records MUST retain GUI-only values in their existing fields, subject to accepted-state and RAW-draft rules.
+
+History and photograph persistence MUST share one private GUI owner for comparing photographic settings and copying session settings. The public parameter schema MUST remain unchanged. These operations MUST NOT introduce a field registry, a second parameter document, or another history mechanism.
+
+The shared settings boundary is:
+
+| Scope | `SettingsParams` fields |
+| --- | --- |
+| Photograph | `spectral_shape`, `rgb_to_raw_method`, `apply_hanatos2025_adaptation_window`, `apply_hanatos2025_adaptation_surface`, `spectral_gaussian_blur`, `use_cat16`, `print_exposure_ev_tracking` |
+| Session | `preview_max_size`, `preview_mode`, `use_enlarger_lut`, `use_scanner_lut`, `lut_resolution`, `use_fast_stats`, `neutral_print_filters_from_database` |
+
+History snapshots and photograph documents MUST retain their existing normalization values. History replay and photograph activation MUST preserve the current session settings through the shared copy operation. Seed handling, accepted RAW settings, applied-preset markers, rotation, and preparation ownership remain with each operation; they MUST NOT be folded into one universal state identity.
+
+Acceptance MUST exercise a metadata-only reset with Undo and Redo, rejected adjustments, and exposure history after a session-setting change. Photograph capture and restoration MUST retain their existing seed and session-setting behavior.
+
+Acceptance MUST cover GUI-only edits through Undo/Redo and photograph save/reopen. Runtime ownership MUST remain valid across these operations.
+
 ## Display color management
 
 Display color management MUST remain separate from simulation and saving conversion. The CPU MUST prepare immutable, image-independent ICC transform data through LittleCMS. Preparation MUST NOT evaluate source or retained image pixels.

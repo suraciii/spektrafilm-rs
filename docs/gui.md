@@ -100,7 +100,11 @@ For Settings and Export, the filter compares accepted preferences with typed fac
 
 A module header's **reset** restores only that module's controls. Parameter rows, sliders, and Export options do not have separate reset buttons. Use **Undo** to reverse an adjustment. For example, resetting **Preflash** leaves main **Enlarger** exposure and filtration unchanged; resetting **Print viewing glare** leaves **Print chemistry** unchanged. Material-module reset restores its factory material selection and development time.
 
-For other modules, reset uses current-film defaults only for stock-derived leaves; other values use factory defaults. Reset also releases explicit ownership in its scope, even when the value already matches, so a later film selection can refresh it. Resets never rewrite a preset or startup-default file. Settings, viewer preferences, and an unsubmitted Export draft remain outside adjustment history. See [section reset](../specs/gui-workflow/spec.md#section-reset).
+For other modules, reset uses current-film defaults only for stock-derived leaves; other values use factory defaults. Reset also releases explicit ownership in its scope, even when the value already matches, so a later film selection can refresh it.
+
+A reset that only releases ownership is still one adjustment. Undo and Redo restore ownership as well as values.
+
+Resets never rewrite a preset or startup-default file. Settings, viewer preferences, and an unsubmitted Export draft remain outside adjustment history. See [section reset](../specs/gui-workflow/spec.md#section-reset).
 
 The left browser owns whole-look presets. Modules do not have section-preset menus or separate preset management. Existing section-preset files are left on disk but cannot be imported or applied through the GUI. A feature profile is distinct from a look: it changes only its declared feature controls, not materials, route, or unrelated parameters. Direct controls remain available under their applicability rules.
 

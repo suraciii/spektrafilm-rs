@@ -26,7 +26,7 @@ fn readback<T: bytemuck::Pod>(
     let mut encoder = gpu.device.create_command_encoder(&Default::default());
     encoder.copy_buffer_to_buffer(buffer, 0, &target, 0, bytes);
     gpu.queue.submit(Some(encoder.finish()));
-    gpu.pipe.read_mapped(&target, bytes)
+    gpu.pipe.read_mapped(&target, bytes).unwrap()
 }
 
 fn storage(gpu: &crate::test_support::DeviceBackend, bytes: u64, label: &str) -> wgpu::Buffer {

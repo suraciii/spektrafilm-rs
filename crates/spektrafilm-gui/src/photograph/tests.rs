@@ -195,6 +195,8 @@ fn failed_next_load_and_changed_record_source_preserve_pixels_and_history() {
 #[test]
 fn saved_record_excludes_pending_controls_and_reopens_the_accepted_endpoint() {
     let (mut app, directory, ctx) = app();
+    app.params.settings.preview_max_size = 1024;
+    app.params.settings.use_cat16 = false;
     exposure(&mut app, &ctx, 0.5);
     let accepted_raw = app.gui_state.sections["load_raw"].clone();
     app.raw_applied_settings = Some(accepted_raw.clone());
@@ -210,6 +212,11 @@ fn saved_record_excludes_pending_controls_and_reopens_the_accepted_endpoint() {
     let saved = PhotographRecord::load(&record).unwrap();
     assert_eq!(saved.settings.params.camera.exposure_compensation_ev, 0.5);
     assert_eq!(saved.settings.raw, accepted_raw);
+    assert!(!saved.settings.params.settings.use_cat16);
+    assert_eq!(
+        saved.settings.params.settings.preview_max_size,
+        SettingsParams::default().preview_max_size
+    );
     assert_eq!(
         app.params.camera.exposure_compensation_ev, 3.0,
         "saving must not commit the pending controls"
@@ -218,15 +225,80 @@ fn saved_record_excludes_pending_controls_and_reopens_the_accepted_endpoint() {
         app.gui_state.sections["load_raw"]["temperature"],
         json!(6200.0)
     );
+    app.params.settings.preview_max_size = 2048;
     app.reopen_photograph_record(&record, None).unwrap();
     settle(&mut app, &ctx);
     assert_eq!(app.params.camera.exposure_compensation_ev, 0.5);
     assert_eq!(app.gui_state.sections["load_raw"], accepted_raw);
+    assert_eq!(app.params.settings.preview_max_size, 2048);
+    assert!(!app.params.settings.use_cat16);
     assert!(
         !app.can_undo(),
         "complete-state reopen starts a new photograph history"
     );
     assert!(!app.photograph_has_unsaved_changes());
+}
+
+#[test]
+fn gui_only_edits_remain_reversible_and_save_without_runtime_ownership() {
+    let (mut app, directory, ctx) = app();
+    let initial_special = app.gui_state.sections["special"].clone();
+    let initial_raw = app.gui_state.sections["load_raw"].clone();
+    let initial_exposure = app.params.camera.exposure_compensation_ev;
+    app.begin_adjustment_frame(&ctx);
+    app.gui_state.sections["special"]["film_channel_swap"] = json!([2, 1, 0]);
+    controls::record_edited_path(&ctx, "extras.special.film_channel_swap");
+    app.gui_state.sections["load_raw"]["temperature"] = json!(6200.0);
+    controls::record_edited_path(&ctx, "extras.load_raw.temperature");
+    app.params.camera.exposure_compensation_ev = 1.0;
+    controls::record_edited_path(&ctx, "camera.exposure_compensation_ev");
+    app.end_adjustment_frame(&ctx);
+
+    let record = directory.path().join("gui-extras.spektra-photo.json");
+    app.save_photograph_record_to(&record).unwrap();
+    let saved = PhotographRecord::load(&record).unwrap();
+    assert_eq!(
+        saved.settings.special["film_channel_swap"],
+        json!([2, 1, 0])
+    );
+    assert_eq!(saved.settings.raw["temperature"], json!(6200.0));
+    assert_eq!(saved.settings.params.camera.exposure_compensation_ev, 1.0);
+    assert!(
+        saved
+            .settings
+            .preparation
+            .explicit_section_paths
+            .iter()
+            .any(|path| path == "camera.exposure_compensation_ev")
+    );
+    assert!(
+        saved
+            .settings
+            .preparation
+            .explicit_section_paths
+            .iter()
+            .all(|path| !path.starts_with("extras."))
+    );
+
+    assert!(app.undo_adjustment());
+    assert_eq!(app.gui_state.sections["special"], initial_special);
+    assert_eq!(app.gui_state.sections["load_raw"], initial_raw);
+    assert_eq!(app.params.camera.exposure_compensation_ev, initial_exposure);
+    assert!(app.redo_adjustment());
+    assert_eq!(app.gui_state.sections["special"], saved.settings.special);
+    assert_eq!(app.gui_state.sections["load_raw"], saved.settings.raw);
+    assert_eq!(app.params.camera.exposure_compensation_ev, 1.0);
+    assert!(app.undo_adjustment());
+    app.reopen_photograph_record(&record, None).unwrap();
+    settle(&mut app, &ctx);
+    assert_eq!(app.gui_state.sections["special"], saved.settings.special);
+    assert_eq!(app.gui_state.sections["load_raw"], saved.settings.raw);
+    assert_eq!(app.params.camera.exposure_compensation_ev, 1.0);
+    assert_eq!(
+        app.params.render_preparation_state(),
+        saved.settings.preparation
+    );
+    assert!(!app.can_undo());
 }
 
 fn render(app: &mut App, ctx: &egui::Context) -> Arc<ImageBuf> {
