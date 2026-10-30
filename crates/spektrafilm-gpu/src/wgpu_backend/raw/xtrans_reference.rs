@@ -214,6 +214,53 @@ pub(crate) fn interpolate_twoxtwo(
     }
 }
 
+/// `markesteijn_homo_max`: a running maximum over the directions, seeded by zero.
+pub(crate) fn homo_max(
+    homosum: &[u8],
+    maxval: &mut [u8],
+    width: usize,
+    height: usize,
+    border: usize,
+    d: usize,
+) {
+    for y in border..height.saturating_sub(border) {
+        for x in border..width.saturating_sub(border) {
+            let i = y * width + x;
+            let hm = homosum[i];
+            let hmax = if d == 0 { 0 } else { maxval[i] };
+            maxval[i] = if hmax < hm { hm } else { hmax };
+        }
+    }
+}
+
+/// `markesteijn_homo_max_corr`: the native integer correction, `hmax - hmax / 8`.
+pub(crate) fn homo_max_corr(maxval: &mut [u8], width: usize, height: usize, border: usize) {
+    for y in border..height.saturating_sub(border) {
+        for x in border..width.saturating_sub(border) {
+            let i = y * width + x;
+            let hmax = maxval[i];
+            maxval[i] = hmax - (hmax >> 3);
+        }
+    }
+}
+
+/// `markesteijn_homo_quench`: of two paired directions, zero the weaker one. A tie
+/// keeps both, which is the native behaviour and not an accident.
+pub(crate) fn homo_quench(a: &mut [u8], b: &mut [u8], width: usize, height: usize, border: usize) {
+    for y in border..height.saturating_sub(border) {
+        for x in border..width.saturating_sub(border) {
+            let i = y * width + x;
+            let (ai, bi) = (a[i], b[i]);
+            if ai < bi {
+                a[i] = 0;
+            }
+            if ai > bi {
+                b[i] = 0;
+            }
+        }
+    }
+}
+
 /// `markesteijn_homo_sum`: the 5x5 neighbourhood sum of a homogeneity map, stored as
 /// one byte per pixel. Nine neighbours of nine is 225, so a byte still holds it.
 pub(crate) fn homo_sum(
@@ -1304,5 +1351,39 @@ mod tests {
         let nines = vec![9u8; width * height];
         homo_sum(&nines, &mut homosum, width, height, 2);
         assert_eq!(homosum[4 * width + 4], 225, "twenty-five cells of nine");
+    }
+
+    #[test]
+    fn homogeneity_vote_max_correction_and_quench() {
+        let (width, height) = (6usize, 6usize);
+        let n = width * height;
+        let mut maxval = vec![0u8; n];
+        for (d, v) in [3u8, 7, 5].iter().enumerate() {
+            homo_max(&vec![*v; n], &mut maxval, width, height, 1, d);
+        }
+        assert_eq!(maxval[2 * width + 2], 7, "largest of 3, 7, 5");
+
+        homo_max_corr(&mut maxval, width, height, 1);
+        assert_eq!(maxval[2 * width + 2], 7, "7 - 7/8 == 7");
+        let mut eight = vec![8u8; n];
+        homo_max_corr(&mut eight, width, height, 1);
+        assert_eq!(eight[2 * width + 2], 7, "8 - 1 == 7");
+
+        let mut a = vec![5u8; n];
+        let mut b = vec![3u8; n];
+        homo_quench(&mut a, &mut b, width, height, 1);
+        assert_eq!(
+            (a[2 * width + 2], b[2 * width + 2]),
+            (5, 0),
+            "the weaker partner is zeroed"
+        );
+        let mut c = vec![4u8; n];
+        let mut e = vec![4u8; n];
+        homo_quench(&mut c, &mut e, width, height, 1);
+        assert_eq!(
+            (c[2 * width + 2], e[2 * width + 2]),
+            (4, 4),
+            "a tie keeps both"
+        );
     }
 }
