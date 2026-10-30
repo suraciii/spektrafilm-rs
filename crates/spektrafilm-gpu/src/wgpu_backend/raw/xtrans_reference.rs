@@ -214,6 +214,26 @@ pub(crate) fn interpolate_twoxtwo(
     }
 }
 
+/// `markesteijn_convert_yuv`: BT.2020 luma and the two chroma differences, written
+/// into the same 4-float slots the rgb buffer uses.
+pub(crate) fn convert_yuv(
+    rgb: &[f32],
+    yuv: &mut [f32],
+    width: usize,
+    height: usize,
+    border: usize,
+) {
+    for y in border..height.saturating_sub(border) {
+        for x in border..width.saturating_sub(border) {
+            let idx = (y * width + x) * RGB_STRIDE;
+            let big_y = 0.2627 * rgb[idx] + 0.6780 * rgb[idx + 1] + 0.0593 * rgb[idx + 2];
+            yuv[idx] = big_y;
+            yuv[idx + 1] = (rgb[idx + 2] - big_y) * 0.56433;
+            yuv[idx + 2] = (rgb[idx] - big_y) * 0.67815;
+        }
+    }
+}
+
 /// One pass of `process_markesteijn_cl`. The sequence is the native one: green is
 /// recalculated only from the second pass on, the six solitary-green calls flip
 /// `i` and `h` between invocations, then four red/blue calls and four 2x2 fills.
@@ -1091,6 +1111,25 @@ mod tests {
         for (d, plane) in dirs.iter().enumerate() {
             for (i, value) in plane.iter().enumerate() {
                 assert_eq!(*value, rgb[i], "pass 3 direction {d} sample {i}");
+            }
+        }
+    }
+
+    #[test]
+    fn convert_yuv_maps_grey_to_zero_chroma_and_unit_luma() {
+        let (width, height) = (8usize, 8usize);
+        let v = 0.5f32;
+        let rgb: Vec<f32> = (0..width * height * RGB_STRIDE)
+            .map(|i| if i % 4 == 3 { 0.0 } else { v })
+            .collect();
+        let mut yuv = vec![0.0f32; rgb.len()];
+        convert_yuv(&rgb, &mut yuv, width, height, 1);
+        for y in 1..height - 1 {
+            for x in 1..width - 1 {
+                let idx = (y * width + x) * RGB_STRIDE;
+                assert!((yuv[idx] - v).abs() < 1e-6, "luma at ({x},{y})");
+                assert!(yuv[idx + 1].abs() < 1e-6, "cb at ({x},{y})");
+                assert!(yuv[idx + 2].abs() < 1e-6, "cr at ({x},{y})");
             }
         }
     }
