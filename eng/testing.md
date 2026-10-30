@@ -59,3 +59,26 @@ Persistence tests must use real IO in isolated temporary directories. Shader num
 When asserting pixel invariance, compare decoded dimensions and samples rather than container bytes that also carry write-time metadata.
 
 The [Justfile](../Justfile) defines test selection. The [README](../README.md#build) documents dependencies and verification commands.
+
+## CPU and GPU are allowed to disagree
+
+We follow darktable: the GPU path is a second implementation, not a bit-exact twin
+of the CPU one. The two may differ in the last bits, and which one runs may depend
+on measured speed.
+
+- Parity tests compare with a tolerance (relative <= 1e-5, or <= 1 LSB at 16 bits).
+  A bit-exact assertion between backends is a bug in the test.
+- Structural invariants stay exact: which pixels and planes a kernel writes, clamp
+  ranges, untouched borders. A skipped write is not a precision difference.
+- Each run is deterministic on its own device: no atomics in accumulation, no
+  reliance on unordered writes, snapshot before an in-place pass.
+- A numerical oracle (for example `xtrans_reference`) is a debugging aid, not a
+  contract. When a deviation appears it says which step moved.
+- Acceptance is end to end: one real file through both paths, compared as an image
+  (PSNR and maximum deviation). That is the only comparison darktable makes too.
+- Prefer the faster path, measured rather than assumed. A GPU kernel that loses to
+  the CPU should not be enabled; darktable switches OpenCL off entirely when its
+  benchmark falls below the CPU.
+- Because the backends may disagree, document that toggling the GPU can change the
+  output. Otherwise it comes back as a bug report.
+
