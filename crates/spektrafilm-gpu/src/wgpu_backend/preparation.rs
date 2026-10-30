@@ -67,9 +67,8 @@ impl WgpuBackend {
         if payload.backend_id != self.backend_id {
             return Err("diagnostic spectral payload belongs to another backend".to_owned());
         }
-        Ok(self
-            .pipe
-            .readback_buffer_as(&payload.f64_buffer, payload.f64_buffer.size()))
+        self.pipe
+            .readback_buffer_as(&payload.f64_buffer, payload.f64_buffer.size())
     }
 
     pub(super) fn prepare_spectral_table_device(

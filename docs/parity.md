@@ -36,6 +36,8 @@ Backend selection in a `precision-f64` binary defaults to genuine CPU f64 arithm
 
 An explicit `SPEKTRAFILM_BACKEND=wgpu` request that cannot be served — an unavailable adapter, or a build compiled without the `wgpu-backend` feature — must fail before output publication. Automatic selection without usable hardware may initially choose CPU and must report its reason. After GPU selection, either mode must fail on unsupported work or device failure without a CPU restart. An automatic CPU path is not evidence of a GPU pass.
 
+GPU-to-host mapping and completion-channel failures return operation errors. They do not trigger CPU fallback or publish partial batch results. See [readback completion](../specs/gpu-execution/design.md#readback-completion).
+
 ## Selected-executor fidelity
 
 Input transfer decoding, grain, gamut processing, optical diffusion, and selected enlarger/scanner PCHIP spectral LUTs must retain their reference algorithms on the selected executor. Missing GPU support must fail a GPU-selected operation, not select a faithful CPU per-stage path. Historical mixed-path measurements remain evidence only for the work they actually exercised.

@@ -957,7 +957,7 @@ impl WgpuBackend {
         let mut encoder = self.device.create_command_encoder(&Default::default());
         encoder.copy_buffer_to_buffer(band.out_buffer(), 0, &staging, 0, bytes);
         self.queue.submit(Some(encoder.finish()));
-        let data: Vec<f32> = self.pipe.read_mapped(&staging, bytes);
+        let data: Vec<f32> = self.pipe.read_mapped(&staging, bytes)?;
         let film = ImageBuf {
             data: f32_to_scalars(data),
             width,

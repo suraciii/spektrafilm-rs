@@ -159,7 +159,8 @@ fn standard_fullframe_exact_percentile_neutral_locus_and_operator_destination() 
             state.submit_setup(&gpu).unwrap();
             let setup = gpu
                 .pipe
-                .readback_buffer_as::<f32>(&state.prepared.setup, 64);
+                .readback_buffer_as::<f32>(&state.prepared.setup, 64)
+                .unwrap();
             let offset_error = (0..3)
                 .map(|c| (f64::from(setup[5 + c]) - offset[c]).abs())
                 .fold(0.0_f64, f64::max);
@@ -174,7 +175,8 @@ fn standard_fullframe_exact_percentile_neutral_locus_and_operator_destination() 
             state.check(&gpu, &p, None, 42, 1).unwrap();
             let actual = gpu
                 .pipe
-                .readback_buffer_as::<f32>(&output, data.len() as u64 * 4);
+                .readback_buffer_as::<f32>(&output, data.len() as u64 * 4)
+                .unwrap();
             let tone_error = actual
                 .iter()
                 .zip(&expected)
@@ -223,7 +225,8 @@ fn standard_setup_large_frame_error_budget() {
     state.submit_setup(&gpu).unwrap();
     let setup = gpu
         .pipe
-        .readback_buffer_as::<f32>(&state.prepared.setup, 64);
+        .readback_buffer_as::<f32>(&state.prepared.setup, 64)
+        .unwrap();
     let offset_error = (0..3)
         .map(|c| (f64::from(setup[5 + c]) - offset[c]).abs())
         .fold(0.0_f64, f64::max);
@@ -235,7 +238,8 @@ fn standard_setup_large_frame_error_budget() {
     state.check(&gpu, &p, None, pixels, 1).unwrap();
     let actual = gpu
         .pipe
-        .readback_buffer_as::<f32>(&output, data.len() as u64 * 4);
+        .readback_buffer_as::<f32>(&output, data.len() as u64 * 4)
+        .unwrap();
     let tone_error = actual
         .iter()
         .zip(&expected)

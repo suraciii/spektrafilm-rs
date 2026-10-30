@@ -141,6 +141,8 @@ pub(super) struct GpuPipe {
     test_failure: std::sync::Arc<Mutex<TestFailure>>,
     #[cfg(test)]
     test_readback_hook: std::sync::Arc<Mutex<Option<ReadbackHook>>>,
+    #[cfg(test)]
+    test_abort_next_mapping: std::sync::Arc<Mutex<bool>>,
 }
 
 impl GpuPipe {
@@ -179,6 +181,8 @@ impl GpuPipe {
             test_failure: std::sync::Arc::new(Mutex::new(TestFailure::default())),
             #[cfg(test)]
             test_readback_hook: std::sync::Arc::new(Mutex::new(None)),
+            #[cfg(test)]
+            test_abort_next_mapping: std::sync::Arc::new(Mutex::new(false)),
         }
     }
 
@@ -202,6 +206,8 @@ impl GpuPipe {
             test_failure: std::sync::Arc::clone(&self.test_failure),
             #[cfg(test)]
             test_readback_hook: self.test_readback_hook.clone(),
+            #[cfg(test)]
+            test_abort_next_mapping: self.test_abort_next_mapping.clone(),
         }
     }
 
@@ -290,10 +296,10 @@ impl GpuPipe {
         n_pixels: u32,
         output_idx: usize,
         name: &'static str,
-    ) -> Option<Vec<f32>> {
+    ) -> Result<Option<Vec<f32>>, String> {
         #[cfg(test)]
         if self.test_operation(name).is_err() {
-            return None;
+            return Ok(None);
         }
         // Reject unrepresentable bindings before wgpu's fatal validation.
         // The selected-device caller converts this decline to an operation error.
@@ -303,34 +309,38 @@ impl GpuPipe {
                 %reason,
                 "device dispatch rejected because a buffer exceeds resource limits"
             );
-            return None;
+            return Ok(None);
         }
-        let additional = bindings.iter().try_fold(
-            bindings[output_idx].data.len() as u64,
-            |bytes, binding| {
-                let allocation = (binding.data.len() as u64).max(4).checked_add(3)? / 4 * 4;
-                bytes.checked_add(allocation)
-            },
-        )?;
+        let Some(additional) =
+            bindings
+                .iter()
+                .try_fold(bindings[output_idx].data.len() as u64, |bytes, binding| {
+                    let allocation = (binding.data.len() as u64).max(4).checked_add(3)? / 4 * 4;
+                    bytes.checked_add(allocation)
+                })
+        else {
+            return Ok(None);
+        };
         // A chain already owns its complete checked working set. Standalone
         // host dispatches still share admission with render/export derivatives.
         let operation = if self.queue.operation.is_none() {
             let cached = if self.device.resources.native_buffer_bytes().is_none() {
-                self.retained_cache_bytes().ok()?
+                let Ok(cached) = self.retained_cache_bytes() else {
+                    return Ok(None);
+                };
+                cached
             } else {
                 0
             };
-            Some(
-                self.device
-                    .resources
-                    .admit(
-                        additional,
-                        cached,
-                        self.cancellation.as_ref(),
-                        &self.device.context,
-                    )
-                    .ok()?,
-            )
+            let Ok(operation) = self.device.resources.admit(
+                additional,
+                cached,
+                self.cancellation.as_ref(),
+                &self.device.context,
+            ) else {
+                return Ok(None);
+            };
+            Some(operation)
         } else {
             None
         };
@@ -407,12 +417,12 @@ impl GpuPipe {
             .is_err()
         {
             self.return_readback(readback, output_size);
-            return None;
+            return Ok(None);
         }
 
-        let out = self.read_mapped_f32(&readback, output_size);
+        let out = self.read_mapped_f32(&readback, output_size)?;
         self.return_readback(readback, output_size);
-        Some(out)
+        Ok(Some(out))
     }
 
     /// Upload host RGB f32 samples as a device image. One of the three pipe
@@ -545,49 +555,90 @@ impl GpuPipe {
         &self,
         input: &DeviceImage,
         cpu: impl FnOnce(Vec<f32>) -> Vec<f32>,
-    ) -> DeviceImage {
-        let host = self.readback_image(input);
+    ) -> Result<DeviceImage, String> {
+        let host = self.readback_image(input)?;
         let out = cpu(host);
-        self.upload_image(&out, input.n_pixels)
+        Ok(self.upload_image(&out, input.n_pixels))
     }
 
-    /// Infallible final readback for the legacy device-image/fence helpers.
+    /// Final readback for the legacy device-image/fence helpers.
     /// These helpers are not part of the cancellable production chain.
     #[allow(dead_code)]
-    pub(super) fn readback_image(&self, image: &DeviceImage) -> Vec<f32> {
+    pub(super) fn readback_image(&self, image: &DeviceImage) -> Result<Vec<f32>, String> {
         let readback = self.take_readback(image.bytes);
         let mut encoder = self.device.create_command_encoder(&Default::default());
         encoder.copy_buffer_to_buffer(&image.buf, 0, &readback, 0, image.bytes);
         self.queue.submit(Some(encoder.finish()));
-        let out = self.read_mapped_f32(&readback, image.bytes);
+        let out = self.read_mapped_f32(&readback, image.bytes)?;
         self.return_readback(readback, image.bytes);
-        out
+        Ok(out)
     }
     /// Readback of f32 stages, the crate's dominant element type.
-    pub(super) fn read_mapped_f32(&self, buffer: &wgpu::Buffer, bytes: u64) -> Vec<f32> {
+    pub(super) fn read_mapped_f32(
+        &self,
+        buffer: &wgpu::Buffer,
+        bytes: u64,
+    ) -> Result<Vec<f32>, String> {
         self.read_mapped(buffer, bytes)
     }
 
-    /// The one readback protocol: map `buffer`, wait for the GPU, record the
-    /// materialized bytes, then copy the mapped range out.
-    pub(super) fn read_mapped<T: bytemuck::Pod>(
+    /// Start a mapping without waiting, so batches can share one device poll.
+    pub(super) fn start_readback_mapping(
+        &self,
+        buffer: &wgpu::Buffer,
+    ) -> std::sync::mpsc::Receiver<Result<(), wgpu::BufferAsyncError>> {
+        let (tx, rx) = std::sync::mpsc::channel();
+        buffer
+            .slice(..)
+            .map_async(wgpu::MapMode::Read, move |result| {
+                let _ = tx.send(result);
+            });
+        #[cfg(test)]
+        if std::mem::take(&mut *self.test_abort_next_mapping.lock()) {
+            buffer.unmap();
+        }
+        rx
+    }
+
+    pub(super) fn readback_mapping_result(
+        receiver: &std::sync::mpsc::Receiver<Result<(), wgpu::BufferAsyncError>>,
+    ) -> Result<(), String> {
+        receiver
+            .recv()
+            .map_err(|error| format!("GPU readback mapping completion missing: {error}"))?
+            .map_err(|error| format!("GPU readback mapping failed: {error}"))
+    }
+
+    /// Copy a successfully mapped buffer and release the view before unmapping.
+    pub(super) fn mapped_samples<T: bytemuck::Pod>(
         &self,
         buffer: &wgpu::Buffer,
         bytes: u64,
     ) -> Vec<T> {
-        let slice = buffer.slice(..);
-        let (tx, rx) = std::sync::mpsc::channel();
-        slice.map_async(wgpu::MapMode::Read, move |r| {
-            tx.send(r).unwrap();
-        });
-        self.device.poll(wgpu::Maintain::Wait);
-        rx.recv().unwrap().unwrap();
         self.device.materialized(bytes);
+        let slice = buffer.slice(..);
         let data = slice.get_mapped_range();
-        let out: Vec<T> = bytemuck::cast_slice(&data).to_vec();
+        let out = bytemuck::cast_slice(&data).to_vec();
         drop(data);
         buffer.unmap();
         out
+    }
+
+    /// Map, wait, and materialize only after successful completion.
+    pub(super) fn read_mapped<T: bytemuck::Pod>(
+        &self,
+        buffer: &wgpu::Buffer,
+        bytes: u64,
+    ) -> Result<Vec<T>, String> {
+        let receiver = self.start_readback_mapping(buffer);
+        self.device.poll(wgpu::Maintain::Wait);
+        Self::readback_mapping_result(&receiver)?;
+        Ok(self.mapped_samples(buffer, bytes))
+    }
+
+    #[cfg(test)]
+    pub(super) fn test_abort_next_mapping(&self) {
+        *self.test_abort_next_mapping.lock() = true;
     }
 
     fn take_readback(&self, size: u64) -> wgpu::Buffer {
@@ -648,7 +699,7 @@ impl GpuPipe {
         Ok(())
     }
 
-    /// Infallible diagnostic materialization through the pooled readback path.
+    /// Diagnostic materialization through the pooled readback path.
     /// Records one readback of `bytes`; request work instead uses
     /// `readback_buffer_cancellable` so cancellation can prevent its COPY.
     /// The source stays a plain storage buffer; only the pooled copy target
@@ -657,14 +708,14 @@ impl GpuPipe {
         &self,
         buf: &wgpu::Buffer,
         bytes: u64,
-    ) -> Vec<T> {
+    ) -> Result<Vec<T>, String> {
         let readback = self.take_readback(bytes);
         let mut encoder = self.device.create_command_encoder(&Default::default());
         encoder.copy_buffer_to_buffer(buf, 0, &readback, 0, bytes);
         self.queue.submit(Some(encoder.finish()));
-        let out = self.read_mapped::<T>(&readback, bytes);
+        let out = self.read_mapped::<T>(&readback, bytes)?;
         self.return_readback(readback, bytes);
-        out
+        Ok(out)
     }
 
     /// Cancellation can prevent the copy submission, but cannot interrupt a
@@ -686,7 +737,7 @@ impl GpuPipe {
             self.return_readback(readback, bytes);
             return Err(error);
         }
-        let result = self.read_mapped::<T>(&readback, bytes);
+        let result = self.read_mapped::<T>(&readback, bytes)?;
         self.return_readback(readback, bytes);
         #[cfg(test)]
         if let Some(hook) = self.test_readback_hook.lock().as_mut() {
@@ -697,7 +748,11 @@ impl GpuPipe {
     }
 
     /// The f32 specialization for noncancellable diagnostic materialization.
-    pub(super) fn readback_buffer(&self, buf: &wgpu::Buffer, bytes: u64) -> Vec<f32> {
+    pub(super) fn readback_buffer(
+        &self,
+        buf: &wgpu::Buffer,
+        bytes: u64,
+    ) -> Result<Vec<f32>, String> {
         self.readback_buffer_as(buf, bytes)
     }
 }
@@ -859,6 +914,7 @@ mod tests {
                 2,
                 "pipe_test_host",
             )
+            .expect("mapping succeeded")
             .expect("test bindings fit the device");
         let dev = b.pipe.upload_image(&img, 16);
         let out = b
@@ -873,7 +929,7 @@ mod tests {
             .expect("test bindings fit the device");
         assert_eq!(out.n_pixels, 16);
         assert_eq!(out.bytes, (img.len() * 4) as u64);
-        let device_result = b.pipe.readback_image(&out);
+        let device_result = b.pipe.readback_image(&out).unwrap();
         assert_eq!(host, device_result);
         // The identity matrix must be transparent.
         assert_eq!(device_result, img);
@@ -888,11 +944,104 @@ mod tests {
         let dev = b.pipe.upload_image(&img, 16);
         let fenced = b
             .pipe
-            .fence(&dev, |host| host.iter().map(|v| v + 1.0).collect());
-        let out = b.pipe.readback_image(&fenced);
+            .fence(&dev, |host| host.iter().map(|v| v + 1.0).collect())
+            .unwrap();
+        let out = b.pipe.readback_image(&fenced).unwrap();
         let expected: Vec<f32> = img.iter().map(|v| v + 1.0).collect();
         assert_eq!(out, expected);
         assert_eq!(fenced.n_pixels, 16);
+    }
+
+    #[test]
+    fn dispatch_preserves_aborted_mapping_error_separate_from_decline() {
+        let b = crate::test_support::explicit_adapter();
+        let img = sample_image();
+        let params = identity_params();
+        let bindings = [
+            GpuBuffer::uniform(bytemuck::bytes_of(&params)),
+            GpuBuffer::storage_ro(bytemuck::cast_slice(&img)),
+            GpuBuffer::storage_rw(&vec![0u8; img.len() * 4]),
+        ];
+        b.pipe.test_abort_next_mapping();
+        let failed = b
+            .pipe
+            .dispatch_host(COLORSPACE_SHADER, &bindings, 16, 2, "pipe_test_host");
+        assert!(failed.is_err());
+        assert!(b.pipe.pool.lock().buffers.is_empty());
+
+        b.pipe.test_fail_operation("pipe_test_decline");
+        let declined =
+            b.pipe
+                .dispatch_host(COLORSPACE_SHADER, &bindings, 16, 2, "pipe_test_decline");
+        assert!(declined.unwrap().is_none());
+        let output = b
+            .pipe
+            .dispatch_host(COLORSPACE_SHADER, &bindings, 16, 2, "pipe_test_host")
+            .unwrap()
+            .unwrap();
+        assert_eq!(output, img);
+    }
+
+    #[test]
+    fn aborted_cancellable_readback_returns_error_and_discards_staging() {
+        let b = crate::test_support::explicit_adapter();
+        let img = sample_image();
+        let dev = b.pipe.upload_image(&img, 16);
+        *b.pipe.test_abort_next_mapping.lock() = true;
+
+        let result = b
+            .pipe
+            .readback_buffer_cancellable::<f32>(&dev.buf, dev.bytes);
+        assert!(result.is_err(), "aborted mapping must return an error");
+        assert!(
+            b.pipe.pool.lock().buffers.is_empty(),
+            "failed staging must not be pooled"
+        );
+
+        let recovered = b
+            .pipe
+            .readback_buffer_cancellable::<f32>(&dev.buf, dev.bytes)
+            .unwrap();
+        assert_eq!(recovered, img);
+        assert_eq!(b.pipe.pool.lock().buffers.len(), 1);
+    }
+
+    #[test]
+    fn cancellable_readback_cleans_up_before_and_after_mapping() {
+        use std::sync::{
+            Arc,
+            atomic::{AtomicBool, Ordering},
+        };
+
+        let b = crate::test_support::explicit_adapter();
+        let img = sample_image();
+        let dev = b.pipe.upload_image(&img, 16);
+        let token = Arc::new(AtomicBool::new(true));
+        let pipe = b.pipe.with_cancellation(Some(token.clone()));
+        assert!(
+            pipe.readback_buffer_cancellable::<f32>(&dev.buf, dev.bytes)
+                .is_err()
+        );
+        assert!(pipe.pool.lock().buffers.is_empty());
+
+        token.store(false, Ordering::Relaxed);
+        pipe.test_on_readback({
+            let token = token.clone();
+            move || token.store(true, Ordering::Relaxed)
+        });
+        assert!(
+            pipe.readback_buffer_cancellable::<f32>(&dev.buf, dev.bytes)
+                .is_err()
+        );
+        assert_eq!(pipe.pool.lock().buffers.len(), 1);
+        pipe.test_on_readback(|| {});
+        token.store(false, Ordering::Relaxed);
+        assert_eq!(
+            pipe.readback_buffer_cancellable::<f32>(&dev.buf, dev.bytes)
+                .unwrap(),
+            img
+        );
+        assert_eq!(pipe.pool.lock().buffers.len(), 1);
     }
 
     #[test]
@@ -902,10 +1051,10 @@ mod tests {
         };
         let img = sample_image();
         let dev = b.pipe.upload_image(&img, 16);
-        let first = b.pipe.readback_image(&dev);
+        let first = b.pipe.readback_image(&dev).unwrap();
         // Same-size readback again: the pooled buffer must be reusable and
         // still correct.
-        let second = b.pipe.readback_image(&dev);
+        let second = b.pipe.readback_image(&dev).unwrap();
         assert_eq!(first, img);
         assert_eq!(second, img);
         assert_eq!(b.pipe.pool.lock().buffers.len(), 1);

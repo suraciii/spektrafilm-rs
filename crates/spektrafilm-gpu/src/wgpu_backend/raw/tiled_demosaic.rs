@@ -771,13 +771,15 @@ mod tests {
         .unwrap();
         let expected = gpu
             .pipe
-            .readback_buffer_as::<u32>(&image.buffer, u64::from(size) * u64::from(size) * 16);
+            .readback_buffer_as::<u32>(&image.buffer, u64::from(size) * u64::from(size) * 16)
+            .unwrap();
         let actual: Vec<u32> = tiled
             .pages
             .iter()
             .flat_map(|p| {
                 gpu.pipe
                     .readback_buffer_as::<u32>(&p.buffer, u64::from(p.n_pixels) * 16)
+                    .unwrap()
             })
             .collect();
         assert_eq!(actual, expected, "{mode:?}, {size}-square, limit {limit}");

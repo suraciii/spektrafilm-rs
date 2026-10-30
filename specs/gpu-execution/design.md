@@ -97,6 +97,20 @@ Full-source exposure metering gathers reflected source support from those pages,
 
 The preview grid and fixed reduction coefficients remain the metering minimum working set.
 
+## Readback completion
+
+The device readback owner MUST propagate mapping and completion-channel failures through the existing operation result. Dispatch adapters MUST distinguish an existing capability or resource decline from a readback failure and preserve the failure reason. This change MUST NOT introduce a workspace-wide error type, automatic retry, device replacement, or CPU fallback.
+
+Single-buffer and batched readbacks MUST share completion and mapped-sample handling where those rules are identical. A batch MUST request all mappings before its shared device wait. Error handling MUST NOT add a second device copy, a submission, or a device wait per buffer to the successful batch path.
+
+A successful readback MUST release its mapped view and unmap before returning a pooled staging buffer. A failed mapping MUST NOT return an unverified buffer to the reusable pool.
+
+A cancelled operation that completed its mapping MUST finish the same cleanup before discarding its result. Existing pre-submission and post-completion cancellation checks MUST remain in place.
+
+Readback telemetry MUST count materialized samples only after mapping succeeds. Successful sample order, arithmetic, transfer counts, and pooling limits MUST remain unchanged.
+
+Focused acceptance MUST exercise a real successful mapping, cancellation before submission and after completion, and an aborted mapping through the production completion path. Batch failure MUST return no partial image list. These scenarios MUST NOT be reported as device-loss recovery or full-platform GPU acceptance.
+
 ## Pipe assembly
 
 The stage sequence is carried by an internal pipe. Each numerical stage is a node: a `Gpu` node dispatches a registered shader over device buffers and never reads host pixels; a `Cpu` node wraps the CPU reference stage for a CPU-selected operation. Node selection happens at assembly time from the resolved parameters and selected backend.

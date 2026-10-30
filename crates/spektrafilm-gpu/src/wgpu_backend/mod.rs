@@ -323,18 +323,18 @@ impl WgpuBackend {
         n_pixels: u32,
         output_idx: usize,
         name: &'static str,
-    ) -> Option<Vec<f32>> {
+    ) -> Result<Option<Vec<f32>>, String> {
         self.pipe
             .dispatch_host(shader_source, bindings, n_pixels, output_idx, name)
     }
 
     /// The one readback protocol: map `buffer`, wait for the GPU, record the
     /// materialized bytes, then copy the mapped range out as f32.
-    fn read_mapped_f32(&self, buffer: &wgpu::Buffer, bytes: u64) -> Vec<f32> {
+    fn read_mapped_f32(&self, buffer: &wgpu::Buffer, bytes: u64) -> Result<Vec<f32>, String> {
         self.pipe.read_mapped(buffer, bytes)
     }
 
-    fn read_mapped_u32(&self, buffer: &wgpu::Buffer, bytes: u64) -> Vec<u32> {
+    fn read_mapped_u32(&self, buffer: &wgpu::Buffer, bytes: u64) -> Result<Vec<u32>, String> {
         self.pipe.read_mapped(buffer, bytes)
     }
 

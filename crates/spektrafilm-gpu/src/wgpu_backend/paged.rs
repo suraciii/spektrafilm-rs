@@ -231,7 +231,7 @@ mod tests {
         gpu.copy_window_to(&mut encoder, payload, 1, 1, 3, 2, &output)
             .unwrap();
         gpu.queue.submit(Some(encoder.finish()));
-        let actual = gpu.pipe.readback_buffer(&output, 72);
+        let actual = gpu.pipe.readback_buffer(&output, 72).unwrap();
         let expected: Vec<_> = values[18..27]
             .iter()
             .chain(&values[33..42])

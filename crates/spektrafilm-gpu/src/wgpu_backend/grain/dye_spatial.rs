@@ -1019,8 +1019,8 @@ impl SpatialCase {
         encoder.copy_buffer_to_buffer(&output, 0, &output_readback, 0, output_bytes);
         backend.submit_commands(Some(encoder.finish()))?;
         Ok((
-            backend.read_mapped_f32(&cell_readback, cell_bytes),
-            backend.read_mapped_f32(&output_readback, output_bytes),
+            backend.read_mapped_f32(&cell_readback, cell_bytes)?,
+            backend.read_mapped_f32(&output_readback, output_bytes)?,
         ))
     }
 }

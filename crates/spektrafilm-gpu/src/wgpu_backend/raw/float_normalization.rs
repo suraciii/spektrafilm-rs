@@ -166,14 +166,22 @@ mod tests {
             .encode(&mut encoder, "float_test");
         backend.queue.submit(Some(encoder.finish()));
         (
-            backend.pipe.readback_buffer_as::<u32>(&black.buffer, 16),
             backend
                 .pipe
-                .readback_buffer_as::<u32>(&repeat.buffer, map.len() as u64 * 4),
-            backend.pipe.readback_buffer_as::<u32>(&scale.buffer, 32),
+                .readback_buffer_as::<u32>(&black.buffer, 16)
+                .unwrap(),
             backend
                 .pipe
-                .readback_buffer_as::<u32>(&conversion.buffer, 16),
+                .readback_buffer_as::<u32>(&repeat.buffer, map.len() as u64 * 4)
+                .unwrap(),
+            backend
+                .pipe
+                .readback_buffer_as::<u32>(&scale.buffer, 32)
+                .unwrap(),
+            backend
+                .pipe
+                .readback_buffer_as::<u32>(&conversion.buffer, 16)
+                .unwrap(),
         )
     }
 
@@ -277,7 +285,8 @@ mod tests {
         assert_eq!(
             backend
                 .pipe
-                .readback_buffer_as::<u32>(&output.buffer, input.len() as u64 * 4),
+                .readback_buffer_as::<u32>(&output.buffer, input.len() as u64 * 4)
+                .unwrap(),
             [0, 0, 0, 0, 1, 16383]
         );
     }

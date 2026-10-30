@@ -43,7 +43,8 @@ fn glare_matches_the_reference_normal_stream() {
                 for page in &image {
                     let actual = backend
                         .pipe
-                        .readback_buffer(&page.buffer, u64::from(page.n_pixels) * 12);
+                        .readback_buffer(&page.buffer, u64::from(page.n_pixels) * 12)
+                        .unwrap();
                     for (pixel, channels) in actual.as_chunks::<3>().0.iter().enumerate() {
                         let reference = expected[page.first_pixel as usize + pixel] as f64;
                         for &sample in channels {
@@ -119,6 +120,7 @@ fn glare_stream_survives_odd_chunks_pages_and_repeat_submission() {
                     backend
                         .pipe
                         .readback_buffer(&page.buffer, u64::from(page.n_pixels) * 12)
+                        .unwrap()
                 })
                 .collect();
             let maximum = actual
@@ -208,7 +210,8 @@ fn glare_cancellation_stops_submission_and_allows_reference_replay() {
     for page in &image {
         let actual = backend
             .pipe
-            .readback_buffer(&page.buffer, u64::from(page.n_pixels) * 12);
+            .readback_buffer(&page.buffer, u64::from(page.n_pixels) * 12)
+            .unwrap();
         for (index, pixel) in actual.as_chunks::<3>().0.iter().enumerate() {
             let reference = expected[page.first_pixel as usize + index] as f64;
             assert!(
@@ -263,7 +266,8 @@ fn glare_large_fields_keep_reference_error_bounded() {
         for page in &image {
             let actual = backend
                 .pipe
-                .readback_buffer(&page.buffer, u64::from(page.n_pixels) * 12);
+                .readback_buffer(&page.buffer, u64::from(page.n_pixels) * 12)
+                .unwrap();
             for (pixel, channels) in actual.as_chunks::<3>().0.iter().enumerate() {
                 let index = page.first_pixel as usize + pixel;
                 let error = (f64::from(channels[0]) - expected[index] as f64).abs();
@@ -382,7 +386,8 @@ fn glare_runs_without_native_f64_features() {
         for page in &image {
             let actual = backend
                 .pipe
-                .readback_buffer(&page.buffer, u64::from(page.n_pixels) * 12);
+                .readback_buffer(&page.buffer, u64::from(page.n_pixels) * 12)
+                .unwrap();
             for (pixel, channels) in actual.as_chunks::<3>().0.iter().enumerate() {
                 for &sample in channels {
                     assert!(sample.is_finite());

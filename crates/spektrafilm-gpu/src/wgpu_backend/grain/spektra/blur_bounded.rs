@@ -1363,7 +1363,7 @@ mod tests {
         encoder.copy_buffer_to_buffer(&output, 0, &readback, 0, bytes);
         encoder.copy_buffer_to_buffer(&untiled, 0, &readback, bytes, bytes);
         gpu.queue.submit(Some(encoder.finish()));
-        let actual = gpu.read_mapped_f32(&readback, bytes * 2);
+        let actual = gpu.read_mapped_f32(&readback, bytes * 2).unwrap();
         let (tiled, whole) = actual.split_at(sentinel.len());
         for channel in 0..3 {
             let input_channel: Vec<f32> = (0..samples / 3)
@@ -1509,7 +1509,7 @@ mod tests {
                     commands.copy(&a, 0, &readback, 0, bytes);
                     commands.copy(&b, 0, &readback, bytes, bytes);
                     commands.submit(&gpu).unwrap();
-                    let result = gpu.read_mapped_f32(&readback, bytes * 2);
+                    let result = gpu.read_mapped_f32(&readback, bytes * 2).unwrap();
                     let (expected, actual) = result.split_at(count * lines);
                     for (i, (&want, &got)) in expected.iter().zip(actual).enumerate() {
                         if want.is_nan() {
@@ -1652,7 +1652,7 @@ mod physical_page_tests {
         let mut encoder = gpu.device.create_command_encoder(&Default::default());
         Store::image(&destination).copy(&mut encoder, 0, &readback, 0, bytes, false);
         gpu.queue.submit(Some(encoder.finish()));
-        let actual = gpu.read_mapped_f32(&readback, bytes);
+        let actual = gpu.read_mapped_f32(&readback, bytes).unwrap();
         for channel in 0..3 {
             let input: Vec<f32> = (0..pixels)
                 .map(|pixel| values[source_sample as usize + pixel * 3 + channel])
@@ -1757,7 +1757,7 @@ mod physical_page_tests {
             Store::image(&destination).copy(&mut encoder, 0, &readback, 0, bytes, false);
             Store::image(&source).copy(&mut encoder, 0, &readback, bytes, bytes, false);
             gpu.queue.submit(Some(encoder.finish()));
-            let actual = gpu.read_mapped_f32(&readback, bytes * 2);
+            let actual = gpu.read_mapped_f32(&readback, bytes * 2).unwrap();
             let (output, unchanged_source) = actual.split_at(values.len());
             for (i, value) in output.iter().enumerate() {
                 let expected = if (destination_offset as usize
@@ -1935,7 +1935,7 @@ mod binary64_tests {
                 encoder.copy_buffer_to_buffer(buffer, 0, &readback, first, buffer.size())
             });
             gpu.queue.submit(Some(encoder.finish()));
-            let actual: Vec<f64> = gpu.pipe.read_mapped(&readback, bytes);
+            let actual: Vec<f64> = gpu.pipe.read_mapped(&readback, bytes).unwrap();
             assert_eq!(&actual[..7], &sentinel[..7]);
             assert_eq!(&actual[7 + samples..], &sentinel[7 + samples..]);
             for channel in 0..3 {
@@ -2017,7 +2017,7 @@ mod binary64_tests {
         encoder.copy_buffer_to_buffer(&output, 0, &readback, 0, bytes);
         encoder.copy_buffer_to_buffer(&direct_output, 0, &readback, bytes, bytes);
         gpu.queue.submit(Some(encoder.finish()));
-        let actual: Vec<f32> = gpu.pipe.read_mapped(&readback, bytes * 2);
+        let actual: Vec<f32> = gpu.pipe.read_mapped(&readback, bytes * 2).unwrap();
         for channel in 0..3 {
             let input: Vec<f64> = (0..samples / 3)
                 .map(|pixel| f64::from(values[pixel * 3 + channel]))

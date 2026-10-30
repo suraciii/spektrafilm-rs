@@ -744,6 +744,7 @@ mod tests {
             .flat_map(|p| {
                 gpu.pipe
                     .readback_buffer_as::<f32>(&p.buffer, u64::from(p.n_pixels) * 12)
+                    .unwrap()
             })
             .collect()
     }
@@ -862,6 +863,7 @@ mod tests {
         gpu.queue.submit(Some(encoder.finish()));
         gpu.pipe
             .readback_buffer_as::<f32>(&final_output.buffer, u64::from(ow * oh) * 12)
+            .unwrap()
     }
 
     #[test]

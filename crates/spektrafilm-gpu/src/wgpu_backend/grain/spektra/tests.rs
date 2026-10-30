@@ -158,7 +158,7 @@ fn active_layers_fast_stats_match_reference_across_workgroups() {
             let mut encoder = gpu.device.create_command_encoder(&Default::default());
             encoder.copy_buffer_to_buffer(&density, 0, &readback, 0, bytes);
             gpu.queue.submit(Some(encoder.finish()));
-            let actual = gpu.read_mapped_f32(&readback, bytes);
+            let actual = gpu.read_mapped_f32(&readback, bytes).unwrap();
             let pages: Vec<_> = input
                 .chunks(111)
                 .enumerate()
@@ -203,7 +203,7 @@ fn active_layers_fast_stats_match_reference_across_workgroups() {
                 gpu.queue.submit(Some(encoder.finish()));
                 assert_eq!(
                     actual,
-                    gpu.read_mapped_f32(&readback, bytes),
+                    gpu.read_mapped_f32(&readback, bytes).unwrap(),
                     "layer_count {layer_count}, storage window {limit} changed global RNG identity"
                 );
             }

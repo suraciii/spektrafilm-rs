@@ -250,7 +250,8 @@ fn bounded_raw_pipeline_preserves_full_source_scale_and_cfa_coordinates() {
         let (full, width, height) = gpu.raw_process_sensor_buffer(&sensor, &params).unwrap();
         let expected = gpu
             .pipe
-            .readback_buffer_as::<f32>(&full, u64::from(width) * u64::from(height) * 12);
+            .readback_buffer_as::<f32>(&full, u64::from(width) * u64::from(height) * 12)
+            .unwrap();
         let actual = gpu.raw_process_paged(&sensor, &params).unwrap();
         let actual = gpu.materialize_buffer(&actual).unwrap();
         assert_eq!((actual.width, actual.height), (width, height));
@@ -304,7 +305,10 @@ fn lab_table_preserves_native_float_rounding_at_ahd_threshold() {
     let mut encoder = gpu.device.create_command_encoder(&Default::default());
     pass.encode(&mut encoder, "raw_native_lab_table");
     gpu.queue.submit(Some(encoder.finish()));
-    let values = gpu.pipe.readback_buffer_as::<u32>(&table.buffer, 65536 * 4);
+    let values = gpu
+        .pipe
+        .readback_buffer_as::<u32>(&table.buffer, 65536 * 4)
+        .unwrap();
     // Measured linked LibRaw0.22.2 pow(float,float), at the five-pixel AHD
     // homogeneity population from natural.KDC. One ULP flips the selected RGB.
     assert_eq!(

@@ -603,7 +603,10 @@ mod tests {
                     backend.execute_enlarger_lut_resident(source, output, n, &p)
                 })
                 .unwrap();
-            let result = backend.pipe.readback_buffer(&output, output.size());
+            let result = backend
+                .pipe
+                .readback_buffer(&output, output.size())
+                .unwrap();
             assert_eq!(&result[9..], &sentinel[9..]);
             assert!(
                 result[..9]

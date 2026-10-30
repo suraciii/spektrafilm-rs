@@ -513,7 +513,7 @@ impl MeterState {
         check_cancelled()?;
         pipe.queue()
             .submit_cancellable(Some(encoder.finish()), self.cancellation.as_ref())?;
-        let ev = pipe.read_mapped::<f32>(&staging, 4)[0];
+        let ev = pipe.read_mapped::<f32>(&staging, 4)?[0];
         check_cancelled()?;
         Ok(f64::from(ev))
     }

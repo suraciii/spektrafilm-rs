@@ -246,7 +246,7 @@ impl WgpuBackend {
         }
         encoder.copy_buffer_to_buffer(&dst, 0, &readback, 0, n_bytes);
         self.queue.submit(Some(encoder.finish()));
-        let output = self.read_mapped_f32(&readback, n_bytes);
+        let output = self.read_mapped_f32(&readback, n_bytes).unwrap();
         ImageBuf::from_data(image.width, image.height, f32_to_scalars(output))
     }
 }

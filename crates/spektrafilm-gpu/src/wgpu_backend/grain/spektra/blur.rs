@@ -1201,7 +1201,7 @@ mod tests {
         });
         encoder.copy_buffer_to_buffer(&destination_buffer, 0, &readback, 0, bytes);
         gpu.queue.submit(Some(encoder.finish()));
-        let actual = gpu.read_mapped_f32(&readback, bytes);
+        let actual = gpu.read_mapped_f32(&readback, bytes).unwrap();
 
         for (channel, &channel_sigma) in sigma.iter().enumerate() {
             let reference_input: Vec<f32> = (0..pixels)
