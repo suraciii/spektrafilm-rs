@@ -202,10 +202,8 @@ pub(crate) fn solitary_green(
             let mut color = [0.0f32; 4];
             let mut ocolor = [0.0f32; 4];
             if d > 0 {
-                for c in 0..4 {
-                    ocolor[c] = aux[idx + c];
-                    color[c] = aux[idx + c];
-                }
+                color.copy_from_slice(&aux[idx..idx + 4]);
+                ocolor = color;
             }
             let mut diff = 0.0f32;
             for c in 0..2 {
@@ -841,7 +839,7 @@ mod tests {
                 // g = 2V - V - V = 0, color[h] = 2V, so rgb[c*2] = V and aux[h] = 2V.
                 assert_eq!(rgb[idx], v, "red at ({x},{y})");
                 assert_eq!(rgb[idx + 2], v, "blue at ({x},{y})");
-                let h = (fcn(&PATTERN, 6, 6, yi, xi + 1) ^ 0) as usize;
+                let h = (fcn(&PATTERN, 6, 6, yi, xi + 1)) as usize;
                 assert_eq!(aux[idx + h], 2.0 * v, "aux[{h}] at ({x},{y})");
                 assert_eq!(aux[idx + 3], 0.0, "diff at ({x},{y})");
             }
