@@ -2630,8 +2630,9 @@ impl eframe::App for App {
                 let capacity = (available - theme::HEIGHT_PHOTOGRAPH_MIN)
                     .clamp(0.0, theme::HEIGHT_ANALYSIS_MAX);
                 let space_available = capacity >= theme::HEIGHT_ANALYSIS_MIN;
-                self.viewer.clipping_suspended =
-                    self.operator_compare || self.operator_comparison.is_some();
+                self.viewer.clipping_suspended = self.operator_compare
+                    || self.finishing_compare
+                    || self.displayed_comparison.is_some();
                 let clipping_source_available = match self.viewer.settings.layer {
                     crate::display::ViewLayer::Input => self.oriented_input.is_some(),
                     crate::display::ViewLayer::Output => {
