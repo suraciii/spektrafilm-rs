@@ -21,17 +21,31 @@ pub(crate) fn sections(
             ui.label(localized(ui.ctx(), reason));
         }
         ui.add_enabled_ui(inactive.is_none(), |ui| {
-        render_chemistry(ui, &mut params.film_render.chemistry, flags, true, filter, values_inactive.as_deref());
-        if filter_matches(filter, "density curve gamma") {
-            flags.runtime_changed |= param_numeric(
+            render_chemistry(
                 ui,
-                "density curve gamma",
-                &mut params.film_render.density_curve_gamma,
+                &mut params.film_render.chemistry,
+                flags,
+                true,
+                filter,
+                values_inactive.as_deref(),
+            );
+        });
+        if filter_matches(filter, "density curve gamma") {
+            flags.runtime_changed |= applicable_control(
+                ui,
+                params,
                 "film_render.density_curve_gamma",
-                "Gamma applied to the film density curves during development; 1.0 keeps the profile curves unchanged. Requires an actual film-development route.",
+                |ui, params| {
+                    param_numeric(
+                        ui,
+                        "density curve gamma",
+                        &mut params.film_render.density_curve_gamma,
+                        "film_render.density_curve_gamma",
+                        "Gamma applied to the film density curves during development or a calibrated film-curve reference; 1.0 keeps the profile curves unchanged.",
+                    )
+                },
             );
         }
-        });
     }
     if section == "Print chemistry" {
         let inactive = crate::ui::control_inactive_reason(

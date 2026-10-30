@@ -9,6 +9,7 @@ fn key(label: &str) -> Option<&'static str> {
         }
         "print exposure operation required" => Some("controls.condition.print_exposure_operation"),
         "scan operation required" => Some("controls.condition.scan_operation"),
+        "terminal RGB finishing required" => Some("controls.condition.terminal_rgb_finishing"),
         "print readout scan operation required" => {
             Some("controls.condition.print_readout_operation")
         }
@@ -540,7 +541,7 @@ fn key(label: &str) -> Option<&'static str> {
         "GPU passes and measurement availability" => Some("surfaces.diagnostics.gpu"),
         "GPU timing" => Some("surfaces.diagnostics.gpu_timing"),
         "GUI parameters" => Some("controls.label.gui_parameters"),
-        "Gamma applied to the film density curves during development; 1.0 keeps the profile curves unchanged. Requires an actual film-development route." => {
+        "Gamma applied to the film density curves during development or a calibrated film-curve reference; 1.0 keeps the profile curves unchanged." => {
             Some("controls.chemistry.film_density_curve_gamma_help")
         }
         "Gamma applied to the paper density curves during print development; 1.0 keeps the profile curves unchanged. Requires an admitted print-development route." => {

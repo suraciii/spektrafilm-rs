@@ -35,6 +35,7 @@ pub(super) enum Condition {
     FilmExposure,
     PrintExposure,
     Scan,
+    TerminalRgbFinishing,
     PrintReadout,
     ConvertFilm,
     FilmInterpretation,
@@ -112,6 +113,7 @@ impl Condition {
             Self::FilmExposure => "film-exposure route and executed span required",
             Self::PrintExposure => "print exposure operation required",
             Self::Scan => "scan operation required",
+            Self::TerminalRgbFinishing => "terminal RGB finishing required",
             Self::PrintReadout => "print readout scan operation required",
             Self::ConvertFilm => "convert-film inversion operation required",
             Self::FilmInterpretation => "film material operation or interpretation required",
@@ -198,6 +200,10 @@ impl Condition {
             }
             Self::PrintExposure => p.workflow.route_enum().executes_print_exposure(&p.taps),
             Self::Scan => p.workflow.route_enum().executes_scan(&p.taps),
+            Self::TerminalRgbFinishing => p
+                .workflow
+                .route_enum()
+                .executes_terminal_rgb_finishing(&p.taps),
             Self::PrintReadout => p.workflow.route_enum().executes_print_readout(&p.taps),
             Self::ConvertFilm => p.workflow.route_enum().executes_conversion(&p.taps),
             Self::FilmCurve => {
@@ -208,13 +214,11 @@ impl Condition {
                 let route = p.workflow.route_enum();
                 route.executes_film_exposure(&p.taps)
                     || (route.artifact_input().is_none()
-                        && ((route.executes_print_exposure(&p.taps)
-                            && (p.enlarger.print_exposure_mode
-                                == crate::params::PrintExposureMode::Auto
-                                || p.settings.print_exposure_ev_tracking
-                                    == crate::params::PrintExposureEvTracking::Always))
-                            || (route.executes_scan(&p.taps)
-                                && p.scanner.scan_output == "negative_to_positive")))
+                        && route.executes_print_exposure(&p.taps)
+                        && (p.enlarger.print_exposure_mode
+                            == crate::params::PrintExposureMode::Auto
+                            || p.settings.print_exposure_ev_tracking
+                                == crate::params::PrintExposureEvTracking::Always))
             }
             Self::FilmInterpretation => {
                 let route = p.workflow.route_enum();
@@ -498,7 +502,7 @@ pub(super) fn conditions(path: &str) -> Vec<Condition> {
     } else if path == "camera.capture_illuminant" {
         out.push(CaptureIlluminant);
     } else if path.starts_with("cmyk.") {
-        out.push(Scan);
+        out.push(TerminalRgbFinishing);
         if !path.ends_with(".active") {
             out.push(CmykActive);
             if path.ends_with(".strength") {
@@ -643,10 +647,96 @@ mod tests {
             );
         }
         params.settings.print_exposure_ev_tracking = crate::params::PrintExposureEvTracking::Always;
-        assert!(inactive_reason_without_profiles("settings.rgb_to_raw_method", &params).is_none());
+        for path in paths {
+            assert!(
+                inactive_reason_without_profiles(path, &params).is_none(),
+                "{path}"
+            );
+        }
         params.workflow.route = "film > print > scan".into();
         // Continuation uses the artifact's frozen calibration, not a new spectral front end.
-        assert!(inactive_reason_without_profiles("settings.rgb_to_raw_method", &params).is_some());
+        for path in paths {
+            assert!(
+                inactive_reason_without_profiles(path, &params).is_some(),
+                "{path}"
+            );
+        }
+    }
+
+    #[test]
+    fn cmyk_follows_terminal_rgb_finishing_not_scan_alone() {
+        let mut params = RuntimeParams::default();
+        params.cmyk.active = true;
+        params.cmyk.strength = 0.75;
+        for (route, inject, collect, expected) in [
+            ("input", None, None, true),
+            ("input", Some("rgb_in"), Some("rgb_out"), true),
+            ("input", Some("rgb_in"), Some("rgb_pre"), false),
+            ("input", Some("rgb_out"), Some("rgb_out"), false),
+            ("input > film", None, None, false),
+            ("input > film > print", None, None, false),
+            ("film > print", None, None, false),
+            ("input > film > scan", None, None, true),
+            ("film > scan", None, None, true),
+            ("print > scan", None, None, true),
+            ("input > convert-film > scan", None, None, true),
+            ("input > convert-film > print > scan", None, None, true),
+            (
+                "input > film > print > scan",
+                Some("cmy_print"),
+                Some("rgb_out"),
+                true,
+            ),
+            (
+                "input > film > scan",
+                Some("cmy_film"),
+                Some("rgb_out"),
+                true,
+            ),
+            (
+                "input > film > scan",
+                Some("log_e_film"),
+                Some("cmy_film"),
+                false,
+            ),
+        ] {
+            params.workflow.route = route.into();
+            params.taps.inject = inject.map(str::to_owned);
+            params.taps.collect = collect.map(str::to_owned);
+            for path in ["cmyk.active", "cmyk.strength"] {
+                assert_eq!(
+                    inactive_reason_without_profiles(path, &params).is_none(),
+                    expected,
+                    "{route} {inject:?}..{collect:?}: {path}"
+                );
+            }
+        }
+        params.workflow.route = "input".into();
+        params.taps.inject = None;
+        params.taps.collect = None;
+        params.cmyk.active = false;
+        assert!(inactive_reason_without_profiles("cmyk.active", &params).is_none());
+        assert!(inactive_reason_without_profiles("cmyk.strength", &params).is_some());
+    }
+
+    #[test]
+    fn negative_readout_without_exposure_does_not_consume_spectral_reference() {
+        let mut params = RuntimeParams::default();
+        params.workflow.route = "input > film > scan".into();
+        params.scanner.scan_output = "negative_to_positive".into();
+        params.taps.inject = Some("cmy_film".into());
+        params.taps.collect = Some("rgb_out".into());
+        for path in [
+            "settings.rgb_to_raw_method",
+            "camera.color_filter",
+            "film_render.density_curve_gamma",
+        ] {
+            assert!(
+                inactive_reason_without_profiles(path, &params).is_some(),
+                "{path}"
+            );
+        }
+        assert!(inactive_reason_without_profiles("scanner.scan_output", &params).is_none());
     }
 
     #[test]

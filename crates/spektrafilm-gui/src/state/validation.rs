@@ -30,6 +30,39 @@ fn validate_runtime_values(value: Value, path: &str) -> Result<()> {
         .map_err(anyhow::Error::new)
 }
 
+fn normalize_legacy_runtime_cmyk(runtime: &mut Value) -> Result<()> {
+    let Some(object) = runtime.as_object_mut() else {
+        return Ok(());
+    };
+    // Limit this migration to CMYK: other legacy conversions have different
+    // version boundaries. The core migration owns the route and conflict rules.
+    let mut carrier = json!({});
+    for key in ["workflow", "cmyk", "magazine_print_color"] {
+        if let Some(fields) = object.get(key) {
+            carrier[key] = fields.clone();
+        }
+    }
+    if carrier.pointer("/workflow/route").and_then(Value::as_str)
+        == Some("input > film > scan > magazine")
+        && carrier.get("cmyk").is_some_and(|cmyk| !cmyk.is_object())
+    {
+        validate_runtime_values(json!({"cmyk": carrier["cmyk"]}), "rust.runtime.cmyk")?;
+    }
+    spektrafilm_core::params::sources::normalize_legacy_complete_params_detailed(&mut carrier)
+        .map_err(anyhow::Error::new)?;
+    for key in ["workflow", "cmyk", "magazine_print_color"] {
+        if let Some(fields) = carrier
+            .as_object_mut()
+            .and_then(|fields| fields.remove(key))
+        {
+            object.insert(key.to_owned(), fields);
+        } else {
+            object.remove(key);
+        }
+    }
+    Ok(())
+}
+
 pub(super) fn normalize_grain_section(section: &mut Value) {
     let Some(object) = section.as_object_mut() else {
         return;
@@ -148,6 +181,18 @@ pub(super) fn validate_state_parameters(value: &mut Value, version: Option<u64>)
                     .context(error)
             })?;
     }
+    // Validate the supplied camera mirror before the dedicated diffusion
+    // panel replaces it. Apply the same known-leaf projection as the loader.
+    if let Some(camera) = value.get("camera") {
+        let mut normalized = super::GuiState::factory().sections["camera"].clone();
+        super::merge(&mut normalized, camera);
+        validate_runtime_values(json!({"camera": normalized}), "camera")?;
+    }
+    if matches!(version, Some(2 | 3))
+        && let Some(runtime) = value.pointer_mut("/rust/runtime")
+    {
+        normalize_legacy_runtime_cmyk(runtime)?;
+    }
     let mut explicit = value["rust"]["runtime"].clone();
     if explicit.is_null() {
         explicit = json!({});
@@ -195,30 +240,6 @@ pub(super) fn validate_state_parameters(value: &mut Value, version: Option<u64>)
     if legacy {
         spektrafilm_core::params::sources::normalize_legacy_complete_params_detailed(&mut explicit)
             .map_err(anyhow::Error::new)?;
-    } else if legacy_cmyk {
-        // The runtime carrier of a legacy complete document may also carry the
-        // retired group; migrate it onto the canonical name.
-        if let Some(magazine) = explicit.get("magazine_print_color") {
-            if !magazine.is_object() {
-                bail!(crate::app::Message::new(
-                    "operations.state.legacy_group_object"
-                ));
-            }
-            if explicit.get("cmyk").is_some() {
-                bail!(crate::app::Message::new(
-                    "operations.state.legacy_groups_conflict"
-                ));
-            }
-            let migrated = magazine.clone();
-            explicit
-                .as_object_mut()
-                .expect("runtime object")
-                .insert("cmyk".to_owned(), migrated);
-            explicit
-                .as_object_mut()
-                .expect("runtime object")
-                .remove("magazine_print_color");
-        }
     }
     validate_runtime_values(explicit.clone(), "rust.runtime")?;
     if let Some(fields) = value.get("grain") {
@@ -345,53 +366,6 @@ pub(super) fn validate_state_parameters(value: &mut Value, version: Option<u64>)
         if let Some(runtime) = value["rust"].get_mut("runtime") {
             spektrafilm_core::params::sources::normalize_legacy_complete_params_detailed(runtime)
                 .map_err(anyhow::Error::new)?;
-        }
-    } else if legacy_cmyk {
-        // The persisted runtime carrier of a legacy complete document may also
-        // carry the retired group; migrate it onto the canonical name.
-        if let Some(magazine) = explicit.get("magazine_print_color") {
-            if !magazine.is_object() {
-                bail!(crate::app::Message::new(
-                    "operations.state.legacy_group_object"
-                ));
-            }
-            if explicit.get("cmyk").is_some() {
-                bail!(crate::app::Message::new(
-                    "operations.state.legacy_groups_conflict"
-                ));
-            }
-            let migrated = magazine.clone();
-            explicit
-                .as_object_mut()
-                .expect("runtime object")
-                .insert("cmyk".to_owned(), migrated);
-            explicit
-                .as_object_mut()
-                .expect("runtime object")
-                .remove("magazine_print_color");
-        }
-        if let Some(runtime) = value["rust"].get_mut("runtime")
-            && let Some(magazine) = runtime.get("magazine_print_color")
-        {
-            if !magazine.is_object() {
-                bail!(crate::app::Message::new(
-                    "operations.state.legacy_group_object"
-                ));
-            }
-            if runtime.get("cmyk").is_some() {
-                bail!(crate::app::Message::new(
-                    "operations.state.legacy_groups_conflict"
-                ));
-            }
-            let migrated = magazine.clone();
-            runtime
-                .as_object_mut()
-                .expect("runtime object")
-                .insert("cmyk".to_owned(), migrated);
-            runtime
-                .as_object_mut()
-                .expect("runtime object")
-                .remove("magazine_print_color");
         }
     }
     validate_runtime_values(explicit, "rust.runtime")?;

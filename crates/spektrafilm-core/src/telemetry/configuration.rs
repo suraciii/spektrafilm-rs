@@ -231,6 +231,12 @@ impl WorkflowRoute {
         }
     }
 
+    /// Terminal RGB finishing runs on the input passthrough or after scan
+    /// readout, but not on material outputs or earlier diagnostic taps.
+    pub fn executes_terminal_rgb_finishing(self, taps: &crate::params::TapsParams) -> bool {
+        (self == Self::Input && !self.diagnostic_span(taps)) || self.executes_scan(taps)
+    }
+
     pub fn executes_print_readout(self, taps: &crate::params::TapsParams) -> bool {
         (self.diagnostic_span(taps) && !self.scans_film()
             || matches!(
