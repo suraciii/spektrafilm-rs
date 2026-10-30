@@ -214,6 +214,35 @@ pub(crate) fn interpolate_twoxtwo(
     }
 }
 
+/// `markesteijn_differentiate`: squared second difference of the three YUV
+/// components along one of the four native directions, one float per pixel.
+pub(crate) fn differentiate(
+    yuv: &[f32],
+    drv: &mut [f32],
+    width: usize,
+    height: usize,
+    border: usize,
+    d: usize,
+) {
+    const DIR: [[i32; 2]; 4] = [[1, 0], [0, 1], [1, 1], [-1, 1]];
+    let p = DIR[d & 3];
+    let at = |y: i32, x: i32, c: usize| -> f32 {
+        yuv[(y as usize * width + x as usize) * RGB_STRIDE + c]
+    };
+    for y in border..height.saturating_sub(border) {
+        for x in border..width.saturating_sub(border) {
+            let (xi, yi) = (x as i32, y as i32);
+            let mut sum = 0.0f32;
+            for c in 0..3 {
+                let v =
+                    2.0 * at(yi, xi, c) - at(yi + p[1], xi + p[0], c) - at(yi - p[1], xi - p[0], c);
+                sum += v * v;
+            }
+            drv[y * width + x] = sum;
+        }
+    }
+}
+
 /// `markesteijn_convert_yuv`: BT.2020 luma and the two chroma differences, written
 /// into the same 4-float slots the rgb buffer uses.
 pub(crate) fn convert_yuv(
@@ -1130,6 +1159,26 @@ mod tests {
                 assert!((yuv[idx] - v).abs() < 1e-6, "luma at ({x},{y})");
                 assert!(yuv[idx + 1].abs() < 1e-6, "cb at ({x},{y})");
                 assert!(yuv[idx + 2].abs() < 1e-6, "cr at ({x},{y})");
+            }
+        }
+    }
+
+    #[test]
+    fn differentiate_turns_a_parabola_into_a_constant() {
+        let (width, height) = (10usize, 10usize);
+        // f(x) = x^2 gives 2f(x) - f(x+1) - f(x-1) == -2 for every x, so the
+        // squared second difference is exactly 4 along the horizontal direction.
+        let mut yuv = vec![0.0f32; width * height * RGB_STRIDE];
+        for y in 0..height {
+            for x in 0..width {
+                yuv[(y * width + x) * RGB_STRIDE] = (x * x) as f32;
+            }
+        }
+        let mut drv = vec![0.0f32; width * height];
+        differentiate(&yuv, &mut drv, width, height, 2, 0);
+        for y in 2..height - 2 {
+            for x in 2..width - 2 {
+                assert!((drv[y * width + x] - 4.0).abs() < 1e-4, "drv at ({x},{y})");
             }
         }
     }
