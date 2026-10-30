@@ -166,6 +166,79 @@ pub(crate) fn green_minmax(
     gminmax
 }
 
+/// `markesteijn_solitary_green`: one of the six ordered calls per pass. `aux`
+/// carries state between calls and `d` decides whether the previous result wins,
+/// so a single call is not independently meaningful.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn solitary_green(
+    cfa: &[u8],
+    rows: usize,
+    cols: usize,
+    rgb: &mut [f32],
+    aux: &mut [f32],
+    width: usize,
+    height: usize,
+    border: usize,
+    d: i32,
+    dir: [i32; 2],
+    hcomp: u8,
+    tables: &Tables,
+) {
+    let src = rgb.to_vec();
+    let at = |y: i32, x: i32, c: usize| -> f32 {
+        if y < 0 || x < 0 || y >= height as i32 || x >= width as i32 {
+            return 0.0;
+        }
+        src[(y as usize * width + x as usize) * RGB_STRIDE + c]
+    };
+    for y in border..height.saturating_sub(border) {
+        for x in border..width.saturating_sub(border) {
+            let (xi, yi) = (x as i32, y as i32);
+            if (xi - tables.sgreen[0]) % 3 != 0 || (yi - tables.sgreen[1]) % 3 != 0 {
+                continue;
+            }
+            let mut h = (fcn(cfa, rows, cols, yi, xi + 1) ^ hcomp) as usize;
+            let idx = (y * width + x) * RGB_STRIDE;
+            let mut color = [0.0f32; 4];
+            let mut ocolor = [0.0f32; 4];
+            if d > 0 {
+                for c in 0..4 {
+                    ocolor[c] = aux[idx + c];
+                    color[c] = aux[idx + c];
+                }
+            }
+            let mut diff = 0.0f32;
+            for c in 0..2 {
+                let k = 1 << c;
+                let (oy, ox) = (dir[1] * k, dir[0] * k);
+                let gp = at(yi + oy, xi + ox, 1);
+                let gm = at(yi - oy, xi - ox, 1);
+                let g = 2.0 * at(yi, xi, 1) - gp - gm;
+                color[h] = g + at(yi + oy, xi + ox, h) + at(yi - oy, xi - ox, h);
+                if d > 1 {
+                    let t = gp - gm - at(yi + oy, xi + ox, h) + at(yi - oy, xi - ox, h);
+                    diff += t * t + g * g;
+                }
+                h ^= 2;
+            }
+            color[3] = diff;
+            if d > 1 && d & 1 != 0 {
+                for c in 0..2 {
+                    if ocolor[3] >= diff {
+                        color[c * 2] = ocolor[c * 2];
+                    }
+                }
+            }
+            if d < 2 || d & 1 != 0 {
+                for c in 0..2 {
+                    rgb[idx + c * 2] = color[c * 2] / 2.0;
+                }
+            }
+            aux[idx..idx + 4].copy_from_slice(&color);
+        }
+    }
+}
+
 /// `markesteijn_recalculate_green`: refines the green channel of each direction
 /// buffer from the samples two steps out. Native has no local staging here, so
 /// the snapshot below replaces a genuine intra-kernel read/write hazard.
@@ -733,5 +806,46 @@ mod tests {
             written[1] && written[2] && written[3],
             "some direction never written"
         );
+    }
+
+    #[test]
+    fn solitary_green_is_the_identity_on_a_flat_field() {
+        let (width, height) = (12usize, 12usize);
+        let tables = Tables::new(&PATTERN, 6, 6);
+        let v = 50.0f32;
+        let mut rgb = vec![v; width * height * RGB_STRIDE];
+        let mut aux = vec![0.0f32; width * height * RGB_STRIDE];
+        solitary_green(
+            &PATTERN,
+            6,
+            6,
+            &mut rgb,
+            &mut aux,
+            width,
+            height,
+            3,
+            0,
+            [1, 0],
+            0,
+            &tables,
+        );
+        let mut checked = 0;
+        for y in 3..height - 3 {
+            for x in 3..width - 3 {
+                let (xi, yi) = (x as i32, y as i32);
+                if (xi - tables.sgreen[0]) % 3 != 0 || (yi - tables.sgreen[1]) % 3 != 0 {
+                    continue;
+                }
+                checked += 1;
+                let idx = (y * width + x) * RGB_STRIDE;
+                // g = 2V - V - V = 0, color[h] = 2V, so rgb[c*2] = V and aux[h] = 2V.
+                assert_eq!(rgb[idx], v, "red at ({x},{y})");
+                assert_eq!(rgb[idx + 2], v, "blue at ({x},{y})");
+                let h = (fcn(&PATTERN, 6, 6, yi, xi + 1) ^ 0) as usize;
+                assert_eq!(aux[idx + h], 2.0 * v, "aux[{h}] at ({x},{y})");
+                assert_eq!(aux[idx + 3], 0.0, "diff at ({x},{y})");
+            }
+        }
+        assert!(checked > 0, "no solitary green site in the fixture");
     }
 }
