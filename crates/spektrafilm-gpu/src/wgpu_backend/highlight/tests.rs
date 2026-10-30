@@ -85,6 +85,87 @@ fn highlight_uses_the_last_chunk_maximum_for_every_chunk() {
 }
 
 #[test]
+fn halation_preserves_a_channel_with_zero_effective_amplitude() {
+    let backend = crate::test_support::adapter();
+    let _restore = RestoreLimit(std::env::var_os("SPEKTRAFILM_GPU_BINDING_LIMIT_BYTES"));
+    let width = 32;
+    let height = 16;
+    let values: Vec<f32> = (0..width * height * 3)
+        .map(|i| 0.05 + (i % 23) as f32 * 0.04)
+        .collect();
+    let hp = spektrafilm_backend::HalationGpuParams {
+        scatter_amount: 0.0,
+        scatter_core_px: [0.0; 3],
+        scatter_tail_px: [0.0; 3],
+        scatter_tail_weight: [0.0; 3],
+        source_compression: 0.0,
+        halation_a_tot: [0.2, 0.1, 0.0],
+        halation_first_sigma_px: [2.0; 3],
+        halation_n_bounces: 2,
+        halation_bounce_decay: 0.5,
+        halation_renormalize: true,
+    };
+    let img = image(&backend, &values);
+    let mut gaussian_scratch = super::super::blur::GaussianScratch::new(width, height);
+    build_halation_state(&hp, width, height, &img, &mut gaussian_scratch, &backend)
+        .unwrap()
+        .submit(&backend)
+        .unwrap();
+    let got = readback(&backend, &img);
+    let mut changed = 0;
+    for (index, (&input, &actual)) in values.iter().zip(&got).enumerate() {
+        if index % 3 == 2 {
+            assert_eq!(actual, input, "silent channel sample {index} changed");
+        } else if actual != input {
+            changed += 1;
+        }
+    }
+    assert!(changed > 0, "active channels must still receive halation");
+}
+
+#[test]
+fn halation_renormalizes_a_zero_sigma_channel_by_its_amplitude() {
+    let backend = crate::test_support::adapter();
+    let _restore = RestoreLimit(std::env::var_os("SPEKTRAFILM_GPU_BINDING_LIMIT_BYTES"));
+    let width = 24;
+    let height = 12;
+    let values: Vec<f32> = (0..width * height * 3)
+        .map(|i| 0.02 + (i % 17) as f32 * 0.05)
+        .collect();
+    // The blue channel has an amplitude but no diffusion width: its blur
+    // contributes nothing, yet the reference still divides it by 1 + a_tot.
+    let hp = spektrafilm_backend::HalationGpuParams {
+        scatter_amount: 0.0,
+        scatter_core_px: [0.0; 3],
+        scatter_tail_px: [0.0; 3],
+        scatter_tail_weight: [0.0; 3],
+        source_compression: 0.0,
+        halation_a_tot: [0.2, 0.1, 0.25],
+        halation_first_sigma_px: [2.0, 2.0, 0.0],
+        halation_n_bounces: 2,
+        halation_bounce_decay: 0.5,
+        halation_renormalize: true,
+    };
+    let img = image(&backend, &values);
+    let mut gaussian_scratch = super::super::blur::GaussianScratch::new(width, height);
+    build_halation_state(&hp, width, height, &img, &mut gaussian_scratch, &backend)
+        .unwrap()
+        .submit(&backend)
+        .unwrap();
+    let got = readback(&backend, &img);
+    let inverse = 1.0f32 / (1.0 + hp.halation_a_tot[2]);
+    for (index, (&input, &actual)) in values.iter().zip(&got).enumerate() {
+        if index % 3 == 2 {
+            assert_eq!(
+                actual,
+                input * inverse,
+                "zero-sigma channel sample {index} must keep renormalization"
+            );
+        }
+    }
+}
+
+#[test]
 fn optical_chunks_preserve_glare_rng_and_reference_blur_across_seams() {
     let backend = crate::test_support::adapter();
     let _restore = RestoreLimit(std::env::var_os("SPEKTRAFILM_GPU_BINDING_LIMIT_BYTES"));
