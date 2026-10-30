@@ -312,10 +312,13 @@ const XTRANS_PREPARE_SHADER: &str = concat!(
     include_str!("../../../../spektrafilm-shaders/wgsl/raw/raw_common.wgsl"),
     include_str!("../../../../spektrafilm-shaders/wgsl/raw/raw_xtrans_prepare.wgsl"),
 );
+#[cfg(test)]
 pub(super) const XTRANS_MINMAX_SHADER: &str =
     include_str!("../../../../spektrafilm-shaders/wgsl/raw/raw_xtrans_minmax.wgsl");
+#[cfg(test)]
 pub(super) const XTRANS_GREEN_SHADER: &str =
     include_str!("../../../../spektrafilm-shaders/wgsl/raw/raw_xtrans_green.wgsl");
+#[cfg(test)]
 pub(super) const XTRANS_INIT_SHADER: &str =
     include_str!("../../../../spektrafilm-shaders/wgsl/raw/raw_xtrans_init.wgsl");
 pub(super) const XTRANS_SHADER: &str = concat!(

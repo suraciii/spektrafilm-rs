@@ -63,7 +63,7 @@ impl Tables {
                                 + ORTH[d + 1] * PATT[g as usize][c * 2 + 1];
                             let h = ORTH[d + 2] * PATT[g as usize][c * 2]
                                 + ORTH[d + 3] * PATT[g as usize][c * 2 + 1];
-                            let slot = (c as i32) ^ (g * 2 & d as i32);
+                            let slot = (c as i32) ^ ((g * 2) & (d as i32));
                             allhex[row as usize][col as usize][slot as usize] = [h, v];
                         }
                     }
@@ -77,6 +77,7 @@ impl Tables {
 
 /// `markesteijn_initial_copy`: keep the measured CFA sample, zero the rest,
 /// clamp negatives.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn initial_copy(
     cfa: &[u8],
     rows: usize,
@@ -102,6 +103,7 @@ pub(crate) fn initial_copy(
 /// `markesteijn_green_minmax`: per non-green site, the min/max of the green
 /// samples on its own hexagon and on the hexagon of the next non-green site
 /// along the four axis directions.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn green_minmax(
     cfa: &[u8],
     rows: usize,
@@ -195,11 +197,12 @@ pub(crate) fn recalculate_green(
             let f = f as usize;
             let base = (y * width + x) * 2;
             let (gmin, gmax) = (gminmax[base], gminmax[base + 1]);
-            let flip = usize::from((y as i32 - tables.sgreen[1]) % 3 == 0);
+            let flip = usize::from(((y as i32 - tables.sgreen[1]) % 3) == 0);
             let hex = &tables.allhex[y % 3][x % 3];
-            for d in 3..6 {
+            for (offset, h) in hex[3..6].iter().enumerate() {
+                let d = offset + 3;
                 let id = (d - 2) ^ flip;
-                let h = hex[d];
+                let h = *h;
                 let (oy, ox) = (y as i32, x as i32);
                 let g = |k: i32| sample(id, oy + h[1] * k, ox + h[0] * k, 1);
                 let v = |k: i32| sample(id, oy + h[1] * k, ox + h[0] * k, f);
@@ -262,7 +265,7 @@ pub(crate) fn interpolate_green(
                             - v(hex[4 + c], 3)
                             - v(hex[4 + c], -3));
             }
-            let flip = usize::from((y as i32 - tables.sgreen[1]) % 3 == 0);
+            let flip = usize::from(((y as i32 - tables.sgreen[1]) % 3) == 0);
             let glidx = (y * width + x) * RGB_STRIDE;
             for c in 0..4 {
                 dirs[c ^ flip][glidx + 1] = color[c].clamp(gmin, gmax);
@@ -399,7 +402,7 @@ mod tests {
                 if fcn(&PATTERN, 6, 6, y as i32, x as i32) == 1 {
                     continue;
                 }
-                let flip = usize::from((y as i32 - tables.sgreen[1]) % 3 == 0);
+                let flip = usize::from(((y as i32 - tables.sgreen[1]) % 3) == 0);
                 let glidx = (y * width + x) * RGB_STRIDE;
                 for c in 0..4 {
                     let got = dirs[c ^ flip][glidx + 1];
@@ -715,7 +718,7 @@ mod tests {
                 if fcn(&PATTERN, 6, 6, y as i32, x as i32) == 1 {
                     continue;
                 }
-                let flip = usize::from((y as i32 - tables.sgreen[1]) % 3 == 0);
+                let flip = usize::from(((y as i32 - tables.sgreen[1]) % 3) == 0);
                 for d in 3..6 {
                     let id = (d - 2) ^ flip;
                     written[id] = true;
