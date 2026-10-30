@@ -25,6 +25,8 @@ pub(crate) struct App {
     pub(crate) browser_state_changed_at: Option<Instant>,
     pub(crate) observed_analysis_preferences: serde_json::Value,
     pub(crate) analysis_preferences_changed_at: Option<Instant>,
+    pub(crate) observed_clipping_preferences: crate::clipping_preferences::ClippingPreferences,
+    pub(crate) clipping_preferences_changed_at: Option<Instant>,
     pub(crate) film_reference_illuminant: String,
     pub(crate) film_name: String,
     pub(crate) film_medium: controls::ScanMedium,
@@ -261,6 +263,20 @@ impl App {
                 });
             }
         }
+        let clipping_preferences = match crate::clipping_preferences::load(&config_directory) {
+            Ok(value) => value.unwrap_or_default(),
+            Err(error) => {
+                let message = crate::app::Message::new("viewer.clipping.preferences_load_failed")
+                    .arg("detail", error);
+                startup_error = Some(match startup_error {
+                    Some(previous) => crate::app::Message::new("operations.error_chain")
+                        .message_arg("context", previous)
+                        .message_arg("detail", message),
+                    None => message,
+                });
+                crate::clipping_preferences::ClippingPreferences::default()
+            }
+        };
 
         let viewer_backend = Arc::clone(&backend);
         let mut app = Self {
@@ -277,6 +293,8 @@ impl App {
             browser_state_changed_at: explicit_state.then(Instant::now),
             observed_analysis_preferences: serde_json::Value::Null,
             analysis_preferences_changed_at: None,
+            observed_clipping_preferences: clipping_preferences,
+            clipping_preferences_changed_at: None,
             film_reference_illuminant,
             film_name,
             film_medium,
@@ -351,6 +369,7 @@ impl App {
             search_index: crate::controls::SearchIndex::default(),
             pending_scroll: None,
         };
+        app.viewer.clipping = clipping_preferences;
         app.viewer.settings =
             display::DisplaySettings::from_json(&app.gui_state.sections["display"]);
         // Every GUI session collects a Summary from startup on, configured
@@ -695,6 +714,30 @@ impl App {
         }
     }
 
+    pub(crate) fn persist_clipping_preferences(&mut self, closing: bool) {
+        let current = self.viewer.clipping;
+        if current != self.observed_clipping_preferences {
+            self.observed_clipping_preferences = current;
+            self.clipping_preferences_changed_at = Some(Instant::now());
+        }
+        if self
+            .clipping_preferences_changed_at
+            .is_some_and(|changed| closing || changed.elapsed() >= Duration::from_millis(300))
+        {
+            self.clipping_preferences_changed_at = None;
+            if let Err(error) = crate::clipping_preferences::save(
+                &self.config_directory,
+                &self.observed_clipping_preferences,
+            ) {
+                self.status = crate::app::Message::new("viewer.clipping.preferences_save_failed")
+                    .arg("detail", error);
+                if closing {
+                    eprintln!("{}", self.status);
+                }
+            }
+        }
+    }
+
     pub(crate) fn persist_browser_state(&mut self, closing: bool) {
         if self.presets.state != self.observed_browser_state {
             self.observed_browser_state = self.presets.state.clone();
@@ -724,6 +767,120 @@ mod tests {
     use super::*;
     use spektrafilm_backend::cpu_backend::CpuBackend;
     use spektrafilm_core::telemetry::{OperationKind, Outcome, Report};
+
+    #[test]
+    fn clipping_preferences_survive_state_history_and_restart() {
+        use crate::clipping_preferences::{self, ClippingPreferences};
+
+        let root = tempfile::tempdir().unwrap();
+        let make_app = || {
+            App::new_with_browser_path(
+                Arc::new(CpuBackend),
+                None,
+                None,
+                None,
+                root.path().join("preset_browser_state.json"),
+                crate::headless::data_dir(),
+            )
+        };
+        let mut app = make_app();
+        assert_eq!(app.viewer.clipping, ClippingPreferences::default());
+        let photograph_viewer = app.viewer.persistent_state();
+        let requested = ClippingPreferences {
+            shadows: true,
+            highlights: false,
+        };
+        app.viewer.clipping = requested;
+        assert_eq!(app.viewer.persistent_state(), photograph_viewer);
+
+        app.persist_clipping_preferences(false);
+        assert!(app.clipping_preferences_changed_at.is_some());
+        assert_eq!(clipping_preferences::load(root.path()).unwrap(), None);
+        app.clipping_preferences_changed_at = Some(Instant::now() - Duration::from_millis(300));
+        app.persist_clipping_preferences(false);
+        assert_eq!(
+            clipping_preferences::load(root.path()).unwrap(),
+            Some(requested)
+        );
+
+        app.apply_state(state::GuiState::factory()).unwrap();
+        assert_eq!(app.viewer.clipping, requested);
+        let ctx = egui::Context::default();
+        app.begin_adjustment_frame(&ctx);
+        app.params.camera.exposure_compensation_ev += 1.0;
+        controls::record_edited_path(&ctx, "camera.exposure_compensation_ev");
+        app.end_adjustment_frame(&ctx);
+        app.viewer.clipping.highlights = true;
+        assert!(app.undo_adjustment());
+        assert_eq!(
+            app.viewer.clipping,
+            ClippingPreferences {
+                shadows: true,
+                highlights: true
+            }
+        );
+        assert!(app.redo_adjustment());
+        assert_eq!(
+            app.viewer.clipping,
+            ClippingPreferences {
+                shadows: true,
+                highlights: true
+            }
+        );
+
+        eframe::App::on_exit(&mut app, None);
+        let mut restarted = make_app();
+        assert_eq!(
+            restarted.viewer.clipping,
+            ClippingPreferences {
+                shadows: true,
+                highlights: true
+            }
+        );
+        eframe::App::on_exit(&mut restarted, None);
+    }
+
+    #[test]
+    fn clipping_preference_errors_surface_without_overwriting_invalid_data() {
+        use crate::clipping_preferences;
+
+        let root = tempfile::tempdir().unwrap();
+        let path = clipping_preferences::preference_path(root.path());
+        std::fs::write(&path, b"invalid").unwrap();
+        let mut app = App::new_with_browser_path(
+            Arc::new(CpuBackend),
+            None,
+            None,
+            None,
+            root.path().join("preset_browser_state.json"),
+            crate::headless::data_dir(),
+        );
+        assert!(matches!(
+            app.status,
+            crate::app::Message::Text {
+                key: "operations.startup_error",
+                ..
+            }
+        ));
+        assert_eq!(
+            app.viewer.clipping,
+            clipping_preferences::ClippingPreferences::default()
+        );
+        app.persist_clipping_preferences(true);
+        assert_eq!(std::fs::read(&path).unwrap(), b"invalid");
+
+        std::fs::remove_file(&path).unwrap();
+        std::fs::create_dir(&path).unwrap();
+        app.viewer.clipping.shadows = true;
+        app.persist_clipping_preferences(true);
+        assert!(matches!(
+            app.status,
+            crate::app::Message::Text {
+                key: "viewer.clipping.preferences_save_failed",
+                ..
+            }
+        ));
+    }
 
     /// Sorted direct entries of `directory`, files and folders alike.
     fn sorted_entries(directory: &Path) -> Vec<PathBuf> {

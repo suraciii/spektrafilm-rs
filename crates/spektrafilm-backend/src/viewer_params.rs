@@ -1,4 +1,30 @@
 //! Bounded native-viewer presentation geometry; image samples stay in carriers.
+/// Endpoint warnings applied only to photographic viewer pixels.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ViewerClipping {
+    #[default]
+    Off,
+    Overlay {
+        shadows: bool,
+        highlights: bool,
+    },
+    Shadows,
+    Highlights,
+}
+
+impl ViewerClipping {
+    pub fn active(self) -> bool {
+        match self {
+            Self::Off
+            | Self::Overlay {
+                shadows: false,
+                highlights: false,
+            } => false,
+            _ => true,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct ViewerComposeGpuParams {
     pub width: u32,
@@ -12,4 +38,5 @@ pub struct ViewerComposeGpuParams {
     pub full_source: bool,
     pub output_layer: bool,
     pub fade: f32,
+    pub clipping: ViewerClipping,
 }

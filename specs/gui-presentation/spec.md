@@ -169,9 +169,10 @@ Linked sample markers MUST remain distinguishable from aggregate traces and plot
 ## Viewer footer
 
 - The footer groups its actions by target. One action belongs to one group.
-- Its groups are layer selection, view zoom, reveal or crossfade presentation, and the optional image-analysis visibility action.
+- Its groups are layer selection, view zoom, reveal or crossfade presentation, and photograph inspection.
 - The image-analysis action is a quiet presentation control.
 - The action opens the analysis workspace below the photograph. It MUST NOT select a photographic subject or another page.
+- [Endpoint warning controls](../gui-product-design/clipping-warnings/spec.md#controls) belong to the photograph-inspection group under their capability contract.
 - The footer MUST preserve its other controls while the workspace is open.
 - The footer presents the current zoom as read-only text, apart from the actions.
 - The footer MUST keep Original and Modified together and Paper back separate. Compact Paper back and transition actions MAY use named icons to preserve nonoverlapping zoom and reset actions in a reopened narrow workspace.

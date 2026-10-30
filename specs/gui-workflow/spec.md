@@ -178,7 +178,7 @@ Each module has one editing owner. The inspector MUST contain these stages and m
 | Output | Output color space and encoding where exposed by their contracts; output gamut processing; CMYK ink style; Simulation blend; retained Save color and encoding settings. |
 | Application settings | General: interface language, preview limits, and rendering preferences that are not photographic controls; GUI parameters: startup state save/load/default actions; Display: display transform, ICC selection, canvas, padding, and interpolation; Diagnostics: observation and report actions. Language preference ownership follows [GUI product language](../gui-language/spec.md#selection-and-persistence), not photographic state. |
 | Export dialog | Independent full-resolution export backend, format, depth, saving color and encoding, applicable codec/compression options, destination selection, and export submission. |
-| Viewer footer | Original/Modified/Paper back selection; zoom, fit, reveal, crossfade, and read-only zoom state. |
+| Viewer footer | Original/Modified/Paper back selection; zoom, fit, reveal, crossfade, and read-only zoom state; [black and white endpoint warnings](../gui-product-design/clipping-warnings/spec.md#controls); optional image-analysis visibility. |
 | Preset browser | Look selection, browser search, library refresh/reveal, and look-preset management. |
 
 Rotation is a source operation and MUST NOT be offered as viewer-only pan or zoom. A read-only summary or action that locates its owner MAY appear elsewhere; a second editable copy MUST NOT.
@@ -332,6 +332,8 @@ Opening a source, changing a display profile, and interacting with the viewer MU
 Cache availability MUST NOT change supported profiles or displayed pixel values. Missing, invalid, stale, or unwritable caches MUST NOT prevent the viewer from preparing the correct transform.
 
 The viewer MUST expose [image analysis](../gui-product-design/image-analysis/spec.md) as an optional workspace below the photograph. That capability owns analysis subjects, regions, display preferences, availability, and read-only measurement behavior.
+
+The viewer MUST expose [black and white endpoint warnings](../gui-product-design/clipping-warnings/spec.md) independently of the analysis workspace. That capability owns native endpoint interpretation, warning presentation, temporary inspection, and independent presentation preferences.
 
 ## Viewer interaction
 

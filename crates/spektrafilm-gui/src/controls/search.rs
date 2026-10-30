@@ -472,6 +472,8 @@ mod tests {
             ("action.work_list", ControlOwner::Header, "Work list"),
             ("viewer.layer.input", ControlOwner::Viewer, "Viewer"),
             ("viewer.layer.output", ControlOwner::Viewer, "Viewer"),
+            ("viewer.clipping.shadows", ControlOwner::Viewer, "Viewer"),
+            ("viewer.clipping.highlights", ControlOwner::Viewer, "Viewer"),
             ("photo_work.list.copy", ControlOwner::WorkList, "Work list"),
             (
                 "photo_work.list.copy_scope",
@@ -509,6 +511,8 @@ mod tests {
         for path in [
             "action.save_photo_record",
             "viewer.layer.input",
+            "viewer.clipping.shadows",
+            "viewer.clipping.highlights",
             "photo_work.list.add",
             "photo.queue.retry",
             "presets.discovery.favorites",
@@ -540,6 +544,8 @@ mod tests {
             "action.save_photo_record",
             "action.save_retained",
             "viewer.layer.output",
+            "viewer.clipping.shadows",
+            "viewer.clipping.highlights",
             "photo_work.list.copy",
             "photo.queue.retry",
             "presets.discovery.favorites",
