@@ -71,6 +71,7 @@ pub struct ClippingAxis {
     image: [f64; 2],
     scale: f64,
     size: u32,
+    nearest: bool,
 }
 
 impl ClippingAxis {
@@ -78,12 +79,16 @@ impl ClippingAxis {
     pub fn new(viewport_size: u32, viewport: [f32; 2], image: [f32; 2], size: u32) -> Self {
         let viewport = viewport.map(f64::from);
         let image = image.map(f64::from);
+        let cell = (viewport[1] - viewport[0]) / f64::from(viewport_size);
+        let scale = f64::from(size) / (image[1] - image[0]);
         Self {
             origin: viewport[0],
-            cell: (viewport[1] - viewport[0]) / f64::from(viewport_size),
+            cell,
             image,
-            scale: f64::from(size) / (image[1] - image[0]),
+            scale,
             size,
+            // Geometry arrives as f32; roundoff at 100% must not create a halo.
+            nearest: cell * scale <= 1.0 + 8.0 * f64::from(f32::EPSILON),
         }
     }
 
@@ -93,6 +98,12 @@ impl ClippingAxis {
         let center = edge + 0.5 * self.cell;
         if center < self.image[0] || center >= self.image[1] {
             return None;
+        }
+        if self.nearest {
+            let pixel = ((center - self.image[0]) * self.scale)
+                .floor()
+                .clamp(0.0, f64::from(self.size - 1)) as u32;
+            return Some([pixel, pixel + 1]);
         }
         Some([
             ((edge - self.image[0]) * self.scale)
@@ -403,6 +414,39 @@ mod tests {
         assert_eq!(
             mask_host(&im, m, &p, None).unwrap(),
             [SHADOW, 0, HIGHLIGHT, 0]
+        );
+    }
+
+    #[test]
+    fn magnified_and_unit_pan_do_not_expand_clipped_native_cells() {
+        let im = image(2, 1, &[0.0, 0.0, 0.0, 1.0, 1.0, 1.0]);
+        let m = meta(&im, &colorspace::SRGB, SampleDomain::Linear);
+        for (width, image_rect, expected) in [
+            (
+                4,
+                [0.1, 0.0, 4.1, 1.0],
+                &[SHADOW, SHADOW, HIGHLIGHT, HIGHLIGHT][..],
+            ),
+            (3, [0.1, 0.0, 2.1, 1.0], &[SHADOW, HIGHLIGHT, 0][..]),
+        ] {
+            let p = params(width, 1, [0.0, 0.0, width as f32, 1.0], image_rect);
+            assert_eq!(mask_host(&im, m, &p, None).unwrap(), expected);
+        }
+    }
+
+    #[test]
+    fn near_unit_reduction_keeps_a_pixel_between_native_center_samples() {
+        let mut im = ImageBuf::from_data(1025, 1, vec![0.5; 3 * 1025]);
+        im.data[512 * 3..513 * 3].fill(0.0);
+        let m = meta(&im, &colorspace::SRGB, SampleDomain::Linear);
+        let p = params(1024, 1, [0.0, 0.0, 1024.0, 1.0], [0.0, 0.0, 1024.0, 1.0]);
+        let mask = mask_host(&im, m, &p, None).unwrap();
+        assert_eq!(&mask[511..513], &[SHADOW, SHADOW]);
+        assert!(
+            mask[..511]
+                .iter()
+                .chain(&mask[513..])
+                .all(|flags| *flags == 0)
         );
     }
 

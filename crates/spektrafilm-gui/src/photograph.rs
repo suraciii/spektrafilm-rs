@@ -562,6 +562,10 @@ impl App {
         }
     }
 
+    pub(crate) fn photograph_confirmation_open(&self) -> bool {
+        self.photograph.pending.is_some()
+    }
+
     pub(crate) fn photograph_dialogs(&mut self, ctx: &egui::Context) {
         if self.photograph.pending.is_some() {
             let mut decision = None;

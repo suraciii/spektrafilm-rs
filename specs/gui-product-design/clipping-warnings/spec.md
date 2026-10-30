@@ -28,15 +28,23 @@ The existing [image-analysis range observations](../image-analysis/spec.md#measu
 
 Warnings MUST cover only the actual photograph. White padding, canvas, watermark, Paper back, text, and linked inspection decorations MUST NOT become warning samples.
 
-Classification MUST precede display filtering. Downscaled warning coverage MUST preserve a qualifying native pixel instead of classifying its averaged display color. At exact source-pixel zoom, warning coverage MUST align with the corresponding native pixel cells. Pan, zoom, DPI, orientation, and accepted crop geometry MUST preserve this correspondence.
+Classification MUST precede display filtering. Downscaled warning coverage MUST preserve a qualifying native pixel instead of classifying its averaged display color.
 
-Black warnings MUST use a blue overlay. White warnings MUST use a red overlay. Nonqualifying photograph pixels MUST retain their normal appearance. Both overlays MUST be independently selectable.
+Magnified coverage MUST use the native cell containing each viewport-cell center. At exact source-pixel zoom, warning coverage MUST align with the corresponding native pixel cells.
+
+Pan, zoom, DPI, orientation, and accepted crop geometry MUST preserve this correspondence.
+
+Black warnings MUST use a blue overlay. White warnings MUST use a red overlay.
+
+Nonqualifying photograph pixels MUST retain their normal appearance. Both overlays MUST be independently selectable.
 
 If conservative black and white coverage share a viewport cell, an enabled white warning MUST take precedence over the black overlay.
 
 Temporary black inspection MUST show a white photograph area with qualifying pixels black. Temporary white inspection MUST show a black photograph area with qualifying pixels white. These inspection backgrounds MUST remain inside the photograph area.
 
-Paper back and an empty or unavailable subject MUST show no warning. Their controls MUST retain the requested choices while disabled. Temporary reveal, development animation, crossfade, and held comparison composites MUST suspend warning presentation without changing those requested choices. Warnings MUST return for the matching accepted subject when the temporary presentation ends.
+Paper back and an empty or unavailable subject MUST show no warning. Their controls MUST retain the requested choices while disabled.
+
+Temporary reveal, development animation, crossfade, and held comparison composites MUST suspend warning presentation without changing those requested choices. Warnings MUST return for the matching accepted subject when the temporary presentation ends.
 
 A pending warning computation MUST NOT put a mask from a different subject, interpretation, or geometry on the accepted photograph. Failure MUST retain the last accepted viewer frame and use the existing display-error surface.
 
@@ -46,7 +54,7 @@ The viewer footer MUST contain one compact pair of independent icon switches imm
 
 The switches MUST NOT be duplicated inside the histogram, photographic inspector, or application settings. They MUST NOT add a permanent information row or reduce the photograph area.
 
-Primary activation and focused Enter MUST toggle the corresponding overlay. A secondary-pointer hold on a switch and a focused Space hold MUST temporarily isolate that switch's warning. Releasing the hold MUST restore the previous overlay choices without toggling them.
+Primary activation and focused Enter MUST toggle the corresponding overlay. A secondary-pointer hold on a switch and a focused Space hold MUST select its temporary isolated view. Releasing the hold MUST restore the previous overlay choices without toggling them.
 
 Temporary isolation MUST end on release, control focus loss, window focus loss, modal entry, or loss of the photographic subject. Pointer cancellation MUST NOT leave a latched inspection mode.
 
@@ -84,4 +92,4 @@ Acceptance MUST exercise the real native viewer and production CPU and GPU paths
 | Inspect Paper back and temporary photographic composites | No unrelated mask appears; requested flags return on the matching photograph. |
 | Restart, load photographic state or a preset, and use Undo/Redo | Only independent warning preferences restore; temporary modes do not persist or enter adjustment history. |
 | Repeat at 1100 by 760 and 1460 by 980 in English and Simplified Chinese | Footer actions remain nonoverlapping, focusable, and named without another row. |
-| Save and independently Export with warnings off, on, and temporarily isolated | Decoded output dimensions and samples remain identical for unchanged render and delivery settings. |
+| Save and independently Export with warnings off, on, and in an isolated view | Decoded output dimensions and samples remain identical for unchanged render and delivery settings. |

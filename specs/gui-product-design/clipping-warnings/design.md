@@ -2,7 +2,9 @@
 
 ## Ownership
 
-[The product contract](spec.md) owns visible behavior and endpoint meaning. Viewer presentation owns requested warning flags and temporary isolation. The display worker owns disposable warning computation and publication. The backend owns classification, coverage reduction, and CPU/GPU agreement.
+[The product contract](spec.md) owns visible behavior and endpoint meaning. Viewer presentation owns requested warning flags and temporary isolation.
+
+The display worker owns disposable warning computation and publication. The backend owns classification, coverage reduction, and CPU/GPU agreement.
 
 The film pipeline, photographic parameter model, look presets, and file writers MUST NOT consume warning state. Existing image analysis MUST retain its own sample interpretation and demand boundary.
 
@@ -10,7 +12,9 @@ The film pipeline, photographic parameter model, look presets, and file writers 
 
 Warnings MUST read the immutable accepted native carrier, not a fitted, display-transformed, ICC-converted, interpolated, or quantized raster.
 
-For a linear carrier, the native endpoints MUST be zero and one. For an encoded carrier, classification MUST use the native transfer function's encoded zero and encoded one at the carrier precision. This monotone comparison preserves native linear endpoint meaning without per-pixel decoding or a primaries conversion. ACEScct code zero and code one MUST NOT substitute for its encoded endpoints.
+For a linear carrier, the native endpoints MUST be zero and one. For an encoded carrier, classification MUST use the native transfer function's encoded zero and encoded one at the carrier precision.
+
+This monotone comparison preserves native linear endpoint meaning without per-pixel decoding or a primaries conversion. ACEScct code zero and code one MUST NOT substitute for its encoded endpoints.
 
 The implementation MUST reject a non-RGB sample domain rather than interpret density or log exposure as image RGB. Nonfinite triples MUST be excluded before endpoint comparisons.
 
@@ -20,9 +24,13 @@ No endpoint observation contains capture or processing provenance. The interface
 
 ## Coverage boundary
 
-A bounded viewport mask MUST accumulate native source-pixel classifications over the displayed source-cell footprints. A source cell with positive-area overlap MUST contribute to its covered viewport cells. Only viewport-cell centers inside the half-open photograph rectangle MAY receive warning presentation.
+A bounded viewport mask MUST accumulate native source-pixel classifications. A reduced axis MUST include each native cell with positive-area overlap.
+
+A magnified or source-pixel-scale axis MUST select the native cell containing the viewport-cell center. Only viewport-cell centers inside the half-open photograph rectangle MAY receive warning presentation.
 
 Classification MUST precede the display filter. Conservative coverage prevents a qualifying pixel from disappearing during Fit and prevents interpolation overshoot from creating a warning. Exact source-pixel zoom MUST map to native cells without an adjacent-cell halo.
+
+The source-pixel crossover MUST allow relative geometry roundoff of `8 * f32::EPSILON`. This allowance MUST NOT alter RGB endpoint comparisons.
 
 Traversal MUST exclude source regions that cannot contribute to the visible photograph. Mask storage MUST be bounded by the current presentation grid instead of retaining a second full floating photograph.
 
@@ -30,7 +38,9 @@ CPU and GPU coverage MUST reuse one per-axis geometry rule. Host geometry metada
 
 ## Execution and publication
 
-Warning work MUST run in the existing background display composition. CPU composition MUST use the shared host reference. Selected GPU composition MUST classify resident source pages and apply the warning on the selected device before packed RGBA presentation readback. It MUST NOT materialize the complete photograph on the host or add a film-render stage.
+Warning work MUST run in the existing background display composition. CPU composition MUST use the shared host reference.
+
+Selected GPU composition MUST classify resident source pages and apply the warning on the selected device before packed RGBA presentation readback. It MUST NOT materialize the complete photograph on the host or add a film-render stage.
 
 Native work inside each GPU invocation MUST be bounded. Dispatch batches MUST observe cancellation under the [bounded-execution contract](../../gpu-execution/design.md#bounded-execution).
 

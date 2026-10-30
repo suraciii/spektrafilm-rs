@@ -14,14 +14,14 @@ pub enum ViewerClipping {
 
 impl ViewerClipping {
     pub fn active(self) -> bool {
-        match self {
+        !matches!(
+            self,
             Self::Off
-            | Self::Overlay {
-                shadows: false,
-                highlights: false,
-            } => false,
-            _ => true,
-        }
+                | Self::Overlay {
+                    shadows: false,
+                    highlights: false,
+                }
+        )
     }
 }
 

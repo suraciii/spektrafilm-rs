@@ -598,7 +598,7 @@ impl WgpuBackend {
                         let max_samples = (u64::from(max_span[0]) * u64::from(max_span[1]))
                             .min(u64::from(page.n_pixels));
                         let blocks = max_samples.div_ceil(256) as u32;
-                        let batch_limit = (262_144 / n).min(32).max(1);
+                        let batch_limit = (262_144 / n).clamp(1, 32);
                         let mut block = 0;
                         while block < blocks {
                             self.check_cancelled()?;

@@ -265,11 +265,13 @@ fn film_chemistry_material_and_capture_controls_accept_edits_and_persist() {
         "9 min",
     );
     let chemistry_active = h.state().params.film_render.chemistry.active;
-    toggle_control(
-        h,
-        "film_render.chemistry.active",
-        "Enable film density curves",
-    );
+    if !chemistry_active {
+        toggle_control(
+            h,
+            "film_render.chemistry.active",
+            "Enable film density curves",
+        );
+    }
     edit_control(
         h,
         "film_render.chemistry.gamma_factor",
@@ -282,6 +284,13 @@ fn film_chemistry_material_and_capture_controls_accept_edits_and_persist() {
         "developer exhaustion",
         "0.375",
     );
+    if chemistry_active {
+        toggle_control(
+            h,
+            "film_render.chemistry.active",
+            "Enable film density curves",
+        );
+    }
     assert_eq!(h.state().params.film_render.development_time, Some(9.0));
     assert_eq!(
         h.state().params.film_render.chemistry.active,
@@ -327,11 +336,13 @@ fn print_chemistry_base_glare_and_diffusion_controls_accept_edits_and_persist() 
     let h = &mut s.harness;
     set_route(h, "input > film > print > scan");
     let chemistry_active = h.state().params.print_render.density_curves_morph.active;
-    toggle_control(
-        h,
-        "print_render.density_curves_morph.active",
-        "Enable print density curves",
-    );
+    if !chemistry_active {
+        toggle_control(
+            h,
+            "print_render.density_curves_morph.active",
+            "Enable print density curves",
+        );
+    }
     edit_control(
         h,
         "print_render.density_curves_morph.gamma_factor",
@@ -344,6 +355,13 @@ fn print_chemistry_base_glare_and_diffusion_controls_accept_edits_and_persist() 
         "developer exhaustion",
         "0.375",
     );
+    if chemistry_active {
+        toggle_control(
+            h,
+            "print_render.density_curves_morph.active",
+            "Enable print density curves",
+        );
+    }
     assert_eq!(
         h.state().params.print_render.density_curves_morph.active,
         !chemistry_active
@@ -517,6 +535,9 @@ fn camera_enlarger_crop_upscale_and_cmyk_controls_edit_params_geometry_and_persi
     assert_eq!(h.state().params.cmyk.active, cmyk_active);
 
     choose_control(h, "camera.film_format_mm", "Film Format", "120");
+    if !h.state().params.camera.auto_exposure {
+        toggle_control(h, "camera.auto_exposure", "auto exposure");
+    }
     choose_control(
         h,
         "camera.auto_exposure_method",

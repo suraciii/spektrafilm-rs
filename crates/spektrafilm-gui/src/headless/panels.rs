@@ -312,8 +312,10 @@ fn clipping_footer_stays_on_one_row_in_both_languages() {
     ] {
         let ctx = h.ctx.clone();
         h.state_mut().select_language(&ctx, language).unwrap();
+        h.run_steps(2);
         for size in [egui::vec2(1100.0, 760.0), egui::vec2(1460.0, 980.0)] {
             h.set_size(size);
+            h.run_steps(2);
             for reopened in [false, true] {
                 if h.state().presets.state.expanded != reopened {
                     let toggle = crate::i18n::text(&h.ctx, "surfaces.presets.toggle").into_owned();

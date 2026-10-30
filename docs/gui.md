@@ -204,11 +204,27 @@ The viewer accepts pointer gestures on its surface. The wheel and pinch zoom at 
 
 The `Paper back` layer is a viewer-only virtual rendering generated from paper texture, watermark, and noise. It is not an editable material stage and does not alter retained, saved, or exported pixels.
 
-The viewer footer groups its controls by target: Original/Modified/Paper back selection, reveal/crossfade presentation, view zoom, and the current zoom as a read-only readout. Source rotation belongs to the inspector, not this footer.
+The viewer footer groups its controls by target: Original/Modified/Paper back selection, reveal/crossfade presentation, view zoom, and photograph inspection. Source rotation belongs to the inspector, not this footer.
 
-The footer uses compact named icons for Paper back and transitions when reopening the preset browser leaves less viewer width. **Viewer gestures** in the status strip opens the gesture guide.
+The footer uses compact named icons for the layer controls and transitions when reopening the preset browser leaves less viewer width. **Viewer gestures** in the status strip opens the gesture guide.
 
 The footer switches between **Original** (原图), the retained input, and **Modified** (修改图), the latest accepted Preview or Scan. Modified is disabled until output exists. The first accepted Preview or Scan selects Modified. Switching does not render or edit adjustments; both views share zoom and pan. **Paper back** remains a separate presentation. **Settings → Display → output interpolation** selects nearest, linear, cubic, spline16, spline36, Lanczos, or Blackman sampling for Modified. Original uses nearest interpolation. Paper back uses spline36. The viewport samples the retained full-resolution image for visible detail.
+
+### Black and white endpoint warnings
+
+The two icon switches immediately left of **Image analysis** control **Shadow clipping warning** (阴影剪裁警告) and **Highlight clipping warning** (高光剪裁警告). Both start off without saved warning preferences.
+
+Click a switch or focus it and press Enter to toggle its overlay. Blue marks black endpoints; red marks white endpoints. Both switches can be on together.
+
+Hold the secondary pointer button on a switch, or hold Space while it has keyboard focus, to inspect an isolated mask. Shadow inspection uses a white photograph area with black matches; highlight inspection uses a black photograph area with white matches. Release the hold to restore the requested overlays.
+
+The warnings inspect the accepted **Original** or **Modified** in its native RGB interpretation before display conversion and ICC. They work with analysis closed and do not use its selection or sRGB range counts.
+
+All native linear channels must be at or below zero for a black warning. Any channel at or above one produces a white warning. Encoded images use the equivalent transfer-function endpoints; an endpoint is not proof of lost capture or export detail.
+
+Padding, canvas, and Paper back do not receive warnings. Temporary photographic composites suspend the overlays and restore them for the accepted subject afterwards.
+
+The two requested choices persist independently in `clipping_preferences.json`. Temporary masks do not persist, enter photograph records or presets, create adjustment history, or change saved and exported pixels. The [endpoint-warning specification](../specs/gui-product-design/clipping-warnings/spec.md) defines classification and coverage.
 
 ### Image analysis
 

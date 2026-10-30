@@ -854,6 +854,7 @@ impl Viewer {
             )
         };
         let label = crate::i18n::text(ui.ctx(), name);
+        let help = crate::i18n::text(ui.ctx(), help);
         let response = ui
             .add_enabled(
                 available,
@@ -861,7 +862,7 @@ impl Viewer {
                     .selected(selected)
                     .min_size(egui::vec2(theme::HEIGHT_CONTROL, theme::HEIGHT_CONTROL)),
             )
-            .on_hover_text(crate::i18n::text(ui.ctx(), help));
+            .on_hover_text(help.as_ref());
         response.widget_info(|| {
             egui::WidgetInfo::selected(
                 egui::WidgetType::Checkbox,
@@ -872,6 +873,7 @@ impl Viewer {
         });
         ui.ctx().accesskit_node_builder(response.id, |node| {
             node.set_label(label.as_ref());
+            node.set_description(help.as_ref());
             node.set_toggled(if selected {
                 egui::accesskit::Toggled::True
             } else {

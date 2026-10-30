@@ -2627,7 +2627,7 @@ impl eframe::App for App {
                     || self.export_dialog.is_open()
                     || self.factory_reset_confirm
                     || self.stale_save_confirmation
-                    || self.photograph.pending.is_some();
+                    || self.photograph_confirmation_open();
                 let footer_id = egui::TopBottomPanel::bottom("viewer-footer")
                     .exact_height(theme::HEIGHT_VIEWER_FOOTER)
                     .frame(
