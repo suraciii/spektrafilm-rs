@@ -51,8 +51,6 @@ fn operator_controls(
     ) {
         return;
     }
-    ui.separator();
-    ui.label(localized(ui.ctx(), "Operator correction"));
     if !active {
         ui.label(localized(ui.ctx(), "Inactive: requires a negative film, an eligible negative-to-positive route and standard conversion style. Stored corrections are retained."));
     }
@@ -370,7 +368,9 @@ pub(crate) fn sections(
             }
             });
             let operator_active = positive_route && params.scanner.operator_eligible();
-            operator_controls(ui, params, operator_active, flags, filter);
+            section_header(ui, filter, "Negative conversion (exposure domain)", |ui, filter| {
+                operator_controls(ui, params, operator_active, flags, filter);
+            });
         });
     }
     if section == "Import Raw" {

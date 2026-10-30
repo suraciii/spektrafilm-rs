@@ -33,6 +33,8 @@ flowchart LR
 
 [Black and white endpoint warnings](clipping-warnings/spec.md) own native endpoint overlays and temporary isolated inspection in the viewer.
 
+[Common finishing](../finishing/spec.md) owns the shared positive-image adjustments. Its inspector placement follows [stage and surface ownership](../gui-workflow/spec.md#stage-and-surface-ownership).
+
 These are target capabilities, not a statement of implementation. Delivery schedules and research candidates are not product contracts.
 
 ## Workspace

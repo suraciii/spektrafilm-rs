@@ -16,6 +16,7 @@ pub enum Section {
     Cmyk,
     Print,
     OutputMix,
+    Finishing,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(tag = "kind", content = "section", rename_all = "snake_case")]
@@ -38,6 +39,7 @@ pub const SECTIONS: &[Section] = &[
     Section::Cmyk,
     Section::Print,
     Section::OutputMix,
+    Section::Finishing,
 ];
 impl Section {
     pub fn name(self) -> &'static str {
@@ -56,6 +58,7 @@ impl Section {
             Self::Cmyk => "cmyk ink style",
             Self::Print => "print",
             Self::OutputMix => "output",
+            Self::Finishing => "finishing",
         }
     }
     pub fn paths(self) -> &'static [&'static str] {
@@ -83,6 +86,7 @@ impl Section {
             Self::Cmyk => &["cmyk"],
             Self::Print => &["print_render"],
             Self::OutputMix => &["output_mix"],
+            Self::Finishing => &["finishing"],
         }
     }
     fn owns(self, path: &str) -> bool {

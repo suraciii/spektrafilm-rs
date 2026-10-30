@@ -150,6 +150,13 @@ impl ComputeBackend for ObservedBackend<'_> {
         self.cpu();
         self.backend.cctf_decode_srgb(i)
     }
+    fn finishing(
+        &self,
+        image: &ImageBuf,
+        params: &FinishingGpuParams,
+    ) -> Result<Option<ImageBuf>, String> {
+        self.backend.finishing(image, params)
+    }
     fn gaussian_blur(&self, i: &ImageBuf, s: f32) -> Result<ImageBuf, String> {
         self.cpu();
         self.backend.gaussian_blur(i, s)

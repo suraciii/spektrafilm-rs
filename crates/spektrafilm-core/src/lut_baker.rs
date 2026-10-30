@@ -176,6 +176,18 @@ impl BundleBuilder {
             first.params().output_mix.amount.to_string(),
         );
         provenance.insert("model_version".into(), crate::runtime::MODEL_VERSION.into());
+        if let Some(finishing) = first.telemetry_configuration().finishing {
+            provenance.insert("finishing.model".into(), finishing.model);
+            provenance.insert("finishing.boundary".into(), finishing.boundary);
+            provenance.insert(
+                "finishing.included".into(),
+                (finishing.applicable && !finishing.controls.is_neutral()).to_string(),
+            );
+            provenance.insert(
+                "finishing.parameters".into(),
+                serde_json::to_string(&finishing.controls).map_err(|error| error.to_string())?,
+            );
+        }
         let meta = BundleMeta {
             schema_version: 4,
             name: spec.name.clone(),

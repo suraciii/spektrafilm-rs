@@ -19,6 +19,7 @@ fn scanner_changes(ui: &mut egui::Ui, params: &mut RuntimeParams) -> super::Chan
         &mut serde_json::Value::Null,
         "Scanner",
         super::ScanMedium::Negative,
+        false,
         "",
         &mut Default::default(),
         "D55",
@@ -33,6 +34,7 @@ fn camera(ui: &mut egui::Ui, params: &mut RuntimeParams) {
         &mut serde_json::Value::Null,
         "Camera",
         super::ScanMedium::Negative,
+        false,
         "",
         &mut Default::default(),
         "D65",
@@ -47,6 +49,7 @@ fn preflash(ui: &mut egui::Ui, params: &mut RuntimeParams) {
         &mut serde_json::Value::Null,
         "Preflash",
         super::ScanMedium::Negative,
+        false,
         "",
         &mut Default::default(),
         "D65",
@@ -93,6 +96,7 @@ fn glare_selector_follows_print_readout_not_print_creation() {
                 &mut serde_json::Value::Null,
                 "Glare",
                 super::ScanMedium::Negative,
+                false,
                 "",
                 &mut Default::default(),
                 "D65",
@@ -134,6 +138,7 @@ fn film_gamma_remains_editable_for_auto_print_reference_without_film_chemistry()
                 &mut serde_json::Value::Null,
                 "Film chemistry",
                 super::ScanMedium::Negative,
+                false,
                 "",
                 &mut Default::default(),
                 "D65",
@@ -542,7 +547,7 @@ mod operator_interactions {
     use spektrafilm_core::params::ScanOperatorParams;
 
     fn harness(params: RuntimeParams) -> Harness<'static, RuntimeParams> {
-        Harness::builder()
+        let mut h = Harness::builder()
             .with_size(egui::vec2(720.0, 1400.0))
             .build_state(
                 |ctx, params| {
@@ -557,7 +562,11 @@ mod operator_interactions {
                     });
                 },
                 params,
-            )
+            );
+        h.get_by_label("Negative conversion (exposure domain)")
+            .simulate_click();
+        h.run();
+        h
     }
 
     fn edit(h: &mut Harness<'_, RuntimeParams>, label: &str, value: &str) {
@@ -736,6 +745,7 @@ mod operator_interactions {
                             &mut serde_json::Value::Null,
                             "Scanner",
                             super::super::ScanMedium::Negative,
+                            false,
                             "",
                             &mut Default::default(),
                             "D55",
@@ -752,6 +762,9 @@ mod operator_interactions {
                 },
                 (params, Vec::new()),
             );
+        h.get_by_label("Negative conversion (exposure domain)")
+            .simulate_click();
+        h.run();
         h.get_by_label("Hold automatic comparison").focus();
         h.run();
         for pressed in [true, false] {
@@ -764,6 +777,162 @@ mod operator_interactions {
             });
             h.run();
             assert_eq!(h.state().0.scanner.operator, original);
+        }
+        assert_eq!(h.state().1, [true, false]);
+    }
+}
+
+#[cfg(test)]
+mod finishing_interactions {
+    use super::*;
+
+    #[test]
+    fn row_resets_are_scoped_and_expand_is_collapsed() {
+        let mut params = RuntimeParams::default();
+        params.finishing.brightness = 0.4;
+        params.finishing.contrast = 0.3;
+        params.finishing.expand.enabled = true;
+        params.finishing.expand.black = -0.1;
+        let mut h = Harness::new_ui_state(
+            |ui, params| {
+                super::super::show(
+                    ui,
+                    params,
+                    &mut serde_json::Value::Null,
+                    "Finishing",
+                    super::super::ScanMedium::Paper,
+                    true,
+                    "",
+                    &mut Default::default(),
+                    "D55",
+                    &crate::profiles::pick_data_dir(),
+                );
+            },
+            params,
+        );
+        assert!(h.query_by_label("Black reference").is_none());
+        h.get_by_label("Reset Brightness").simulate_click();
+        h.run();
+        assert_eq!(h.state().finishing.brightness, 0.0);
+        assert_eq!(h.state().finishing.contrast, 0.3);
+        assert!(h.state().finishing.expand.enabled);
+        h.get_by_label("Expand").simulate_click();
+        h.run();
+        h.get_by_label("Reset Black reference").simulate_click();
+        h.run();
+        assert_eq!(h.state().finishing.expand.black, 0.0);
+        assert!(h.state().finishing.expand.enabled);
+        assert_eq!(h.state().finishing.contrast, 0.3);
+    }
+
+    #[test]
+    fn expand_toggle_records_its_owned_leaf() {
+        let mut h = Harness::new_ui_state(
+            |ui, params| {
+                super::super::show(
+                    ui,
+                    params,
+                    &mut serde_json::Value::Null,
+                    "Finishing",
+                    super::super::ScanMedium::Paper,
+                    true,
+                    "",
+                    &mut Default::default(),
+                    "D55",
+                    &crate::profiles::pick_data_dir(),
+                );
+            },
+            RuntimeParams::default(),
+        );
+        h.get_by_label("Expand").simulate_click();
+        h.run();
+        super::super::take_edited_paths(&h.ctx);
+        h.get_by_label("Enable Expand").simulate_click();
+        h.run();
+        assert!(h.state().finishing.expand.enabled);
+        assert_eq!(
+            super::super::take_edited_paths(&h.ctx),
+            ["finishing.expand.enabled"]
+        );
+    }
+
+    #[test]
+    fn reference_reset_cannot_create_an_invalid_span() {
+        let mut params = RuntimeParams::default();
+        params.finishing.expand.black = 1.1;
+        params.finishing.expand.white = 1.2;
+        let mut h = Harness::new_ui_state(
+            |ui, params| {
+                super::super::show(
+                    ui,
+                    params,
+                    &mut serde_json::Value::Null,
+                    "Finishing",
+                    super::super::ScanMedium::Paper,
+                    true,
+                    "",
+                    &mut Default::default(),
+                    "D55",
+                    &crate::profiles::pick_data_dir(),
+                );
+            },
+            params,
+        );
+        h.get_by_label("Expand").simulate_click();
+        h.run();
+        assert!(h.get_by_label("Reset White reference").node().is_disabled());
+        assert_eq!(h.state().finishing.expand.white, 1.2);
+        h.get_by_label("Reset Black reference").simulate_click();
+        h.run();
+        assert!(!h.get_by_label("Reset White reference").node().is_disabled());
+    }
+
+    #[test]
+    fn finishing_comparison_is_transient_and_releases() {
+        let mut params = RuntimeParams::default();
+        params.workflow.route = "input > film > print > scan".into();
+        params.finishing.brightness = 0.4;
+        let original = params.finishing.clone();
+        let mut h = Harness::builder()
+            .with_size(egui::vec2(720.0, 1400.0))
+            .build_state(
+                |ctx, state: &mut (RuntimeParams, Vec<bool>)| {
+                    if super::super::release_finishing_compare(ctx) {
+                        state.1.push(false);
+                    }
+                    egui::CentralPanel::default().show(ctx, |ui| {
+                        let flags = super::super::show(
+                            ui,
+                            &mut state.0,
+                            &mut serde_json::Value::Null,
+                            "Finishing",
+                            super::super::ScanMedium::Paper,
+                            true,
+                            "",
+                            &mut Default::default(),
+                            "D55",
+                            &crate::profiles::pick_data_dir(),
+                        );
+                        assert!(!flags.runtime_changed);
+                        if let Some(comparing) = flags.finishing_compare {
+                            state.1.push(comparing);
+                        }
+                    });
+                },
+                (params, Vec::new()),
+            );
+        h.get_by_label("Hold finishing comparison").focus();
+        h.run();
+        for pressed in [true, false] {
+            h.input_mut().events.push(egui::Event::Key {
+                key: egui::Key::Space,
+                physical_key: None,
+                pressed,
+                repeat: false,
+                modifiers: egui::Modifiers::NONE,
+            });
+            h.run();
+            assert_eq!(h.state().0.finishing, original);
         }
         assert_eq!(h.state().1, [true, false]);
     }

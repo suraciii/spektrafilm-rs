@@ -83,6 +83,7 @@ pub enum ValidationReason {
     Tap,
     Route,
     OutputMix,
+    FinishingExpandSpan,
     ColorSpace,
     InputAlgorithm,
     InputBoundary,
@@ -206,6 +207,17 @@ pub(crate) fn rgb_to_raw_names() -> [&'static str; 7] {
 /// maximum means unbounded above.
 pub(crate) fn leaf_numeric_bounds(path: &str) -> Option<(f64, Option<f64>)> {
     match path {
+        "finishing.brightness"
+        | "finishing.contrast"
+        | "finishing.warmth"
+        | "finishing.saturation" => Some((
+            super::finishing::FINISHING_CONTROL_MIN,
+            Some(super::finishing::FINISHING_CONTROL_MAX),
+        )),
+        "finishing.expand.black" | "finishing.expand.white" => Some((
+            super::finishing::EXPAND_ENDPOINT_MIN,
+            Some(super::finishing::EXPAND_ENDPOINT_MAX),
+        )),
         "output_mix.amount" => Some((0.0, Some(1.0))),
         "scanner.operator.contrast" => Some((0.0, None)),
         "film_render.chemistry.developer_exhaustion"
@@ -1168,6 +1180,15 @@ pub(super) fn validate_finite_values_detailed(
     );
     scalars!(params.cmyk, "cmyk", strength);
     scalars!(params.output_mix, "output_mix", amount);
+    scalars!(
+        params.finishing,
+        "finishing",
+        brightness,
+        contrast,
+        warmth,
+        saturation
+    );
+    scalars!(params.finishing.expand, "finishing.expand", black, white);
     scalars!(params.settings, "settings", spectral_gaussian_blur);
     arrays!(params.settings, "settings", spectral_shape);
     Ok(())
@@ -1182,6 +1203,7 @@ pub(super) fn validate_values_detailed(params: &RuntimeParams) -> Result<(), Val
     validate_finite_values_detailed(params)?;
     validate_film_format_mm_detailed(f64::from(params.camera.film_format_mm))?;
     params.output_mix.validate_detailed()?;
+    params.finishing.validate_detailed()?;
     validate_enum_value_detailed("workflow.route", &params.workflow.route)?;
     for (path, value) in [
         ("io.input_color_space", &params.io.input_color_space),

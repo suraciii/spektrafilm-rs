@@ -109,6 +109,11 @@ fn validate_report(report: &Report) -> Result<(), ValidationError> {
         if !(0.0..=1.0).contains(&render.output_mix_amount) {
             return Err(ValidationError::InvalidMeasurement);
         }
+        if let Some(finishing) = &render.finishing {
+            finishing
+                .validate()
+                .map_err(|_| ValidationError::InvalidMeasurement)?;
+        }
         for (value, field) in [
             (
                 render.scan_operator.exposure_ev,

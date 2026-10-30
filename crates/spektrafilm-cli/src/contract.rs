@@ -10,13 +10,14 @@ use std::path::Path;
 
 pub const IMPLEMENTATION: &str = "spektrafilm-rs";
 pub const ADAPTER_VERSION: &str = "spektrafilm-rs-adapter-1";
-pub const PARAMETER_SCHEMA_VERSION: &str = "spektrafilm-rs-params-6";
+pub const PARAMETER_SCHEMA_VERSION: &str = "spektrafilm-rs-params-7";
 const LEGACY_PARAMETER_SCHEMA_VERSIONS: &[&str] = &[
     "spektrafilm-rs-params-1",
     "spektrafilm-rs-params-2",
     "spektrafilm-rs-params-3",
     "spektrafilm-rs-params-4",
     "spektrafilm-rs-params-5",
+    "spektrafilm-rs-params-6",
 ];
 pub const FORK_REFERENCE: &str = "suraciii/spektrafilm-rs";
 pub const FINISHED_JPEG_QUALITY: u8 = 85;
@@ -101,19 +102,36 @@ pub fn read_recipe(path: &Path) -> Result<RenderRecipe> {
     validate_output(&recipe.output)?;
     let mut parameters = canonical_parameters(recipe.parameters.clone())?;
     if LEGACY_PARAMETER_SCHEMA_VERSIONS.contains(&recipe.schema_version.as_str()) {
-        // Params 5 already rejected the older retired-field spellings.
-        if recipe.schema_version != "spektrafilm-rs-params-5" {
-            spektrafilm_core::params::sources::normalize_legacy_complete_params(&mut parameters)
+        if parameters.get("finishing").is_some() {
+            bail!("legacy recipe parameters.finishing is unknown; use {PARAMETER_SCHEMA_VERSION}");
+        }
+        if recipe.schema_version != "spektrafilm-rs-params-6" {
+            // Params 5 already rejected the older retired-field spellings.
+            if recipe.schema_version != "spektrafilm-rs-params-5" {
+                spektrafilm_core::params::sources::normalize_legacy_complete_params(
+                    &mut parameters,
+                )
+                .map_err(anyhow::Error::msg)?;
+            }
+            if let Some(provenance) = recipe.scanner_provenance.as_ref() {
+                recipe.scanner_provenance = Some(
+                    ScannerProvenance::migrate_legacy(
+                        provenance,
+                        parameters.pointer("/scanner/lamp"),
+                    )
+                    .map_err(anyhow::Error::msg)?,
+                );
+            }
+            spektrafilm_core::params::sources::normalize_legacy_scan_readout(&mut parameters, true)
                 .map_err(anyhow::Error::msg)?;
         }
-        if let Some(provenance) = recipe.scanner_provenance.as_ref() {
-            recipe.scanner_provenance = Some(
-                ScannerProvenance::migrate_legacy(provenance, parameters.pointer("/scanner/lamp"))
-                    .map_err(anyhow::Error::msg)?,
-            );
-        }
-        spektrafilm_core::params::sources::normalize_legacy_scan_readout(&mut parameters, true)
-            .map_err(anyhow::Error::msg)?;
+        parameters["finishing"] =
+            serde_json::to_value(spektrafilm_core::params::FinishingParams::default())?;
+    } else {
+        spektrafilm_core::params::FinishingParams::require_complete(
+            parameters.get("finishing").unwrap_or(&Value::Null),
+        )
+        .map_err(anyhow::Error::msg)?;
     }
     let params = normalize_parameters(parameters.clone())?;
     recipe.parameters = serde_json::to_value(&params)?;
@@ -268,6 +286,7 @@ pub fn describe() -> Value {
         "scanner",
         "film_render",
         "print_render",
+        "finishing",
         "cmyk",
         "io",
         "settings",
@@ -333,9 +352,13 @@ mod tests {
         let path = directory.path().join("recipe.json");
         for version in ["spektrafilm-rs-params-1", PARAMETER_SCHEMA_VERSION] {
             for exhaustion in [0.0, 0.5, 1.0, -0.1, 2.0] {
-                let parameters = json!({"print_render": {"density_curves_morph": {
+                let mut parameters = json!({"print_render": {"density_curves_morph": {
                     "active": false, "developer_exhaustion": exhaustion
                 }}});
+                if version == PARAMETER_SCHEMA_VERSION {
+                    parameters["finishing"] =
+                        json!(spektrafilm_core::params::FinishingParams::default());
+                }
                 let source = serde_json::to_vec(&json!({
                     "schemaVersion": version, "filmProfile": "kodak_portra_400",
                     "parameters": parameters, "output": default_output("jpeg")
@@ -367,6 +390,39 @@ mod tests {
     }
 
     #[test]
+    fn recipe_finishing_migrates_neutral_and_rejects_incomplete_or_invalid_current_groups() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("recipe.json");
+        let mut document = json!({"schemaVersion":"spektrafilm-rs-params-6", "filmProfile":"kodak_portra_400",
+            "parameters":{"scanner":{"operator":{"exposure_ev":0.0,"warmth_ev":0.0,"tint_ev":0.0,"contrast":1.0}}},
+            "output":default_output("png")});
+        document["output"]["maxEdge"] = json!(1024);
+        std::fs::write(&path, serde_json::to_vec(&document).unwrap()).unwrap();
+        let migrated = read_recipe(&path).unwrap();
+        assert_eq!(
+            migrated.parameters["finishing"],
+            serde_json::to_value(spektrafilm_core::params::FinishingParams::default()).unwrap()
+        );
+        assert_eq!(
+            migrated.parameters["scanner"]["operator"],
+            document["parameters"]["scanner"]["operator"]
+        );
+        document["schemaVersion"] = PARAMETER_SCHEMA_VERSION.into();
+        for invalid in [
+            Value::Null,
+            json!({"brightness":0.1}),
+            json!({"brightness":0.0,"contrast":0.0,"warmth":0.0,"saturation":0.0,"expand":{"enabled":false,"black":0.5,"white":0.5}}),
+            json!({"brightness":0.0,"contrast":0.0,"warmth":0.0,"saturation":0.0,"expand":{"enabled":false,"black":0.0,"white":1.0,"extra":1}}),
+        ] {
+            document["parameters"]["finishing"] = invalid;
+            let source = serde_json::to_vec(&document).unwrap();
+            std::fs::write(&path, &source).unwrap();
+            assert!(read_recipe(&path).is_err());
+            assert_eq!(std::fs::read(&path).unwrap(), source);
+        }
+    }
+
+    #[test]
     fn recipe_versions_migrate_only_null_retired_values_and_preserve_source() {
         static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let root = std::env::temp_dir().join(format!(
@@ -381,6 +437,9 @@ mod tests {
         for version in versions {
             for retired in [None, Some(Value::Null), Some(json!([0.95, 1.0, 1.6]))] {
                 let mut parameters = serde_json::to_value(RuntimeParams::default()).unwrap();
+                if LEGACY_PARAMETER_SCHEMA_VERSIONS.contains(&version) {
+                    parameters.as_object_mut().unwrap().remove("finishing");
+                }
                 if let Some(value) = &retired {
                     parameters["io"]["output_gamut_compress"]["lightness_compression"] =
                         value.clone();
@@ -391,6 +450,7 @@ mod tests {
                 if retired.is_none()
                     || (LEGACY_PARAMETER_SCHEMA_VERSIONS.contains(&version)
                         && version != "spektrafilm-rs-params-5"
+                        && version != "spektrafilm-rs-params-6"
                         && retired == Some(Value::Null))
                 {
                     let accepted = result.unwrap();
@@ -472,6 +532,8 @@ mod tests {
                 "scanner":{"scan_output":"negative_to_positive","operator":operator}},
             "output":default_output("png")
         });
+        document["parameters"]["finishing"] =
+            serde_json::to_value(spektrafilm_core::params::FinishingParams::default()).unwrap();
         document["output"]["maxEdge"] = 128.into();
         std::fs::write(&path, serde_json::to_vec(&document).unwrap()).unwrap();
         let accepted = read_recipe(&path).unwrap();

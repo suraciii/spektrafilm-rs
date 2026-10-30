@@ -102,6 +102,9 @@ pub(super) fn validate_state_parameters(value: &mut Value, version: Option<u64>)
             "operations.state.output_mix_owner"
         ));
     }
+    if value.get("finishing").is_some() {
+        bail!("finishing belongs in rust.runtime.finishing");
+    }
     if !legacy_cmyk {
         if value.get(LEGACY_GROUP).is_some()
             || value

@@ -81,7 +81,7 @@ impl App {
             &self.params.io.input_color_space,
             self.params.io.input_cctf_decoding,
         );
-        let (space, encoded) = self.operator_comparison.as_ref().map_or(
+        let (space, encoded) = self.displayed_comparison.as_ref().map_or(
             (self.output_color_space.as_str(), self.output_cctf_encoding),
             |comparison| (comparison.color_space.as_str(), comparison.encoded),
         );
@@ -652,6 +652,7 @@ impl App {
                 app.calibration_epoch = app.calibration_epoch.wrapping_add(1);
                 app.input_epoch = app.input_epoch.wrapping_add(1);
                 app.set_operator_compare(false);
+                app.set_finishing_compare(false);
                 app.render_worker.cancel_active();
                 app.full_scan_requested = false;
                 app.image = Some(prepared.source);
@@ -712,6 +713,7 @@ impl App {
                 app.input_rotation = rotation;
                 app.input_epoch = app.input_epoch.wrapping_add(1);
                 app.set_operator_compare(false);
+                app.set_finishing_compare(false);
                 app.render_worker.cancel_active();
                 app.calibration_epoch = app.calibration_epoch.wrapping_add(1);
                 app.full_scan_requested = false;
@@ -1289,6 +1291,7 @@ impl App {
     }
 
     fn parameter_section_controls(&mut self, ui: &mut egui::Ui, section: &str) {
+        let scanned_medium_positive = self.scanned_medium_positive();
         let cache = self.section_labels.entry(section.to_owned()).or_default();
         let capture_reference_illuminant = &self.film_reference_illuminant;
         let data_dir = self.data_dir.clone();
@@ -1298,6 +1301,7 @@ impl App {
             &mut self.gui_state.sections,
             section,
             self.film_medium,
+            scanned_medium_positive,
             &self.filter,
             cache,
             capture_reference_illuminant,
@@ -1308,6 +1312,9 @@ impl App {
         }
         if let Some(comparing) = changes.operator_compare {
             self.set_operator_compare(comparing);
+        }
+        if let Some(comparing) = changes.finishing_compare {
+            self.set_finishing_compare(comparing);
         }
         if let Some(action) = changes.action {
             self.start_calibration(action);
@@ -1836,6 +1843,7 @@ impl App {
     }
 
     fn settings_parameter_controls(&mut self, ui: &mut egui::Ui, section: &str) {
+        let scanned_medium_positive = self.scanned_medium_positive();
         let cache = self.section_labels.entry(section.to_owned()).or_default();
         let changes = controls::show(
             ui,
@@ -1843,6 +1851,7 @@ impl App {
             &mut self.gui_state.sections,
             section,
             self.film_medium,
+            scanned_medium_positive,
             "",
             cache,
             &self.film_reference_illuminant,
@@ -2349,6 +2358,13 @@ impl eframe::App for App {
         if controls::release_operator_compare(ctx) {
             self.set_operator_compare(false);
         }
+        if controls::release_finishing_compare(ctx) {
+            self.set_finishing_compare(false);
+        }
+        if self.finishing_compare {
+            // A route or stock change may make an already-held comparison inapplicable.
+            self.set_finishing_compare(true);
+        }
         // First-paint hook: tag the wgpu Metal layer's colorspace as sRGB.
         // Has to happen here (not in `App::new`) because the CAMetalLayer
         // isn't wired up at construction time.
@@ -2614,8 +2630,9 @@ impl eframe::App for App {
                 let capacity = (available - theme::HEIGHT_PHOTOGRAPH_MIN)
                     .clamp(0.0, theme::HEIGHT_ANALYSIS_MAX);
                 let space_available = capacity >= theme::HEIGHT_ANALYSIS_MIN;
-                self.viewer.clipping_suspended =
-                    self.operator_compare || self.operator_comparison.is_some();
+                self.viewer.clipping_suspended = self.operator_compare
+                    || self.finishing_compare
+                    || self.displayed_comparison.is_some();
                 let clipping_source_available = match self.viewer.settings.layer {
                     crate::display::ViewLayer::Input => self.oriented_input.is_some(),
                     crate::display::ViewLayer::Output => {
@@ -2801,7 +2818,7 @@ impl eframe::App for App {
 
                 self.viewer
                     .set_display_max_size(self.params.settings.preview_max_size);
-                let displayed_output = self.operator_comparison.as_ref().map_or_else(
+                let displayed_output = self.displayed_comparison.as_ref().map_or_else(
                     || self.output_image.clone(),
                     |comparison| comparison.image.host_image().cloned(),
                 );

@@ -23,6 +23,7 @@ The scope MUST cover these production operations:
 - Camera and enlarger diffusion, highlight boost, per-channel halation, DIR including its exponential tails and non-default coefficients, scanner optics, print viewing glare, and unsharp masking.
 - All four grain engines in their declared domains, including Spektra's resolved layer model and single-curve case, both Procedural modes and resolution models, Dye field readout, and Fotufilm population formation and readout.
 - Every readout-illuminant category, direct scan, negative conversion, and scanner optics.
+- Eligible [common finishing](../finishing/spec.md#scope-and-applicability), including its fixed color interpretation and RGB-only policy.
 - CMYK ink style, complete-result output mixing, output transfer encoding, and independent saving color and sample conversion.
 - GUI viewer resampling, display color and ICC transforms, and disposable viewer composition. These operations MUST NOT change retained or saved image samples.
 - Pointwise LUT lattice evaluation through the calibrated runtime, with the existing bake neutralization and delivery rules.
@@ -79,6 +80,8 @@ Hardware and software WGPU adapters MUST remain distinguishable. An explicit WGP
 ## Algorithm alignment
 
 CPU and GPU MUST implement the same photographic algorithm. They MUST use the same resolved parameters, data identities, stage order, color domains, spectral grids, interpolation rules, spatial kernels, boundary extension, endpoint continuation, random laws, and validation policy.
+
+CPU and GPU MUST follow the [common finishing response](../finishing/design.md#response-definition) and its [preparation and execution](../finishing/design.md#preparation-and-execution) contract.
 
 GPU execution MUST NOT average channel-specific optical parameters, replace exponential DIR diffusion with Gaussian diffusion, truncate a kernel to a device radius cap, or replace a sampler with Gaussian noise. It MUST NOT substitute a grain engine or use a different inverse or appearance model. The same restrictions apply to a new CPU implementation introduced for alignment.
 

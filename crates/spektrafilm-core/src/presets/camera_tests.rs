@@ -153,6 +153,10 @@ fn legacy_schema_versions_preserve_exposure_and_export_camera_absence() {
                 .as_object_mut()
                 .unwrap()
                 .remove("output_mix");
+            document["parameters"]
+                .as_object_mut()
+                .unwrap()
+                .remove("finishing");
         }
         document["schema_version"] = version.into();
         let imported = Preset::from_json_str(&document.to_string()).unwrap();

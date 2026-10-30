@@ -3,8 +3,8 @@ mod library;
 mod sections;
 use crate::params::sources::{ParameterEdits, parse_carrier_detailed};
 use crate::params::{
-    CmykParams, DiffusionFilterParams, EnlargerParams, FilmRenderingParams, OutputMixParams,
-    PrintRenderingParams, RuntimeParams, ScannerParams, SettingsParams,
+    CmykParams, DiffusionFilterParams, EnlargerParams, FilmRenderingParams, FinishingParams,
+    OutputMixParams, PrintRenderingParams, RuntimeParams, ScannerParams, SettingsParams,
 };
 use crate::params_builder::apply_film_specifics;
 use crate::profile::{self, Profile};
@@ -15,7 +15,7 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::path::Path;
 
-pub const PRESET_SCHEMA_VERSION: u32 = 6;
+pub const PRESET_SCHEMA_VERSION: u32 = 7;
 /// Preset-owned validation identity; English diagnostics remain the CLI contract.
 #[derive(Debug, Clone)]
 pub enum PresetDocumentReason {
@@ -167,6 +167,7 @@ pub struct LookParameters {
     pub print_render: PrintRenderingParams,
     pub camera_diffusion_filter: DiffusionFilterParams,
     pub output_mix: OutputMixParams,
+    pub finishing: FinishingParams,
     /// Canonical CMYK ink style enablement and strength, replacing the retired
     /// `magazine_print_color` spelling at the preset schema 5 boundary.
     pub cmyk: CmykParams,
@@ -192,6 +193,7 @@ struct LookParametersWire {
     print_render: PrintRenderingParams,
     camera_diffusion_filter: DiffusionFilterParams,
     output_mix: OutputMixParams,
+    finishing: FinishingParams,
     #[serde(default)]
     cmyk: CmykParams,
     #[serde(default)]
@@ -306,6 +308,7 @@ impl Serialize for LookParameters {
             print_render: self.print_render.clone(),
             camera_diffusion_filter: self.camera_diffusion_filter.clone(),
             output_mix: self.output_mix.clone(),
+            finishing: self.finishing.clone(),
             settings: self.settings.clone(),
             cmyk: self.cmyk.clone(),
         };
@@ -325,6 +328,18 @@ impl LookParameters {
     fn from_value_detailed(value: Value) -> Result<Self, PresetDocumentError> {
         reject_unowned_preset_fields_detailed(&value)?;
         reject_retired_preset_fields_detailed(&value)?;
+        // Complete looks carry every finishing leaf; defaults are reserved for
+        // sparse parameter overlays and explicit legacy migrations.
+        FinishingParams::require_complete(value.get("finishing").unwrap_or(&Value::Null)).map_err(
+            |detail| {
+                PresetDocumentError::new(
+                    PresetDocumentReason::Parser {
+                        detail: detail.clone(),
+                    },
+                    detail,
+                )
+            },
+        )?;
         let omitted_rms = value
             .pointer("/film_render/grain/rms_granularity")
             .is_none();
@@ -349,6 +364,7 @@ impl LookParameters {
             print_render: wire.print_render,
             camera_diffusion_filter: wire.camera_diffusion_filter,
             output_mix: wire.output_mix,
+            finishing: wire.finishing,
             settings: wire.settings,
             cmyk: wire.cmyk,
         })
@@ -479,6 +495,7 @@ impl LookParameters {
             print_render: params.print_render.clone(),
             camera_diffusion_filter: params.camera.diffusion_filter.clone(),
             output_mix: params.output_mix.clone(),
+            finishing: params.finishing.clone(),
             cmyk: params.cmyk.clone(),
             settings: LookSettingsParams {
                 apply_hanatos2025_adaptation_window: params
@@ -527,6 +544,7 @@ impl LookParameters {
         params.print_render = self.print_render.clone();
         params.camera.diffusion_filter = self.camera_diffusion_filter.clone();
         params.output_mix = self.output_mix.clone();
+        params.finishing = self.finishing.clone();
         params.cmyk = self.cmyk.clone();
         self.settings.apply_to(&mut params.settings);
     }
@@ -543,6 +561,7 @@ impl LookParameters {
             && expected.print_render == params.print_render
             && expected.camera.diffusion_filter == params.camera.diffusion_filter
             && expected.output_mix == params.output_mix
+            && expected.finishing == params.finishing
             && expected.cmyk == params.cmyk
             && expected.settings == params.settings
     }
@@ -589,6 +608,7 @@ impl Preset {
         Self::from_value_detailed(value).map_err(|error| error.to_string())
     }
     fn from_value_detailed(mut value: Value) -> Result<Self, PresetDocumentError> {
+        let original_version = value["schema_version"].as_u64();
         #[derive(Deserialize)]
         #[serde(deny_unknown_fields)]
         struct Wire {
@@ -724,6 +744,33 @@ impl Preset {
             }
             object.insert("schema_version".into(), PRESET_SCHEMA_VERSION.into());
         }
+        if matches!(original_version, Some(1..=6)) {
+            let is_look = value.get("film_profile").is_some_and(|v| !v.is_null())
+                || value.get("print_profile").is_some_and(|v| !v.is_null());
+            let parameters = value
+                .get_mut("parameters")
+                .and_then(Value::as_object_mut)
+                .ok_or_else(|| {
+                    PresetDocumentError::new(
+                        PresetDocumentReason::ParametersObject,
+                        "preset parameters must be an object",
+                    )
+                })?;
+            if parameters.contains_key("finishing") {
+                return Err(PresetDocumentError::new(
+                    PresetDocumentReason::LegacyField { field: "finishing" },
+                    "legacy preset parameters.finishing is unknown; use schema_version 7",
+                ));
+            }
+            if is_look {
+                parameters.insert(
+                    "finishing".into(),
+                    serde_json::to_value(FinishingParams::default())
+                        .expect("finishing defaults serialize"),
+                );
+            }
+            value["schema_version"] = PRESET_SCHEMA_VERSION.into();
+        }
         if value
             .pointer("/parameters/scanner/conversion_style")
             .and_then(Value::as_str)
@@ -851,6 +898,16 @@ impl Preset {
         match &self.parameters {
             PresetParameters::Look(look) => look.apply_to(&mut params),
             PresetParameters::Section(payload) => {
+                // An omitted endpoint belongs to the destination, not this
+                // sparse document. Check whether the authored endpoint can
+                // form a valid span; application validates the actual pair.
+                let black = payload.pointer("/finishing/expand/black").is_some();
+                let white = payload.pointer("/finishing/expand/white").is_some();
+                if black && !white {
+                    params.finishing.expand.white = crate::params::finishing::EXPAND_ENDPOINT_MAX;
+                } else if white && !black {
+                    params.finishing.expand.black = crate::params::finishing::EXPAND_ENDPOINT_MIN;
+                }
                 parameter_edits_detailed(payload)?.apply_detailed(&mut params)?
             }
         }

@@ -24,6 +24,12 @@ pub static ALL_PATHS: &[&str] = &[
     "enlarger.preflash_y_filter_shift",
     "enlarger.preflash_m_filter_shift",
     "cmyk.strength",
+    "finishing.brightness",
+    "finishing.contrast",
+    "finishing.warmth",
+    "finishing.saturation",
+    "finishing.expand.black",
+    "finishing.expand.white",
     "camera.diffusion_filter.strength",
     "camera.diffusion_filter.spatial_scale",
     "camera.diffusion_filter.halo_warmth",
@@ -182,6 +188,23 @@ pub fn editor_range(path: &str) -> Option<EditorRange> {
 
         // CMYK ink style
         "cmyk.strength" => Some((0.0, 1.0, 0.01, 2)),
+
+        // Public finishing domains are owned by core parameter metadata.
+        "finishing.brightness"
+        | "finishing.contrast"
+        | "finishing.warmth"
+        | "finishing.saturation" => Some((
+            spektrafilm_core::params::finishing::FINISHING_CONTROL_MIN,
+            spektrafilm_core::params::finishing::FINISHING_CONTROL_MAX,
+            0.01,
+            2,
+        )),
+        "finishing.expand.black" | "finishing.expand.white" => Some((
+            spektrafilm_core::params::finishing::EXPAND_ENDPOINT_MIN,
+            spektrafilm_core::params::finishing::EXPAND_ENDPOINT_MAX,
+            0.001,
+            4,
+        )),
 
         // Camera and enlarger diffusion filters
         "camera.diffusion_filter.strength" => Some((0.0, 2.0, 0.125, 2)),

@@ -43,6 +43,7 @@
 - No generic graph or backend-specific public parameter schema is required; runtime parameters remain the single caller-facing model.
 - [Output mix and material controls](../output-mix/design.md) owns preflash exposure composition, Output lightness retirement, and final mixing. Per-stage, resident, converted-film, and diagnostic paths execute only material operations present in their route.
 - Existing chemistry and scanner reference ownership remain unchanged.
+- [Common finishing](../finishing/design.md#ownership) owns its route gate and response independently of scanner and material controls. Its [color and order](../finishing/design.md#color-and-order) apply across CPU, resident, continuation, and final diagnostic paths.
 - The shared output finishing boundary delegates CMYK ink style to [CMYK ink style](../cmyk-style/design.md). It MUST also serve the film-free `input` workflow without preparing a spectral chain.
 
 ## Prepared runtime state
@@ -66,6 +67,7 @@
 - Material preparation, the spectral front end, the convert-film inverse, middle-gray references, print calibration, and output gamut preparation MUST own separate reusable results where their dependencies differ.
 - Cold construction and parameter updates MUST use the same component builders and reuse rules.
 - Material-only and exposure-reference updates MUST retain compatible spectral tables. Spectral-input, route, or device changes MUST rebuild the affected preparation.
+- Finishing-only edits reuse compatible preparation under [Finishing preparation and execution](../finishing/design.md#preparation-and-execution).
 - The spectral representation MUST distinguish TC and Mallett algorithms. TC preparation MUST distinguish host samples from a device table and its descriptor; an absent optional update MUST NOT double as an algorithm choice.
 - The converted-film inverse MUST remain independent of the spectral algorithm choice. A converted-film route MAY still consume the spectral front end for its reference calibration.
 - The inverse's material view MUST contain the dye spectra, base density, and density-curve range it consumes. Its control view MUST contain conversion illumination, calibration, exposure, input color space, and transfer decoding.

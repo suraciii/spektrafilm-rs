@@ -106,6 +106,8 @@ pub struct ChangeFlags {
     pub action: Option<CalibrationAction>,
     /// Press/hold comparison changed; never changes the persisted operator values.
     pub operator_compare: Option<bool>,
+    /// Press/hold comparison bypasses only finishing and never edits stored values.
+    pub finishing_compare: Option<bool>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -151,6 +153,11 @@ pub(crate) fn scan_medium(film: &Profile) -> ScanMedium {
     } else {
         ScanMedium::None
     }
+}
+
+/// Use the core route contract with the actual scanned medium's polarity.
+pub(crate) fn finishing_applicable(params: &RuntimeParams, medium_is_positive: bool) -> bool {
+    spektrafilm_core::finishing::is_applicable(params, medium_is_positive)
 }
 
 /// Normalize only GUI transitions; imported states and recipes retain validation errors.
@@ -399,6 +406,7 @@ pub(crate) fn show(
     extras: &mut Value,
     section: &str,
     film_medium: ScanMedium,
+    scanned_medium_positive: bool,
     filter: &str,
     cache: &mut SectionLabelCache,
     capture_reference_illuminant: &str,
@@ -420,6 +428,7 @@ pub(crate) fn show(
             extras,
             section,
             film_medium,
+            scanned_medium_positive,
             &mut flags,
             &mut filter,
             capture_reference_illuminant,
@@ -442,6 +451,7 @@ pub(crate) fn render_sections(
     extras: &mut Value,
     section: &str,
     film_medium: ScanMedium,
+    scanned_medium_positive: bool,
     flags: &mut ChangeFlags,
     filter: &mut ControlFilter<'_>,
     capture_reference_illuminant: &str,
@@ -460,6 +470,7 @@ pub(crate) fn render_sections(
     );
     chemistry::sections(ui, params, section, flags, filter);
     glare::sections(ui, params, section, flags, filter);
+    finishing::sections(ui, params, scanned_medium_positive, section, flags, filter);
     gamut::sections(ui, params, section, flags, filter);
     crop::sections(ui, params, section, flags, filter);
     base::sections(ui, params, section, flags, filter);
@@ -479,6 +490,7 @@ mod couplers;
 mod crop;
 mod display;
 mod filter;
+mod finishing;
 pub(crate) use filter::{ControlFilter, SectionLabelCache, filter_matches, filter_matches_any};
 pub(crate) mod row_modified;
 /// Photographic stages in the continuous adjustment inspector.
@@ -552,7 +564,12 @@ pub(crate) const STAGE_LAYOUT: &[(Stage, &[&str])] = &[
     (Stage::Scan, &["Scanner", "Glare"]),
     (
         Stage::Output,
-        &["Output", "Output gamut compress", "CMYK ink style"],
+        &[
+            "Finishing",
+            "Output",
+            "Output gamut compress",
+            "CMYK ink style",
+        ],
     ),
 ];
 
@@ -757,6 +774,15 @@ pub(crate) fn module_applicability(
     film: &Profile,
     print: Option<&Profile>,
 ) -> Option<String> {
+    if section == "Finishing" {
+        let scanned = match spektrafilm_core::finishing::scanned_material(params) {
+            Some(spektrafilm_core::stage_artifact::MaterialKind::Film) => Some(film),
+            Some(spektrafilm_core::stage_artifact::MaterialKind::Print) => print,
+            None => None,
+        };
+        return (!finishing_applicable(params, scanned.is_some_and(|profile| profile.is_paper() || profile.is_positive())))
+            .then(|| "Finishing is inactive: the route does not deliver an eligible positive reading. Stored values are retained.".to_owned());
+    }
     // A module banner states that the whole module has no effect. Reporting
     // the first inactive control would promote an optional subfeature (the
     // halation boost group, camera auto exposure, crop) to a module-wide
@@ -793,6 +819,7 @@ mod halation;
 mod output;
 mod scanner;
 
+pub(crate) use finishing::release_finishing_compare;
 pub(crate) use scanner::release_operator_compare;
 mod search;
 mod upsampling;
@@ -810,6 +837,46 @@ mod acceptance;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn finishing_banner_uses_core_gate_and_actual_scanned_profile() {
+        let factory = crate::state::GuiState::factory();
+        let data = crate::profiles::pick_data_dir();
+        let film = spektrafilm_core::profile::load_profile_by_name(&data, factory.film()).unwrap();
+        let print =
+            spektrafilm_core::profile::load_profile_by_name(&data, factory.paper()).unwrap();
+        let mut params = factory.runtime_params().unwrap();
+        params.finishing.brightness = 0.4;
+        for (route, scan_film, output, expected) in [
+            ("input", false, "direct_scan", false),
+            ("input > film > scan", true, "direct_scan", false),
+            (
+                "input > convert-film > scan-minus-base",
+                false,
+                "direct_scan",
+                false,
+            ),
+            ("input > film > print > scan", false, "direct_scan", true),
+            ("input > film > print > scan", true, "direct_scan", false),
+            ("input > convert-film > scan", false, "direct_scan", false),
+            (
+                "input > convert-film > scan",
+                false,
+                "negative_to_positive",
+                true,
+            ),
+            ("print > scan", false, "direct_scan", true),
+        ] {
+            params.workflow.route = route.into();
+            params.io.scan_film = scan_film;
+            params.scanner.scan_output = output.into();
+            assert_eq!(
+                module_applicability("Finishing", &params, &film, Some(&print)).is_none(),
+                expected,
+                "{route}, scan_film={scan_film}, {output}",
+            );
+        }
+    }
 
     #[test]
     fn inactive_engine_requests_do_not_mark_the_active_grain_module_inactive() {
@@ -1010,6 +1077,7 @@ mod tests {
                         &mut serde_json::json!({}),
                         "Camera",
                         ScanMedium::Negative,
+                        false,
                         "",
                         &mut cache,
                         "D55",
@@ -1092,6 +1160,7 @@ mod tests {
                             &mut serde_json::json!({}),
                             section,
                             ScanMedium::Negative,
+                            false,
                             "",
                             &mut cache,
                             "D55",
@@ -1206,6 +1275,7 @@ mod tests {
                             &mut serde_json::json!({}),
                             "Grain",
                             ScanMedium::Negative,
+                            false,
                             "",
                             &mut Default::default(),
                             "D55",

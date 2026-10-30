@@ -442,12 +442,20 @@ fn scan_with_capture(
     if params.scanner.lens_blur > 0.0 && !negative_to_positive {
         rgb = backend.gaussian_blur(&rgb, params.scanner.lens_blur)?;
     }
-    finish_tail(rgb, params, backend, gamut, scan_context, output_space)
+    finish_tail(
+        rgb,
+        params,
+        backend,
+        gamut,
+        scan_context,
+        output_space,
+        profile.is_paper() || profile.is_positive(),
+    )
 }
 
 /// The post-capture tail shared by the full scan and a pre-captured readout:
-/// viewing glare, output gamut compression, unsharp, then the encoded-domain
-/// passes. Takes the scan context for the glare offset colour.
+/// viewing glare, common finishing, output gamut compression, unsharp, then
+/// encoded-domain passes. Takes the scan context for the glare offset colour.
 #[allow(clippy::too_many_arguments)]
 fn finish_tail(
     mut rgb: ImageBuf,
@@ -456,6 +464,7 @@ fn finish_tail(
     gamut: &crate::gamut_compression::OutputGamutCompress,
     scan_context: &crate::chain_prep::ScanColorContext,
     output_space: &spektrafilm_math::colorspace::RgbColorSpace,
+    medium_is_positive: bool,
 ) -> Result<ImageBuf, String> {
     // Viewing glare. Since CAT+matrix is linear, we equivalently add glare in
     // RGB space by pre-multiplying the lamp XYZ through the same matrix.
@@ -483,6 +492,24 @@ fn finish_tail(
             params.random_seed,
         );
         spektrafilm_model::glare::add_glare_with_amount(&mut rgb, &glare_amount, glare_rgb_offset);
+    }
+
+    if crate::finishing::is_applicable(params, medium_is_positive) && !params.finishing.is_neutral()
+    {
+        if backend.is_gpu() {
+            let prepared = crate::finishing::gpu_params(&params.finishing, output_space)
+                .expect("active finishing has device parameters");
+            rgb = backend
+                .finishing(&rgb, &prepared)?
+                .ok_or("common finishing: selected GPU has no device operation")?;
+        } else {
+            let _finishing = super::StageObservation::cpu(
+                backend,
+                "finishing",
+                spektrafilm_backend::telemetry::CpuReason::BackendDefault,
+            );
+            crate::finishing::apply(&mut rgb, &params.finishing, output_space);
+        }
     }
 
     // Output gamut compression.
@@ -596,7 +623,14 @@ pub fn finish_capture(
     gamut: &crate::gamut_compression::OutputGamutCompress,
 ) -> Result<ImageBuf, String> {
     let prepared = crate::chain_prep::PreparedChain::for_scan(profile, params, true);
-    finish_capture_prepared(rgb, params, backend, gamut, &prepared.scan)
+    finish_capture_prepared(
+        rgb,
+        params,
+        backend,
+        gamut,
+        &prepared.scan,
+        profile.is_paper() || profile.is_positive(),
+    )
 }
 
 pub(crate) fn finish_capture_prepared(
@@ -605,10 +639,19 @@ pub(crate) fn finish_capture_prepared(
     backend: &dyn ComputeBackend,
     gamut: &crate::gamut_compression::OutputGamutCompress,
     color: &crate::chain_prep::ScanColorContext,
+    medium_is_positive: bool,
 ) -> Result<ImageBuf, String> {
     let output_space = colorspace::resolve(&params.io.output_color_space)
         .expect("output color space must be validated before scanning");
-    finish_tail(rgb, params, backend, gamut, color, output_space)
+    finish_tail(
+        rgb,
+        params,
+        backend,
+        gamut,
+        color,
+        output_space,
+        medium_is_positive,
+    )
 }
 
 /// One resolved exact-cell response shared by every tile in a render. Standalone
@@ -1168,6 +1211,7 @@ mod prepared_capture_tests {
                 &backend,
                 &gamut,
                 &color.scan,
+                profile.is_paper() || profile.is_positive(),
             )
             .unwrap();
             let full = process(

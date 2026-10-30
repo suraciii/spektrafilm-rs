@@ -26,7 +26,9 @@ use std::time::Instant;
 /// truncated FIR support, so wide halation and DIR tails changed pixels; the
 /// f32 kernels run on devices without binary64 within their frozen stage
 /// budgets and do not change the model.
-pub const MODEL_VERSION: &str = "lab_scan_operator_v6";
+/// Common finishing v1 adds the shared positive-image adjustment before
+/// output gamut processing; neutral controls leave existing results unchanged.
+pub const MODEL_VERSION: &str = "common_finishing_v1";
 
 /// Last-call wall-clock timings exposed by the runtime facade.
 pub type Timings = BTreeMap<String, f64>;
@@ -983,6 +985,12 @@ mod tests {
         corrected.scanner.operator.warmth_ev = 0.25;
         corrected.scanner.operator.contrast = 0.75;
         let corrected = runtime.clone().with_params(corrected).unwrap();
+        render(&corrected, &image, &mut cache);
+        let mut finished = corrected.params().clone();
+        finished.finishing.brightness = 0.75;
+        finished.finishing.warmth = -0.4;
+        finished.finishing.expand.enabled = true;
+        let corrected = corrected.with_params(finished).unwrap();
         render(&corrected, &image, &mut cache);
         let mut upstream = corrected.params().clone();
         upstream.camera.exposure_compensation_ev = 1.0;

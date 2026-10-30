@@ -1643,6 +1643,36 @@ mod tests {
     }
 
     #[test]
+    fn copy_look_and_finishing_scope_leave_unrelated_scopes_independent() {
+        let (app, _directory, _ctx) = app();
+        let mut destination = app.capture_photograph_settings().unwrap();
+        destination.params.finishing.warmth = -0.3;
+        let mut source = destination.clone();
+        source.params.finishing.warmth = 0.4;
+        source.params.finishing.expand.black = 0.1;
+        for scope in [CopyScope::Look, CopyScope::Section(Section::Finishing)] {
+            let copied = copied_settings(
+                &source,
+                &destination,
+                scope,
+                &app.data_dir,
+                app.backend.as_ref(),
+            )
+            .unwrap();
+            assert_eq!(copied.params.finishing, source.params.finishing);
+        }
+        let copied = copied_settings(
+            &source,
+            &destination,
+            CopyScope::Section(Section::Camera),
+            &app.data_dir,
+            app.backend.as_ref(),
+        )
+        .unwrap();
+        assert_eq!(copied.params.finishing, destination.params.finishing);
+    }
+
+    #[test]
     fn copy_preserves_source_calibration_geometry_delivery_and_rejects_invalid_candidates() {
         let (app, _directory, _ctx) = app();
         let destination = app.capture_photograph_settings().unwrap();

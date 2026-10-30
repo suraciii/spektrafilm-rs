@@ -32,6 +32,8 @@ pub(super) enum Condition {
     Preflash,
     CaptureIlluminant,
     ScanOperator,
+    Finishing,
+    Expand,
     Chemistry(bool),
     FilmExposure,
     PrintExposure,
@@ -53,6 +55,12 @@ pub(super) enum Condition {
 impl Condition {
     pub(super) fn description(self) -> &'static str {
         match self {
+            Self::Finishing => {
+                "completed eligible positive scan; inactive routes retain finishing values"
+            }
+            Self::Expand => {
+                "finishing.expand.enabled = true; disabled references remain stored and validated"
+            }
             Self::ScanOperator => {
                 "standard negative_to_positive on an eligible negative film scan route"
             }
@@ -143,6 +151,10 @@ impl Condition {
     fn holds_for(self, p: &RuntimeParams, film: Option<&Profile>) -> bool {
         let g = &p.film_render.grain;
         match self {
+            Self::Finishing => film.is_some_and(|medium| {
+                crate::finishing::is_applicable(p, medium.is_paper() || medium.is_positive())
+            }),
+            Self::Expand => p.finishing.expand.enabled,
             Self::ScanOperator => {
                 p.scanner.operator_eligible()
                     && p.workflow.route_enum().executes_scan(&p.taps)
@@ -423,6 +435,13 @@ fn grain_inactive_reason(
 pub(super) fn conditions(path: &str) -> Vec<Condition> {
     use Condition::*;
     let mut out = Vec::new();
+    if path.starts_with("finishing.") {
+        out.push(Finishing);
+        if matches!(path, "finishing.expand.black" | "finishing.expand.white") {
+            out.push(Expand);
+        }
+        return out;
+    }
     if path.starts_with("scanner.operator.") {
         return vec![Scan, ScanOperator];
     }
@@ -611,9 +630,23 @@ pub fn inactive_reason_with_materials(
         }
         return None;
     }
+    let medium = match crate::finishing::scanned_material(params) {
+        Some(crate::stage_artifact::MaterialKind::Film) => film,
+        Some(crate::stage_artifact::MaterialKind::Print) => print,
+        None => None,
+    };
     if let Some(reason) = conditions(path)
         .into_iter()
-        .find(|condition| !condition.holds_for(params, film))
+        .find(|condition| {
+            !condition.holds_for(
+                params,
+                if path.starts_with("finishing.") {
+                    medium
+                } else {
+                    film
+                },
+            )
+        })
         .map(|condition| condition.description().into())
     {
         return Some(reason);
@@ -652,6 +685,27 @@ pub fn inactive_reason_with_materials(
 mod tests {
     use super::*;
     use crate::params::grain::ProceduralGrainMode;
+
+    #[test]
+    fn finishing_feedback_uses_the_scanned_medium_and_preserves_inactive_references() {
+        let data = crate::test_support::data_dir();
+        let negative = crate::profile::load_profile_by_name(&data, "kodak_portra_400").unwrap();
+        let paper = crate::profile::load_profile_by_name(&data, "kodak_portra_endura").unwrap();
+        let mut params = RuntimeParams::default();
+        params.workflow.route = "input > film > scan".into();
+        params.io.scan_film = true;
+        assert!(inactive_reason("finishing.brightness", &params, &negative, &paper).is_some());
+        params.scanner.scan_output = "negative_to_positive".into();
+        assert!(inactive_reason("finishing.brightness", &params, &negative, &paper).is_none());
+        assert!(inactive_reason("finishing.expand.black", &params, &negative, &paper).is_some());
+        params.finishing.expand.enabled = true;
+        assert!(inactive_reason("finishing.expand.black", &params, &negative, &paper).is_none());
+        params.workflow.route = "print > scan".into();
+        params.scanner.scan_output = "direct_scan".into();
+        assert!(inactive_reason("finishing.brightness", &params, &negative, &paper).is_none());
+        params.workflow.route = "input".into();
+        assert!(inactive_reason("finishing.brightness", &params, &negative, &paper).is_some());
+    }
 
     fn film(color: bool, sublayers: bool) -> Profile {
         serde_json::from_value(serde_json::json!({

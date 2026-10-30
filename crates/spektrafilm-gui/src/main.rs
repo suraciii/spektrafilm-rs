@@ -228,6 +228,25 @@ mod telemetry_lifecycle_tests {
     }
 
     #[test]
+    fn finishing_uses_the_scanned_stock_not_the_upstream_film() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut app = scanner_app(directory.path());
+        assert!(!app.scanned_medium_positive());
+        app.set_finishing_compare(true);
+        assert!(!app.finishing_compare);
+
+        app.params.workflow.route = "input > film > print > scan".into();
+        assert!(!app.scanned_medium_positive());
+        app.params.io.scan_film = false;
+        assert!(app.scanned_medium_positive());
+        app.set_finishing_compare(true);
+        assert!(app.finishing_compare);
+        app.params.workflow.route = "input".into();
+        app.set_finishing_compare(true);
+        assert!(!app.finishing_compare);
+    }
+
+    #[test]
     fn app_manual_scanner_edits_reach_the_render_snapshot() {
         let directory = tempfile::tempdir().unwrap();
         let mut app = scanner_app(directory.path());

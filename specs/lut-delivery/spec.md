@@ -20,7 +20,7 @@
 - Bundles with active CMYK ink style MUST record the base workflow and finishing definition independently.
 - They MUST use an explicit `cmyk_` final-stage role so they cannot be mistaken for photographic-print LUT stages.
 - Existing material exposure, preflash, and development MUST be evaluated only on routes containing those stages.
-- No digital-response layer or new scan-reference model is added.
+- No digital material-response layer or new scan-reference model is added.
 - The bundle retains physical film-density and print-density wire meanings.
 - [Print exposure composition](../output-mix/design.md#print-exposure-composition) MUST share its main/preflash filtration and exposure-gain derivation with image rendering.
 - Uniform preflash is pointwise and LUT-bakeable; active spatial propagation is not.
@@ -31,10 +31,12 @@
 - Segmented topologies MUST reject that selection before baking because their scan-stage input does not carry the source branch.
 - The baker MUST NOT silently reset output amount to 1.
 - Image-specific geometry remains neutralized under the existing LUT contract.
+- Eligible [common finishing](../finishing/spec.md#delivery) MUST be included once at the existing scan/final RGB boundary in segmented, collapsed, and complete bakes.
+- The bundle MUST retain the finishing definition and its applied boundary in provenance, including when stages are collapsed.
 - CMYK ink style MUST run once at its post-scan finishing boundary.
 - The final RGB stage retains its `cmyk_` role and records its definition independently of material stages.
 - Neither a segmented consumer nor a collapsed complete transform MAY reapply CMYK ink style.
 - Overall output mix follows CMYK ink style in linear output RGB.
 - A complete one-LUT mixed transform MUST retain appearance and amount provenance even though intermediate nodes are collapsed.
 - Existing output gamut algorithms remain unchanged except for standalone lightness retirement under [Output boundary and retirement](../output-mix/spec.md#output-boundary-and-retirement).
-- A bake MUST NOT introduce a replacement final RGB response, output lightness stage, or separate `input`-workflow output-processing switch.
+- A bake MUST NOT introduce a separate material response, replacement output lightness stage, or separate `input`-workflow output-processing switch.

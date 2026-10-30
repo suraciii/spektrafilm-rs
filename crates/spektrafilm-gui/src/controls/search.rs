@@ -207,6 +207,28 @@ mod tests {
     }
 
     #[test]
+    fn finishing_discovery_finds_inactive_modified_controls_in_both_languages() {
+        let (mut params, extras) = factory();
+        params.workflow.route = "input".into();
+        params.finishing.brightness = 0.25;
+        params.finishing.expand.black = -0.1;
+        for (query, path) in [
+            ("亮度", "finishing.brightness"),
+            ("finishing.expand.black", "finishing.expand.black"),
+            ("黑色参考点", "finishing.expand.black"),
+        ] {
+            let found = build_filtered(query, &params, &extras, true);
+            assert!(
+                found.iter().any(|result| result.section == "Finishing"
+                    && result.owner == ControlOwner::Stage(Stage::Output)
+                    && result.paths.iter().any(|candidate| candidate == path)),
+                "{query}"
+            );
+        }
+        assert!(build_filtered("finishing.saturation", &params, &extras, true).is_empty());
+    }
+
+    #[test]
     fn locators_name_the_matched_control_module_and_destination_in_each_locale() {
         let (params, extras) = factory();
         let ctx = egui::Context::default();

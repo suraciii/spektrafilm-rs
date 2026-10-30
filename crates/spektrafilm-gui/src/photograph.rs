@@ -58,6 +58,7 @@ pub(crate) fn photographic_controls_match(a: &RuntimeParams, b: &RuntimeParams) 
     a.camera == b.camera
         && a.enlarger == b.enlarger
         && a.scanner == b.scanner
+        && a.finishing == b.finishing
         && a.film_render == b.film_render
         && a.print_render == b.print_render
         && a.io == b.io
@@ -288,7 +289,8 @@ impl App {
         self.stale_save_confirmation = false;
         self.scan_for_print_snapshot = None;
         self.operator_compare = false;
-        self.operator_comparison = None;
+        self.finishing_compare = false;
+        self.displayed_comparison = None;
 
         self.full_scan_requested = false;
         self.dirty_since = Some(Instant::now());

@@ -49,6 +49,38 @@
         "additionalProperties": false
       }
     },
+    "finishing": {
+      "type": "object",
+      "description": "Declared common finishing controls at the pre-gamut RGB boundary, not a seventh tap or executor measurement. Historical bundles may omit it.",
+      "properties": {
+        "model": { "const": "common_finishing_v1" },
+        "boundary": { "const": "pre_output_gamut" },
+        "applicable": { "type": "boolean" },
+        "controls": {
+          "type": "object",
+          "properties": {
+            "brightness": { "type": "number", "minimum": -1, "maximum": 1 },
+            "contrast": { "type": "number", "minimum": -1, "maximum": 1 },
+            "warmth": { "type": "number", "minimum": -1, "maximum": 1 },
+            "saturation": { "type": "number", "minimum": -1, "maximum": 1 },
+            "expand": {
+              "type": "object",
+              "properties": {
+                "enabled": { "type": "boolean" },
+                "black": { "type": "number", "minimum": -0.25, "maximum": 1.25 },
+                "white": { "type": "number", "minimum": -0.25, "maximum": 1.25 }
+              },
+              "required": ["enabled", "black", "white"],
+              "additionalProperties": false
+            }
+          },
+          "required": ["brightness", "contrast", "warmth", "saturation", "expand"],
+          "additionalProperties": false
+        }
+      },
+      "required": ["model", "boundary", "applicable", "controls"],
+      "additionalProperties": false
+    },
     "terminal_cmyk": {
       "type": "object",
       "description": "The terminal CMYK ink style appearance as the executed render applied it, after rgb_out collection and before output mix. It is an appearance on the same three-channel RGB buffer, never a spectral stage: no buffer, no seventh stage id, no CMY channel claim. Available only when the runtime actually executed the stage; disabled and strength-zero runs stay not_applicable with a stable reason and carry no strength claim.",

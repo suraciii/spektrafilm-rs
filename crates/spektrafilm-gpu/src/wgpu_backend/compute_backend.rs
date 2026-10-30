@@ -118,6 +118,40 @@ impl ComputeBackend for WgpuBackend {
         backend.cancellation = cancellation;
         Some(Box::new(backend))
     }
+    fn finishing(
+        &self,
+        image: &ImageBuf,
+        params: &spektrafilm_backend::FinishingGpuParams,
+    ) -> Result<Option<ImageBuf>, String> {
+        let (stage, _scope) = self.observed_stage(
+            "finishing",
+            spektrafilm_backend::telemetry::GpuStage::Output,
+        );
+        let (backend, _batch) = stage.observed_batch("finishing");
+        backend.check_cancelled()?;
+        if image.width == 0 || image.height == 0 {
+            return Ok(Some(image.clone()));
+        }
+        let retained = backend.upload_retained(
+            image,
+            &spektrafilm_backend::RetainedImageMeta {
+                width: image.width,
+                height: image.height,
+                domain: spektrafilm_backend::SampleDomain::Linear,
+                precision: spektrafilm_backend::Precision::host(),
+                // The transforms in params own the color interpretation; this
+                // transient carrier only transports samples to the shared kernel.
+                space: &spektrafilm_math::colorspace::SRGB,
+                pixel_pitch_um: None,
+            },
+        )?;
+        let payload = backend.buffer_payload(&retained)?;
+        backend
+            .chain_finishing(&payload.pages, payload.n_pixels, params)?
+            .submit(&backend)?;
+        backend.materialize_buffer(&retained).map(Some)
+    }
+
     fn colorspace_convert(
         &self,
         img: &ImageBuf,

@@ -2,6 +2,7 @@ pub mod chain_prep;
 pub mod cmyk;
 pub mod config;
 pub mod enlarger;
+pub mod finishing;
 #[cfg(feature = "precision-f64")]
 pub mod fit;
 pub mod gamut_compression;

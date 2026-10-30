@@ -3,18 +3,50 @@ use crate::*;
 
 use super::state::App;
 
-pub(crate) struct OperatorComparison {
+pub(crate) struct DisplayedComparison {
     pub(crate) image: crate::render::InputImage,
     pub(crate) color_space: String,
     pub(crate) encoded: bool,
 }
 
 impl App {
+    /// Select the actual scanned stock without duplicating core's eligibility rules.
+    pub(crate) fn scanned_medium_positive(&mut self) -> bool {
+        let stock = match spektrafilm_core::finishing::scanned_material(&self.params) {
+            Some(spektrafilm_core::stage_artifact::MaterialKind::Film) => &self.film_name,
+            Some(spektrafilm_core::stage_artifact::MaterialKind::Print) => &self.print_name,
+            None => return false,
+        };
+        if let Some((directory, cached_stock, positive)) = &self.scan_medium_polarity
+            && directory == &self.data_dir
+            && cached_stock == stock
+        {
+            return *positive;
+        }
+        let positive = profile::load_profile_by_name(&self.data_dir, stock)
+            .is_ok_and(|profile| profile.is_paper() || profile.is_positive());
+        self.scan_medium_polarity = Some((self.data_dir.clone(), stock.clone(), positive));
+        positive
+    }
+
     pub(crate) fn set_operator_compare(&mut self, comparing: bool) {
         let comparing = comparing && self.params.scanner.operator_eligible();
-        if self.operator_compare != comparing {
-            self.operator_compare = comparing;
-            self.operator_comparison = None;
+        let finishing = self.finishing_compare && !comparing;
+        self.set_comparison(comparing, finishing);
+    }
+
+    pub(crate) fn set_finishing_compare(&mut self, comparing: bool) {
+        let positive = self.scanned_medium_positive();
+        let comparing = comparing && controls::finishing_applicable(&self.params, positive);
+        let operator = self.operator_compare && !comparing;
+        self.set_comparison(operator, comparing);
+    }
+
+    fn set_comparison(&mut self, operator: bool, finishing: bool) {
+        if self.operator_compare != operator || self.finishing_compare != finishing {
+            self.operator_compare = operator;
+            self.finishing_compare = finishing;
+            self.displayed_comparison = None;
             self.viewer
                 .set_retained_output(self.output_retained.clone());
             self.viewer.set_output_display_source(
@@ -24,8 +56,13 @@ impl App {
                 self.gui_state.display_profile().map(Path::new),
             );
             self.viewer.invalidate_display();
-            self.mark_parameters_changed();
-
+            // Comparison changes request identity, not photographic adjustments.
+            self.render_worker.cancel_active();
+            self.render_job = None;
+            self.dirty = true;
+            // A comparison changes only the selected module, not the working
+            // grid or detail effects of an already accepted full Scan.
+            self.full_scan_requested = self.retained_kind == Some(RenderKind::Scan);
             self.dirty_since = None;
         }
     }
@@ -87,9 +124,16 @@ impl App {
             }
         };
         let parameter_revision = self.parameter_revision;
+        let comparison = if self.operator_compare {
+            crate::render::Comparison::Operator
+        } else if self.finishing_compare {
+            crate::render::Comparison::Finishing
+        } else {
+            crate::render::Comparison::None
+        };
         let snapshot = self
             .render_snapshot(params)
-            .with_operator_compare(self.operator_compare)
+            .with_comparison(comparison)
             .with_cancellation(Some(Arc::new(AtomicBool::new(false))));
         let request = RenderRequest {
             job: RenderJob {
@@ -167,7 +211,7 @@ impl App {
                             .expect("successful render has output samples");
                         (image.width, image.height)
                     };
-                    if r.operator_compare {
+                    if r.comparison != crate::render::Comparison::None {
                         self.viewer.transform_status = r.display_status;
                         self.viewer.set_output(
                             r.preview,
@@ -197,12 +241,17 @@ impl App {
                             self.viewer.set_retained_output(None);
                             crate::render::InputImage::Host(image)
                         };
-                        self.operator_comparison = Some(OperatorComparison {
+                        self.displayed_comparison = Some(DisplayedComparison {
                             image: comparison,
                             color_space: r.output_color_space,
                             encoded: r.output_cctf_encoding,
                         });
-                        self.status = crate::app::Message::new("operations.comparing_baseline");
+                        self.status = crate::app::Message::new(match r.comparison {
+                            crate::render::Comparison::Finishing => {
+                                "operations.comparing_finishing"
+                            }
+                            _ => "operations.comparing_baseline",
+                        });
                         drop(handoff);
                         self.diagnostics.finish(operation, Outcome::Succeeded);
                         continue;

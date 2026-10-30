@@ -189,6 +189,20 @@ impl PhotographRecord {
             .map_err(|e| Message::new("operations.record.format").context(e))?;
         let mut carrier: serde_json::Value = serde_json::from_slice(bytes)
             .map_err(|e| Message::new("operations.record.format").context(e))?;
+        // The previous model's complete records predate finishing. Preserve
+        // their provenance and supply only the absent neutral group for the
+        // complete-shape check; explicit malformed values remain errors.
+        if record.runtime_model == "lab_scan_operator_v6"
+            && let Some(params) = carrier
+                .pointer_mut("/settings/params")
+                .and_then(serde_json::Value::as_object_mut)
+            && !params.contains_key("finishing")
+        {
+            params.insert(
+                "finishing".into(),
+                serde_json::to_value(spektrafilm_core::params::FinishingParams::default())?,
+            );
+        }
         if let Some(grain) = carrier.pointer_mut("/settings/params/film_render/grain") {
             spektrafilm_core::params::normalize_grain_control_names(grain)
                 .map_err(anyhow::Error::msg)?;
@@ -252,7 +266,8 @@ impl PhotographRecord {
             Message::new("operations.record.version").arg("version", self.schema_version)
         );
         ensure!(
-            self.runtime_model == spektrafilm_core::runtime::MODEL_VERSION,
+            self.runtime_model == spektrafilm_core::runtime::MODEL_VERSION
+                || self.runtime_model == "lab_scan_operator_v6",
             Message::new("operations.record.model_changed")
         );
         ensure!(
@@ -671,6 +686,52 @@ mod tests {
             applied: None,
         };
         (dir, data, source, settings)
+    }
+
+    #[test]
+    fn finishing_roundtrip_and_previous_model_migration_are_strict() {
+        let (_dir, data, source, mut settings) = fixture();
+        settings.params.finishing.brightness = 0.35;
+        settings.params.finishing.expand.black = 0.1;
+        settings
+            .preparation
+            .explicit_section_paths
+            .push("finishing.brightness".into());
+        settings.preparation.explicit_section_paths.sort();
+        let record = PhotographRecord::capture(&source, settings.clone(), &data).unwrap();
+        let value = serde_json::to_value(&record).unwrap();
+        let restored = PhotographRecord::decode(&serde_json::to_vec(&value).unwrap()).unwrap();
+        assert_eq!(
+            restored.settings.params.finishing,
+            settings.params.finishing
+        );
+        assert_eq!(restored.settings.preparation, settings.preparation);
+
+        let mut legacy = value.clone();
+        legacy["runtime_model"] = json!("lab_scan_operator_v6");
+        legacy["settings"]["params"]
+            .as_object_mut()
+            .unwrap()
+            .remove("finishing");
+        let restored = PhotographRecord::decode(&serde_json::to_vec(&legacy).unwrap()).unwrap();
+        assert_eq!(restored.settings.params.finishing, Default::default());
+        assert_eq!(restored.runtime_model, "lab_scan_operator_v6");
+        assert_eq!(restored.settings.preparation, settings.preparation);
+
+        let mut current_missing = legacy.clone();
+        current_missing["runtime_model"] = json!(spektrafilm_core::runtime::MODEL_VERSION);
+        assert!(PhotographRecord::decode(&serde_json::to_vec(&current_missing).unwrap()).is_err());
+        for invalid in [
+            json!(null),
+            json!({"expand": {"black": 0.8, "white": 0.8}}),
+            json!({"unknown": 1}),
+        ] {
+            let mut candidate = value.clone();
+            candidate["settings"]["params"]["finishing"] = invalid;
+            assert!(PhotographRecord::decode(&serde_json::to_vec(&candidate).unwrap()).is_err());
+        }
+        legacy["runtime_model"] = json!("unknown_model");
+        assert!(PhotographRecord::decode(&serde_json::to_vec(&legacy).unwrap()).is_err());
     }
 
     #[test]
