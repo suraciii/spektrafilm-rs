@@ -214,6 +214,26 @@ pub(crate) fn interpolate_twoxtwo(
     }
 }
 
+/// `markesteijn_homo_threshold`: a running minimum over the directions. The first
+/// call seeds from `f32::MAX`, the rest reduce the value already stored.
+pub(crate) fn homo_threshold(
+    drv: &[f32],
+    thresh: &mut [f32],
+    width: usize,
+    height: usize,
+    border: usize,
+    d: usize,
+) {
+    for y in border..height.saturating_sub(border) {
+        for x in border..width.saturating_sub(border) {
+            let i = y * width + x;
+            let tr = if d == 0 { f32::MAX } else { thresh[i] };
+            let deriv = drv[i];
+            thresh[i] = if tr > deriv { deriv } else { tr };
+        }
+    }
+}
+
 /// `markesteijn_differentiate`: squared second difference of the three YUV
 /// components along one of the four native directions, one float per pixel.
 pub(crate) fn differentiate(
@@ -1179,6 +1199,22 @@ mod tests {
         for y in 2..height - 2 {
             for x in 2..width - 2 {
                 assert!((drv[y * width + x] - 4.0).abs() < 1e-4, "drv at ({x},{y})");
+            }
+        }
+    }
+
+    #[test]
+    fn homo_threshold_keeps_the_smallest_direction() {
+        let (width, height) = (8usize, 8usize);
+        let mut thresh = vec![0.0f32; width * height];
+        // Direction d contributes 100 - d, so the minimum after four calls is 97.
+        for d in 0..4 {
+            let drv = vec![100.0 - d as f32; width * height];
+            homo_threshold(&drv, &mut thresh, width, height, 1, d);
+        }
+        for y in 1..height - 1 {
+            for x in 1..width - 1 {
+                assert_eq!(thresh[y * width + x], 97.0, "({x},{y})");
             }
         }
     }
