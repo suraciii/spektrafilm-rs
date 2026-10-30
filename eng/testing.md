@@ -36,4 +36,6 @@ Persistence tests must use real IO in isolated temporary directories. Shader num
 
 When asserting pixel invariance, compare decoded dimensions and samples rather than container bytes that also carry write-time metadata.
 
+For successful CLI image publication, assert decoded output, replacement behavior, supported metadata, and staging-file cleanup. Do not assert incidental progress-message wording or require warning-free stderr. Valid inactive-setting feedback can accompany a successful write.
+
 The [Justfile](../Justfile) defines test selection. The [README](../README.md#build) documents dependencies and verification commands.
