@@ -166,6 +166,54 @@ pub(crate) fn green_minmax(
     gminmax
 }
 
+/// `markesteijn_interpolate_twoxtwo`: fills red and blue inside the 2x2 green
+/// blocks, from the pair of neighbours the hexagon table names for this `d`.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn interpolate_twoxtwo(
+    cfa: &[u8],
+    rows: usize,
+    cols: usize,
+    rgb: &mut [f32],
+    width: usize,
+    height: usize,
+    border: usize,
+    d: usize,
+    tables: &Tables,
+) {
+    let _ = (cfa, rows, cols);
+    let src = rgb.to_vec();
+    let at = |y: i32, x: i32, c: usize| -> f32 {
+        if y < 0 || x < 0 || y >= height as i32 || x >= width as i32 {
+            return 0.0;
+        }
+        src[(y as usize * width + x as usize) * RGB_STRIDE + c]
+    };
+    for y in border..height.saturating_sub(border) {
+        for x in border..width.saturating_sub(border) {
+            let (xi, yi) = (x as i32, y as i32);
+            if (yi - tables.sgreen[1]) % 3 == 0 || (xi - tables.sgreen[0]) % 3 == 0 {
+                continue;
+            }
+            let hex = &tables.allhex[y % 3][x % 3];
+            let a = hex[d];
+            let b = hex[d + 1];
+            let (m, s) = if a[0] + b[0] != 0 || a[1] + b[1] != 0 {
+                ([3.0, -2.0, -1.0, 2.0], 1.0 / 3.0)
+            } else {
+                ([2.0, -1.0, -1.0, 1.0], 1.0 / 2.0)
+            };
+            let g = m[0] * at(yi, xi, 1)
+                + m[1] * at(yi + a[1], xi + a[0], 1)
+                + m[2] * at(yi + b[1], xi + b[0], 1);
+            let idx = (y * width + x) * RGB_STRIDE;
+            for c in [0usize, 2] {
+                rgb[idx + c] =
+                    (g + m[3] * at(yi + a[1], xi + a[0], c) + at(yi + b[1], xi + b[0], c)) * s;
+            }
+        }
+    }
+}
+
 /// `markesteijn_red_and_blue`: fills the channel opposite this pixel's one, taking
 /// the sample pair either one step along the axis that does not run through the
 /// green rows, or three steps along the other axis, whichever the green gradient
@@ -918,6 +966,29 @@ mod tests {
                     continue;
                 }
                 for c in 0..3 {
+                    assert_eq!(
+                        rgb[(y * width + x) * RGB_STRIDE + c],
+                        v,
+                        "({x},{y}) channel {c}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn interpolate_twoxtwo_is_the_identity_on_a_flat_field() {
+        let (width, height) = (12usize, 12usize);
+        let tables = Tables::new(&PATTERN, 6, 6);
+        let v = 70.0f32;
+        let mut rgb = vec![v; width * height * RGB_STRIDE];
+        for d in 0..4 {
+            interpolate_twoxtwo(&PATTERN, 6, 6, &mut rgb, width, height, 3, d, &tables);
+        }
+        // Both coefficient sets give g = 0 and (0 + 2V + V)/3 == (0 + V + V)/2 == V.
+        for y in 3..height - 3 {
+            for x in 3..width - 3 {
+                for c in [0usize, 2] {
                     assert_eq!(
                         rgb[(y * width + x) * RGB_STRIDE + c],
                         v,
