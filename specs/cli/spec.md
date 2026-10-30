@@ -272,10 +272,13 @@ The following operation distinctions MUST hold alongside each feature's existing
 | Enlarger, Preflash, and print chemistry | New print exposure or development is distinct from scanning an already developed print. |
 | Print viewing glare | Print readout is required; producing a print artifact alone is insufficient, while `print > scan` supplies the readout without new printing. |
 | Material grain and Procedural grain | The selected model owns its operation; Procedural remains post-scan appearance rather than film development. |
+| `film_render.grain.density_min` | Spektra grain formation and executing film-scanner or enlarger LUTs are separate consumers. Grain enable or engine selection MUST NOT gate LUT use. Bypassed LUTs MUST NOT count as consumers. Component applicability MUST follow the selected execution path's monochrome normalization. |
 | Scan-only controls on a material terminal route | Downstream defaults MAY be retained, but the material output does not execute scanning. |
 | Shared geometry, color, and interpretation controls | Every actual consumer counts; a storage group MUST NOT impose a single-stage gate on a shared control. |
 
 Material continuation and admitted diagnostic endpoints MUST use their actual remaining span. Frozen interpretation context MUST remain available to its downstream consumers without replaying the operation that created it. [Frozen-state conflicts](stage-artifacts.md#frozen-state-and-editable-continuation) remain errors, not inactive edits.
+
+A retained LUT-mode flag MUST NOT by itself disable an admitted downstream LUT during material continuation. Applicability MUST NOT replay image-input monochrome preparation on a material continuation.
 
 An absent operation MUST be explained as an operation or route condition, not as a suggestion to enable a feature on that route. A feature's enable control MUST NOT become unusable solely because that feature is off. Engine selectors MUST remain available for explicit correction under their owning GUI contract.
 

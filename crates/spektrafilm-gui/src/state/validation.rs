@@ -259,6 +259,11 @@ pub(super) fn validate_state_parameters(value: &mut Value, version: Option<u64>)
             if leaf.is_empty() {
                 if section == "preflashing" {
                     let (translated, tracking) = translate_legacy_print_exposure(fields);
+                    let mut projected = json!({"enlarger": translated});
+                    if let Some(tracking) = &tracking {
+                        projected["settings"] = tracking.clone();
+                    }
+                    validate_runtime_values(projected, "preflashing")?;
                     if let Some(tracking) = tracking {
                         if !explicit["settings"].is_object() {
                             explicit["settings"] = json!({});
@@ -282,6 +287,14 @@ pub(super) fn validate_state_parameters(value: &mut Value, version: Option<u64>)
         "io",
     ] {
         if let Some(fields) = value.get(group) {
+            let mut projected = json!({(group): fields});
+            if legacy {
+                spektrafilm_core::params::sources::normalize_legacy_complete_params_detailed(
+                    &mut projected,
+                )
+                .map_err(anyhow::Error::new)?;
+            }
+            validate_runtime_values(projected, group)?;
             explicit[group] = fields.clone();
         }
     }
@@ -295,10 +308,14 @@ pub(super) fn validate_state_parameters(value: &mut Value, version: Option<u64>)
         // authoritative carrier (`rust.runtime`, the translated `preflashing`
         // pair) already produced — the same guard the projection applies.
         let mut enlarger = enlarger.clone();
-        if let Some(Value::Bool(comp)) = enlarger
-            .as_object_mut()
-            .and_then(|fields| fields.remove("print_exposure_compensation"))
+        if let Some(comp) = enlarger
+            .get("print_exposure_compensation")
+            .and_then(Value::as_bool)
         {
+            enlarger
+                .as_object_mut()
+                .expect("compensation belongs to an object")
+                .remove("print_exposure_compensation");
             let tracking_default = explicit["settings"]["print_exposure_ev_tracking"]
                 .as_str()
                 .is_none_or(|v| v == "follow_mode");
@@ -309,6 +326,14 @@ pub(super) fn validate_state_parameters(value: &mut Value, version: Option<u64>)
                 explicit["settings"]["print_exposure_ev_tracking"] = json!("never");
             }
         }
+        let mut projected = json!({"enlarger": enlarger});
+        if legacy {
+            spektrafilm_core::params::sources::normalize_legacy_complete_params_detailed(
+                &mut projected,
+            )
+            .map_err(anyhow::Error::new)?;
+        }
+        validate_runtime_values(projected, "simulation.enlarger")?;
         overlay_runtime(&mut explicit["enlarger"], &enlarger);
     }
     if let Some(io) = value["simulation"].get("io") {

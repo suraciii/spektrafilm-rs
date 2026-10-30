@@ -144,13 +144,15 @@ The `input` workflow color-manages an already rendered image to the output space
 
 ### Grain controls
 
-**Film → Grain** starts with **Enable grain** and **Engine**. It shows only the selected engine's effective controls. Turning Grain off hides numerical controls without clearing stored values.
+**Film → Grain** starts with **Enable grain** and **Engine**. It shows the selected engine's effective grain controls. Turning Grain off hides grain-only numerical controls without clearing stored values.
 
-Dye exposes **Grain strength** and **Grain scale** as its only editors. Strength 1 keeps the delivered look and 0 removes random grain, including residual count noise. Scale 1 keeps the delivered texture and larger values coarsen it; it is a film-coordinate texture scale, not a crystal diameter or scanner blur.
+Dye exposes **Grain strength** and **Grain scale** as its only numerical grain editors. Strength 1 keeps the delivered look and 0 removes random grain, including residual count noise. Scale 1 keeps the delivered texture and larger values coarsen it; it is a film-coordinate texture scale, not a crystal diameter or scanner blur.
 
 Black-and-white Spektra shows only record 0 for RMS or relative strength, density minimum, and uniformity. Hidden G/B requests stay stored and reactivate for color material.
 
-Dye retains channel correlation and the shared material requests without editors; they report inactive for Dye. The three numerical-component scales remain independent editors for Spektra; they are not RGB lanes.
+Dye retains channel correlation and the shared material requests without Dye-grain editors. They do not control Dye grain formation. The three numerical-component scales remain independent editors for Spektra; they are not RGB lanes.
+
+The shared **density min** editor remains available when an executing film-scanner or enlarger LUT consumes its bounds, even with grain off or another engine selected. Editing it does not enable grain or select Spektra. Its components follow the current operation's material normalization.
 
 **Procedural Grain Profiles** appears only for Procedural. Named profiles retain editable **Amount**; choose **Custom** to expose custom controls. Noise hides **Film Resolution** and **Resolution Type** without clearing their requests.
 
@@ -354,6 +356,8 @@ The queue shows waiting, running, completed, failed, and canceled outcomes. Canc
 ## State and defaults
 
 **Settings → GUI parameters → Save current to file / Load from file** exchange the pinned Python 0.3.4 GUI JSON sections. Partial files merge into factory values. Legacy input aliases and nested sections normalize to the flat upstream format. Invalid JSON, field types, selections, or Rust extension versions appear in the header status without replacing accepted state. A successful load begins a new adjustment history rather than restoring an old undo stack.
+
+An invalid supplied enlarger mirror fails even if another valid mirror would win. Valid mirror precedence stays unchanged. For example, a valid `simulation.enlarger.illuminant` cannot conceal an invalid `preflashing.illuminant`.
 
 In the same settings section, **Save current as default** persists the current controls and reports that it replaced startup controls. **Restore factory default** confirms before it applies, then restores Kodak Gold 200 + Kodak Supra Endura with Gold's material defaults and upscale factor `1.0`. The confirmation states that the action replaces the current controls and session settings and removes the saved startup default; cancelling keeps both. Adjustment Undo does not reverse either startup-file change. Saved user values, including zero RMS, survive startup and state loading.
 

@@ -819,6 +819,8 @@ mod tests {
         let print =
             spektrafilm_core::profile::load_profile_by_name(&data, factory.paper()).unwrap();
         let mut params = factory.runtime_params().unwrap();
+        params.settings.use_scanner_lut = false;
+        params.settings.use_enlarger_lut = false;
         for engine in [
             GrainEngine::Dye,
             GrainEngine::Spektra,
@@ -880,6 +882,21 @@ mod tests {
             module_applicability("Camera diffusion", &params, &film, Some(&print)).is_some(),
             "disabled diffusion must keep its module banner"
         );
+
+        params.workflow.route = "input > film > scan".into();
+        params.taps.inject = Some("cmy_film".into());
+        params.film_render.grain.active = false;
+        params.settings.use_enlarger_lut = false;
+        params.settings.use_scanner_lut = true;
+        assert_eq!(
+            module_applicability("Grain", &params, &film, Some(&print)),
+            None
+        );
+        params.debug.lut_mode = true;
+        assert!(module_applicability("Grain", &params, &film, Some(&print)).is_some());
+        params.debug.lut_mode = false;
+        params.settings.use_scanner_lut = false;
+        assert!(module_applicability("Grain", &params, &film, Some(&print)).is_some());
     }
 
     fn has_text(output: &egui::FullOutput, text: &str) -> bool {

@@ -138,11 +138,13 @@ No duplicate grain selector or automatic engine conversion is required.
 
 ### Grain control disclosure
 
-Ordinary Grain browsing MUST place Enable grain and Engine first. It MUST show only the selected engine's effective controls. Turning grain off MUST hide numerical controls without clearing their requests.
+Ordinary Grain browsing MUST place Enable grain and Engine first. It MUST show the selected engine's effective grain controls. Turning grain off MUST hide grain-only numerical controls without clearing their requests.
 
-Dye MUST expose Grain strength and Grain scale as its only numerical editors. Grain strength 0 MUST remove random grain, including residual count noise; 1 MUST keep the delivered look. Grain scale MUST be described as a film-coordinate texture scale, not a crystal diameter or scanner blur, and MUST NOT be described as an output-pixel size.
+Dye MUST expose Grain strength and Grain scale as its only numerical grain editors. Grain strength 0 MUST remove random grain, including residual count noise; 1 MUST keep the delivered look. Grain scale MUST be described as a film-coordinate texture scale, not a crystal diameter or scanner blur, and MUST NOT be described as an output-pixel size.
 
-RMS granularity, channel correlation, density minimum, uniformity, and particle scale sublayers MUST remain stored recipe values without Dye editors; loads and saves MUST keep them unchanged. Their Dye applicability MUST report them inactive, and search MUST NOT present them as effective Dye controls.
+RMS granularity, channel correlation, density minimum, uniformity, and particle scale sublayers MUST remain stored recipe values without Dye grain editors; loads and saves MUST keep them unchanged. The GUI MUST NOT present them as effective Dye grain controls.
+
+The shared density minimum editor MUST remain available when an executing film-scanner or enlarger LUT consumes it, regardless of grain enable or engine selection. It MUST use the [operation applicability](../cli/spec.md#operation-applicability) rules for component disclosure. Editing it MUST NOT enable grain or change the selected engine.
 
 The panel MUST explain the lightweight Preview bypass and direct inspection to SCAN and exact 100% zoom.
 
@@ -216,6 +218,8 @@ The interface MUST NOT impose a blanket Custom-only restriction on a parameter w
 Module disable, unsupported material capability, source type, route, and selected engine are different applicability reasons. The GUI MUST name the actual reason and retain readable values. Expanding an inactive group MUST NOT activate it.
 
 Runtime control values MUST follow [shared value validity](../cli/spec.md#parameter-value-validity) after existing GUI-state normalization. Valid inactive values remain storable; an invalid loaded or edited value MUST NOT be repaired by clamping, clearing, or enabling another control. Rejection follows the existing accepted-state and history transaction.
+
+A higher-precedence runtime mirror MUST NOT conceal invalid enlarger values in another supplied mirror. Validation MUST retain the existing normalization and precedence for valid mirrors.
 
 Rows, search results, and module notices MUST use [operation applicability](../cli/spec.md#operation-applicability) for the same configured final-render context. They MUST distinguish an absent operation from an off switch or unsupported material. An unavailable context MUST NOT be presented as proof that a control is active.
 
