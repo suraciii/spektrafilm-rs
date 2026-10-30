@@ -214,6 +214,75 @@ pub(crate) fn interpolate_twoxtwo(
     }
 }
 
+/// One pass of `process_markesteijn_cl`. The sequence is the native one: green is
+/// recalculated only from the second pass on, the six solitary-green calls flip
+/// `i` and `h` between invocations, then four red/blue calls and four 2x2 fills.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn interpolate_pass(
+    cfa: &[u8],
+    rows: usize,
+    cols: usize,
+    dirs: &mut [Vec<f32>; 4],
+    gminmax: &[f32],
+    width: usize,
+    height: usize,
+    border: usize,
+    pass: usize,
+    tables: &Tables,
+) {
+    if pass > 0 {
+        recalculate_green(
+            cfa, rows, cols, dirs, gminmax, width, height, border, tables,
+        );
+    }
+    let mut aux = vec![0.0f32; width * height * RGB_STRIDE];
+    let (mut i, mut h) = (1i32, 0u8);
+    for d in 0..6 {
+        solitary_green(
+            cfa,
+            rows,
+            cols,
+            &mut dirs[0],
+            &mut aux,
+            width,
+            height,
+            border,
+            d,
+            [i, i ^ 1],
+            h,
+            tables,
+        );
+        i ^= 1;
+        h ^= 2;
+    }
+    for d in 0..4 {
+        red_and_blue(
+            cfa,
+            rows,
+            cols,
+            &mut dirs[d],
+            width,
+            height,
+            border,
+            d as i32,
+            tables,
+        );
+    }
+    for (n, d) in (0..8).step_by(2).enumerate() {
+        interpolate_twoxtwo(
+            cfa,
+            rows,
+            cols,
+            &mut dirs[n],
+            width,
+            height,
+            border,
+            d,
+            tables,
+        );
+    }
+}
+
 /// `markesteijn_red_and_blue`: fills the channel opposite this pixel's one, taking
 /// the sample pair either one step along the axis that does not run through the
 /// green rows, or three steps along the other axis, whichever the green gradient
@@ -995,6 +1064,41 @@ mod tests {
                         "({x},{y}) channel {c}"
                     );
                 }
+            }
+        }
+    }
+
+    #[test]
+    fn three_passes_keep_a_flat_field_and_stay_finite() {
+        let (width, height) = (16usize, 16usize);
+        let tables = Tables::new(&PATTERN, 6, 6);
+        let v = 80.0f32;
+        let rgb: Vec<f32> = (0..width * height * RGB_STRIDE)
+            .map(|i| if i % 4 == 3 { 0.0 } else { v })
+            .collect();
+        let mut dirs: [Vec<f32>; 4] = std::array::from_fn(|_| rgb.clone());
+        let mut gminmax = vec![0.0f32; width * height * 2];
+        for i in 0..width * height {
+            gminmax[i * 2] = v;
+            gminmax[i * 2 + 1] = v;
+        }
+        for pass in 0..3 {
+            interpolate_pass(
+                &PATTERN, 6, 6, &mut dirs, &gminmax, width, height, 3, pass, &tables,
+            );
+            for (d, plane) in dirs.iter().enumerate() {
+                for (i, value) in plane.iter().enumerate() {
+                    assert!(
+                        value.is_finite(),
+                        "pass {pass} direction {d} sample {i} is {value}"
+                    );
+                }
+            }
+        }
+        // gminmax pins green to v, so every pass is the identity on the channels.
+        for (d, plane) in dirs.iter().enumerate() {
+            for (i, value) in plane.iter().enumerate() {
+                assert_eq!(*value, rgb[i], "pass 3 direction {d} sample {i}");
             }
         }
     }
