@@ -20,6 +20,8 @@ The implementation MUST reject a non-RGB sample domain rather than interpret den
 
 The warning API MUST carry the accepted source independently of the disposable display image. Display ICC and output saving conversion MUST NOT select the warning endpoints.
 
+An upload for warning inspection MUST preserve the accepted carrier's endpoint decisions. A host f64 source MUST NOT acquire f32 endpoint decisions because the display image uses f32. Lossless warning samples MUST remain separate from render carriers and MUST NOT require shader f64 support.
+
 No endpoint observation contains capture or processing provenance. The interface MUST NOT infer which earlier operation produced a qualifying value.
 
 ## Coverage boundary
@@ -35,6 +37,8 @@ The source-pixel crossover MUST allow relative geometry roundoff of `8 * f32::EP
 Traversal MUST exclude source regions that cannot contribute to the visible photograph. Mask storage MUST be bounded by the current presentation grid instead of retaining a second full floating photograph.
 
 CPU and GPU coverage MUST reuse one per-axis geometry rule. Host geometry metadata MUST scale with viewport axes rather than require a per-pixel host cell table.
+
+The warning apply pass MUST use the photograph compositor's cell-center containment precision. Conservative source coverage MUST NOT make a canvas or padding cell part of the photograph.
 
 ## Execution and publication
 

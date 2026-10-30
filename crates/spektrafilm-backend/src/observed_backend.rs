@@ -305,6 +305,13 @@ impl ComputeBackend for ObservedBackend<'_> {
     fn retain_image(&self, i: &ImageBuf, m: &RetainedImageMeta) -> Result<DeviceImage, String> {
         self.backend.retain_image(i, m)
     }
+    fn retain_viewer_clipping_source(
+        &self,
+        i: &ImageBuf,
+        m: &RetainedImageMeta,
+    ) -> Result<DeviceImage, String> {
+        self.backend.retain_viewer_clipping_source(i, m)
+    }
     fn image_payload<'a>(
         &'a self,
         i: &'a DeviceImage,

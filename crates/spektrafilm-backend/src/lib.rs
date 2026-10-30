@@ -484,6 +484,18 @@ pub trait ComputeBackend: Send + Sync {
         Err("backend does not retain device images".to_owned())
     }
 
+    /// Upload immutable host samples for native viewer warnings. The returned
+    /// carrier is only valid as the native argument to viewer composition; it
+    /// must not be used for rendering, inspection, or output. Backends may
+    /// preserve host precision separately from their normal computation carrier.
+    fn retain_viewer_clipping_source(
+        &self,
+        image: &ImageBuf,
+        meta: &RetainedImageMeta,
+    ) -> Result<DeviceImage, String> {
+        self.retain_image(image, meta)
+    }
+
     /// Borrow a retained carrier's backend payload for a device pass.
     ///
     /// `Err` reports a carrier this backend cannot consume: host samples, a

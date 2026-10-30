@@ -6,6 +6,94 @@ use spektrafilm_backend::{
     ViewerFullSourceGpuParams, ViewerIccGpuParams,
 };
 
+#[cfg(feature = "precision-f64")]
+struct ClippingF64Payload {
+    pages: std::sync::Arc<super::film_chain::device_image::BufferPayload>,
+}
+
+#[cfg(feature = "precision-f64")]
+impl spektrafilm_backend::DeviceImagePayload for ClippingF64Payload {
+    fn backend_id(&self) -> u64 {
+        spektrafilm_backend::DeviceImagePayload::backend_id(self.pages.as_ref())
+    }
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+}
+
+impl WgpuBackend {
+    pub(super) fn retain_clipping_source_gpu(
+        &self,
+        image: &ImageBuf,
+        meta: &spektrafilm_backend::RetainedImageMeta,
+    ) -> Result<DeviceImage, String> {
+        #[cfg(feature = "precision-f64")]
+        {
+            self.retain_clipping_f64_with_limit(
+                image,
+                meta,
+                super::bounded::storage_binding_limit(self)?,
+            )
+        }
+        #[cfg(not(feature = "precision-f64"))]
+        {
+            self.upload_retained(image, meta)
+        }
+    }
+
+    #[cfg(feature = "precision-f64")]
+    fn retain_clipping_f64_with_limit(
+        &self,
+        image: &ImageBuf,
+        meta: &spektrafilm_backend::RetainedImageMeta,
+        limit: u64,
+    ) -> Result<DeviceImage, String> {
+        use super::film_chain::device_image::BufferPayload;
+        use spektrafilm_backend::Precision;
+        self.check_cancelled()?;
+        let count = u64::from(image.width) * u64::from(image.height);
+        if meta.width != image.width
+            || meta.height != image.height
+            || meta.precision != Precision::F64
+            || count > u64::from(u32::MAX)
+            || count.checked_mul(3) != Some(image.data.len() as u64)
+        {
+            return Err("viewer clipping source metadata does not match samples".into());
+        }
+        let capacity = (limit.min(self.viewer_limit()) / 24).min(u64::from(u32::MAX)) as u32;
+        if capacity == 0 && count != 0 {
+            return Err("viewer clipping source exceeds device limits".into());
+        }
+        let mut pages = Vec::new();
+        let mut first = 0u32;
+        while first < count as u32 {
+            self.check_cancelled()?;
+            let n = capacity.min(count as u32 - first);
+            let start = first as usize * 3;
+            let end = start + n as usize * 3;
+            let buffer = self.viewer_buffer(u64::from(n) * 24, "viewer_clipping_source");
+            self.queue
+                .write_buffer(&buffer, 0, bytemuck::cast_slice(&image.data[start..end]));
+            pages.push(ImagePage {
+                first_pixel: first,
+                n_pixels: n,
+                buffer,
+            });
+            first += n;
+        }
+        self.check_cancelled()?;
+        let mut payload =
+            BufferPayload::from_pages(self.backend_id(), pages, image.width, image.height);
+        payload.bytes = count * 24;
+        let payload = std::sync::Arc::new(payload);
+        self.device.resources.register_image(&payload);
+        Ok(DeviceImage::retained(
+            *meta,
+            std::sync::Arc::new(ClippingF64Payload { pages: payload }),
+        ))
+    }
+}
+
 impl WgpuBackend {
     pub(super) fn viewer_inspect_gpu(
         &self,
@@ -442,7 +530,23 @@ impl WgpuBackend {
             }
             let thresholds =
                 spektrafilm_backend::viewer_clipping::endpoint_thresholds(native.meta())?;
-            Some((native, self.buffer_payload(native)?, thresholds))
+            #[cfg(feature = "precision-f64")]
+            let binary64 = native
+                .payload_ref()?
+                .as_any()
+                .downcast_ref::<ClippingF64Payload>();
+            #[cfg(feature = "precision-f64")]
+            let (payload, is_f64) = if let Some(payload) = binary64 {
+                if native.payload_ref()?.backend_id() != self.backend_id() {
+                    return Err("viewer clipping source belongs to a different device".into());
+                }
+                (payload.pages.as_ref(), true)
+            } else {
+                (self.buffer_payload(native)?, false)
+            };
+            #[cfg(not(feature = "precision-f64"))]
+            let (payload, is_f64) = (self.buffer_payload(native)?, false);
+            Some((native, payload, thresholds, is_f64))
         } else {
             None
         };
@@ -536,7 +640,7 @@ impl WgpuBackend {
                 &out,
                 "viewer_presentation",
             )?;
-            if let Some((native, payload, thresholds)) = clipping {
+            if let Some((native, payload, thresholds, is_f64)) = clipping {
                 let mask = self.viewer_buffer(bytes, "viewer_clipping_mask");
                 // Geometry is shared with the host mask; source samples stay on device.
                 use spektrafilm_backend::viewer_clipping::ClippingAxis;
@@ -563,7 +667,8 @@ impl WgpuBackend {
                         if coordinate & 4095 == 0 {
                             self.check_cancelled()?;
                         }
-                        let Some([lo, hi]) = mapping.bounds(coordinate) else {
+                        let Some([lo, hi]) = mapping.bounds_with_compositor_roundoff(coordinate)
+                        else {
                             bounds.push([u32::MAX, 0]);
                             continue;
                         };
@@ -603,13 +708,23 @@ impl WgpuBackend {
                         while block < blocks {
                             self.check_cancelled()?;
                             let batch = (blocks - block).min(batch_limit);
+                            let shadow = if is_f64 {
+                                thresholds[0].to_bits()
+                            } else {
+                                u64::from((thresholds[0] as f32).to_bits())
+                            };
+                            let highlight = if is_f64 {
+                                thresholds[1].to_bits()
+                            } else {
+                                u64::from((thresholds[1] as f32).to_bits())
+                            };
                             let clip_words = [
                                 native.width(),
                                 n,
                                 page.first_pixel,
                                 page.n_pixels,
-                                (thresholds[0] as f32).to_bits(),
-                                (thresholds[1] as f32).to_bits(),
+                                shadow as u32,
+                                highlight as u32,
                                 first,
                                 p.width,
                                 x0,
@@ -617,9 +732,9 @@ impl WgpuBackend {
                                 x_len,
                                 block,
                                 batch,
-                                0,
-                                0,
-                                0,
+                                u32::from(is_f64),
+                                (shadow >> 32) as u32,
+                                (highlight >> 32) as u32,
                             ];
                             self.viewer_dispatch_into(
                                 include_str!(
@@ -646,11 +761,12 @@ impl WgpuBackend {
                 };
                 let blue = u32::from_le_bytes(spektrafilm_backend::viewer_clipping::SHADOW_RGBA);
                 let red = u32::from_le_bytes(spektrafilm_backend::viewer_clipping::HIGHLIGHT_RGBA);
-                let clip_words = [n, mode, blue, red, first, p.width, x0, y0, x_len, 0, 0, 0];
+                let mut clip_words = vec![n, mode, blue, red, first, p.width, p.height, 0];
+                clip_words.extend(p.rect.into_iter().chain(p.image_rect).map(f32::to_bits));
                 self.viewer_dispatch_into(
                     include_str!("../../../spektrafilm-shaders/wgsl/viewer_clipping_apply.wgsl"),
                     &clip_words,
-                    &[&mask, &geometry],
+                    &[&mask],
                     n,
                     &out,
                     "viewer_clipping_apply",
@@ -728,6 +844,195 @@ mod tests {
         Arc,
         atomic::{AtomicBool, AtomicUsize, Ordering},
     };
+
+    #[test]
+    fn clipping_never_paints_fractional_photo_padding() {
+        use spektrafilm_backend::ViewerClipping;
+        let gpu = crate::test_support::explicit_adapter();
+        let meta = RetainedImageMeta {
+            width: 1,
+            height: 1,
+            domain: SampleDomain::Linear,
+            precision: Precision::host(),
+            space: spektrafilm_math::colorspace::resolve("sRGB").unwrap(),
+            pixel_pitch_um: None,
+        };
+        let source = ImageBuf::from_data(1, 1, vec![0.0 as _; 3]);
+        let display = gpu.retain_image(&source, &meta).unwrap();
+        let native = gpu.retain_viewer_clipping_source(&source, &meta).unwrap();
+        let mut p = ViewerComposeGpuParams {
+            width: 150,
+            height: 1,
+            rect: [0.0, 0.0, 100.0, 1.0],
+            border: [0.0; 4],
+            paper_rect: [0.0; 4],
+            image_rect: [0.0, 0.0, 33.66666793823242_f32, 1.0],
+            gray: [0.2, 0.4, 0.6],
+            interpolation: 0,
+            full_source: false,
+            output_layer: false,
+            fade: 1.0,
+            clipping: ViewerClipping::Off,
+        };
+        for image_rect in [
+            [0.0, 0.0, 33.66666793823242_f32, 1.0],
+            [17.166667, 0.0, 83.5, 1.0],
+            [33.66666793823242_f32, 0.0, 80.333336, 1.0],
+        ] {
+            p.image_rect = image_rect;
+            p.clipping = ViewerClipping::Off;
+            let baseline = gpu
+                .viewer_compose_retained(Some(&display), None, None, None, &p)
+                .unwrap();
+            if image_rect[0] == 0.0 {
+                assert_eq!(baseline[50], [51, 102, 153, 255]);
+            }
+            for mode in [
+                ViewerClipping::Overlay {
+                    shadows: true,
+                    highlights: false,
+                },
+                ViewerClipping::Overlay {
+                    shadows: false,
+                    highlights: true,
+                },
+                ViewerClipping::Shadows,
+                ViewerClipping::Highlights,
+            ] {
+                p.clipping = mode;
+                for limit in [48, gpu.viewer_limit()] {
+                    let pixels = gpu
+                        .viewer_compose_gpu_with_limit(
+                            Some(&display),
+                            None,
+                            None,
+                            Some(&native),
+                            &p,
+                            limit,
+                        )
+                        .unwrap();
+                    for (i, pixel) in baseline.iter().enumerate() {
+                        if *pixel == [51, 102, 153, 255] {
+                            assert_eq!(pixels[i], *pixel, "{mode:?} {image_rect:?} pixel {i}");
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[cfg(feature = "precision-f64")]
+    #[test]
+    fn f64_warning_source_keeps_endpoints_invalids_and_pages_exact() {
+        use spektrafilm_backend::{ViewerClipping, viewer_clipping};
+        let gpu = crate::test_support::explicit_adapter();
+        for (space, domain) in [
+            ("sRGB", SampleDomain::Linear),
+            ("sRGB", SampleDomain::Encoded),
+            ("ACEScct", SampleDomain::Encoded),
+        ] {
+            let meta = RetainedImageMeta {
+                width: 15,
+                height: 1,
+                domain,
+                precision: Precision::F64,
+                space: spektrafilm_math::colorspace::resolve(space).unwrap(),
+                pixel_pitch_um: None,
+            };
+            let [black, white] = viewer_clipping::endpoint_thresholds(meta).unwrap();
+            let mid = (black + white) / 2.0;
+            let values = [
+                [black; 3],
+                [black.next_up(); 3],
+                [black.next_down(); 3],
+                [white.next_down(), mid, mid],
+                [white, mid, mid],
+                [white.next_up(), mid, mid],
+                [1e-46; 3],
+                [1e300, mid, mid],
+                [-1e300; 3],
+                [f64::NAN, black, black],
+                [f64::INFINITY, mid, mid],
+                [f64::NEG_INFINITY, black, black],
+                [0.999999999, mid, mid],
+                [-0.0; 3],
+                [0.0, -0.0, 0.0],
+            ];
+            let host = ImageBuf::from_data(15, 1, values.into_iter().flatten().collect());
+            let display = gpu
+                .retain_image(
+                    &ImageBuf::from_data(1, 1, vec![0.4; 3]),
+                    &RetainedImageMeta { width: 1, ..meta },
+                )
+                .unwrap();
+            let normal = gpu.retain_viewer_clipping_source(&host, &meta).unwrap();
+            let paged = gpu
+                .retain_clipping_f64_with_limit(&host, &meta, 72)
+                .unwrap();
+            assert!(gpu.viewer_fit_retained(&normal, 1, 1, None, None).is_err());
+            let rect = [0.0, 0.0, 15.0, 1.0];
+            let mut p = ViewerComposeGpuParams {
+                width: 15,
+                height: 1,
+                rect,
+                border: rect,
+                paper_rect: rect,
+                image_rect: rect,
+                gray: [0.2; 3],
+                interpolation: 0,
+                full_source: false,
+                output_layer: false,
+                fade: 1.0,
+                clipping: ViewerClipping::Off,
+            };
+            let baseline = gpu
+                .viewer_compose_retained(Some(&display), None, None, None, &p)
+                .unwrap();
+            p.clipping = ViewerClipping::Overlay {
+                shadows: true,
+                highlights: true,
+            };
+            let mask = viewer_clipping::mask_host(&host, meta, &p, None).unwrap();
+            assert_eq!(&mask[..6], &[1, 0, 1, 0, 2, 2]);
+            assert_eq!(&mask[7..12], &[2, 1, 0, 0, 0]);
+            if domain == SampleDomain::Linear {
+                assert_eq!(mask[6], 0);
+                assert_eq!(&mask[12..], &[0, 1, 1]);
+            }
+            let expected: Vec<_> = baseline
+                .iter()
+                .zip(mask)
+                .map(|(&pixel, flags)| viewer_clipping::apply_rgba(pixel, flags, p.clipping))
+                .collect();
+            for source in [&normal, &paged] {
+                for limit in [48, gpu.viewer_limit()] {
+                    assert_eq!(
+                        gpu.viewer_compose_gpu_with_limit(
+                            Some(&display),
+                            None,
+                            None,
+                            Some(source),
+                            &p,
+                            limit
+                        )
+                        .unwrap(),
+                        expected,
+                        "{space}"
+                    );
+                }
+            }
+            if domain == SampleDomain::Linear {
+                let device_source = gpu.retain_image(&host, &meta).unwrap();
+                assert_eq!(device_source.precision(), Precision::F32);
+                let pixels = gpu
+                    .viewer_compose_retained(Some(&display), None, None, Some(&device_source), &p)
+                    .unwrap();
+                assert_eq!(pixels[6], viewer_clipping::SHADOW_RGBA);
+                assert_eq!(pixels[7], baseline[7]);
+                assert_eq!(pixels[12], viewer_clipping::HIGHLIGHT_RGBA);
+            }
+        }
+    }
 
     #[test]
     fn packed_viewer_chunks_preserve_rgba_and_four_byte_resource_bound() {
