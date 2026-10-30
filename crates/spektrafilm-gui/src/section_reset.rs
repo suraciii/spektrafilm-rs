@@ -479,18 +479,7 @@ pub(crate) fn reset(
             }
         }
     }
-    let mut preparation = params.render_preparation_state();
-    let old_len = preparation.explicit_section_paths.len();
-    preparation.explicit_section_paths.retain(|owned| {
-        !paths.iter().any(|scope| {
-            owned == scope
-                || (owned.starts_with(scope) && owned.as_bytes().get(scope.len()) == Some(&b'.'))
-        })
-    });
-    if preparation.explicit_section_paths.len() != old_len {
-        params.restore_render_preparation_state(&preparation);
-        changed = true;
-    }
+    changed |= params.clear_explicit_paths(paths);
     if let Some(extras_paths) = section_extras(section) {
         for path in extras_paths {
             let Some(factory) = document_value(&FACTORY_EXTRAS, path) else {

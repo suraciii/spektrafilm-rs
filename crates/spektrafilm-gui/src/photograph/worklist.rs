@@ -172,11 +172,7 @@ fn copied_settings(
             let edits = ParameterEdits::parse(&assignments).map_err(anyhow::Error::msg)?;
             let mut params = current.clone();
             edits.apply_detailed(&mut params)?;
-            let mut preparation = params.render_preparation_state();
-            preparation
-                .explicit_section_paths
-                .extend(edits.paths().map(str::to_owned));
-            params.restore_render_preparation_state(&preparation);
+            params.mark_explicit_paths(edits.paths());
             params
         }
         CopyScope::Operator => {
@@ -187,11 +183,7 @@ fn copied_settings(
             )).map_err(anyhow::Error::msg)?;
             let mut params = current.clone();
             edits.apply_detailed(&mut params)?;
-            let mut preparation = params.render_preparation_state();
-            preparation
-                .explicit_section_paths
-                .extend(edits.paths().map(str::to_owned));
-            params.restore_render_preparation_state(&preparation);
+            params.mark_explicit_paths(edits.paths());
             params
         }
     };
@@ -209,25 +201,20 @@ fn copied_settings(
         .calibration
         .clone_from(&capture.calibration);
     result.params.film_render.convert.base_percentile = capture.base_percentile;
-    let source_preparation = current.render_preparation_state();
-    let mut preparation = result.params.render_preparation_state();
-    for path in [
+    let capture_paths = [
         "film_render.convert.scan_illuminant",
         "film_render.convert.calibration",
         "film_render.convert.base_percentile",
-    ] {
-        preparation
-            .explicit_section_paths
-            .retain(|owned| owned != path);
-        if source_preparation
+    ];
+    result.params.clear_explicit_paths(&capture_paths);
+    result.params.mark_explicit_paths(
+        destination
+            .preparation
             .explicit_section_paths
             .iter()
-            .any(|owned| owned == path)
-        {
-            preparation.explicit_section_paths.push(path.into());
-        }
-    }
-    result.params.restore_render_preparation_state(&preparation);
+            .map(String::as_str)
+            .filter(|path| capture_paths.contains(path)),
+    );
     result.preparation = result.params.render_preparation_state();
     result.params.validate_detailed()?;
     let film = profile::load_profile_by_name(data_dir, &result.film)?;

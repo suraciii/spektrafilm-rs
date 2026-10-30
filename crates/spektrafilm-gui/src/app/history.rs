@@ -22,14 +22,10 @@ pub(super) struct AdjustmentState {
 
 impl AdjustmentState {
     fn photographic_params(mut params: RuntimeParams) -> RuntimeParams {
-        // Session execution preferences are not photographic adjustments.
+        // History uses zero limits; photograph documents retain schema defaults.
+        crate::photograph::normalize_session_settings(&mut params.settings);
         params.settings.preview_max_size = 0;
-        params.settings.preview_mode = false;
-        params.settings.use_enlarger_lut = false;
-        params.settings.use_scanner_lut = false;
         params.settings.lut_resolution = 0;
-        params.settings.use_fast_stats = false;
-        params.settings.neutral_print_filters_from_database = true;
         params.debug = Default::default();
         params.taps = Default::default();
         params.random_seed = 0;
@@ -57,25 +53,9 @@ impl AdjustmentState {
     pub(super) fn controls_match(&self, app: &App) -> bool {
         let a = &self.params;
         let b = &app.params;
-        a.camera == b.camera
-            && a.enlarger == b.enlarger
-            && a.scanner == b.scanner
-            && a.film_render == b.film_render
-            && a.print_render == b.print_render
-            && a.io == b.io
-            && a.workflow == b.workflow
-            && a.cmyk == b.cmyk
-            && a.output_mix == b.output_mix
+        crate::photograph::photographic_controls_match(a, b)
             && a.neutral_print_filters_protected == b.neutral_print_filters_protected
-            && a.settings.spectral_shape == b.settings.spectral_shape
-            && a.settings.rgb_to_raw_method == b.settings.rgb_to_raw_method
-            && a.settings.apply_hanatos2025_adaptation_window
-                == b.settings.apply_hanatos2025_adaptation_window
-            && a.settings.apply_hanatos2025_adaptation_surface
-                == b.settings.apply_hanatos2025_adaptation_surface
-            && a.settings.spectral_gaussian_blur == b.settings.spectral_gaussian_blur
-            && a.settings.use_cat16 == b.settings.use_cat16
-            && a.settings.print_exposure_ev_tracking == b.settings.print_exposure_ev_tracking
+            && a.explicit_paths_match(b)
             && self.film_name == app.film_name
             && self.print_name == app.print_name
             && self.special == app.gui_state.sections["special"]
@@ -85,16 +65,8 @@ impl AdjustmentState {
     }
 
     pub(super) fn runtime_params(&self, app: &App) -> RuntimeParams {
-        let settings = &app.params.settings;
         let mut params = self.params.clone();
-        params.settings.preview_max_size = settings.preview_max_size;
-        params.settings.preview_mode = settings.preview_mode;
-        params.settings.use_enlarger_lut = settings.use_enlarger_lut;
-        params.settings.use_scanner_lut = settings.use_scanner_lut;
-        params.settings.lut_resolution = settings.lut_resolution;
-        params.settings.use_fast_stats = settings.use_fast_stats;
-        params.settings.neutral_print_filters_from_database =
-            settings.neutral_print_filters_from_database;
+        crate::photograph::copy_session_settings(&mut params.settings, &app.params.settings);
         params.debug = app.params.debug.clone();
         params.taps = app.params.taps.clone();
         params.random_seed = app.params.random_seed;
@@ -271,25 +243,8 @@ impl App {
         let accepted = self.accepted_adjustment();
         let a = &baseline.params;
         let b = &accepted.params;
-        a.camera != b.camera
-            || a.enlarger != b.enlarger
-            || a.scanner != b.scanner
-            || a.film_render != b.film_render
-            || a.print_render != b.print_render
-            || a.io != b.io
-            || a.workflow != b.workflow
-            || a.cmyk != b.cmyk
-            || a.output_mix != b.output_mix
+        !crate::photograph::photographic_controls_match(a, b)
             || a.random_seed != self.params.random_seed
-            || a.settings.spectral_shape != b.settings.spectral_shape
-            || a.settings.rgb_to_raw_method != b.settings.rgb_to_raw_method
-            || a.settings.apply_hanatos2025_adaptation_window
-                != b.settings.apply_hanatos2025_adaptation_window
-            || a.settings.apply_hanatos2025_adaptation_surface
-                != b.settings.apply_hanatos2025_adaptation_surface
-            || a.settings.spectral_gaussian_blur != b.settings.spectral_gaussian_blur
-            || a.settings.use_cat16 != b.settings.use_cat16
-            || a.settings.print_exposure_ev_tracking != b.settings.print_exposure_ev_tracking
             || baseline.film != accepted.film_name
             || baseline.print != accepted.print_name
             || baseline.rotation != accepted.rotation
@@ -360,9 +315,7 @@ impl App {
             .clone();
         let changed = !before.controls_match(self)
             || (self.parameter_revision != frame.revision
-                && (before.params.render_preparation_state()
-                    != self.params.render_preparation_state()
-                    || before.applied != self.presets.state.applied));
+                && before.applied != self.presets.state.applied);
         let suspended = numeric::has_suspended_adjustment(ctx) && !signal.resumed;
         if suspended && signal.canceled {
             if let Some((initial, label)) = self.adjustment_history.gesture.take() {
@@ -419,25 +372,13 @@ impl App {
             }
         }
         if !paths.is_empty() && changed {
-            let mut ownership = self.params.render_preparation_state();
-            for path in paths {
-                match path.as_str() {
-                    "enlarger.c_filter_neutral" => {
-                        ownership.neutral_print_filters_protected[0] = true
-                    }
-                    "enlarger.m_filter_neutral" => {
-                        ownership.neutral_print_filters_protected[1] = true
-                    }
-                    "enlarger.y_filter_neutral" => {
-                        ownership.neutral_print_filters_protected[2] = true
-                    }
-                    _ => {}
-                }
-                if !ownership.explicit_section_paths.contains(&path) {
-                    ownership.explicit_section_paths.push(path);
-                }
-            }
-            self.params.restore_render_preparation_state(&ownership);
+            self.params
+                .protect_neutral_filter_axes(paths.iter().map(String::as_str));
+            // Only core-discovered runtime leaves carry explicit ownership.
+            self.params
+                .mark_explicit_paths(paths.into_iter().filter(|path| {
+                    controls::lookup(path).is_some_and(|entry| entry.validation.is_some())
+                }));
         }
         if !changed
             && !signal.started
@@ -889,9 +830,18 @@ mod tests {
         app.params.restore_render_preparation_state(&ownership);
         app.reset_adjustment_history();
         let before = app.params.clone();
+        let baseline = app.current_material_baseline().unwrap();
+        let revision = app.parameter_revision;
         app.begin_adjustment_frame(&ctx);
-        assert!(app.reset_parameter_section("Couplers"));
+        assert!(section_reset::reset(
+            &mut app.params,
+            &mut app.gui_state.sections,
+            "Couplers",
+            &baseline,
+        ));
+        assert_eq!(app.parameter_revision, revision);
         app.end_adjustment_frame(&ctx);
+        assert!(app.parameter_revision > revision);
         assert_eq!(
             serde_json::to_value(&app.params).unwrap(),
             serde_json::to_value(&before).unwrap()
@@ -939,6 +889,34 @@ mod tests {
         assert_eq!(app.params, before);
         assert!(app.redo_adjustment());
         assert_eq!(app.params, expected);
+    }
+
+    #[test]
+    fn session_settings_survive_exposure_undo_without_becoming_adjustments() {
+        let (mut app, _directory, ctx) = app();
+        let initial = app.params.camera.exposure_compensation_ev;
+        app.begin_adjustment_frame(&ctx);
+        app.params.settings.preview_max_size = 1024;
+        app.params.settings.preview_mode = true;
+        app.params.settings.use_enlarger_lut = true;
+        app.params.settings.use_scanner_lut = true;
+        app.params.settings.lut_resolution = 33;
+        app.params.settings.use_fast_stats = true;
+        app.params.settings.neutral_print_filters_from_database = false;
+        app.params.random_seed = 73;
+        app.end_adjustment_frame(&ctx);
+        assert!(!app.can_undo());
+        let session = app.params.settings.clone();
+
+        exposure(&mut app, &ctx, initial + 1.0);
+        assert!(app.undo_adjustment());
+        assert_eq!(app.params.camera.exposure_compensation_ev, initial);
+        assert_eq!(app.params.settings, session);
+        assert_eq!(app.params.random_seed, 73);
+        assert!(app.redo_adjustment());
+        assert_eq!(app.params.camera.exposure_compensation_ev, initial + 1.0);
+        assert_eq!(app.params.settings, session);
+        assert_eq!(app.params.random_seed, 73);
     }
 
     #[test]

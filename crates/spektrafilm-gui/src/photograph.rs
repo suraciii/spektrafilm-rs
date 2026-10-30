@@ -2,6 +2,7 @@
 use crate::app::Message;
 use crate::*;
 use record::{PhotographRecord, PhotographSettings};
+use spektrafilm_core::params::SettingsParams;
 
 pub(crate) mod preparation;
 pub(crate) mod record;
@@ -52,19 +53,50 @@ pub(crate) struct PhotoContext {
     pub(crate) print_dev_times: Vec<f64>,
 }
 
+/// Compare photographic controls without allocating or including session preferences.
+pub(crate) fn photographic_controls_match(a: &RuntimeParams, b: &RuntimeParams) -> bool {
+    a.camera == b.camera
+        && a.enlarger == b.enlarger
+        && a.scanner == b.scanner
+        && a.film_render == b.film_render
+        && a.print_render == b.print_render
+        && a.io == b.io
+        && a.workflow == b.workflow
+        && a.cmyk == b.cmyk
+        && a.output_mix == b.output_mix
+        && a.settings.spectral_shape == b.settings.spectral_shape
+        && a.settings.rgb_to_raw_method == b.settings.rgb_to_raw_method
+        && a.settings.apply_hanatos2025_adaptation_window
+            == b.settings.apply_hanatos2025_adaptation_window
+        && a.settings.apply_hanatos2025_adaptation_surface
+            == b.settings.apply_hanatos2025_adaptation_surface
+        && a.settings.spectral_gaussian_blur == b.settings.spectral_gaussian_blur
+        && a.settings.use_cat16 == b.settings.use_cat16
+        && a.settings.print_exposure_ev_tracking == b.settings.print_exposure_ev_tracking
+}
+
+/// Preserve the active session while restoring photograph or history controls.
+pub(crate) fn copy_session_settings(target: &mut SettingsParams, source: &SettingsParams) {
+    target.preview_max_size = source.preview_max_size;
+    target.preview_mode = source.preview_mode;
+    target.use_enlarger_lut = source.use_enlarger_lut;
+    target.use_scanner_lut = source.use_scanner_lut;
+    target.lut_resolution = source.lut_resolution;
+    target.use_fast_stats = source.use_fast_stats;
+    target.neutral_print_filters_from_database = source.neutral_print_filters_from_database;
+}
+
+pub(crate) fn normalize_session_settings(settings: &mut SettingsParams) {
+    static DEFAULTS: std::sync::LazyLock<SettingsParams> =
+        std::sync::LazyLock::new(SettingsParams::default);
+    copy_session_settings(settings, &DEFAULTS);
+}
+
 /// Execution and viewer preferences do not become photograph adjustments.
 fn normalize_execution(params: &mut RuntimeParams) {
-    let defaults = RuntimeParams::default();
-    params.settings.preview_mode = defaults.settings.preview_mode;
-    params.settings.preview_max_size = defaults.settings.preview_max_size;
-    params.settings.use_enlarger_lut = defaults.settings.use_enlarger_lut;
-    params.settings.use_scanner_lut = defaults.settings.use_scanner_lut;
-    params.settings.lut_resolution = defaults.settings.lut_resolution;
-    params.settings.use_fast_stats = defaults.settings.use_fast_stats;
-    params.settings.neutral_print_filters_from_database =
-        defaults.settings.neutral_print_filters_from_database;
-    params.debug = defaults.debug;
-    params.taps = defaults.taps;
+    normalize_session_settings(&mut params.settings);
+    params.debug = Default::default();
+    params.taps = Default::default();
 }
 
 impl App {
@@ -211,15 +243,7 @@ impl App {
         if let Some(ctx) = &self.photograph.context {
             numeric_drafts.restore(ctx);
         }
-        let execution = &self.params.settings;
-        settings.params.settings.preview_max_size = execution.preview_max_size;
-        settings.params.settings.preview_mode = execution.preview_mode;
-        settings.params.settings.use_enlarger_lut = execution.use_enlarger_lut;
-        settings.params.settings.use_scanner_lut = execution.use_scanner_lut;
-        settings.params.settings.lut_resolution = execution.lut_resolution;
-        settings.params.settings.use_fast_stats = execution.use_fast_stats;
-        settings.params.settings.neutral_print_filters_from_database =
-            execution.neutral_print_filters_from_database;
+        copy_session_settings(&mut settings.params.settings, &self.params.settings);
         settings.params.debug = self.params.debug.clone();
         settings.params.taps = self.params.taps.clone();
         self.params = settings.params;
