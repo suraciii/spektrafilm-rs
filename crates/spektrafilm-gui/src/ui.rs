@@ -4,8 +4,8 @@ use std::sync::atomic::Ordering;
 struct InspectorMaterials {
     film_name: String,
     print_name: String,
-    film: profile::Profile,
-    print: profile::Profile,
+    film: Arc<profile::Profile>,
+    print: Option<Arc<profile::Profile>>,
 }
 
 pub(crate) fn grain_control_inactive_reason(
@@ -29,6 +29,26 @@ pub(crate) fn grain_control_inactive_reason(
         None => spektrafilm_core::params::sources::grain_control_inactive_reason(
             path, params, component,
         ),
+    }
+}
+
+pub(crate) fn control_inactive_reason(
+    ctx: &egui::Context,
+    path: &str,
+    params: &RuntimeParams,
+) -> Option<String> {
+    let materials = ctx.data(|data| {
+        data.get_temp::<Arc<InspectorMaterials>>(egui::Id::new("inspector-material-context"))
+    });
+    match materials {
+        Some(materials) => spektrafilm_core::params::sources::inactive_reason_with_materials(
+            path,
+            params,
+            Some(&materials.film),
+            materials.print.as_deref(),
+        ),
+        None => spektrafilm_core::params::sources::inactive_reason_without_profiles(path, params)
+            .map(str::to_owned),
     }
 }
 
@@ -61,7 +81,7 @@ impl App {
             &self.params.io.input_color_space,
             self.params.io.input_cctf_decoding,
         );
-        let (space, encoded) = self.operator_comparison.as_ref().map_or(
+        let (space, encoded) = self.displayed_comparison.as_ref().map_or(
             (self.output_color_space.as_str(), self.output_cctf_encoding),
             |comparison| (comparison.color_space.as_str(), comparison.encoded),
         );
@@ -632,6 +652,7 @@ impl App {
                 app.calibration_epoch = app.calibration_epoch.wrapping_add(1);
                 app.input_epoch = app.input_epoch.wrapping_add(1);
                 app.set_operator_compare(false);
+                app.set_finishing_compare(false);
                 app.render_worker.cancel_active();
                 app.full_scan_requested = false;
                 app.image = Some(prepared.source);
@@ -692,6 +713,7 @@ impl App {
                 app.input_rotation = rotation;
                 app.input_epoch = app.input_epoch.wrapping_add(1);
                 app.set_operator_compare(false);
+                app.set_finishing_compare(false);
                 app.render_worker.cancel_active();
                 app.calibration_epoch = app.calibration_epoch.wrapping_add(1);
                 app.full_scan_requested = false;
@@ -882,7 +904,7 @@ impl App {
                     section,
                     &self.params,
                     &materials.film,
-                    &materials.print,
+                    materials.print.as_deref(),
                 ) {
                     ui.label(
                         egui::RichText::new(crate::tr!(
@@ -1207,9 +1229,14 @@ impl App {
             .show(ui, |ui| {
                 for result in results {
                     let label = result.localized_locator_label(ui.ctx());
-                    let response = ui
-                        .button(&label)
-                        .on_hover_text(result.localized_details(ui.ctx()));
+                    let mut details = result.localized_details(ui.ctx());
+                    if let Some(reason) =
+                        control_inactive_reason(ui.ctx(), &result.target_path, &self.params)
+                    {
+                        details.push('\n');
+                        details.push_str(controls::localized(ui.ctx(), &reason).as_ref());
+                    }
+                    let response = ui.button(&label).on_hover_text(details);
                     locator_ids.push(response.id);
                     if response.clicked() {
                         destination = Some((
@@ -1264,6 +1291,7 @@ impl App {
     }
 
     fn parameter_section_controls(&mut self, ui: &mut egui::Ui, section: &str) {
+        let scanned_medium_positive = self.scanned_medium_positive();
         let cache = self.section_labels.entry(section.to_owned()).or_default();
         let capture_reference_illuminant = &self.film_reference_illuminant;
         let data_dir = self.data_dir.clone();
@@ -1273,6 +1301,7 @@ impl App {
             &mut self.gui_state.sections,
             section,
             self.film_medium,
+            scanned_medium_positive,
             &self.filter,
             cache,
             capture_reference_illuminant,
@@ -1283,6 +1312,9 @@ impl App {
         }
         if let Some(comparing) = changes.operator_compare {
             self.set_operator_compare(comparing);
+        }
+        if let Some(comparing) = changes.finishing_compare {
+            self.set_finishing_compare(comparing);
         }
         if let Some(action) = changes.action {
             self.start_calibration(action);
@@ -1378,11 +1410,11 @@ impl App {
                 ))
             })
             .and_then(|materials| {
-                spektrafilm_core::params::sources::inactive_reason(
+                spektrafilm_core::params::sources::inactive_reason_with_materials(
                     path,
                     &self.params,
-                    &materials.film,
-                    &materials.print,
+                    Some(&materials.film),
+                    materials.print.as_deref(),
                 )
             });
         if let Some(reason) = &inactive {
@@ -1434,29 +1466,54 @@ impl App {
             self.params.io.input_cctf_decoding,
         );
         let cache_id = egui::Id::new("inspector-material-context");
-        let cache_current = ui
+        let route = self.params.workflow.route_enum();
+        let need_print = route.executes_print_exposure(&self.params.taps)
+            || route.executes_print_development(&self.params.taps)
+            || route.executes_print_readout(&self.params.taps);
+        let cached = ui
             .ctx()
-            .data(|data| data.get_temp::<Arc<InspectorMaterials>>(cache_id))
-            .is_some_and(|materials| {
-                materials.film_name == self.film_name && materials.print_name == self.print_name
-            });
-        if !cache_current
-            && let (Ok(film), Ok(print)) = (
-                profile::load_profile_by_name(&self.data_dir, &self.film_name),
-                profile::load_profile_by_name(&self.data_dir, &self.print_name),
-            )
-        {
-            ui.ctx().data_mut(|data| {
-                data.insert_temp(
-                    cache_id,
-                    Arc::new(InspectorMaterials {
-                        film_name: self.film_name.clone(),
-                        print_name: self.print_name.clone(),
-                        film,
-                        print,
-                    }),
-                )
-            });
+            .data(|data| data.get_temp::<Arc<InspectorMaterials>>(cache_id));
+        let cache_current = cached.as_ref().is_some_and(|materials| {
+            materials.film_name == self.film_name
+                && materials.print_name == self.print_name
+                && (!need_print || materials.print.is_some())
+        });
+        if !cache_current {
+            let film = cached
+                .as_ref()
+                .filter(|materials| materials.film_name == self.film_name)
+                .map(|materials| Arc::clone(&materials.film))
+                .or_else(|| {
+                    profile::load_profile_by_name(&self.data_dir, &self.film_name)
+                        .ok()
+                        .map(Arc::new)
+                });
+            let print = if need_print {
+                cached
+                    .as_ref()
+                    .filter(|materials| materials.print_name == self.print_name)
+                    .and_then(|materials| materials.print.as_ref().map(Arc::clone))
+                    .or_else(|| {
+                        profile::load_profile_by_name(&self.data_dir, &self.print_name)
+                            .ok()
+                            .map(Arc::new)
+                    })
+            } else {
+                None
+            };
+            if let Some(film) = film {
+                ui.ctx().data_mut(|data| {
+                    data.insert_temp(
+                        cache_id,
+                        Arc::new(InspectorMaterials {
+                            film_name: self.film_name.clone(),
+                            print_name: self.print_name.clone(),
+                            film,
+                            print,
+                        }),
+                    )
+                });
+            }
         }
         for &(stage, sections) in controls::STAGE_LAYOUT {
             let reveal_stage = self.pending_stage == Some(stage);
@@ -1786,6 +1843,7 @@ impl App {
     }
 
     fn settings_parameter_controls(&mut self, ui: &mut egui::Ui, section: &str) {
+        let scanned_medium_positive = self.scanned_medium_positive();
         let cache = self.section_labels.entry(section.to_owned()).or_default();
         let changes = controls::show(
             ui,
@@ -1793,6 +1851,7 @@ impl App {
             &mut self.gui_state.sections,
             section,
             self.film_medium,
+            scanned_medium_positive,
             "",
             cache,
             &self.film_reference_illuminant,
@@ -2299,6 +2358,13 @@ impl eframe::App for App {
         if controls::release_operator_compare(ctx) {
             self.set_operator_compare(false);
         }
+        if controls::release_finishing_compare(ctx) {
+            self.set_finishing_compare(false);
+        }
+        if self.finishing_compare {
+            // A route or stock change may make an already-held comparison inapplicable.
+            self.set_finishing_compare(true);
+        }
         // First-paint hook: tag the wgpu Metal layer's colorspace as sRGB.
         // Has to happen here (not in `App::new`) because the CAMetalLayer
         // isn't wired up at construction time.
@@ -2532,7 +2598,10 @@ impl eframe::App for App {
             });
         self.persist_browser_state(false);
         self.persist_analysis_preferences(false);
-        if self.browser_state_changed_at.is_some() || self.analysis_preferences_changed_at.is_some()
+        self.persist_clipping_preferences(false);
+        if self.browser_state_changed_at.is_some()
+            || self.analysis_preferences_changed_at.is_some()
+            || self.clipping_preferences_changed_at.is_some()
         {
             ctx.request_repaint_after(Duration::from_millis(300));
         }
@@ -2547,43 +2616,7 @@ impl eframe::App for App {
         egui::CentralPanel::default()
             .frame(egui::Frame::NONE)
             .show(ctx, |ui| {
-                if self.analysis.visible {
-                    egui::TopBottomPanel::bottom("image-analysis-workspace")
-                        .exact_height(
-                            self.analysis
-                                .preferences
-                                .height
-                                .clamp(100.0, 400.0)
-                                .min((ui.available_height() * 0.4).max(120.0))
-                                + 72.0,
-                        )
-                        .frame(egui::Frame::NONE.fill(theme::SURFACE))
-                        .show_inside(ui, |ui| self.show_image_analysis(ui));
-                }
-                egui::TopBottomPanel::bottom("viewer-footer")
-                    .exact_height(theme::HEIGHT_VIEWER_FOOTER)
-                    .frame(
-                        egui::Frame::NONE
-                            .fill(theme::SURFACE)
-                            .inner_margin(egui::Margin::symmetric(theme::SPACE_3 as i8, 9)),
-                    )
-                    .show_inside(ui, |ui| {
-                        self.viewer.footer_controls(ui, &mut self.analysis.visible)
-                    });
-                if !self.analysis.visible
-                    && (self.analysis.identity.is_some()
-                        || self.viewer.analysis.enabled
-                        || self.viewer.analysis.armed)
-                {
-                    self.viewer.analysis.enabled = false;
-                    self.viewer.analysis.selection = None;
-                    self.viewer.analysis.band = None;
-                    self.viewer.analysis.sample = None;
-                    self.viewer.cancel_analysis_selection();
-                    self.analysis.clear();
-                }
-                // Reserve the strip before the canvas and populate it after the
-                // viewer accepts composition and transition work for this frame.
+                // Reserve both fixed strips before allocating any of the shelf.
                 let status_rect = egui::TopBottomPanel::top("viewer-status")
                     .exact_height(theme::HEIGHT_VIEWER_STATUS)
                     .frame(
@@ -2593,9 +2626,199 @@ impl eframe::App for App {
                     )
                     .show_inside(ui, |ui| ui.available_rect_before_wrap())
                     .inner;
+                let available = (ui.available_height() - theme::HEIGHT_VIEWER_FOOTER).max(0.0);
+                let capacity = (available - theme::HEIGHT_PHOTOGRAPH_MIN)
+                    .clamp(0.0, theme::HEIGHT_ANALYSIS_MAX);
+                let space_available = capacity >= theme::HEIGHT_ANALYSIS_MIN;
+                self.viewer.clipping_suspended = self.operator_compare
+                    || self.finishing_compare
+                    || self.displayed_comparison.is_some();
+                let clipping_source_available = match self.viewer.settings.layer {
+                    crate::display::ViewLayer::Input => self.oriented_input.is_some(),
+                    crate::display::ViewLayer::Output => {
+                        self.output_image.is_some() || self.output_retained.is_some()
+                    }
+                    crate::display::ViewLayer::PaperBack => false,
+                };
+                let clipping_modal_open = self.settings_open
+                    || self.export_dialog.is_open()
+                    || self.factory_reset_confirm
+                    || self.stale_save_confirmation
+                    || self.photograph_confirmation_open();
+                let footer_id = egui::TopBottomPanel::bottom("viewer-footer")
+                    .exact_height(theme::HEIGHT_VIEWER_FOOTER)
+                    .frame(
+                        egui::Frame::NONE
+                            .fill(theme::SURFACE)
+                            .inner_margin(egui::Margin::symmetric(theme::SPACE_3 as i8, 9)),
+                    )
+                    .show_inside(ui, |ui| {
+                        self.viewer.footer_controls(
+                            ui,
+                            &mut self.analysis.visible,
+                            space_available,
+                            clipping_source_available,
+                            clipping_modal_open,
+                        )
+                    })
+                    .inner;
+
+                // Identify only controls removed with the shelf, not inspector focus.
+                let shelf_rect_id = egui::Id::new("analysis-shelf-previous-rect");
+                let viewer_controls_id = egui::Id::new("analysis-viewer-controls-previous-rect");
+                let focused_removed_control = |ctx: &egui::Context| {
+                    let focused = ctx.memory(|memory| memory.focused());
+                    let rect = focused.and_then(|id| ctx.read_response(id)).map(|r| r.rect);
+                    let (shelf, viewer_controls) = ctx.data(|data| {
+                        (
+                            data.get_temp::<egui::Rect>(shelf_rect_id),
+                            data.get_temp::<egui::Rect>(viewer_controls_id),
+                        )
+                    });
+                    rect.is_some_and(|rect| {
+                        shelf.is_some_and(|area| area.contains_rect(rect))
+                            || viewer_controls.is_some_and(|area| area.contains_rect(rect))
+                    })
+                };
+                let expanded = self.analysis.visible && space_available;
+                if self.analysis.expanded && !expanded {
+                    if focused_removed_control(ctx) {
+                        ctx.memory_mut(|memory| memory.request_focus(footer_id));
+                    }
+                    self.suspend_image_analysis();
+                }
+                self.analysis.expanded = expanded;
+                if expanded {
+                    let height = self
+                        .analysis
+                        .preferences
+                        .shelf_height
+                        .clamp(theme::HEIGHT_ANALYSIS_MIN, theme::HEIGHT_ANALYSIS_MAX)
+                        .min(capacity);
+                    let shelf = egui::TopBottomPanel::bottom("image-analysis-workspace")
+                        .exact_height(height)
+                        .show_separator_line(false)
+                        .frame(egui::Frame::NONE.fill(theme::SURFACE))
+                        .show_inside(ui, |ui| {
+                            let (rect, _) = ui.allocate_exact_size(
+                                egui::vec2(ui.available_width(), 6.0),
+                                egui::Sense::hover(),
+                            );
+                            let divider = ui
+                                .interact(
+                                    rect,
+                                    egui::Id::new("analysis-shelf-divider"),
+                                    egui::Sense::click_and_drag(),
+                                )
+                                .on_hover_cursor(egui::CursorIcon::ResizeVertical);
+                            let label = crate::i18n::text(ui.ctx(), "surfaces.analysis.resize");
+                            divider.widget_info(|| {
+                                egui::WidgetInfo::labeled(
+                                    egui::WidgetType::Button,
+                                    true,
+                                    label.as_ref(),
+                                )
+                            });
+                            ui.painter().hline(
+                                rect.x_range(),
+                                rect.center().y,
+                                theme::stroke(theme::FG_MUTED),
+                            );
+                            crate::controls::focus_feedback(ui, &divider);
+                            if divider.clicked() || divider.drag_started() {
+                                divider.request_focus();
+                            }
+                            let drag_id = divider.id.with("height-at-press");
+                            if divider.drag_started()
+                                && let Some(origin) = ui.input(|input| input.pointer.press_origin())
+                            {
+                                ctx.data_mut(|data| {
+                                    data.insert_temp(
+                                        drag_id,
+                                        (self.analysis.preferences.shelf_height, height, origin.y),
+                                    )
+                                });
+                            }
+                            if (divider.dragged() || divider.drag_stopped())
+                                && let Some(position) = divider.interact_pointer_pos()
+                                && let Some((requested, displayed, origin)) =
+                                    ctx.data(|data| data.get_temp::<(f32, f32, f32)>(drag_id))
+                            {
+                                let delta = origin - position.y;
+                                let resized = displayed + delta;
+                                self.analysis.preferences.shelf_height = if delta >= 0.0 {
+                                    requested.max(resized)
+                                } else {
+                                    resized
+                                }
+                                .clamp(theme::HEIGHT_ANALYSIS_MIN, theme::HEIGHT_ANALYSIS_MAX);
+                                ctx.request_repaint();
+                            }
+                            if divider.drag_stopped() {
+                                ctx.data_mut(|data| data.remove::<(f32, f32, f32)>(drag_id));
+                            }
+                            if divider.has_focus() {
+                                ui.memory_mut(|memory| {
+                                    memory.set_focus_lock_filter(
+                                        divider.id,
+                                        egui::EventFilter {
+                                            vertical_arrows: true,
+                                            ..Default::default()
+                                        },
+                                    )
+                                });
+                                let (up, down, reset) = ui.input(|input| {
+                                    (
+                                        input.key_pressed(egui::Key::ArrowUp),
+                                        input.key_pressed(egui::Key::ArrowDown),
+                                        input.key_pressed(egui::Key::Home),
+                                    )
+                                });
+                                let delta = (up as i32 - down as i32) as f32 * 8.0;
+                                if delta != 0.0 {
+                                    let resized = height + delta;
+                                    self.analysis.preferences.shelf_height = if delta > 0.0 {
+                                        self.analysis.preferences.shelf_height.max(resized)
+                                    } else {
+                                        resized
+                                    }
+                                    .clamp(theme::HEIGHT_ANALYSIS_MIN, theme::HEIGHT_ANALYSIS_MAX);
+                                    ctx.request_repaint();
+                                }
+                                if reset {
+                                    self.analysis.preferences.shelf_height =
+                                        theme::HEIGHT_ANALYSIS_DEFAULT;
+                                    ctx.request_repaint();
+                                }
+                            }
+                            if divider.double_clicked() {
+                                self.analysis.preferences.shelf_height =
+                                    theme::HEIGHT_ANALYSIS_DEFAULT;
+                                ctx.request_repaint();
+                            }
+                            self.show_image_analysis(ui);
+                        });
+                    ctx.data_mut(|data| data.insert_temp(shelf_rect_id, shelf.response.rect));
+                    if !self.analysis.visible {
+                        if focused_removed_control(ctx) {
+                            ctx.memory_mut(|memory| memory.request_focus(footer_id));
+                        }
+                        self.analysis.expanded = false;
+                        self.suspend_image_analysis();
+                        ctx.request_repaint();
+                    }
+                }
+                let viewer_rect = ui.available_rect_before_wrap();
+                let viewer_controls_rect = egui::Rect::from_min_size(
+                    viewer_rect.min + egui::Vec2::splat(theme::SPACE_2),
+                    egui::vec2(viewer_rect.width().max(1.0), theme::HEIGHT_CONTROL * 2.0),
+                );
+                ctx.data_mut(|data| data.insert_temp(viewer_controls_id, viewer_controls_rect));
+                // Populate status after the viewer accepts composition and transition work.
+
                 self.viewer
                     .set_display_max_size(self.params.settings.preview_max_size);
-                let displayed_output = self.operator_comparison.as_ref().map_or_else(
+                let displayed_output = self.displayed_comparison.as_ref().map_or_else(
                     || self.output_image.clone(),
                     |comparison| comparison.image.host_image().cloned(),
                 );
@@ -2665,6 +2888,7 @@ impl eframe::App for App {
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
         self.persist_browser_state(true);
         self.persist_analysis_preferences(true);
+        self.persist_clipping_preferences(true);
         self.cancel_pending_saves();
         if let Some(mut job) = self.export_job.take() {
             job.cancel.store(true, Ordering::SeqCst);

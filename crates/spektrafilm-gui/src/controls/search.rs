@@ -207,6 +207,28 @@ mod tests {
     }
 
     #[test]
+    fn finishing_discovery_finds_inactive_modified_controls_in_both_languages() {
+        let (mut params, extras) = factory();
+        params.workflow.route = "input".into();
+        params.finishing.brightness = 0.25;
+        params.finishing.expand.black = -0.1;
+        for (query, path) in [
+            ("亮度", "finishing.brightness"),
+            ("finishing.expand.black", "finishing.expand.black"),
+            ("黑色参考点", "finishing.expand.black"),
+        ] {
+            let found = build_filtered(query, &params, &extras, true);
+            assert!(
+                found.iter().any(|result| result.section == "Finishing"
+                    && result.owner == ControlOwner::Stage(Stage::Output)
+                    && result.paths.iter().any(|candidate| candidate == path)),
+                "{query}"
+            );
+        }
+        assert!(build_filtered("finishing.saturation", &params, &extras, true).is_empty());
+    }
+
+    #[test]
     fn locators_name_the_matched_control_module_and_destination_in_each_locale() {
         let (params, extras) = factory();
         let ctx = egui::Context::default();
@@ -472,6 +494,8 @@ mod tests {
             ("action.work_list", ControlOwner::Header, "Work list"),
             ("viewer.layer.input", ControlOwner::Viewer, "Viewer"),
             ("viewer.layer.output", ControlOwner::Viewer, "Viewer"),
+            ("viewer.clipping.shadows", ControlOwner::Viewer, "Viewer"),
+            ("viewer.clipping.highlights", ControlOwner::Viewer, "Viewer"),
             ("photo_work.list.copy", ControlOwner::WorkList, "Work list"),
             (
                 "photo_work.list.copy_scope",
@@ -509,6 +533,8 @@ mod tests {
         for path in [
             "action.save_photo_record",
             "viewer.layer.input",
+            "viewer.clipping.shadows",
+            "viewer.clipping.highlights",
             "photo_work.list.add",
             "photo.queue.retry",
             "presets.discovery.favorites",
@@ -540,6 +566,8 @@ mod tests {
             "action.save_photo_record",
             "action.save_retained",
             "viewer.layer.output",
+            "viewer.clipping.shadows",
+            "viewer.clipping.highlights",
             "photo_work.list.copy",
             "photo.queue.retry",
             "presets.discovery.favorites",

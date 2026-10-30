@@ -44,6 +44,10 @@ The version-1 root MUST carry:
 
 `stages` is an array of six records in fixed order: `rgb_in`, `log_e_film`, `cmy_film`, `log_e_print`, `cmy_print`, `rgb_out`. These are the existing named taps. `rgb_pre` is outside this contract.
 
+Final RGB observations MUST record common finishing's [definition and boundary](../finishing/design.md#response-definition) in an optional root `finishing` record. Historical bundles MAY omit it; absence MUST NOT establish neutral finishing or authorize backfilling controls.
+
+Core MUST construct the record with its shared effective-configuration model from validated runtime controls. Read-only measurement consumers MUST preserve the declaration without executing or reinterpreting its controls. This metadata MUST NOT add a seventh stage, buffer, or executor-timing claim, or introduce a renderer dependency into the benchmark reader.
+
 Every record carries `id` and `availability` (`available`, `unavailable`, or `not_applicable`). An available record carries:
 
 - `path`: bundle-relative `<id>.f64` filename.

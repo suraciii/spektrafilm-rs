@@ -150,6 +150,13 @@ impl ComputeBackend for ObservedBackend<'_> {
         self.cpu();
         self.backend.cctf_decode_srgb(i)
     }
+    fn finishing(
+        &self,
+        image: &ImageBuf,
+        params: &FinishingGpuParams,
+    ) -> Result<Option<ImageBuf>, String> {
+        self.backend.finishing(image, params)
+    }
     fn gaussian_blur(&self, i: &ImageBuf, s: f32) -> Result<ImageBuf, String> {
         self.cpu();
         self.backend.gaussian_blur(i, s)
@@ -377,9 +384,11 @@ impl ComputeBackend for ObservedBackend<'_> {
         i: Option<&DeviceImage>,
         paper: Option<&DeviceImage>,
         previous: Option<&DeviceImage>,
+        native: Option<&DeviceImage>,
         p: &ViewerComposeGpuParams,
     ) -> Result<Vec<[u8; 4]>, String> {
-        self.backend.viewer_compose_retained(i, paper, previous, p)
+        self.backend
+            .viewer_compose_retained(i, paper, previous, native, p)
     }
     fn viewer_paper_retained(
         &self,

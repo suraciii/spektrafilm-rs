@@ -240,6 +240,33 @@ fn saved_record_excludes_pending_controls_and_reopens_the_accepted_endpoint() {
 }
 
 #[test]
+fn photograph_record_restores_finishing_and_its_explicit_ownership() {
+    let (mut app, directory, ctx) = app();
+    app.begin_adjustment_frame(&ctx);
+    app.params.finishing.saturation = 0.4;
+    app.params.finishing.expand.black = 0.1;
+    controls::record_edited_path(&ctx, "finishing.saturation");
+    controls::record_edited_path(&ctx, "finishing.expand.black");
+    app.end_adjustment_frame(&ctx);
+    assert!(app.photograph_has_unsaved_changes());
+    let accepted = app.params.finishing.clone();
+    let preparation = app.params.render_preparation_state();
+    let record = directory.path().join("finishing.spektra-photo.json");
+    app.save_photograph_record_to(&record).unwrap();
+    assert!(!app.photograph_has_unsaved_changes());
+    app.begin_adjustment_frame(&ctx);
+    app.params.finishing.saturation = -0.3;
+    controls::record_edited_path(&ctx, "finishing.saturation");
+    app.end_adjustment_frame(&ctx);
+    assert!(app.photograph_has_unsaved_changes());
+    app.reopen_photograph_record(&record, None).unwrap();
+    settle(&mut app, &ctx);
+    assert_eq!(app.params.finishing, accepted);
+    assert_eq!(app.params.render_preparation_state(), preparation);
+    assert!(!app.photograph_has_unsaved_changes());
+}
+
+#[test]
 fn gui_only_edits_remain_reversible_and_save_without_runtime_ownership() {
     let (mut app, directory, ctx) = app();
     let initial_special = app.gui_state.sections["special"].clone();

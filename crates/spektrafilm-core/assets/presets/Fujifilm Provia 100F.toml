@@ -1,8 +1,18 @@
-schema_version = 5
+schema_version = 7
+
 name = "Fujifilm Provia 100F"
 author = "SpektraFilm"
 description = "SpektraFilm classic stock look"
 
+[parameters.finishing]
+brightness = 0.0
+contrast = 0.0
+warmth = 0.0
+saturation = 0.0
+[parameters.finishing.expand]
+enabled = false
+black = 0.0
+white = 1.0
 [film_profile]
 stock = "fujifilm_provia_100f"
 version = "0.3.4"

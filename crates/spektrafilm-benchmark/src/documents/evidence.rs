@@ -216,6 +216,29 @@ pub fn validate_stage_bundle(bundle_dir: &Path) -> Result<StageBundle> {
             "bundle normalization_mode must be profile_prepared",
         ));
     }
+    if let Some(finishing) = root.get("finishing") {
+        let schema = super::schema_for("evidence")?;
+        let compiled = jsonschema::validator_for(&schema["properties"]["finishing"])
+            .map_err(|error| err("schema_asset", error.to_string()))?;
+        compiled.validate(finishing).map_err(|error| {
+            err(
+                "stage_evidence",
+                format!("invalid finishing declaration: {error}"),
+            )
+        })?;
+        let expand = &finishing["controls"]["expand"];
+        // Cross-field wire invariant of common_finishing_v1; JSON Schema
+        // cannot express a difference between two numeric properties.
+        if expand["white"].as_f64().expect("validated reference")
+            - expand["black"].as_f64().expect("validated reference")
+            < 1.0 / 1024.0
+        {
+            return Err(err(
+                "stage_evidence",
+                "finishing Expand reference span must be at least 1/1024",
+            ));
+        }
+    }
     let errors = root["errors"]
         .as_array()
         .filter(|rows| {
@@ -596,6 +619,10 @@ pub fn validate_stage_bundle(bundle_dir: &Path) -> Result<StageBundle> {
             ]
             .into_iter()
             .map(|key| (key.to_owned(), root[key].clone()))
+            .chain(
+                root.get("finishing")
+                    .map(|value| ("finishing".to_owned(), value.clone())),
+            )
             .collect(),
         ),
         buffers,

@@ -29,6 +29,7 @@ mod app;
 mod backend;
 mod calibration;
 mod chooser;
+mod clipping_preferences;
 mod controls;
 mod diagnostics;
 mod display;
@@ -224,6 +225,25 @@ mod telemetry_lifecycle_tests {
             ),
         )));
         app
+    }
+
+    #[test]
+    fn finishing_uses_the_scanned_stock_not_the_upstream_film() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut app = scanner_app(directory.path());
+        assert!(!app.scanned_medium_positive());
+        app.set_finishing_compare(true);
+        assert!(!app.finishing_compare);
+
+        app.params.workflow.route = "input > film > print > scan".into();
+        assert!(!app.scanned_medium_positive());
+        app.params.io.scan_film = false;
+        assert!(app.scanned_medium_positive());
+        app.set_finishing_compare(true);
+        assert!(app.finishing_compare);
+        app.params.workflow.route = "input".into();
+        app.set_finishing_compare(true);
+        assert!(!app.finishing_compare);
     }
 
     #[test]

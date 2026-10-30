@@ -222,6 +222,7 @@ pub struct StageCapture {
     exposure_source: Option<ExposureSource>,
     compensation_applied: Option<f64>,
     terminal_cmyk: Option<TerminalCmyk>,
+    finishing: Option<crate::telemetry::FinishingConfiguration>,
     errors: Vec<String>,
 }
 
@@ -250,6 +251,7 @@ impl StageCapture {
             exposure_source: None,
             compensation_applied: None,
             terminal_cmyk: None,
+            finishing: None,
             errors: Vec::new(),
         }
     }
@@ -287,6 +289,7 @@ impl StageCapture {
         self.exposure_source = None;
         self.compensation_applied = None;
         self.terminal_cmyk = None;
+        self.finishing = None;
         self.errors.clear();
         if let Some(id) = StageId::of_tap(inject) {
             let space = match inject {
@@ -377,6 +380,17 @@ impl StageCapture {
             output_cctf_encoding: params.io.output_cctf_encoding,
             reason,
         });
+    }
+
+    pub(crate) fn record_finishing_params(
+        &mut self,
+        params: &RuntimeParams,
+        medium_is_positive: bool,
+    ) {
+        self.finishing = Some(crate::telemetry::FinishingConfiguration::from_params(
+            params,
+            medium_is_positive,
+        ));
     }
 
     /// Write the terminal manifest atomically and report whether the bundle
@@ -548,6 +562,7 @@ impl StageCapture {
                     reason: "not_recorded_on_route".to_string(),
                 },
             },
+            finishing: self.finishing.clone(),
             stages,
             errors,
         }
@@ -656,6 +671,8 @@ struct Manifest {
     exposure: ExposureRecord,
     print_normalization: PrintNormalizationRecord,
     terminal_cmyk: TerminalCmykRecord,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    finishing: Option<crate::telemetry::FinishingConfiguration>,
     stages: Vec<StageRecord>,
     errors: Vec<String>,
 }

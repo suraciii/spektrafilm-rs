@@ -12,6 +12,85 @@ fn provenance() -> Provenance {
 }
 
 #[test]
+fn finishing_look_migration_and_sparse_sections_preserve_ownership() {
+    let look = builtin_presets().remove(0);
+    let mut legacy = serde_json::to_value(&look).unwrap();
+    legacy["schema_version"] = 6.into();
+    legacy["parameters"]
+        .as_object_mut()
+        .unwrap()
+        .remove("finishing");
+    // Scanner corrections remain in their own coordinates, never translated.
+    let operator = legacy["parameters"]["scanner"]["operator"].clone();
+    let migrated = Preset::from_json_str(&legacy.to_string()).unwrap();
+    assert_eq!(
+        migrated.look_parameters().unwrap().finishing,
+        FinishingParams::default()
+    );
+    assert_eq!(
+        serde_json::to_value(&migrated).unwrap()["parameters"]["scanner"]["operator"],
+        operator
+    );
+    let mut current = RuntimeParams::default();
+    current.finishing.brightness = 0.4;
+    migrated.look_parameters().unwrap().apply_to(&mut current);
+    assert!(current.finishing.is_neutral());
+
+    let sparse = serde_json::json!({"schema_version":6,"name":"Sparse", "parameters":{"scanner":{"lens_blur":0.2}}, "provenance":provenance()});
+    let section = Preset::from_json_str(&sparse.to_string()).unwrap();
+    assert!(
+        serde_json::to_value(&section).unwrap()["parameters"]
+            .get("finishing")
+            .is_none()
+    );
+    current.finishing.brightness = 0.4;
+    let applied = section.apply_section(&current, &test_film()).unwrap();
+    assert_eq!(applied.finishing, current.finishing);
+    let finishing =
+        Preset::capture_section("Finish", Section::Finishing, &current, provenance()).unwrap();
+    let mut other = current.clone();
+    other.finishing.brightness = -0.2;
+    assert!(!section_matches(&finishing, &other).unwrap());
+    let restored = finishing.apply_section(&other, &test_film()).unwrap();
+    assert_eq!(restored.finishing, current.finishing);
+    assert!(section_matches(&finishing, &restored).unwrap());
+}
+
+#[test]
+fn finishing_documents_reject_partial_null_unknown_and_invalid_ranges() {
+    let mut document = serde_json::to_value(builtin_presets().remove(0)).unwrap();
+    let complete = document["parameters"]["finishing"].clone();
+    for invalid in [
+        serde_json::json!({"brightness":0.0}),
+        serde_json::json!({"brightness":0.0,"contrast":0.0,"warmth":0.0,"saturation":0.0,"expand":null}),
+        serde_json::json!({"brightness":0.0,"contrast":0.0,"warmth":0.0,"saturation":0.0,"expand":{"enabled":false,"black":0.0,"white":1.0,"extra":0}}),
+        serde_json::json!({"brightness":1.01,"contrast":0.0,"warmth":0.0,"saturation":0.0,"expand":{"enabled":false,"black":0.0,"white":1.0}}),
+        serde_json::json!({"brightness":0.0,"contrast":0.0,"warmth":0.0,"saturation":0.0,"expand":{"enabled":false,"black":0.5,"white":0.5}}),
+    ] {
+        document["parameters"]["finishing"] = invalid;
+        assert!(Preset::from_json_str(&document.to_string()).is_err());
+    }
+    document["parameters"]["finishing"] = complete;
+    assert!(Preset::from_json_str(&document.to_string()).is_ok());
+}
+
+#[test]
+fn sparse_finishing_endpoint_is_checked_against_the_destination() {
+    let document = serde_json::json!({"schema_version":PRESET_SCHEMA_VERSION,"name":"Black reference",
+        "parameters":{"finishing":{"expand":{"black":1.1}}},"provenance":provenance()});
+    let preset = Preset::from_json_str(&document.to_string()).unwrap();
+    let mut current = RuntimeParams::default();
+    let before = current.clone();
+    assert!(preset.apply_section(&current, &test_film()).is_err());
+    assert_eq!(current, before);
+    current.finishing.expand.white = 1.2;
+    let applied = preset.apply_section(&current, &test_film()).unwrap();
+    assert_eq!(applied.finishing.expand.black, 1.1);
+    assert_eq!(applied.finishing.expand.white, 1.2);
+    assert!(!applied.finishing.expand.enabled);
+}
+
+#[test]
 fn scanner_preset_import_rejects_removed_mode_and_preserves_canonical_or_omitted_output() {
     let mut current = RuntimeParams::default();
     current.workflow.route = "input > film > scan".into();
@@ -169,6 +248,10 @@ fn version_three_looks_map_the_exposure_pair_and_reject_retired_scanner_spelling
         let preset = builtin_presets().remove(0);
         let mut document = serde_json::to_value(preset).unwrap();
         document["schema_version"] = 3.into();
+        document["parameters"]
+            .as_object_mut()
+            .unwrap()
+            .remove("finishing");
         // Strip the canonical spelling before injecting the legacy one; a
         // real v3 document predates both.
         document["parameters"]["enlarger"]
@@ -201,6 +284,10 @@ fn version_three_looks_map_the_exposure_pair_and_reject_retired_scanner_spelling
     let preset = builtin_presets().remove(0);
     let mut document = serde_json::to_value(preset).unwrap();
     document["schema_version"] = 3.into();
+    document["parameters"]
+        .as_object_mut()
+        .unwrap()
+        .remove("finishing");
     document["parameters"]["scanner"]["positive_density_ev"] = 0.5.into();
     assert!(Preset::from_json_str(&document.to_string()).is_err());
     // A single enlarger section cannot carry the tracking setting, so a
@@ -226,6 +313,7 @@ fn legacy_whole_looks_gain_full_mix_and_preserve_caller_io() {
         let parameters = document["parameters"].as_object_mut().unwrap();
         parameters.remove("output_mix");
         parameters.remove("camera");
+        parameters.remove("finishing");
         let migrated = Preset::from_json_str(&document.to_string()).unwrap();
         assert_eq!(migrated.schema_version, PRESET_SCHEMA_VERSION);
         assert_eq!(migrated.look_parameters().unwrap().output_mix.amount, 1.0);
@@ -882,7 +970,7 @@ fn legacy_cmyk_look(version: u32, parameters: serde_json::Map<String, Value>) ->
     object.insert("schema_version".into(), version.into());
     let mut look = serde_json::Map::new();
     for (key, value) in object["parameters"].as_object().unwrap() {
-        if !matches!(key.as_str(), "cmyk" | "settings") {
+        if !matches!(key.as_str(), "cmyk" | "settings" | "finishing") {
             look.insert(key.clone(), value.clone());
         }
     }
@@ -1040,6 +1128,10 @@ fn migrated_legacy_ink_style_migration_is_idempotent_at_the_preset_boundary() {
     // Replaying the migrated document as schema 4 must be a no-op.
     let mut replayed = exported.clone();
     replayed["schema_version"] = 4.into();
+    replayed["parameters"]
+        .as_object_mut()
+        .unwrap()
+        .remove("finishing");
     let again = Preset::from_json_str(&replayed.to_string()).unwrap();
     assert_eq!(serde_json::to_value(&again).unwrap(), exported);
 }
@@ -1151,6 +1243,10 @@ fn scanner_cutover_migrates_legacy_lamp_and_canonicalizes_sparse_style_without_f
     let base = builtin_presets().remove(0);
     let mut old = serde_json::to_value(base).unwrap();
     old["schema_version"] = 5.into();
+    old["parameters"]
+        .as_object_mut()
+        .unwrap()
+        .remove("finishing");
     old["parameters"]["scanner"]["lamp"] = "D65".into();
     old["parameters"]["film_render"]["convert"]
         .as_object_mut()

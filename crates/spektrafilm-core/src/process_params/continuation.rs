@@ -232,19 +232,35 @@ pub fn resolve_continuation(
         ParameterEdits::single("scanner.scan_output", Value::String(value.into()))?
             .apply(&mut params)?;
     }
-    validate_finite(&params)?;
     params.validate()?;
     crate::stage_execution::validate_continuation(header, &params)?;
     let effective = serde_json::to_value(&params).map_err(|e| e.to_string())?;
+    let feedback_print = print
+        .as_ref()
+        .or_else(|| retained_print.map(|p| &p.profile));
     let edits = winning
         .into_iter()
-        .map(|(path, (requested, source))| EditFeedback {
-            effective: lookup(&effective, &path).cloned().unwrap_or(Value::Null),
-            path,
-            requested,
-            source,
-            status: EditStatus::Active,
-            reason: None,
+        .map(|(path, (requested, source))| {
+            let effective = lookup(&effective, &path).cloned().unwrap_or(Value::Null);
+            let override_option = (path == "scanner.scan_output" && request.scan_output.is_some())
+                .then_some("--scan-output");
+            let (status, reason) = classify_edit(
+                &path,
+                &requested,
+                &effective,
+                override_option,
+                &params,
+                Some(&header.film.profile),
+                feedback_print,
+            );
+            EditFeedback {
+                path,
+                requested,
+                effective,
+                source,
+                status,
+                reason,
+            }
         })
         .collect();
     Ok(ResolvedContinuation {

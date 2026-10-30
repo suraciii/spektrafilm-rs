@@ -694,6 +694,29 @@ mod tests {
     }
 
     #[test]
+    fn finishing_edits_undo_and_redo_values_and_explicit_ownership() {
+        let (mut app, _directory, ctx) = app();
+        let original = app.params.finishing.clone();
+        let ownership = app.params.render_preparation_state();
+        app.begin_adjustment_frame(&ctx);
+        app.params.finishing.expand.black = 0.1;
+        app.params.finishing.warmth = 0.4;
+        controls::record_edited_path(&ctx, "finishing.expand.black");
+        controls::record_edited_path(&ctx, "finishing.warmth");
+        app.end_adjustment_frame(&ctx);
+        let accepted = app.params.clone();
+        assert!(app.undo_adjustment());
+        assert_eq!(app.params.finishing, original);
+        assert_eq!(app.params.render_preparation_state(), ownership);
+        assert!(app.redo_adjustment());
+        assert_eq!(app.params.finishing, accepted.finishing);
+        assert_eq!(
+            app.params.render_preparation_state(),
+            accepted.render_preparation_state()
+        );
+    }
+
+    #[test]
     fn undo_restores_explicit_ownership_and_redo_replays_the_captured_successor() {
         let (mut app, _directory, ctx) = app();
         let original = app.params.camera.exposure_compensation_ev;

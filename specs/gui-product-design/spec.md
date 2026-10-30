@@ -6,7 +6,7 @@ This specification defines the photo-first desktop workspace and its user flows.
 
 [GUI product language](../gui-language/spec.md) owns labels and help. [The product design](design.md) defines the boundaries that implement these contracts.
 
-The GUI MUST reduce navigation and editing effort without removing supported controls. It MUST NOT replace independent parameters with a generic effect-strength slider. Folding a module MUST change its presentation only.
+The GUI MUST reduce navigation and editing effort without removing supported photographic controls. It MUST NOT replace independent parameters with a generic effect-strength slider. Folding a module MUST change its presentation only.
 
 This target replaces the MAIN, FILM, PRINT, ADVANCED, and CONFIG page navigation with a stage inspector and separate application settings. It does not change the film pipeline, canonical parameter paths, preset schemas, validation, or Save and Export pixel semantics.
 
@@ -30,6 +30,10 @@ flowchart LR
 [Photograph work](photo-work/spec.md) owns Original/Modified inspection, adjustment records, and multi-photograph work.
 
 [Image analysis](image-analysis/spec.md) owns tone and color inspection, subject comparison, and analysis regions.
+
+[Black and white endpoint warnings](clipping-warnings/spec.md) own native endpoint overlays and temporary isolated inspection in the viewer.
+
+[Common finishing](../finishing/spec.md) owns the shared positive-image adjustments. Its inspector placement follows [stage and surface ownership](../gui-workflow/spec.md#stage-and-surface-ownership).
 
 These are target capabilities, not a statement of implementation. Delivery schedules and research candidates are not product contracts.
 

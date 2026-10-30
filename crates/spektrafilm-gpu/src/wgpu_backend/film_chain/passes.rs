@@ -65,6 +65,7 @@ enum ChainStep {
     Scan,
     ScannerBlur,
     Glare,
+    Finishing,
     Gamut,
     Unsharp,
     ProceduralGrain,
@@ -132,6 +133,7 @@ impl ChainStep {
             Self::Gamut => GpuStage::Gamut,
             Self::Unsharp => GpuStage::Unsharp,
             Self::ProceduralGrain => GpuStage::GrainProcedural,
+            Self::Finishing => GpuStage::Output,
             Self::Transfer | Self::Cmyk => GpuStage::Output,
         }
     }
@@ -161,6 +163,7 @@ impl ChainStep {
             Self::Scan => "scan_spectral",
             Self::ScannerBlur => "scanner_lens_blur",
             Self::Glare => "glare",
+            Self::Finishing => "finishing",
             Self::Gamut => "output_gamut",
             Self::Unsharp => "unsharp_mask",
             Self::ProceduralGrain => "grain_procedural",
@@ -246,6 +249,9 @@ fn chain_steps(p: &spektrafilm_backend::FilmChainParams<'_>) -> Result<Vec<Chain
     }
     if p.glare.is_some() {
         steps.push(Glare);
+    }
+    if p.finishing.is_some() {
+        steps.push(Finishing);
     }
     if p.gamut.is_some() {
         steps.push(Gamut);
@@ -1105,6 +1111,13 @@ impl WgpuBackend {
                             backend,
                         )?
                         .submit(backend),
+                        Finishing => backend
+                            .chain_finishing(
+                                &rasters.tail_b,
+                                geometry.tail.0 * geometry.tail.1,
+                                p.finishing.as_ref().ok_or("finishing missing")?,
+                            )?
+                            .submit(backend),
                         Gamut => build_gamut_state(
                             &backend.device,
                             p.gamut.as_ref().ok_or("gamut missing")?,
@@ -1450,6 +1463,7 @@ mod tests {
             halation: None,
             dir_couplers: None,
             glare: None,
+            finishing: None,
             gamut: None,
             unsharp: None,
             grain_procedural: None,
@@ -1968,6 +1982,212 @@ mod tests {
         }));
         let error = backend.run_film_chain_retained(&exposure, &p).unwrap_err();
         assert!(error.contains("CPU image-stage fence"), "{error}");
+    }
+
+    #[test]
+    fn finishing_runs_on_completed_scan_and_not_material_taps() {
+        use spektrafilm_backend::FinishingGpuParams;
+
+        let gpu = crate::test_support::explicit_adapter();
+        let identity = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
+        let swap = [[0.0, 1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]];
+        let dyes: Vec<[f64; 3]> = (0..81)
+            .map(|i| {
+                let x = i as f64 / 80.0;
+                [0.1 + x, 0.2 + (x - 0.5).abs(), 1.1 - x]
+            })
+            .collect();
+        let base = vec![0.08; 81];
+        let lamp = vec![1.0; 81];
+        let norm: f64 = lamp
+            .iter()
+            .zip(spektrafilm_math::spectral::CMF_Y_F64.iter())
+            .map(|(a, b)| a * b)
+            .sum();
+        let rgb = [[-1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 2.0]];
+        let cat = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
+        let host = ImageBuf::from_data(
+            3,
+            1,
+            f32_to_scalars(vec![0.0, 0.0, 0.0, 0.2, 0.5, 1.0, 1.5, 0.3, 0.7]),
+        );
+        let source = gpu
+            .retain_image(
+                &host,
+                &RetainedImageMeta {
+                    width: 3,
+                    height: 1,
+                    domain: SampleDomain::Density,
+                    precision: Precision::host(),
+                    space: &colorspace::SRGB,
+                    pixel_pitch_um: None,
+                },
+            )
+            .unwrap();
+        let mut p = params(3, 1);
+        p.inject = Tap::CmyFilm;
+        p.scan_film = true;
+        p.film_channel_density = &dyes;
+        p.film_base_density = &base;
+        p.scan_illuminant = &lamp;
+        p.scan_normalization = norm;
+        p.scan_cat = &cat;
+        p.scan_base_xyz_to_rgb = &rgb;
+        let scan = gpu
+            .run_film_chain_retained(&source, &p)
+            .unwrap()
+            .to_host(gpu.backend())
+            .unwrap();
+        let mut finish = FinishingGpuParams {
+            tone: [0.04, -0.05, 0.006, 0.2],
+            color: [0.15, 0.6, 0.8, 0.0],
+            expand_enabled: false,
+            black: -0.1,
+            inverse_span: 1.25,
+            to_srgb: swap,
+            from_srgb: swap,
+            rgb_to_lms: identity,
+            lms_to_lab: identity,
+            lab_to_lms: identity,
+            lms_to_rgb: identity,
+        };
+        let window = |l: f64| {
+            if l > 0.0 && l < 1.0 {
+                16.0 * l * l * (1.0 - l) * (1.0 - l)
+            } else {
+                0.0
+            }
+        };
+        p.finishing = Some(finish);
+        let result = gpu
+            .run_film_chain_retained(&source, &p)
+            .unwrap()
+            .to_host(gpu.backend())
+            .unwrap();
+        for (input, actual) in scan
+            .data
+            .as_chunks::<3>()
+            .0
+            .iter()
+            .zip(result.data.as_chunks::<3>().0)
+        {
+            let mut l = (input[1] as f64).cbrt();
+            let mut a = (input[0] as f64).cbrt();
+            let mut b = (input[2] as f64).cbrt();
+            l += -0.05 * (2.0 * l - 1.0) * window(l);
+            l += 0.04 * window(l);
+            let warm = 0.006 * window(l) / (1.0 + (a.hypot(b) / 0.15).powi(2));
+            a += warm * 0.6;
+            b += warm * 0.8;
+            let saturation = (0.2 / (1.0 + (a.hypot(b) / 0.15).powi(2))).exp();
+            let expected = [
+                (a * saturation).powi(3),
+                l.powi(3),
+                (b * saturation).powi(3),
+            ];
+            for (got, want) in actual.iter().zip(expected) {
+                assert!((*got as f64 - want).abs() < 3e-5, "{got} != {want}");
+            }
+        }
+        assert!(scan.data.iter().any(|&v| v < 0.0));
+        finish.tone = [0.0; 4];
+        finish.expand_enabled = true;
+        p.finishing = Some(finish);
+        let expanded = gpu
+            .run_film_chain_retained(&source, &p)
+            .unwrap()
+            .to_host(gpu.backend())
+            .unwrap();
+        for (input, actual) in scan.data.iter().zip(expanded.data.iter()) {
+            let x = *input as f64;
+            let encoded = x.signum()
+                * if x.abs() <= 0.0031308 {
+                    12.92 * x.abs()
+                } else {
+                    1.055 * x.abs().powf(1.0 / 2.4) - 0.055
+                };
+            let mapped = ((encoded + 0.1) * 1.25).clamp(0.0, 1.0);
+            let expected = if mapped <= 0.04045 {
+                mapped / 12.92
+            } else {
+                ((mapped + 0.055) / 1.055).powf(2.4)
+            };
+            assert!((*actual as f64 - expected).abs() < 3e-5);
+        }
+        p.collect = Tap::CmyFilm;
+        let material = gpu.run_film_chain_retained(&source, &p).unwrap();
+        assert!(std::sync::Arc::ptr_eq(
+            source.payload().unwrap(),
+            material.payload().unwrap()
+        ));
+        assert_eq!(source.to_host(gpu.backend()).unwrap().data, host.data);
+    }
+
+    #[test]
+    fn finishing_processes_each_resident_page_with_default_expand_clamp() {
+        use spektrafilm_backend::FinishingGpuParams;
+        let gpu = crate::test_support::explicit_adapter();
+        let identity = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
+        let params = FinishingGpuParams {
+            tone: [0.0; 4],
+            color: [0.15, 0.6, 0.8, 0.0],
+            expand_enabled: true,
+            black: 0.0,
+            inverse_span: 1.0,
+            to_srgb: identity,
+            from_srgb: identity,
+            rgb_to_lms: identity,
+            lms_to_lab: identity,
+            lab_to_lms: identity,
+            lms_to_rgb: identity,
+        };
+        let values: [f32; 15] = [
+            -0.4, 0.0, 0.002, 0.1, 0.5, 1.3, 0.8, -1.0, 1.0, 0.02, 0.25, 2.0, 0.7, 0.4, -0.1,
+        ];
+        let pages: Vec<ImagePage> = [(0, 2), (2, 1), (3, 2)]
+            .into_iter()
+            .map(|(first, count)| {
+                let start = first as usize * 3;
+                let end = start + count as usize * 3;
+                ImagePage {
+                    first_pixel: first,
+                    n_pixels: count,
+                    buffer: gpu
+                        .device
+                        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                            label: Some("finishing_test_page"),
+                            contents: bytemuck::cast_slice(&values[start..end]),
+                            usage: wgpu::BufferUsages::STORAGE
+                                | wgpu::BufferUsages::COPY_SRC
+                                | wgpu::BufferUsages::COPY_DST,
+                        }),
+                }
+            })
+            .collect();
+        gpu.chain_finishing(&pages, 5, &params)
+            .unwrap()
+            .submit(&gpu)
+            .unwrap();
+        let mut actual = Vec::new();
+        for page in &pages {
+            actual.extend(
+                gpu.pipe
+                    .readback_buffer_as::<f32>(&page.buffer, u64::from(page.n_pixels) * 12)
+                    .unwrap(),
+            );
+        }
+        for (got, input) in actual.into_iter().zip(values) {
+            assert!(
+                (got - input.clamp(0.0, 1.0)).abs() < 2e-6,
+                "{got} for {input}"
+            );
+        }
+        let host = ImageBuf::from_data(5, 1, f32_to_scalars(values.to_vec()));
+        let staged = gpu.finishing(&host, &params).unwrap().unwrap();
+        for (got, input) in staged.data.iter().zip(values) {
+            assert!((*got as f64 - f64::from(input.clamp(0.0, 1.0))).abs() < 2e-6);
+        }
+        assert_eq!(scalars_to_f32(&host.data).as_ref(), &values);
     }
 
     #[test]

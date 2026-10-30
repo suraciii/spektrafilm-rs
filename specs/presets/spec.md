@@ -94,11 +94,12 @@ Multi-photograph application follows [Photograph work](../gui-product-design/pho
 
 ### Apply
 
-- Selecting a preset validates the document, or the section it carries, before changing active controls.
+- Selecting a preset validates the document, or the section it carries, before changing active controls. Its carried runtime values MUST follow [shared value validity](../cli/spec.md#parameter-value-validity) after the preset's existing versioned migration, without filling omitted section leaves.
 - A look preset identifies both film and print profiles. The resolver validates film=`support=film, stage=filming` and print=`support=paper, stage=printing`.
 - A preset does not store or directly apply a workflow. A look preset selects the corresponding workflow default: negative film selects `input > film > print > scan`, and positive film selects `input > film > scan`.
 - The user MAY then choose another supported workflow manually. A section preset carries no film reference and MUST NOT change the workflow.
 - Applying a look preset replaces all carried look-owned controls together, including the controls of every carried section, so a section preset MUST be applied after a look change to take effect. An omitted camera group preserves the active virtual film exposure and metering controls.
+- A whole look owns and replaces [common finishing](../finishing/spec.md#persistence-and-replay), independently of its optional camera group. Sparse omission MUST NOT edit finishing values.
 - Application clears transient Scan-for-print state, invalidates dependent render state, and schedules automatic Preview.
 - Applying a look preset normalizes the scanner output: when the resolved film is positive or the selected workflow route is not a film-scan route, the output becomes the direct-scan mode. A route the caller already declared as `input > film > scan` or `input > convert-film > scan` is preserved, so a document that selects the negative conversion keeps that selection on those routes.
 - `core` owns that rule once for the GUI and the CLI.
@@ -159,6 +160,8 @@ A look preset owns film and print selection plus explicit film, print, enlarger,
 
 Neutral enlarger filter anchors are calibration baselines, not look controls, and are not preset-owned. Existing material controls and `output_mix` follow [Output mix and material controls](../output-mix/spec.md). A section preset owns exactly the controls of its section.
 
+Common finishing is an independent look-owned section under [Preset design](design.md#sections). Its controls MUST NOT belong to the optional camera group.
+
 Virtual film exposure compensation and metering belong to the look through the optional `parameters.camera` group. Other camera controls remain outside this group; camera diffusion remains a separate look-owned group.
 
 The assumed scene light belongs to the look through the optional `camera.capture_illuminant` leaf under the [capture illuminant contract](../image-input/spec.md#capture-illuminant):
@@ -192,7 +195,7 @@ This rule applies equally to whole-look payloads and section payloads. Capturing
 - The authored-versus-baseline state persists in the parameter document so replaying a resolved document reproduces its render bit-identically; documents without the flags treat every axis as baseline.
 - The exposure normalization refines baseline axes from the database's f64 values while the published parameter surface carries their f32 views. Authored axes stay exact.
 - A render that consumes only the published f32 views MUST agree within 1e-8 absolute on the f64 reference values (measured 6.4e-10 in the report/render acceptance fixture).
-- Existing `--params` invocations, RenderRecipe, LUT behavior, CPU f64 semantics, WGPU f32 semantics, Procedural grain algorithm, and raw profile assets MUST retain their `0.3.4` results with `output_mix.amount = 1`. Exceptions are the explicit [output lightness retirement](../output-mix/spec.md#output-boundary-and-retirement) and [optical-order cutover](../film-chain/spec.md#optical-order-cutover).
+- Existing `--params` invocations and consumers MUST retain their `0.3.4` results with `output_mix.amount = 1` and neutral [common finishing](../finishing/spec.md#controls). Exceptions remain the explicit [output lightness retirement](../output-mix/spec.md#output-boundary-and-retirement) and [optical-order cutover](../film-chain/spec.md#optical-order-cutover).
 - The cutover does not change stored blur units, grain selectors, or print-glare ownership.
 - The [CLI parameter language](../cli/spec.md) owns command syntax and composition rules.
 
@@ -212,7 +215,7 @@ TOML MUST be the default preset export format. Readers MUST accept `.toml` and `
 
 A reader MUST NOT try another parser after a parse failure. Both carriers MUST apply the same version, ownership, profile, type, and value validation.
 
-The preset schema version MUST be 6. The [lab scan cutover](../film-chain/lab-scan/spec.md#point-wise-consumers-and-migration) moves acquisition light from scanner lamp keys into the Convert owner in complete legacy documents, normalizes the input style alias, and validates historical scanner provenance before re-deriving it. Version 6 documents MUST reject scanner lamp keys.
+The preset schema version MUST be 7. The [lab scan cutover](../film-chain/lab-scan/spec.md#point-wise-consumers-and-migration) retains its acquisition-light and scanner-provenance migration rules; version 6 and later documents MUST reject scanner lamp keys.
 
 The previous schema version was 5 because the negative conversion controls and the enlarger print exposure mode rename their paths, and the terminal `cmyk` group replaces the retired magazine spelling. A version 1 through version 4 document is accepted only through an explicit migration. Version 1 migration MUST discard the old `id`.
 
@@ -220,7 +223,7 @@ Migration of a version 1 or version 2 whole look MUST supply `output_mix.amount 
 
 Version 3 to version 5 migration MUST map the existing scanner and enlarger legacy paths to their canonical controls, then normalize the retired CMYK group and route only for an approved complete document. The migration MUST preserve rendered pixels and MUST NOT keep a legacy path beside its canonical path.
 
-An older section MUST preserve sparse omission and MUST NOT acquire new leaves. Resolving, exporting, or updating a migrated whole look MUST NOT capture or replace caller `io` settings. Exporters MUST write version 6.
+An older section MUST preserve sparse omission and MUST NOT acquire new leaves. Resolving, exporting, or updating a migrated whole look MUST NOT capture or replace caller `io` settings. Exporters MUST write version 7.
 
 Legacy renamed paths and the retired CMYK group in a version 5 document MUST fail unknown-field validation. The unshipped `film_render.response`, `print_render.response`, `enlarger.c_filter_shift`, `reproduction`, and `io.finished_rgb_output_processing` fields MUST fail normal unknown-field validation in every accepted version, including draft legacy documents. The unshipped `output response` section MUST be rejected.
 
@@ -230,7 +233,9 @@ A look preset MUST contain every required look-owned group. An exporter MUST wri
 
 Readers MUST materialize other omitted controls before resolution or re-export. TOML absence MUST represent an unset optional control; an exporter MUST omit unset optional controls in TOML. The two carriers MUST NOT introduce a separate schema version or field vocabulary.
 
-A future change to accepted omitted-field behavior MUST use an explicit schema migration rather than silently rejecting existing documents.
+A change to accepted omitted-field behavior MUST use an explicit schema migration rather than silently rejecting existing documents. A change that makes a new look-owned group required MUST use an explicit schema-version migration.
+
+Version 1 through 6 whole looks MUST gain neutral finishing during migration to version 7. Those versions MUST reject authored finishing fields; version 7 whole looks MUST require the complete group under [finishing compatibility](../finishing/design.md#wire-and-compatibility).
 
 `parameters.camera` is an additive optional group in schema version 3. When present, it MUST contain exactly three required fields: `exposure_compensation_ev` (f32), `auto_exposure` (boolean), and `auto_exposure_method` (string). Readers MUST reject a partial group, a null group, and unknown fields within it.
 
@@ -272,6 +277,8 @@ Saving state after applying or editing a preset MUST store the actual controls a
 
 Any new Rust-owned state metadata MUST use the existing versioned Rust extension and MUST preserve existing Python state normalization.
 
+GUI state version 7 MUST retain finishing through the [finishing compatibility contract](../finishing/design.md#wire-and-compatibility). State loading MUST preserve existing sparse-document semantics independently of complete-look requirements.
+
 Complete GUI states, render recipes, and presets that carry a versioned complete runtime document MUST migrate the retired `magazine_print_color` group and route only at their own legacy boundary. A current preset schema 4 document MUST reject the retired group; the preset schema bump required for canonical `cmyk` MUST be recorded separately from the parameter-document bump.
 
 Successful migration MUST preserve omitted section leaves and MUST NOT materialize `cmyk` into a section preset that did not carry the feature. Their versioned legacy complete-document migration MUST apply the [output lightness retirement rule](../output-mix/spec.md#output-boundary-and-retirement): allow an absent or null `io.output_gamut_compress.lightness_compression`, but reject every explicit numeric triplet even when the old gamut algorithm ignored it.
@@ -281,6 +288,8 @@ The error MUST identify that exact path, state that no automatic replacement exi
 Current complete documents, sparse sources, and inline assignments MUST reject the retired leaf even when null. New writers MUST never emit it. The unshipped response and Cyan-shift fields MUST fail normal unknown-field validation rather than gain defaults or migration support.
 
 A migration failure MUST preserve the source document, active state, and existing output.
+
+Normalized runtime controls MUST follow [shared value validity](../cli/spec.md#parameter-value-validity). This check MUST NOT replace the GUI-state decoder, discard valid inactive settings, or infer explicit ownership from default-filled fields. Rejected canonical values retain the same transaction protection as rejected migration.
 
 Capturing a preset from the GUI MUST use the active look controls. Applying it MUST preserve the excluded context defined in [Look ownership](#look-ownership). A captured section MUST carry an unset optional control as an explicit null, so re-applying the capture restores the captured unset value; a capture that carries explicit nulls uses the JSON carrier.
 

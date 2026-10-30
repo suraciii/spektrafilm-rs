@@ -1342,3 +1342,93 @@ fn historical_grain_telemetry_names_read_and_emit_canonical_engine_names() {
         );
     }
 }
+
+#[test]
+fn finishing_reports_reject_invalid_domains_and_preserve_unknown_historical_state() {
+    use spektrafilm_core::{params, profile, telemetry};
+    let profile: profile::Profile = serde_json::from_value(serde_json::json!({
+        "metadata": {}, "info": {"type": "positive"}, "data": {}
+    }))
+    .unwrap();
+    let mut params = params::RuntimeParams::default();
+    params.workflow.route = "input > film > scan".into();
+    params.finishing.brightness = 0.5;
+    let mut report = collected_report();
+    report.configuration.render = Some(telemetry::RenderConfiguration::from_runtime(
+        &params, &profile, &profile,
+    ));
+    let value = serde_json::to_value(&report).unwrap();
+    for (path, invalid_value) in [
+        (
+            "/configuration/render/finishing/controls/warmth",
+            serde_json::json!(1.1),
+        ),
+        (
+            "/configuration/render/finishing/controls/expand/white",
+            serde_json::json!(0.0),
+        ),
+        (
+            "/configuration/render/finishing/boundary",
+            serde_json::json!("post_output_mix"),
+        ),
+        (
+            "/configuration/render/finishing/model",
+            serde_json::json!("different_response"),
+        ),
+    ] {
+        let mut invalid = value.clone();
+        *invalid.pointer_mut(path).unwrap() = invalid_value;
+        assert!(Report::from_json(&invalid.to_string()).is_err(), "{path}");
+    }
+    let mut missing_control = value.clone();
+    missing_control["configuration"]["render"]["finishing"]["controls"]
+        .as_object_mut()
+        .unwrap()
+        .remove("contrast");
+    assert!(Report::from_json(&missing_control.to_string()).is_err());
+    let mut historical = value;
+    historical["configuration"]["render"]
+        .as_object_mut()
+        .unwrap()
+        .remove("finishing");
+    let restored = Report::from_json(&historical.to_string()).unwrap();
+    assert!(restored.configuration.render.unwrap().finishing.is_none());
+}
+
+#[test]
+fn finishing_provenance_uses_converted_film_and_real_print_polarity() {
+    use spektrafilm_core::{params::RuntimeParams, profile, telemetry::RenderConfiguration};
+    let data = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data");
+    let film = profile::load_profile_by_name(&data, "kodak_portra_400").unwrap();
+    let paper = profile::load_profile_by_name(&data, "kodak_portra_endura").unwrap();
+    let mut params = RuntimeParams::default();
+    params.camera.auto_exposure = false;
+    params.finishing.brightness = 0.5;
+    for (route, output, scan_film, expected) in [
+        ("input > convert-film > scan", "direct_scan", false, false),
+        (
+            "input > convert-film > scan",
+            "negative_to_positive",
+            false,
+            true,
+        ),
+        (
+            "input > convert-film > print > scan",
+            "direct_scan",
+            true,
+            true,
+        ),
+        ("input > film > print > scan", "direct_scan", true, false),
+        ("input > film > print > scan", "direct_scan", false, true),
+        ("print > scan", "direct_scan", false, true),
+    ] {
+        params.workflow.route = route.into();
+        params.scanner.scan_output = output.into();
+        params.io.scan_film = scan_film;
+        params.validate().unwrap();
+        let declared = RenderConfiguration::from_runtime(&params, &film, &paper)
+            .finishing
+            .unwrap();
+        assert_eq!(declared.applicable, expected, "{route}: {output}");
+    }
+}

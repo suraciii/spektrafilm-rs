@@ -6,7 +6,7 @@ The [product contract](spec.md) owns scope, controls, retirement, and acceptance
 
 Existing scanner preparation owns its references and inverses. Output composition belongs to core, not GUI widgets, the CLI, the image writer, or an independent RGB-response pipeline.
 
-No prepared digital-response object, material-relative color coordinate system, tonal-mask pass, extra calibration render, or baseline/effective cache split is introduced. Preserve existing profile and development dependencies. The only added public parameter group is `output_mix`, containing f64 `amount`; use existing typed validation, preset, discovery and snapshot boundaries.
+No prepared digital material-response object, material-relative color coordinate system, tonal-mask pass, extra calibration render, or baseline/effective cache split is introduced. Preserve existing profile and development dependencies. `output_mix` contains f64 `amount` and uses existing typed validation, preset, discovery and snapshot boundaries.
 
 Existing preflash and chemistry retain their storage types and capability checks.
 
@@ -38,7 +38,9 @@ The scanner optical cutover remains independently owned by [Film chain](../film-
 
 Remove the standalone Output lightness parameter and its operation across runtime, discovery, GUI, shaders and serialization. Preserve existing chroma/gamut algorithms, scanner conversion and optional named appearances. Do not add a hidden compensation curve or rewrite a retired triplet into preflash, chemistry, or another control.
 
-All final RGB paths, including the `input` workflow, resident execution and final diagnostic collection, use one composition boundary after scanner interpretation, output gamut processing, unsharp masking, transfer encoding, Procedural grain, and CMYK ink style. Prepare the source before simulated camera metering/exposure. Reuse input orientation, requested rotation, crop and resize geometry; viewer downsampling and display-ICC conversion are not valid source branches.
+All final RGB paths, including the `input` workflow, resident execution and final diagnostic collection, use one composition boundary after the existing output tail. Eligible processed branches include [common finishing](../finishing/design.md#color-and-order) before that tail; the source branch excludes it.
+
+Prepare the source before simulated camera metering/exposure. Reuse input orientation, requested rotation, crop and resize geometry; viewer downsampling and display-ICC conversion are not valid source branches.
 
 RAW processing, decoding and requested lens correction are already part of the input. Convert that source to linear output primaries through existing color-management code without creative gamut or tone processing.
 
@@ -56,9 +58,9 @@ Use the same rule for all admitted backends rather than silently forcing amount 
 
 ## Persistence and delivery
 
-The [preset contract](../presets/spec.md) owns schema version 3 and migration; [CLI parameters](../cli/spec.md) owns sparse composition and discovery. Complete GUI state stores the added group under the [GUI state compatibility contract](../presets/spec.md#gui-state-compatibility). Older complete looks and complete state/recipe documents gain only an absent output-mix default of 1.
+The [preset contract](../presets/spec.md) owns version policy and migration; [CLI parameters](../cli/spec.md) owns sparse composition and discovery. Complete GUI state stores the added group under the [GUI state compatibility contract](../presets/spec.md#gui-state-compatibility). Older complete looks and complete state/recipe documents gain only an absent output-mix default of 1.
 
-No response fields or cyan shift are materialized.
+No Film or Print response fields or cyan shift are materialized.
 
 Retired-field migration inspects explicit legacy presence before typed defaults erase it. Absent/null lightness is eligible only in a versioned legacy complete document; an explicit numeric triplet fails even if the previous algorithm ignored it. Current schemas and sparse validators do not retain a deprecated optional field.
 
@@ -76,7 +78,7 @@ Use the [product acceptance matrix](spec.md#acceptance) and [benchmark contract]
 
 Preflash evidence records the derived `F0`, main exposure, total material exposure, print density and output under fixed scan settings. Check both main and flash filter isolation, gain conventions, zero flash, and constant-field behavior. Compare photographic-paper highlight/detail tradeoffs on real profiles and images; do not use a toy logarithm to claim those outcomes.
 
-Existing developer exhaustion is not required to match a withdrawn digital compressor, and no saturation acceptance is attached to this scope.
+Existing developer exhaustion is not required to match a withdrawn digital compressor. Common finishing saturation follows its [independent contract](../finishing/spec.md#controls).
 
 Mix evidence records both same-geometry branches, selected output transfer, exact endpoints and intermediate linear arithmetic. Exercise negative and super-white samples, negative capture, RAW, output encoding on/off, immutable Export, retained Save, and missing-source diagnostics. Validate LUT complete-bake behavior separately from segmented rejection and spatial-neutralization limits.
 

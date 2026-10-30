@@ -50,6 +50,9 @@ _Avoid_: Capture exposure, operator correction, scanner calibration
 **Operator correction**: The user's global finished-positive exposure, warmth, green–magenta balance, and common-exposure contrast judgment over a frame's automatic result. It does not change the developed negative or the automatic judgment.
 _Avoid_: Capture white balance, material gamma, scanner calibration
 
+**Common finishing**: The user's tonal and color adjustments to a completed positive image, independent of the material and readout route that formed it. It does not describe material exposure, development, or negative-conversion operator correction.
+_Avoid_: Scanner finish, material response, color density
+
 **Digital output**: The color space, transfer encoding, geometry, and file representation used to deliver an image.
 _Avoid_: Scanned medium, negative conversion
 

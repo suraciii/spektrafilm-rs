@@ -3,6 +3,7 @@
 - Rendering, saving conversion, and native writing are separate boundaries. The renderer retains floating output in its execution domain; [GPU residency](../gpu-execution/design.md#device-residency) governs computation and final host handoff.
 - One shared writer handles CLI and GUI publication.
 - Export chooses a backend and re-renders at export geometry. Save starts from retained output and applies only the requested saving conversion.
+- Export evaluates [common finishing](../finishing/design.md#color-and-order) from its immutable snapshot. Save MUST NOT apply it again or reinterpret it in the saving color space.
 - Simulation color settings and saving color settings are distinct. A writer option never changes film-chain gamut mapping.
 - Writers validate format-specific constraints before opening the destination, write to a temporary path, and publish only after the write succeeds.
 - Cancellation is checked before rendering and around publishable work. A native write that cannot be interrupted completes into a temporary path and is removed on cancellation.

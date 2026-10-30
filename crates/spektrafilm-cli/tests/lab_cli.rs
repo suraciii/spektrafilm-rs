@@ -2548,7 +2548,8 @@ fn measurement_replay_pins_named_user_preset() {
             "film_profile": {"stock": "kodak_portra_400"},
             "print_profile": {"stock": "kodak_portra_endura"},
             "parameters": {"enlarger": {}, "scanner": {}, "film_render": {}, "print_render": {},
-                "camera_diffusion_filter": {"active": false}, "output_mix": {"amount": 1.0}},
+                "camera_diffusion_filter": {"active": false}, "output_mix": {"amount": 1.0},
+                "finishing": spektrafilm_core::params::FinishingParams::default()},
             "provenance": {"implementation_version": "test", "model_version": "test"}
         }))
         .unwrap(),

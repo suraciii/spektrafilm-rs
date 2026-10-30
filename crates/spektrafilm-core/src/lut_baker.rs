@@ -50,6 +50,7 @@ impl BundleBuilder {
         let mut spec = self.spec.clone();
         spec.normalize()?;
         if let Some(params) = self.base_params.as_ref() {
+            params.validate_values()?;
             if params.output_mix.amount < 1.0 && spec.topology != Topology::One {
                 return Err(
                     "output_mix.amount below 1 requires 1lut: segmented LUTs have no prepared source branch"
@@ -175,6 +176,18 @@ impl BundleBuilder {
             first.params().output_mix.amount.to_string(),
         );
         provenance.insert("model_version".into(), crate::runtime::MODEL_VERSION.into());
+        if let Some(finishing) = first.telemetry_configuration().finishing {
+            provenance.insert("finishing.model".into(), finishing.model);
+            provenance.insert("finishing.boundary".into(), finishing.boundary);
+            provenance.insert(
+                "finishing.included".into(),
+                (finishing.applicable && !finishing.controls.is_neutral()).to_string(),
+            );
+            provenance.insert(
+                "finishing.parameters".into(),
+                serde_json::to_string(&finishing.controls).map_err(|error| error.to_string())?,
+            );
+        }
         let meta = BundleMeta {
             schema_version: 4,
             name: spec.name.clone(),
@@ -680,6 +693,24 @@ mod tests {
                 .expect_err("segmented mixing must fail");
             assert!(error.contains("no prepared source branch"), "{error}");
         }
+    }
+
+    #[test]
+    fn invalid_inactive_values_fail_before_lut_constraints_or_profile_loading() {
+        let mut params = RuntimeParams::default();
+        params.debug.deactivate_stochastic_effects = true;
+        params.print_render.density_curves_morph.active = false;
+        params
+            .print_render
+            .density_curves_morph
+            .developer_exhaustion = 2.0;
+        let error = BundleBuilder::with_params(spec("srgb", "srgb"), params)
+            .build(
+                Path::new("missing-profile-directory"),
+                &spektrafilm_backend::cpu_backend::CpuBackend,
+            )
+            .unwrap_err();
+        assert!(error.contains("print_render.density_curves_morph.developer_exhaustion"));
     }
 
     #[test]

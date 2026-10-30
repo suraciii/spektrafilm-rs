@@ -38,7 +38,7 @@ The right inspector contains one continuous list, not mutually exclusive pages. 
 | Film | Film material, Film chemistry, Film base, Halation, Couplers, Grain |
 | Print | Print material, Enlarger, Preflash, Enlarger diffusion, Print chemistry, Print base |
 | Scan | Scanner, Print viewing glare |
-| Output | Output, Output gamut compress, CMYK ink style |
+| Output | Finishing, Output, Output gamut compress, CMYK ink style |
 
 The persistent **SCAN** and **SAVE** action bar stays below the inspector. SCAN shows `full-resolution effects`; SAVE shows `retained result · no rerender`. Preview updates automatically; there is no Preview button or enablement preference. **Settings** owns general application preferences, state files and startup defaults, display configuration, and Diagnostics. Independent file-delivery options belong to the **Export options** dialog, not a photographic module.
 
@@ -96,9 +96,11 @@ A boolean row is a switch that names the concept it enables. A choice row shows 
 
 **Only modified** filters against the reset baseline, independently of the applied preset. It can combine with search. The row marker, module `modified` chip, and this filter use the same exact comparison. The preset browser's applied/modified/missing marker has its own preset baseline.
 
+Inactive rows retain valid stored values and explain whether an operation is absent, a feature is disabled, or the selected material lacks support. Switching to `input` and back retains those requests and their explicit ownership. The temporary lightweight Preview bypass does not mark final-render controls permanently inactive. Numeric document domains remain separate from the editor's interaction range; loading a valid value outside that range does not clamp it. Invalid loaded state is rejected without replacing accepted controls, history, or the retained image.
+
 For Settings and Export, the filter compares accepted preferences with typed factory defaults. Unsubmitted Export drafts do not change these results.
 
-A module header's **reset** restores only that module's controls. Parameter rows, sliders, and Export options do not have separate reset buttons. Use **Undo** to reverse an adjustment. For example, resetting **Preflash** leaves main **Enlarger** exposure and filtration unchanged; resetting **Print viewing glare** leaves **Print chemistry** unchanged. Material-module reset restores its factory material selection and development time.
+A module header's **reset** restores only that module's controls. Finishing also provides individual row resets, described below. Other parameter rows, sliders, and Export options do not have separate reset buttons. Use **Undo** to reverse an adjustment. For example, resetting **Preflash** leaves main **Enlarger** exposure and filtration unchanged; resetting **Print viewing glare** leaves **Print chemistry** unchanged. Material-module reset restores its factory material selection and development time.
 
 For other modules, reset uses current-film defaults only for stock-derived leaves; other values use factory defaults. Reset also releases explicit ownership in its scope, even when the value already matches, so a later film selection can refresh it.
 
@@ -115,13 +117,25 @@ The left browser owns whole-look presets. Modules do not have section-preset men
 - The readout illuminant is a fixed product value selected by the material category, not an editable scanner lamp.
 - **Lens blur (readout optics)** and **Unsharp mask (digital sharpening)** describe readout optics and digital sharpening. On a route without scanning, these controls remain readable but inactive, with stored values retained.
 
-**Scan → Scanner → Operator correction** adjusts the finished positive before the fixed tone curve, after the experimental frame setup when it is enabled. **Finished exposure** is ±3 EV (positive is brighter); **Warmth** and **Green–magenta tint** are ±1 differential EV (positive is warmer and more magenta respectively, not Kelvin); **Contrast** spans 0.5–2 (1 is unchanged). These are editor ranges, not document limits. The controls are disabled outside eligible negative-to-positive scans, with their stored values retained.
+**Scan → Scanner → Negative conversion (exposure domain)** is a collapsed specialized group containing operator correction. It adjusts the finished positive before the fixed tone curve, after the experimental frame setup when it is enabled. **Finished exposure** is ±3 EV (positive is brighter); **Warmth** and **Green–magenta tint** are ±1 differential EV (positive is warmer and more magenta respectively, not Kelvin); **Contrast** spans 0.5–2 (1 is unchanged). These are editor ranges, not document limits. The controls are disabled outside eligible negative-to-positive scans, with their stored values retained. This exposure-domain operation is distinct from common Finishing and its values are not converted to finishing adjustments.
 
 **Restore automatic** resets only the four operator values to 0, 0, 0, 1. The workspace's source-local **Undo** and **Redo** include these edits, restore and paste actions. **Hold automatic comparison** (primary mouse button, or Space while focused) shows the same prepared frame with default operator values until release; it does not change saved corrections or the retained pixels used by Save. This is separate from the viewer's Original/Modified selection.
 
 **Copy operator correction** and **Paste operator correction** use a session-local clipboard containing only the four values. Load another frame and paste to apply them over that frame's own readout; no offsets, film density, capture calibration, or other settings are copied. The clipboard and adjustment history are not saved in presets or GUI state.
 
 Changing the route resets an ineligible scan polarity; leaving negative conversion resets the conversion style to `standard`. The style selects the tone only; the separate off-by-default `scanner.experimental_setup` switch adds whole-frame exposure and color measurement before that tone. `neutral` is accepted only as an input migration alias and is saved as `standard`; it does not preserve the former fixed-curve appearance. See [scanning](scanning.md) for scanner mode and style semantics.
+
+### Finishing
+
+**Output → Finishing** adjusts eligible positive film scans, negatives converted to positives, and photographic-paper scans after positive formation and before output gamut processing. Input-only routes, material outputs without a completed scan, and negative scans preserving polarity are inactive; stored controls remain available and are retained across route and material changes.
+
+**Brightness**, **Contrast**, **Warmth**, and **Saturation** each range from -1 to 1 and default to zero. Brightness and Contrast affect internal tones with diminishing influence near the reference endpoints, rather than source exposure or sharpening. Warmth follows a fixed warm–cool direction, not Kelvin or capture white balance; Saturation changes color strength with restrained amplification of strong colors. Effects can interact and downstream processing can change the result.
+
+The collapsed **Expand** group optionally maps black and white input references in fixed sRGB encoding. It defaults off, retaining its references when disabled; when enabled, even its default 0 and 1 references hard-clip. The references range from -0.25 to 1.25 and must be separated by at least 1/1024. Invalid edits are rejected, not reordered or widened. Hard clipping destroys differences for that render; later adjustments cannot recover them and do not guarantee an in-gamut result.
+
+Each row's reset restores that control alone, subject to the same valid-reference constraint; module reset restores all four daily controls and disables Expand with its default references. Undo and Redo include these edits. **Hold finishing comparison** uses the primary mouse button or focused Space to temporarily bypass only Finishing, restoring it on release. It does not change stored controls, history, retained Save output, or independent Export, and does not bypass negative conversion, gamut processing, CMYK style, or output mix.
+
+Comparison preserves the retained Preview or Scan grid and detail effects. Releasing it restores the accepted finishing on that same grid. Comparing alone does not make the retained result stale.
 
 **Input and capture → Convert → scan illuminant** declares the acquisition light of an imported negative RGB image through `film_render.convert.scan_illuminant`. It defaults to `D55` and affects capture inversion and calibration only. Choose from the full shared illuminant catalog or enter a custom `BB<kelvin>` value accepted by the shared validator. It does not override the fixed product readout light. The control remains readable but inactive on routes without convert-film inversion.
 
@@ -142,13 +156,15 @@ The `input` workflow color-manages an already rendered image to the output space
 
 ### Grain controls
 
-**Film → Grain** starts with **Enable grain** and **Engine**. It shows only the selected engine's effective controls. Turning Grain off hides numerical controls without clearing stored values.
+**Film → Grain** starts with **Enable grain** and **Engine**. It shows the selected engine's effective grain controls. Turning Grain off hides grain-only numerical controls without clearing stored values.
 
-Dye exposes **Grain strength** and **Grain scale** as its only editors. Strength 1 keeps the delivered look and 0 removes random grain, including residual count noise. Scale 1 keeps the delivered texture and larger values coarsen it; it is a film-coordinate texture scale, not a crystal diameter or scanner blur.
+Dye exposes **Grain strength** and **Grain scale** as its only numerical grain editors. Strength 1 keeps the delivered look and 0 removes random grain, including residual count noise. Scale 1 keeps the delivered texture and larger values coarsen it; it is a film-coordinate texture scale, not a crystal diameter or scanner blur.
 
 Black-and-white Spektra shows only record 0 for RMS or relative strength, density minimum, and uniformity. Hidden G/B requests stay stored and reactivate for color material.
 
-Dye retains channel correlation and the shared material requests without editors; they report inactive for Dye. The three numerical-component scales remain independent editors for Spektra; they are not RGB lanes.
+Dye retains channel correlation and the shared material requests without Dye-grain editors. They do not control Dye grain formation. The three numerical-component scales remain independent editors for Spektra; they are not RGB lanes.
+
+The shared **density min** editor remains available when an executing film-scanner or enlarger LUT consumes its bounds, even with grain off or another engine selected. Editing it does not enable grain or select Spektra. Its components follow the current operation's material normalization.
 
 **Procedural Grain Profiles** appears only for Procedural. Named profiles retain editable **Amount**; choose **Custom** to expose custom controls. Noise hides **Film Resolution** and **Resolution Type** without clearing their requests.
 
@@ -202,11 +218,27 @@ The viewer accepts pointer gestures on its surface. The wheel and pinch zoom at 
 
 The `Paper back` layer is a viewer-only virtual rendering generated from paper texture, watermark, and noise. It is not an editable material stage and does not alter retained, saved, or exported pixels.
 
-The viewer footer groups its controls by target: Original/Modified/Paper back selection, reveal/crossfade presentation, view zoom, and the current zoom as a read-only readout. Source rotation belongs to the inspector, not this footer.
+The viewer footer groups its controls by target: Original/Modified/Paper back selection, reveal/crossfade presentation, view zoom, and photograph inspection. Source rotation belongs to the inspector, not this footer.
 
-The footer uses compact named icons for Paper back and transitions when reopening the preset browser leaves less viewer width. **Viewer gestures** in the status strip opens the gesture guide.
+The footer uses compact named icons for the layer controls and transitions when reopening the preset browser leaves less viewer width. **Viewer gestures** in the status strip opens the gesture guide.
 
 The footer switches between **Original** (原图), the retained input, and **Modified** (修改图), the latest accepted Preview or Scan. Modified is disabled until output exists. The first accepted Preview or Scan selects Modified. Switching does not render or edit adjustments; both views share zoom and pan. **Paper back** remains a separate presentation. **Settings → Display → output interpolation** selects nearest, linear, cubic, spline16, spline36, Lanczos, or Blackman sampling for Modified. Original uses nearest interpolation. Paper back uses spline36. The viewport samples the retained full-resolution image for visible detail.
+
+### Black and white endpoint warnings
+
+The two icon switches immediately left of **Image analysis** control **Shadow clipping warning** (阴影剪裁警告) and **Highlight clipping warning** (高光剪裁警告). Both start off without saved warning preferences.
+
+Click a switch or focus it and press Enter to toggle its overlay. Blue marks black endpoints; red marks white endpoints. Both switches can be on together.
+
+Hold the secondary pointer button on a switch, or hold Space while it has keyboard focus, to inspect an isolated mask. Shadow inspection uses a white photograph area with black matches; highlight inspection uses a black photograph area with white matches. Release the hold to restore the requested overlays.
+
+The warnings inspect the accepted **Original** or **Modified** in its native RGB interpretation before display conversion and ICC. They work with analysis closed and do not use its selection or sRGB range counts.
+
+All native linear channels must be at or below zero for a black warning. Any channel at or above one produces a white warning. Encoded images use the equivalent transfer-function endpoints; an endpoint is not proof of lost capture or export detail.
+
+Padding, canvas, and Paper back do not receive warnings. Temporary photographic composites suspend the overlays and restore them for the accepted subject afterwards.
+
+The two requested choices persist independently in `clipping_preferences.json`. Temporary masks do not persist, enter photograph records or presets, create adjustment history, or change saved and exported pixels. The [endpoint-warning specification](../specs/gui-product-design/clipping-warnings/spec.md) defines classification and coverage.
 
 ### Image analysis
 
@@ -214,31 +246,39 @@ The footer switches between **Original** (原图), the retained input, and **Mod
 
 | Mode | Reading |
 | --- | --- |
-| Histogram | Overall Tone or RGB distribution. Linear and Logarithmic change relative-frequency presentation, not image values. |
+| Histogram | Overall Tone or RGB distribution. Fixed logarithmic height exposes low-frequency bins; inspect to read exact population frequencies. |
 | Waveform | Picture position from left to right against Tone or RGB values. Choose RGB overlay or RGB parade to compare channels on matching scales. Density shows frequency. |
-| Advanced → Vectorscope | Color frequency in the Oklab a,b plane. Neutral is central; fixed references identify hue directions, not a gamut boundary or a preferred result. |
+| Vectorscope | Color frequency in the Oklab a,b plane. Neutral is central; fixed references identify hue directions, not a gamut boundary or a preferred result. |
 
-**Analysis mode** offers Histogram and Waveform directly. Expand **Advanced** within this selector to choose Vectorscope. Histogram is the initial mode without a saved preference.
+**Analysis mode** offers Histogram, Waveform, and Vectorscope directly. Histogram is the initial mode without a saved preference.
 
 **Waveform display** offers **Tone**, **RGB overlay**, and **RGB parade**. Parade places Red, Green, and Blue in separate plots; it is a waveform display, not another analysis mode. Returning to Waveform restores the selected display.
 
 Histogram offers **Tone** and **RGB**. Tone is display-encoded relative luminance, not physical light or one RGB channel. Histogram uses filled distributions; RGB overlaps show channel combinations.
 
-Histogram RGB and Waveform RGB overlay share channel visibility choices. RGB parade always shows all three channels without changing those choices. Histogram defaults to Logarithmic; its scale control exposes Linear on demand.
+Histogram RGB and Waveform RGB overlay share channel visibility choices. RGB parade always shows all three channels without changing those choices. Histogram has no scale selector; logarithmic height ratios are not frequency ratios.
 
-The plot and its coordinate guides take priority over explanatory text. Hover over a mode or waveform display choice for its question and limits. The scope line identifies Original, Preview or Scan, Full image or Selection, and **sRGB analysis**.
+The ordinary shelf contains one toolbar row and the plot. Mode help explains the question, sRGB interpretation, and Preview limitations. Active inspection readouts and meaningful exceptions appear inside the plot without changing its size; no empty information row or duplicate scope line remains.
 
 Vectorscope offers **1×**, **2×**, and **4×** chroma zoom and reports colors outside its window. All modes use the same sRGB analysis interpretation before monitor conversion. They do not predict a saving profile, bit depth, printer, or physical spectrum.
 
-**Select area** arms a temporary primary-drag tool. The committed rectangle changes the analysis population, not crop or photographic adjustments. Use the focusable move and resize handles with arrow keys and Enter for keyboard selection. Escape cancels an unfinished selection. **Full image** clears it. The selection follows its source area across rotation, crop, Preview, and Scan. If its complete area is absent in the other subject, analysis reports the mismatch instead of intersecting it with that frame.
+**Select area** arms a temporary primary-drag tool. The committed rectangle changes the analysis population, not crop or photographic adjustments. Use the focusable move and resize handles with arrow keys and Enter for keyboard selection. Escape cancels an unfinished selection. **Full image** appears only while a selection exists and clears it. The selection follows its source area across rotation, crop, Preview, and Scan. If its complete area is absent in the other subject, analysis reports the mismatch instead of intersecting it with that frame.
 
 Hover over the photograph to show the native pixel coordinates, analysis values, and matching accent-colored plot markers. Focus **Analysis pixel cursor** and use arrow keys for keyboard inspection. A pixel outside the selected area retains a labeled numeric readout without a plot marker. Hover over or focus the plot to inspect bins with a subdued band and edge ticks; Waveform and RGB parade show the corresponding image band. Parade marks the same column in all three channel plots. Inspection never changes the distributions.
 
-**Analysis settings → Plot height** changes the requested plot size. The shelf adapts to shorter windows while keeping the photograph and viewer controls available. Changing its size preserves photographic adjustments, layer selection, zoom, and pan.
+Readouts leave sample markers visible and do not intercept plot inspection. When a window limits the shelf height, Up preserves a larger requested height; Down shrinks from the displayed height. Divider drags include movement from the initial press.
+
+Active coordinates, values, and selection or off-scale indications stay visible without scrolling. If notices exceed their plot region, scroll that region to read them. With the plot focused, Page Up and Page Down scroll notices while arrow keys continue to inspect samples.
+
+Drag the photograph/analysis divider to change the total shelf height, including controls and plot. Focus the divider and use Up or Down to resize; Home or a double click restores the default. Sizes follow the [native layout baseline](../specs/gui-presentation/spec.md#native-layout-baseline).
+
+When the photograph reserve and minimum shelf cannot both fit, analysis collapses without changing the requested expansion or height. The footer action explains the space limit and remains operable. Increasing the window restores requested analysis; turning the action off prevents reopening. A committed selection survives this space constraint, but unfinished selection and inspection stop.
+
+Changing the shelf or window preserves zoom mode and pan. Fit recalculates its scale for the new canvas without resetting its zoom multiplier. Explicit percentages retain the actual source-pixel-to-device-pixel scale rather than switching to Fit.
 
 Either close control cancels unfinished analysis and any armed area-selection tool. Normal viewer gestures remain available while the workspace is hidden.
 
-Visibility, requested height, mode, waveform display, signal choices, channel visibility, histogram scale, and chroma zoom persist as application preferences. Existing saved parade and waveform choices upgrade automatically. Selections and cursors do not enter photograph records, looks, or export metadata.
+Requested expansion, total shelf height, mode, waveform display, signal choices, channel visibility, and chroma zoom persist as application preferences. Existing saved parade and waveform choices upgrade automatically. Legacy plot-only heights reset to the compact default unless a total shelf height is saved; legacy linear scale does not restore a linear branch. Selections and cursors do not enter photograph records, looks, or export metadata.
 
 Analysis reports below-range, above-range, and invalid samples separately. Endpoint accumulation is not proof of clipping. Preview retains its detail-effects caveat. Pending, stale, unavailable, or failed analysis does not replace the accepted photograph or block Save and Export. See the [image-analysis specification](../specs/gui-product-design/image-analysis/spec.md) for measurement and comparison rules.
 
@@ -329,11 +369,13 @@ The queue shows waiting, running, completed, failed, and canceled outcomes. Canc
 
 **Settings → GUI parameters → Save current to file / Load from file** exchange the pinned Python 0.3.4 GUI JSON sections. Partial files merge into factory values. Legacy input aliases and nested sections normalize to the flat upstream format. Invalid JSON, field types, selections, or Rust extension versions appear in the header status without replacing accepted state. A successful load begins a new adjustment history rather than restoring an old undo stack.
 
+An invalid supplied enlarger mirror fails even if another valid mirror would win. Valid mirror precedence stays unchanged. For example, a valid `simulation.enlarger.illuminant` cannot conceal an invalid `preflashing.illuminant`.
+
 In the same settings section, **Save current as default** persists the current controls and reports that it replaced startup controls. **Restore factory default** confirms before it applies, then restores Kodak Gold 200 + Kodak Supra Endura with Gold's material defaults and upscale factor `1.0`. The confirmation states that the action replaces the current controls and session settings and removes the saved startup default; cancelling keeps both. Adjustment Undo does not reverse either startup-file change. Saved user values, including zero RMS, survive startup and state loading.
 
 To replace stored material coefficients with the selected film's defaults, use the affected module's **reset**. Reloading a complete saved state preserves its stored coefficients; it does not refresh them from the film tables.
 
-Startup files use the platform configuration directory. `SPEKTRAFILM_CONFIG_DIR` overrides it. Rust settings use `rust.version = 2`. File-dialog directories persist separately.
+Startup files use the platform configuration directory. `SPEKTRAFILM_CONFIG_DIR` overrides it. Rust state uses `rust.version = 7`; older complete states migrate to neutral Finishing. File-dialog directories persist separately.
 
 Legacy states without an explicit export format preserve 8-bit as PNG and 16/32-bit as TIFF before defaults and validation. Recipe values and viewer state remain intact. Explicitly incompatible format/depth combinations remain errors.
 

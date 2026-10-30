@@ -79,7 +79,7 @@ pub(super) fn classify_pass(hint: GpuStage, label: Option<&str>) -> (GpuStage, G
         | "enlarger_lut_interpolate" => (S::Other, K::Spectral),
         "input_decode" => (S::Input, K::Pointwise),
         "output_gamut" => (S::Gamut, K::Pointwise),
-        "output_transfer" | "cmyk" => (S::Output, K::Pointwise),
+        "output_transfer" | "cmyk" | "finishing" => (S::Output, K::Pointwise),
         "geometry_gaussian_line" | "geometry_spline_line" => (S::Geometry, K::Filter),
         "optical_diffusion" => (S::Other, K::Filter),
         "highlight_merge" | "diffusion_print_domain" => (S::Other, K::Pointwise),

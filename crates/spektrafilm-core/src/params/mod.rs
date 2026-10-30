@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 
 pub mod couplers;
 pub mod diffusion;
+pub mod finishing;
 pub mod glare;
 pub mod grain;
 mod grain_compat;
@@ -16,6 +17,7 @@ pub mod sources;
 pub(crate) mod validation;
 use couplers::DirCouplersParams;
 pub use diffusion::DiffusionFilterParams;
+pub use finishing::{ExpandParams, FinishingParams};
 use glare::GlareParams;
 pub use grain::{FotufilmGrainParams, FotufilmMaterial};
 pub use grain::{GrainEngine, GrainParams};
@@ -693,15 +695,7 @@ impl OutputMixParams {
     }
 
     pub fn validate_detailed(&self) -> Result<(), ValidationError> {
-        if !self.amount.is_finite() || !(0.0..=1.0).contains(&self.amount) {
-            return Err(ValidationError::new(
-                ValidationReason::OutputMix,
-                "output_mix.amount",
-                "output_mix.amount: must be finite and in 0..=1",
-            )
-            .arg("value", self.amount));
-        }
-        Ok(())
+        validation::validate_scalar_detailed("output_mix.amount", self.amount)
     }
 }
 
@@ -820,6 +814,17 @@ impl RuntimeParams {
     /// Validate using the same rules while retaining semantic failures for adapters.
     pub fn validate_detailed(&self) -> Result<(), ValidationError> {
         validation::validate_detailed(self)
+    }
+
+    /// Validate canonical value domains without route or resource checks.
+    pub fn validate_values(&self) -> Result<(), String> {
+        self.validate_values_detailed()
+            .map_err(|error| error.to_string())
+    }
+
+    /// Validate canonical value domains while retaining semantic failure details.
+    pub fn validate_values_detailed(&self) -> Result<(), ValidationError> {
+        validation::validate_values_detailed(self)
     }
 
     /// Record already-validated canonical leaf paths without changing filter protection.
@@ -945,6 +950,8 @@ pub struct RuntimeParams {
     pub cmyk: CmykParams,
     #[serde(default)]
     pub output_mix: OutputMixParams,
+    #[serde(default)]
+    pub finishing: FinishingParams,
     #[serde(default)]
     pub settings: SettingsParams,
     #[serde(default)]

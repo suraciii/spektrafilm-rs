@@ -4,6 +4,91 @@ use std::borrow::Cow;
 
 fn key(label: &str) -> Option<&'static str> {
     match label {
+        "film-exposure route and executed span required" => {
+            Some("controls.condition.film_exposure_operation")
+        }
+        "print exposure operation required" => Some("controls.condition.print_exposure_operation"),
+        "scan operation required" => Some("controls.condition.scan_operation"),
+        "terminal RGB finishing required" => Some("controls.condition.terminal_rgb_finishing"),
+        "print readout scan operation required" => {
+            Some("controls.condition.print_readout_operation")
+        }
+        "convert-film inversion operation required" => {
+            Some("controls.condition.conversion_operation")
+        }
+        "film material operation or interpretation required" => {
+            Some("controls.condition.film_interpretation")
+        }
+        "print material operation or interpretation required" => {
+            Some("controls.condition.print_interpretation")
+        }
+        "selected grain engine requires film development or a scan for Procedural grain" => {
+            Some("controls.condition.grain_operation")
+        }
+        "film exposure, film scan interpretation, or print exposure tracking required" => {
+            Some("controls.condition.exposure_compensation")
+        }
+        "film_render.base.active = true" => Some("controls.condition.film_base"),
+        "print_render.base.active = true" => Some("controls.condition.print_base"),
+        "input metering operation required" => Some("controls.condition.metering"),
+        "negative-to-positive film scan interpretation required" => {
+            Some("controls.condition.negative_scan")
+        }
+        "film exposure or a downstream calibrated spectral reference required" => {
+            Some("controls.condition.spectral_reference")
+        }
+        "film development or a downstream calibrated film-curve reference required" => {
+            Some("controls.condition.film_curve")
+        }
+        "selected material capability is unavailable" => {
+            Some("controls.condition.material_unavailable")
+        }
+        "Finishing" => Some("controls.finishing.title"),
+        "Brightness" => Some("controls.finishing.brightness"),
+        "Saturation" => Some("controls.finishing.saturation"),
+        "Expand" => Some("controls.finishing.expand"),
+        "Enable Expand" => Some("controls.finishing.enable_expand"),
+        "Black reference" => Some("controls.finishing.black"),
+        "White reference" => Some("controls.finishing.white"),
+        "Reset Brightness" => Some("controls.finishing.reset_brightness"),
+        "Reset Contrast" => Some("controls.finishing.reset_contrast"),
+        "Reset Warmth" => Some("controls.finishing.reset_warmth"),
+        "Reset Saturation" => Some("controls.finishing.reset_saturation"),
+        "Reset Enable Expand" => Some("controls.finishing.reset_enabled"),
+        "Reset Black reference" => Some("controls.finishing.reset_black"),
+        "Reset White reference" => Some("controls.finishing.reset_white"),
+        "Hold finishing comparison" => Some("controls.finishing.compare"),
+        "Negative conversion (exposure domain)" => Some("controls.finishing.negative_conversion"),
+        "Finishing is inactive: the route does not deliver an eligible positive reading. Stored values are retained." => {
+            Some("controls.finishing.inactive")
+        }
+        "Reset only this finishing control to its default. An invalid Expand span cannot be accepted." => {
+            Some("controls.finishing.reset_help")
+        }
+        "Raise or lower internal tones with less influence near reference endpoints. This is not source exposure or linear EV." => {
+            Some("controls.finishing.brightness_help")
+        }
+        "Change internal tonal separation with less influence near reference endpoints. This is not sharpening or an endpoint crop." => {
+            Some("controls.finishing.contrast_help")
+        }
+        "Shift along a fixed warm–cool direction weighted by tone and chroma. This is not Kelvin or capture white balance." => {
+            Some("controls.finishing.warmth_help")
+        }
+        "Change color strength with restrained amplification of strong colors. This is not physical dye density or automatic warming." => {
+            Some("controls.finishing.saturation_help")
+        }
+        "Map fixed sRGB-encoded input references to black and white. Hard clipping destroys differences for this render; later controls cannot recover them." => {
+            Some("controls.finishing.expand_help")
+        }
+        "Encoded input reference mapped to black. This is not a scanner calibration point or output endpoint." => {
+            Some("controls.finishing.black_help")
+        }
+        "Encoded input reference mapped to white. This is not a scanner calibration point or output endpoint." => {
+            Some("controls.finishing.white_help")
+        }
+        "Hold the primary mouse button or focused Space to bypass only finishing. Release to restore it. Saved and exported adjustments are unchanged." => {
+            Some("controls.finishing.compare_help")
+        }
         "hoya_x0" => Some("controls.scanner.filter_x0"),
         "hoya_x1" => Some("controls.scanner.filter_x1"),
         "hoya_y2" => Some("controls.scanner.filter_y2"),
@@ -27,6 +112,8 @@ fn key(label: &str) -> Option<&'static str> {
         "Photograph records" => Some("controls.section.photograph_records"),
         "Export queue" => Some("photo.queue.title"),
         "Preset discovery" => Some("controls.section.preset_discovery"),
+        "Shadow clipping warning" => Some("surfaces.viewer.clipping_shadows"),
+        "Highlight clipping warning" => Some("surfaces.viewer.clipping_highlights"),
         "Continue saving retained pixels" => Some("result.save.continue"),
         "Save adjustments…" => Some("photo.record.save"),
         "Reopen adjustments…" => Some("photo.record.reopen"),
@@ -502,7 +589,7 @@ fn key(label: &str) -> Option<&'static str> {
         "GPU passes and measurement availability" => Some("surfaces.diagnostics.gpu"),
         "GPU timing" => Some("surfaces.diagnostics.gpu_timing"),
         "GUI parameters" => Some("controls.label.gui_parameters"),
-        "Gamma applied to the film density curves during development; 1.0 keeps the profile curves unchanged. Requires an actual film-development route." => {
+        "Gamma applied to the film density curves during development or a calibrated film-curve reference; 1.0 keeps the profile curves unchanged." => {
             Some("controls.chemistry.film_density_curve_gamma_help")
         }
         "Gamma applied to the paper density curves during print development; 1.0 keeps the profile curves unchanged. Requires an admitted print-development route." => {
@@ -688,7 +775,9 @@ fn key(label: &str) -> Option<&'static str> {
         "Micro-structure scale and clump size." => Some("controls.grain.micro_structure_help"),
         "Midtone grain amount." => Some("controls.grain.midtones_help"),
         "Midtones" => Some("controls.grain.midtones"),
-        "Minimum grain density for Spektra." => Some("controls.grain.density_min_help"),
+        "Minimum grain density for Spektra; also sets bounds for executing film-scanner and enlarger LUTs." => {
+            Some("controls.grain.density_min_help")
+        }
         "Multiplier on the cross-layer (off-diagonal) inhibition. Controls saturation enhancement from interlayer DIR effects." => {
             Some("controls.couplers.inhibition_interlayer_help")
         }
@@ -1227,7 +1316,7 @@ fn key(label: &str) -> Option<&'static str> {
         "enable print base" => Some("controls.base.enable_print"),
         "enable print density curves" => Some("controls.chemistry.enable_print_curves"),
         "engine" => Some("controls.grain.engine"),
-        "enlarger.diffusion_filter.active = true; strength and spatial_scale positive; io.scan_film = false" => {
+        "enlarger.diffusion_filter.active = true; strength and spatial_scale positive" => {
             Some("controls.condition.enlarger_diffusion")
         }
         "enlarger.preflash_exposure > 0; zero disables flash and retains filter settings" => {
@@ -1305,7 +1394,7 @@ fn key(label: &str) -> Option<&'static str> {
         "input color space" => Some("controls.scanner.input_color_space"),
         "inscribed_hull" => Some("controls.gamut.inscribed_hull"),
         "io.crop = true" => Some("controls.condition.crop"),
-        "io.scan_film = false; print_render.glare.active = true; percent > 0; stochastic effects enabled" => {
+        "print_render.glare.active = true; percent > 0; stochastic effects enabled" => {
             Some("controls.condition.glare")
         }
         "knee" => Some("controls.gamut.knee"),

@@ -370,6 +370,9 @@ impl GuiState {
         paper: &str,
         extras: &Value,
     ) -> Result<Self> {
+        params
+            .validate_values_detailed()
+            .map_err(anyhow::Error::new)?;
         let mut base = Self::factory().sections;
         merge(&mut base, extras);
         let mut state = Self::from_value(base)?;

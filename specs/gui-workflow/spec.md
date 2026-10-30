@@ -21,9 +21,11 @@ The [GUI presentation specification](../gui-presentation/spec.md) owns visual hi
 
 Every route shows lens blur and unsharp mask; the readout illuminant is not a control. Conversion control display names MUST follow the [conversion control naming contract](../film-chain/spec.md#conversion-control-naming-acceptance). Eligible `standard` negative scans MUST expose operator correction and its restore, copy/paste and held automatic-comparison actions under the [operator contract](../film-chain/lab-scan/spec.md#operator-correction).
 
+Negative conversion MUST place `scanner.operator` in a collapsible specialized correction group. Its labels and help MUST identify exposure-domain units and distinguish it from common finishing; it MUST NOT be renamed or migrated into finishing.
+
 Operator edits use the workspace's adjustment history, not a second local Undo/Redo owner. Comparison MUST leave retained Save pixels and correction parameters unchanged. It activates only while the primary mouse button holds its control or focused Space is held; secondary and middle presses MUST NOT start comparison or invalidate the accepted render.
 
-A route or film profile change that makes the selected mode ineligible resets it to `direct_scan` and clears ineligible scanner controls.
+A route or film profile change that makes the selected mode ineligible resets it to `direct_scan` and clears ineligible scanner controls. It MUST preserve common finishing values under [finishing editing](../finishing/spec.md#editing-and-comparison).
 - Imported states and presets MUST reject the removed mode as defined by [Scanner language](../film-chain/spec.md#scanner-language). A rejected import MUST NOT replace accepted parameters or the retained image.
 - Numeric parameter fields use text editing and the default text cursor. Each original wheel event over a field changes its value by the declared step.
 - Smoothed scroll residue MUST NOT repeat that change in later frames. Invalid or incomplete text MUST NOT enter runtime parameters.
@@ -67,7 +69,7 @@ Export MUST be the primary file-delivery entry. Its submission surface MUST iden
 
 ## Material controls and output composition
 
-Control placement follows [Stage and surface ownership](#stage-and-surface-ownership). Material behavior follows [Output mix and material controls](../output-mix/spec.md#user-operation). The inspector MUST NOT add Digital response panels, a Reproduction section, saturation or color-density groups, or tonal-mask controls.
+Control placement follows [Stage and surface ownership](#stage-and-surface-ownership). Material behavior follows [Output mix and material controls](../output-mix/spec.md#user-operation). Apart from [common finishing](../finishing/spec.md#controls), the inspector MUST NOT add Digital response panels, a Reproduction section, saturation or color-density groups, or tonal-mask controls.
 
 Inspector stages organize access to controls; they do not change pipeline execution order or serialized preset ownership.
 
@@ -85,9 +87,13 @@ Profile and route feedback MUST identify unsupported or inactive controls withou
 
 Material edits MUST use existing scanner calibration and inverse reconstruction semantics. The GUI MUST NOT promise creative-reference isolation or add separate baseline and effective reference controls. Module resets follow [Section reset](#section-reset).
 
-Serialized section payloads retain their core ownership under [Preset design](../presets/design.md#sections); no response reset or preset section is added.
+Serialized section payloads retain their core ownership under [Preset design](../presets/design.md#sections). The independent Finishing section MUST NOT restore withdrawn digital-response sections.
 
 Output MUST expose Simulation blend as the full-result/prepared-source blend under [Output mix](../output-mix/spec.md#output-mix). Existing output gamut algorithm and chroma-knee controls remain available without duplicate editable copies. Output MUST NOT expose standalone lightness compression, an Output response section or preset, or a separate output-processing switch for the `input` workflow.
+
+Output MUST expose a Finishing module with the controls and collapsible Range group defined by [common finishing](../finishing/spec.md#controls). It MUST explain inactive conditions and retain stored values under [applicability](../finishing/spec.md#scope-and-applicability).
+
+Finishing reset, transient module comparison, and editing behavior MUST follow [finishing editing and comparison](../finishing/spec.md#editing-and-comparison). Comparison MUST NOT bypass unrelated stages or change retained output, parameters, or adjustment history.
 
 A negative-capture source MUST state that zero Simulation blend returns the prepared negative, not a positive interpretation. Input/Output viewing remains independent from rendered effect amount.
 
@@ -138,11 +144,13 @@ No duplicate grain selector or automatic engine conversion is required.
 
 ### Grain control disclosure
 
-Ordinary Grain browsing MUST place Enable grain and Engine first. It MUST show only the selected engine's effective controls. Turning grain off MUST hide numerical controls without clearing their requests.
+Ordinary Grain browsing MUST place Enable grain and Engine first. It MUST show the selected engine's effective grain controls. Turning grain off MUST hide grain-only numerical controls without clearing their requests.
 
-Dye MUST expose Grain strength and Grain scale as its only numerical editors. Grain strength 0 MUST remove random grain, including residual count noise; 1 MUST keep the delivered look. Grain scale MUST be described as a film-coordinate texture scale, not a crystal diameter or scanner blur, and MUST NOT be described as an output-pixel size.
+Dye MUST expose Grain strength and Grain scale as its only numerical grain editors. Grain strength 0 MUST remove random grain, including residual count noise; 1 MUST keep the delivered look. Grain scale MUST be described as a film-coordinate texture scale, not a crystal diameter or scanner blur, and MUST NOT be described as an output-pixel size.
 
-RMS granularity, channel correlation, density minimum, uniformity, and particle scale sublayers MUST remain stored recipe values without Dye editors; loads and saves MUST keep them unchanged. Their Dye applicability MUST report them inactive, and search MUST NOT present them as effective Dye controls.
+RMS granularity, channel correlation, density minimum, uniformity, and particle scale sublayers MUST remain stored recipe values without Dye grain editors; loads and saves MUST keep them unchanged. The GUI MUST NOT present them as effective Dye grain controls.
+
+The shared density minimum editor MUST remain available when an executing film-scanner or enlarger LUT consumes it, regardless of grain enable or engine selection. It MUST use the [operation applicability](../cli/spec.md#operation-applicability) rules for component disclosure. Editing it MUST NOT enable grain or change the selected engine.
 
 The panel MUST explain the lightweight Preview bypass and direct inspection to SCAN and exact 100% zoom.
 
@@ -174,11 +182,11 @@ Each module has one editing owner. The inspector MUST contain these stages and m
 | Input and capture | Workflow selector; input color space and decoding; RAW white balance, temperature, tint, lens correction, and reprocess action; crop, upscale, and source rotation; Camera exposure, metering, film format, color filter, and capture illuminant; Camera diffusion; input gamut compression; spectral reconstruction and its applicable adaptation controls; Convert imported-capture scan illuminant, exposure, base estimation, calibration, channel swaps, and calibration actions. |
 | Film | Film material selector and its development-time family; Chemistry; Film base; Halation; Couplers; Grain selector, shared material-grain parameters, and every engine-specific parameter group. |
 | Print | Print material selector and its development-time family; Enlarger exposure mode, exposure, exposure tracking, M/Y shifts, and illuminant; Preflash; Enlarger diffusion; print Chemistry and independent density-curve gamma; Print base. |
-| Scan | Fixed product readout illuminant information; eligible scan output and conversion-style controls; operator correction, restore, copy/paste and held automatic comparison; lens blur, unsharp mask; Print viewing glare. |
-| Output | Output color space and encoding where exposed by their contracts; output gamut processing; CMYK ink style; Simulation blend; retained Save color and encoding settings. |
+| Scan | Fixed product readout illuminant information; eligible scan output and conversion-style controls; specialized negative-conversion correction, restore, copy/paste and held automatic comparison; lens blur, unsharp mask; Print viewing glare. |
+| Output | Finishing and its collapsible Range group; output color space and encoding where exposed by their contracts; output gamut processing; CMYK ink style; Simulation blend; retained Save color and encoding settings. |
 | Application settings | General: interface language, preview limits, and rendering preferences that are not photographic controls; GUI parameters: startup state save/load/default actions; Display: display transform, ICC selection, canvas, padding, and interpolation; Diagnostics: observation and report actions. Language preference ownership follows [GUI product language](../gui-language/spec.md#selection-and-persistence), not photographic state. |
 | Export dialog | Independent full-resolution export backend, format, depth, saving color and encoding, applicable codec/compression options, destination selection, and export submission. |
-| Viewer footer | Original/Modified/Paper back selection; zoom, fit, reveal, crossfade, and read-only zoom state. |
+| Viewer footer | Original/Modified/Paper back selection; zoom, fit, reveal, crossfade, and read-only zoom state; [black and white endpoint warnings](../gui-product-design/clipping-warnings/spec.md#controls); optional image-analysis visibility. |
 | Preset browser | Look selection, browser search, library refresh/reveal, and look-preset management. |
 
 Rotation is a source operation and MUST NOT be offered as viewer-only pan or zoom. A read-only summary or action that locates its owner MAY appear elsewhere; a second editable copy MUST NOT.
@@ -215,6 +223,14 @@ The interface MUST NOT impose a blanket Custom-only restriction on a parameter w
 
 Module disable, unsupported material capability, source type, route, and selected engine are different applicability reasons. The GUI MUST name the actual reason and retain readable values. Expanding an inactive group MUST NOT activate it.
 
+Runtime control values MUST follow [shared value validity](../cli/spec.md#parameter-value-validity) after existing GUI-state normalization. Valid inactive values remain storable; an invalid loaded or edited value MUST NOT be repaired by clamping, clearing, or enabling another control. Rejection follows the existing accepted-state and history transaction.
+
+A higher-precedence runtime mirror MUST NOT conceal invalid enlarger values in another supplied mirror. Validation MUST retain the existing normalization and precedence for valid mirrors.
+
+Rows, search results, and module notices MUST use [operation applicability](../cli/spec.md#operation-applicability) for the same configured final-render context. They MUST distinguish an absent operation from an off switch or unsupported material. An unavailable context MUST NOT be presented as proof that a control is active.
+
+Changing an admitted full route to `input` and back MUST retain valid inactive settings and their explicit ownership, except for existing owning normalizations. The GUI MUST expose the missing-operation reason without implying that an enable switch can add that operation to the route. A temporary Preview bypass MUST NOT make final-render controls appear permanently inactive.
+
 An inactive optional subfeature MUST NOT mark its whole module inactive. A module-level notice appears only when every dependent control in that module is inactive; the module's own enable switch is not evidence of its inactivity.
 
 A route or material change MUST preserve inactive values except for normalizations explicitly required by the owning contract and [material defaults](../presets/spec.md#material-defaults). The header MUST report route and scanner normalizations.
@@ -228,6 +244,8 @@ Modules expose resets under [Section reset](#section-reset). Control coverage ac
 ## Section reset
 
 A visible module reset MUST restore exactly that module's editable canonical paths to their reset baseline. A module reset MUST NOT reset another module because modules can share one serialized preset section.
+
+Finishing reset MUST affect only the controls owned by Finishing, including Range. Row reset MUST affect only its own control.
 
 In particular, Preflash reset MUST leave main Enlarger exposure and filtration unchanged, and Print viewing glare reset MUST leave Print chemistry unchanged. A material module reset MUST also restore its material selection and development time.
 
@@ -252,6 +270,8 @@ Application settings sections General and Display each offer one grouped reset o
 ## Edit history
 
 Undo and Redo apply to accepted adjustments for the current source: direct parameter edits, workflow and material selection, feature-profile and look-preset application, and module reset. Each action includes its required dependent normalizations. A rejected edit creates no history entry.
+
+Accepted finishing edits and resets MUST use the same adjustment history. Transient finishing comparison MUST NOT create a history entry.
 
 One slider drag is one history entry, even if intermediate valid values schedule previews. A completed numeric text edit is one entry. One original wheel event over a numeric field is one entry.
 
@@ -287,7 +307,7 @@ Loading a state or preset MUST NOT round a value to a specification or migrate t
 
 An editor range is a usability bound. It is not the parameter's document bound.
 
-Each numeric editor MUST declare a minimum, a maximum, and a step. The parameter discovery description MUST declare the same usable range. That usable range MAY be narrower than the accepted document range.
+Each numeric editor MUST declare a minimum, a maximum, and a step. That usable range MAY be narrower than the accepted document range. Parameter discovery MUST describe the accepted document domain; a GUI interaction range MUST NOT replace that domain.
 
 The editor MUST accept every value inside the usable range and MUST reject values outside it.
 
@@ -297,7 +317,7 @@ An editor MUST reject input that the validator would reject, before the value en
 
 The GUI editor reads the single declared range for `camera.film_format_mm` from the editor-range table. Recipes, presets, CLI parameters, and saved state MUST carry every strictly positive value accepted by the validator, including values outside the editor range. The [Film geometry](../film-grain/dye/design.md#film-geometry) contract owns the Dye-specific geometry consequence.
 
-The editor range is declared once per parameter path in a single table. The GUI editor reads that table; a missing entry is a defect, not a silent default to the machine range. The same table is the source for the CLI discovery `minimum`/`maximum` output.
+The editor range is declared once per parameter path in a single GUI table. The GUI editor reads that table; a missing entry is a defect, not a silent default to the machine range. The table MUST NOT duplicate or override the core-owned document-domain rules used by CLI discovery and validation.
 
 The editor range MUST be contained within the validator's accepted range and MUST be wide enough to reach the parameter's documented usable values. Where the validator bound is unbounded above, the editor MUST still declare a finite maximum derived from the parameter's typical operating range.
 
@@ -332,6 +352,8 @@ Opening a source, changing a display profile, and interacting with the viewer MU
 Cache availability MUST NOT change supported profiles or displayed pixel values. Missing, invalid, stale, or unwritable caches MUST NOT prevent the viewer from preparing the correct transform.
 
 The viewer MUST expose [image analysis](../gui-product-design/image-analysis/spec.md) as an optional workspace below the photograph. That capability owns analysis subjects, regions, display preferences, availability, and read-only measurement behavior.
+
+The viewer MUST expose [black and white endpoint warnings](../gui-product-design/clipping-warnings/spec.md) independently of the analysis workspace. That capability owns native endpoint interpretation, warning presentation, temporary inspection, and independent presentation preferences.
 
 ## Viewer interaction
 

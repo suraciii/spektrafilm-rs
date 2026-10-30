@@ -16,6 +16,7 @@ pub enum Section {
     Cmyk,
     Print,
     OutputMix,
+    Finishing,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(tag = "kind", content = "section", rename_all = "snake_case")]
@@ -38,6 +39,7 @@ pub const SECTIONS: &[Section] = &[
     Section::Cmyk,
     Section::Print,
     Section::OutputMix,
+    Section::Finishing,
 ];
 impl Section {
     pub fn name(self) -> &'static str {
@@ -56,6 +58,7 @@ impl Section {
             Self::Cmyk => "cmyk ink style",
             Self::Print => "print",
             Self::OutputMix => "output",
+            Self::Finishing => "finishing",
         }
     }
     pub fn paths(self) -> &'static [&'static str] {
@@ -83,6 +86,7 @@ impl Section {
             Self::Cmyk => &["cmyk"],
             Self::Print => &["print_render"],
             Self::OutputMix => &["output_mix"],
+            Self::Finishing => &["finishing"],
         }
     }
     fn owns(self, path: &str) -> bool {
@@ -113,7 +117,7 @@ pub fn extract_section_detailed(
     section: Section,
     params: &RuntimeParams,
 ) -> Result<Value, PresetDocumentError> {
-    crate::params::sources::validate_finite_detailed(params)?;
+    params.validate_values_detailed()?;
     let root = serde_json::to_value(LookParameters::capture(params)).map_err(|e| {
         PresetDocumentError::new(
             PresetDocumentReason::Parser {
@@ -178,7 +182,7 @@ pub fn section_matches_detailed(
     let PresetParameters::Section(payload) = &preset.parameters else {
         unreachable!()
     };
-    crate::params::sources::validate_finite_detailed(params)?;
+    params.validate_values_detailed()?;
     let applied = preset.overlay_section_detailed(params)?;
     let expected = serde_json::to_value(LookParameters::capture(&applied)).map_err(|e| {
         PresetDocumentError::new(

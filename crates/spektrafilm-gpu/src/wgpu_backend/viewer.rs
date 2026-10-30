@@ -396,9 +396,10 @@ impl WgpuBackend {
         image: Option<&DeviceImage>,
         paper: Option<&DeviceImage>,
         previous: Option<&DeviceImage>,
+        native: Option<&DeviceImage>,
         p: &ViewerComposeGpuParams,
     ) -> Result<Vec<[u8; 4]>, String> {
-        self.viewer_compose_gpu_with_limit(image, paper, previous, p, self.viewer_limit())
+        self.viewer_compose_gpu_with_limit(image, paper, previous, native, p, self.viewer_limit())
     }
 
     fn viewer_compose_gpu_with_limit(
@@ -406,6 +407,7 @@ impl WgpuBackend {
         image: Option<&DeviceImage>,
         paper: Option<&DeviceImage>,
         previous: Option<&DeviceImage>,
+        native: Option<&DeviceImage>,
         p: &ViewerComposeGpuParams,
         limit: u64,
     ) -> Result<Vec<[u8; 4]>, String> {
@@ -420,12 +422,46 @@ impl WgpuBackend {
         if limit < 4 {
             return Err("viewer composition footprint exceeds device limits".into());
         }
+        let clipping = if p.clipping.active() && image.is_some() {
+            let native = native.ok_or("native image required for viewer clipping")?;
+            if native.width() == 0
+                || native.height() == 0
+                || !p
+                    .rect
+                    .iter()
+                    .chain(p.image_rect.iter())
+                    .all(|v| v.is_finite())
+                || p.rect[2] <= p.rect[0]
+                || p.rect[3] <= p.rect[1]
+                || p.image_rect[2] <= p.image_rect[0]
+                || p.image_rect[3] <= p.image_rect[1]
+            {
+                return Err(
+                    "viewer clipping requires nonempty finite rectangles and source".into(),
+                );
+            }
+            let thresholds =
+                spektrafilm_backend::viewer_clipping::endpoint_thresholds(native.meta())?;
+            Some((native, self.buffer_payload(native)?, thresholds))
+        } else {
+            None
+        };
+        if clipping.is_some() && limit < 16 {
+            return Err("viewer clipping footprint exceeds device limits".into());
+        }
         let mut result = Vec::with_capacity(count as usize);
         let mut first = 0;
         while first < count {
             self.check_cancelled()?;
-            let mut n = (count - first).min((limit / 4).min(u64::from(u32::MAX)) as u32);
+            let stride = if clipping.is_some() { 16 } else { 4 };
+            let mut n = (count - first).min((limit / stride).min(u64::from(u32::MAX)) as u32);
+            if clipping.is_some() {
+                n = n.min(262_144);
+            }
             let windows = loop {
+                if clipping.is_some() && n < p.width {
+                    n = n.min(p.width - first % p.width);
+                }
                 let mut windows = [[0, 0, 1, 1]; 3];
                 for (i, source) in [image, paper, previous].into_iter().enumerate() {
                     if let Some(source) = source {
@@ -500,6 +536,126 @@ impl WgpuBackend {
                 &out,
                 "viewer_presentation",
             )?;
+            if let Some((native, payload, thresholds)) = clipping {
+                let mask = self.viewer_buffer(bytes, "viewer_clipping_mask");
+                // Geometry is shared with the host mask; source samples stay on device.
+                use spektrafilm_backend::viewer_clipping::ClippingAxis;
+                let x_axis = ClippingAxis::new(
+                    p.width,
+                    [p.rect[0], p.rect[2]],
+                    [p.image_rect[0], p.image_rect[2]],
+                    native.width(),
+                );
+                let y_axis = ClippingAxis::new(
+                    p.height,
+                    [p.rect[1], p.rect[3]],
+                    [p.image_rect[1], p.image_rect[3]],
+                    native.height(),
+                );
+                let (x0, x1, y0, y1) = output_extent(first, n, p.width);
+                let x_len = x1 - x0 + 1;
+                let mut bounds =
+                    Vec::<[u32; 2]>::with_capacity(x_len as usize + (y1 - y0 + 1) as usize);
+                let mut limits = [[u32::MAX, 0]; 2];
+                let mut max_span = [0u32; 2];
+                for (axis, start, end, mapping) in [(0, x0, x1, &x_axis), (1, y0, y1, &y_axis)] {
+                    for coordinate in start..=end {
+                        if coordinate & 4095 == 0 {
+                            self.check_cancelled()?;
+                        }
+                        let Some([lo, hi]) = mapping.bounds(coordinate) else {
+                            bounds.push([u32::MAX, 0]);
+                            continue;
+                        };
+                        bounds.push([lo, hi]);
+                        if lo < hi {
+                            limits[axis][0] = limits[axis][0].min(lo);
+                            limits[axis][1] = limits[axis][1].max(hi);
+                            max_span[axis] = max_span[axis].max(hi - lo);
+                        }
+                    }
+                }
+                let lower =
+                    u64::from(limits[1][0]) * u64::from(native.width()) + u64::from(limits[0][0]);
+                let upper = if limits[0][0] < limits[0][1] && limits[1][0] < limits[1][1] {
+                    u64::from(limits[1][1] - 1) * u64::from(native.width())
+                        + u64::from(limits[0][1])
+                } else {
+                    0
+                };
+                let geometry = self.viewer_table(bytemuck::cast_slice(&bounds));
+                if lower < upper {
+                    for page in &payload.pages {
+                        self.check_cancelled()?;
+                        if u64::from(page.first_pixel) >= upper
+                            || u64::from(page.first_pixel) + u64::from(page.n_pixels) <= lower
+                        {
+                            continue;
+                        }
+                        // Each invocation scans at most 256 selected source pixels.
+                        // Split large footprints into bounded batches so cancellation
+                        // is observed between device dispatches.
+                        let max_samples = (u64::from(max_span[0]) * u64::from(max_span[1]))
+                            .min(u64::from(page.n_pixels));
+                        let blocks = max_samples.div_ceil(256) as u32;
+                        let batch_limit = (262_144 / n).clamp(1, 32);
+                        let mut block = 0;
+                        while block < blocks {
+                            self.check_cancelled()?;
+                            let batch = (blocks - block).min(batch_limit);
+                            let clip_words = [
+                                native.width(),
+                                n,
+                                page.first_pixel,
+                                page.n_pixels,
+                                (thresholds[0] as f32).to_bits(),
+                                (thresholds[1] as f32).to_bits(),
+                                first,
+                                p.width,
+                                x0,
+                                y0,
+                                x_len,
+                                block,
+                                batch,
+                                0,
+                                0,
+                                0,
+                            ];
+                            self.viewer_dispatch_into(
+                                include_str!(
+                                    "../../../spektrafilm-shaders/wgsl/viewer_clipping_mask.wgsl"
+                                ),
+                                &clip_words,
+                                &[&page.buffer, &geometry],
+                                n * batch,
+                                &mask,
+                                "viewer_clipping_mask",
+                            )?;
+                            block += batch;
+                        }
+                    }
+                }
+                let mode = match p.clipping {
+                    spektrafilm_backend::ViewerClipping::Off => 0,
+                    spektrafilm_backend::ViewerClipping::Overlay {
+                        shadows,
+                        highlights,
+                    } => u32::from(shadows) | (u32::from(highlights) << 1),
+                    spektrafilm_backend::ViewerClipping::Shadows => 4,
+                    spektrafilm_backend::ViewerClipping::Highlights => 5,
+                };
+                let blue = u32::from_le_bytes(spektrafilm_backend::viewer_clipping::SHADOW_RGBA);
+                let red = u32::from_le_bytes(spektrafilm_backend::viewer_clipping::HIGHLIGHT_RGBA);
+                let clip_words = [n, mode, blue, red, first, p.width, x0, y0, x_len, 0, 0, 0];
+                self.viewer_dispatch_into(
+                    include_str!("../../../spektrafilm-shaders/wgsl/viewer_clipping_apply.wgsl"),
+                    &clip_words,
+                    &[&mask, &geometry],
+                    n,
+                    &out,
+                    "viewer_clipping_apply",
+                )?;
+            }
             result.extend(
                 self.pipe
                     .readback_buffer_cancellable::<u32>(&out, bytes)?
@@ -592,9 +748,10 @@ mod tests {
             full_source: false,
             output_layer: true,
             fade: 1.0,
+            clipping: spektrafilm_backend::ViewerClipping::Off,
         };
         let pixels = observed
-            .viewer_compose_gpu_with_limit(None, None, None, &params, 28)
+            .viewer_compose_gpu_with_limit(None, None, None, None, &params, 28)
             .unwrap();
         let expected: Vec<_> = (0..37)
             .map(|x| {
@@ -616,7 +773,7 @@ mod tests {
         assert!(work.buffer_create_bytes.unwrap() <= 6 * (36 + 192) + 2 * 37 * 4);
         assert!(
             observed
-                .viewer_compose_gpu_with_limit(None, None, None, &params, 3)
+                .viewer_compose_gpu_with_limit(None, None, None, None, &params, 3)
                 .unwrap_err()
                 .contains("exceeds device limits")
         );
@@ -661,14 +818,15 @@ mod tests {
             full_source: true,
             output_layer: true,
             fade: 1.0,
+            clipping: spektrafilm_backend::ViewerClipping::Off,
         };
         assert_eq!(
-            gpu.viewer_compose_gpu_with_limit(Some(&image), None, None, &params, 72)
+            gpu.viewer_compose_gpu_with_limit(Some(&image), None, None, None, &params, 72)
                 .unwrap(),
             expected
         );
         assert_eq!(
-            gpu.viewer_compose_retained(Some(&image), None, None, &params)
+            gpu.viewer_compose_retained(Some(&image), None, None, None, &params)
                 .unwrap(),
             expected
         );
@@ -704,6 +862,10 @@ mod tests {
             full_source: false,
             output_layer: true,
             fade: 1.0,
+            clipping: spektrafilm_backend::ViewerClipping::Overlay {
+                shadows: true,
+                highlights: true,
+            },
         };
         let cancellation = Arc::new(AtomicBool::new(false));
         let readbacks = Arc::new(AtomicUsize::new(0));
@@ -720,7 +882,7 @@ mod tests {
         operation.cancellation = Some(cancellation.clone());
         assert_eq!(
             operation
-                .viewer_compose_gpu_with_limit(Some(&image), None, None, &params, 24)
+                .viewer_compose_gpu_with_limit(Some(&image), None, None, Some(&image), &params, 24)
                 .unwrap_err(),
             "operation cancelled"
         );
@@ -732,11 +894,11 @@ mod tests {
         gpu.pipe.test_on_readback(|| {});
         let healthy = operation.with_cancellation(None).unwrap();
         let pixels = healthy
-            .viewer_compose_retained(Some(&image), None, None, &params)
+            .viewer_compose_retained(Some(&image), None, None, Some(&image), &params)
             .unwrap();
         assert_eq!(pixels, vec![[128, 128, 128, 255]; 7]);
         assert_eq!(
-            gpu.viewer_compose_gpu_with_limit(Some(&image), None, None, &params, 24)
+            gpu.viewer_compose_gpu_with_limit(Some(&image), None, None, Some(&image), &params, 24)
                 .unwrap(),
             pixels
         );
@@ -744,10 +906,271 @@ mod tests {
         gpu.pipe.test_fail_operation("viewer_presentation");
         assert!(
             healthy
-                .viewer_compose_retained(Some(&image), None, None, &params)
+                .viewer_compose_retained(Some(&image), None, None, Some(&image), &params)
                 .unwrap_err()
                 .contains("injected device resource failure")
         );
         assert_eq!(gpu.pipe.test_failure_attempts(), 1);
+    }
+
+    #[test]
+    fn native_clipping_matches_host_across_pages_and_viewport_geometry() {
+        use spektrafilm_backend::{ViewerClipping, viewer_clipping};
+        let gpu = crate::test_support::explicit_adapter();
+        let display_host = ImageBuf::from_data(1, 1, vec![0.4 as _; 3]);
+        let display_meta = RetainedImageMeta {
+            width: 1,
+            height: 1,
+            domain: SampleDomain::Encoded,
+            precision: Precision::host(),
+            space: spektrafilm_math::colorspace::resolve("sRGB").unwrap(),
+            pixel_pitch_um: None,
+        };
+        let display = gpu.retain_image(&display_host, &display_meta).unwrap();
+        for (space, domain) in [
+            ("ACEScct", SampleDomain::Encoded),
+            ("sRGB", SampleDomain::Linear),
+        ] {
+            let meta = RetainedImageMeta {
+                width: 8,
+                height: 2,
+                domain,
+                precision: Precision::F32,
+                space: spektrafilm_math::colorspace::resolve(space).unwrap(),
+                pixel_pitch_um: None,
+            };
+            let [black, white] = viewer_clipping::endpoint_thresholds(meta)
+                .unwrap()
+                .map(|x| x as f32);
+            let mid = (black + white) / 2.0;
+            let mut values = vec![mid; 8 * 2 * 3];
+            values[0..3].copy_from_slice(&[black; 3]);
+            values[3..6].copy_from_slice(&[black - 0.01, mid, mid]);
+            values[6..9].copy_from_slice(&[mid, white, mid]);
+            values[9..12].copy_from_slice(&[f32::NAN, black, black]);
+            values[12..15].copy_from_slice(&[f32::INFINITY, mid, mid]);
+            values[30..33].copy_from_slice(&[black; 3]);
+            values[42..45].copy_from_slice(&[white, mid, mid]);
+            let host = ImageBuf::from_data(8, 2, f32_to_scalars(values.clone()));
+            let pages = values
+                .chunks(9)
+                .enumerate()
+                .map(|(i, samples)| ImagePage {
+                    first_pixel: i as u32 * 3,
+                    n_pixels: samples.len() as u32 / 3,
+                    buffer: gpu
+                        .device
+                        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                            label: Some("clipping_test_native_page"),
+                            contents: bytemuck::cast_slice(samples),
+                            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+                        }),
+                })
+                .collect();
+            let native = gpu.retain_image_pages(pages, 8, 2, domain, meta.space, None);
+            let geometries = [
+                (8, 2, [0.0, 0.0, 8.0, 2.0], [0.0, 0.0, 8.0, 2.0]),
+                (4, 1, [0.0, 0.0, 8.0, 2.0], [0.0, 0.0, 8.0, 2.0]),
+                (4, 2, [2.0, 0.0, 6.0, 2.0], [0.0, 0.0, 8.0, 2.0]),
+                (6, 2, [-2.0, 0.0, 10.0, 2.0], [0.0, 0.0, 8.0, 2.0]),
+                (7, 3, [-0.7, 0.13, 7.4, 2.17], [-0.15, -0.2, 7.83, 2.12]),
+            ];
+            for (width, height, rect, image_rect) in geometries {
+                let mut p = ViewerComposeGpuParams {
+                    width,
+                    height,
+                    rect,
+                    border: rect,
+                    paper_rect: rect,
+                    image_rect,
+                    gray: [0.2; 3],
+                    interpolation: 0,
+                    full_source: false,
+                    output_layer: false,
+                    fade: 1.0,
+                    clipping: ViewerClipping::Off,
+                };
+                let baseline = gpu
+                    .viewer_compose_retained(Some(&display), None, None, None, &p)
+                    .unwrap();
+                let mut inactive = p;
+                inactive.clipping = ViewerClipping::Overlay {
+                    shadows: false,
+                    highlights: false,
+                };
+                assert_eq!(
+                    gpu.viewer_compose_retained(Some(&display), None, None, None, &inactive)
+                        .unwrap(),
+                    baseline
+                );
+                for mode in [
+                    ViewerClipping::Overlay {
+                        shadows: true,
+                        highlights: true,
+                    },
+                    ViewerClipping::Overlay {
+                        shadows: true,
+                        highlights: false,
+                    },
+                    ViewerClipping::Overlay {
+                        shadows: false,
+                        highlights: true,
+                    },
+                    ViewerClipping::Shadows,
+                    ViewerClipping::Highlights,
+                ] {
+                    p.clipping = mode;
+                    let mask = viewer_clipping::mask_host(&host, meta, &p, None).unwrap();
+                    if width == 8 {
+                        assert_eq!(&mask[0..5], &[1, 0, 2, 0, 0]);
+                    }
+                    if width == 4 && height == 1 {
+                        assert_eq!(mask, [1, 3, 0, 2]);
+                    }
+                    let expected: Vec<_> = baseline
+                        .iter()
+                        .enumerate()
+                        .map(|(i, &pixel)| {
+                            let x = i as u32 % width;
+                            let y = i as u32 / width;
+                            let r = rect.map(f64::from);
+                            let photo = image_rect.map(f64::from);
+                            let cx = r[0]
+                                + f64::from(x) * ((r[2] - r[0]) / f64::from(width))
+                                + 0.5 * ((r[2] - r[0]) / f64::from(width));
+                            let cy = r[1]
+                                + f64::from(y) * ((r[3] - r[1]) / f64::from(height))
+                                + 0.5 * ((r[3] - r[1]) / f64::from(height));
+                            if cx >= photo[0] && cx < photo[2] && cy >= photo[1] && cy < photo[3] {
+                                viewer_clipping::apply_rgba(pixel, mask[i], mode)
+                            } else {
+                                pixel
+                            }
+                        })
+                        .collect();
+                    assert_eq!(
+                        gpu.viewer_compose_retained(Some(&display), None, None, Some(&native), &p)
+                            .unwrap(),
+                        expected,
+                        "{space} {mode:?} {rect:?} {image_rect:?}"
+                    );
+                    assert_eq!(
+                        gpu.viewer_compose_gpu_with_limit(
+                            Some(&display),
+                            None,
+                            None,
+                            Some(&native),
+                            &p,
+                            24
+                        )
+                        .unwrap(),
+                        expected
+                    );
+                    for limit in [48, 96] {
+                        assert_eq!(
+                            gpu.viewer_compose_gpu_with_limit(
+                                Some(&display),
+                                None,
+                                None,
+                                Some(&native),
+                                &p,
+                                limit
+                            )
+                            .unwrap(),
+                            expected
+                        );
+                    }
+                }
+            }
+            let retained = native.to_host(gpu.backend()).unwrap();
+            for (a, b) in retained.data.iter().zip(host.data.iter()) {
+                assert!(a == b || (a.is_nan() && b.is_nan()));
+            }
+        }
+    }
+
+    #[test]
+    fn clipping_reduces_large_footprint_across_blocks_and_pages() {
+        use spektrafilm_backend::{ViewerClipping, viewer_clipping};
+        let gpu = crate::test_support::explicit_adapter();
+        let space = spektrafilm_math::colorspace::resolve("sRGB").unwrap();
+        let meta = RetainedImageMeta {
+            width: 9131,
+            height: 1,
+            domain: SampleDomain::Linear,
+            precision: Precision::F32,
+            space,
+            pixel_pitch_um: None,
+        };
+        let mut values = vec![0.5f32; meta.width as usize * 3];
+        values[0..3].copy_from_slice(&[f32::NAN, 0.0, 0.0]);
+        values[9000 * 3] = 1.0;
+        values[9130 * 3..9131 * 3].copy_from_slice(&[0.0; 3]);
+        let host = ImageBuf::from_data(meta.width, 1, f32_to_scalars(values.clone()));
+        let pages = values
+            .chunks(9017 * 3)
+            .enumerate()
+            .map(|(i, samples)| ImagePage {
+                first_pixel: i as u32 * 9017,
+                n_pixels: samples.len() as u32 / 3,
+                buffer: gpu
+                    .device
+                    .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                        label: Some("clipping_block_test_page"),
+                        contents: bytemuck::cast_slice(samples),
+                        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+                    }),
+            })
+            .collect();
+        let native = gpu.retain_image_pages(pages, meta.width, 1, meta.domain, space, None);
+        let display = gpu
+            .retain_image(
+                &ImageBuf::from_data(1, 1, vec![0.5 as _; 3]),
+                &RetainedImageMeta {
+                    width: 1,
+                    height: 1,
+                    ..meta
+                },
+            )
+            .unwrap();
+        let rect = [0.0, 0.0, 1.0, 1.0];
+        let mut p = ViewerComposeGpuParams {
+            width: 1,
+            height: 1,
+            rect,
+            border: rect,
+            paper_rect: rect,
+            image_rect: rect,
+            gray: [0.0; 3],
+            interpolation: 0,
+            full_source: false,
+            output_layer: false,
+            fade: 1.0,
+            clipping: ViewerClipping::Off,
+        };
+        let baseline = gpu
+            .viewer_compose_retained(Some(&display), None, None, None, &p)
+            .unwrap();
+        for mode in [
+            ViewerClipping::Overlay {
+                shadows: true,
+                highlights: false,
+            },
+            ViewerClipping::Overlay {
+                shadows: false,
+                highlights: true,
+            },
+            ViewerClipping::Shadows,
+        ] {
+            p.clipping = mode;
+            let flags = viewer_clipping::mask_host(&host, meta, &p, None).unwrap();
+            assert_eq!(flags, [3]);
+            let expected = viewer_clipping::apply_rgba(baseline[0], flags[0], mode);
+            assert_eq!(
+                gpu.viewer_compose_retained(Some(&display), None, None, Some(&native), &p)
+                    .unwrap(),
+                [expected]
+            );
+        }
     }
 }

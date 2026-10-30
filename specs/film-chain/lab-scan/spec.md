@@ -129,6 +129,8 @@ Material-producing routes MAY retain otherwise valid pending scanner correction 
 
 Changing that downstream correction MUST NOT redevelop the stored material or reuse an earlier corrected positive as its setup input.
 
+`scanner.operator` remains exposure-domain negative conversion, distinct from [common finishing](../../finishing/spec.md#controls). Its values and units MUST NOT be migrated or equated with finishing controls.
+
 Let `x_c` be reconstructed log10 exposure and `o_c` the immutable full-frame setup offset. Define `p = log10(0.16 / 0.184)` and `L = log10(2)`. The operator coordinates and correction are:
 
 ```text
@@ -168,6 +170,8 @@ Cache reuse MUST NOT lock offsets across frames. Insufficient memory MUST cause 
 ## Output primaries
 
 The positive tone output MUST denote fixed linear sRGB. The scan MUST convert this response into the selected output RGB space before gamut processing, CMYK, output mixing, sharpening, and transfer encoding. Selecting sRGB MUST use an exact identity transform.
+
+The independent [common finishing color boundary](../../finishing/design.md#color-and-order) applies before output gamut processing on eligible positive scans.
 
 Writer saving-space conversion and viewer ICC conversion remain separate boundaries.
 

@@ -209,6 +209,7 @@ mod tests {
                     &mut serde_json::Value::Null,
                     "Convert",
                     ScanMedium::Negative,
+                    false,
                     "film_render.convert.scan_illuminant",
                     &mut SectionLabelCache::default(),
                     "D55",

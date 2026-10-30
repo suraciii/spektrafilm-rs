@@ -27,6 +27,8 @@ pub(crate) enum Icon {
     Save,
     Layers,
     Transitions,
+    ClippingShadows,
+    ClippingHighlights,
 }
 
 /// Paint a symbol in the central 17-point square without relying on font glyphs.
@@ -194,6 +196,8 @@ pub(crate) fn paint_icon(
             }
             line([-5.0, 0.0], [5.0, 0.0]);
         }
+        Icon::ClippingShadows => path(&[[-6.5, -5.0], [6.5, -5.0], [0.0, 6.0], [-6.5, -5.0]]),
+        Icon::ClippingHighlights => path(&[[-6.5, 5.0], [6.5, 5.0], [0.0, -6.0], [-6.5, 5.0]]),
         Icon::Save => {
             path(&[
                 [-6.0, -6.0],

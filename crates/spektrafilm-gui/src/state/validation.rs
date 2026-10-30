@@ -18,6 +18,51 @@ pub(crate) fn validate_stored_runtime(params: &mut RuntimeParams) -> Result<()> 
     result.map_err(anyhow::Error::new)
 }
 
+/// Validate a normalized runtime carrier before another stored mirror can replace it.
+fn validate_runtime_values(value: Value, path: &str) -> Result<()> {
+    let params: RuntimeParams = serde_json::from_value(value).map_err(|error| {
+        crate::app::Message::new("operations.state.invalid_parameters")
+            .arg("path", path)
+            .context(error)
+    })?;
+    params
+        .validate_values_detailed()
+        .map_err(anyhow::Error::new)
+}
+
+fn normalize_legacy_runtime_cmyk(runtime: &mut Value) -> Result<()> {
+    let Some(object) = runtime.as_object_mut() else {
+        return Ok(());
+    };
+    // Limit this migration to CMYK: other legacy conversions have different
+    // version boundaries. The core migration owns the route and conflict rules.
+    let mut carrier = json!({});
+    for key in ["workflow", "cmyk", "magazine_print_color"] {
+        if let Some(fields) = object.get(key) {
+            carrier[key] = fields.clone();
+        }
+    }
+    if carrier.pointer("/workflow/route").and_then(Value::as_str)
+        == Some("input > film > scan > magazine")
+        && carrier.get("cmyk").is_some_and(|cmyk| !cmyk.is_object())
+    {
+        validate_runtime_values(json!({"cmyk": carrier["cmyk"]}), "rust.runtime.cmyk")?;
+    }
+    spektrafilm_core::params::sources::normalize_legacy_complete_params_detailed(&mut carrier)
+        .map_err(anyhow::Error::new)?;
+    for key in ["workflow", "cmyk", "magazine_print_color"] {
+        if let Some(fields) = carrier
+            .as_object_mut()
+            .and_then(|fields| fields.remove(key))
+        {
+            object.insert(key.to_owned(), fields);
+        } else {
+            object.remove(key);
+        }
+    }
+    Ok(())
+}
+
 pub(super) fn normalize_grain_section(section: &mut Value) {
     let Some(object) = section.as_object_mut() else {
         return;
@@ -56,6 +101,9 @@ pub(super) fn validate_state_parameters(value: &mut Value, version: Option<u64>)
         bail!(crate::app::Message::new(
             "operations.state.output_mix_owner"
         ));
+    }
+    if value.get("finishing").is_some() {
+        bail!("finishing belongs in rust.runtime.finishing");
     }
     if !legacy_cmyk {
         if value.get(LEGACY_GROUP).is_some()
@@ -136,6 +184,18 @@ pub(super) fn validate_state_parameters(value: &mut Value, version: Option<u64>)
                     .context(error)
             })?;
     }
+    // Validate the supplied camera mirror before the dedicated diffusion
+    // panel replaces it. Apply the same known-leaf projection as the loader.
+    if let Some(camera) = value.get("camera") {
+        let mut normalized = super::GuiState::factory().sections["camera"].clone();
+        super::merge(&mut normalized, camera);
+        validate_runtime_values(json!({"camera": normalized}), "camera")?;
+    }
+    if matches!(version, Some(2 | 3))
+        && let Some(runtime) = value.pointer_mut("/rust/runtime")
+    {
+        normalize_legacy_runtime_cmyk(runtime)?;
+    }
     let mut explicit = value["rust"]["runtime"].clone();
     if explicit.is_null() {
         explicit = json!({});
@@ -183,45 +243,13 @@ pub(super) fn validate_state_parameters(value: &mut Value, version: Option<u64>)
     if legacy {
         spektrafilm_core::params::sources::normalize_legacy_complete_params_detailed(&mut explicit)
             .map_err(anyhow::Error::new)?;
-    } else if legacy_cmyk {
-        // The runtime carrier of a legacy complete document may also carry the
-        // retired group; migrate it onto the canonical name.
-        if let Some(magazine) = explicit.get("magazine_print_color") {
-            if !magazine.is_object() {
-                bail!(crate::app::Message::new(
-                    "operations.state.legacy_group_object"
-                ));
-            }
-            if explicit.get("cmyk").is_some() {
-                bail!(crate::app::Message::new(
-                    "operations.state.legacy_groups_conflict"
-                ));
-            }
-            let migrated = magazine.clone();
-            explicit
-                .as_object_mut()
-                .expect("runtime object")
-                .insert("cmyk".to_owned(), migrated);
-            explicit
-                .as_object_mut()
-                .expect("runtime object")
-                .remove("magazine_print_color");
-        }
     }
-    let _: RuntimeParams = serde_json::from_value(explicit.clone()).map_err(|error| {
-        crate::app::Message::new("operations.state.invalid_parameters")
-            .arg("path", "rust.runtime")
-            .context(error)
-    })?;
+    validate_runtime_values(explicit.clone(), "rust.runtime")?;
     if let Some(fields) = value.get("grain") {
         let mut grain = fields.clone();
         normalize_grain_section(&mut grain);
         let projected = json!({"film_render": {"grain": grain}});
-        let _: RuntimeParams = serde_json::from_value(projected).map_err(|error| {
-            crate::app::Message::new("operations.state.invalid_parameters")
-                .arg("path", "grain")
-                .context(error)
-        })?;
+        validate_runtime_values(projected, "grain")?;
     }
     for (section, group, leaf) in [
         ("output_gamut_compress", "io", "output_gamut_compress"),
@@ -234,6 +262,11 @@ pub(super) fn validate_state_parameters(value: &mut Value, version: Option<u64>)
             if leaf.is_empty() {
                 if section == "preflashing" {
                     let (translated, tracking) = translate_legacy_print_exposure(fields);
+                    let mut projected = json!({"enlarger": translated});
+                    if let Some(tracking) = &tracking {
+                        projected["settings"] = tracking.clone();
+                    }
+                    validate_runtime_values(projected, "preflashing")?;
                     if let Some(tracking) = tracking {
                         if !explicit["settings"].is_object() {
                             explicit["settings"] = json!({});
@@ -257,6 +290,14 @@ pub(super) fn validate_state_parameters(value: &mut Value, version: Option<u64>)
         "io",
     ] {
         if let Some(fields) = value.get(group) {
+            let mut projected = json!({(group): fields});
+            if legacy {
+                spektrafilm_core::params::sources::normalize_legacy_complete_params_detailed(
+                    &mut projected,
+                )
+                .map_err(anyhow::Error::new)?;
+            }
+            validate_runtime_values(projected, group)?;
             explicit[group] = fields.clone();
         }
     }
@@ -270,10 +311,14 @@ pub(super) fn validate_state_parameters(value: &mut Value, version: Option<u64>)
         // authoritative carrier (`rust.runtime`, the translated `preflashing`
         // pair) already produced — the same guard the projection applies.
         let mut enlarger = enlarger.clone();
-        if let Some(Value::Bool(comp)) = enlarger
-            .as_object_mut()
-            .and_then(|fields| fields.remove("print_exposure_compensation"))
+        if let Some(comp) = enlarger
+            .get("print_exposure_compensation")
+            .and_then(Value::as_bool)
         {
+            enlarger
+                .as_object_mut()
+                .expect("compensation belongs to an object")
+                .remove("print_exposure_compensation");
             let tracking_default = explicit["settings"]["print_exposure_ev_tracking"]
                 .as_str()
                 .is_none_or(|v| v == "follow_mode");
@@ -284,6 +329,14 @@ pub(super) fn validate_state_parameters(value: &mut Value, version: Option<u64>)
                 explicit["settings"]["print_exposure_ev_tracking"] = json!("never");
             }
         }
+        let mut projected = json!({"enlarger": enlarger});
+        if legacy {
+            spektrafilm_core::params::sources::normalize_legacy_complete_params_detailed(
+                &mut projected,
+            )
+            .map_err(anyhow::Error::new)?;
+        }
+        validate_runtime_values(projected, "simulation.enlarger")?;
         overlay_runtime(&mut explicit["enlarger"], &enlarger);
     }
     if let Some(io) = value["simulation"].get("io") {
@@ -304,11 +357,7 @@ pub(super) fn validate_state_parameters(value: &mut Value, version: Option<u64>)
                 )
             );
         }
-        let _: RuntimeParams = serde_json::from_value(projected.clone()).map_err(|error| {
-            crate::app::Message::new("operations.state.invalid_parameters")
-                .arg("path", "simulation.io")
-                .context(error)
-        })?;
+        validate_runtime_values(projected.clone(), "simulation.io")?;
         if legacy {
             value["simulation"]["io"] = projected["io"].clone();
         }
@@ -318,29 +367,11 @@ pub(super) fn validate_state_parameters(value: &mut Value, version: Option<u64>)
     // scanner keys fail the document instead of being silently dropped.
     if let Some(fields) = value.get("scanner") {
         let projected = json!({"scanner": fields});
-        let params: RuntimeParams = serde_json::from_value(projected).map_err(|error| {
-            crate::app::Message::new("operations.state.invalid_parameters")
-                .arg("path", "scanner")
-                .context(error)
-        })?;
-        params
-            .scanner
-            .operator
-            .validate_detailed()
-            .map_err(anyhow::Error::new)?;
+        validate_runtime_values(projected, "scanner")?;
     }
     if let Some(fields) = value["rust"]["runtime"].get("scanner") {
         let projected = json!({"scanner": fields});
-        let params: RuntimeParams = serde_json::from_value(projected).map_err(|error| {
-            crate::app::Message::new("operations.state.invalid_parameters")
-                .arg("path", "rust.runtime.scanner")
-                .context(error)
-        })?;
-        params
-            .scanner
-            .operator
-            .validate_detailed()
-            .map_err(anyhow::Error::new)?;
+        validate_runtime_values(projected, "rust.runtime.scanner")?;
     }
     if let Some(output) = value.get_mut("output_gamut_compress") {
         let mut projected = json!({"io": {"output_gamut_compress": output.clone()}});
@@ -350,11 +381,7 @@ pub(super) fn validate_state_parameters(value: &mut Value, version: Option<u64>)
             )
             .map_err(anyhow::Error::new)?;
         }
-        let _: RuntimeParams = serde_json::from_value(projected).map_err(|error| {
-            crate::app::Message::new("operations.state.invalid_parameters")
-                .arg("path", "io.output_gamut_compress")
-                .context(error)
-        })?;
+        validate_runtime_values(projected, "io.output_gamut_compress")?;
         if legacy {
             output
                 .as_object_mut()
@@ -368,58 +395,7 @@ pub(super) fn validate_state_parameters(value: &mut Value, version: Option<u64>)
             spektrafilm_core::params::sources::normalize_legacy_complete_params_detailed(runtime)
                 .map_err(anyhow::Error::new)?;
         }
-    } else if legacy_cmyk {
-        // The persisted runtime carrier of a legacy complete document may also
-        // carry the retired group; migrate it onto the canonical name.
-        if let Some(magazine) = explicit.get("magazine_print_color") {
-            if !magazine.is_object() {
-                bail!(crate::app::Message::new(
-                    "operations.state.legacy_group_object"
-                ));
-            }
-            if explicit.get("cmyk").is_some() {
-                bail!(crate::app::Message::new(
-                    "operations.state.legacy_groups_conflict"
-                ));
-            }
-            let migrated = magazine.clone();
-            explicit
-                .as_object_mut()
-                .expect("runtime object")
-                .insert("cmyk".to_owned(), migrated);
-            explicit
-                .as_object_mut()
-                .expect("runtime object")
-                .remove("magazine_print_color");
-        }
-        if let Some(runtime) = value["rust"].get_mut("runtime")
-            && let Some(magazine) = runtime.get("magazine_print_color")
-        {
-            if !magazine.is_object() {
-                bail!(crate::app::Message::new(
-                    "operations.state.legacy_group_object"
-                ));
-            }
-            if runtime.get("cmyk").is_some() {
-                bail!(crate::app::Message::new(
-                    "operations.state.legacy_groups_conflict"
-                ));
-            }
-            let migrated = magazine.clone();
-            runtime
-                .as_object_mut()
-                .expect("runtime object")
-                .insert("cmyk".to_owned(), migrated);
-            runtime
-                .as_object_mut()
-                .expect("runtime object")
-                .remove("magazine_print_color");
-        }
     }
-    let _: RuntimeParams = serde_json::from_value(explicit).map_err(|error| {
-        crate::app::Message::new("operations.state.invalid_parameters")
-            .arg("path", "rust.runtime")
-            .context(error)
-    })?;
+    validate_runtime_values(explicit, "rust.runtime")?;
     Ok(())
 }

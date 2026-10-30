@@ -30,6 +30,8 @@ Numerical calibration grids, spectral lookup generation, full-source statistics,
 
 CPU and GPU preparation MUST derive the same calibrated model. Scanner preparation MUST retain the owning spectral grid and clear-film white reference. The negative-density inverse MUST retain profile-derived monotone density-to-log-exposure knots, finite endpoint slopes, and per-record independence under the [film-chain design](../film-chain/design.md).
 
+Finishing preparation and its reuse follow [Finishing preparation and execution](../finishing/design.md#preparation-and-execution) for both backends.
+
 The convert-film solver MUST keep its bounded solve and stopping policy.
 
 Cache identity MUST include resolved parameters, source data identities, coordinate geometry where relevant, precision representation, and device ownership. Backend selection MUST NOT mutate accepted controls. An image revision or device change MUST invalidate resources whose contents depend on it.
@@ -133,11 +135,11 @@ A missing GPU implementation or a required CPU intermediate is an execution limi
 
 Each stage MUST define its reference input and output domains and its permitted arithmetic differences. The CPU f64 model is the oracle; CPU native-f32 distinguishes host rounding from algorithm changes. A GPU representation MUST identify any binary16 composition, f32 arithmetic, integer arithmetic, or extended-precision computation that affects its result.
 
-The executor MUST preserve per-channel coefficients, normalization, wavelength grids, kernel support, interpolation continuity, spectral missing-value policy, extrapolation, and unclipped headroom. An implementation MAY fuse linear operations only after stage and integrated evidence proves agreement under the frozen budget. A nonlinear operation MUST NOT move across a spatial filter or domain transform.
+The executor MUST preserve per-channel coefficients, normalization, wavelength grids, kernel support, interpolation continuity, spectral missing-value policy, extrapolation, and headroom except at [Expand](../finishing/spec.md#expand). An implementation MAY fuse linear operations only after stage and integrated evidence proves agreement under the frozen budget. A nonlinear operation MUST NOT move across a spatial filter or domain transform.
 
 Retained RGB color conversion follows the CPU `convert_rgb` law: decode the source transfer when requested, apply the source-to-destination matrix exactly once, then encode the destination transfer when requested. When separate device passes implement that sequence, an encoding pass that also accepts a matrix MUST receive identity after the conversion matrix has already run.
 
-Preserve signed and out-of-gamut samples without clipping; neither storage partitioning nor observation binding changes the conversion.
+Preserve signed and out-of-gamut samples without clipping except at the optional [Expand](../finishing/spec.md#expand) operation; neither storage partitioning nor observation binding changes the conversion.
 
 Spatial implementation MUST retain the same convolution law, support and boundary extension. CPU IIR and GPU FIR MUST NOT be assumed equivalent because both are called Gaussian. They MUST have measured agreement over the declared parameter domain or use an aligned implementation.
 

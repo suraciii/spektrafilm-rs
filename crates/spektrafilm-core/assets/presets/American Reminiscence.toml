@@ -1,8 +1,18 @@
-schema_version = 5
+schema_version = 7
+
 name = "American Reminiscence"
 author = "SpektraFilm"
 description = "Warm highlights and soft print tonality from Kodak Gold 200 and Portra Endura. Virtual exposure +0.5 EV with metering off."
 
+[parameters.finishing]
+brightness = 0.0
+contrast = 0.0
+warmth = 0.0
+saturation = 0.0
+[parameters.finishing.expand]
+enabled = false
+black = 0.0
+white = 1.0
 [film_profile]
 stock = "kodak_gold_200"
 version = "0.3.4"

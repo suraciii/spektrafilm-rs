@@ -138,6 +138,15 @@ impl Pipeline {
                 // that post-rgb_out terminal boundary with the executed
                 // parameters, never a spectral stage.
                 capture.record_terminal_cmyk_params(&self.params);
+                let positive =
+                    crate::finishing::scanned_material(&self.params).is_some_and(|material| {
+                        let scanned = match material {
+                            crate::stage_artifact::MaterialKind::Film => &self.film,
+                            crate::stage_artifact::MaterialKind::Print => &self.print,
+                        };
+                        scanned.is_paper() || scanned.is_positive()
+                    });
+                capture.record_finishing_params(&self.params, positive);
             }
             return Ok(result);
         }
@@ -169,6 +178,17 @@ impl Pipeline {
             // the record names that post-rgb_out terminal boundary with the
             // executed parameters, never a spectral stage.
             capture.record_terminal_cmyk_params(&self.params);
+            if inject != Tap::RgbOut {
+                let positive =
+                    crate::finishing::scanned_material(&self.params).is_some_and(|material| {
+                        let scanned = match material {
+                            crate::stage_artifact::MaterialKind::Film => &self.film,
+                            crate::stage_artifact::MaterialKind::Print => &self.print,
+                        };
+                        scanned.is_paper() || scanned.is_positive()
+                    });
+                capture.record_finishing_params(&self.params, positive);
+            }
         }
         Ok(result)
     }

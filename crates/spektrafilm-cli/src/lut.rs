@@ -232,16 +232,17 @@ fn load_bundle_spec(args: &BuildArgs) -> Result<BundleSpec> {
 
 fn build(args: BuildArgs) -> Result<()> {
     let spec = load_bundle_spec(&args)?;
-    let backend = spektrafilm_gpu::select_backend().map_err(|e| anyhow::anyhow!("{e}"))?;
     let builder = if let Some(path) = &args.params {
         let text = std::fs::read_to_string(path)
             .with_context(|| format!("reading RuntimeParams JSON: {}", path.display()))?;
         let params: RuntimeParams = serde_json::from_str(&text)
             .with_context(|| format!("parsing RuntimeParams JSON: {}", path.display()))?;
+        params.validate_values().map_err(anyhow::Error::msg)?;
         BundleBuilder::with_params(spec, params)
     } else {
         BundleBuilder::new(spec)
     };
+    let backend = spektrafilm_gpu::select_backend().map_err(|e| anyhow::anyhow!("{e}"))?;
     if std::io::stderr().is_terminal() {
         eprintln!("[bake] Starting LUT baking");
     }

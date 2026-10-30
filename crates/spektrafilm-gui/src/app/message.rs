@@ -269,6 +269,7 @@ impl Message {
             R::EventArea => "validation.event_area",
             R::Correlation => "validation.correlation",
             R::NumericRange => "validation.numeric_range",
+            R::FinishingExpandSpan => "validation.finishing_expand_span",
             R::SpectralBounds => "validation.spectral_bounds",
             R::SpectralIntervals => "validation.spectral_intervals",
             R::SpectralBundled => "validation.spectral_bundled",

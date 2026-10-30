@@ -3,6 +3,7 @@ mod effects;
 mod metadata;
 pub use effects::{
     grain_control_inactive_reason, grain_control_inactive_reason_with_profile, inactive_reason,
+    inactive_reason_with_materials, inactive_reason_without_profiles,
 };
 
 use discovery::schema_value;
@@ -691,21 +692,6 @@ mod inline_value_tests {
     }
 
     #[test]
-    fn unquoted_text_keeps_equals_and_file_extensions() {
-        let mut params = RuntimeParams::default();
-        ParameterEdits::parse("film_render.convert.calibration=example=value.json")
-            .unwrap()
-            .apply(&mut params)
-            .unwrap();
-        assert_eq!(params.film_render.convert.calibration, "example=value.json");
-        ParameterEdits::parse(r#"film_render.convert.calibration="a,b=c""#)
-            .unwrap()
-            .apply(&mut params)
-            .unwrap();
-        assert_eq!(params.film_render.convert.calibration, "a,b=c");
-    }
-
-    #[test]
     fn invalid_typed_values_do_not_become_text_or_disappear_under_overrides() {
         for source in [
             "camera.auto_exposure=yes,camera.auto_exposure=false",
@@ -852,11 +838,16 @@ fn enum_check(path: &str, value: &Value) -> Result<(), Error> {
     Ok(())
 }
 fn range_check(path: &str, value: &Value) -> Result<(), Error> {
-    if path.starts_with("scanner.operator.") {
-        return super::validation::validate_scan_operator_value_detailed(
-            path,
-            value.as_f64().expect("numeric operator leaf"),
-        );
+    if path == "settings.spectral_shape" {
+        let values: [f64; 3] = serde_json::from_value(value.clone()).map_err(|error| {
+            Error::new(
+                Reason::Representation,
+                path,
+                format!("{path}: invalid spectral shape: {error}"),
+            )
+            .arg("detail", error)
+        })?;
+        return super::validation::validate_spectral_shape_detailed(values);
     }
     if super::validation::gamut_component_domains(path).is_some() {
         let values: [f32; 3] = serde_json::from_value(value.clone()).map_err(|error| {
@@ -870,37 +861,24 @@ fn range_check(path: &str, value: &Value) -> Result<(), Error> {
         super::validation::validate_gamut_triplet_detailed(path, values)?;
         return Ok(());
     }
-    if path == "film_render.grain.procedural_timer" {
-        if let Some(n) = value.as_f64() {
-            super::validation::validate_procedural_timer_detailed(f64::from(n as f32))?;
-        }
-        return Ok(());
-    }
-    let Some((min, max)) = super::validation::leaf_numeric_bounds(path) else {
-        return Ok(());
-    };
-    let nums: Vec<f64> = match value {
+    let numbers: Vec<f64> = match value {
         Value::Number(n) => n.as_f64().into_iter().collect(),
         Value::Array(a) => a.iter().filter_map(Value::as_f64).collect(),
-        _ => vec![],
+        _ => return Ok(()),
     };
-    if path.starts_with("film_render.grain.fotufilm.") {
-        return super::validation::validate_fotufilm_values_detailed(path, &nums);
+    if path.starts_with("film_render.grain.fotufilm.")
+        && super::validation::leaf_numeric_bounds(path).is_some()
+    {
+        return super::validation::validate_fotufilm_values_detailed(path, &numbers);
     }
-    let too_low = nums
-        .iter()
-        .any(|x| *x < min || (path == "io.input_gamut_compress.hull_detail" && *x <= 0.0));
-    let too_high = max.is_some_and(|hi| nums.iter().any(|x| *x > hi));
-    if too_low || too_high {
-        let maximum = max.map(|m| m.to_string()).unwrap_or_else(|| "inf".into());
-        return Err(Error::new(
-            Reason::OutsideRange,
-            path,
-            format!("{path}: value outside [{min}, {maximum}]"),
-        )
-        .arg("min", min)
-        .arg("max", maximum)
-        .arg("value", value));
+    let stored_f32 = rust_type(path).contains("f32");
+    for value in numbers {
+        let value = if stored_f32 {
+            f64::from(value as f32)
+        } else {
+            value
+        };
+        super::validation::validate_scalar_detailed(path, value)?;
     }
     Ok(())
 }
@@ -1162,120 +1140,8 @@ fn group_rejected_detailed(path: &str) -> Error {
     )
 }
 
-pub fn validate_finite(params: &RuntimeParams) -> Result<(), String> {
-    validate_finite_detailed(params).map_err(|error| error.to_string())
-}
-
 pub fn validate_finite_detailed(params: &RuntimeParams) -> Result<(), Error> {
-    let value = serde_json::to_value(params).map_err(|error| {
-        Error::new(Reason::SerializeParameters, "", error.to_string()).arg("detail", error)
-    })?;
-    fn check(path: &str, value: &Value) -> Result<(), Error> {
-        match value {
-            Value::Null if !nullable(path) => Err(Error::new(
-                Reason::NumericFinite,
-                path,
-                format!("{path}: numeric value must be finite"),
-            )),
-            Value::Object(m) => {
-                for (key, v) in m {
-                    check(
-                        &if path.is_empty() {
-                            key.clone()
-                        } else {
-                            format!("{path}.{key}")
-                        },
-                        v,
-                    )?;
-                }
-                Ok(())
-            }
-            Value::Array(a) => {
-                if a.iter().any(Value::is_null) {
-                    Err(Error::new(
-                        Reason::ArrayFinite,
-                        path,
-                        format!("{path}: array values must be finite"),
-                    ))
-                } else {
-                    Ok(())
-                }
-            }
-            _ => Ok(()),
-        }
-    }
-    check("", &value)?;
-    let grain = &params.film_render.grain;
-    for (path, value) in [
-        ("procedural_size", grain.procedural_size),
-        ("procedural_amount", grain.procedural_amount),
-        ("procedural_shadows", grain.procedural_shadows),
-        ("procedural_midtones", grain.procedural_midtones),
-        ("procedural_highlights", grain.procedural_highlights),
-        ("procedural_chroma", grain.procedural_chroma),
-        (
-            "procedural_resolution_factor",
-            grain.procedural_resolution_factor,
-        ),
-    ] {
-        if value.is_some_and(|v| !v.is_finite()) {
-            return Err(Error::new(
-                Reason::NumericFinite,
-                format!("film_render.grain.{path}"),
-                format!("film_render.grain.{path}: numeric value must be finite"),
-            ));
-        }
-    }
-    for (path, value) in [
-        (
-            "film_render.development_time",
-            params.film_render.development_time,
-        ),
-        (
-            "print_render.development_time",
-            params.print_render.development_time,
-        ),
-    ] {
-        if value.is_some_and(|v| !v.is_finite()) {
-            return Err(Error::new(
-                Reason::NumericFinite,
-                path,
-                format!("{path}: numeric value must be finite"),
-            ));
-        }
-    }
-    if params
-        .film_render
-        .grain
-        .fotufilm
-        .layers
-        .iter()
-        .chain(params.film_render.grain.fotufilm.layer_weights.iter())
-        .chain(params.film_render.grain.fotufilm.layer_size_ratio.iter())
-        .chain(params.film_render.grain.fotufilm.sublayer_shares.iter())
-        .any(|x| !x.is_finite())
-        || [
-            params.film_render.grain.fotufilm.amount,
-            params.film_render.grain.fotufilm.size,
-            params.film_render.grain.fotufilm.softness,
-            params.film_render.grain.fotufilm.color,
-            params.film_render.grain.fotufilm.rms_density,
-            params.film_render.grain.fotufilm.clump_radius_um,
-            params.film_render.grain.fotufilm.radius_span,
-            params.film_render.grain.fotufilm.coating_density_scale,
-            params.film_render.grain.fotufilm.fog_density,
-        ]
-        .iter()
-        .any(|x| !x.is_finite())
-    {
-        return Err(Error::new(
-            Reason::ArrayFinite,
-            "",
-            "parameter array values must be finite",
-        ));
-    }
-    params.film_render.grain.fotufilm.validate_detailed()?;
-    Ok(())
+    super::validation::validate_finite_values_detailed(params)
 }
 
 #[cfg(test)]
@@ -1391,6 +1257,161 @@ mod fotufilm_tests {
 mod tests {
     use super::*;
     use crate::params::PrintExposureMode;
+
+    #[test]
+    fn disabled_chemistry_has_the_same_sparse_and_runtime_domains() {
+        for print in [false, true] {
+            let path = if print {
+                "print_render.density_curves_morph.developer_exhaustion"
+            } else {
+                "film_render.chemistry.developer_exhaustion"
+            };
+            for (value, valid) in [
+                (0.0, true),
+                (0.5, true),
+                (1.0, true),
+                (-0.1, false),
+                (2.0, false),
+                (f64::NAN, false),
+                (f64::INFINITY, false),
+                (f64::NEG_INFINITY, false),
+            ] {
+                let mut params = RuntimeParams::default();
+                let chemistry = if print {
+                    &mut params.print_render.density_curves_morph
+                } else {
+                    &mut params.film_render.chemistry
+                };
+                chemistry.active = false;
+                chemistry.developer_exhaustion = value;
+                assert_eq!(params.validate_values().is_ok(), valid, "{path}={value}");
+                assert_eq!(
+                    ParameterEdits::parse(&format!("{path}={value}")).is_ok(),
+                    valid,
+                    "{path}={value}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn sparse_and_runtime_share_positive_and_component_domains() {
+        for (path, set) in [
+            (
+                "film_render.chemistry.gamma_factor",
+                (|p: &mut RuntimeParams, v| p.film_render.chemistry.gamma_factor = v)
+                    as fn(&mut RuntimeParams, f64),
+            ),
+            ("print_render.density_curves_morph.gamma_factor", |p, v| {
+                p.print_render.density_curves_morph.gamma_factor = v
+            }),
+            ("film_render.grain.dye_event_area_um2", |p, v| {
+                p.film_render.grain.dye_event_area_um2 = v
+            }),
+            ("io.input_gamut_compress.hull_detail", |p, v| {
+                p.io.input_gamut_compress.hull_detail = v
+            }),
+        ] {
+            for (value, valid) in [(0.0, false), (-1.0, false), (0.5, true)] {
+                let mut params = RuntimeParams::default();
+                params.film_render.chemistry.active = false;
+                params.print_render.density_curves_morph.active = false;
+                params.film_render.grain.active = false;
+                params.io.input_gamut_compress.active = false;
+                set(&mut params, value);
+                assert_eq!(params.validate_values().is_ok(), valid, "{path}={value}");
+                assert_eq!(
+                    ParameterEdits::parse(&format!("{path}={value}")).is_ok(),
+                    valid,
+                    "{path}={value}"
+                );
+            }
+        }
+        for (knee, valid) in [
+            ([0.0, 1.0, 1.0], true),
+            ([1.0, 1.0, 1.0], false),
+            ([0.5, 0.0, 1.0], false),
+            ([0.5, 1.0, 0.0], false),
+        ] {
+            let mut params = RuntimeParams::default();
+            params.io.input_gamut_compress.active = false;
+            params.io.input_gamut_compress.knee = knee;
+            assert_eq!(params.validate_values().is_ok(), valid, "{knee:?}");
+            assert_eq!(
+                ParameterEdits::parse(&format!(
+                    "io.input_gamut_compress.knee=[{},{},{}]",
+                    knee[0], knee[1], knee[2]
+                ))
+                .is_ok(),
+                valid,
+                "{knee:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn inactive_values_are_checked_without_contextual_applicability() {
+        let mut params = RuntimeParams::default();
+        params.scanner.operator.exposure_ev = 0.5;
+        assert!(params.validate_values().is_ok());
+        assert!(params.validate().is_err());
+        params.camera.diffusion_filter.active = false;
+        params.camera.diffusion_filter.filter_family = "unknown".into();
+        assert_eq!(
+            params.validate_values_detailed().unwrap_err().path,
+            "camera.diffusion_filter.filter_family"
+        );
+        assert!(ParameterEdits::parse("camera.diffusion_filter.filter_family=unknown").is_err());
+        params.camera.diffusion_filter.filter_family = "black_pro_mist".into();
+        params.film_render.grain.active = false;
+        params.film_render.grain.procedural_amount = Some(f32::NAN);
+        assert_eq!(
+            params.validate_values_detailed().unwrap_err().path,
+            "film_render.grain.procedural_amount"
+        );
+        params.film_render.grain.procedural_amount = None;
+        params.print_render.development_time = Some(f64::INFINITY);
+        assert_eq!(
+            params.validate_values_detailed().unwrap_err().path,
+            "print_render.development_time"
+        );
+        assert!(ParameterEdits::parse("print_render.development_time=inf").is_err());
+        params.print_render.development_time = None;
+        params.film_render.halation.active = false;
+        params.film_render.halation.scatter_core_um[1] = f64::NAN;
+        assert_eq!(
+            params.validate_values_detailed().unwrap_err().path,
+            "film_render.halation.scatter_core_um"
+        );
+        assert!(ParameterEdits::parse("film_render.halation.scatter_core_um=[1,NaN,1]").is_err());
+        params.film_render.halation.scatter_core_um[1] = 1.0;
+        params.film_render.convert.calibration = "1 2 3".into();
+        assert_eq!(
+            params.validate_values_detailed().unwrap_err().path,
+            "film_render.convert.calibration"
+        );
+        assert!(ParameterEdits::parse("film_render.convert.calibration=\"1 2 3\"").is_err());
+    }
+
+    #[test]
+    fn value_validation_preserves_document_precision_and_spectral_support_context() {
+        let mut params = RuntimeParams::default();
+        let precise = 12.3456789012345_f64;
+        ParameterEdits::parse("film_render.chemistry.gamma_factor=12.3456789012345")
+            .unwrap()
+            .apply(&mut params)
+            .unwrap();
+        assert_eq!(params.film_render.chemistry.gamma_factor, precise);
+        params.validate_values().unwrap();
+
+        params.settings.spectral_shape = [400.0, 700.0, 5.0];
+        assert!(params.validate_values().is_ok());
+        assert!(params.validate().is_err());
+        assert!(ParameterEdits::parse("settings.spectral_shape=[400,700,5]").is_ok());
+        params.settings.spectral_shape = [400.0, 700.0, 0.0];
+        assert!(params.validate_values().is_err());
+        assert!(ParameterEdits::parse("settings.spectral_shape=[400,700,0]").is_err());
+    }
 
     #[test]
     fn format_sources_reject_invalid_and_preserve_fractional_values() {
@@ -2279,11 +2300,6 @@ mod tests {
         let flash = describe_field("enlarger.preflash_exposure").unwrap();
         assert_eq!(flash["default"], 0.0);
         assert_eq!(flash["unit"], "linear exposure multiplier");
-        assert!(
-            flash["conditions"]
-                .to_string()
-                .contains("print-development")
-        );
         for path in [
             "enlarger.preflash_m_filter_shift",
             "enlarger.preflash_y_filter_shift",
@@ -2291,11 +2307,6 @@ mod tests {
             let field = describe_field(path).unwrap();
             assert_eq!(field["unit"], "Kodak CC");
             assert_eq!(field["default"], 0.0);
-            assert!(
-                field["conditions"]
-                    .to_string()
-                    .contains("preflash_exposure > 0")
-            );
         }
         for path in [
             "film_render.chemistry.developer_exhaustion",
@@ -2306,10 +2317,6 @@ mod tests {
             assert_eq!(field["default"], 0.0);
             assert_eq!(field["minimum"], 0.0);
             assert_eq!(field["maximum"], 1.0);
-            let conditions = field["conditions"].to_string();
-            assert!(conditions.contains("development"));
-            assert!(conditions.contains("active = true"));
-            assert!(conditions.contains("fitted density_curves_model"));
         }
     }
 

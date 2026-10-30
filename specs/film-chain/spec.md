@@ -8,7 +8,7 @@
 - Optional CMYK ink style MUST satisfy the [CMYK ink style](../cmyk-style/spec.md) contract. It MUST NOT determine base workflow topology.
 - Base workflows include input color management, direct film scanning, photographic printing, and the existing film-conversion routes.
 - The default film path starts with source color and exposure → spectral film exposure and development → film-domain effects (including Spektra, Dye, and Fotufilm Film grain) → the selected base route → scanner interpretation.
-- It continues with output gamut processing → unsharp masking → transfer encoding → Procedural grain → optional CMYK ink style → output mix → output handoff.
+- It continues with [common finishing](../finishing/spec.md#scope-and-applicability) → output gamut processing → unsharp masking → transfer encoding → Procedural grain → optional CMYK ink style → output mix → output handoff.
 - [Output mix and material controls](../output-mix/spec.md) owns reuse of existing preflash and chemistry, retirement of Output lightness compression, and overall output mix. It adds no digital material-response layer or scan-reference isolation pass.
 - CMYK ink style remains after all scanner-domain effects; overall output mix follows it before output handoff.
 - Film, photographic paper, spectral, and color profiles are data inputs. A missing or invalid data input consumed by the selected route is an error before output publication.
@@ -19,7 +19,7 @@
 - A filming-stage material that carries `hanatos2025_adaptation_surface_params` runs the log-exposure correction surface when the look enables it. An absent surface field runs no surface correction.
 - The selected route preserves the requested color, spatial, optical, and stochastic semantics. A backend MUST NOT silently disable or replace them to remain on a fast path.
 - Execution policy and CPU/GPU algorithm alignment follow [GPU execution](../gpu-execution/spec.md). GPU execution MUST cover the selected chain without replacing its model.
-- The chain preserves floating headroom until a bounded image writer clips and encodes it.
+- The chain preserves floating headroom until a bounded image writer clips and encodes it, except for the optional [Expand](../finishing/spec.md#expand) operation.
 - Invalid color spaces, routes, dimensions, crops, resize factors, and effect parameters fail before a final output is written.
 
 ## Parameter updates and preparation reuse
@@ -29,6 +29,7 @@
 - A rejected in-place update MUST preserve the last accepted parameters and render behavior.
 - A change to conversion illumination, calibration, exposure, input color space, or input transfer decoding MUST refresh the converted-film interpretation without rebuilding unrelated preparation.
 - Changing only output gamut controls MUST NOT rebuild material, spectral, or exposure-reference preparation.
+- Finishing-only edits reuse compatible upstream preparation under [Finishing preparation](../finishing/design.md#preparation-and-execution).
 - Changing the preparation device MUST replace device-bound resources and any calibration that depends on their numerical values before image execution.
 - An inactive control MUST retain its stored value. Preparation MUST NOT create a dependency solely because that control exists in the parameter document.
 - Reuse MUST NOT change validation, parameter precedence, serialized values, stage order, or the selected backend's failure policy.
@@ -130,7 +131,7 @@ The white reference of a scan is the clear film base of the scanned medium. A cl
 - A negative film scan with `negative_to_positive` additionally exposes `scanner.conversion_style`, the declared stylization point of the conversion tone.
 - The scanner owns no white/black correction, no white/black levels, and no film-scan black or white points. Those controls are removed from the runtime model, discovery, presets, recipes, GUI state, and CLI options; their canonical names MUST fail unknown-field validation at the current schema version.
 - Negative conversion belongs to `negative_to_positive`. A photographic-paper scan and a slide film scan MUST NOT expose it; see [Direct negative-film scan output](#direct-negative-film-scan-output).
-- Existing exposure and development controls belong to their material stage. No appearance treatment is applied to a completed scan: scanner finishing is removed from the contract.
+- Existing exposure and development controls belong to their material stage. Independent [common finishing](../finishing/spec.md#scope-and-applicability) applies only to eligible positive scans; it does not restore scanner finishing.
 - Scanner calibration, inverse curves, and correction references retain their existing dependencies on profile and development settings. Material controls MUST NOT add a second reference model or alter the real captured-negative recovery solve.
 - Scan provenance records one colorimetric sensor and the clear-film white reference. It MUST publish the resolved readout illuminant, the output space white, and the identity matrix of the scan transform.
 
@@ -190,7 +191,7 @@ The [Print exposure composition](../output-mix/design.md#print-exposure-composit
 - The negative reconstruction reads developed record density over each record's own minimum. It inserts no synthetic scanner capture.
 - Film continuation reads the saved densities without repeating their formation.
 - The [lab scan contract](lab-scan/spec.md) owns the inverse, the opt-in frame setup, tone, the `standard` default, the `neutral` migration alias, and fixed file styles. Every style retains the frozen camera compensation on simulated film continuation; the enabled setup does not subtract it again.
-- Scanner lens blur acts on transmitted light before density reconstruction. Output gamut compression, unsharp mask, encoding, CMYK ink style, and output handoff run after conversion.
+- Scanner lens blur acts on transmitted light before density reconstruction. [Common finishing](../finishing/design.md#color-and-order) follows positive interpretation before the existing output tail.
 - `negative_to_positive` accepts every grain engine, because Procedural composites on the encoded scanner output. Backend selection follows [GPU execution](../gpu-execution/spec.md#backend-selection).
 
 ## Print exposure mode

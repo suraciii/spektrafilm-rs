@@ -496,6 +496,17 @@ fn marker_transitions_and_capture_roundtrip() {
         Preset::capture("Roundtrip", film, print, &params, provenance()).look_parameters(),
         p.look_parameters()
     );
+    params.finishing.saturation = 0.4;
+    assert_eq!(
+        marker(&applied, &entries, &params, film, print),
+        Marker::Modified
+    );
+    look.apply_to(&mut params);
+    assert_eq!(params.finishing, Default::default());
+    assert_eq!(
+        marker(&applied, &entries, &params, film, print),
+        Marker::Applied
+    );
     params.io.crop = true;
     assert_eq!(
         marker(&applied, &entries, &params, film, print),

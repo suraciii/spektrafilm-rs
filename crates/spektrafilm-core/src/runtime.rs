@@ -26,7 +26,9 @@ use std::time::Instant;
 /// truncated FIR support, so wide halation and DIR tails changed pixels; the
 /// f32 kernels run on devices without binary64 within their frozen stage
 /// budgets and do not change the model.
-pub const MODEL_VERSION: &str = "lab_scan_operator_v6";
+/// Common finishing v1 adds the shared positive-image adjustment before
+/// output gamut processing; neutral controls leave existing results unchanged.
+pub const MODEL_VERSION: &str = "common_finishing_v1";
 
 /// Last-call wall-clock timings exposed by the runtime facade.
 pub type Timings = BTreeMap<String, f64>;
@@ -88,12 +90,14 @@ impl RuntimePhotoParams {
 
     /// Resolve user-facing parameters using the shared digest precedence.
     pub fn digested_params(&self, mode: DigestMode) -> Result<RuntimeParams, String> {
+        self.params.validate_values()?;
         let neutral = crate::neutral_filters::NeutralFilters::load(&self.data_dir)?;
         Ok(self.digested_params_with_neutral(mode, &neutral))
     }
 
     /// Build a calibrated runtime after applying the selected digest policy.
     pub fn into_runtime(self, mode: DigestMode) -> Result<Runtime, String> {
+        self.params.validate_values()?;
         let neutral = crate::neutral_filters::NeutralFilters::load(&self.data_dir)?;
         let params =
             digest_params_with_neutral(self.params, &self.film, &self.print, &neutral, mode);
@@ -131,6 +135,7 @@ impl RuntimePhotoParams {
         mode: DigestMode,
         backend: &dyn ComputeBackend,
     ) -> Result<Runtime, String> {
+        self.params.validate_values()?;
         let neutral = crate::neutral_filters::NeutralFilters::load(&self.data_dir)?;
         let params =
             digest_params_with_neutral(self.params, &self.film, &self.print, &neutral, mode);
@@ -143,6 +148,7 @@ impl RuntimePhotoParams {
         backend: &dyn ComputeBackend,
         context: &ObservationContext,
     ) -> Result<Runtime, String> {
+        self.params.validate_values()?;
         let neutral = crate::neutral_filters::NeutralFilters::load(&self.data_dir)?;
         let params =
             digest_params_with_neutral(self.params, &self.film, &self.print, &neutral, mode);
@@ -980,6 +986,12 @@ mod tests {
         corrected.scanner.operator.contrast = 0.75;
         let corrected = runtime.clone().with_params(corrected).unwrap();
         render(&corrected, &image, &mut cache);
+        let mut finished = corrected.params().clone();
+        finished.finishing.brightness = 0.75;
+        finished.finishing.warmth = -0.4;
+        finished.finishing.expand.enabled = true;
+        let corrected = corrected.with_params(finished).unwrap();
+        render(&corrected, &image, &mut cache);
         let mut upstream = corrected.params().clone();
         upstream.camera.exposure_compensation_ev = 1.0;
         let upstream = corrected.with_params(upstream).unwrap();
@@ -1482,6 +1494,24 @@ mod tests {
         rejected.film_render.base.scale = 2.4;
         rejected.scanner.conversion_style = "missing-material-update-style".into();
         assert!(runtime.update(rejected).is_err());
+        assert_eq!(runtime.params(), &accepted);
+        assert_eq!(
+            runtime.process(image.clone(), &backend).unwrap().data,
+            baseline.data
+        );
+
+        let mut rejected = accepted.clone();
+        rejected.print_render.density_curves_morph.active = false;
+        rejected
+            .print_render
+            .density_curves_morph
+            .developer_exhaustion = 2.0;
+        assert!(
+            runtime
+                .update(rejected)
+                .unwrap_err()
+                .contains("print_render.density_curves_morph.developer_exhaustion")
+        );
         assert_eq!(runtime.params(), &accepted);
         assert_eq!(
             runtime.process(image.clone(), &backend).unwrap().data,

@@ -52,6 +52,7 @@ impl Pipeline {
     fn device_scan_cache_parameters(&self) -> RuntimeParams {
         let mut parameters = self.params.clone();
         parameters.scanner.operator = Default::default();
+        parameters.finishing = Default::default();
         parameters.settings.preview_mode = false;
         parameters.settings.preview_max_size = 0;
         parameters
@@ -350,6 +351,7 @@ impl Pipeline {
         crate::pipeline_calibration::validate_scan_output(&self.params, &self.film)?;
         let mut parameters = self.params.clone();
         parameters.scanner.operator = Default::default();
+        parameters.finishing = Default::default();
         // Preview affects presentation only on this exact path.
         parameters.settings.preview_mode = false;
         parameters.settings.preview_max_size = 0;

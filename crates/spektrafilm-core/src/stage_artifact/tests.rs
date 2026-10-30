@@ -88,6 +88,71 @@ fn moved_artifact_preserves_values_profiles_and_seed_without_external_sources() 
 }
 
 #[test]
+fn pre_finishing_material_preserves_provenance_and_admits_only_downstream_edits() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("legacy.sfstage");
+    let mut expected = state();
+    expected.header.lineage.push(StageLineage {
+        seed: expected.header.seed,
+        provenance: expected.header.provenance.clone(),
+        effective_parameters: expected.header.baseline.clone(),
+    });
+    write(&path, &expected).unwrap();
+    edit_manifest(&path, |manifest| {
+        manifest["provenance"]["runtime_model_version"] = json!("lab_scan_operator_v6");
+        manifest["baseline"]
+            .as_object_mut()
+            .unwrap()
+            .remove("finishing");
+        manifest["lineage"][0]["provenance"]["runtime_model_version"] =
+            json!("lab_scan_operator_v6");
+        manifest["lineage"][0]["effective_parameters"]
+            .as_object_mut()
+            .unwrap()
+            .remove("finishing");
+    });
+    let restored = read(&path).unwrap();
+    assert_eq!(restored.density.data, expected.density.data);
+    assert_eq!(
+        restored.header.provenance.runtime_model_version,
+        "lab_scan_operator_v6"
+    );
+    assert!(restored.header.baseline.finishing.is_neutral());
+    assert_eq!(
+        restored.header.lineage[0].provenance.runtime_model_version,
+        "lab_scan_operator_v6"
+    );
+    assert!(
+        restored.header.lineage[0]
+            .effective_parameters
+            .finishing
+            .is_neutral()
+    );
+    let mut downstream = restored.header.baseline.clone();
+    downstream.finishing.brightness = 0.5;
+    downstream.finishing.expand.enabled = true;
+    crate::stage_execution::validate_frozen_controls(&restored.header, &downstream).unwrap();
+    downstream.camera.exposure_compensation_ev += 1.0;
+    assert!(
+        crate::stage_execution::validate_frozen_controls(&restored.header, &downstream).is_err()
+    );
+    edit_manifest(&path, |manifest| {
+        manifest["provenance"]["runtime_model_version"] = json!(crate::runtime::MODEL_VERSION);
+        manifest["baseline"]["finishing"] = json!(crate::params::FinishingParams::default());
+    });
+    assert!(
+        read(&path).unwrap().header.lineage[0]
+            .effective_parameters
+            .finishing
+            .is_neutral()
+    );
+    edit_manifest(&path, |manifest| {
+        manifest["provenance"]["runtime_model_version"] = json!("unsupported_material_model");
+    });
+    assert!(read_header(&path).is_err());
+}
+
+#[test]
 fn native_f32_and_f64_preserve_bits_and_report_actual_conversion() {
     let root = tempfile::tempdir().unwrap();
     for (name, samples) in [

@@ -92,6 +92,8 @@ The shared native tokens MUST use this baseline in logical points. Settings, Exp
 | Action height and reserved action area | 64 and 80 |
 | Header height | 64 |
 | Viewer status and footer height | 34 and 50 |
+| Analysis shelf total height: default, resize minimum, maximum | 152, 120, 320 |
+| Photograph canvas height reserved before analysis allocation | 300 |
 | Expanded module inset | 12 |
 | Dialog header height and region inset | 56 and 16 |
 
@@ -154,6 +156,8 @@ Locator results and destination cues MUST remain readable and keyboard accessibl
 
 The [analysis product contract](../gui-product-design/image-analysis/spec.md#workspace-and-controls) owns panel composition. Its plot controls MUST reuse native components and visible focus states.
 
+Analysis shelf heights include the toolbar, plot, borders, and padding. The photograph reserve excludes the viewer status and footer. The [analysis layout boundary](../gui-product-design/image-analysis/design.md#layout-and-preference-boundary) owns constrained allocation.
+
 Analysis traces MUST use the series roles. Data-derived tint MAY represent measured hue, but MUST NOT imply action selection or a quality judgment.
 
 A statistical endpoint or hue-reference crossing MUST NOT receive error styling solely because of its plot location. Invalid analysis and stale identity MUST remain distinct from ordinary image characteristics.
@@ -165,9 +169,10 @@ Linked sample markers MUST remain distinguishable from aggregate traces and plot
 ## Viewer footer
 
 - The footer groups its actions by target. One action belongs to one group.
-- Its groups are layer selection, view zoom, reveal or crossfade presentation, and the optional image-analysis visibility action.
+- Its groups are layer selection, view zoom, reveal or crossfade presentation, and photograph inspection.
 - The image-analysis action is a quiet presentation control.
 - The action opens the analysis workspace below the photograph. It MUST NOT select a photographic subject or another page.
+- [Endpoint warning controls](../gui-product-design/clipping-warnings/spec.md#controls) belong to the photograph-inspection group under their capability contract.
 - The footer MUST preserve its other controls while the workspace is open.
 - The footer presents the current zoom as read-only text, apart from the actions.
 - The footer MUST keep Original and Modified together and Paper back separate. Compact Paper back and transition actions MAY use named icons to preserve nonoverlapping zoom and reset actions in a reopened narrow workspace.

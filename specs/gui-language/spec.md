@@ -64,6 +64,9 @@ The Simplified Chinese presentation MUST use these core terms consistently. The 
 | Only modified | 仅显示已修改 |
 | Input and capture | 输入与拍摄 |
 | Film / Print / Output | 胶片 / 印相 / 输出 |
+| Finishing / Range | 成片 / 范围 |
+| Brightness / Contrast | 明暗 / 反差 |
+| Warmth / Saturation | 冷暖 / 彩度 |
 | Film Format / Custom | 胶片规格 / 自定义 |
 | Frame Long Edge | 画面长边 |
 | reset <module> · help: Restore <module> to the factory state | 重置<模块> · 提示：将<模块>恢复为出厂状态 |
@@ -174,6 +177,8 @@ The GUI MUST call the terminal modeled appearance `CMYK ink style`. Its help MUS
 The GUI MUST keep `Simulation blend` as the name of the full-result/prepared-source mix. It MUST NOT rename it to opacity, intensity, saturation, or strength.
 
 The GUI MUST keep `Print viewing glare`, `Lens blur (readout optics)`, `Unsharp mask (digital sharpening)`, material grain, and Procedural post-scan grain distinct. Similar visual effects MUST NOT share a label that implies the same physical stage.
+
+Finishing labels MUST follow [common finishing controls](../finishing/spec.md#controls). Brightness MUST NOT imply exposure-value units; the specialized negative-conversion operator MUST retain its own exposure-domain meaning and units.
 
 The unified Grain selector MUST retain the names Spektra, Dye, and Procedural. Its choice descriptions MUST identify Spektra and Dye as material grain and Procedural as post-scan grain appearance. Procedural help MUST identify Film Resolution as part of that appearance algorithm, not scanner lens resolution.
 

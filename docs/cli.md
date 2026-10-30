@@ -112,6 +112,22 @@ The [CLI parameter contract](../specs/cli/spec.md) defines parameter editing.
     --saving-color-space 'ProPhoto RGB' --saving-cctf-encoding true --data-dir data
 ```
 
+### Common finishing
+
+Finishing adjusts the completed positive before output gamut processing and the final output mix. It does not replace negative-conversion operator correction. It is inactive for input-only, material output, and preserved-negative scans; stored values remain intact and are still validated.
+
+```bash
+spektrafilm describe --module finishing
+spektrafilm process input.png -o output.tif --backend cpu \
+    --input-color-space sRGB --input-cctf-decoding true \
+    --film kodak_portra_400 --paper kodak_portra_endura \
+    --set 'finishing.brightness=0.2,finishing.contrast=0.1,finishing.warmth=-0.1,finishing.saturation=0.15' \
+    --set 'finishing.expand.enabled=true,finishing.expand.black=0.02,finishing.expand.white=0.98'
+```
+
+The four daily controls are normalized to `-1..=1`, with zero neutral. Expand defaults to disabled and retains its fixed-sRGB encoded input references when disabled. Each reference must be in `-0.25..=1.25`, and white must exceed black by at least `1/1024`, even when Expand is disabled. Enabling Expand hard-clips at its references, including the default `0` and `1`; clipped differences are lost for that render and later controls cannot recover them. Sparse edits change only named leaves. Complete preset looks use schema 7 and replace finishing; legacy complete looks restore neutral finishing, while legacy sections preserve omission. Complete recipes use `spektrafilm-rs-params-7` and carry the complete `finishing` group; older recipes migrate to neutral finishing.
+
+
 `--dry-run` prints effective runtime controls, writer options, profile names, and the requested backend policy.
 Omit `--output` when checking parameters without choosing a destination. The report keeps `output.path` as `null`; `output.format` is also `null` unless `--format` is supplied. A normal process invocation still requires a destination.
 Without a format, container-specific defaults such as bit depth and compression remain `null`. Supply `--format` to validate codec-specific options such as JPEG quality or compression.
@@ -126,6 +142,12 @@ Without a format, container-specific defaults such as bit depth and compression 
 It checks the input path and supported file kind.
 Image decoding and compute-adapter availability remain unchecked.
 Saving color flags control writer conversion independently of scanner `io.output_color_space` and `io.output_cctf_encoding`.
+
+Canonical values use the same validation rules in complete parameters, sparse edits, presets, GUI state, recipes, LUT requests, and direct runtime updates. Disabled features still require valid stored values. For example, disabled chemistry accepts `developer_exhaustion=0.5` but rejects `2.0`; a later override cannot conceal the invalid source. Rejection does not rewrite the source or replace an existing output.
+
+An `inactive` edit remains stored but is not used by the selected operation. Feedback distinguishes an absent operation from a disabled feature or unsupported material. The `input` route does not expose film, and scanning a developed print does not print it again. Shared spectral and film-curve controls can still serve downstream calibration on fresh automatic-print routes. See [value validity](../specs/cli/spec.md#parameter-value-validity) and [operation applicability](../specs/cli/spec.md#operation-applicability).
+
+`film_render.grain.density_min` also sets the interpolation bounds of an executing film-scanner or enlarger LUT. These consumers do not require grain. A selected LUT that the current operation bypasses is not a consumer. Material continuation uses its retained baseline and admitted downstream switches; it does not replay image-input debug or monochrome preparation.
 
 Recipe `seed` values are admitted in the unsigned 32-bit range (`0..=4_294_967_295`).
 

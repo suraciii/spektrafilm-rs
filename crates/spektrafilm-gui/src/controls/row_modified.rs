@@ -17,8 +17,8 @@ pub(crate) fn current_section(ctx: &Context) -> Option<String> {
     ctx.data(|data| data.get_temp::<String>(section_id()))
 }
 
-/// Validate a changed row against the accepted runtime and shared typed validator.
-/// This runs only on an actual edit, not while painting or searching rows.
+/// Validate a proposed row value against accepted controls without requiring
+/// the row's operation to be active on the current route.
 pub(crate) fn accepts_value(ctx: &Context, path: &str, value: Value) -> bool {
     if path.starts_with("extras.") {
         return true;
@@ -33,6 +33,7 @@ pub(crate) fn accepts_value(ctx: &Context, path: &str, value: Value) -> bool {
     };
     spektrafilm_core::params::sources::ParameterEdits::parse(&format!("{path}={value}"))
         .and_then(|edits| edits.apply(&mut candidate))
+        .and_then(|()| candidate.validate_values())
         .is_ok()
 }
 #[derive(Clone, Default)]

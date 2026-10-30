@@ -191,6 +191,12 @@ pub const HEIGHT_HEADER: f32 = 64.0;
 pub const HEIGHT_VIEWER_FOOTER: f32 = 50.0;
 /// Stable retained-result identity strip above the photograph.
 pub const HEIGHT_VIEWER_STATUS: f32 = 34.0;
+/// Total analysis shelf height, including its divider and controls.
+pub const HEIGHT_ANALYSIS_DEFAULT: f32 = 152.0;
+pub const HEIGHT_ANALYSIS_MIN: f32 = 120.0;
+pub const HEIGHT_ANALYSIS_MAX: f32 = 320.0;
+/// Photograph space reserved before allocating the analysis shelf.
+pub const HEIGHT_PHOTOGRAPH_MIN: f32 = 300.0;
 /// Dialog title and close action, including their vertical spacing.
 pub const HEIGHT_DIALOG_HEADER: f32 = 56.0;
 /// Dialog actions, including their vertical spacing.

@@ -106,6 +106,8 @@ pub struct ChangeFlags {
     pub action: Option<CalibrationAction>,
     /// Press/hold comparison changed; never changes the persisted operator values.
     pub operator_compare: Option<bool>,
+    /// Press/hold comparison bypasses only finishing and never edits stored values.
+    pub finishing_compare: Option<bool>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -118,9 +120,11 @@ pub(crate) enum ScanMedium {
 
 impl ScanMedium {
     pub(crate) fn for_route(self, route: &str) -> Self {
-        if route.contains(" > print > scan") {
+        use spektrafilm_core::WorkflowRoute;
+        let route = WorkflowRoute::parse(route);
+        if route.executes_print_readout(&Default::default()) {
             Self::Paper
-        } else if route.ends_with(" > scan") || route.ends_with(" > scan-minus-base") {
+        } else if route.executes_scan(&Default::default()) {
             self
         } else {
             Self::None
@@ -128,8 +132,14 @@ impl ScanMedium {
     }
 
     pub(crate) fn positive_output_eligible(self, route: &str) -> bool {
+        use spektrafilm_core::WorkflowRoute;
         self == Self::Negative
-            && matches!(route, "input > film > scan" | "input > convert-film > scan")
+            && matches!(
+                WorkflowRoute::parse(route),
+                WorkflowRoute::FilmScan
+                    | WorkflowRoute::StoredFilmScan
+                    | WorkflowRoute::ConvertFilmScan
+            )
     }
 }
 
@@ -143,6 +153,11 @@ pub(crate) fn scan_medium(film: &Profile) -> ScanMedium {
     } else {
         ScanMedium::None
     }
+}
+
+/// Use the core route contract with the actual scanned medium's polarity.
+pub(crate) fn finishing_applicable(params: &RuntimeParams, medium_is_positive: bool) -> bool {
+    spektrafilm_core::finishing::is_applicable(params, medium_is_positive)
 }
 
 /// Normalize only GUI transitions; imported states and recipes retain validation errors.
@@ -391,6 +406,7 @@ pub(crate) fn show(
     extras: &mut Value,
     section: &str,
     film_medium: ScanMedium,
+    scanned_medium_positive: bool,
     filter: &str,
     cache: &mut SectionLabelCache,
     capture_reference_illuminant: &str,
@@ -412,6 +428,7 @@ pub(crate) fn show(
             extras,
             section,
             film_medium,
+            scanned_medium_positive,
             &mut flags,
             &mut filter,
             capture_reference_illuminant,
@@ -434,6 +451,7 @@ pub(crate) fn render_sections(
     extras: &mut Value,
     section: &str,
     film_medium: ScanMedium,
+    scanned_medium_positive: bool,
     flags: &mut ChangeFlags,
     filter: &mut ControlFilter<'_>,
     capture_reference_illuminant: &str,
@@ -452,6 +470,7 @@ pub(crate) fn render_sections(
     );
     chemistry::sections(ui, params, section, flags, filter);
     glare::sections(ui, params, section, flags, filter);
+    finishing::sections(ui, params, scanned_medium_positive, section, flags, filter);
     gamut::sections(ui, params, section, flags, filter);
     crop::sections(ui, params, section, flags, filter);
     base::sections(ui, params, section, flags, filter);
@@ -471,6 +490,7 @@ mod couplers;
 mod crop;
 mod display;
 mod filter;
+mod finishing;
 pub(crate) use filter::{ControlFilter, SectionLabelCache, filter_matches, filter_matches_any};
 pub(crate) mod row_modified;
 /// Photographic stages in the continuous adjustment inspector.
@@ -544,7 +564,12 @@ pub(crate) const STAGE_LAYOUT: &[(Stage, &[&str])] = &[
     (Stage::Scan, &["Scanner", "Glare"]),
     (
         Stage::Output,
-        &["Output", "Output gamut compress", "CMYK ink style"],
+        &[
+            "Finishing",
+            "Output",
+            "Output gamut compress",
+            "CMYK ink style",
+        ],
     ),
 ];
 
@@ -727,12 +752,37 @@ pub(crate) fn locate_row(ui: &Ui, path: &str, response: &egui::Response) {
     }
 }
 
+pub(crate) fn applicable_control(
+    ui: &mut Ui,
+    params: &mut RuntimeParams,
+    path: &str,
+    edit: impl FnOnce(&mut Ui, &mut RuntimeParams) -> bool,
+) -> bool {
+    let inactive = crate::ui::control_inactive_reason(ui.ctx(), path, params);
+    let changed = ui
+        .add_enabled_ui(inactive.is_none(), |ui| edit(ui, params))
+        .inner;
+    if let Some(reason) = inactive {
+        ui.label(localized(ui.ctx(), &reason));
+    }
+    changed
+}
+
 pub(crate) fn module_applicability(
     section: &str,
     params: &RuntimeParams,
     film: &Profile,
-    print: &Profile,
+    print: Option<&Profile>,
 ) -> Option<String> {
+    if section == "Finishing" {
+        let scanned = match spektrafilm_core::finishing::scanned_material(params) {
+            Some(spektrafilm_core::stage_artifact::MaterialKind::Film) => Some(film),
+            Some(spektrafilm_core::stage_artifact::MaterialKind::Print) => print,
+            None => None,
+        };
+        return (!finishing_applicable(params, scanned.is_some_and(|profile| profile.is_paper() || profile.is_positive())))
+            .then(|| "Finishing is inactive: the route does not deliver an eligible positive reading. Stored values are retained.".to_owned());
+    }
     // A module banner states that the whole module has no effect. Reporting
     // the first inactive control would promote an optional subfeature (the
     // halation boost group, camera auto exposure, crop) to a module-wide
@@ -748,9 +798,12 @@ pub(crate) fn module_applicability(
             && !entry.path.ends_with(".engine")
     }) {
         considered = true;
-        let Some(reason) =
-            spektrafilm_core::params::sources::inactive_reason(&entry.path, params, film, print)
-        else {
+        let Some(reason) = spektrafilm_core::params::sources::inactive_reason_with_materials(
+            &entry.path,
+            params,
+            Some(film),
+            print,
+        ) else {
             // One effective control means the module still has an effect.
             return None;
         };
@@ -766,6 +819,7 @@ mod halation;
 mod output;
 mod scanner;
 
+pub(crate) use finishing::release_finishing_compare;
 pub(crate) use scanner::release_operator_compare;
 mod search;
 mod upsampling;
@@ -785,6 +839,46 @@ mod tests {
     use super::*;
 
     #[test]
+    fn finishing_banner_uses_core_gate_and_actual_scanned_profile() {
+        let factory = crate::state::GuiState::factory();
+        let data = crate::profiles::pick_data_dir();
+        let film = spektrafilm_core::profile::load_profile_by_name(&data, factory.film()).unwrap();
+        let print =
+            spektrafilm_core::profile::load_profile_by_name(&data, factory.paper()).unwrap();
+        let mut params = factory.runtime_params().unwrap();
+        params.finishing.brightness = 0.4;
+        for (route, scan_film, output, expected) in [
+            ("input", false, "direct_scan", false),
+            ("input > film > scan", true, "direct_scan", false),
+            (
+                "input > convert-film > scan-minus-base",
+                false,
+                "direct_scan",
+                false,
+            ),
+            ("input > film > print > scan", false, "direct_scan", true),
+            ("input > film > print > scan", true, "direct_scan", false),
+            ("input > convert-film > scan", false, "direct_scan", false),
+            (
+                "input > convert-film > scan",
+                false,
+                "negative_to_positive",
+                true,
+            ),
+            ("print > scan", false, "direct_scan", true),
+        ] {
+            params.workflow.route = route.into();
+            params.io.scan_film = scan_film;
+            params.scanner.scan_output = output.into();
+            assert_eq!(
+                module_applicability("Finishing", &params, &film, Some(&print)).is_none(),
+                expected,
+                "{route}, scan_film={scan_film}, {output}",
+            );
+        }
+    }
+
+    #[test]
     fn inactive_engine_requests_do_not_mark_the_active_grain_module_inactive() {
         let factory = crate::state::GuiState::factory();
         let data = crate::profiles::pick_data_dir();
@@ -792,6 +886,8 @@ mod tests {
         let print =
             spektrafilm_core::profile::load_profile_by_name(&data, factory.paper()).unwrap();
         let mut params = factory.runtime_params().unwrap();
+        params.settings.use_scanner_lut = false;
+        params.settings.use_enlarger_lut = false;
         for engine in [
             GrainEngine::Dye,
             GrainEngine::Spektra,
@@ -802,15 +898,15 @@ mod tests {
             params.film_render.grain.active = true;
             params.debug.deactivate_stochastic_effects = false;
             assert_eq!(
-                module_applicability("Grain", &params, &film, &print),
+                module_applicability("Grain", &params, &film, Some(&print)),
                 None,
                 "{engine:?}"
             );
             params.film_render.grain.active = false;
-            assert!(module_applicability("Grain", &params, &film, &print).is_some());
+            assert!(module_applicability("Grain", &params, &film, Some(&print)).is_some());
             params.film_render.grain.active = true;
             params.debug.deactivate_stochastic_effects = true;
-            assert!(module_applicability("Grain", &params, &film, &print).is_some());
+            assert!(module_applicability("Grain", &params, &film, Some(&print)).is_some());
         }
     }
 
@@ -826,30 +922,48 @@ mod tests {
         // Default halation has a zero boost: only the boost sub-group is
         // inactive, so the module keeps no banner.
         assert_eq!(
-            module_applicability("Halation", &params, &film, &print),
+            module_applicability("Halation", &params, &film, Some(&print)),
             None
         );
-        assert_eq!(module_applicability("Camera", &params, &film, &print), None);
+        assert_eq!(
+            module_applicability("Camera", &params, &film, Some(&print)),
+            None
+        );
 
         // A disabled module still explains itself.
         params.film_render.halation.active = false;
         assert_eq!(
-            module_applicability("Halation", &params, &film, &print).as_deref(),
+            module_applicability("Halation", &params, &film, Some(&print)).as_deref(),
             Some("film_render.halation.active = true")
         );
         params.film_render.halation.active = true;
         params.film_render.halation.boost_ev = 1.0;
         assert_eq!(
-            module_applicability("Halation", &params, &film, &print),
+            module_applicability("Halation", &params, &film, Some(&print)),
             None
         );
 
         // A whole-module switch still reports when every dependent row is
         // inactive.
         assert!(
-            module_applicability("Camera diffusion", &params, &film, &print).is_some(),
+            module_applicability("Camera diffusion", &params, &film, Some(&print)).is_some(),
             "disabled diffusion must keep its module banner"
         );
+
+        params.workflow.route = "input > film > scan".into();
+        params.taps.inject = Some("cmy_film".into());
+        params.film_render.grain.active = false;
+        params.settings.use_enlarger_lut = false;
+        params.settings.use_scanner_lut = true;
+        assert_eq!(
+            module_applicability("Grain", &params, &film, Some(&print)),
+            None
+        );
+        params.debug.lut_mode = true;
+        assert!(module_applicability("Grain", &params, &film, Some(&print)).is_some());
+        params.debug.lut_mode = false;
+        params.settings.use_scanner_lut = false;
+        assert!(module_applicability("Grain", &params, &film, Some(&print)).is_some());
     }
 
     fn has_text(output: &egui::FullOutput, text: &str) -> bool {
@@ -963,6 +1077,7 @@ mod tests {
                         &mut serde_json::json!({}),
                         "Camera",
                         ScanMedium::Negative,
+                        false,
                         "",
                         &mut cache,
                         "D55",
@@ -1045,6 +1160,7 @@ mod tests {
                             &mut serde_json::json!({}),
                             section,
                             ScanMedium::Negative,
+                            false,
                             "",
                             &mut cache,
                             "D55",
@@ -1159,6 +1275,7 @@ mod tests {
                             &mut serde_json::json!({}),
                             "Grain",
                             ScanMedium::Negative,
+                            false,
                             "",
                             &mut Default::default(),
                             "D55",

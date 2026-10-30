@@ -8,7 +8,7 @@ use clap::ArgMatches;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use spektrafilm_core::params::RuntimeParams;
-use spektrafilm_core::params::sources::{ParameterEdits, validate_finite};
+use spektrafilm_core::params::sources::ParameterEdits;
 use spektrafilm_core::presets::PresetLibrary;
 use spektrafilm_core::process_params::{self, ProcessParamsRequest};
 use spektrafilm_core::profile::{self, Profile};
@@ -283,7 +283,6 @@ fn resolve_chain(args: &EvaluateArgs, data_dir: &Path) -> Result<ResolvedChain> 
                 .apply(&mut params)
                 .map_err(|e| anyhow!("--set {source:?}: {e}"))?;
         }
-        validate_finite(&params).map_err(anyhow::Error::msg)?;
         params.validate().map_err(anyhow::Error::msg)?;
         let profile_name = path
             .file_stem()
