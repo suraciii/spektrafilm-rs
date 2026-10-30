@@ -214,6 +214,29 @@ pub(crate) fn interpolate_twoxtwo(
     }
 }
 
+/// `markesteijn_homo_sum`: the 5x5 neighbourhood sum of a homogeneity map, stored as
+/// one byte per pixel. Nine neighbours of nine is 225, so a byte still holds it.
+pub(crate) fn homo_sum(
+    homo: &[u8],
+    homosum: &mut [u8],
+    width: usize,
+    height: usize,
+    border: usize,
+) {
+    for y in border..height.saturating_sub(border) {
+        for x in border..width.saturating_sub(border) {
+            let mut accu = 0u32;
+            for v in -2i32..=2 {
+                for h in -2i32..=2 {
+                    accu +=
+                        u32::from(homo[(y as i32 + v) as usize * width + (x as i32 + h) as usize]);
+                }
+            }
+            homosum[y * width + x] = accu as u8;
+        }
+    }
+}
+
 /// `markesteijn_homo_set`: how many of the nine cells in the 3x3 neighbourhood have
 /// a derivative no larger than eight times the threshold, floored by the native
 /// epsilon guard.
@@ -1269,5 +1292,17 @@ mod tests {
             0,
             "derivative 10 against threshold 1 admits none"
         );
+    }
+
+    #[test]
+    fn homo_sum_adds_the_5x5_neighbourhood() {
+        let (width, height) = (9usize, 9usize);
+        let mut homosum = vec![0u8; width * height];
+        let ones = vec![1u8; width * height];
+        homo_sum(&ones, &mut homosum, width, height, 2);
+        assert_eq!(homosum[4 * width + 4], 25, "twenty-five cells of one");
+        let nines = vec![9u8; width * height];
+        homo_sum(&nines, &mut homosum, width, height, 2);
+        assert_eq!(homosum[4 * width + 4], 225, "twenty-five cells of nine");
     }
 }
