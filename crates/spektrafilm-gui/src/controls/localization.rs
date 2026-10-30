@@ -43,6 +43,52 @@ fn key(label: &str) -> Option<&'static str> {
         "selected material capability is unavailable" => {
             Some("controls.condition.material_unavailable")
         }
+        "Finishing" => Some("controls.finishing.title"),
+        "Brightness" => Some("controls.finishing.brightness"),
+        "Saturation" => Some("controls.finishing.saturation"),
+        "Expand" => Some("controls.finishing.expand"),
+        "Enable Expand" => Some("controls.finishing.enable_expand"),
+        "Black reference" => Some("controls.finishing.black"),
+        "White reference" => Some("controls.finishing.white"),
+        "Reset Brightness" => Some("controls.finishing.reset_brightness"),
+        "Reset Contrast" => Some("controls.finishing.reset_contrast"),
+        "Reset Warmth" => Some("controls.finishing.reset_warmth"),
+        "Reset Saturation" => Some("controls.finishing.reset_saturation"),
+        "Reset Enable Expand" => Some("controls.finishing.reset_enabled"),
+        "Reset Black reference" => Some("controls.finishing.reset_black"),
+        "Reset White reference" => Some("controls.finishing.reset_white"),
+        "Hold finishing comparison" => Some("controls.finishing.compare"),
+        "Negative conversion (exposure domain)" => Some("controls.finishing.negative_conversion"),
+        "Finishing is inactive: the route does not deliver an eligible positive reading. Stored values are retained." => {
+            Some("controls.finishing.inactive")
+        }
+        "Reset only this finishing control to its default. An invalid Expand span cannot be accepted." => {
+            Some("controls.finishing.reset_help")
+        }
+        "Raise or lower internal tones with less influence near reference endpoints. This is not source exposure or linear EV." => {
+            Some("controls.finishing.brightness_help")
+        }
+        "Change internal tonal separation with less influence near reference endpoints. This is not sharpening or an endpoint crop." => {
+            Some("controls.finishing.contrast_help")
+        }
+        "Shift along a fixed warm–cool direction weighted by tone and chroma. This is not Kelvin or capture white balance." => {
+            Some("controls.finishing.warmth_help")
+        }
+        "Change color strength with restrained amplification of strong colors. This is not physical dye density or automatic warming." => {
+            Some("controls.finishing.saturation_help")
+        }
+        "Map fixed sRGB-encoded input references to black and white. Hard clipping destroys differences for this render; later controls cannot recover them." => {
+            Some("controls.finishing.expand_help")
+        }
+        "Encoded input reference mapped to black. This is not a scanner calibration point or output endpoint." => {
+            Some("controls.finishing.black_help")
+        }
+        "Encoded input reference mapped to white. This is not a scanner calibration point or output endpoint." => {
+            Some("controls.finishing.white_help")
+        }
+        "Hold the primary mouse button or focused Space to bypass only finishing. Release to restore it. Saved and exported adjustments are unchanged." => {
+            Some("controls.finishing.compare_help")
+        }
         "hoya_x0" => Some("controls.scanner.filter_x0"),
         "hoya_x1" => Some("controls.scanner.filter_x1"),
         "hoya_y2" => Some("controls.scanner.filter_y2"),

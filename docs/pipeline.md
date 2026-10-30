@@ -9,9 +9,19 @@ The print-and-scan chain follows this order: RGB → film dye density → enlarg
 1. **Prepare film exposure.** Hanatos2025 provides RGB→raw spectral upsampling with its full sensitivity adaptation. That adaptation includes camera UV/IR band-pass filters with reference-illuminant normalization and spectral Gaussian blur.
 2. **Develop film density.** The chain uses density-curve interpolation to obtain developed film dye density. Film processing includes halation, DIR couplers, and grain. See [grain](grain.md) for the grain engines.
 3. **Expose and develop print paper.** The enlarger illuminant carries the film dye-density result into the print-paper stage. The chain performs full 81-wavelength film/print/scanner spectral integration.
-4. **Scan and encode output.** The scanner produces one colorimetric RGB capture of the developed medium under the product readout illuminant, referenced to the clear film base. The pipeline includes glare and output CCTF encoding.
+4. **Read and finish the positive.** Scanner optics and eligible print viewing glare precede common finishing. Output gamut processing, unsharp masking, transfer encoding, Procedural grain, optional CMYK ink style, and Simulation blend follow it.
 
 See [scanning](scanning.md) for scan polarity and negative conversion.
+
+### Common finishing
+
+Output / Finishing supplies Brightness, Contrast, Warmth, Saturation, and optional Expand for slide positives, negative conversion, and paper reflection positives. These controls do not change film or print formation. Film and route changes retain their values; input-only and preserved-negative readings leave them inactive.
+
+The four controls use neutral zero and normalized values from -1 to 1. Their fixed responses work in linear sRGB/D65 and Oklab, independently of output or saving primaries. Brightness emphasizes internal tones rather than linear EV; Warmth is a creative color direction, not Kelvin or source white balance.
+
+Expand maps encoded sRGB input references to black and white with hard clipping. It defaults to disabled; enabling its default references still clips signed and super-white samples. Disable or change it to recompute from the base positive, not from the previous clipped result.
+
+Default finishing bypasses exactly. The controls affect only the simulation branch, so Simulation blend zero still returns the prepared source. Save does not apply them again. See the [finishing contract](../specs/finishing/spec.md) for control boundaries and the [CLI guide](cli.md) for parameter examples.
 
 ## Film and print continuation
 

@@ -754,6 +754,7 @@ mod direct_tests {
             halation: None,
             dir_couplers: None,
             glare: None,
+            finishing: None,
             gamut: None,
             unsharp: None,
             grain_procedural: None,

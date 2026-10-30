@@ -260,6 +260,9 @@ pub(crate) fn inventory() -> &'static [ControlEntry] {
             {
                 text.push_str("\nOperator correction");
             }
+            if entry.path.starts_with("finishing.expand.") {
+                text.push_str("\nExpand\n扩展");
+            }
             if entry.path == "camera.film_format_mm" {
                 text.push_str("\nFrame Long Edge");
             }
@@ -518,6 +521,8 @@ fn runtime_owner(path: &str) -> (ControlOwner, &'static str) {
         (Owner(Stage::Print), "Enlarger")
     } else if path.starts_with("scanner.") {
         (Owner(Stage::Scan), "Scanner")
+    } else if path.starts_with("finishing.") {
+        (Owner(Stage::Output), "Finishing")
     } else if path.starts_with("cmyk.") {
         (Owner(Stage::Output), "CMYK ink style")
     } else if path.starts_with("io.input_gamut_compress.") {
@@ -637,6 +642,26 @@ fn append_nonruntime(entries: &mut Vec<ControlEntry>) {
             affected_paths,
         ));
     }
+    entries.push(nonruntime(
+        SurfaceEntry {
+            path: "action.finishing_compare",
+            label: "Hold finishing comparison",
+            owner: Owner(Stage::Output),
+            section: "Finishing",
+            editor: Action,
+            validator: "controls::finishing::sections",
+            conditions: &["eligible positive reading; session-only comparison"],
+        },
+        &[
+            "finishing.brightness",
+            "finishing.contrast",
+            "finishing.warmth",
+            "finishing.saturation",
+            "finishing.expand.enabled",
+            "finishing.expand.black",
+            "finishing.expand.white",
+        ],
+    ));
     entries.push(nonruntime(
         SurfaceEntry {
             path: "action.halation_profile",
@@ -1347,6 +1372,13 @@ const SURFACES: &[SurfaceEntry] = &[
 ];
 
 const LABELS: &[(&str, &str)] = &[
+    ("finishing.brightness", "Brightness"),
+    ("finishing.contrast", "Contrast"),
+    ("finishing.warmth", "Warmth"),
+    ("finishing.saturation", "Saturation"),
+    ("finishing.expand.enabled", "Enable Expand"),
+    ("finishing.expand.black", "Black reference"),
+    ("finishing.expand.white", "White reference"),
     ("io.input_gamut_compress.boundary", "boundary"),
     ("camera.auto_exposure", "auto exposure"),
     ("camera.auto_exposure_method", "auto exposure method"),

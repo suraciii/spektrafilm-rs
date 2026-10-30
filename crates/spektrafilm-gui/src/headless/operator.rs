@@ -102,7 +102,7 @@ fn standard_operator_preview_matches_scan_and_hold_compare_preserves_saved_corre
     assert_eq!(compared_composed.size, automatic_composed.size);
     assert_eq!(compared_composed.pixels, automatic_composed.pixels);
     assert_eq!(h.state().viewer.zoom_percent(), Some(100.0));
-    let comparison = h.state().operator_comparison.as_ref().unwrap();
+    let comparison = h.state().displayed_comparison.as_ref().unwrap();
     assert_eq!(
         comparison.image.host_image().unwrap().data,
         automatic_scan.data
@@ -183,12 +183,111 @@ fn standard_operator_preview_matches_scan_and_hold_compare_preserves_saved_corre
     let restored_composed = h.state().viewer.observation().pixels.unwrap();
     assert_eq!(restored_composed.pixels, corrected_composed.pixels);
     assert_eq!(h.state().viewer.zoom_percent(), Some(100.0));
-    assert!(h.state().operator_comparison.is_none());
+    assert!(h.state().displayed_comparison.is_none());
     // Holding/releasing a transient baseline does not add history entries.
     click(h, "Undo");
     assert_eq!(h.state().params.scanner.operator.exposure_ev, 0.0);
     click(h, "Redo");
     assert_eq!(h.state().params.scanner.operator.exposure_ev, 1.0);
+}
+
+#[test]
+fn finishing_comparison_keeps_operator_and_retained_save() {
+    let mut session = session();
+    let h = &mut session.harness;
+    standard_operator(h);
+    h.state_mut().params.scanner.operator.exposure_ev = 0.5;
+    h.state_mut().mark_parameters_changed();
+    let without_finishing = scan(h);
+
+    h.state_mut().params.finishing.brightness = 0.8;
+    h.state_mut().params.finishing.saturation = 0.5;
+    h.state_mut().mark_parameters_changed();
+    let finished = scan(h);
+    assert_ne!(without_finishing.data, finished.data);
+    let accepted = h.state().params.clone();
+    let source = h.state().source_render.clone();
+    let before = session.directory.path().join("finishing-before.exr");
+    save_retained(h, &before);
+
+    h.state_mut().set_finishing_compare(true);
+    assert!(h.state().finishing_compare);
+    wait_until(h, |app| {
+        app.displayed_comparison.is_some() && app.render_job.is_none() && !app.dirty
+    });
+    let compared = h
+        .state()
+        .displayed_comparison
+        .as_ref()
+        .unwrap()
+        .image
+        .host_image()
+        .unwrap();
+    assert_eq!(compared.data, without_finishing.data);
+    assert!(Arc::ptr_eq(
+        h.state().output_image.as_ref().unwrap(),
+        &finished
+    ));
+    assert_eq!(h.state().source_render, source);
+    assert_eq!(h.state().params, accepted);
+    let export_snapshot = h.state_mut().render_snapshot(accepted.clone());
+    assert_eq!(export_snapshot.params().finishing, accepted.finishing);
+    let during = session.directory.path().join("finishing-during.exr");
+    save_retained(h, &during);
+    assert_eq!(
+        image_io::load(&before).unwrap().image.data,
+        image_io::load(&during).unwrap().image.data
+    );
+
+    h.state_mut().set_operator_compare(true);
+    assert!(h.state().operator_compare);
+    assert!(!h.state().finishing_compare);
+    h.state_mut().set_finishing_compare(true);
+    assert!(h.state().finishing_compare);
+    assert!(!h.state().operator_compare);
+    h.state_mut().set_finishing_compare(false);
+    assert_eq!(h.state().params, accepted);
+}
+
+#[test]
+fn finishing_comparison_preserves_the_retained_scan_grid_and_result() {
+    let mut session = session();
+    let h = &mut session.harness;
+    h.state_mut().params.workflow.route = "input > film > print > scan".into();
+    h.state_mut().params.io.scan_film = false;
+    h.state_mut().params.settings.preview_max_size = 64;
+    h.state_mut().mark_parameters_changed();
+    let reduced = preview(h);
+    let baseline = scan(h);
+    assert!(reduced.width < baseline.width);
+    h.state_mut().params.finishing.brightness = 0.8;
+    h.state_mut().mark_parameters_changed();
+    let finished = scan(h);
+    h.state_mut().set_finishing_compare(true);
+    wait_until(h, |app| {
+        app.displayed_comparison.is_some() && app.render_job.is_none() && !app.dirty
+    });
+    let compared = h
+        .state()
+        .displayed_comparison
+        .as_ref()
+        .unwrap()
+        .image
+        .host_image()
+        .unwrap();
+    assert_eq!(
+        (compared.width, compared.height),
+        (baseline.width, baseline.height)
+    );
+    assert_eq!(compared.data, baseline.data);
+    h.state_mut().set_finishing_compare(false);
+    let restored = preview(h);
+    assert_eq!(h.state().retained_kind, Some(RenderKind::Scan));
+    assert_eq!(
+        (restored.width, restored.height),
+        (finished.width, finished.height)
+    );
+    assert_eq!(restored.data, finished.data);
 }
 
 #[test]
@@ -485,9 +584,9 @@ fn gpu_operator_comparison_keeps_the_corrected_device_carrier() {
     assert!(h.state().viewer.observation().pixels.is_some());
     h.state_mut().set_operator_compare(true);
     wait_until(&mut h, |app| {
-        app.operator_comparison.is_some() && app.render_job.is_none() && !app.dirty
+        app.displayed_comparison.is_some() && app.render_job.is_none() && !app.dirty
     });
-    let baseline = &h.state().operator_comparison.as_ref().unwrap().image;
+    let baseline = &h.state().displayed_comparison.as_ref().unwrap().image;
     assert!(
         baseline.host_image().is_none(),
         "GPU automatic baseline must stay retained"
@@ -529,7 +628,7 @@ fn gpu_operator_comparison_keeps_the_corrected_device_carrier() {
         !app.operator_compare && app.render_job.is_none() && !app.dirty
     });
     settle_animation(&mut h);
-    assert!(h.state().operator_comparison.is_none());
+    assert!(h.state().displayed_comparison.is_none());
     assert_eq!(
         h.state().viewer.settings.layer,
         crate::display::ViewLayer::Output

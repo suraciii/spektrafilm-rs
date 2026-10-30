@@ -311,6 +311,17 @@ pub(super) fn metadata(path: &str, default: &Value) -> Value {
 }
 
 fn unit(path: &str) -> Option<&'static str> {
+    if matches!(
+        path,
+        "finishing.brightness"
+            | "finishing.contrast"
+            | "finishing.warmth"
+            | "finishing.saturation"
+            | "finishing.expand.black"
+            | "finishing.expand.white"
+    ) {
+        return Some("dimensionless");
+    }
     if path == "enlarger.preflash_exposure" {
         return Some("linear exposure multiplier");
     }
@@ -362,6 +373,12 @@ fn conditions(path: &str) -> Vec<String> {
         .into_iter()
         .map(|condition| condition.description().into())
         .collect();
+    if matches!(path, "finishing.expand.black" | "finishing.expand.white") {
+        out.push(format!(
+            "white minus black must be at least {}; validated even when disabled",
+            super::super::finishing::EXPAND_MIN_SPAN
+        ));
+    }
     if path == "camera.film_format_mm" {
         out.push("finite and strictly positive; exposed full-source long edge, not roll width or film-stock designation".into());
     }
@@ -399,6 +416,24 @@ fn conditions(path: &str) -> Vec<String> {
 
 fn description(path: &str) -> Option<&'static str> {
     match path {
+        "finishing.brightness" => {
+            Some("Normalized positive-image brightness adjustment; zero is neutral.")
+        }
+        "finishing.contrast" => {
+            Some("Normalized positive-image contrast adjustment; zero is neutral.")
+        }
+        "finishing.warmth" => {
+            Some("Normalized warm–cool adjustment, not source white balance; zero is neutral.")
+        }
+        "finishing.saturation" => {
+            Some("Normalized selective color-strength adjustment; zero is neutral.")
+        }
+        "finishing.expand.enabled" => Some(
+            "Enable hard-clamped mapping of fixed sRGB encoded references; clipping destroys differences in this render.",
+        ),
+        "finishing.expand.black" | "finishing.expand.white" => Some(
+            "Fixed sRGB encoded input reference; not scanner calibration or an output endpoint. Hard clipping destroys differences in this render.",
+        ),
         "scanner.operator.exposure_ev" => Some(
             "Common reconstructed exposure correction in stops; positive values make the positive image brighter.",
         ),

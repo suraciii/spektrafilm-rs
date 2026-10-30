@@ -66,6 +66,61 @@ fn inactive_chemistry_state_validates_mirrors_and_preserves_valid_values() {
 }
 
 #[test]
+fn finishing_state_roundtrip_legacy_and_invalid_candidates() {
+    let factory = GuiState::factory();
+    let mut params = factory.runtime_params().unwrap();
+    params.finishing.brightness = 0.4;
+    params.finishing.warmth = -0.3;
+    params.finishing.expand.enabled = false;
+    params.finishing.expand.black = 0.1;
+    params.finishing.expand.white = 0.8;
+    params.mark_explicit_paths(["finishing.brightness", "finishing.expand.black"]);
+    let saved = GuiState::from_runtime(&params, factory.film(), factory.paper(), &factory.sections)
+        .unwrap();
+    let restored = GuiState::from_value(saved.sections.clone())
+        .unwrap()
+        .runtime_params()
+        .unwrap();
+    assert_eq!(restored.finishing, params.finishing);
+    assert_eq!(
+        restored.render_preparation_state(),
+        params.render_preparation_state()
+    );
+
+    let mut legacy = saved.sections.clone();
+    legacy["rust"]["version"] = json!(6);
+    legacy["rust"]["runtime"]
+        .as_object_mut()
+        .unwrap()
+        .remove("finishing");
+    let migrated = GuiState::from_value(legacy).unwrap();
+    assert_eq!(
+        migrated.runtime_params().unwrap().finishing,
+        Default::default()
+    );
+    assert_eq!(
+        migrated.sections["rust"]["version"],
+        json!(CURRENT_STATE_VERSION)
+    );
+
+    for invalid in [
+        json!(null),
+        json!({"brightness": 2.0}),
+        json!({"unknown": 1}),
+        json!({"expand": {"enabled": false, "black": 0.8, "white": 0.8}}),
+    ] {
+        let mut candidate = saved.sections.clone();
+        candidate["rust"]["runtime"]["finishing"] = invalid;
+        assert!(GuiState::from_value(candidate).is_err());
+    }
+    let mut legacy_invalid = saved.sections.clone();
+    legacy_invalid["rust"]["version"] = json!(6);
+    legacy_invalid["rust"]["runtime"]["finishing"] = json!(null);
+    assert!(GuiState::from_value(legacy_invalid).is_err());
+    assert_eq!(saved.runtime_params().unwrap().finishing, params.finishing);
+}
+
+#[test]
 fn sparse_dye_state_preserves_omitted_and_authored_strength() {
     let inherited = GuiState::factory()
         .runtime_params()

@@ -781,6 +781,7 @@ fn pass_name(label: Option<&str>) -> &'static str {
         // (telemetry metrics: pass names identify the executed work).
         "cctf_transfer_params" => "cctf_transfer_params",
         "output_transfer" => "output_transfer",
+        "finishing" => "finishing",
         "cmyk_params" => "cmyk_params",
         "cmyk" => "cmyk",
         x if x.starts_with("blur_multi_h") => "blur_h",

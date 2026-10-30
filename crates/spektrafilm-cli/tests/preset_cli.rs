@@ -1782,6 +1782,7 @@ fn library_document(f: &Fixture, name: &str, grain_amount: f64) -> PathBuf {
             "print_render": {},
             "camera_diffusion_filter": {"active": false},
             "output_mix": {"amount": 1.0},
+            "finishing": spektrafilm_core::params::FinishingParams::default(),
         },
         "provenance": {"implementation_version": "test", "model_version": "test"}});
     std::fs::write(&path, serde_json::to_vec(&document).unwrap()).unwrap();

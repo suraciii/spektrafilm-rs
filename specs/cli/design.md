@@ -39,6 +39,8 @@ The resolution report MUST include deterministic topology and monochrome channel
 - These facts MUST come from the owning parameter definitions and validators. The CLI MUST NOT maintain a second handwritten list of bounds or enum values.
 - The carrier adapter MAY map field names to this description but MUST NOT invent shorter aliases.
 
+Common finishing discovery and validation MUST use the core-owned [finishing model](../finishing/design.md#ownership) and its shared applicability decision. CLI carriers MUST follow [finishing compatibility](../finishing/design.md#wire-and-compatibility) without inventing paths, bounds, or versions.
+
 Array controls with distinct component domains MUST describe each component. Source validation MUST apply the same component rules as runtime construction before a later source can replace the array.
 
 - Single-field and module discovery MUST use the same metadata records. Text output MUST format these records without changing validation or static defaults.
@@ -141,7 +143,8 @@ This cutover MUST NOT change numerical algorithms, parameter wire shapes, docume
 - Safe publication MUST land before new success-facing image examples are accepted. The publication transaction belongs to [photo export](../photo-export/design.md#transaction-boundary).
 - Declaration, seed, and route changes MUST then migrate every public process caller, README example, packaged example, acceptance script, and affected behavior test. New required declarations MUST NOT be bypassed by legacy-only calls or a compatibility flag.
 - Feedback and text presentation MUST build on the same prepared result after source tracking is available. Selected-field descriptions MUST be updated with the authoritative conditions.
-- Existing RenderRecipe, selector-free discovery, GUI child-process, LUT, and preset document schemas MUST stay unchanged. GUI internal calls that use `process` MUST be exercised without silently treating them as public batch invocations.
+- Declaration and feedback changes MUST NOT independently alter RenderRecipe, selector-free discovery, GUI child-process, LUT, or preset document schemas. Finishing carrier changes follow [finishing compatibility](../finishing/design.md#wire-and-compatibility).
+- GUI internal `process` calls MUST NOT be treated silently as public batch invocations.
 - Implementation MUST run the existing formatting, relevant checks, and relevant tests defined in `Justfile`. It MUST additionally exercise the [real-entry-point scenarios](spec.md#image-processing-acceptance) and [publication failures](../photo-export/spec.md#publication-acceptance).
 - The current f64-feature workspace tests alone do not establish default-f32 executable behavior. Baseline incidental-behavior tests for ambiguous route precedence MUST be removed or replaced by consumer-visible route invariants, not re-pinned to a new incidental order.
 

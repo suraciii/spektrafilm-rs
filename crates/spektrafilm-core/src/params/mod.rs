@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 
 pub mod couplers;
 pub mod diffusion;
+pub mod finishing;
 pub mod glare;
 pub mod grain;
 mod grain_compat;
@@ -16,6 +17,7 @@ pub mod sources;
 pub(crate) mod validation;
 use couplers::DirCouplersParams;
 pub use diffusion::DiffusionFilterParams;
+pub use finishing::{ExpandParams, FinishingParams};
 use glare::GlareParams;
 pub use grain::{FotufilmGrainParams, FotufilmMaterial};
 pub use grain::{GrainEngine, GrainParams};
@@ -948,6 +950,8 @@ pub struct RuntimeParams {
     pub cmyk: CmykParams,
     #[serde(default)]
     pub output_mix: OutputMixParams,
+    #[serde(default)]
+    pub finishing: FinishingParams,
     #[serde(default)]
     pub settings: SettingsParams,
     #[serde(default)]

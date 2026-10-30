@@ -1,8 +1,18 @@
-schema_version = 5
+schema_version = 7
+
 name = "CineStill 800T Night 280um (experimental)"
 author = "SpektraFilm"
 description = "Experimental CineStill 800T Cs41 night look with a broad 280 um halation blur. It keeps the 800T approximation and its existing scan controls; the halation width is an appearance experiment, not a measured CineStill PSF. Set camera.film_format_mm=36 for a 24×36 mm frame when physical-size scaling is required, and choose the scene light with camera.capture_illuminant at render time."
 
+[parameters.finishing]
+brightness = 0.0
+contrast = 0.0
+warmth = 0.0
+saturation = 0.0
+[parameters.finishing.expand]
+enabled = false
+black = 0.0
+white = 1.0
 [film_profile]
 stock = "cinestill_800t_cs41_approx"
 version = "0.3.4"

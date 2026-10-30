@@ -513,6 +513,37 @@ impl ScanModelConfiguration {
     }
 }
 
+/// Declared finishing configuration, not a timing or executor observation.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FinishingConfiguration {
+    pub model: String,
+    pub boundary: String,
+    #[serde(deserialize_with = "crate::params::FinishingParams::deserialize_complete")]
+    pub controls: crate::params::FinishingParams,
+    pub applicable: bool,
+}
+
+impl FinishingConfiguration {
+    pub(crate) fn from_params(params: &RuntimeParams, medium_is_positive: bool) -> Self {
+        Self {
+            model: crate::runtime::MODEL_VERSION.into(),
+            boundary: "pre_output_gamut".into(),
+            controls: params.finishing.clone(),
+            applicable: crate::finishing::is_applicable(params, medium_is_positive),
+        }
+    }
+
+    pub fn validate(&self) -> Result<(), String> {
+        if self.model != crate::runtime::MODEL_VERSION || self.boundary != "pre_output_gamut" {
+            return Err("unsupported finishing definition or boundary".into());
+        }
+        self.controls
+            .validate_detailed()
+            .map_err(|error| error.to_string())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RenderConfiguration {
     pub workflow_route: WorkflowRoute,
@@ -537,6 +568,8 @@ pub struct RenderConfiguration {
     pub output_mix_amount: f64,
     #[serde(default)]
     pub model_version: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub finishing: Option<FinishingConfiguration>,
     pub gamut_algorithm: GamutAlgorithm,
     pub grain: GrainConfiguration,
     pub spatial: SpatialConfiguration,
@@ -579,6 +612,15 @@ impl RenderConfiguration {
             scan_model: ScanModelConfiguration::from_runtime(params, film, print),
             output_mix_amount: params.output_mix.amount,
             model_version: crate::runtime::MODEL_VERSION.into(),
+            finishing: Some(FinishingConfiguration::from_params(params, {
+                let route = params.workflow.route_enum();
+                let scanned = if route.prints() || route == WorkflowRoute::StoredPrintScan {
+                    print
+                } else {
+                    film
+                };
+                scanned.is_paper() || scanned.is_positive()
+            })),
             gamut_algorithm: GamutAlgorithm::parse(&params.io.output_gamut_compress.algorithm),
             grain: GrainConfiguration {
                 active: grain_active,

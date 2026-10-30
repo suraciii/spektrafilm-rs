@@ -229,7 +229,11 @@ Material-control edits MUST retain existing route and profile capability conditi
 
 Developer exhaustion MUST remain a model-specific development control; unsupported profiles MUST NOT acquire a fitted model or substitute effect. Inactive values remain stored. Edits MUST NOT change a route or silently activate chemistry.
 
-Scanner points, inverse reconstruction, and calibration retain their existing meanings. There are no new generic levels, saturation, color-density, or split-toning controls.
+Scanner inverse reconstruction and calibration retain their existing meanings. Retired scanner points remain rejected under [Scanner language](../film-chain/spec.md#scanner-language).
+
+The CLI MUST expose [common finishing](../finishing/spec.md#controls) through canonical assignments and discovery. Its shared validators and [applicability](../finishing/spec.md#scope-and-applicability) MUST govern complete documents, sparse sources, discovery, and feedback.
+
+No other generic levels, saturation, color-density, or split-toning controls are added.
 
 `io.output_gamut_compress.lightness_compression` is retired from the runtime model, editable paths, discovery, GUI, and execution. Current complete documents, sparse files, and inline assignments MUST reject that exact leaf even when null or a later layer would replace it.
 
@@ -489,7 +493,7 @@ Field discovery MUST explain input versus scanner versus saving color, exposure 
 
 Procedural Amount MUST remain applicable to named and custom Procedural profiles. Both controls MUST remain distinct from Spektra RMS granularity. Text and selected-field/module JSON MUST use the same descriptions and effect conditions.
 
-Selector-free JSON MUST retain its existing render contract. Discovery MUST distinguish material density-curve development controls, optical M/Y exposure filtration and calibrated neutral filters, preflash, reference print normalization, existing scanner interpretation points, output gamut processing, and global source mixing. It MUST NOT advertise retired lightness or unshipped response, Cyan-shift, saturation, color-density, or split-toning paths.
+Selector-free JSON MUST retain its existing render contract. Discovery MUST distinguish material development, optical exposure filtration, preflash, scanner interpretation, [common finishing](../finishing/spec.md#controls), output gamut processing, and source mixing. It MUST NOT advertise retired scanner points, lightness, or unshipped response, Cyan-shift, color-density, or split-toning paths.
 
 Existing Cyan neutral calibration remains a calibration control rather than a new creative Cyan shift. Scanner lens blur discovery MUST identify linear readout optics before interpretation and gamut processing. Unsharp mask MUST identify digital scan sharpening.
 
@@ -591,13 +595,13 @@ Exercise complete `--params`, sparse JSON, sparse TOML, inline assignments, pres
 
 ## Compatibility
 
-Legacy `--params` MUST retain its existing decoding and relationship to stock initialization and database calibration, except for the explicit [retired output-lightness migration](#editable-paths-and-conditional-controls) and post-normalization [value-validity checks](#parameter-value-validity). A sparse legacy file MUST NOT be reinterpreted as a sparse parameter override. A legacy baseline MAY be followed by `--set` sources.
+Legacy `--params` MUST retain its existing decoding and relationship to stock initialization and database calibration, except for explicit versioned migrations under [finishing compatibility](../finishing/design.md#wire-and-compatibility), [output-lightness retirement](#editable-paths-and-conditional-controls), and post-normalization [value-validity checks](#parameter-value-validity). A sparse legacy file MUST NOT be reinterpreted as a sparse parameter override. A legacy baseline MAY be followed by `--set` sources.
 
 The declaration requirement and route normalization are intentional changes for all public `process` invocations. The absence of `--preset` or `--set` MUST NOT bypass them. Seed and report presentation alone MUST NOT select a different numerical preparation policy.
 
 For the same effective parameters, routing, seed, and backend, these interface changes MUST NOT alter numerical computation.
 
-`render --recipe`, `lut --params`, and GUI child-process protocols MUST retain their existing carriers and execution contracts while sharing [canonical value validation](#parameter-value-validity) and the same versioned complete-document output-lightness retirement. They MUST NOT acquire the added process flags implicitly. A rejected migration or configuration MUST preserve the source file, active state, and existing image output.
+`render --recipe`, `lut --params`, and GUI child-process protocols MUST retain their existing carriers and execution contracts while sharing [canonical value validation](#parameter-value-validity) and explicit versioned migrations under [finishing compatibility](../finishing/design.md#wire-and-compatibility) and output-lightness retirement. They MUST NOT acquire the added process flags implicitly. A rejected migration or configuration MUST preserve the source file, active state, and existing image output.
 
 TOML support for presets and sparse parameter files MUST NOT imply TOML support for complete GUI states, legacy `--params`, or RenderRecipe.
 
@@ -718,6 +722,6 @@ JSON and TOML discovery, dry-run, render, and inspect output MUST remain parseab
 
 ## Lab scan recipe cutover
 
-The recipe writer MUST emit `spektrafilm-rs-params-6`. Versions 1–5 MAY migrate only at their declared legacy boundary under the [lab scan contract](../film-chain/lab-scan/spec.md#point-wise-consumers-and-migration). Historical scanner provenance MUST match the built-in model before replacement.
+The recipe writer MUST emit `spektrafilm-rs-params-7`. Versions 1–6 MUST migrate finishing under the [finishing wire contract](../finishing/design.md#wire-and-compatibility), while retaining their declared [lab scan migration boundaries](../film-chain/lab-scan/spec.md#point-wise-consumers-and-migration). Historical scanner provenance MUST match the built-in model before replacement.
 
 Version 5 MUST NOT reopen older retired-field migrations. Current recipe parameters MUST reject `scanner.lamp`; independent imported-capture illumination belongs to `film_render.convert.scan_illuminant`.

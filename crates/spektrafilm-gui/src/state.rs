@@ -12,9 +12,10 @@ pub use spektrafilm_core::config::config_dir;
 pub(crate) use validation::validate_stored_runtime;
 use validation::{normalize_grain_section, validate_state_parameters};
 
-/// Version 6 makes Dye the authored default. Explicit versions 1–5 without
+/// Version 7 adds the look-owned finishing group to the runtime extension.
+/// Earlier states without it retain neutral finishing; versions 1–5 without
 /// a grain engine migrate to their historical Spektra intent.
-pub(crate) const CURRENT_STATE_VERSION: u64 = 6;
+pub(crate) const CURRENT_STATE_VERSION: u64 = 7;
 
 /// Enlarger controls the upstream GUI also exposes under `simulation`
 /// aliases, as `(simulation key, enlarger key)`. Both directions of the
@@ -194,6 +195,19 @@ impl GuiState {
             if let Some(convert) = value.get_mut("convert").and_then(Value::as_object_mut) {
                 convert.insert("scan_illuminant".into(), light);
             }
+        }
+        // Legacy complete runtime snapshots predate finishing. Add only the
+        // absent group; authored values still receive current validation.
+        if matches!(version, Some(1..=6))
+            && let Some(runtime) = value
+                .pointer_mut("/rust/runtime")
+                .and_then(Value::as_object_mut)
+            && !runtime.contains_key("finishing")
+        {
+            runtime.insert(
+                "finishing".into(),
+                serde_json::to_value(spektrafilm_core::params::FinishingParams::default())?,
+            );
         }
         validate_state_parameters(&mut value, version)?;
         // Engine-specific imports belong to the runtime extension. The shared

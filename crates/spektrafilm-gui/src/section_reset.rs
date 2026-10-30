@@ -118,6 +118,7 @@ const SECTION_PARAMETERS: &[(&str, &[&str], &[&str])] = &[
     ("Enlarger diffusion", &["enlarger.diffusion_filter"], &[]),
     ("Scanner", &["scanner"], &[]),
     ("Glare", &["print_render.glare"], &[]),
+    ("Finishing", &["finishing"], &[]),
     (
         "Input gamut compress",
         &[
@@ -540,6 +541,29 @@ mod tests {
 
     fn factory() -> RuntimeParams {
         GuiState::factory().runtime_params().unwrap()
+    }
+
+    #[test]
+    fn finishing_reset_restores_only_its_controls_and_ownership() {
+        let mut params = factory();
+        let mut extras = GuiState::factory().sections;
+        params.finishing.brightness = 0.5;
+        params.finishing.expand.enabled = true;
+        params.finishing.expand.black = 0.1;
+        params.output_mix.amount = 0.3;
+        params.mark_explicit_paths([
+            "finishing.brightness",
+            "finishing.expand.black",
+            "output_mix.amount",
+        ]);
+        assert!(is_modified("Finishing", &params, &extras, factory_root()));
+        assert!(reset(&mut params, &mut extras, "Finishing", factory_root()));
+        assert_eq!(params.finishing, Default::default());
+        assert_eq!(params.output_mix.amount, 0.3);
+        let paths = params.render_preparation_state().explicit_section_paths;
+        assert!(!paths.iter().any(|path| path.starts_with("finishing.")));
+        assert!(paths.contains(&"output_mix.amount".to_owned()));
+        assert!(!is_modified("Finishing", &params, &extras, factory_root()));
     }
 
     #[test]

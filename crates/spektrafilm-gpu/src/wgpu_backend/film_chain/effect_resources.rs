@@ -210,6 +210,7 @@ impl WgpuBackend {
             | "print_spectral"
             | "print_density"
             | "scan_spectral"
+            | "finishing"
             | "output_gamut"
             | "output_transfer"
             | "cmyk" => 0,

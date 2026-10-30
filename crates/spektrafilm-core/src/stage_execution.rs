@@ -44,6 +44,7 @@ pub fn is_frozen_parameter(kind: MaterialKind, path: &str, baseline: &RuntimePar
     if path.starts_with("scanner.")
         || path.starts_with("cmyk.")
         || path.starts_with("output_mix.")
+        || path.starts_with("finishing.")
         || path == "io.output_color_space"
         || path == "io.output_cctf_encoding"
         || path.starts_with("io.output_gamut_compress.")

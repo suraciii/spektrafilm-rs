@@ -164,6 +164,16 @@ pub trait ComputeBackend: Send + Sync {
     fn cctf_decode_srgb(&self, img: &ImageBuf) -> Result<ImageBuf, String>;
     fn gaussian_blur(&self, img: &ImageBuf, sigma: f32) -> Result<ImageBuf, String>;
 
+    /// Apply prepared common finishing to linear RGB on the selected device.
+    /// `None` means this backend does not implement the device stage.
+    fn finishing(
+        &self,
+        _img: &ImageBuf,
+        _params: &FinishingGpuParams,
+    ) -> Result<Option<ImageBuf>, String> {
+        Ok(None)
+    }
+
     /// Blur `img` with each of `sigmas`, returning one image per sigma.
     /// GPU backends fuse the work into a single command buffer (one upload,
     /// one submit, one readback) — much cheaper than N independent
@@ -1108,6 +1118,8 @@ pub struct FilmChainParams<'a> {
     /// final RGB buffer. Lognormal-distributed per-pixel surface noise +
     /// blur + per-channel illuminant offset.
     pub glare: Option<GlareGpuParams>,
+    /// Optional common finishing on completed positive linear RGB, before gamut.
+    pub finishing: Option<FinishingGpuParams>,
     /// Optional output gamut compression pass — applied after glare on
     /// the final linear RGB buffer, before unsharp (matching CPU scanning).
     pub gamut: Option<GamutGpuParams<'a>>,
@@ -1610,6 +1622,25 @@ pub struct DirCouplersGpuParams<'a> {
     pub density_curves_0: &'a [[f64; 3]],
     pub log_exposure: &'a [f64],
     pub gamma_factor: f64,
+}
+
+/// Prepared common-finishing response and row-major color transforms.
+/// The core owns the response coefficients and all six matrix definitions.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct FinishingGpuParams {
+    /// Brightness, contrast, warmth and saturation response coefficients.
+    pub tone: [f32; 4],
+    /// Chroma reference and normalized warmth direction, with one unused lane.
+    pub color: [f32; 4],
+    pub expand_enabled: bool,
+    pub black: f32,
+    pub inverse_span: f32,
+    pub to_srgb: [[f32; 3]; 3],
+    pub from_srgb: [[f32; 3]; 3],
+    pub rgb_to_lms: [[f32; 3]; 3],
+    pub lms_to_lab: [[f32; 3]; 3],
+    pub lab_to_lms: [[f32; 3]; 3],
+    pub lms_to_rgb: [[f32; 3]; 3],
 }
 
 /// Output gamut compression parameters for the GPU-resident per-pixel pass.

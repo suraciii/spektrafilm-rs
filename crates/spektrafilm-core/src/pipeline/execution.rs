@@ -138,6 +138,15 @@ impl Pipeline {
                 // that post-rgb_out terminal boundary with the executed
                 // parameters, never a spectral stage.
                 capture.record_terminal_cmyk_params(&self.params);
+                let scanned = if route.prints() || route == WorkflowRoute::StoredPrintScan {
+                    &self.print
+                } else {
+                    &self.film
+                };
+                capture.record_finishing_params(
+                    &self.params,
+                    scanned.is_paper() || scanned.is_positive(),
+                );
             }
             return Ok(result);
         }
@@ -169,6 +178,17 @@ impl Pipeline {
             // the record names that post-rgb_out terminal boundary with the
             // executed parameters, never a spectral stage.
             capture.record_terminal_cmyk_params(&self.params);
+            if inject != Tap::RgbOut {
+                let scanned = if route.prints() || route == WorkflowRoute::StoredPrintScan {
+                    &self.print
+                } else {
+                    &self.film
+                };
+                capture.record_finishing_params(
+                    &self.params,
+                    scanned.is_paper() || scanned.is_positive(),
+                );
+            }
         }
         Ok(result)
     }

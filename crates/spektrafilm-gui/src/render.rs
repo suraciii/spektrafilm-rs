@@ -147,6 +147,15 @@ impl InputImage {
     }
 }
 
+/// A transient display-only bypass. Only one module can be compared at once.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) enum Comparison {
+    #[default]
+    None,
+    Operator,
+    Finishing,
+}
+
 #[derive(Clone)]
 pub(super) struct RenderSnapshot {
     params: RuntimeParams,
@@ -155,7 +164,7 @@ pub(super) struct RenderSnapshot {
     data_dir: PathBuf,
     special: serde_json::Value,
     cancellation: Option<Arc<AtomicBool>>,
-    operator_compare: bool,
+    comparison: Comparison,
 }
 
 impl RenderSnapshot {
@@ -173,7 +182,7 @@ impl RenderSnapshot {
             data_dir,
             special,
             cancellation: None,
-            operator_compare: false,
+            comparison: Comparison::None,
         }
     }
 
@@ -209,16 +218,18 @@ impl RenderSnapshot {
         self.cancellation.clone()
     }
 
-    pub(super) fn with_operator_compare(mut self, comparing: bool) -> Self {
-        self.operator_compare = comparing;
-        if comparing {
-            self.params.scanner.operator = Default::default();
+    pub(super) fn with_comparison(mut self, comparison: Comparison) -> Self {
+        self.comparison = comparison;
+        match comparison {
+            Comparison::None => {}
+            Comparison::Operator => self.params.scanner.operator = Default::default(),
+            Comparison::Finishing => self.params.finishing = Default::default(),
         }
         self
     }
 
-    pub(super) fn operator_compare(&self) -> bool {
-        self.operator_compare
+    pub(super) fn comparison(&self) -> Comparison {
+        self.comparison
     }
 
     #[cfg(test)]
@@ -491,6 +502,8 @@ pub(super) fn build_runtime_observed_with_backend(
 
 #[cfg(test)]
 mod tests {
+    use crate::render::Comparison;
+
     use super::{RenderSnapshot, RuntimeCache};
     use spektrafilm_backend::cpu_backend::CpuBackend;
     use spektrafilm_backend::telemetry::ObservationContext;
@@ -523,6 +536,25 @@ mod tests {
                 .collect(),
         );
         (snapshot, input)
+    }
+
+    #[test]
+    fn comparison_neutralizes_only_the_selected_module_in_its_snapshot() {
+        let (mut snapshot, _) = snapshot_and_input();
+        snapshot.params.scanner.operator.exposure_ev = 0.75;
+        snapshot.params.finishing.brightness = 0.5;
+        snapshot.params.finishing.expand.enabled = true;
+        snapshot.params.finishing.expand.black = -0.1;
+        let accepted = snapshot.params.clone();
+
+        let finishing = snapshot.clone().with_comparison(Comparison::Finishing);
+        assert_eq!(finishing.params.finishing, Default::default());
+        assert_eq!(finishing.params.scanner, accepted.scanner);
+        assert_eq!(finishing.params.random_seed, accepted.random_seed);
+        let operator = snapshot.clone().with_comparison(Comparison::Operator);
+        assert_eq!(operator.params.scanner.operator, Default::default());
+        assert_eq!(operator.params.finishing, accepted.finishing);
+        assert_eq!(snapshot.params, accepted);
     }
 
     #[test]

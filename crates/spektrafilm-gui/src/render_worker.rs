@@ -102,7 +102,7 @@ pub(super) struct RenderResult {
     pub(super) output_color_space: String,
     pub(super) output_cctf_encoding: bool,
     pub(super) source_metadata: Option<ImageMetadata>,
-    pub(super) operator_compare: bool,
+    pub(super) comparison: crate::render::Comparison,
 }
 
 /// One immutable raw upload for the accepted input, before metering or geometry.
@@ -517,7 +517,7 @@ impl RenderWorker {
                             runtime_params,
                         );
                         Ok(RenderResult {
-                            operator_compare: request.snapshot.operator_compare(),
+                            comparison: request.snapshot.comparison(),
                             source_metadata: request.source_metadata,
                             output_color_space: runtime_params.io.output_color_space.clone(),
                             output_cctf_encoding: runtime_params.io.output_cctf_encoding,

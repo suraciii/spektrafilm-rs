@@ -327,7 +327,16 @@
     "output_interpolation": "spline36"
   },
   "rust": {
-    "version": 6,
+    "version": 7,
+    "runtime": {
+      "finishing": {
+        "brightness": 0.0,
+        "contrast": 0.0,
+        "warmth": 0.0,
+        "saturation": 0.0,
+        "expand": {"enabled": false, "black": 0.0, "white": 1.0}
+      }
+    },
     "save_bit_depth": 8,
     "export_format": "png",
     "jpeg_quality": 95,

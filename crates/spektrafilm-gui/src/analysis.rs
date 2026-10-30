@@ -642,7 +642,8 @@ impl crate::App {
             }
             let suspended = self.viewer.analysis.suspended
                 || self.operator_compare
-                || self.operator_comparison.is_some();
+                || self.finishing_compare
+                || self.displayed_comparison.is_some();
             let target = self
                 .viewer
                 .analysis

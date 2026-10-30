@@ -29,6 +29,11 @@ pub const REPRESENTATION_VERSION: u32 = 1;
 pub const NUMERICAL_MODEL: &str = "main-0.3.4-material-v1";
 const MAX_MANIFEST_BYTES: u64 = 64 * 1024 * 1024;
 
+// Common finishing changes only downstream RGB, not this material representation.
+fn compatible_runtime_model(version: &str) -> bool {
+    version == crate::runtime::MODEL_VERSION || version == "lab_scan_operator_v6"
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum MaterialKind {
@@ -205,7 +210,7 @@ impl StageHeader {
             self.provenance.numerical_model
         );
         ensure!(
-            self.provenance.runtime_model_version == crate::runtime::MODEL_VERSION,
+            compatible_runtime_model(&self.provenance.runtime_model_version),
             "unsupported artifact runtime numerical model {:?}",
             self.provenance.runtime_model_version
         );
@@ -262,7 +267,7 @@ impl StageHeader {
         for prior in &self.lineage {
             ensure!(
                 prior.provenance.numerical_model == NUMERICAL_MODEL
-                    && prior.provenance.runtime_model_version == crate::runtime::MODEL_VERSION
+                    && compatible_runtime_model(&prior.provenance.runtime_model_version)
                     && !prior.provenance.producer_version.is_empty()
                     && !prior.provenance.backend.is_empty()
                     && !prior.provenance.input_identity.is_empty(),
@@ -497,6 +502,20 @@ fn read_header_from_root(root: &publication::ArtifactRoot) -> Result<StageHeader
     );
     let mut value =
         crate::params::sources::parse_carrier(&text, false).map_err(anyhow::Error::msg)?;
+    if value
+        .pointer("/provenance/runtime_model_version")
+        .and_then(serde_json::Value::as_str)
+        == Some("lab_scan_operator_v6")
+        && let Some(baseline) = value
+            .get_mut("baseline")
+            .and_then(serde_json::Value::as_object_mut)
+        && !baseline.contains_key("finishing")
+    {
+        baseline.insert(
+            "finishing".into(),
+            serde_json::to_value(crate::params::FinishingParams::default())?,
+        );
+    }
     if let Some(grain) = value.pointer_mut("/baseline/film_render/grain") {
         crate::params::normalize_grain_control_names(grain).map_err(anyhow::Error::msg)?;
     }

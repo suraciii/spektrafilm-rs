@@ -112,6 +112,22 @@ The [CLI parameter contract](../specs/cli/spec.md) defines parameter editing.
     --saving-color-space 'ProPhoto RGB' --saving-cctf-encoding true --data-dir data
 ```
 
+### Common finishing
+
+Finishing adjusts the completed positive before output gamut processing and the final output mix. It does not replace negative-conversion operator correction. It is inactive for input-only, material output, and preserved-negative scans; stored values remain intact and are still validated.
+
+```bash
+spektrafilm describe --module finishing
+spektrafilm process input.png -o output.tif --backend cpu \
+    --input-color-space sRGB --input-cctf-decoding true \
+    --film kodak_portra_400 --paper kodak_portra_endura \
+    --set 'finishing.brightness=0.2,finishing.contrast=0.1,finishing.warmth=-0.1,finishing.saturation=0.15' \
+    --set 'finishing.expand.enabled=true,finishing.expand.black=0.02,finishing.expand.white=0.98'
+```
+
+The four daily controls are normalized to `-1..=1`, with zero neutral. Expand defaults to disabled and retains its fixed-sRGB encoded input references when disabled. Each reference must be in `-0.25..=1.25`, and white must exceed black by at least `1/1024`, even when Expand is disabled. Enabling Expand hard-clips at its references, including the default `0` and `1`; clipped differences are lost for that render and later controls cannot recover them. Sparse edits change only named leaves. Complete preset looks use schema 7 and replace finishing; legacy complete looks restore neutral finishing, while legacy sections preserve omission. Complete recipes use `spektrafilm-rs-params-7` and carry the complete `finishing` group; older recipes migrate to neutral finishing.
+
+
 `--dry-run` prints effective runtime controls, writer options, profile names, and the requested backend policy.
 Omit `--output` when checking parameters without choosing a destination. The report keeps `output.path` as `null`; `output.format` is also `null` unless `--format` is supplied. A normal process invocation still requires a destination.
 Without a format, container-specific defaults such as bit depth and compression remain `null`. Supply `--format` to validate codec-specific options such as JPEG quality or compression.

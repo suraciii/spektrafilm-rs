@@ -37,13 +37,17 @@ pub(crate) struct App {
     pub(crate) params: RuntimeParams,
     pub(crate) gui_state: state::GuiState,
     pub(crate) material_baseline: Option<(PathBuf, String, Option<Arc<serde_json::Value>>)>,
+    /// Cached polarity of the selected scan profile, keyed by data directory and stock.
+    pub(crate) scan_medium_polarity: Option<(PathBuf, String, bool)>,
     pub(crate) full_scan_requested: bool,
     /// Original print-glare switch captured while Scan-for-print is active.
     /// This transient workflow state is deliberately excluded from persistence.
     pub(crate) scan_for_print_snapshot: Option<bool>,
     /// Temporary automatic-baseline display. Never enters saved parameters.
     pub(crate) operator_compare: bool,
-    pub(crate) operator_comparison: Option<super::render::OperatorComparison>,
+    /// Temporary finishing-only baseline; mutually exclusive with operator comparison.
+    pub(crate) finishing_compare: bool,
+    pub(crate) displayed_comparison: Option<super::render::DisplayedComparison>,
     pub(crate) adjustment_history: super::history::AdjustmentHistory,
     pub(crate) photograph: crate::photograph::PhotographWork,
     pub(crate) retained_kind: Option<RenderKind>,
@@ -307,9 +311,11 @@ impl App {
             gui_state,
             material_baseline: None,
             full_scan_requested: false,
+            scan_medium_polarity: None,
             scan_for_print_snapshot: None,
             operator_compare: false,
-            operator_comparison: None,
+            finishing_compare: false,
+            displayed_comparison: None,
             adjustment_history: super::history::AdjustmentHistory::default(),
             photograph: crate::photograph::PhotographWork::default(),
             retained_kind: None,

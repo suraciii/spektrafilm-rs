@@ -19,11 +19,12 @@ The [GUI language design](../gui-language/design.md) owns localized presentation
 - Material controls MUST use existing runtime ownership and capability checks under [Ownership](../output-mix/design.md#ownership). Print contains Enlarger and Preflash under [Print exposure composition](../output-mix/design.md#print-exposure-composition).
 - Film and Print retain existing chemistry and model-specific developer exhaustion. Inactive routes and unsupported profiles MUST retain stored values and report capability conditions.
 - Print-filter neutralization MUST fit a deterministic pointwise request with spatial and stochastic effects disabled. It MUST retain caller parameters and vary only local trial M/Y shifts.
-- Module resets and serialized section payloads have separate scopes under [Section reset](spec.md#section-reset). The GUI MUST NOT add digital-response preparation, tonal masks, creative cyan shifts, saturation or color-density groups, or duplicate Scanner levels.
+- Module resets and serialized section payloads have separate scopes under [Section reset](spec.md#section-reset). Apart from [common finishing](../finishing/design.md#ownership), the GUI MUST NOT add digital-response preparation, tonal masks, creative cyan shifts, saturation or color-density groups, or duplicate Scanner levels.
 - Material selection and reset-baseline construction MUST use the core-owned [material defaults](../presets/design.md#material-defaults), not a GUI copy of stock tables. Reset baseline construction starts from a fresh factory projection without live explicit edits.
-- Ordinary rendering, full-state restoration, and history replay retain accepted values without material-default initialization. Existing state carriers and versions remain unchanged.
+- Ordinary rendering, full-state restoration, and history replay retain accepted values without material-default initialization. State compatibility follows [finishing wire and compatibility](../finishing/design.md#wire-and-compatibility).
 - Scanner references and inverses retain their existing dependencies. Input and capture → Camera exposes the canonical `camera.capture_illuminant` leaf under the [Camera control contract](spec.md#contract), including inherited effective values and the CLI's shared type, validator, and conditions.
-- The output amount control MUST use [core output composition](../output-mix/design.md#output-composition). The GUI MUST NOT derive an output-mix source from the Input viewer raster, add an output lightness stage, or add a separate output-processing switch for the `input` workflow.
+- The output amount control MUST use [core output composition](../output-mix/design.md#output-composition). The GUI MUST NOT derive an output-mix source from the Input viewer raster, restore retired output lightness processing, or add a separate output-processing switch for the `input` workflow.
+- Finishing controls and inactive reasons MUST consume the core-owned [finishing applicability](../finishing/design.md#ownership), not a GUI route table. Module comparison MUST use [finishing editing and comparison](../finishing/spec.md#editing-and-comparison) without creating another history owner.
 - State and preset loading MUST validate and migrate a candidate before committing any UI or runtime state. With a loaded source, state application prepares RAW reloads, GPU upload and the input view on the input worker before one UI-side commit.
 - RGB state application MUST reuse accepted source samples and preserve their metadata and source identity without rereading the file. Completion status and history replacement occur only after that commit; preparation failure preserves the source, controls, accepted output, history and numeric drafts.
 - Rejected retired settings likewise leave the accepted transaction intact under [Persistence and delivery](../output-mix/design.md#persistence-and-delivery).
@@ -78,7 +79,7 @@ GUI edits MUST acquire explicit ownership only for core-discovered parameter lea
 
 History and photograph records MUST retain GUI-only values in their existing fields, subject to accepted-state and RAW-draft rules.
 
-History and photograph persistence MUST share one private GUI owner for comparing photographic settings and copying session settings. The public parameter schema MUST remain unchanged. These operations MUST NOT introduce a field registry, a second parameter document, or another history mechanism.
+History and photograph persistence MUST share one private GUI owner for comparing photographic settings and copying session settings. These operations MUST NOT independently change the public parameter schema or introduce a field registry, a second parameter document, or another history mechanism.
 
 The shared settings boundary is:
 

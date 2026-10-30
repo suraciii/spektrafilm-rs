@@ -92,6 +92,7 @@ The artifact MUST contain the dependency closure needed to interpret the saved s
 - Unknown fields, duplicate keys, unknown schema or representation versions, non-finite required state, missing dependencies, inconsistent shapes, truncated data, and digest mismatches MUST fail. Checked arithmetic MUST validate dimensions and lengths before allocation.
 - Member paths MUST be relative to the artifact root. Absolute paths, parent traversal, and symlink escapes MUST fail.
 - A reader MUST NOT resolve a frozen dependency against an external same-named profile after a missing member or hash failure. A changed numerical model MUST either explicitly support the stored representation or reject it; it MUST NOT silently reinterpret the state.
+- `common_finishing_v1` MUST admit the unchanged material representation from `lab_scan_operator_v6`. Its reader MUST insert neutral finishing only when that legacy baseline omits the group. It MUST preserve stored material values and original provenance. Unsupported runtime-model identities MUST fail.
 
 This is a generated persistence format, not a new user-authored configuration language. The implementation MUST supply its typed schema and representation validators with the reader and writer. No runtime MAY accept a placeholder or opaque unvalidated context object as a substitute for required model state.
 
@@ -105,6 +106,7 @@ The artifact MUST provide the baseline for continuation. Existing preset and `--
 The resolver MUST NOT replay a complete saved parameter snapshot through input preparation and stock initialization. It MUST restore validated completed state and prepare only remaining operations. Frozen interpretation data, recorded provenance, and editable downstream defaults MUST remain distinct even when they refer to the same parameter vocabulary.
 
 - Applicability MUST follow the executed operation and the owning model, not a parameter prefix or GUI section. Procedural grain remains post-scan appearance even though it is configured under `film_render.grain`.
+- [Common finishing](../finishing/spec.md#scope-and-applicability) remains editable downstream of a saved material. It MUST execute only on an eligible positive continuation and MUST NOT alter the frozen material or its interpretation dependencies.
 - Already formed material grain MUST NOT be generated again. Camera context needed by negative conversion MUST remain available without applying camera exposure again.
 - Omitted `--seed` MUST inherit the artifact's seed. An explicit seed MUST affect only the remaining random operations and MUST NOT replace an already stored realization.
 - Image input keeps the default seed of 0. Existing repeated-iteration rules apply to the selected seed.
