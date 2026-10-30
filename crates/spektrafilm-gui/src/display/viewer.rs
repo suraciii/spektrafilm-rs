@@ -678,7 +678,12 @@ impl Viewer {
     /// on the left, with the retained-view controls aligned to the right.
     /// Transitions stay independent; all actions affect viewing only, never
     /// retained, saved or exported pixels.
-    pub fn footer_controls(&mut self, ui: &mut egui::Ui, analysis_visible: &mut bool) {
+    pub(crate) fn footer_controls(
+        &mut self,
+        ui: &mut egui::Ui,
+        analysis_visible: &mut bool,
+        space_available: bool,
+    ) -> egui::Id {
         ui.allocate_ui_with_layout(
             ui.available_size(),
             egui::Layout::left_to_right(egui::Align::Center),
@@ -689,10 +694,20 @@ impl Viewer {
                 ui.add_space(theme::SPACE_GROUP);
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let analysis_label = crate::i18n::text(ui.ctx(), "surfaces.analysis.title");
-                    if ui
-                        .selectable_label(*analysis_visible, analysis_label)
-                        .clicked()
-                    {
+                    let action = ui
+                        .push_id("viewer-analysis-action", |ui| {
+                            ui.selectable_label(*analysis_visible, analysis_label)
+                        })
+                        .inner;
+                    if !space_available {
+                        let help =
+                            crate::i18n::text(ui.ctx(), "surfaces.analysis.insufficient_space");
+                        ui.ctx().accesskit_node_builder(action.id, |node| {
+                            node.set_description(help.as_ref());
+                        });
+                        action.clone().on_hover_text(help);
+                    }
+                    if action.clicked() {
                         *analysis_visible = !*analysis_visible;
                     }
                     ui.separator();
@@ -718,9 +733,12 @@ impl Viewer {
                     }
                     self.zoom_menu(ui);
                     ui.separator();
-                });
+                    action.id
+                })
+                .inner
             },
-        );
+        )
+        .inner
     }
     /// The accepted-result transitions: two independent booleans in one
     /// labelled popover, never one exclusive choice. A pending control-search

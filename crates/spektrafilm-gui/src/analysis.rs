@@ -158,6 +158,8 @@ struct SampleIdentity {
 
 pub(crate) struct Analysis {
     pub visible: bool,
+    /// Effective visibility; the requested state above survives window constraints.
+    pub expanded: bool,
     pub preferences: crate::analysis_plot::PlotPreferences,
     pub plot: crate::analysis_plot::PlotState,
     pub selection: Option<[f64; 4]>,
@@ -180,6 +182,7 @@ impl Default for Analysis {
     fn default() -> Self {
         Self {
             visible: false,
+            expanded: false,
             preferences: Default::default(),
             plot: Default::default(),
             selection: None,
@@ -290,8 +293,10 @@ impl Analysis {
         let mut preferences = value["preferences"].clone();
         let mut migrated = false;
         if let Some(fields) = preferences.as_object_mut() {
+            migrated |= fields.remove("height").is_some();
+            migrated |= fields.remove("logarithmic").is_some();
             let legacy_rgb = fields.remove("waveform_rgb");
-            migrated = legacy_rgb.is_some();
+            migrated |= legacy_rgb.is_some();
             if fields.get("mode").and_then(|mode| mode.as_str()) == Some("parade") {
                 fields.insert("mode".into(), serde_json::json!("waveform"));
                 fields.insert("waveform_view".into(), serde_json::json!("rgb_parade"));
@@ -313,9 +318,14 @@ impl Analysis {
             if ![1, 2, 4].contains(&prefs.chroma_zoom) {
                 prefs.chroma_zoom = 1;
             }
-            if !prefs.height.is_finite() {
-                prefs.height = 180.0;
-            }
+            prefs.shelf_height = if prefs.shelf_height.is_finite() {
+                prefs.shelf_height.clamp(
+                    crate::theme::HEIGHT_ANALYSIS_MIN,
+                    crate::theme::HEIGHT_ANALYSIS_MAX,
+                )
+            } else {
+                crate::theme::HEIGHT_ANALYSIS_DEFAULT
+            };
             self.preferences = prefs;
             return migrated;
         }
@@ -409,52 +419,63 @@ fn image_band(region: [u32; 4], size: [u32; 2], start: f32, end: f32) -> [f64; 4
 }
 
 impl crate::App {
+    pub(crate) fn suspend_image_analysis(&mut self) {
+        self.viewer.analysis.enabled = false;
+        self.viewer.analysis.selection = None;
+        self.viewer.analysis.band = None;
+        self.viewer.analysis.sample = None;
+        self.viewer.analysis.completed = None;
+        self.viewer.cancel_analysis_selection();
+        self.analysis.clear();
+    }
+
     pub(crate) fn show_image_analysis(&mut self, ui: &mut egui::Ui) {
         use crate::analysis_geometry::AnalysisGeometry;
         use crate::analysis_plot::{self, PlotSample};
         use crate::display::ViewLayer;
-        let max_height = ui.available_height();
-        let panel_top = ui.cursor().top();
         let layer = self.viewer.settings.layer;
-        ui.horizontal_wrapped(|ui| {
-            let close_label = crate::i18n::text(ui.ctx(), "surfaces.analysis.close");
-            let close = crate::controls::icon_button(
-                ui,
-                close_label.as_ref(),
-                crate::controls::Icon::Close,
-            );
-            if close.clicked() {
-                self.analysis.visible = false;
-            }
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = crate::theme::SPACE_1;
+            ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
             analysis_plot::show_mode_controls(ui, &mut self.analysis.preferences);
-            egui::menu::menu_button(ui, crate::i18n::text(ui.ctx(), "analysis.settings"), |ui| {
-                analysis_plot::show_settings(ui, &mut self.analysis.preferences)
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let close_label = crate::i18n::text(ui.ctx(), "surfaces.analysis.close");
+                if crate::controls::icon_button(
+                    ui,
+                    close_label.as_ref(),
+                    crate::controls::Icon::Close,
+                )
+                .clicked()
+                {
+                    self.analysis.visible = false;
+                }
+                if self.analysis.selection.is_some()
+                    && ui
+                        .button(crate::i18n::text(ui.ctx(), "surfaces.analysis.full"))
+                        .clicked()
+                {
+                    self.analysis.selection = None;
+                    self.viewer.cancel_analysis_selection();
+                    self.analysis.clear_sample();
+                }
+                if (self.viewer.analysis_retained(layer).is_some()
+                    || (layer == ViewLayer::Input && self.oriented_input.is_some())
+                    || (layer == ViewLayer::Output && self.output_geometry.is_some()))
+                    && ui
+                        .selectable_label(
+                            self.viewer.analysis.armed,
+                            crate::i18n::text(ui.ctx(), "surfaces.analysis.select"),
+                        )
+                        .clicked()
+                {
+                    if self.viewer.analysis.armed {
+                        self.viewer.cancel_analysis_selection();
+                    } else {
+                        self.viewer.arm_analysis_selection();
+                    }
+                    self.analysis.clear_sample();
+                }
             });
-            let selected = self.analysis.selection.is_some();
-            if ui
-                .selectable_label(
-                    selected,
-                    crate::i18n::text(ui.ctx(), "surfaces.analysis.select"),
-                )
-                .clicked()
-                && layer != ViewLayer::PaperBack
-            {
-                self.viewer.arm_analysis_selection();
-                self.analysis.clear_sample();
-            }
-            if ui
-                .selectable_label(
-                    !selected,
-                    crate::i18n::text(ui.ctx(), "surfaces.analysis.full"),
-                )
-                .clicked()
-            {
-                self.analysis.selection = None;
-                self.viewer.cancel_analysis_selection();
-                self.analysis.clear_sample();
-            }
-            ui.label(egui::RichText::new("sRGB").color(crate::theme::FG_MUTED))
-                .on_hover_text(crate::i18n::text(ui.ctx(), "analysis.interpretation"));
         });
         if !self.analysis.visible {
             return;
@@ -612,21 +633,12 @@ impl crate::App {
             if layer == ViewLayer::Output && self.accepted_frame_is_stale() {
                 status.push(crate::i18n::text(ui.ctx(), "surfaces.analysis.earlier").into_owned());
             }
-            if layer == ViewLayer::Output && self.retained_kind == Some(crate::RenderKind::Preview)
-            {
-                status.push(
-                    crate::i18n::text(ui.ctx(), "surfaces.analysis.preview_limit").into_owned(),
-                );
-            }
             if self.analysis.selection.is_none()
                 && geometries[0]
                     .zip(geometries[1])
                     .is_some_and(|(a, b)| a.coverage() != b.coverage())
             {
                 status.push(crate::i18n::text(ui.ctx(), "surfaces.analysis.framing").into_owned());
-            }
-            if !status.is_empty() {
-                ui.label(status.join(" · "));
             }
             let suspended = self.viewer.analysis.suspended
                 || self.operator_compare
@@ -638,7 +650,6 @@ impl crate::App {
                 .filter(|sample| sample.layer == layer && !suspended);
             if suspended {
                 self.analysis.clear_sample();
-                ui.label(crate::i18n::text(ui.ctx(), "surfaces.analysis.suspended"));
             } else if let Some(sample) = target {
                 if self.analysis.result.is_some() {
                     self.analysis.update_sample(
@@ -657,7 +668,8 @@ impl crate::App {
                 self.analysis.clear_sample();
             }
             if self.analysis.sample_failed {
-                ui.label(crate::i18n::text(ui.ctx(), "analysis.sample_unavailable"));
+                status
+                    .push(crate::i18n::text(ui.ctx(), "analysis.sample_unavailable").into_owned());
             }
             let Some(result) = self.analysis.result.as_ref() else {
                 ui.label(crate::i18n::text(ui.ctx(), "surfaces.analysis.analyzing"));
@@ -671,41 +683,21 @@ impl crate::App {
                 .as_ref()
                 .and_then(|result| result.as_ref().ok());
             if has_counterpart && counterpart.is_none() {
-                ui.label(crate::i18n::text(
-                    ui.ctx(),
-                    if regions[1 - index].is_none() {
-                        "surfaces.analysis.counterpart_unavailable"
-                    } else if result.data[1 - index].as_ref().is_some_and(Result::is_err) {
-                        "surfaces.analysis.counterpart_failed"
-                    } else {
-                        "surfaces.analysis.counterpart_pending"
-                    },
-                ));
+                status.push(
+                    crate::i18n::text(
+                        ui.ctx(),
+                        if regions[1 - index].is_none() {
+                            "surfaces.analysis.counterpart_unavailable"
+                        } else if result.data[1 - index].as_ref().is_some_and(Result::is_err) {
+                            "surfaces.analysis.counterpart_failed"
+                        } else {
+                            "surfaces.analysis.counterpart_pending"
+                        },
+                    )
+                    .into_owned(),
+                );
             }
             let region = regions[index].unwrap();
-            let population = crate::i18n::text(ui.ctx(), "analysis.population_hint")
-                .replace("{total}", &data.total.to_string());
-            let subject_key = match layer {
-                ViewLayer::Input => "surfaces.analysis.original",
-                ViewLayer::Output if self.retained_kind == Some(crate::RenderKind::Scan) => {
-                    "surfaces.analysis.scan"
-                }
-                ViewLayer::Output => "surfaces.analysis.preview",
-                ViewLayer::PaperBack => "surfaces.analysis.paper",
-            };
-            let scope_key = if self.analysis.selection.is_some() {
-                "surfaces.analysis.selection"
-            } else {
-                "surfaces.analysis.full"
-            };
-            let scope = format!(
-                "{} · {} · {}",
-                crate::i18n::text(ui.ctx(), subject_key),
-                crate::i18n::text(ui.ctx(), scope_key),
-                crate::i18n::text(ui.ctx(), "surfaces.analysis.interpretation")
-            );
-            ui.label(egui::RichText::new(scope).color(crate::theme::FG_MUTED))
-                .on_hover_text(population);
             let sample = target
                 .zip(self.analysis.sample)
                 .map(|(sample, pixel)| PlotSample {
@@ -718,7 +710,7 @@ impl crate::App {
                         && sample.y >= region[1]
                         && sample.y < region[3],
                 });
-            let plot_max_height = (max_height - (ui.cursor().top() - panel_top) - 56.0).max(40.0);
+            let plot_max_height = ui.available_height().max(0.0);
             let plot = analysis_plot::show_plot(
                 ui,
                 &mut self.analysis.plot,
@@ -727,6 +719,7 @@ impl crate::App {
                 counterpart,
                 sample,
                 plot_max_height,
+                status,
             );
             if plot.inspecting {
                 self.analysis.clear_sample();
@@ -848,6 +841,7 @@ mod tests {
                     "histogram_rgb": true,
                     "channels": [false, true, false],
                     "height": 320.0,
+                    "logarithmic": false,
                     "chroma_zoom": 2
                 }
             });
@@ -864,11 +858,16 @@ mod tests {
             assert_eq!(analysis.preferences.waveform_view, expected_view);
             assert_eq!(analysis.preferences.channels, [false, true, false]);
             assert!(analysis.preferences.histogram_rgb);
-            assert_eq!(analysis.preferences.height, 320.0);
+            assert_eq!(
+                analysis.preferences.shelf_height,
+                crate::theme::HEIGHT_ANALYSIS_DEFAULT
+            );
             assert_eq!(analysis.preferences.chroma_zoom, 2);
 
             let canonical = analysis.persistent_state();
             assert!(canonical["preferences"].get("waveform_rgb").is_none());
+            assert!(canonical["preferences"].get("height").is_none());
+            assert!(canonical["preferences"].get("logarithmic").is_none());
             assert_ne!(canonical["preferences"]["mode"], "parade");
             crate::analysis_preferences::save(directory.path(), &canonical).unwrap();
             let loaded = crate::analysis_preferences::load(directory.path())
@@ -878,6 +877,50 @@ mod tests {
             analysis.preferences = Default::default();
             assert!(!analysis.restore_state(&loaded));
             assert_eq!(analysis.preferences, expected);
+        }
+    }
+
+    #[test]
+    fn total_shelf_height_takes_precedence_and_survives_preference_republication() {
+        use serde_json::json;
+
+        let directory = tempfile::tempdir().unwrap();
+        for requested in [160.0, 280.0] {
+            let saved = json!({
+                "visible": true,
+                "preferences": {
+                    "shelf_height": requested,
+                    "height": 400.0,
+                    "logarithmic": false,
+                    "mode": "waveform",
+                    "waveform_view": "rgb_parade"
+                }
+            });
+            crate::analysis_preferences::save(directory.path(), &saved).unwrap();
+            let loaded = crate::analysis_preferences::load(directory.path())
+                .unwrap()
+                .unwrap();
+            let mut analysis = Analysis::default();
+            assert!(analysis.restore_state(&loaded));
+            assert_eq!(analysis.preferences.shelf_height, requested);
+            // Effective collapse must never replace the persisted expansion request.
+            assert!(!analysis.expanded);
+            let canonical = analysis.persistent_state();
+            assert_eq!(canonical["visible"], true);
+            assert!(canonical["preferences"].get("height").is_none());
+            assert!(canonical["preferences"].get("logarithmic").is_none());
+            crate::analysis_preferences::save(directory.path(), &canonical).unwrap();
+            let loaded = crate::analysis_preferences::load(directory.path())
+                .unwrap()
+                .unwrap();
+            let mut restored = Analysis::default();
+            assert!(!restored.restore_state(&loaded));
+            assert!(restored.visible);
+            assert_eq!(restored.preferences.shelf_height, requested);
+            assert_eq!(
+                restored.preferences.waveform_view,
+                crate::analysis_plot::WaveformView::RgbParade
+            );
         }
     }
 

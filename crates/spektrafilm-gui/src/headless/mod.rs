@@ -1238,9 +1238,6 @@ mod layout_snapshots {
                 AnalysisMode::Parade => choose(h, "Waveform display", mode),
                 _ => {
                     click(h, "Analysis mode");
-                    if expected == AnalysisMode::Vectorscope {
-                        click(h, "Advanced");
-                    }
                     click(h, mode);
                 }
             }
