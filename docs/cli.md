@@ -131,6 +131,8 @@ Canonical values use the same validation rules in complete parameters, sparse ed
 
 An `inactive` edit remains stored but is not used by the selected operation. Feedback distinguishes an absent operation from a disabled feature or unsupported material. The `input` route does not expose film, and scanning a developed print does not print it again. Shared spectral and film-curve controls can still serve downstream calibration on fresh automatic-print routes. See [value validity](../specs/cli/spec.md#parameter-value-validity) and [operation applicability](../specs/cli/spec.md#operation-applicability).
 
+`film_render.grain.density_min` also sets the interpolation bounds of an executing film-scanner or enlarger LUT. These consumers do not require grain. A selected LUT that the current operation bypasses is not a consumer. Material continuation uses its retained baseline and admitted downstream switches; it does not replay image-input debug or monochrome preparation.
+
 Recipe `seed` values are admitted in the unsigned 32-bit range (`0..=4_294_967_295`).
 
 ### Feature profiles

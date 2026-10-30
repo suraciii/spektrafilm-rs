@@ -503,7 +503,7 @@
   "controls.grain.dye_reversal": "染料反转片",
   "controls.grain.spektra": "Spektra",
   "controls.grain.rms_granularity_help": "逐通道颗粒度 G：Spektra 按上游颗粒度算法从胶片密度曲线推导统计粒子面积；Dye 将其用作相对事件面积强度 k = (G / 6)^2，零值保留参考倍率回退。两者均非经认证的光学 RMS 目标，且与 Procedural 的颗粒量不同。",
-  "controls.grain.density_min_help": "Spektra 与 Dye 共用的最低颗粒密度。",
+  "controls.grain.density_min_help": "Spektra 的最低颗粒密度；也设置实际执行的胶片扫描与放大机 LUT 的插值边界。",
   "controls.grain.uniformity_help": "Spektra 与 Dye 共用的逐通道颗粒均匀度。",
   "controls.grain.particle_scale_sublayers_help": "各分量的正值倍率：Spektra 使用各乳剂子层的相对粒子尺度；Dye 使用数值曲线分量，改变事件质量与事件率，而非各分量独立的染料云核宽度。",
   "controls.grain.blur_help": "后置模糊标准差。",

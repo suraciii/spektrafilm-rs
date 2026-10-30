@@ -503,7 +503,7 @@
   "controls.grain.dye_reversal": "Dye reversal",
   "controls.grain.spektra": "Spektra",
   "controls.grain.rms_granularity_help": "Per-channel granularity G: Spektra derives statistical particle area from the film density curves using upstream granularity; Dye uses relative event-area strength k = (G / 6)^2, with zero retaining the reference-scale fallback. Neither is a certified optical RMS target. Distinct from Procedural Amount.",
-  "controls.grain.density_min_help": "Minimum grain density shared by Spektra and Dye.",
+  "controls.grain.density_min_help": "Minimum grain density for Spektra; also sets bounds for executing film-scanner and enlarger LUTs.",
   "controls.grain.uniformity_help": "Per-channel grain uniformity shared by Spektra and Dye.",
   "controls.grain.particle_scale_sublayers_help": "Positive scale per component: Spektra uses relative particle scales per emulsion sublayer; Dye uses numerical curve components, changing event mass and rate, not separate cloud-kernel widths.",
   "controls.grain.blur_help": "Post-blur sigma.",
