@@ -29,6 +29,7 @@ mod app;
 mod backend;
 mod calibration;
 mod chooser;
+mod clipping_preferences;
 mod controls;
 mod diagnostics;
 mod display;

@@ -936,9 +936,10 @@ impl ComputeBackend for WgpuBackend {
         i: Option<&spektrafilm_backend::DeviceImage>,
         paper: Option<&spektrafilm_backend::DeviceImage>,
         previous: Option<&spektrafilm_backend::DeviceImage>,
+        native: Option<&spektrafilm_backend::DeviceImage>,
         p: &spektrafilm_backend::ViewerComposeGpuParams,
     ) -> Result<Vec<[u8; 4]>, String> {
-        self.viewer_compose_gpu(i, paper, previous, p)
+        self.viewer_compose_gpu(i, paper, previous, native, p)
     }
     fn viewer_paper_retained(
         &self,

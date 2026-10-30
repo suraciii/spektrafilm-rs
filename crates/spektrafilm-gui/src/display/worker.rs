@@ -40,6 +40,7 @@ pub(super) struct DisplayRequest {
     pub(super) texture_size: [usize; 2],
     pub(super) gray: Color32,
     pub(super) layer: ViewLayer,
+    pub(super) clipping: spektrafilm_backend::ViewerClipping,
     pub(super) interpolation: Interpolation,
     pub(super) raster: Option<DisplayRaster>,
     pub(super) paper_size: [usize; 2],
@@ -564,6 +565,36 @@ impl DisplaySource {
     }
 }
 
+fn compose_params(request: &DisplayRequest) -> spektrafilm_backend::ViewerComposeGpuParams {
+    let rect = |r: Rect| [r.min.x, r.min.y, r.max.x, r.max.y];
+    let clipping = if request.layer == ViewLayer::PaperBack
+        || request.polaroid
+        || (request.layer == ViewLayer::Output && request.previous.is_some())
+    {
+        spektrafilm_backend::ViewerClipping::Off
+    } else {
+        request.clipping
+    };
+    spektrafilm_backend::ViewerComposeGpuParams {
+        width: request.texture_size[0] as u32,
+        height: request.texture_size[1] as u32,
+        rect: rect(request.rect),
+        border: rect(request.border),
+        paper_rect: rect(request.paper_rect),
+        image_rect: rect(request.image_rect),
+        gray: [
+            request.gray.r() as f32 / 255.0,
+            request.gray.g() as f32 / 255.0,
+            request.gray.b() as f32 / 255.0,
+        ],
+        interpolation: request.interpolation.discriminant(),
+        full_source: request.full_source && request.layer != ViewLayer::PaperBack,
+        output_layer: request.layer == ViewLayer::Output,
+        fade: request.frame as f32 / 10.0,
+        clipping,
+    }
+}
+
 #[cfg(test)]
 fn compose_display(request: DisplayRequest, cache: &mut CompositionCache) -> DisplayResponse {
     compose_display_cancellable(request, cache, None)
@@ -577,6 +608,7 @@ fn compose_display_cancellable(
     if request.backend.is_gpu() {
         return compose_display_device(request, cache, cancellation);
     }
+    let mut params = compose_params(&request);
     let DisplayRequest {
         key,
         generation,
@@ -737,6 +769,59 @@ fn compose_display_cancellable(
     if let Some((_, message)) = full.as_ref() {
         status = message.clone();
     }
+    let mask = if params.clipping.active() && raster.is_some() {
+        if let Some(source) = source.as_ref().filter(|s| s.width > 0 && s.height > 0) {
+            let result = metadata
+                .space
+                .as_deref()
+                .ok_or_else(|| "viewer source has no color space".to_owned())
+                .and_then(spektrafilm_math::colorspace::resolve)
+                .and_then(|space| {
+                    spektrafilm_backend::viewer_clipping::mask_host(
+                        source,
+                        spektrafilm_backend::RetainedImageMeta {
+                            width: source.width,
+                            height: source.height,
+                            domain: if metadata.encoded {
+                                spektrafilm_backend::SampleDomain::Encoded
+                            } else {
+                                spektrafilm_backend::SampleDomain::Linear
+                            },
+                            precision: spektrafilm_backend::Precision::host(),
+                            space,
+                            pixel_pitch_um: None,
+                        },
+                        &params,
+                        cancellation.as_deref(),
+                    )
+                });
+            match result {
+                Ok(mask) => Some(mask),
+                Err(message) => {
+                    return DisplayResponse {
+                        key,
+                        generation,
+                        image: egui::ColorImage {
+                            size: [0, 0],
+                            pixels: Vec::new(),
+                        },
+                        status: Some(
+                            crate::app::Message::new("surfaces.display.error")
+                                .arg("error", &message),
+                        ),
+                        error: Some(message),
+                        prepared: current_prepared,
+                        uploaded_input: None,
+                    };
+                }
+            }
+        } else {
+            params.clipping = spektrafilm_backend::ViewerClipping::Off;
+            None
+        }
+    } else {
+        None
+    };
     let mut pixels = vec![Color32::TRANSPARENT; texture_size[0] * texture_size[1]];
     let render_pixel = |x: usize, y: usize| -> Color32 {
         let p = Pos2::new(
@@ -772,6 +857,14 @@ fn compose_display_cancellable(
                 }
             }
             color = pack(rgb);
+            if let Some(mask) = mask.as_ref() {
+                let rgba = spektrafilm_backend::viewer_clipping::apply_rgba(
+                    color.to_array(),
+                    mask[y * texture_size[0] + x],
+                    params.clipping,
+                );
+                color = Color32::from_rgba_premultiplied(rgba[0], rgba[1], rgba[2], rgba[3]);
+            }
         }
         color
     };
@@ -940,7 +1033,22 @@ fn compose_display_device(
             let _ = pause.started.send(());
             let _ = pause.release.lock().recv();
         }
-        if request.full_source && request.layer != ViewLayer::PaperBack && image.is_some() {
+        let mut params = compose_params(&request);
+        let native_available = if let Some(image) = request.retained_source.as_ref() {
+            let meta = image.meta();
+            meta.width > 0 && meta.height > 0
+        } else {
+            request
+                .source
+                .as_ref()
+                .is_some_and(|source| source.width > 0 && source.height > 0)
+        };
+        if image.is_none() || !native_available {
+            params.clipping = spektrafilm_backend::ViewerClipping::Off;
+        }
+        let need_full =
+            request.full_source && request.layer != ViewLayer::PaperBack && image.is_some();
+        let native = if need_full || params.clipping.active() {
             let source = request.source.as_ref();
             let metadata = &request.metadata;
             let raw = if let Some(retained) = request.retained_source.as_ref() {
@@ -988,16 +1096,23 @@ fn compose_display_device(
             if request.layer == ViewLayer::Input && request.retained_source.is_none() {
                 uploaded_input = Some(raw.clone());
             }
+            Some(raw)
+        } else {
+            None
+        };
+        if need_full {
+            let raw = native.as_ref().expect("full source available");
+            let metadata = &request.metadata;
             // Pointwise viewing transform before interpolation, exactly as the
             // CPU full-source tap cache. Same-size resampling is an identity.
             let slot = &mut cache.device_fit[2 + usize::from(request.layer == ViewLayer::Output)];
             if !slot
                 .as_ref()
-                .is_some_and(|e| e.matches(&raw, metadata, usize::MAX))
+                .is_some_and(|e| e.matches(raw, metadata, usize::MAX))
             {
                 let (transformed, message) = super::colortransform::output_display_raster_retained(
                     backend,
-                    &raw,
+                    raw,
                     metadata
                         .space
                         .as_deref()
@@ -1058,28 +1173,17 @@ fn compose_display_device(
                     .ok_or("previous viewer raster belongs to host backend")
             })
             .transpose()?;
-        let rect = |r: Rect| [r.min.x, r.min.y, r.max.x, r.max.y];
+        let native_for_clipping = if params.clipping.active() {
+            native.as_ref()
+        } else {
+            None
+        };
         let pixels = backend.viewer_compose_retained(
             image.as_ref(),
             cache.paper.as_ref().and_then(|r| r.retained.as_ref()),
             previous,
-            &spektrafilm_backend::ViewerComposeGpuParams {
-                width: request.texture_size[0] as u32,
-                height: request.texture_size[1] as u32,
-                rect: rect(request.rect),
-                border: rect(request.border),
-                paper_rect: rect(request.paper_rect),
-                image_rect: rect(request.image_rect),
-                gray: [
-                    request.gray.r() as f32 / 255.0,
-                    request.gray.g() as f32 / 255.0,
-                    request.gray.b() as f32 / 255.0,
-                ],
-                interpolation: request.interpolation.discriminant(),
-                full_source: request.full_source && request.layer != ViewLayer::PaperBack,
-                output_layer: request.layer == ViewLayer::Output,
-                fade: request.frame as f32 / 10.0,
-            },
+            native_for_clipping,
+            &params,
         )?;
         Ok(egui::ColorImage {
             size: request.texture_size,
@@ -1212,11 +1316,206 @@ mod tests {
             },
             max_size: 1,
             full_source: true,
+            clipping: spektrafilm_backend::ViewerClipping::Off,
             polaroid: false,
             backend: Arc::new(spektrafilm_backend::cpu_backend::CpuBackend),
             ctx: egui::Context::default(),
             frame: 0,
         }
+    }
+
+    #[test]
+    fn native_clipping_follows_viewport_cells_and_never_changes_source() {
+        use spektrafilm_backend::ViewerClipping;
+
+        let mut current = request(1);
+        current.metadata.encoded = false;
+        current.full_source = false;
+        current.max_size = 4;
+        current.source = Some(Arc::new(ImageBuf::from_data(
+            4,
+            1,
+            vec![
+                0.0 as _,
+                0.0 as _,
+                0.0 as _,
+                -0.1 as _,
+                0.5 as _,
+                0.5 as _,
+                1.0 as _,
+                0.2 as _,
+                0.2 as _,
+                f64::NAN as _,
+                0.0 as _,
+                0.0 as _,
+            ],
+        )));
+        let original = current.source.as_ref().unwrap().data.clone();
+        current.clipping = ViewerClipping::Overlay {
+            shadows: true,
+            highlights: true,
+        };
+        let mut cache = CompositionCache::default();
+        let response = compose_display(current.clone(), &mut cache);
+        assert!(response.error.is_none(), "{:?}", response.error);
+        assert_eq!(response.image.pixels[0], Color32::from_rgb(64, 112, 255));
+        assert_ne!(response.image.pixels[1], Color32::from_rgb(64, 112, 255));
+        assert_eq!(response.image.pixels[2], Color32::from_rgb(255, 64, 64));
+        assert_ne!(response.image.pixels[3], Color32::from_rgb(64, 112, 255));
+        assert!(response.matches(1, &[1]));
+        assert!(!response.matches(2, &[1]));
+        assert!(!response.matches(1, &[2]));
+
+        current.rect = Rect::from_min_size(Pos2::ZERO, Vec2::new(2.0, 1.0));
+        current.image_rect = current.rect;
+        current.border = current.rect;
+        current.paper_rect = current.rect;
+        current.texture_size = [2, 1];
+        let fit = compose_display(current.clone(), &mut cache);
+        assert_eq!(
+            fit.image.pixels,
+            vec![
+                Color32::from_rgb(64, 112, 255),
+                Color32::from_rgb(255, 64, 64)
+            ]
+        );
+        current.image_rect = current.image_rect.translate(Vec2::new(-1.0, 0.0));
+        let panned = compose_display(current.clone(), &mut cache);
+        assert_eq!(panned.image.pixels[0], Color32::from_rgb(255, 64, 64));
+        assert_ne!(panned.image.pixels[1], Color32::from_rgb(255, 64, 64));
+        current.clipping = ViewerClipping::Shadows;
+        current.image_rect = current.rect;
+        let isolated = compose_display(current, &mut cache);
+        assert_eq!(isolated.image.pixels, vec![Color32::BLACK, Color32::WHITE]);
+        let after = &cache.fit[1].as_ref().unwrap().prepared.source.data;
+        assert!(
+            original
+                .iter()
+                .zip(after)
+                .all(|(a, b)| a == b || (a.is_nan() && b.is_nan()))
+        );
+    }
+
+    #[test]
+    fn warnings_are_suspended_for_transitions_paper_and_missing_sources() {
+        use spektrafilm_backend::ViewerClipping;
+
+        let mut current = request(1);
+        current.clipping = ViewerClipping::Shadows;
+        for scenario in 0..4 {
+            let mut active = current.clone();
+            match scenario {
+                0 => active.polaroid = true,
+                1 => active.previous = Some(DisplayRaster::new([1, 1], vec![[0.3; 3]]).unwrap()),
+                2 => active.layer = ViewLayer::PaperBack,
+                _ => {
+                    active.source = None;
+                    active.raster = None;
+                    active.full_source = false;
+                }
+            }
+            let mut off = active.clone();
+            off.clipping = ViewerClipping::Off;
+            let actual = compose_display(active, &mut CompositionCache::default());
+            let expected = compose_display(off, &mut CompositionCache::default());
+            assert!(actual.error.is_none(), "{:?}", actual.error);
+            assert_eq!(actual.image.pixels, expected.image.pixels);
+        }
+        current.clipping = ViewerClipping::Overlay {
+            shadows: false,
+            highlights: false,
+        };
+        let inactive = compose_display(current.clone(), &mut CompositionCache::default());
+        current.clipping = ViewerClipping::Off;
+        let off = compose_display(current, &mut CompositionCache::default());
+        assert_eq!(inactive.image.pixels, off.image.pixels);
+    }
+
+    #[test]
+    fn warning_failure_and_cancellation_do_not_publish_pixels() {
+        let mut current = request(1);
+        current.clipping = spektrafilm_backend::ViewerClipping::Shadows;
+        current.full_source = false;
+        current.metadata.space = Some("unknown viewer space".into());
+        let failed = compose_display(current.clone(), &mut CompositionCache::default());
+        assert!(failed.error.is_some());
+        assert!(failed.image.pixels.is_empty());
+
+        current.metadata.space = Some("sRGB".into());
+        let cancelled = compose_display_cancellable(
+            current,
+            &mut CompositionCache::default(),
+            Some(Arc::new(AtomicBool::new(true))),
+        );
+        assert!(cancelled.error.is_some());
+        assert!(cancelled.image.pixels.is_empty());
+
+        let mut empty = request(2);
+        empty.clipping = spektrafilm_backend::ViewerClipping::Shadows;
+        empty.full_source = false;
+        empty.raster = None;
+        empty.source = Some(Arc::new(ImageBuf::new(0, 0)));
+        let response = compose_display(empty, &mut CompositionCache::default());
+        assert!(response.error.is_some());
+        assert!(response.image.pixels.iter().all(|p| *p != Color32::BLACK));
+    }
+
+    #[test]
+    fn device_warning_composition_reuses_native_upload_and_preserves_samples() {
+        use spektrafilm_backend::ViewerClipping;
+
+        let gpu = spektrafilm_gpu::test_support::explicit_adapter();
+        let mut device = request(1);
+        device.backend = Arc::new(gpu.derived_explicit());
+        device.max_size = 4;
+        device.frame = 10;
+        device.clipping = ViewerClipping::Overlay {
+            shadows: true,
+            highlights: true,
+        };
+        let saved = device.source.as_ref().unwrap().data.clone();
+        let mut cache = CompositionCache::default();
+        for full_source in [false, true] {
+            device.full_source = full_source;
+            let actual = compose_display(device.clone(), &mut cache);
+            assert!(actual.error.is_none(), "{:?}", actual.error);
+            let mut host = device.clone();
+            host.backend = Arc::new(spektrafilm_backend::cpu_backend::CpuBackend);
+            let expected = compose_display(host, &mut CompositionCache::default());
+            assert!(expected.error.is_none(), "{:?}", expected.error);
+            assert_eq!(actual.image.pixels, expected.image.pixels);
+            let raw = &cache.device_source[1].as_ref().unwrap().image;
+            assert_eq!(raw.to_host(device.backend.as_ref()).unwrap().data, saved);
+        }
+        let raw = cache.device_source[1].as_ref().unwrap().image.clone();
+        let mut resident = device.clone();
+        resident.source = None;
+        resident.retained_source = Some(raw.clone());
+        let result = compose_display(resident, &mut cache);
+        assert!(result.error.is_none(), "{:?}", result.error);
+        assert_eq!(
+            result.image.pixels,
+            vec![
+                Color32::from_rgb(64, 112, 255),
+                Color32::from_rgb(255, 64, 64),
+                Color32::from_rgb(64, 112, 255),
+                Color32::from_rgb(255, 64, 64),
+            ]
+        );
+        device.image_rect = device.image_rect.translate(Vec2::new(1.0, 0.0));
+        device.clipping = ViewerClipping::Highlights;
+        let panned = compose_display(device.clone(), &mut cache);
+        assert!(panned.error.is_none(), "{:?}", panned.error);
+        assert!(Arc::ptr_eq(
+            raw.payload().unwrap(),
+            cache.device_source[1]
+                .as_ref()
+                .unwrap()
+                .image
+                .payload()
+                .unwrap()
+        ));
+        assert_eq!(raw.to_host(device.backend.as_ref()).unwrap().data, saved);
     }
 
     #[test]
@@ -1735,6 +2034,14 @@ mod tests {
             assert_ne!(empty.image.pixels, accepted.image.pixels);
             assert!(empty.prepared.is_none());
         }
+        let mut absent = healthy.clone();
+        absent.source = None;
+        absent.retained_source = None;
+        absent.full_source = false;
+        absent.clipping = spektrafilm_backend::ViewerClipping::Shadows;
+        let empty = compose_display(absent, &mut cache);
+        assert!(empty.error.is_none(), "{:?}", empty.error);
+        assert_eq!(empty.image.pixels, vec![Color32::WHITE; 4]);
         let reused = compose_display(healthy.clone(), &mut cache);
         assert!(reused.error.is_none(), "{:?}", reused.error);
         assert_eq!(reused.image.pixels, accepted.image.pixels);
@@ -1845,6 +2152,7 @@ mod cancellation_tests {
         first.backend = backend.clone();
         first.max_size = 4;
         first.frame = 10;
+        first.clipping = spektrafilm_backend::ViewerClipping::Shadows;
         let (repaint, repainted) = std::sync::mpsc::channel();
         first.ctx.set_request_repaint_callback(move |_| {
             let _ = repaint.send(());
@@ -1857,6 +2165,10 @@ mod cancellation_tests {
         assert!(!cancellation.load(Ordering::Relaxed));
         first.generation = 2;
         first.key = vec![2];
+        first.clipping = spektrafilm_backend::ViewerClipping::Overlay {
+            shadows: false,
+            highlights: true,
+        };
         worker.submit(first);
         let cancelled = cancellation.load(Ordering::Relaxed);
         release.send(()).unwrap();
@@ -1878,9 +2190,9 @@ mod cancellation_tests {
             response.image.pixels,
             vec![
                 Color32::BLACK,
-                Color32::WHITE,
+                Color32::from_rgb(255, 64, 64),
                 Color32::BLACK,
-                Color32::WHITE
+                Color32::from_rgb(255, 64, 64)
             ]
         );
         drop(worker);

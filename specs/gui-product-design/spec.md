@@ -31,6 +31,8 @@ flowchart LR
 
 [Image analysis](image-analysis/spec.md) owns tone and color inspection, subject comparison, and analysis regions.
 
+[Black and white endpoint warnings](clipping-warnings/spec.md) own native endpoint overlays and temporary isolated inspection in the viewer.
+
 These are target capabilities, not a statement of implementation. Delivery schedules and research candidates are not product contracts.
 
 ## Workspace

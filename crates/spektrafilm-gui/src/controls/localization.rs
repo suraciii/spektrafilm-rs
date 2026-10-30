@@ -66,6 +66,8 @@ fn key(label: &str) -> Option<&'static str> {
         "Photograph records" => Some("controls.section.photograph_records"),
         "Export queue" => Some("photo.queue.title"),
         "Preset discovery" => Some("controls.section.preset_discovery"),
+        "Shadow clipping warning" => Some("surfaces.viewer.clipping_shadows"),
+        "Highlight clipping warning" => Some("surfaces.viewer.clipping_highlights"),
         "Continue saving retained pixels" => Some("result.save.continue"),
         "Save adjustments…" => Some("photo.record.save"),
         "Reopen adjustments…" => Some("photo.record.reopen"),

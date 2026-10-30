@@ -25,8 +25,9 @@ pub use observed_backend::{bind_backend, bind_cpu_fallback};
 pub mod cpu_backend;
 pub mod scalar_scan;
 pub mod viewer_params;
-pub use viewer_params::ViewerComposeGpuParams;
+pub use viewer_params::{ViewerClipping, ViewerComposeGpuParams};
 pub mod preparation;
+pub mod viewer_clipping;
 pub use preparation::{
     GamutTableParams, InputGamutTableParams, PreparedTable, SpectralTcLutParams,
 };
@@ -718,6 +719,7 @@ pub trait ComputeBackend: Send + Sync {
         _image: Option<&DeviceImage>,
         _paper: Option<&DeviceImage>,
         _previous: Option<&DeviceImage>,
+        _native: Option<&DeviceImage>,
         _params: &ViewerComposeGpuParams,
     ) -> Result<Vec<[u8; 4]>, String> {
         Err("backend has no retained viewer composition".into())

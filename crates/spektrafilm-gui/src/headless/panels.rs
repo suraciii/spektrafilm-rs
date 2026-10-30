@@ -3,6 +3,388 @@ use crate::display::{ViewLayer, ViewerObservation};
 use egui::{Color32, Pos2, Vec2};
 use egui_kittest::kittest::Queryable;
 
+#[test]
+fn clipping_overlay_and_isolation_leave_save_and_export_pixels_unchanged() {
+    let mut s = session();
+    let h = &mut s.harness;
+    let retained = preview(h);
+    settle_animation(h);
+    let params = h.state().params.clone();
+    let revision = h.state().parameter_revision;
+    let mut options = h.state().export_options.clone();
+    options.format = export::ExportFormat::Exr;
+    options.depth = BitDepth::ThirtyTwo;
+    options.saving_cctf_encoding = false;
+    let ctx = h.ctx.clone();
+    let save_before = s.directory.path().join("clipping-save-before.exr");
+    let export_before = s.directory.path().join("clipping-export-before.exr");
+    save_retained(h, &save_before);
+    h.state_mut()
+        .start_export_to_path(&ctx, options.clone(), &export_before);
+    wait_until(h, |app| app.export_job.is_none());
+    assert!(save_before.is_file() && export_before.is_file());
+
+    click(h, "Shadow clipping warning");
+    click(h, "Highlight clipping warning");
+    let _ = settled(h, 40.0);
+    h.get_by_label("Shadow clipping warning").focus();
+    h.step();
+    h.input_mut().events.push(egui::Event::Key {
+        key: egui::Key::Space,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: egui::Modifiers::NONE,
+    });
+    h.step();
+    assert_eq!(
+        h.state().viewer.observed_clipping(),
+        spektrafilm_backend::ViewerClipping::Shadows
+    );
+    let _ = composed(h, 41.0);
+    let save_after = s.directory.path().join("clipping-save-held.exr");
+    let export_after = s.directory.path().join("clipping-export-held.exr");
+    save_retained(h, &save_after);
+    h.state_mut()
+        .start_export_to_path(&ctx, options, &export_after);
+    wait_until(h, |app| app.export_job.is_none());
+    assert!(save_after.is_file() && export_after.is_file());
+    assert_float_images_equal(&save_before, &save_after);
+    assert_float_images_equal(&export_before, &export_after);
+    assert_eq!(h.state().params, params);
+    assert_eq!(h.state().parameter_revision, revision);
+    assert!(Arc::ptr_eq(
+        h.state().output_image.as_ref().unwrap(),
+        &retained
+    ));
+}
+
+#[test]
+fn clipping_controls_are_independent_and_holds_restore_without_photo_edits() {
+    use spektrafilm_backend::ViewerClipping;
+    let mut session = session();
+    let h = &mut session.harness;
+    let output = preview(h);
+    settle_animation(h);
+    let samples = output.data.clone();
+    let params = h.state().params.clone();
+    let revision = h.state().parameter_revision;
+    let request = h.state().render_worker.next_request_id;
+    let history = h.state().can_undo();
+    assert!(!h.state().analysis.visible);
+    click(h, "Shadow clipping warning");
+    assert_eq!(
+        h.state().viewer.observed_clipping(),
+        ViewerClipping::Overlay {
+            shadows: true,
+            highlights: false
+        }
+    );
+    click(h, "Highlight clipping warning");
+    assert_eq!(
+        h.state().viewer.observed_clipping(),
+        ViewerClipping::Overlay {
+            shadows: true,
+            highlights: true
+        }
+    );
+    assert!(!h.state().analysis.visible);
+
+    h.get_by_label("Shadow clipping warning").focus();
+    h.step();
+    h.input_mut().events.push(egui::Event::Key {
+        key: egui::Key::Space,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: egui::Modifiers::NONE,
+    });
+    h.step();
+    assert_eq!(
+        h.state().viewer.observed_clipping(),
+        ViewerClipping::Shadows
+    );
+    assert!(h.state().viewer.clipping.shadows && h.state().viewer.clipping.highlights);
+    h.input_mut().events.push(egui::Event::Key {
+        key: egui::Key::Space,
+        physical_key: None,
+        pressed: false,
+        repeat: false,
+        modifiers: egui::Modifiers::NONE,
+    });
+    h.step();
+    assert_eq!(
+        h.state().viewer.observed_clipping(),
+        ViewerClipping::Overlay {
+            shadows: true,
+            highlights: true
+        }
+    );
+
+    let bounds = h
+        .get_by_label("Highlight clipping warning")
+        .raw_bounds()
+        .unwrap();
+    let position = egui::pos2(
+        ((bounds.x0 + bounds.x1) * 0.5) as f32,
+        ((bounds.y0 + bounds.y1) * 0.5) as f32,
+    );
+    h.input_mut().events.extend([
+        egui::Event::PointerMoved(position),
+        egui::Event::PointerButton {
+            pos: position,
+            button: egui::PointerButton::Secondary,
+            pressed: true,
+            modifiers: egui::Modifiers::NONE,
+        },
+    ]);
+    h.step();
+    assert_eq!(
+        h.state().viewer.observed_clipping(),
+        ViewerClipping::Highlights
+    );
+    h.input_mut().events.push(egui::Event::PointerButton {
+        pos: position,
+        button: egui::PointerButton::Secondary,
+        pressed: false,
+        modifiers: egui::Modifiers::NONE,
+    });
+    h.step();
+    assert_eq!(
+        h.state().viewer.observed_clipping(),
+        ViewerClipping::Overlay {
+            shadows: true,
+            highlights: true
+        }
+    );
+
+    h.get_by_label("Shadow clipping warning").focus();
+    h.step();
+    h.input_mut().events.push(egui::Event::Key {
+        key: egui::Key::Space,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: egui::Modifiers::NONE,
+    });
+    h.step();
+    assert_eq!(
+        h.state().viewer.observed_clipping(),
+        ViewerClipping::Shadows
+    );
+    h.get_by_label("Highlight clipping warning").focus();
+    h.step();
+    assert_eq!(
+        h.state().viewer.observed_clipping(),
+        ViewerClipping::Overlay {
+            shadows: true,
+            highlights: true
+        }
+    );
+    h.input_mut().events.push(egui::Event::Key {
+        key: egui::Key::Space,
+        physical_key: None,
+        pressed: false,
+        repeat: false,
+        modifiers: egui::Modifiers::NONE,
+    });
+    h.step();
+    h.get_by_label("Shadow clipping warning").focus();
+    h.step();
+    h.press_key(egui::Key::Enter);
+    h.step();
+    assert_eq!(
+        h.state().viewer.observed_clipping(),
+        ViewerClipping::Overlay {
+            shadows: false,
+            highlights: true
+        }
+    );
+    h.press_key(egui::Key::Enter);
+    h.step();
+    assert_eq!(
+        h.state().viewer.observed_clipping(),
+        ViewerClipping::Overlay {
+            shadows: true,
+            highlights: true
+        }
+    );
+
+    h.input_mut().events.push(egui::Event::Key {
+        key: egui::Key::Space,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: egui::Modifiers::NONE,
+    });
+    h.step();
+    assert_eq!(
+        h.state().viewer.observed_clipping(),
+        ViewerClipping::Shadows
+    );
+    h.input_mut().focused = false;
+    h.step();
+    assert_eq!(
+        h.state().viewer.observed_clipping(),
+        ViewerClipping::Overlay {
+            shadows: true,
+            highlights: true
+        }
+    );
+    h.input_mut().focused = true;
+    h.input_mut().events.push(egui::Event::Key {
+        key: egui::Key::Space,
+        physical_key: None,
+        pressed: false,
+        repeat: false,
+        modifiers: egui::Modifiers::NONE,
+    });
+    h.step();
+    h.get_by_label("Shadow clipping warning").focus();
+    h.step();
+    h.input_mut().events.push(egui::Event::Key {
+        key: egui::Key::Space,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: egui::Modifiers::NONE,
+    });
+    h.step();
+    assert_eq!(
+        h.state().viewer.observed_clipping(),
+        ViewerClipping::Shadows
+    );
+    h.state_mut().settings_open = true;
+    h.step();
+    assert_eq!(
+        h.state().viewer.observed_clipping(),
+        ViewerClipping::Overlay {
+            shadows: true,
+            highlights: true
+        }
+    );
+    h.input_mut().events.push(egui::Event::Key {
+        key: egui::Key::Space,
+        physical_key: None,
+        pressed: false,
+        repeat: false,
+        modifiers: egui::Modifiers::NONE,
+    });
+    h.step();
+    h.state_mut().settings_open = false;
+    h.run_steps(3);
+    click_viewer_layer(h, "Paper back");
+    assert_eq!(h.state().viewer.observed_clipping(), ViewerClipping::Off);
+    assert!(
+        h.get_by_label("Shadow clipping warning")
+            .node()
+            .is_disabled()
+    );
+    assert!(h.state().viewer.clipping.shadows && h.state().viewer.clipping.highlights);
+    click_viewer_layer(h, "Modified");
+    assert_eq!(
+        h.state().viewer.observed_clipping(),
+        ViewerClipping::Overlay {
+            shadows: true,
+            highlights: true
+        }
+    );
+    assert_eq!(h.state().params, params);
+    assert_eq!(h.state().parameter_revision, revision);
+    assert_eq!(h.state().render_worker.next_request_id, request);
+    assert_eq!(h.state().can_undo(), history);
+    assert!(Arc::ptr_eq(
+        h.state().output_image.as_ref().unwrap(),
+        &output
+    ));
+    assert_eq!(output.data, samples);
+}
+
+#[test]
+fn clipping_footer_stays_on_one_row_in_both_languages() {
+    let mut session = session();
+    let h = &mut session.harness;
+    preview(h);
+    settle_animation(h);
+    for language in [
+        crate::i18n::LanguagePreference::English,
+        crate::i18n::LanguagePreference::SimplifiedChinese,
+    ] {
+        let ctx = h.ctx.clone();
+        h.state_mut().select_language(&ctx, language).unwrap();
+        h.run_steps(2);
+        for size in [egui::vec2(1100.0, 760.0), egui::vec2(1460.0, 980.0)] {
+            h.set_size(size);
+            h.run_steps(2);
+            for reopened in [false, true] {
+                if h.state().presets.state.expanded != reopened {
+                    let toggle = crate::i18n::text(&h.ctx, "surfaces.presets.toggle").into_owned();
+                    h.get_by_label(&toggle).simulate_click();
+                }
+                h.run_steps(6);
+                let viewport = h.state().viewer.observation().viewport;
+                let bounds: Vec<_> = [
+                    "surfaces.viewer.clipping_shadows",
+                    "surfaces.viewer.clipping_highlights",
+                    "surfaces.analysis.title",
+                ]
+                .into_iter()
+                .map(|key| {
+                    let label = crate::i18n::text(&h.ctx, key);
+                    h.get_by_label(label.as_ref()).raw_bounds().unwrap()
+                })
+                .collect();
+                for pair in bounds.windows(2) {
+                    assert!(pair[0].x1 <= pair[1].x0);
+                    assert!(((pair[0].y0 + pair[0].y1) - (pair[1].y0 + pair[1].y1)).abs() < 6.0);
+                }
+                let mut footer = Vec::new();
+                for key in [
+                    "surfaces.viewer.input",
+                    "surfaces.viewer.output",
+                    "surfaces.viewer.paper_back",
+                    "surfaces.viewer.transitions",
+                    "surfaces.viewer.fit",
+                    "surfaces.viewer.reset",
+                    "surfaces.viewer.clipping_shadows",
+                    "surfaces.viewer.clipping_highlights",
+                    "surfaces.analysis.title",
+                ] {
+                    let label = crate::i18n::text(&h.ctx, key);
+                    footer.push(h.get_by_label(label.as_ref()).raw_bounds().unwrap());
+                }
+                let zoom = h.state().viewer.zoom_percent().map_or_else(
+                    || {
+                        crate::tr!(
+                            &h.ctx,
+                            "surfaces.viewer.zoom_fit",
+                            percent = format!("{:.0}", h.state().viewer.zoom * 100.0)
+                        )
+                        .into_owned()
+                    },
+                    |percent| format!("{percent:.0}%"),
+                );
+                let zoom_label = crate::tr!(&h.ctx, "surfaces.viewer.zoom", zoom = zoom.as_str());
+                footer.push(h.get_by_label(zoom_label.as_ref()).raw_bounds().unwrap());
+                for (index, bounds) in footer.iter().enumerate() {
+                    assert!(
+                        bounds.x0 >= f64::from(viewport.left())
+                            && bounds.x1 <= f64::from(viewport.right()),
+                        "footer clipped at {size:?}, reopened={reopened}: {bounds:?}"
+                    );
+                    for other in &footer[..index] {
+                        assert!(
+                            bounds.x1 <= other.x0 || other.x1 <= bounds.x0,
+                            "footer overlap at {size:?}, reopened={reopened}: {bounds:?} {other:?}"
+                        );
+                    }
+                }
+                assert!(!h.state().analysis.expanded);
+            }
+        }
+    }
+}
+
 fn frame(h: &mut Harness<'_, App>, time: f64) {
     h.input_mut().time = Some(time.max(h.ctx.input(|input| input.time)));
     h.step();

@@ -173,9 +173,26 @@ struct Transition {
     polaroid: bool,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ClippingHold {
+    Pointer(bool),
+    Keyboard(bool),
+}
+
+impl ClippingHold {
+    fn shadows(self) -> bool {
+        match self {
+            Self::Pointer(shadows) | Self::Keyboard(shadows) => shadows,
+        }
+    }
+}
+
 #[derive(Default)]
 pub struct Viewer {
     pub settings: DisplaySettings,
+    pub(crate) clipping: crate::clipping_preferences::ClippingPreferences,
+    pub(crate) clipping_suspended: bool,
+    clipping_hold: Option<ClippingHold>,
     pub zoom: f32,
     pub zoom_percent: Option<f32>,
     pub pan: Vec2,
@@ -613,31 +630,58 @@ impl Viewer {
                     ui.visuals_mut().selection.bg_fill = theme::SURFACE3;
                     ui.visuals_mut().selection.stroke = theme::stroke(theme::FG);
                     ui.horizontal(|ui| {
-                        let input = ui
-                            .selectable_value(
+                        let input_label = crate::i18n::text(ui.ctx(), "surfaces.viewer.input");
+                        let input = if compact {
+                            Self::compact_layer_control(
+                                ui,
+                                input_label.as_ref(),
+                                crate::controls::Icon::Image,
+                                self.settings.layer == ViewLayer::Input,
+                            )
+                        } else {
+                            ui.selectable_value(
                                 &mut self.settings.layer,
                                 ViewLayer::Input,
-                                crate::i18n::text(ui.ctx(), "surfaces.viewer.input"),
+                                input_label,
                             )
-                            .on_hover_text(crate::i18n::text(
-                                ui.ctx(),
-                                "surfaces.viewer.input_help",
-                            ));
+                        };
+                        if input.clicked() {
+                            self.settings.layer = ViewLayer::Input;
+                        }
+                        let input = input.on_hover_text(crate::i18n::text(
+                            ui.ctx(),
+                            "surfaces.viewer.input_help",
+                        ));
                         crate::controls::locate_row(ui, "viewer.layer.input", &input);
                         ui.add_enabled_ui(self.output.is_some(), |ui| {
-                            let output =
+                            let output_label =
+                                crate::i18n::text(ui.ctx(), "surfaces.viewer.output");
+                            let output = if compact {
+                                Self::compact_layer_control(
+                                    ui,
+                                    output_label.as_ref(),
+                                    crate::controls::Icon::Aperture,
+                                    self.settings.layer == ViewLayer::Output,
+                                )
+                            } else {
                                 ui.selectable_value(
                                     &mut self.settings.layer,
                                     ViewLayer::Output,
-                                    crate::i18n::text(ui.ctx(), "surfaces.viewer.output"),
+                                    output_label,
                                 )
+                            };
+                            if output.clicked() {
+                                self.settings.layer = ViewLayer::Output;
+                            }
+                            let output = output
                                 .on_hover_text(crate::i18n::text(
                                     ui.ctx(),
                                     "surfaces.viewer.output_help",
                                 ))
-                                .on_disabled_hover_text(
-                                    crate::i18n::text(ui.ctx(), "surfaces.viewer.output_disabled"),
-                                );
+                                .on_disabled_hover_text(crate::i18n::text(
+                                    ui.ctx(),
+                                    "surfaces.viewer.output_disabled",
+                                ));
                             crate::controls::locate_row(ui, "viewer.layer.output", &output);
                         });
                     });
@@ -674,6 +718,42 @@ impl Viewer {
         });
         before != self.settings.layer
     }
+    fn compact_layer_control(
+        ui: &mut egui::Ui,
+        label: &str,
+        icon: crate::controls::Icon,
+        selected: bool,
+    ) -> egui::Response {
+        let response = ui.add_sized(
+            [theme::HEIGHT_CONTROL, theme::HEIGHT_CONTROL],
+            egui::Button::new("").selected(selected),
+        );
+        response.widget_info(|| {
+            egui::WidgetInfo::selected(
+                egui::WidgetType::SelectableLabel,
+                ui.is_enabled(),
+                selected,
+                label,
+            )
+        });
+        ui.ctx().accesskit_node_builder(response.id, |node| {
+            node.set_label(label);
+            node.set_toggled(if selected {
+                egui::accesskit::Toggled::True
+            } else {
+                egui::accesskit::Toggled::False
+            });
+        });
+        crate::controls::paint_icon(
+            ui.painter(),
+            response.rect,
+            icon,
+            ui.style().interact(&response).text_color(),
+        );
+        crate::controls::focus_feedback(ui, &response);
+        response
+    }
+
     /// One nonwrapping footer row: layer segments and paper/transition actions
     /// on the left, with the retained-view controls aligned to the right.
     /// Transitions stay independent; all actions affect viewing only, never
@@ -683,6 +763,8 @@ impl Viewer {
         ui: &mut egui::Ui,
         analysis_visible: &mut bool,
         space_available: bool,
+        source_available: bool,
+        modal_open: bool,
     ) -> egui::Id {
         ui.allocate_ui_with_layout(
             ui.available_size(),
@@ -710,6 +792,9 @@ impl Viewer {
                     if action.clicked() {
                         *analysis_visible = !*analysis_visible;
                     }
+                    // Right-to-left layout places the shadow control left of highlight.
+                    self.clipping_button(ui, false, source_available, modal_open);
+                    self.clipping_button(ui, true, source_available, modal_open);
                     ui.separator();
                     let reset_label = crate::i18n::text(ui.ctx(), "surfaces.viewer.reset");
                     let reset = crate::controls::icon_button(
@@ -740,6 +825,142 @@ impl Viewer {
         )
         .inner
     }
+    fn clipping_button(
+        &mut self,
+        ui: &mut egui::Ui,
+        shadows: bool,
+        source_available: bool,
+        modal_open: bool,
+    ) {
+        let available =
+            source_available && self.settings.layer != ViewLayer::PaperBack && !modal_open;
+        let (name, help, path, icon, color, selected) = if shadows {
+            (
+                "surfaces.viewer.clipping_shadows",
+                "surfaces.viewer.clipping_shadows_help",
+                "viewer.clipping.shadows",
+                crate::controls::Icon::ClippingShadows,
+                spektrafilm_backend::viewer_clipping::SHADOW_RGBA,
+                self.clipping.shadows,
+            )
+        } else {
+            (
+                "surfaces.viewer.clipping_highlights",
+                "surfaces.viewer.clipping_highlights_help",
+                "viewer.clipping.highlights",
+                crate::controls::Icon::ClippingHighlights,
+                spektrafilm_backend::viewer_clipping::HIGHLIGHT_RGBA,
+                self.clipping.highlights,
+            )
+        };
+        let label = crate::i18n::text(ui.ctx(), name);
+        let help = crate::i18n::text(ui.ctx(), help);
+        let response = ui
+            .add_enabled(
+                available,
+                egui::Button::new("")
+                    .selected(selected)
+                    .min_size(egui::vec2(theme::HEIGHT_CONTROL, theme::HEIGHT_CONTROL)),
+            )
+            .on_hover_text(help.as_ref());
+        response.widget_info(|| {
+            egui::WidgetInfo::selected(
+                egui::WidgetType::Checkbox,
+                available,
+                selected,
+                label.as_ref(),
+            )
+        });
+        ui.ctx().accesskit_node_builder(response.id, |node| {
+            node.set_label(label.as_ref());
+            node.set_description(help.as_ref());
+            node.set_toggled(if selected {
+                egui::accesskit::Toggled::True
+            } else {
+                egui::accesskit::Toggled::False
+            });
+        });
+        let tint = if selected && available {
+            Color32::from_rgba_unmultiplied(color[0], color[1], color[2], color[3])
+        } else {
+            ui.style().interact(&response).text_color()
+        };
+        crate::controls::paint_icon(ui.painter(), response.rect, icon, tint);
+        crate::controls::focus_feedback(ui, &response);
+        crate::controls::locate_row(ui, path, &response);
+        let (focused, secondary_down, secondary_pressed, space_down, space_pressed, press_pos) = ui
+            .input(|input| {
+                (
+                    input.focused,
+                    input.pointer.button_down(egui::PointerButton::Secondary),
+                    input.pointer.button_pressed(egui::PointerButton::Secondary),
+                    input.key_down(egui::Key::Space),
+                    input.key_pressed(egui::Key::Space),
+                    input.pointer.interact_pos(),
+                )
+            });
+        let allowed =
+            available && focused && ui.ctx().memory(|memory| memory.top_modal_layer().is_none());
+        if self
+            .clipping_hold
+            .is_some_and(|hold| hold.shadows() == shadows)
+        {
+            let keep = allowed
+                && match self.clipping_hold.unwrap() {
+                    ClippingHold::Pointer(_) => secondary_down,
+                    ClippingHold::Keyboard(_) => response.has_focus() && space_down,
+                };
+            if !keep {
+                self.clipping_hold = None;
+            }
+        }
+        if allowed && self.clipping_hold.is_none() {
+            if secondary_pressed && press_pos.is_some_and(|pos| response.rect.contains(pos)) {
+                self.clipping_hold = Some(ClippingHold::Pointer(shadows));
+            } else if response.has_focus() && space_pressed {
+                self.clipping_hold = Some(ClippingHold::Keyboard(shadows));
+            }
+        }
+        // egui synthesizes a primary click for Space as well as Enter; Space is
+        // exclusively a temporary hold here, never a persistent toggle.
+        if allowed && response.clicked() && !space_pressed {
+            if shadows {
+                self.clipping.shadows = !self.clipping.shadows;
+            } else {
+                self.clipping.highlights = !self.clipping.highlights;
+            }
+        }
+    }
+
+    fn effective_clipping(&self, available: bool) -> spektrafilm_backend::ViewerClipping {
+        use spektrafilm_backend::ViewerClipping;
+        if !available || self.clipping_suspended || self.transition.is_some() {
+            return ViewerClipping::Off;
+        }
+        match self.clipping_hold {
+            Some(ClippingHold::Pointer(true) | ClippingHold::Keyboard(true)) => {
+                ViewerClipping::Shadows
+            }
+            Some(ClippingHold::Pointer(false) | ClippingHold::Keyboard(false)) => {
+                ViewerClipping::Highlights
+            }
+            None if self.clipping.shadows || self.clipping.highlights => ViewerClipping::Overlay {
+                shadows: self.clipping.shadows,
+                highlights: self.clipping.highlights,
+            },
+            None => ViewerClipping::Off,
+        }
+    }
+    #[cfg(test)]
+    pub(crate) fn observed_clipping(&self) -> spektrafilm_backend::ViewerClipping {
+        let available = match self.settings.layer {
+            ViewLayer::Input => self.input_size.is_some(),
+            ViewLayer::Output => self.output_size.is_some(),
+            ViewLayer::PaperBack => false,
+        };
+        self.effective_clipping(available)
+    }
+
     /// The accepted-result transitions: two independent booleans in one
     /// labelled popover, never one exclusive choice. A pending control-search
     /// locate for either toggle opens the popover, so the hidden rows stay
@@ -762,7 +983,7 @@ impl Viewer {
             ui.memory_mut(|memory| memory.open_popup(popup_id));
         }
         let label = crate::i18n::text(ui.ctx(), "surfaces.viewer.transitions");
-        let menu = if ui.available_width() < 360.0 {
+        let menu = if ui.available_width() < 480.0 {
             crate::controls::icon_button(ui, label.as_ref(), crate::controls::Icon::Transitions)
         } else {
             ui.button(label)
@@ -1199,8 +1420,24 @@ impl Viewer {
         }
         let max_texture_side = ui.input(|i| i.max_texture_side).max(1) as usize;
         let (sampling_rect, texture_size) = presentation_grid(rect, dpi, max_texture_side);
+        let native_available = match layer {
+            ViewLayer::Input => input_source.is_some() || self.retained_input.is_some(),
+            ViewLayer::Output => output_float.is_some() || self.retained_output.is_some(),
+            ViewLayer::PaperBack => false,
+        };
+        let clipping = self.effective_clipping(native_available);
+        let clipping_key = match clipping {
+            spektrafilm_backend::ViewerClipping::Off => 0,
+            spektrafilm_backend::ViewerClipping::Overlay {
+                shadows,
+                highlights,
+            } => 1 + shadows as u64 + 2 * highlights as u64,
+            spektrafilm_backend::ViewerClipping::Shadows => 5,
+            spektrafilm_backend::ViewerClipping::Highlights => 6,
+        };
         let key = vec![
             self.revision,
+            clipping_key,
             layer as u64,
             interpolation as u64,
             self.settings.gray_18_canvas as u64,
@@ -1266,6 +1503,7 @@ impl Viewer {
                     Color32::BLACK
                 },
                 layer,
+                clipping,
                 interpolation,
                 raster: selected.cloned(),
                 paper_size,
@@ -1676,6 +1914,36 @@ mod tests {
     use super::super::raster::capped_raster;
     use super::*;
     use spektrafilm_backend::cpu_backend::CpuBackend;
+
+    #[test]
+    fn clipping_suspends_for_transitions_and_missing_photos_without_erasing_requests() {
+        use spektrafilm_backend::ViewerClipping;
+        let mut viewer = Viewer::new();
+        viewer.clipping.shadows = true;
+        viewer.clipping.highlights = true;
+        let overlay = ViewerClipping::Overlay {
+            shadows: true,
+            highlights: true,
+        };
+        assert_eq!(viewer.effective_clipping(true), overlay);
+        assert_eq!(viewer.effective_clipping(false), ViewerClipping::Off);
+        viewer.clipping_hold = Some(ClippingHold::Keyboard(true));
+        assert_eq!(viewer.effective_clipping(true), ViewerClipping::Shadows);
+        viewer.clipping_suspended = true;
+        assert_eq!(viewer.effective_clipping(true), ViewerClipping::Off);
+        viewer.clipping_suspended = false;
+        viewer.transition = Some(Transition {
+            start: 0.0,
+            frame: 0,
+            previous: None,
+            polaroid: true,
+        });
+        assert_eq!(viewer.effective_clipping(true), ViewerClipping::Off);
+        viewer.transition = None;
+        viewer.clipping_hold = None;
+        assert_eq!(viewer.effective_clipping(true), overlay);
+        assert!(viewer.clipping.shadows && viewer.clipping.highlights);
+    }
 
     #[test]
     fn selection_requires_native_pixel_centers() {

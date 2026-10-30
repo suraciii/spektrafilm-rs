@@ -2582,7 +2582,10 @@ impl eframe::App for App {
             });
         self.persist_browser_state(false);
         self.persist_analysis_preferences(false);
-        if self.browser_state_changed_at.is_some() || self.analysis_preferences_changed_at.is_some()
+        self.persist_clipping_preferences(false);
+        if self.browser_state_changed_at.is_some()
+            || self.analysis_preferences_changed_at.is_some()
+            || self.clipping_preferences_changed_at.is_some()
         {
             ctx.request_repaint_after(Duration::from_millis(300));
         }
@@ -2611,6 +2614,20 @@ impl eframe::App for App {
                 let capacity = (available - theme::HEIGHT_PHOTOGRAPH_MIN)
                     .clamp(0.0, theme::HEIGHT_ANALYSIS_MAX);
                 let space_available = capacity >= theme::HEIGHT_ANALYSIS_MIN;
+                self.viewer.clipping_suspended =
+                    self.operator_compare || self.operator_comparison.is_some();
+                let clipping_source_available = match self.viewer.settings.layer {
+                    crate::display::ViewLayer::Input => self.oriented_input.is_some(),
+                    crate::display::ViewLayer::Output => {
+                        self.output_image.is_some() || self.output_retained.is_some()
+                    }
+                    crate::display::ViewLayer::PaperBack => false,
+                };
+                let clipping_modal_open = self.settings_open
+                    || self.export_dialog.is_open()
+                    || self.factory_reset_confirm
+                    || self.stale_save_confirmation
+                    || self.photograph_confirmation_open();
                 let footer_id = egui::TopBottomPanel::bottom("viewer-footer")
                     .exact_height(theme::HEIGHT_VIEWER_FOOTER)
                     .frame(
@@ -2619,8 +2636,13 @@ impl eframe::App for App {
                             .inner_margin(egui::Margin::symmetric(theme::SPACE_3 as i8, 9)),
                     )
                     .show_inside(ui, |ui| {
-                        self.viewer
-                            .footer_controls(ui, &mut self.analysis.visible, space_available)
+                        self.viewer.footer_controls(
+                            ui,
+                            &mut self.analysis.visible,
+                            space_available,
+                            clipping_source_available,
+                            clipping_modal_open,
+                        )
                     })
                     .inner;
 
@@ -2849,6 +2871,7 @@ impl eframe::App for App {
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
         self.persist_browser_state(true);
         self.persist_analysis_preferences(true);
+        self.persist_clipping_preferences(true);
         self.cancel_pending_saves();
         if let Some(mut job) = self.export_job.take() {
             job.cancel.store(true, Ordering::SeqCst);
