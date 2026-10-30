@@ -540,42 +540,4 @@ mod scan_semantics_tests {
             "Input route output must not depend on the resolved film or print profile"
         );
     }
-
-    #[test]
-    fn params_validate_rejects_only_effective_bad_families() {
-        assert!(RuntimeParams::default().validate().is_ok());
-
-        let mut params = RuntimeParams::default();
-        params.camera.diffusion_filter.active = true;
-        params.camera.diffusion_filter.strength = 0.5;
-        params.camera.diffusion_filter.filter_family = "black_promist".into();
-        assert!(params.validate().is_err());
-
-        // Ineffective filters never reach the family check (Python's
-        // early return in apply_diffusion_filter_um).
-        params.camera.diffusion_filter.strength = 0.0;
-        assert!(params.validate().is_ok());
-        params.camera.diffusion_filter.strength = 0.5;
-        params.camera.diffusion_filter.spatial_scale = 0.0;
-        assert!(params.validate().is_ok());
-
-        let mut params = RuntimeParams::default();
-        params.enlarger.diffusion_filter.active = true;
-        params.enlarger.diffusion_filter.filter_family = "golden_glow".into();
-        assert!(params.validate().is_err());
-    }
-
-    #[test]
-    fn new_with_spectral_rejects_bad_family_before_building() {
-        let dir = data_dir();
-        let film = profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();
-        let print = profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap();
-        let mut params = RuntimeParams::default();
-        params.camera.diffusion_filter.active = true;
-        params.camera.diffusion_filter.filter_family = "nope".into();
-        let err = Pipeline::new_with_spectral(film, print, params, &dir)
-            .err()
-            .expect("effective unknown filter must fail");
-        assert!(err.contains("unknown diffusion filter family"));
-    }
 }

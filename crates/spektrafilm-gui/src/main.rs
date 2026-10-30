@@ -236,6 +236,8 @@ mod telemetry_lifecycle_tests {
         assert!(!app.finishing_compare);
 
         app.params.workflow.route = "input > film > print > scan".into();
+        assert!(!app.scanned_medium_positive());
+        app.params.io.scan_film = false;
         assert!(app.scanned_medium_positive());
         app.set_finishing_compare(true);
         assert!(app.finishing_compare);

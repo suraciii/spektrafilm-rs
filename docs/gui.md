@@ -135,6 +135,8 @@ The collapsed **Expand** group optionally maps black and white input references 
 
 Each row's reset restores that control alone, subject to the same valid-reference constraint; module reset restores all four daily controls and disables Expand with its default references. Undo and Redo include these edits. **Hold finishing comparison** uses the primary mouse button or focused Space to temporarily bypass only Finishing, restoring it on release. It does not change stored controls, history, retained Save output, or independent Export, and does not bypass negative conversion, gamut processing, CMYK style, or output mix.
 
+Comparison preserves the retained Preview or Scan grid and detail effects. Releasing it restores the accepted finishing on that same grid. Comparing alone does not make the retained result stale.
+
 **Input and capture → Convert → scan illuminant** declares the acquisition light of an imported negative RGB image through `film_render.convert.scan_illuminant`. It defaults to `D55` and affects capture inversion and calibration only. Choose from the full shared illuminant catalog or enter a custom `BB<kelvin>` value accepted by the shared validator. It does not override the fixed product readout light. The control remains readable but inactive on routes without convert-film inversion.
 
 **Output → Output → Simulation blend** blends the complete result with the decoded, geometrically aligned source in linear output RGB. Amount `1` keeps the complete result. Amount `0` returns the prepared source before virtual camera exposure. A negative capture stays negative at zero. Preview, Scan, Export, and complete source-to-output LUTs share this operation. Segmented LUTs require amount `1`. See [the output mix specification](../specs/output-mix/spec.md#output-mix) and [the GUI workflow specification](../specs/gui-workflow/spec.md#material-controls-and-output-composition) for the control semantics.
@@ -373,7 +375,7 @@ In the same settings section, **Save current as default** persists the current c
 
 To replace stored material coefficients with the selected film's defaults, use the affected module's **reset**. Reloading a complete saved state preserves its stored coefficients; it does not refresh them from the film tables.
 
-Startup files use the platform configuration directory. `SPEKTRAFILM_CONFIG_DIR` overrides it. Rust settings use `rust.version = 2`. File-dialog directories persist separately.
+Startup files use the platform configuration directory. `SPEKTRAFILM_CONFIG_DIR` overrides it. Rust state uses `rust.version = 7`; older complete states migrate to neutral Finishing. File-dialog directories persist separately.
 
 Legacy states without an explicit export format preserve 8-bit as PNG and 16/32-bit as TIFF before defaults and validation. Recipe values and viewer state remain intact. Explicitly incompatible format/depth combinations remain errors.
 

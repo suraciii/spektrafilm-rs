@@ -630,13 +630,10 @@ pub fn inactive_reason_with_materials(
         }
         return None;
     }
-    let medium = if params.workflow.route_enum().prints()
-        || params.workflow.route_enum().artifact_input()
-            == Some(crate::stage_artifact::MaterialKind::Print)
-    {
-        print
-    } else {
-        film
+    let medium = match crate::finishing::scanned_material(params) {
+        Some(crate::stage_artifact::MaterialKind::Film) => film,
+        Some(crate::stage_artifact::MaterialKind::Print) => print,
+        None => None,
     };
     if let Some(reason) = conditions(path)
         .into_iter()

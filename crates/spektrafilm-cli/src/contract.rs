@@ -286,6 +286,7 @@ pub fn describe() -> Value {
         "scanner",
         "film_render",
         "print_render",
+        "finishing",
         "cmyk",
         "io",
         "settings",

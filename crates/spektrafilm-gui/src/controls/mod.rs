@@ -775,15 +775,12 @@ pub(crate) fn module_applicability(
     print: Option<&Profile>,
 ) -> Option<String> {
     if section == "Finishing" {
-        let route = params.workflow.route_enum();
-        let scanned = if route.prints()
-            || route.artifact_input() == Some(spektrafilm_core::stage_artifact::MaterialKind::Print)
-        {
-            print
-        } else {
-            film
+        let scanned = match spektrafilm_core::finishing::scanned_material(params) {
+            Some(spektrafilm_core::stage_artifact::MaterialKind::Film) => Some(film),
+            Some(spektrafilm_core::stage_artifact::MaterialKind::Print) => print,
+            None => None,
         };
-        return (!finishing_applicable(params, scanned.is_paper() || scanned.is_positive()))
+        return (!finishing_applicable(params, scanned.is_some_and(|profile| profile.is_paper() || profile.is_positive())))
             .then(|| "Finishing is inactive: the route does not deliver an eligible positive reading. Stored values are retained.".to_owned());
     }
     // A module banner states that the whole module has no effect. Reporting
@@ -850,33 +847,34 @@ mod tests {
             spektrafilm_core::profile::load_profile_by_name(&data, factory.paper()).unwrap();
         let mut params = factory.runtime_params().unwrap();
         params.finishing.brightness = 0.4;
-        for route in [
-            "input",
-            "input > film > scan",
-            "input > convert-film > scan-minus-base",
-            "input > film > print > scan",
-            "print > scan",
+        for (route, scan_film, output, expected) in [
+            ("input", false, "direct_scan", false),
+            ("input > film > scan", true, "direct_scan", false),
+            (
+                "input > convert-film > scan-minus-base",
+                false,
+                "direct_scan",
+                false,
+            ),
+            ("input > film > print > scan", false, "direct_scan", true),
+            ("input > film > print > scan", true, "direct_scan", false),
+            ("input > convert-film > scan", false, "direct_scan", false),
+            (
+                "input > convert-film > scan",
+                false,
+                "negative_to_positive",
+                true,
+            ),
+            ("print > scan", false, "direct_scan", true),
         ] {
             params.workflow.route = route.into();
-            let resolved = params.workflow.route_enum();
-            let scanned = if resolved.prints()
-                || resolved.artifact_input()
-                    == Some(spektrafilm_core::stage_artifact::MaterialKind::Print)
-            {
-                &print
-            } else {
-                &film
-            };
-            let expected = spektrafilm_core::finishing::is_applicable(
-                &params,
-                scanned.is_paper() || scanned.is_positive(),
-            );
+            params.io.scan_film = scan_film;
+            params.scanner.scan_output = output.into();
             assert_eq!(
-                module_applicability("Finishing", &params, &film, &print).is_none(),
+                module_applicability("Finishing", &params, &film, Some(&print)).is_none(),
                 expected,
-                "{route}"
+                "{route}, scan_film={scan_film}, {output}",
             );
-            assert_eq!(params.finishing.brightness, 0.4);
         }
     }
 

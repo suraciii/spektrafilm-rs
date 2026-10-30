@@ -32,20 +32,30 @@ const CHROMA_REFERENCE: f64 = 0.15;
 const WARM_A: f64 = 0.35;
 const WARM_B: f64 = 1.0;
 
+/// Material read by a completed scan. Convert and saved-material routes own
+/// their readout; ordinary image routes retain the admitted `io.scan_film` flag.
+pub fn scanned_material(params: &RuntimeParams) -> Option<crate::stage_artifact::MaterialKind> {
+    use crate::stage_artifact::MaterialKind::{Film, Print};
+    match params.workflow.route_enum() {
+        WorkflowRoute::ConvertFilmScan
+        | WorkflowRoute::ConvertFilmScanMinusBase
+        | WorkflowRoute::StoredFilmScan => Some(Film),
+        WorkflowRoute::ConvertFilmPrintScan
+        | WorkflowRoute::StoredFilmPrintScan
+        | WorkflowRoute::StoredPrintScan => Some(Print),
+        WorkflowRoute::FilmScan | WorkflowRoute::FilmPrintScan => {
+            Some(if params.io.scan_film { Film } else { Print })
+        }
+        _ => None,
+    }
+}
+
 /// Applicability depends on the completed route and the actual scanned medium.
 /// Paper reflection is a positive reading even for negative-type paper.
 pub fn is_applicable(params: &RuntimeParams, medium_is_positive: bool) -> bool {
     let route = params.workflow.route_enum();
-    let completed = matches!(
-        route,
-        WorkflowRoute::FilmScan
-            | WorkflowRoute::FilmPrintScan
-            | WorkflowRoute::StoredFilmScan
-            | WorkflowRoute::StoredFilmPrintScan
-            | WorkflowRoute::StoredPrintScan
-            | WorkflowRoute::ConvertFilmPrintScan
-            | WorkflowRoute::ConvertFilmScan
-    );
+    let completed =
+        scanned_material(params).is_some() && route != WorkflowRoute::ConvertFilmScanMinusBase;
     completed
         && (medium_is_positive
             || (matches!(

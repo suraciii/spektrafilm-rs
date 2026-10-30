@@ -471,6 +471,24 @@ impl StageHeader {
     }
 }
 
+fn normalize_legacy_finishing(record: &mut serde_json::Value, parameters: &str) -> Result<()> {
+    if record
+        .pointer("/provenance/runtime_model_version")
+        .and_then(serde_json::Value::as_str)
+        == Some("lab_scan_operator_v6")
+        && let Some(controls) = record
+            .get_mut(parameters)
+            .and_then(serde_json::Value::as_object_mut)
+        && !controls.contains_key("finishing")
+    {
+        controls.insert(
+            "finishing".into(),
+            serde_json::to_value(crate::params::FinishingParams::default())?,
+        );
+    }
+    Ok(())
+}
+
 #[derive(Debug, Clone)]
 pub struct MaterialState {
     pub header: StageHeader,
@@ -502,20 +520,7 @@ fn read_header_from_root(root: &publication::ArtifactRoot) -> Result<StageHeader
     );
     let mut value =
         crate::params::sources::parse_carrier(&text, false).map_err(anyhow::Error::msg)?;
-    if value
-        .pointer("/provenance/runtime_model_version")
-        .and_then(serde_json::Value::as_str)
-        == Some("lab_scan_operator_v6")
-        && let Some(baseline) = value
-            .get_mut("baseline")
-            .and_then(serde_json::Value::as_object_mut)
-        && !baseline.contains_key("finishing")
-    {
-        baseline.insert(
-            "finishing".into(),
-            serde_json::to_value(crate::params::FinishingParams::default())?,
-        );
-    }
+    normalize_legacy_finishing(&mut value, "baseline")?;
     if let Some(grain) = value.pointer_mut("/baseline/film_render/grain") {
         crate::params::normalize_grain_control_names(grain).map_err(anyhow::Error::msg)?;
     }
@@ -524,6 +529,7 @@ fn read_header_from_root(root: &publication::ArtifactRoot) -> Result<StageHeader
         .and_then(serde_json::Value::as_array_mut)
     {
         for prior in lineage {
+            normalize_legacy_finishing(prior, "effective_parameters")?;
             if let Some(grain) = prior.pointer_mut("/effective_parameters/film_render/grain") {
                 crate::params::normalize_grain_control_names(grain).map_err(anyhow::Error::msg)?;
             }

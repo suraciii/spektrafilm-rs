@@ -28,9 +28,10 @@ fn numeric_row(
         return false;
     }
     let changed = param_numeric(ui, label, value, path, help);
-    let valid_reset = row_modified::accepts_value(ui.ctx(), path, Value::from(default));
+    let valid_reset =
+        *value != default && row_modified::accepts_value(ui.ctx(), path, Value::from(default));
     let response = ui.add_enabled(
-        *value != default && valid_reset,
+        valid_reset,
         egui::Button::new(localized(ui.ctx(), reset_label)),
     ).on_hover_text(localized(ui.ctx(), "Reset only this finishing control to its default. An invalid Expand span cannot be accepted."));
     focus_response(ui, reset_label, &response);

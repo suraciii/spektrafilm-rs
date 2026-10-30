@@ -1404,14 +1404,27 @@ fn finishing_provenance_uses_converted_film_and_real_print_polarity() {
     let mut params = RuntimeParams::default();
     params.camera.auto_exposure = false;
     params.finishing.brightness = 0.5;
-    for (route, output, expected) in [
-        ("input > convert-film > scan", "direct_scan", false),
-        ("input > convert-film > scan", "negative_to_positive", true),
-        ("input > convert-film > print > scan", "direct_scan", true),
-        ("print > scan", "direct_scan", true),
+    for (route, output, scan_film, expected) in [
+        ("input > convert-film > scan", "direct_scan", false, false),
+        (
+            "input > convert-film > scan",
+            "negative_to_positive",
+            false,
+            true,
+        ),
+        (
+            "input > convert-film > print > scan",
+            "direct_scan",
+            true,
+            true,
+        ),
+        ("input > film > print > scan", "direct_scan", true, false),
+        ("input > film > print > scan", "direct_scan", false, true),
+        ("print > scan", "direct_scan", false, true),
     ] {
         params.workflow.route = route.into();
         params.scanner.scan_output = output.into();
+        params.io.scan_film = scan_film;
         params.validate().unwrap();
         let declared = RenderConfiguration::from_runtime(&params, &film, &paper)
             .finishing

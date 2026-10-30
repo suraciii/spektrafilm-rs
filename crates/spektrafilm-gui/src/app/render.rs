@@ -12,14 +12,10 @@ pub(crate) struct DisplayedComparison {
 impl App {
     /// Select the actual scanned stock without duplicating core's eligibility rules.
     pub(crate) fn scanned_medium_positive(&mut self) -> bool {
-        let route = self.params.workflow.route_enum();
-        let print = route.prints()
-            || route.artifact_input()
-                == Some(spektrafilm_core::stage_artifact::MaterialKind::Print);
-        let stock = if print {
-            &self.print_name
-        } else {
-            &self.film_name
+        let stock = match spektrafilm_core::finishing::scanned_material(&self.params) {
+            Some(spektrafilm_core::stage_artifact::MaterialKind::Film) => &self.film_name,
+            Some(spektrafilm_core::stage_artifact::MaterialKind::Print) => &self.print_name,
+            None => return false,
         };
         if let Some((directory, cached_stock, positive)) = &self.scan_medium_polarity
             && directory == &self.data_dir
@@ -60,7 +56,10 @@ impl App {
                 self.gui_state.display_profile().map(Path::new),
             );
             self.viewer.invalidate_display();
-            self.mark_parameters_changed();
+            // Comparison changes request identity, not photographic adjustments.
+            self.render_worker.cancel_active();
+            self.render_job = None;
+            self.dirty = true;
             // A comparison changes only the selected module, not the working
             // grid or detail effects of an already accepted full Scan.
             self.full_scan_requested = self.retained_kind == Some(RenderKind::Scan);

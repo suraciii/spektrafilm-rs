@@ -92,7 +92,8 @@ The artifact MUST contain the dependency closure needed to interpret the saved s
 - Unknown fields, duplicate keys, unknown schema or representation versions, non-finite required state, missing dependencies, inconsistent shapes, truncated data, and digest mismatches MUST fail. Checked arithmetic MUST validate dimensions and lengths before allocation.
 - Member paths MUST be relative to the artifact root. Absolute paths, parent traversal, and symlink escapes MUST fail.
 - A reader MUST NOT resolve a frozen dependency against an external same-named profile after a missing member or hash failure. A changed numerical model MUST either explicitly support the stored representation or reject it; it MUST NOT silently reinterpret the state.
-- `common_finishing_v1` MUST admit the unchanged material representation from `lab_scan_operator_v6`. Its reader MUST insert neutral finishing only when that legacy baseline omits the group. It MUST preserve stored material values and original provenance. Unsupported runtime-model identities MUST fail.
+- `common_finishing_v1` MUST admit the unchanged `lab_scan_operator_v6` material representation. Missing finishing groups in each legacy baseline or lineage record MUST become neutral without changing material values or original provenance.
+- Unsupported runtime-model identities MUST fail.
 
 This is a generated persistence format, not a new user-authored configuration language. The implementation MUST supply its typed schema and representation validators with the reader and writer. No runtime MAY accept a placeholder or opaque unvalidated context object as a substitute for required model state.
 

@@ -207,6 +207,7 @@ fn finishing_comparison_keeps_operator_and_retained_save() {
     assert_ne!(without_finishing.data, finished.data);
     let accepted = h.state().params.clone();
     let source = h.state().source_render.clone();
+    assert!(!h.state().accepted_frame_is_stale());
     let before = session.directory.path().join("finishing-before.exr");
     save_retained(h, &before);
 
@@ -215,6 +216,7 @@ fn finishing_comparison_keeps_operator_and_retained_save() {
     wait_until(h, |app| {
         app.displayed_comparison.is_some() && app.render_job.is_none() && !app.dirty
     });
+    assert!(!h.state().accepted_frame_is_stale());
     let compared = h
         .state()
         .displayed_comparison
@@ -246,6 +248,7 @@ fn finishing_comparison_keeps_operator_and_retained_save() {
     assert!(h.state().finishing_compare);
     assert!(!h.state().operator_compare);
     h.state_mut().set_finishing_compare(false);
+    assert!(!h.state().accepted_frame_is_stale());
     assert_eq!(h.state().params, accepted);
 }
 

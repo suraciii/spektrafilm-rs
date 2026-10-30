@@ -613,13 +613,13 @@ impl RenderConfiguration {
             output_mix_amount: params.output_mix.amount,
             model_version: crate::runtime::MODEL_VERSION.into(),
             finishing: Some(FinishingConfiguration::from_params(params, {
-                let route = params.workflow.route_enum();
-                let scanned = if route.prints() || route == WorkflowRoute::StoredPrintScan {
-                    print
-                } else {
-                    film
-                };
-                scanned.is_paper() || scanned.is_positive()
+                crate::finishing::scanned_material(params).is_some_and(|material| {
+                    let scanned = match material {
+                        crate::stage_artifact::MaterialKind::Film => film,
+                        crate::stage_artifact::MaterialKind::Print => print,
+                    };
+                    scanned.is_paper() || scanned.is_positive()
+                })
             })),
             gamut_algorithm: GamutAlgorithm::parse(&params.io.output_gamut_compress.algorithm),
             grain: GrainConfiguration {
