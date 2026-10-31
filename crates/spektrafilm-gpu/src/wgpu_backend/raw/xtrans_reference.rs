@@ -450,12 +450,15 @@ pub(crate) fn interpolate_pass(
     }
     let mut aux = vec![0.0f32; width * height * RGB_STRIDE];
     let (mut i, mut h) = (1i32, 0u8);
+    // The native loop advances the destination buffer only on the calls that also
+    // write rgb, so the six calls land on buffers 0, 1, 2, 2, 3, 3.
+    let mut b = 0usize;
     for d in 0..6 {
         solitary_green(
             cfa,
             rows,
             cols,
-            &mut dirs[0],
+            &mut dirs[b],
             &mut aux,
             width,
             height,
@@ -465,6 +468,9 @@ pub(crate) fn interpolate_pass(
             h,
             tables,
         );
+        if d < 2 || d & 1 != 0 {
+            b += 1;
+        }
         i ^= 1;
         h ^= 2;
     }
