@@ -214,6 +214,50 @@ pub(crate) fn interpolate_twoxtwo(
     }
 }
 
+/// `markesteijn_accu`: adds one direction's colour into the accumulator when its
+/// homogeneity score reaches the maximum, and counts the contribution in `w`.
+pub(crate) fn accu(
+    img: &mut [f32],
+    rgb: &[f32],
+    homosum: &[u8],
+    maxval: &[u8],
+    width: usize,
+    height: usize,
+    border: usize,
+) {
+    for y in border..height.saturating_sub(border) {
+        for x in border..width.saturating_sub(border) {
+            let i = y * width + x;
+            if homosum[i] < maxval[i] {
+                continue;
+            }
+            for c in 0..3 {
+                img[i * RGB_STRIDE + c] += rgb[i * RGB_STRIDE + c];
+            }
+            img[i * RGB_STRIDE + 3] += 1.0;
+        }
+    }
+}
+
+/// `markesteijn_final`: divides by the contribution count, drops the count and
+/// clamps negatives to zero.
+pub(crate) fn finalise(img: &mut [f32], width: usize, height: usize, border: usize) {
+    for y in border..height.saturating_sub(border) {
+        for x in border..width.saturating_sub(border) {
+            let i = (y * width + x) * RGB_STRIDE;
+            let w = img[i + 3];
+            for c in 0..3 {
+                img[i + c] = if w > 0.0 {
+                    (img[i + c] / w).max(0.0)
+                } else {
+                    0.0
+                };
+            }
+            img[i + 3] = 0.0;
+        }
+    }
+}
+
 /// `markesteijn_homo_max`: a running maximum over the directions, seeded by zero.
 pub(crate) fn homo_max(
     homosum: &[u8],
@@ -1384,6 +1428,39 @@ mod tests {
             (c[2 * width + 2], e[2 * width + 2]),
             (4, 4),
             "a tie keeps both"
+        );
+    }
+
+    #[test]
+    fn accu_and_final_average_the_accepted_directions() {
+        let (width, height) = (6usize, 6usize);
+        let n = width * height;
+        let mut img = vec![0.0f32; n * RGB_STRIDE];
+        let mut rgb = vec![0.0f32; n * RGB_STRIDE];
+        for i in 0..n {
+            rgb[i * RGB_STRIDE] = 1.0;
+            rgb[i * RGB_STRIDE + 1] = 2.0;
+            rgb[i * RGB_STRIDE + 2] = 3.0;
+        }
+        let accept = vec![9u8; n];
+        let maxval = vec![9u8; n];
+        for _ in 0..3 {
+            accu(&mut img, &rgb, &accept, &maxval, width, height, 1);
+        }
+        let i = (2 * width + 2) * RGB_STRIDE;
+        assert_eq!(
+            (img[i], img[i + 1], img[i + 2], img[i + 3]),
+            (3.0, 6.0, 9.0, 3.0)
+        );
+
+        let reject = vec![8u8; n];
+        accu(&mut img, &rgb, &reject, &maxval, width, height, 1);
+        assert_eq!(img[i + 3], 3.0, "a rejected direction adds nothing");
+
+        finalise(&mut img, width, height, 1);
+        assert_eq!(
+            (img[i], img[i + 1], img[i + 2], img[i + 3]),
+            (1.0, 2.0, 3.0, 0.0)
         );
     }
 }
