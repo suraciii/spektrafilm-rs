@@ -1,15 +1,11 @@
 //! Scalar reference for darktable's Markesteijn kernel order.
 //!
-//! This is the oracle for the eventual parallel GPU implementation: the same
-//! decomposition, written once in plain Rust where the index arithmetic can be
-//! read and checked. It is compiled only for tests, because nothing in the
-//! production path may depend on it.
+//! This test-only reference exposes the interpolation and voting stages for
+//! comparison with the production GPU implementation. It leaves global image
+//! borders to a separate interpolation step.
 //!
-//! Stage 1 covers the two kernels that build the working buffers:
-//! `markesteijn_initial_copy`, and the `allhex`/`sgreen` tables that
-//! `markesteijn_green_minmax` consumes. Source:
-//! `data/kernels/demosaic_markesteijn.cl` and `process_markesteijn_cl()` in
-//! `src/iop/demosaicing/xtrans.c`.
+//! Source: darktable `data/kernels/demosaic_markesteijn.cl` and
+//! `process_markesteijn_cl()` in `src/iop/demosaicing/xtrans.c`.
 
 /// Cardinal and diagonal step pairs, copied verbatim from darktable.
 pub(crate) const ORTH: [i32; 12] = [1, 0, 0, 1, -1, 0, 0, -1, 1, 0, 0, 1];

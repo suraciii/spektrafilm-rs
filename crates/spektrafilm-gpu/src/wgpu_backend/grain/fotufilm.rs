@@ -1296,6 +1296,34 @@ mod tests {
         }
     }
 
+    mod logic_tests {
+        use super::*;
+
+        #[test]
+        fn field_workspace_counts_output_growth_once_without_allocating_it() {
+            let empty = FotufilmRecordGpuParams {
+                sublayers: Vec::new(),
+                d_min: 0.0,
+                d_max: 1.0,
+            };
+            let mut p = device_params(&[], (8, 4), (8, 4));
+            p.records = vec![empty; 3];
+            let minimum = (u64::from(LEVELS * SUMS_LEVEL) * 4).max(u64::from(SAMPLE * SAMPLE) * 4);
+            assert!(field_workspace_bytes(&p, minimum - 1).is_err());
+            validate_field_geometry(8, 4, &p).unwrap();
+            let small = field_workspace_bytes(&p, minimum).unwrap();
+            p.width = 1024;
+            p.height = 1024;
+            let large = field_workspace_bytes(&p, minimum).unwrap();
+            assert_eq!(large - small, (1024 * 1024 - 8 * 4) * 12);
+            p.width = u32::MAX;
+            p.height = u32::MAX;
+            assert!(field_workspace_bytes(&p, minimum).is_err());
+            p.source_width = 9;
+            assert!(validate_field_geometry(8, 4, &p).is_err());
+        }
+    }
+
     #[test]
     fn prepared_cloud_kernel_matches_reference_blur() {
         let backend = crate::test_support::adapter();
