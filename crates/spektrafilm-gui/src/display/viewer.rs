@@ -887,18 +887,41 @@ impl Viewer {
         };
         crate::controls::paint_icon(ui.painter(), response.rect, icon, tint);
         crate::controls::focus_feedback(ui, &response);
+        // A locator may transfer focus here in response to Space or Enter.
+        // That activation belongs to the locator, not to this switch.
+        let focused_before_locate = response.has_focus();
         crate::controls::locate_row(ui, path, &response);
-        let (focused, secondary_down, secondary_pressed, space_down, space_pressed, press_pos) = ui
-            .input(|input| {
-                (
-                    input.focused,
-                    input.pointer.button_down(egui::PointerButton::Secondary),
-                    input.pointer.button_pressed(egui::PointerButton::Secondary),
-                    input.key_down(egui::Key::Space),
-                    input.key_pressed(egui::Key::Space),
-                    input.pointer.interact_pos(),
-                )
-            });
+        let (
+            focused,
+            secondary_down,
+            secondary_pressed,
+            pointer_present,
+            space_down,
+            space_pressed,
+        ) = ui.input(|input| {
+            (
+                input.focused,
+                input.pointer.button_down(egui::PointerButton::Secondary),
+                input.pointer.button_pressed(egui::PointerButton::Secondary),
+                input.pointer.latest_pos().is_some()
+                    && !input
+                        .events
+                        .iter()
+                        .any(|event| matches!(event, egui::Event::PointerGone)),
+                input.key_down(egui::Key::Space),
+                input.events.iter().any(|event| {
+                    matches!(
+                        event,
+                        egui::Event::Key {
+                            key: egui::Key::Space,
+                            pressed: true,
+                            repeat: false,
+                            ..
+                        }
+                    )
+                }),
+            )
+        });
         let allowed =
             available && focused && ui.ctx().memory(|memory| memory.top_modal_layer().is_none());
         if self
@@ -907,7 +930,9 @@ impl Viewer {
         {
             let keep = allowed
                 && match self.clipping_hold.unwrap() {
-                    ClippingHold::Pointer(_) => secondary_down,
+                    ClippingHold::Pointer(_) => {
+                        response.has_focus() && secondary_down && pointer_present
+                    }
                     ClippingHold::Keyboard(_) => response.has_focus() && space_down,
                 };
             if !keep {
@@ -915,15 +940,39 @@ impl Viewer {
             }
         }
         if allowed && self.clipping_hold.is_none() {
-            if secondary_pressed && press_pos.is_some_and(|pos| response.rect.contains(pos)) {
+            if secondary_pressed
+                && response.is_pointer_button_down_on()
+                && response.contains_pointer()
+                && pointer_present
+            {
+                response.request_focus();
                 self.clipping_hold = Some(ClippingHold::Pointer(shadows));
-            } else if response.has_focus() && space_pressed {
+            } else if focused_before_locate && response.has_focus() && space_pressed {
                 self.clipping_hold = Some(ClippingHold::Keyboard(shadows));
             }
         }
-        // egui synthesizes a primary click for Space as well as Enter; Space is
-        // exclusively a temporary hold here, never a persistent toggle.
-        if allowed && response.clicked() && !space_pressed {
+        // egui synthesizes clicks for both keys, including repeats. Space is
+        // only a hold; an Enter repeat may belong to the locator that just
+        // transferred focus here and must not toggle the switch.
+        let keyboard_click_blocked = ui.input(|input| {
+            input.key_down(egui::Key::Space)
+                || input.key_pressed(egui::Key::Space)
+                || input.events.iter().any(|event| {
+                    matches!(
+                        event,
+                        egui::Event::Key {
+                            key: egui::Key::Enter,
+                            pressed: true,
+                            repeat: true,
+                            ..
+                        }
+                    )
+                })
+        });
+        if allowed
+            && (response.clicked_by(egui::PointerButton::Primary)
+                || (response.clicked() && !keyboard_click_blocked))
+        {
             if shadows {
                 self.clipping.shadows = !self.clipping.shadows;
             } else {

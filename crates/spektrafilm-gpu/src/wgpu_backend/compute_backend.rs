@@ -1339,6 +1339,14 @@ impl ComputeBackend for WgpuBackend {
         self.upload_retained(image, meta)
     }
 
+    fn retain_viewer_clipping_source(
+        &self,
+        image: &ImageBuf,
+        meta: &spektrafilm_backend::RetainedImageMeta,
+    ) -> Result<spektrafilm_backend::DeviceImage, String> {
+        self.retain_clipping_source_gpu(image, meta)
+    }
+
     fn image_payload<'a>(
         &'a self,
         image: &'a spektrafilm_backend::DeviceImage,
