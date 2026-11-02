@@ -18,6 +18,28 @@ Prepared device banks may be reused within one test when formation parameters an
 
 **Long local gates:** Use `just ci-pr` as the first local gate. If `just ci` reaches the local shell timeout while a workspace test is still running, run `just test` and `just test-f64` as separate commands and report each result. A partial `just ci` run is not a full-gate pass.
 
+**A test that takes minutes has no value.** A test that costs minutes is not run, and an assertion
+nobody runs protects nothing. This narrows the rule above: speed may never weaken an assertion that
+runs, but an assertion that cannot be run affordably is deleted rather than quarantined. Measure the
+test before adding or keeping it, and delete it if the cost is intrinsic to what it does.
+
+Three device tests were deleted under this rule on 2026-10-30, each for the same reason: the work
+that dominated them was device formation, not the property under test.
+
+| deleted test | measured cost | what it actually asserted |
+|---|---|---|
+| `gpu::…::grain::fotufilm::tests::fractional_geometry_and_paged_readout_match_the_cpu_bank` | 279 s | fractional geometry and paged/contiguous sample equality on a 4x4 source |
+| `gpu::…::grain::fotufilm::tests::device_multi_sublayer_readout_matches_the_host_reference` | 283 s on amdgpu, 190 s CPU on the software adapter | device/host readout parity at three raster extents |
+| `gui::…::headless::viewer::gpu_gui_scan_view_transition_and_save_keep_the_accepted_device_samples` | 166 s wall on 40 s CPU | GPU/CPU rotation parity, retained-carrier declarations, scan transition, save |
+
+Coverage that survives them: paged/contiguous equality in the `paged` and `page_views` unit tests,
+fractional geometry in the host-side `Bank::apply` tests in `spektrafilm-model`, and preview/scan/save
+in `headless::scanner_ui_real_preview_scan_persistence_save_and_export`. Do not re-add a device test
+that prepares a Fotufilm bank to the default suite: one bank is 51 level formations, and that is
+minutes on every adapter.
+
+**Local adapter:** When the workstation's amdgpu loses its context (`radv/amdgpu: The CS has been cancelled because the context is lost`), the GPU library aborts and every device test becomes a multi-second fence wait. Force the software adapter for a deterministic local run: `VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.json cargo test --locked -p spektrafilm-gpu`. CI already runs on llvmpipe, so this matches CI's adapter.
+
 **GPU host logic — `test-gpu-logic`:** Run the audited `logic_tests::` modules in `spektrafilm-gpu` in both precisions. These tests cover small host-side calculations, validation, and execution planning without creating a WGPU instance or device. `test-fast` includes this lane; `ci-pr` remains unchanged.
 
 The recipe sets `SPEKTRAFILM_TEST_NO_DEVICE=1`. In GPU unit tests, this flag makes backend construction and device-lock acquisition fail before adapter enumeration or device work. A test that needs a device must stay outside `logic_tests::`; the flag must not turn device work into a skip or success.
@@ -41,3 +63,26 @@ For successful CLI image publication, assert decoded output, replacement behavio
 Built-in look changes must ship with regenerated reference thumbnails. Use the existing real-CPU asset producer, `cargo test --locked -p spektrafilm-gui --bin spektrafilm-gui presets::thumbnails::tests::generate_fixed_reference_thumbnails -- --ignored --exact`, then verify the distributed bundle. Do not update fingerprints without rendering their images.
 
 The [Justfile](../Justfile) defines test selection. The [README](../README.md#build) documents dependencies and verification commands.
+
+## CPU and GPU are allowed to disagree
+
+The GPU path is a separate implementation. Same-algorithm arithmetic may differ
+in the last bits. An intentionally different algorithm variant needs its own
+documented image-quality budget.
+
+- Same-algorithm parity tests compare with a tolerance (relative <= 1e-5, or <= 1 LSB at 16 bits).
+  A bit-exact assertion between backends is a bug in the test.
+- Structural invariants stay exact: which pixels and planes a kernel writes, clamp
+  ranges, untouched borders. A skipped write is not a precision difference.
+- Each run is deterministic on its own device: no atomics in accumulation, no
+  reliance on unordered writes, snapshot before an in-place pass.
+- A numerical oracle (for example `xtrans_reference`) is a debugging aid, not a
+  contract. When a deviation appears it says which step moved.
+- Acceptance is end to end: one real file through both paths, compared as an image
+  (PSNR and maximum deviation). Different algorithm variants need independent
+  reference evidence and an explicit regression budget.
+- Measure GPU and CPU performance rather than assuming a speedup. Report the
+  adapter, workload, and timing scope. Backend selection follows the product
+  contract; a timing result does not authorize an undeclared CPU fallback.
+- Because the backends may disagree, document that toggling the GPU can change the
+  output. Otherwise it comes back as a bug report.

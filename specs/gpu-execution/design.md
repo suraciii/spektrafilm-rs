@@ -42,6 +42,23 @@ CPU-selected construction MUST retain the CPU reference preparation.
 
 Native RAW unpacking MUST expose the sensor samples and metadata needed by the selected decoding algorithm. GPU numerical processing MUST retain that algorithm's supported sensor modes, demosaicing, corrections, orientation, white balance, and color assignment. Moving only the final ACES transform to GPU MUST NOT count as GPU RAW processing.
 
+### X-Trans demosaicing
+
+GPU X-Trans MUST use parallel three-pass Markesteijn interpolation with separate
+direction planes and a shared homogeneity threshold. The CPU reference keeps
+LibRaw's integer implementation; the GPU follows darktable's float/YUV variant.
+These variants do not have a universal pixel-identity contract.
+
+Every spatial refinement MUST read a completed source plane. Bounded windows
+MUST preserve global CFA phase, include the full dependency halo, and commit
+disjoint cores from the unchanged source sensor plane. Global image edges use
+normalized linear CFA interpolation, with bounded measured-color support when
+a clipped corner lacks a color.
+
+Image arithmetic MUST stay on the selected device. The host MAY construct
+window extents and read bounded validity status. Explicit GPU selection MUST
+propagate resource, cancellation, and device errors without a CPU decode retry.
+
 ## Device residency
 
 Device image ownership MUST represent dimensions, sample domain, color and transfer state, working pixel pitch, and lifetime. Stages MUST consume that representation without obtaining host pixels implicitly. CPU reference execution MAY use host images under the same domain contracts.

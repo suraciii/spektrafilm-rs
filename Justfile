@@ -81,6 +81,14 @@ test-gpu-logic: (test-gpu-logic-precision "") (test-gpu-logic-precision "--featu
 test-gpu-logic-precision precision_args:
     SPEKTRAFILM_TEST_NO_DEVICE=1 cargo test --locked -p spektrafilm-gpu --lib {{precision_args}} -- logic_tests::
 
+# Run the full suite on the software Vulkan adapter. This matches CI's adapter
+# and avoids the workstation amdgpu context loss (`radv/amdgpu: The CS has been
+# cancelled because the context is lost`), which turns every device call into a
+# multi-second fence wait and eventually aborts the run.
+[unix]
+test-software:
+    VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.json cargo test --locked --workspace
+
 # Run measured deterministic logic and isolated file tests in both precisions.
 test-fast: test-gpu-logic (test-fast-precision "") (test-fast-precision "--features precision-f64")
 
@@ -113,7 +121,15 @@ gui-raw:
     set -euo pipefail
     fixture="${SPEKTRAFILM_GUI_RAW_FIXTURE:?Set SPEKTRAFILM_GUI_RAW_FIXTURE to the pinned Kodak DC50 KDC file}"
     SPEKTRAFILM_GUI_RAW_FIXTURE="$fixture" \
-        cargo test --locked -p spektrafilm-gui --features precision-f64,gui-raw headless::raw::
+        cargo test --locked -p spektrafilm-gui --features precision-f64,gui-raw headless::raw:: -- --skip xtrans_import_demosaics_and_renders_on_selected_gpu
+
+# Import the pinned X-Trans fixture through the App with an explicit GPU.
+gui-xtrans:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    fixture="${SPEKTRAFILM_GUI_XTRANS_FIXTURE:?Set SPEKTRAFILM_GUI_XTRANS_FIXTURE to the pinned _DSF9237.RAF file}"
+    SPEKTRAFILM_GUI_XTRANS_FIXTURE="$fixture" \
+        cargo test --locked -p spektrafilm-gui --features gui-raw xtrans_import_demosaics_and_renders_on_selected_gpu -- --nocapture
 
 # Render focused GUI layouts and the full window offscreen; requires a usable WGPU adapter.
 gui-layout:
