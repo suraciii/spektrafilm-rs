@@ -541,3 +541,67 @@ fn raw_import_failure_keeps_the_previous_image_and_state() {
     assert_eq!(h.state().parameter_revision, revision_before);
     assert_eq!((h.state().can_undo(), h.state().can_redo()), history_before);
 }
+
+/// X-Trans demosaicing and the accepted source/preview stay on the selected
+/// device. Keep its distinct fixture separate from Kodak.
+#[cfg(feature = "gui-raw")]
+#[test]
+fn xtrans_import_demosaics_and_renders_on_selected_gpu() {
+    use sha2::{Digest, Sha256};
+    let fixture = PathBuf::from(
+        std::env::var_os("SPEKTRAFILM_GUI_XTRANS_FIXTURE")
+            .expect("set SPEKTRAFILM_GUI_XTRANS_FIXTURE to _DSF9237.RAF"),
+    );
+    assert_eq!(
+        format!("{:x}", Sha256::digest(std::fs::read(&fixture).unwrap())),
+        "37df5503bc615791d60e946553847de1e56c5fa188c24022a525d44893527fce"
+    );
+    let sensor = spektrafilm_raw::unpack(&fixture).unwrap();
+    assert_eq!(
+        (sensor.filters, sensor.cfa_rows, sensor.cfa_columns),
+        (9, 6, 6)
+    );
+    drop(sensor);
+    let _device = spektrafilm_gpu::test_support::device_lock();
+    let backend: Arc<dyn ComputeBackend> = Arc::new(
+        spektrafilm_gpu::wgpu_backend::WgpuBackend::new_explicit().expect("GPU adapter required"),
+    );
+    let directory = tempfile::tempdir().unwrap();
+    let state_path = deterministic_state(directory.path());
+    let browser_path = directory.path().join("browser.json");
+    let mut h = Harness::builder()
+        .with_size(egui::vec2(1500.0, 1400.0))
+        .build_eframe(move |cc| {
+            theme::apply(&cc.egui_ctx);
+            App::new_with_browser_path(
+                backend,
+                None,
+                Some(state_path),
+                None,
+                browser_path,
+                data_dir(),
+            )
+        });
+    click(&mut h, "Collapse or expand Presets");
+    choose(&mut h, "workflow", "input");
+    script(&mut h, chooser::Chooser::chooser_path(&fixture));
+    import_file(&mut h, true);
+    await_input(&mut h);
+    let source = h.state().image.as_ref().expect("X-Trans import accepted");
+    assert!(source.host_image().is_none());
+    assert_eq!((source.width(), source.height()), (6032, 4032));
+    assert_eq!(h.state().params.io.input_color_space, "ACES2065-1");
+    assert!(!h.state().params.io.input_cctf_decoding);
+    wait_until(&mut h, |a| {
+        !a.dirty && a.render_job.is_none() && a.output_retained.is_some()
+    });
+    let output = h
+        .state()
+        .output_retained
+        .as_ref()
+        .unwrap()
+        .to_host(h.state().backend.as_ref())
+        .unwrap();
+    assert!(output.data.iter().all(|v| v.is_finite()));
+    assert!(output.data.iter().any(|v| *v > 0.0));
+}

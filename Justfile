@@ -121,7 +121,15 @@ gui-raw:
     set -euo pipefail
     fixture="${SPEKTRAFILM_GUI_RAW_FIXTURE:?Set SPEKTRAFILM_GUI_RAW_FIXTURE to the pinned Kodak DC50 KDC file}"
     SPEKTRAFILM_GUI_RAW_FIXTURE="$fixture" \
-        cargo test --locked -p spektrafilm-gui --features precision-f64,gui-raw headless::raw::
+        cargo test --locked -p spektrafilm-gui --features precision-f64,gui-raw headless::raw:: -- --skip xtrans_import_demosaics_and_renders_on_selected_gpu
+
+# Import the pinned X-Trans fixture through the App with an explicit GPU.
+gui-xtrans:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    fixture="${SPEKTRAFILM_GUI_XTRANS_FIXTURE:?Set SPEKTRAFILM_GUI_XTRANS_FIXTURE to the pinned _DSF9237.RAF file}"
+    SPEKTRAFILM_GUI_XTRANS_FIXTURE="$fixture" \
+        cargo test --locked -p spektrafilm-gui --features gui-raw xtrans_import_demosaics_and_renders_on_selected_gpu -- --nocapture
 
 # Render focused GUI layouts and the full window offscreen; requires a usable WGPU adapter.
 gui-layout:

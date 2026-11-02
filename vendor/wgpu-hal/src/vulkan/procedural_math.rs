@@ -1,7 +1,10 @@
-//! Preserve separate rounding in the Procedural module's float-bit hash inputs.
+//! Preserve separate rounding in Procedural float-bit hashes and RAW direction votes.
 //! This is not a general strict-IEEE mode. Explicit Fma instructions are unchanged.
 
-const MARKER: &str = "spektrafilm_procedural_no_contraction";
+const MARKERS: &[&str] = &[
+    "spektrafilm_procedural_no_contraction",
+    "spektrafilm_raw_no_contraction",
+];
 const DECORATE: u32 = 71;
 const NO_CONTRACTION: u32 = 42;
 
@@ -9,11 +12,11 @@ pub(super) fn preserve_operations(
     module: &naga::Module,
     mut words: Vec<u32>,
 ) -> Result<Vec<u32>, &'static str> {
-    if !module
-        .functions
-        .iter()
-        .any(|(_, f)| f.name.as_deref() == Some(MARKER))
-    {
+    if !module.functions.iter().any(|(_, f)| {
+        f.name
+            .as_deref()
+            .is_some_and(|name| MARKERS.contains(&name))
+    }) {
         return Ok(words);
     }
     if words.len() < 5 || words[0] != 0x07230203 {
@@ -152,10 +155,24 @@ mod tests {
     }
 
     #[test]
+    fn raw_direction_votes_use_the_same_operation_preservation() {
+        for entry in [false, true] {
+            let source = SOURCE.replace(MARKERS[0], MARKERS[1]);
+            let (module, words) = emit(&source, entry);
+            let protected = preserve_operations(&module, words.clone()).unwrap();
+            assert!(protected.len() > words.len());
+            assert_eq!(
+                preserve_operations(&module, protected.clone()).unwrap(),
+                protected
+            );
+        }
+    }
+
+    #[test]
     fn shared_metal_marker_and_unmarked_modules_are_unchanged() {
         for marker in ["spektrafilm_strict_float", "ordinary_function"] {
             for entry in [false, true] {
-                let (module, words) = emit(&SOURCE.replace(MARKER, marker), entry);
+                let (module, words) = emit(&SOURCE.replace(MARKERS[0], marker), entry);
                 assert_eq!(preserve_operations(&module, words.clone()).unwrap(), words);
             }
         }

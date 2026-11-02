@@ -4,8 +4,9 @@
 mod procedural_math;
 
 #[test]
-fn production_marker_selects_procedural_and_excludes_other_grain_engines() {
+fn production_markers_select_procedural_and_raw_without_other_grain_engines() {
     let procedural = include_str!("../src/wgpu_backend/grain/procedural.wgsl");
+    let raw = include_str!("../../spektrafilm-shaders/wgsl/raw/raw_markesteijn.wgsl");
     let spektra = concat!(
         include_str!("../../spektrafilm-shaders/wgsl/f64_math.wgsl"),
         include_str!("../src/wgpu_backend/grain/work_f32.wgsl"),
@@ -33,7 +34,12 @@ fn production_marker_selects_procedural_and_excludes_other_grain_engines() {
         3,
         4,
     ];
-    for (source, selected) in [(procedural, true), (spektra, false), (mt, false)] {
+    for (source, selected) in [
+        (procedural, true),
+        (raw, true),
+        (spektra, false),
+        (mt, false),
+    ] {
         let module = naga::front::wgsl::parse_str(source).unwrap();
         let after = procedural_math::preserve_operations(&module, words.clone()).unwrap();
         assert_eq!(after != words, selected);

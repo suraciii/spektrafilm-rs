@@ -214,6 +214,103 @@ pub(crate) fn interpolate_twoxtwo(
     }
 }
 
+/// Markesteijn's interior only. The caller must supply a separate border
+/// interpolation before using this as a whole image. Pixels outside the valid
+/// interior remain zero; this test-only reference is not a production decoder.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn demosaic_xtrans(
+    cfa: &[u8],
+    rows: usize,
+    cols: usize,
+    image: &[f32],
+    width: usize,
+    height: usize,
+    passes: usize,
+    tables: &Tables,
+) -> Vec<f32> {
+    assert!(matches!(passes, 1 | 3));
+    let border = if passes == 1 { 12 } else { 17 };
+    assert!(
+        width > 2 * border && height > 2 * border,
+        "empty Markesteijn interior"
+    );
+    assert_eq!(image.len(), width * height * RGB_STRIDE);
+    let yuv_border = if passes == 1 { 8 } else { 13 };
+    let homo_border = if passes == 1 { 10 } else { 15 };
+    let ndir = if passes == 1 { 4 } else { 8 };
+    let n = width * height;
+    let dir0 = initial_copy(cfa, rows, cols, image, width, height);
+    let mut dirs: Vec<Vec<f32>> = vec![dir0.clone(); ndir];
+    let gminmax = green_minmax(cfa, rows, cols, &dir0, width, height, 3, tables);
+    interpolate_green(
+        cfa,
+        rows,
+        cols,
+        &mut dirs[0..4],
+        &gminmax,
+        width,
+        height,
+        3,
+        tables,
+    );
+    for pass in 0..passes {
+        let base = if pass == 0 { 0 } else { 4 };
+        if pass == 1 {
+            for c in 0..4 {
+                dirs[c + 4] = dirs[c].clone();
+            }
+        }
+        interpolate_pass(
+            cfa,
+            rows,
+            cols,
+            &mut dirs[base..base + 4],
+            &gminmax,
+            width,
+            height,
+            passes,
+            pass,
+            tables,
+        );
+    }
+    let mut yuv = vec![vec![0.0f32; n * RGB_STRIDE]; ndir];
+    let mut drv = vec![vec![0.0f32; n]; ndir];
+    let mut thresh = vec![0.0f32; n];
+    let mut homo = vec![vec![0u8; n]; ndir];
+    let mut homosum = vec![vec![0u8; n]; ndir];
+    let mut maxval = vec![0u8; n];
+    let mut img = vec![0.0f32; n * RGB_STRIDE];
+    for d in 0..ndir {
+        convert_yuv(&dirs[d], &mut yuv[d], width, height, yuv_border);
+        differentiate(&yuv[d], &mut drv[d], width, height, yuv_border, d);
+        homo_threshold(&drv[d], &mut thresh, width, height, homo_border, d);
+    }
+    // Every direction votes against the same completed minimum reduction.
+    for d in 0..ndir {
+        homo_set(&drv[d], &thresh, &mut homo[d], width, height, homo_border);
+        homo_sum(&homo[d], &mut homosum[d], width, height, border);
+        homo_max(&homosum[d], &mut maxval, width, height, border, d);
+    }
+    homo_max_corr(&mut maxval, width, height, border);
+    for d in 0..ndir - 4 {
+        let (head, tail) = homosum.split_at_mut(d + 4);
+        homo_quench(&mut head[d], &mut tail[0], width, height, border);
+    }
+    for d in 0..ndir {
+        accu(
+            &mut img,
+            &dirs[d],
+            &homosum[d],
+            &maxval,
+            width,
+            height,
+            border,
+        );
+    }
+    finalise(&mut img, width, height, border);
+    img
+}
+
 /// `markesteijn_accu`: adds one direction's colour into the accumulator when its
 /// homogeneity score reaches the maximum, and counts the contribution in `w`.
 pub(crate) fn accu(
@@ -429,24 +526,24 @@ pub(crate) fn convert_yuv(
 
 /// One pass of `process_markesteijn_cl`. The sequence is the native one: green is
 /// recalculated only from the second pass on, the six solitary-green calls flip
-/// `i` and `h` between invocations, then four red/blue calls and four 2x2 fills.
+/// `i` and `h` between invocations, then four red/blue calls and two (one pass) or four (three pass) 2x2 fills.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn interpolate_pass(
     cfa: &[u8],
     rows: usize,
     cols: usize,
-    dirs: &mut [Vec<f32>; 4],
+    dirs: &mut [Vec<f32>],
     gminmax: &[f32],
     width: usize,
     height: usize,
-    border: usize,
+    passes: usize,
     pass: usize,
     tables: &Tables,
 ) {
+    assert!(matches!(passes, 1 | 3) && pass < passes);
+    let border = if passes == 1 { 6 } else { 5 };
     if pass > 0 {
-        recalculate_green(
-            cfa, rows, cols, dirs, gminmax, width, height, border, tables,
-        );
+        recalculate_green(cfa, rows, cols, dirs, gminmax, width, height, 6, tables);
     }
     let mut aux = vec![0.0f32; width * height * RGB_STRIDE];
     let (mut i, mut h) = (1i32, 0u8);
@@ -479,7 +576,8 @@ pub(crate) fn interpolate_pass(
             cfa, rows, cols, plane, width, height, border, d as i32, tables,
         );
     }
-    for (n, d) in (0..8).step_by(2).enumerate() {
+    let ndir = if passes == 1 { 4 } else { 8 };
+    for (n, d) in (0..ndir).step_by(2).enumerate() {
         interpolate_twoxtwo(
             cfa,
             rows,
@@ -487,7 +585,7 @@ pub(crate) fn interpolate_pass(
             &mut dirs[n],
             width,
             height,
-            border,
+            if passes == 1 { 8 } else { 4 },
             d,
             tables,
         );
@@ -605,7 +703,7 @@ pub(crate) fn solitary_green(
             color[3] = diff;
             if d > 1 && d & 1 != 0 {
                 for c in 0..2 {
-                    if ocolor[3] >= diff {
+                    if ocolor[3] < diff {
                         color[c * 2] = ocolor[c * 2];
                     }
                 }
@@ -621,14 +719,14 @@ pub(crate) fn solitary_green(
 }
 
 /// `markesteijn_recalculate_green`: refines the green channel of each direction
-/// buffer from the samples two steps out. Native has no local staging here, so
-/// the snapshot below replaces a genuine intra-kernel read/write hazard.
+/// buffer from the samples two steps out. The snapshot keeps the scalar
+/// reference independent of traversal order.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn recalculate_green(
     cfa: &[u8],
     rows: usize,
     cols: usize,
-    dirs: &mut [Vec<f32>; 4],
+    dirs: &mut [Vec<f32>],
     gminmax: &[f32],
     width: usize,
     height: usize,
@@ -676,7 +774,7 @@ pub(crate) fn interpolate_green(
     cfa: &[u8],
     rows: usize,
     cols: usize,
-    dirs: &mut [Vec<f32>; 4],
+    dirs: &mut [Vec<f32>],
     gminmax: &[f32],
     width: usize,
     height: usize,
@@ -1467,6 +1565,91 @@ mod tests {
         assert_eq!(
             (img[i], img[i + 1], img[i + 2], img[i + 3]),
             (1.0, 2.0, 3.0, 0.0)
+        );
+    }
+
+    #[test]
+    fn assembled_interior_preserves_constant_colors_for_every_cfa_phase() {
+        let (width, height) = (64, 64);
+        for passes in [1, 3] {
+            let border = if passes == 1 { 12 } else { 17 };
+            for oy in 0..6 {
+                for ox in 0..6 {
+                    let pattern: Vec<u8> = (0..36)
+                        .map(|i| PATTERN[((i / 6 + oy) % 6) * 6 + (i % 6 + ox) % 6])
+                        .collect();
+                    let tables = Tables::new(&pattern, 6, 6);
+                    for want in [[1000.0; 3], [1000.0, 2000.0, 3000.0]] {
+                        let mut image = vec![0.0; width * height * RGB_STRIDE];
+                        for y in 0..height {
+                            for x in 0..width {
+                                let c = fcn(&pattern, 6, 6, y as i32, x as i32) as usize;
+                                image[(y * width + x) * RGB_STRIDE + c] = want[c];
+                            }
+                        }
+                        let out =
+                            demosaic_xtrans(&pattern, 6, 6, &image, width, height, passes, &tables);
+                        for y in border..height - border {
+                            for x in border..width - border {
+                                for c in 0..3 {
+                                    let got = out[(y * width + x) * RGB_STRIDE + c];
+                                    assert!(
+                                        got.is_finite() && (got - want[c]).abs() <= 1e-5 * want[c],
+                                        "passes={passes} phase=({ox},{oy}) ({x},{y},{c}): {got} != {}",
+                                        want[c]
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Measured regression for the shared-threshold assembly, not a claim that
+    // Markesteijn must reproduce all analytic ramps exactly. The old per-plane
+    // threshold gives max relative error 0.002092698 for this same interior.
+    #[test]
+    fn assembled_ramp_uses_the_completed_direction_threshold() {
+        let size = 64;
+        let tables = Tables::new(&PATTERN, 6, 6);
+        let mut image = vec![0.0; size * size * RGB_STRIDE];
+        for y in 0..size {
+            for x in 0..size {
+                let c = fcn(&PATTERN, 6, 6, y as i32, x as i32) as usize;
+                image[(y * size + x) * RGB_STRIDE + c] =
+                    [1000.0, 2000.0, 3000.0][c] + 2.0 * x as f32 + 3.0 * y as f32;
+            }
+        }
+        let out = demosaic_xtrans(&PATTERN, 6, 6, &image, size, size, 3, &tables);
+        let mut worst = 0.0f32;
+        for y in 17..size - 17 {
+            for x in 17..size - 17 {
+                for c in 0..3 {
+                    let want = [1000.0, 2000.0, 3000.0][c] + 2.0 * x as f32 + 3.0 * y as f32;
+                    let got = out[(y * size + x) * RGB_STRIDE + c];
+                    assert!(got.is_finite());
+                    worst = worst.max((got - want).abs() / want);
+                }
+            }
+        }
+        assert!(worst <= 0.0002, "shared-threshold ramp error {worst}");
+    }
+
+    #[test]
+    #[should_panic(expected = "empty Markesteijn interior")]
+    fn assembled_reference_rejects_an_empty_interior() {
+        let tables = Tables::new(&PATTERN, 6, 6);
+        demosaic_xtrans(
+            &PATTERN,
+            6,
+            6,
+            &vec![1000.0; 24 * 24 * RGB_STRIDE],
+            24,
+            24,
+            3,
+            &tables,
         );
     }
 }

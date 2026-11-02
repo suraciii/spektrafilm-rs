@@ -64,11 +64,11 @@ The [Justfile](../Justfile) defines test selection. The [README](../README.md#bu
 
 ## CPU and GPU are allowed to disagree
 
-We follow darktable: the GPU path is a second implementation, not a bit-exact twin
-of the CPU one. The two may differ in the last bits, and which one runs may depend
-on measured speed.
+The GPU path is a separate implementation. Same-algorithm arithmetic may differ
+in the last bits. An intentionally different algorithm variant needs its own
+documented image-quality budget.
 
-- Parity tests compare with a tolerance (relative <= 1e-5, or <= 1 LSB at 16 bits).
+- Same-algorithm parity tests compare with a tolerance (relative <= 1e-5, or <= 1 LSB at 16 bits).
   A bit-exact assertion between backends is a bug in the test.
 - Structural invariants stay exact: which pixels and planes a kernel writes, clamp
   ranges, untouched borders. A skipped write is not a precision difference.
@@ -77,10 +77,11 @@ on measured speed.
 - A numerical oracle (for example `xtrans_reference`) is a debugging aid, not a
   contract. When a deviation appears it says which step moved.
 - Acceptance is end to end: one real file through both paths, compared as an image
-  (PSNR and maximum deviation). That is the only comparison darktable makes too.
-- Prefer the faster path, measured rather than assumed. A GPU kernel that loses to
-  the CPU should not be enabled; darktable switches OpenCL off entirely when its
-  benchmark falls below the CPU.
+  (PSNR and maximum deviation). Different algorithm variants need independent
+  reference evidence and an explicit regression budget.
+- Measure GPU and CPU performance rather than assuming a speedup. Report the
+  adapter, workload, and timing scope. Backend selection follows the product
+  contract; a timing result does not authorize an undeclared CPU fallback.
 - Because the backends may disagree, document that toggling the GPU can change the
   output. Otherwise it comes back as a bug report.
 
