@@ -86,4 +86,3 @@ documented image-quality budget.
   contract; a timing result does not authorize an undeclared CPU fallback.
 - Because the backends may disagree, document that toggling the GPU can change the
   output. Otherwise it comes back as a bug report.
-
