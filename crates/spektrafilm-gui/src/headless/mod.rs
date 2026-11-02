@@ -195,6 +195,7 @@ pub(crate) fn default_startup(config_root: &Path, work: &Path) -> Harness<'stati
 /// Inspect the report returned by the real App worker, not a reconstructed
 /// execution snapshot. Device rendering and its transfers must share the
 /// operation's phase tree.
+#[cfg(feature = "gui-raw")]
 fn assert_retained_gpu_report(
     app: &App,
     path: &Path,

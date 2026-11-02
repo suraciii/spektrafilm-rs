@@ -525,6 +525,14 @@ mod tests {
             6,
             96 * 96 * 128,
         );
+        // Smaller windows exercise CFA alignment and clipped final cores at
+        // every translation of the sensor pattern.
+        for shift in 0..36 {
+            let shifted: Vec<u8> = (0..36)
+                .map(|i| pattern[((i / 6 + shift / 6) % 6) * 6 + (i % 6 + shift % 6) % 6])
+                .collect();
+            compare(&gpu, RawDemosaic::XTrans, 70, &shifted, 6, 6, 64 * 64 * 128);
+        }
         // A different final partition exercises clipped halos.
         compare(
             &gpu,
