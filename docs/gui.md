@@ -37,8 +37,8 @@ The right inspector contains one continuous list, not mutually exclusive pages. 
 | Input and capture | Workflow, Camera, Camera diffusion, Input, Import Raw, Source rotation, Crop and upscale, Input gamut compress, Spectral upsampling, Convert |
 | Film | Film material, Film chemistry, Film base, Halation, Couplers, Grain |
 | Print | Print material, Enlarger, Preflash, Enlarger diffusion, Print chemistry, Print base |
-| Scan | Scanner, Print viewing glare |
-| Output | Finishing, Output, Output gamut compress, CMYK ink style |
+| Scan | Scanner, Print viewing glare, Tone & Color |
+| Output | Output, Output gamut compress, CMYK ink style |
 
 The persistent **SCAN** and **SAVE** action bar stays below the inspector. SCAN shows `full-resolution effects`; SAVE shows `retained result · no rerender`. Preview updates automatically; there is no Preview button or enablement preference. **Settings** owns general application preferences, state files and startup defaults, display configuration, and Diagnostics. Independent file-delivery options belong to the **Export options** dialog, not a photographic module.
 
@@ -100,7 +100,7 @@ Inactive rows retain valid stored values and explain whether an operation is abs
 
 For Settings and Export, the filter compares accepted preferences with typed factory defaults. Unsubmitted Export drafts do not change these results.
 
-A module header's **reset** restores only that module's controls. Finishing also provides individual row resets, described below. Other parameter rows, sliders, and Export options do not have separate reset buttons. Use **Undo** to reverse an adjustment. For example, resetting **Preflash** leaves main **Enlarger** exposure and filtration unchanged; resetting **Print viewing glare** leaves **Print chemistry** unchanged. Material-module reset restores its factory material selection and development time.
+A module header's **reset** restores only that module's controls. Tone & Color also provides individual row resets, described below. Other parameter rows, sliders, and Export options do not have separate reset buttons. Use **Undo** to reverse an adjustment. For example, resetting **Preflash** leaves main **Enlarger** exposure and filtration unchanged; resetting **Print viewing glare** leaves **Print chemistry** unchanged. Material-module reset restores its factory material selection and development time.
 
 For other modules, reset uses current-film defaults only for stock-derived leaves; other values use factory defaults. Reset also releases explicit ownership in its scope, even when the value already matches, so a later film selection can refresh it.
 
@@ -117,7 +117,7 @@ The left browser owns whole-look presets. Modules do not have section-preset men
 - The readout illuminant is a fixed product value selected by the material category, not an editable scanner lamp.
 - **Lens blur (readout optics)** and **Unsharp mask (digital sharpening)** describe readout optics and digital sharpening. On a route without scanning, these controls remain readable but inactive, with stored values retained.
 
-**Scan → Scanner → Negative conversion (exposure domain)** is a collapsed specialized group containing operator correction. It adjusts the finished positive before the fixed tone curve, after the experimental frame setup when it is enabled. **Finished exposure** is ±3 EV (positive is brighter); **Warmth** and **Green–magenta tint** are ±1 differential EV (positive is warmer and more magenta respectively, not Kelvin); **Contrast** spans 0.5–2 (1 is unchanged). These are editor ranges, not document limits. The controls are disabled outside eligible negative-to-positive scans, with their stored values retained. This exposure-domain operation is distinct from common Finishing and its values are not converted to finishing adjustments.
+**Scan → Scanner → Negative conversion (exposure domain)** is a collapsed specialized group containing operator correction. It adjusts the finished positive before the fixed tone curve, after the experimental frame setup when it is enabled. **Finished exposure** is ±3 EV (positive is brighter); **Warmth** and **Green–magenta tint** are ±1 differential EV (positive is warmer and more magenta respectively, not Kelvin); **Contrast** spans 0.5–2 (1 is unchanged). These are editor ranges, not document limits. The controls are disabled outside eligible negative-to-positive scans, with their stored values retained. This exposure-domain operation is distinct from Tone & Color and its values are not converted to tone and color adjustments.
 
 **Restore automatic** resets only the four operator values to 0, 0, 0, 1. The workspace's source-local **Undo** and **Redo** include these edits, restore and paste actions. **Hold automatic comparison** (primary mouse button, or Space while focused) shows the same prepared frame with default operator values until release; it does not change saved corrections or the retained pixels used by Save. This is separate from the viewer's Original/Modified selection.
 
@@ -125,17 +125,17 @@ The left browser owns whole-look presets. Modules do not have section-preset men
 
 Changing the route resets an ineligible scan polarity; leaving negative conversion resets the conversion style to `standard`. The style selects the tone only; the separate off-by-default `scanner.experimental_setup` switch adds whole-frame exposure and color measurement before that tone. `neutral` is accepted only as an input migration alias and is saved as `standard`; it does not preserve the former fixed-curve appearance. See [scanning](scanning.md) for scanner mode and style semantics.
 
-### Finishing
+### Tone & Color
 
-**Output → Finishing** adjusts eligible positive film scans, negatives converted to positives, and photographic-paper scans after positive formation and before output gamut processing. Input-only routes, material outputs without a completed scan, and negative scans preserving polarity are inactive; stored controls remain available and are retained across route and material changes.
+**Scan → Tone & Color** adjusts eligible positive film scans, negatives converted to positives, and photographic-paper scans after positive formation and before output gamut processing. Input-only routes, material outputs without a completed scan, and negative scans preserving polarity are inactive; stored controls remain available and are retained across route and material changes.
 
 **Brightness**, **Contrast**, **Warmth**, and **Saturation** each range from -1 to 1 and default to zero. Brightness and Contrast affect internal tones with diminishing influence near the reference endpoints, rather than source exposure or sharpening. Warmth follows a fixed warm–cool direction, not Kelvin or capture white balance; Saturation changes color strength with restrained amplification of strong colors. Effects can interact and downstream processing can change the result.
 
-The collapsed **Expand** group optionally maps black and white input references in fixed sRGB encoding. It defaults off, retaining its references when disabled; when enabled, even its default 0 and 1 references hard-clip. The references range from -0.25 to 1.25 and must be separated by at least 1/1024. Invalid edits are rejected, not reordered or widened. Hard clipping destroys differences for that render; later adjustments cannot recover them and do not guarantee an in-gamut result.
+The collapsed **Range** group provides **Enable Expand** to map black and white input references in fixed sRGB encoding. It defaults off, retaining its references when disabled; when enabled, even its default 0 and 1 references hard-clip. The references range from -0.25 to 1.25 and must be separated by at least 1/1024. Invalid edits are rejected, not reordered or widened. Hard clipping destroys differences for that render; later adjustments cannot recover them and do not guarantee an in-gamut result.
 
-Each row's reset restores that control alone, subject to the same valid-reference constraint; module reset restores all four daily controls and disables Expand with its default references. Undo and Redo include these edits. **Hold finishing comparison** uses the primary mouse button or focused Space to temporarily bypass only Finishing, restoring it on release. It does not change stored controls, history, retained Save output, or independent Export, and does not bypass negative conversion, gamut processing, CMYK style, or output mix.
+Each row's reset restores that control alone, subject to the same valid-reference constraint; module reset restores all four daily controls and disables Expand with its default references. Undo and Redo include these edits. **Hold Tone & Color comparison** uses the primary mouse button or focused Space to temporarily bypass only Tone & Color, restoring it on release. It does not change stored controls, history, retained Save output, or independent Export, and does not bypass negative conversion, gamut processing, CMYK style, or output mix.
 
-Comparison preserves the retained Preview or Scan grid and detail effects. Releasing it restores the accepted finishing on that same grid. Comparing alone does not make the retained result stale.
+Comparison preserves the retained Preview or Scan grid and detail effects. Releasing it restores the accepted tone and color adjustments on that same grid. Comparing alone does not make the retained result stale.
 
 **Input and capture → Convert → scan illuminant** declares the acquisition light of an imported negative RGB image through `film_render.convert.scan_illuminant`. It defaults to `D55` and affects capture inversion and calibration only. Choose from the full shared illuminant catalog or enter a custom `BB<kelvin>` value accepted by the shared validator. It does not override the fixed product readout light. The control remains readable but inactive on routes without convert-film inversion.
 
@@ -377,7 +377,7 @@ In the same settings section, **Save current as default** persists the current c
 
 To replace stored material coefficients with the selected film's defaults, use the affected module's **reset**. Reloading a complete saved state preserves its stored coefficients; it does not refresh them from the film tables.
 
-Startup files use the platform configuration directory. `SPEKTRAFILM_CONFIG_DIR` overrides it. Rust state uses `rust.version = 7`; older complete states migrate to neutral Finishing. File-dialog directories persist separately.
+Startup files use the platform configuration directory. `SPEKTRAFILM_CONFIG_DIR` overrides it. Rust state uses `rust.version = 7`; older complete states migrate to neutral Tone & Color. File-dialog directories persist separately.
 
 Legacy states without an explicit export format preserve 8-bit as PNG and 16/32-bit as TIFF before defaults and validation. Recipe values and viewer state remain intact. Explicitly incompatible format/depth combinations remain errors.
 

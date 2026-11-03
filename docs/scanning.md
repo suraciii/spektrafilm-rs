@@ -1,10 +1,12 @@
 # Scanning and negative conversion
 
-This page explains the scan model, scan output modes, negative conversion, and film-scan controls. It also describes the experimental CineStill 800T Cs41 material and look.
+This page explains scanner readout, scan output modes, negative conversion, and the broader Scan workflow. It also describes the experimental CineStill 800T Cs41 material and look.
 
 ## Neutral scan model
 
-A scan is one colorimetric capture. The scanner has one sensor, modeled on the CIE 1931 color-matching functions, and one readout light. There is no receiver profile to choose, no scanner calibration matrix, and no scanner finish.
+Scanner readout is one colorimetric capture. The scanner has one sensor, modeled on the CIE 1931 color-matching functions, and one readout light. There is no receiver profile to choose, no scanner calibration matrix, and no scanner finish.
+
+The GUI Scan stage covers readout, interpretation, and digital adjustments. **Scan → Tone & Color** adjusts an eligible completed positive without changing the scanned material, acquisition, or negative-conversion operator correction. Its independent `finishing.*` controls and preset section remain separate from `scanner.*`; see [Tone & Color](gui.md#tone--color).
 
 The readout light is a product constant selected by the material category: `BB5800` for colour cine print materials (ISO 2910:2018) and `D50` for every other material (ISO 3664). It is not a runtime parameter and not a profile field, so there is no `scanner.lamp` to set; a document that carries that field fails validation.
 

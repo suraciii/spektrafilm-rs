@@ -30,7 +30,7 @@ Built-in looks enable their film profile's adaptation surface by default. See th
 
 ## Portable identities and name resolution
 
-Core migrates versioned legacy documents and exports schema v7. Older complete looks gain neutral common finishing, while sparse sections keep omitted controls unchanged. Current complete looks include every finishing control. Retired spellings retain their own migration boundaries; changing a preset version does not reopen them.
+Core migrates versioned legacy documents and exports schema v7. Older complete looks gain neutral tone and color adjustments, while sparse sections keep omitted controls unchanged. Current complete looks include every `finishing` control. Retired spellings retain their own migration boundaries; changing a preset version does not reopen them.
 
 User documents live in `<config_dir>/presets` under the shared `SPEKTRAFILM_CONFIG_DIR` policy. A name resolves in My Presets first, then Built-in. `user:` and `built-in:` select one group.
 
@@ -38,7 +38,7 @@ Choose **American Reminiscence** in the GUI preset browser. You can also pass `-
 
 Newly saved looks include virtual film exposure and metering. Older look documents without the camera group keep your current values when applied. They do not mark the look modified when those values change. RAW/source exposure correction and input color interpretation remain caller settings. See [look ownership](../specs/presets/spec.md#look-ownership).
 
-Common finishing belongs to the look independently of virtual exposure and scanner operator correction. Applying a complete look replaces it; changing film, paper, or route keeps the stored values. A Finishing section remains available to CLI composition and scoped photograph copying, not as another GUI preset browser.
+Tone & Color belongs to the look independently of virtual exposure and scanner operator correction. Applying a complete look replaces it; changing film, paper, or route keeps the stored values. The independent `finishing` section remains available to CLI composition and scoped photograph copying, not as another GUI preset browser.
 
 Versioned states and recipes permit an absent or null `io.output_gamut_compress.lightness_compression`. A stored triplet must be removed. Current documents and sparse edits reject the retired field even when null. Rejection preserves the active controls and retained output.
 

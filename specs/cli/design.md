@@ -39,7 +39,7 @@ The resolution report MUST include deterministic topology and monochrome channel
 - These facts MUST come from the owning parameter definitions and validators. The CLI MUST NOT maintain a second handwritten list of bounds or enum values.
 - The carrier adapter MAY map field names to this description but MUST NOT invent shorter aliases.
 
-Common finishing discovery and validation MUST use the core-owned [finishing model](../finishing/design.md#ownership) and its shared applicability decision. CLI carriers MUST follow [finishing compatibility](../finishing/design.md#wire-and-compatibility) without inventing paths, bounds, or versions.
+Tone & Color discovery and validation MUST use the core-owned [finishing model](../finishing/design.md#ownership) and its shared applicability decision. CLI carriers MUST follow [finishing compatibility](../finishing/design.md#wire-and-compatibility) without inventing paths, bounds, or versions.
 
 Array controls with distinct component domains MUST describe each component. Source validation MUST apply the same component rules as runtime construction before a later source can replace the array.
 

@@ -231,7 +231,7 @@ Developer exhaustion MUST remain a model-specific development control; unsupport
 
 Scanner inverse reconstruction and calibration retain their existing meanings. Retired scanner points remain rejected under [Scanner language](../film-chain/spec.md#scanner-language).
 
-The CLI MUST expose [common finishing](../finishing/spec.md#controls) through canonical assignments and discovery. Its shared validators and [applicability](../finishing/spec.md#scope-and-applicability) MUST govern complete documents, sparse sources, discovery, and feedback.
+The CLI MUST expose [Tone & Color](../finishing/spec.md#controls) through canonical assignments and discovery. Its shared validators and [applicability](../finishing/spec.md#scope-and-applicability) MUST govern complete documents, sparse sources, discovery, and feedback.
 
 No other generic levels, saturation, color-density, or split-toning controls are added.
 
@@ -493,7 +493,7 @@ Field discovery MUST explain input versus scanner versus saving color, exposure 
 
 Procedural Amount MUST remain applicable to named and custom Procedural profiles. Both controls MUST remain distinct from Spektra RMS granularity. Text and selected-field/module JSON MUST use the same descriptions and effect conditions.
 
-Selector-free JSON MUST retain its existing render contract. Discovery MUST distinguish material development, optical exposure filtration, preflash, scanner interpretation, [common finishing](../finishing/spec.md#controls), output gamut processing, and source mixing. It MUST NOT advertise retired scanner points, lightness, or unshipped response, Cyan-shift, color-density, or split-toning paths.
+Selector-free JSON MUST retain its existing render contract. Discovery MUST distinguish material development, optical exposure filtration, preflash, scanner interpretation, [Tone & Color](../finishing/spec.md#controls), output gamut processing, and source mixing. It MUST NOT advertise retired scanner points, lightness, or unshipped response, Cyan-shift, color-density, or split-toning paths.
 
 Existing Cyan neutral calibration remains a calibration control rather than a new creative Cyan shift. Scanner lens blur discovery MUST identify linear readout optics before interpretation and gamut processing. Unsharp mask MUST identify digital scan sharpening.
 

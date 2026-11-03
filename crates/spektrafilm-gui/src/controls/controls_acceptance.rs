@@ -816,7 +816,7 @@ mod finishing_interactions {
         assert_eq!(h.state().finishing.brightness, 0.0);
         assert_eq!(h.state().finishing.contrast, 0.3);
         assert!(h.state().finishing.expand.enabled);
-        h.get_by_label("Expand").simulate_click();
+        h.get_by_label("Range").simulate_click();
         h.run();
         h.get_by_label("Reset Black reference").simulate_click();
         h.run();
@@ -844,7 +844,7 @@ mod finishing_interactions {
             },
             RuntimeParams::default(),
         );
-        h.get_by_label("Expand").simulate_click();
+        h.get_by_label("Range").simulate_click();
         h.run();
         super::super::take_edited_paths(&h.ctx);
         h.get_by_label("Enable Expand").simulate_click();
@@ -878,7 +878,7 @@ mod finishing_interactions {
             },
             params,
         );
-        h.get_by_label("Expand").simulate_click();
+        h.get_by_label("Range").simulate_click();
         h.run();
         assert!(h.get_by_label("Reset White reference").node().is_disabled());
         assert_eq!(h.state().finishing.expand.white, 1.2);
@@ -921,7 +921,7 @@ mod finishing_interactions {
                 },
                 (params, Vec::new()),
             );
-        h.get_by_label("Hold finishing comparison").focus();
+        h.get_by_label("Hold Tone & Color comparison").focus();
         h.run();
         for pressed in [true, false] {
             h.input_mut().events.push(egui::Event::Key {

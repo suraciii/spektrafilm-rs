@@ -112,9 +112,11 @@ The [CLI parameter contract](../specs/cli/spec.md) defines parameter editing.
     --saving-color-space 'ProPhoto RGB' --saving-cctf-encoding true --data-dir data
 ```
 
-### Common finishing
+### Tone & Color
 
-Finishing adjusts the completed positive before output gamut processing and the final output mix. It does not replace negative-conversion operator correction. It is inactive for input-only, material output, and preserved-negative scans; stored values remain intact and are still validated.
+Tone & Color adjusts the completed positive before output gamut processing and the final output mix. It does not replace negative-conversion operator correction. It is inactive for input-only, material output, and preserved-negative scans; stored values remain intact and are still validated.
+
+The GUI places these controls under **Scan → Tone & Color**. Canonical CLI paths remain `finishing.*`; the presentation change does not add scanner aliases or change document versions.
 
 ```bash
 spektrafilm describe --module finishing
@@ -125,7 +127,7 @@ spektrafilm process input.png -o output.tif --backend cpu \
     --set 'finishing.expand.enabled=true,finishing.expand.black=0.02,finishing.expand.white=0.98'
 ```
 
-The four daily controls are normalized to `-1..=1`, with zero neutral. Expand defaults to disabled and retains its fixed-sRGB encoded input references when disabled. Each reference must be in `-0.25..=1.25`, and white must exceed black by at least `1/1024`, even when Expand is disabled. Enabling Expand hard-clips at its references, including the default `0` and `1`; clipped differences are lost for that render and later controls cannot recover them. Sparse edits change only named leaves. Complete preset looks use schema 7 and replace finishing; legacy complete looks restore neutral finishing, while legacy sections preserve omission. Complete recipes use `spektrafilm-rs-params-7` and carry the complete `finishing` group; older recipes migrate to neutral finishing.
+The four daily controls are normalized to `-1..=1`, with zero neutral. Expand defaults to disabled and retains its fixed-sRGB encoded input references when disabled. Each reference must be in `-0.25..=1.25`, and white must exceed black by at least `1/1024`, even when Expand is disabled. Enabling Expand hard-clips at its references, including the default `0` and `1`; clipped differences are lost for that render and later controls cannot recover them. Sparse edits change only named leaves. Complete preset looks use schema 7 and replace tone and color adjustments; legacy complete looks restore neutral values, while legacy sections preserve omission. Complete recipes use `spektrafilm-rs-params-7` and carry the complete `finishing` group; older recipes migrate to neutral finis…
 
 
 `--dry-run` prints effective runtime controls, writer options, profile names, and the requested backend policy.

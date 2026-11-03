@@ -17,6 +17,9 @@ _Avoid_: Debug dump, scan capture
 
 **Scanned medium**: The developed film or photographic paper read for digital output. Its native polarity is independent of the delivered image's polarity.
 
+**Scan workflow**: Reading a developed film or photographic print for a digital image, with interpretation and image adjustments appropriate to the delivered polarity. It includes optical readout and digital operations without treating them as the same physical process.
+_Avoid_: Scan capture alone
+
 **Scanner lamp**: The single physical light source of a scan. Its accepted values are the illuminant vocabulary the enlarger lamp uses: `D50`, `D55`, `D65`, `T`, `TH-KG3`, `TH-KG3-L`, `K75P`, and a `BB<kelvin>` blackbody token. `D55` is the default.
 _Avoid_: Scanner look, output color space, scan illuminant
 
@@ -50,8 +53,8 @@ _Avoid_: Capture exposure, operator correction, scanner calibration
 **Operator correction**: The user's global finished-positive exposure, warmth, green–magenta balance, and common-exposure contrast judgment over a frame's automatic result. It does not change the developed negative or the automatic judgment.
 _Avoid_: Capture white balance, material gamma, scanner calibration
 
-**Common finishing**: The user's tonal and color adjustments to a completed positive image, independent of the material and readout route that formed it. It does not describe material exposure, development, or negative-conversion operator correction.
-_Avoid_: Scanner finish, material response, color density
+**Tone and color adjustments**: The user's brightness, contrast, warmth, saturation, and input-range adjustments to a completed positive image, independent of the material and readout route that formed it. They do not describe material exposure, development, scanner calibration, or negative-conversion operator correction.
+_Avoid_: Common finishing, scanner finish, material response, color density
 
 **Digital output**: The color space, transfer encoding, geometry, and file representation used to deliver an image.
 _Avoid_: Scanned medium, negative conversion

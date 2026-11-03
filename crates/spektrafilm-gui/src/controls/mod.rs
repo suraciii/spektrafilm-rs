@@ -561,15 +561,10 @@ pub(crate) const STAGE_LAYOUT: &[(Stage, &[&str])] = &[
             "Print base",
         ],
     ),
-    (Stage::Scan, &["Scanner", "Glare"]),
+    (Stage::Scan, &["Scanner", "Glare", "Finishing"]),
     (
         Stage::Output,
-        &[
-            "Finishing",
-            "Output",
-            "Output gamut compress",
-            "CMYK ink style",
-        ],
+        &["Output", "Output gamut compress", "CMYK ink style"],
     ),
 ];
 

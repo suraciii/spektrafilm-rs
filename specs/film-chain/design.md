@@ -43,7 +43,7 @@
 - No generic graph or backend-specific public parameter schema is required; runtime parameters remain the single caller-facing model.
 - [Output mix and material controls](../output-mix/design.md) owns preflash exposure composition, Output lightness retirement, and final mixing. Per-stage, resident, converted-film, and diagnostic paths execute only material operations present in their route.
 - Existing chemistry and scanner reference ownership remain unchanged.
-- [Common finishing](../finishing/design.md#ownership) owns its route gate and response independently of scanner and material controls. Its [color and order](../finishing/design.md#color-and-order) apply across CPU, resident, continuation, and final diagnostic paths.
+- [Tone & Color](../finishing/design.md#ownership) owns its route gate and response independently of scanner and material controls. Its [color and order](../finishing/design.md#color-and-order) apply across CPU, resident, continuation, and final diagnostic paths.
 - The shared output finishing boundary delegates CMYK ink style to [CMYK ink style](../cmyk-style/design.md). It MUST also serve the film-free `input` workflow without preparing a spectral chain.
 
 ## Prepared runtime state

@@ -43,8 +43,9 @@ fn key(label: &str) -> Option<&'static str> {
         "selected material capability is unavailable" => {
             Some("controls.condition.material_unavailable")
         }
-        "Finishing" => Some("controls.finishing.title"),
+        "Finishing" | "finishing" => Some("controls.finishing.title"),
         "Brightness" => Some("controls.finishing.brightness"),
+        "Tone & Color warmth" => Some("controls.finishing.warmth"),
         "Saturation" => Some("controls.finishing.saturation"),
         "Expand" => Some("controls.finishing.expand"),
         "Enable Expand" => Some("controls.finishing.enable_expand"),
