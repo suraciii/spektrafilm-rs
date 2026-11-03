@@ -64,7 +64,7 @@ A section is a named set of look-owned parameter paths. This table is authoritat
 - `cmyk ink style`: `cmyk`. Primary module anchor: Output / CMYK ink style.
 - `print`: `print_render`. Primary module anchor: Print / Chemistry.
 - `output mix`: `output_mix`. Primary module anchor: Output / Simulation blend.
-- Common finishing: the independent [finishing controls](../finishing/spec.md#controls). Primary module anchor: Output / Finishing.
+- `finishing`: the independent [tone and color controls](../finishing/spec.md#controls). Primary module anchor: Scan / Tone & Color.
 
 The `convert` section includes the imported-capture acquisition light in `film_render.convert.scan_illuminant`. The fixed product readout illuminant is not preset-owned. Retired scanner lamp keys and the input-only `neutral` style alias follow the [lab scan migration contract](../film-chain/lab-scan/spec.md#point-wise-consumers-and-migration).
 
@@ -74,7 +74,7 @@ The `convert` section includes the imported-capture acquisition light in `film_r
 - A section preset MUST NOT change a profile reference or the workflow.
 - Visible stage and module ownership follows [Stage and surface ownership](../gui-workflow/spec.md#stage-and-surface-ownership), not serialized group names. Module resets follow [Section reset](../gui-workflow/spec.md#section-reset); a section's wider payload MUST NOT expand a visible module's reset scope.
 
-Finishing capture, application, sparse omission, and legacy complete-look migration follow [finishing persistence](../finishing/spec.md#persistence-and-replay). Finishing section ownership is independent of `camera`, scanner correction, and output mix.
+Tone and color capture, application, sparse omission, and legacy complete-look migration follow [adjustment persistence](../finishing/spec.md#persistence-and-replay). The `finishing` section remains independent of `camera`, `scanner`, and output mix; its Scan placement MUST NOT broaden any section's payload.
 
 ## Everyday flows
 

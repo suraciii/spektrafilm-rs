@@ -31,7 +31,7 @@
 - Segmented topologies MUST reject that selection before baking because their scan-stage input does not carry the source branch.
 - The baker MUST NOT silently reset output amount to 1.
 - Image-specific geometry remains neutralized under the existing LUT contract.
-- Eligible [common finishing](../finishing/spec.md#delivery) MUST be included once at the existing scan/final RGB boundary in segmented, collapsed, and complete bakes.
+- Eligible [Tone & Color](../finishing/spec.md#delivery) MUST be included once at the existing scan/final RGB boundary in segmented, collapsed, and complete bakes.
 - The bundle MUST retain the finishing definition and its applied boundary in provenance, including when stages are collapsed.
 - CMYK ink style MUST run once at its post-scan finishing boundary.
 - The final RGB stage retains its `cmyk_` role and records its definition independently of material stages.

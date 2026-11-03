@@ -21,11 +21,11 @@ The [GUI presentation specification](../gui-presentation/spec.md) owns visual hi
 
 Every route shows lens blur and unsharp mask; the readout illuminant is not a control. Conversion control display names MUST follow the [conversion control naming contract](../film-chain/spec.md#conversion-control-naming-acceptance). Eligible `standard` negative scans MUST expose operator correction and its restore, copy/paste and held automatic-comparison actions under the [operator contract](../film-chain/lab-scan/spec.md#operator-correction).
 
-Negative conversion MUST place `scanner.operator` in a collapsible specialized correction group. Its labels and help MUST identify exposure-domain units and distinguish it from common finishing; it MUST NOT be renamed or migrated into finishing.
+Negative conversion MUST place `scanner.operator` in a collapsible specialized correction group. Its labels and help MUST identify exposure-domain units and distinguish it from Tone & Color. Its values MUST NOT be renamed or migrated into the `finishing` group.
 
 Operator edits use the workspace's adjustment history, not a second local Undo/Redo owner. Comparison MUST leave retained Save pixels and correction parameters unchanged. It activates only while the primary mouse button holds its control or focused Space is held; secondary and middle presses MUST NOT start comparison or invalidate the accepted render.
 
-A route or film profile change that makes the selected mode ineligible resets it to `direct_scan` and clears ineligible scanner controls. It MUST preserve common finishing values under [finishing editing](../finishing/spec.md#editing-and-comparison).
+A route or film profile change that makes the selected mode ineligible resets it to `direct_scan` and clears ineligible scanner controls. It MUST preserve tone and color values under [adjustment editing](../finishing/spec.md#editing-and-comparison).
 - Imported states and presets MUST reject the removed mode as defined by [Scanner language](../film-chain/spec.md#scanner-language). A rejected import MUST NOT replace accepted parameters or the retained image.
 - Numeric parameter fields use text editing and the default text cursor. Each original wheel event over a field changes its value by the declared step.
 - Smoothed scroll residue MUST NOT repeat that change in later frames. Invalid or incomplete text MUST NOT enter runtime parameters.
@@ -69,7 +69,7 @@ Export MUST be the primary file-delivery entry. Its submission surface MUST iden
 
 ## Material controls and output composition
 
-Control placement follows [Stage and surface ownership](#stage-and-surface-ownership). Material behavior follows [Output mix and material controls](../output-mix/spec.md#user-operation). Apart from [common finishing](../finishing/spec.md#controls), the inspector MUST NOT add Digital response panels, a Reproduction section, saturation or color-density groups, or tonal-mask controls.
+Control placement follows [Stage and surface ownership](#stage-and-surface-ownership). Material behavior follows [Output mix and material controls](../output-mix/spec.md#user-operation). Apart from [tone and color adjustments](../finishing/spec.md#controls), the inspector MUST NOT add Digital response panels, a Reproduction section, saturation or color-density groups, or tonal-mask controls.
 
 Inspector stages organize access to controls; they do not change pipeline execution order or serialized preset ownership.
 
@@ -87,13 +87,13 @@ Profile and route feedback MUST identify unsupported or inactive controls withou
 
 Material edits MUST use existing scanner calibration and inverse reconstruction semantics. The GUI MUST NOT promise creative-reference isolation or add separate baseline and effective reference controls. Module resets follow [Section reset](#section-reset).
 
-Serialized section payloads retain their core ownership under [Preset design](../presets/design.md#sections). The independent Finishing section MUST NOT restore withdrawn digital-response sections.
+Serialized section payloads retain their core ownership under [Preset design](../presets/design.md#sections). The independent `finishing` section MUST NOT restore withdrawn digital-response sections.
 
 Output MUST expose Simulation blend as the full-result/prepared-source blend under [Output mix](../output-mix/spec.md#output-mix). Existing output gamut algorithm and chroma-knee controls remain available without duplicate editable copies. Output MUST NOT expose standalone lightness compression, an Output response section or preset, or a separate output-processing switch for the `input` workflow.
 
-Output MUST expose a Finishing module with the controls and collapsible Range group defined by [common finishing](../finishing/spec.md#controls). It MUST explain inactive conditions and retain stored values under [applicability](../finishing/spec.md#scope-and-applicability).
+Scan MUST expose a Tone & Color module with the controls and collapsible Range group defined by [tone and color adjustments](../finishing/spec.md#controls). It MUST explain inactive conditions and retain stored values under [applicability](../finishing/spec.md#scope-and-applicability).
 
-Finishing reset, transient module comparison, and editing behavior MUST follow [finishing editing and comparison](../finishing/spec.md#editing-and-comparison). Comparison MUST NOT bypass unrelated stages or change retained output, parameters, or adjustment history.
+Tone & Color reset, transient module comparison, and editing behavior MUST follow [adjustment editing and comparison](../finishing/spec.md#editing-and-comparison). Comparison MUST NOT bypass unrelated stages or change retained output, parameters, or adjustment history.
 
 A negative-capture source MUST state that zero Simulation blend returns the prepared negative, not a positive interpretation. Input/Output viewing remains independent from rendered effect amount.
 
@@ -182,8 +182,8 @@ Each module has one editing owner. The inspector MUST contain these stages and m
 | Input and capture | Workflow selector; input color space and decoding; RAW white balance, temperature, tint, lens correction, and reprocess action; crop, upscale, and source rotation; Camera exposure, metering, film format, color filter, and capture illuminant; Camera diffusion; input gamut compression; spectral reconstruction and its applicable adaptation controls; Convert imported-capture scan illuminant, exposure, base estimation, calibration, channel swaps, and calibration actions. |
 | Film | Film material selector and its development-time family; Chemistry; Film base; Halation; Couplers; Grain selector, shared material-grain parameters, and every engine-specific parameter group. |
 | Print | Print material selector and its development-time family; Enlarger exposure mode, exposure, exposure tracking, M/Y shifts, and illuminant; Preflash; Enlarger diffusion; print Chemistry and independent density-curve gamma; Print base. |
-| Scan | Fixed product readout illuminant information; eligible scan output and conversion-style controls; specialized negative-conversion correction, restore, copy/paste and held automatic comparison; lens blur, unsharp mask; Print viewing glare. |
-| Output | Finishing and its collapsible Range group; output color space and encoding where exposed by their contracts; output gamut processing; CMYK ink style; Simulation blend; retained Save color and encoding settings. |
+| Scan | Fixed product readout illuminant information; eligible scan output and conversion-style controls; specialized negative-conversion correction, restore, copy/paste and held automatic comparison; lens blur, unsharp mask; Print viewing glare; Tone & Color and its collapsible Range group. |
+| Output | Output color space and encoding where exposed by their contracts; output gamut processing; CMYK ink style; Simulation blend; retained Save color and encoding settings. |
 | Application settings | General: interface language, preview limits, and rendering preferences that are not photographic controls; GUI parameters: startup state save/load/default actions; Display: display transform, ICC selection, canvas, padding, and interpolation; Diagnostics: observation and report actions. Language preference ownership follows [GUI product language](../gui-language/spec.md#selection-and-persistence), not photographic state. |
 | Export dialog | Independent full-resolution export backend, format, depth, saving color and encoding, applicable codec/compression options, destination selection, and export submission. |
 | Viewer footer | Original/Modified/Paper back selection; zoom, fit, reveal, crossfade, and read-only zoom state; [black and white endpoint warnings](../gui-product-design/clipping-warnings/spec.md#controls); optional image-analysis visibility. |
@@ -198,6 +198,21 @@ It MUST NOT close other stages or change any parameter. A heading toggle MUST af
 Open state and scroll position MUST survive ordinary edits, render completion, and route changes.
 
 The [preset section table](../presets/design.md#sections) remains authoritative for serialized section payloads and their primary module anchors. A visual module is not a new serialized section. Moving Print viewing glare to Scan or splitting Preflash from Enlarger MUST NOT migrate their canonical leaves or expand a preset's scope.
+
+### Tone and color access
+
+Scan organizes the [scan workflow](../../CONTEXT.md#language), not only optical capture. Tone & Color MUST remain a separate module from Scanner and its specialized negative-conversion correction. Output MUST NOT retain a second editor or an empty Finishing module.
+
+Module names and related messages MUST follow [GUI product language](../gui-language/spec.md#color-and-output-labels). The controls' independent payload scope follows [Preset design](../presets/design.md#sections), regardless of their Scan placement.
+
+Acceptance MUST exercise these user operations through the production inspector:
+
+1. Reach Tone & Color from Scan on positive-film, converted-negative, and photographic-paper routes without a negative-conversion prerequisite for positive media.
+2. Find its controls by English and Simplified Chinese names and canonical `finishing.*` paths in either interface language. Search and Only modified reveal the same owner without editing values or changing the route.
+3. Switch to preserved-negative polarity or the film-free input route. Stored values remain readable with an inactive reason and return unchanged when an eligible route is restored.
+4. Edit and reset the module without changing scanner controls, negative-conversion correction, Print viewing glare, or output settings. Undo and Redo restore the adjustment and its explicit ownership without expanding its scope.
+5. Hold and release module comparison on retained Preview and Scan results. Retained Save, independent Export, accepted geometry, and history retain the behavior defined by [editing and comparison](../finishing/spec.md#editing-and-comparison).
+
 
 ## Complete control access
 
@@ -245,7 +260,7 @@ Modules expose resets under [Section reset](#section-reset). Control coverage ac
 
 A visible module reset MUST restore exactly that module's editable canonical paths to their reset baseline. A module reset MUST NOT reset another module because modules can share one serialized preset section.
 
-Finishing reset MUST affect only the controls owned by Finishing, including Range. Row reset MUST affect only its own control.
+Tone & Color reset MUST affect only its own controls, including Range. Row reset MUST affect only its own control.
 
 In particular, Preflash reset MUST leave main Enlarger exposure and filtration unchanged, and Print viewing glare reset MUST leave Print chemistry unchanged. A material module reset MUST also restore its material selection and development time.
 
@@ -271,7 +286,7 @@ Application settings sections General and Display each offer one grouped reset o
 
 Undo and Redo apply to accepted adjustments for the current source: direct parameter edits, workflow and material selection, feature-profile and look-preset application, and module reset. Each action includes its required dependent normalizations. A rejected edit creates no history entry.
 
-Accepted finishing edits and resets MUST use the same adjustment history. Transient finishing comparison MUST NOT create a history entry.
+Accepted tone and color edits and resets MUST use the same adjustment history. Transient module comparison MUST NOT create a history entry.
 
 One slider drag is one history entry, even if intermediate valid values schedule previews. A completed numeric text edit is one entry. One original wheel event over a numeric field is one entry.
 

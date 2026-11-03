@@ -76,7 +76,7 @@ pub(crate) fn sections(
             "Change internal tonal separation with less influence near reference endpoints. This is not sharpening or an endpoint crop.",
         ),
         (
-            "Warmth",
+            "Tone & Color warmth",
             "Reset Warmth",
             "finishing.warmth",
             &mut finishing.warmth,

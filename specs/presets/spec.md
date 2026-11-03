@@ -99,7 +99,7 @@ Multi-photograph application follows [Photograph work](../gui-product-design/pho
 - A preset does not store or directly apply a workflow. A look preset selects the corresponding workflow default: negative film selects `input > film > print > scan`, and positive film selects `input > film > scan`.
 - The user MAY then choose another supported workflow manually. A section preset carries no film reference and MUST NOT change the workflow.
 - Applying a look preset replaces all carried look-owned controls together, including the controls of every carried section, so a section preset MUST be applied after a look change to take effect. An omitted camera group preserves the active virtual film exposure and metering controls.
-- A whole look owns and replaces [common finishing](../finishing/spec.md#persistence-and-replay), independently of its optional camera group. Sparse omission MUST NOT edit finishing values.
+- A whole look owns and replaces [Tone & Color](../finishing/spec.md#persistence-and-replay), independently of its optional camera group. Sparse omission MUST NOT edit finishing values.
 - Application clears transient Scan-for-print state, invalidates dependent render state, and schedules automatic Preview.
 - Applying a look preset normalizes the scanner output: when the resolved film is positive or the selected workflow route is not a film-scan route, the output becomes the direct-scan mode. A route the caller already declared as `input > film > scan` or `input > convert-film > scan` is preserved, so a document that selects the negative conversion keeps that selection on those routes.
 - `core` owns that rule once for the GUI and the CLI.
@@ -160,7 +160,7 @@ A look preset owns film and print selection plus explicit film, print, enlarger,
 
 Neutral enlarger filter anchors are calibration baselines, not look controls, and are not preset-owned. Existing material controls and `output_mix` follow [Output mix and material controls](../output-mix/spec.md). A section preset owns exactly the controls of its section.
 
-Common finishing is an independent look-owned section under [Preset design](design.md#sections). Its controls MUST NOT belong to the optional camera group.
+Tone & Color is an independent look-owned section under [Preset design](design.md#sections). Its controls MUST NOT belong to the optional camera group.
 
 Virtual film exposure compensation and metering belong to the look through the optional `parameters.camera` group. Other camera controls remain outside this group; camera diffusion remains a separate look-owned group.
 
@@ -195,7 +195,7 @@ This rule applies equally to whole-look payloads and section payloads. Capturing
 - The authored-versus-baseline state persists in the parameter document so replaying a resolved document reproduces its render bit-identically; documents without the flags treat every axis as baseline.
 - The exposure normalization refines baseline axes from the database's f64 values while the published parameter surface carries their f32 views. Authored axes stay exact.
 - A render that consumes only the published f32 views MUST agree within 1e-8 absolute on the f64 reference values (measured 6.4e-10 in the report/render acceptance fixture).
-- Existing `--params` invocations and consumers MUST retain their `0.3.4` results with `output_mix.amount = 1` and neutral [common finishing](../finishing/spec.md#controls). Exceptions remain the explicit [output lightness retirement](../output-mix/spec.md#output-boundary-and-retirement) and [optical-order cutover](../film-chain/spec.md#optical-order-cutover).
+- Existing `--params` invocations and consumers MUST retain their `0.3.4` results with `output_mix.amount = 1` and neutral [Tone & Color](../finishing/spec.md#controls). Exceptions remain the explicit [output lightness retirement](../output-mix/spec.md#output-boundary-and-retirement) and [optical-order cutover](../film-chain/spec.md#optical-order-cutover).
 - The cutover does not change stored blur units, grain selectors, or print-glare ownership.
 - The [CLI parameter language](../cli/spec.md) owns command syntax and composition rules.
 

@@ -1259,7 +1259,7 @@ fn hidden_grain_modified_locators_and_whole_reset_are_complete_scoped_and_revers
 }
 
 #[test]
-fn control_search_by_label_module_and_path_never_changes_parameters_or_saved_sections() {
+fn control_search_and_scan_tone_access_preserve_canonical_state() {
     let mut s = session();
     let h = &mut s.harness;
     let params = h.state().params.clone();
@@ -1278,6 +1278,40 @@ fn control_search_by_label_module_and_path_never_changes_parameters_or_saved_sec
     search_controls(h, "");
     assert_eq!(h.state().params, params);
     assert_eq!(h.state().gui_state.sections, sections);
+
+    set_route(h, "input > film > print > scan");
+    navigate_stage(h, controls::Stage::Scan);
+    let scan_heading = h.get_by_label("Scan stage").raw_bounds().unwrap();
+    let output_heading = h.get_by_label("Output stage").raw_bounds().unwrap();
+    let module = h.get_by_label("Tone & Color").raw_bounds().unwrap();
+    assert!(scan_heading.y0 < module.y0 && module.y0 < output_heading.y0);
+    assert_eq!(h.query_all_by_label("Tone & Color").count(), 1);
+    click(h, "Tone & Color");
+    let scanner = h.state().params.scanner.clone();
+    edit(h, "Brightness", "0.35");
+    assert_eq!(h.state().params.finishing.brightness, 0.35);
+    assert_eq!(h.state().params.scanner, scanner);
+    assert_eq!(
+        h.state().params.workflow.route,
+        "input > film > print > scan"
+    );
+    reveal_control(h, "finishing.brightness");
+    assert_eq!(h.query_all_by_label("Brightness").count(), 1);
+    assert_eq!(h.state().params.finishing.brightness, 0.35);
+    click(h, "Undo");
+    assert_eq!(h.state().params.finishing.brightness, 0.0);
+    click(h, "Redo");
+    assert_eq!(h.state().params.finishing.brightness, 0.35);
+
+    set_route(h, "input > film > scan");
+    let slide = profile::load_profile_by_name(&data_dir(), "kodak_ektachrome_100").unwrap();
+    select_film(h, slide.info.name.as_deref().unwrap());
+    assert_eq!(h.state().params.scanner.scan_output, "direct_scan");
+    reveal_control(h, "finishing.brightness");
+    assert!(!h.get_by_label("Brightness").node().is_disabled());
+    edit(h, "Brightness", "0.5");
+    assert_eq!(h.state().params.finishing.brightness, 0.5);
+    assert_eq!(h.state().params.scanner.scan_output, "direct_scan");
 }
 
 #[test]

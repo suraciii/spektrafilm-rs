@@ -278,6 +278,10 @@ pub(crate) fn inventory() -> &'static [ControlEntry] {
                     text.push('\n');
                     text.push_str(&super::localized_for(locale, label));
                 }
+                if entry.path.starts_with("finishing.expand.") {
+                    text.push('\n');
+                    text.push_str(&super::localized_for(locale, "Expand"));
+                }
                 if entry.path == "camera.film_format_mm" {
                     text.push('\n');
                     text.push_str(&super::localized_for(locale, "Frame Long Edge"));
@@ -522,7 +526,7 @@ fn runtime_owner(path: &str) -> (ControlOwner, &'static str) {
     } else if path.starts_with("scanner.") {
         (Owner(Stage::Scan), "Scanner")
     } else if path.starts_with("finishing.") {
-        (Owner(Stage::Output), "Finishing")
+        (Owner(Stage::Scan), "Finishing")
     } else if path.starts_with("cmyk.") {
         (Owner(Stage::Output), "CMYK ink style")
     } else if path.starts_with("io.input_gamut_compress.") {
@@ -646,7 +650,7 @@ fn append_nonruntime(entries: &mut Vec<ControlEntry>) {
         SurfaceEntry {
             path: "action.finishing_compare",
             label: "Hold finishing comparison",
-            owner: Owner(Stage::Output),
+            owner: Owner(Stage::Scan),
             section: "Finishing",
             editor: Action,
             validator: "controls::finishing::sections",
@@ -1374,7 +1378,7 @@ const SURFACES: &[SurfaceEntry] = &[
 const LABELS: &[(&str, &str)] = &[
     ("finishing.brightness", "Brightness"),
     ("finishing.contrast", "Contrast"),
-    ("finishing.warmth", "Warmth"),
+    ("finishing.warmth", "Tone & Color warmth"),
     ("finishing.saturation", "Saturation"),
     ("finishing.expand.enabled", "Enable Expand"),
     ("finishing.expand.black", "Black reference"),

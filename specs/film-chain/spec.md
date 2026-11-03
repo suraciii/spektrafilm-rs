@@ -8,7 +8,7 @@
 - Optional CMYK ink style MUST satisfy the [CMYK ink style](../cmyk-style/spec.md) contract. It MUST NOT determine base workflow topology.
 - Base workflows include input color management, direct film scanning, photographic printing, and the existing film-conversion routes.
 - The default film path starts with source color and exposure → spectral film exposure and development → film-domain effects (including Spektra, Dye, and Fotufilm Film grain) → the selected base route → scanner interpretation.
-- It continues with [common finishing](../finishing/spec.md#scope-and-applicability) → output gamut processing → unsharp masking → transfer encoding → Procedural grain → optional CMYK ink style → output mix → output handoff.
+- It continues with [Tone & Color](../finishing/spec.md#scope-and-applicability) → output gamut processing → unsharp masking → transfer encoding → Procedural grain → optional CMYK ink style → output mix → output handoff.
 - [Output mix and material controls](../output-mix/spec.md) owns reuse of existing preflash and chemistry, retirement of Output lightness compression, and overall output mix. It adds no digital material-response layer or scan-reference isolation pass.
 - CMYK ink style remains after all scanner-domain effects; overall output mix follows it before output handoff.
 - Film, photographic paper, spectral, and color profiles are data inputs. A missing or invalid data input consumed by the selected route is an error before output publication.
@@ -131,7 +131,7 @@ The white reference of a scan is the clear film base of the scanned medium. A cl
 - A negative film scan with `negative_to_positive` additionally exposes `scanner.conversion_style`, the declared stylization point of the conversion tone.
 - The scanner owns no white/black correction, no white/black levels, and no film-scan black or white points. Those controls are removed from the runtime model, discovery, presets, recipes, GUI state, and CLI options; their canonical names MUST fail unknown-field validation at the current schema version.
 - Negative conversion belongs to `negative_to_positive`. A photographic-paper scan and a slide film scan MUST NOT expose it; see [Direct negative-film scan output](#direct-negative-film-scan-output).
-- Existing exposure and development controls belong to their material stage. Independent [common finishing](../finishing/spec.md#scope-and-applicability) applies only to eligible positive scans; it does not restore scanner finishing.
+- Existing exposure and development controls belong to their material stage. Independent [Tone & Color](../finishing/spec.md#scope-and-applicability) applies only to eligible positive scans; it does not restore scanner finishing.
 - Scanner calibration, inverse curves, and correction references retain their existing dependencies on profile and development settings. Material controls MUST NOT add a second reference model or alter the real captured-negative recovery solve.
 - Scan provenance records one colorimetric sensor and the clear-film white reference. It MUST publish the resolved readout illuminant, the output space white, and the identity matrix of the scan transform.
 
@@ -191,7 +191,7 @@ The [Print exposure composition](../output-mix/design.md#print-exposure-composit
 - The negative reconstruction reads developed record density over each record's own minimum. It inserts no synthetic scanner capture.
 - Film continuation reads the saved densities without repeating their formation.
 - The [lab scan contract](lab-scan/spec.md) owns the inverse, the opt-in frame setup, tone, the `standard` default, the `neutral` migration alias, and fixed file styles. Every style retains the frozen camera compensation on simulated film continuation; the enabled setup does not subtract it again.
-- Scanner lens blur acts on transmitted light before density reconstruction. [Common finishing](../finishing/design.md#color-and-order) follows positive interpretation before the existing output tail.
+- Scanner lens blur acts on transmitted light before density reconstruction. [Tone & Color](../finishing/design.md#color-and-order) follows positive interpretation before the existing output tail.
 - `negative_to_positive` accepts every grain engine, because Procedural composites on the encoded scanner output. Backend selection follows [GPU execution](../gpu-execution/spec.md#backend-selection).
 
 ## Print exposure mode
