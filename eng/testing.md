@@ -14,6 +14,17 @@ Parameterized device tests should acquire one backend outside the case loop unle
 
 Prepared device banks may be reused within one test when formation parameters and sampling footprints match. Keep them on the backend that prepared them. Keep image and readout buffers local to each case. Prepared-bank reuse must not replace cold production-path acceptance.
 
+**Built-in look references:** Each shipped look needs a current entry in `crates/spektrafilm-gui/assets/preset-thumbnails.json`. After adding or changing a look or its material dependencies, run the existing real-CPU authoring operation and the normal completeness check:
+
+```bash
+cargo test --locked -p spektrafilm-gui --bin spektrafilm-gui \
+  presets::thumbnails::tests::generate_fixed_reference_thumbnails -- --exact --ignored
+cargo test --locked -p spektrafilm-gui --bin spektrafilm-gui \
+  presets::thumbnails::tests::distributed_bundle_contains_current_real_render_for_every_builtin_look -- --exact
+```
+
+The authoring command uses the default-f32 configuration and writes the distributed bundle from actual CPU renders. Do not replace a missing reference with another look's image or edit its fingerprint by hand. The normal completeness check remains enabled.
+
 **Main cost:** The full gate must stay within the `Main full verification` timeout in [.github/workflows/ci.yml](../.github/workflows/ci.yml). A change that adds rendering or preparation work reports the measured wall clock of the affected suites in the pull request. Test codegen uses `[profile.test] opt-level = 2` in [Cargo.toml](../Cargo.toml); it still inherits `dev`, so debug assertions and overflow checks stay enabled and only code generation differs.
 
 **Long local gates:** Use `just ci-pr` as the first local gate. If `just ci` reaches the local shell timeout while a workspace test is still running, run `just test` and `just test-f64` as separate commands and report each result. A partial `just ci` run is not a full-gate pass.
