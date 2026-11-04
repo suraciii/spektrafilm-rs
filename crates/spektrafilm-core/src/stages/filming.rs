@@ -440,7 +440,7 @@ pub(crate) fn apply_spektra_grain(
 ) -> Result<ImageBuf, String> {
     let prepared = prepare_spektra(film, grain, norm_curves_f64, pixel_size_um)?;
     let sampling = resolve_spektra_sampling(grain.spektra_sampling, use_fast_stats);
-    spektrafilm_model::grain::spektra::apply_grain(
+    spektrafilm_model::grain::spektra::apply_grain_with_sampling(
         &density_cmy,
         norm_curves_f64,
         &prepared.layers_tensor,

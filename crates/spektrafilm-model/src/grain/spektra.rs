@@ -407,6 +407,47 @@ pub fn apply_grain(
     positive_film: bool,
     monochrome: bool,
     use_fast_stats: bool,
+    base_seed: u64,
+    backend: &dyn ComputeBackend,
+) -> Result<ImageBuf, String> {
+    apply_grain_with_sampling(
+        density_cmy,
+        norm_curves_f64,
+        curves_layers,
+        prepared,
+        pixel_size_um,
+        grain_blur,
+        blur_dye_clouds_um,
+        micro_structure,
+        usm_sigma,
+        usm_amount,
+        positive_film,
+        monochrome,
+        use_fast_stats,
+        false,
+        base_seed,
+        backend,
+    )
+}
+
+/// Apply the original Spektra sampling law with an explicit statistical PCG
+/// selector. The existing [`apply_grain`] entry point remains the CPU/GPU
+/// reference wrapper and never selects the statistical realization.
+#[allow(clippy::too_many_arguments)]
+pub fn apply_grain_with_sampling(
+    density_cmy: &ImageBuf,
+    norm_curves_f64: &[[f64; 3]],
+    curves_layers: &[[[f64; 3]; 3]],
+    prepared: &PreparedGrain,
+    pixel_size_um: f64,
+    grain_blur: f64,
+    blur_dye_clouds_um: f64,
+    micro_structure: [f64; 2],
+    usm_sigma: f64,
+    usm_amount: f64,
+    positive_film: bool,
+    monochrome: bool,
+    use_fast_stats: bool,
     statistical_pcg: bool,
     base_seed: u64,
     backend: &dyn ComputeBackend,
@@ -414,7 +455,7 @@ pub fn apply_grain(
     validate_prepared(prepared)?;
     if statistical_pcg {
         return Err(
-            "Spektra statistical PCG sampling is only implemented by the GPU resident stage; \
+            "Spektra statistical PCG sampling requires the GPU-resident Spektra stage; \
              select spektra_sampling=mt19937 or fast_stats for CPU execution"
                 .into(),
         );
@@ -600,7 +641,6 @@ mod tests {
             false,
             monochrome,
             fast,
-            false,
             0,
             &CpuBackend,
         )
@@ -659,7 +699,7 @@ mod tests {
         for pixel in image.pixels_mut() {
             pixel.fill(from_f64(1.1));
         }
-        let error = apply_grain(
+        let error = apply_grain_with_sampling(
             &image,
             &composite,
             &layers,
@@ -678,7 +718,7 @@ mod tests {
             &CpuBackend,
         )
         .unwrap_err();
-        assert!(error.contains("GPU resident"), "{error}");
+        assert!(error.contains("GPU-resident"), "{error}");
     }
 
     #[test]
@@ -764,7 +804,6 @@ mod tests {
             [0.0; 2],
             0.0,
             0.0,
-            false,
             false,
             false,
             false,

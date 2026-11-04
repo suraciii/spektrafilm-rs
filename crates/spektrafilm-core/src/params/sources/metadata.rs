@@ -25,6 +25,12 @@ fn types() -> &'static BTreeMap<String, String> {
             },
         )
         .expect("type recording serialization cannot fail");
+        // The field is skipped when it is the default `auto`, so its type is
+        // declared here beside the serialization rule.
+        out.insert(
+            "film_render.grain.spektra_sampling".into(),
+            "SpektraSampling".into(),
+        );
         out
     })
 }

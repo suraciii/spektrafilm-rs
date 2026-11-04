@@ -114,6 +114,11 @@ pub enum SpektraSampling {
 }
 
 impl SpektraSampling {
+    /// True for the default that follows the global fast-statistics switch.
+    pub fn is_auto(&self) -> bool {
+        matches!(self, Self::Auto)
+    }
+
     /// Stable telemetry/document spelling.
     pub const fn as_str(self) -> &'static str {
         match self {
@@ -242,7 +247,7 @@ pub struct GrainParams {
     /// Spektra sampling realization. `auto` preserves the historical
     /// `settings.use_fast_stats` selection; `statistical_pcg` is the explicit
     /// GPU statistical mode introduced for the A prototype.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "SpektraSampling::is_auto")]
     pub spektra_sampling: SpektraSampling,
 }
 
@@ -518,7 +523,10 @@ mod fotufilm_tests {
         let default = GrainParams::default();
         assert_eq!(default.spektra_sampling, SpektraSampling::Auto);
         let saved = serde_json::to_value(&default).unwrap();
-        assert_eq!(saved["spektra_sampling"], "auto");
+        assert!(
+            !saved.as_object().unwrap().contains_key("spektra_sampling"),
+            "auto must not rewrite existing persisted grain documents"
+        );
         for (name, expected) in [
             ("mt19937", SpektraSampling::Mt19937),
             ("fast_stats", SpektraSampling::FastStats),
@@ -534,6 +542,10 @@ mod fotufilm_tests {
             );
         }
         assert!(serde_json::from_str::<GrainParams>(r#"{"spektra_sampling":"unknown"}"#).is_err());
+        assert_eq!(
+            crate::params::validation::enum_values("film_render.grain.spektra_sampling").unwrap(),
+            ["auto", "mt19937", "fast_stats", "statistical_pcg"]
+        );
     }
 
     /// A named control and the setter that writes it.

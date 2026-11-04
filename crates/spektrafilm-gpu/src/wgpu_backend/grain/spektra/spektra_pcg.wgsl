@@ -1,7 +1,8 @@
 // Spektra statistical PCG particle fields. Curve interpolation uses f64
 // tables, then floor addition, conditioning and count products use f32 exactly
-// like the reference working arrays. NumPy clumping continues from the final
-// plane's MT19937 seed/state.
+// like the reference working arrays. Micro-structure uses the existing
+// fresh-seeded fast-statistics clump field; this mode does not continue the
+// sequential MT particle state.
 
 struct Params {
   width: u32,
@@ -31,14 +32,6 @@ struct Params {
 // Layer curve rows: `knots` rows × 3 sublayers × 3 channels.
 @group(0) @binding(3) var<storage, read> curve_layers: array<f64>;
 @group(0) @binding(4) var<storage, read_write> layer_fields: array<f32>;
-
-// The local WGPU HAL uses this named function to select strict Metal math.
-// Every Poisson and binomial decision below is conditioned on an f64 value
-// whose last bits change the reference's discrete outcome, so no contraction
-// or reassociation is allowed anywhere in this module.
-fn spektrafilm_strict_float(v: f64) -> f64 {
-  return v;
-}
 
 // Spektra statistical PCG realization.
 //
@@ -112,14 +105,15 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
       let saturation = sf32_sub(1.0f, sf32_mul(sf32_mul(prob, gu), 1.0f - 1e-6f));
       let lam = sf32_div(npp, saturation);
       let layer_seed = u32(p.base_seed) + ch + sl * 10u;
+      let seed_hi = u32(p.base_seed >> 32u);
       var rng = Pcg(
-        pcg_splitmix(layer_seed) ^ pcg_splitmix(global_i),
+        pcg_splitmix(layer_seed) ^ pcg_splitmix(global_i) ^ pcg_splitmix(seed_hi),
         (pcg_splitmix(global_i ^ 0x9e3779b9u) << 1u) | 1u,
       );
       let seeds = pcg_poisson(f32(lam), &rng);
       let developed = pcg_binomial(seeds, f32(prob), &rng);
-      let particle = developed * od;
-      let value = particle * saturation;
+      let particle = sf32_mul(developed, od);
+      let value = sf32_mul(particle, saturation);
       layer_fields[(sl * n + i) * 3u + ch] = value;
       if p.flags.y != 0u {
         layer_fields[(sl * n + i) * 3u + 1u] = value;

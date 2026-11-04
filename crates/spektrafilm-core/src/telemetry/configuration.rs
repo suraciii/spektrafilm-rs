@@ -376,11 +376,12 @@ pub struct GrainConfiguration {
     pub engine: GrainEngine,
     pub mode: GrainMode,
     pub spektra_fast_statistics_sampler: bool,
-    /// Resolved Spektra sampling mode (`auto` is never emitted here; the
-    /// report records the concrete `mt19937`, `fast_stats`, or
-    /// `statistical_pcg` choice).
-    #[serde(default)]
-    pub spektra_sampling: String,
+    /// Resolved Spektra sampling mode; absent when grain is inactive or the
+    /// selected engine is not Spektra. `auto` is never emitted: the report
+    /// records the concrete `mt19937`, `fast_stats`, or `statistical_pcg`
+    /// choice.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub spektra_sampling: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub record: Option<RecordConfiguration>,
 }
@@ -653,17 +654,15 @@ impl RenderConfiguration {
                         grain.spektra_sampling,
                         crate::params::SpektraSampling::Auto
                     ) && params.settings.use_fast_stats)),
-                spektra_sampling: if grain.engine == crate::params::GrainEngine::Spektra {
-                    match grain.spektra_sampling {
+                spektra_sampling: (grain_active
+                    && grain.engine == crate::params::GrainEngine::Spektra)
+                    .then(|| match grain.spektra_sampling {
                         crate::params::SpektraSampling::Auto if params.settings.use_fast_stats => {
                             "fast_stats".to_owned()
                         }
                         crate::params::SpektraSampling::Auto => "mt19937".to_owned(),
                         explicit => explicit.as_str().to_owned(),
-                    }
-                } else {
-                    "auto".to_owned()
-                },
+                    }),
                 record: None,
             },
             spatial: SpatialConfiguration {

@@ -185,7 +185,6 @@ fn reference(image: &ImageBuf, params: &spektrafilm_backend::SpektraGrainGpuPara
         params.lookup_sign < 0.0,
         params.monochrome,
         false,
-        false,
         params.base_seed,
         &CpuBackend,
     )

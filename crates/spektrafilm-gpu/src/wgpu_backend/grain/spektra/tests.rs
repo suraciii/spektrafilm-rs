@@ -131,7 +131,6 @@ fn active_layers_fast_stats_match_reference_across_workgroups() {
                 sign < 0.0,
                 monochrome,
                 true,
-                false,
                 params.base_seed,
                 &CpuBackend,
             )
@@ -306,6 +305,8 @@ fn statistical_pcg_is_deterministic_across_storage_windows() {
 
     gpu.queue
         .write_buffer(&density, 0, bytemuck::cast_slice(&input));
+    // 1024 bytes yields 42-pixel chunks for this 132-pixel image, so the
+    // bounded build spans four storage windows rather than repeating one.
     let bounded = build_spektra_grain_state_with_limit(
         &gpu.device,
         width,
@@ -313,7 +314,7 @@ fn statistical_pcg_is_deterministic_across_storage_windows() {
         &density,
         &params,
         &gpu,
-        4096,
+        1024,
     )
     .expect("bounded statistical PCG state");
     bounded.submit(&gpu).unwrap();
@@ -324,6 +325,38 @@ fn statistical_pcg_is_deterministic_across_storage_windows() {
         actual,
         gpu.read_mapped_f32(&readback, bytes).unwrap(),
         "storage windows changed the per-pixel PCG realization"
+    );
+
+    gpu.queue
+        .write_buffer(&density, 0, bytemuck::cast_slice(&input));
+    let mut fast_params = params.clone();
+    fast_params.statistical_pcg = false;
+    let fast = build_spektra_grain_state(&gpu.device, width, height, &density, &fast_params, &gpu)
+        .expect("fast-statistics state for selection check");
+    fast.submit(&gpu).unwrap();
+    let mut encoder = gpu.device.create_command_encoder(&Default::default());
+    encoder.copy_buffer_to_buffer(&density, 0, &readback, 0, bytes);
+    gpu.queue.submit(Some(encoder.finish()));
+    assert_ne!(
+        actual,
+        gpu.read_mapped_f32(&readback, bytes).unwrap(),
+        "statistical_pcg must select the PCG shader, not fast statistics"
+    );
+
+    gpu.queue
+        .write_buffer(&density, 0, bytemuck::cast_slice(&input));
+    let mut high_seed = params.clone();
+    high_seed.base_seed += 1u64 << 32;
+    let high = build_spektra_grain_state(&gpu.device, width, height, &density, &high_seed, &gpu)
+        .expect("high seed statistical PCG state");
+    high.submit(&gpu).unwrap();
+    let mut encoder = gpu.device.create_command_encoder(&Default::default());
+    encoder.copy_buffer_to_buffer(&density, 0, &readback, 0, bytes);
+    gpu.queue.submit(Some(encoder.finish()));
+    assert_ne!(
+        actual,
+        gpu.read_mapped_f32(&readback, bytes).unwrap(),
+        "the PCG stream must consume the full request seed"
     );
 }
 

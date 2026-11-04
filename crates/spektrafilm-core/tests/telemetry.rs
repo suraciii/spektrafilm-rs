@@ -1110,15 +1110,15 @@ fn grain_configuration_describes_effective_sampler_branches() {
     params.settings.use_fast_stats = true;
     let auto_fast = RenderConfiguration::from_runtime(&params, &profile, &profile).grain;
     assert!(auto_fast.spektra_fast_statistics_sampler);
-    assert_eq!(auto_fast.spektra_sampling, "fast_stats");
+    assert_eq!(auto_fast.spektra_sampling.as_deref(), Some("fast_stats"));
     params.settings.use_fast_stats = false;
     let auto_mt = RenderConfiguration::from_runtime(&params, &profile, &profile).grain;
     assert!(!auto_mt.spektra_fast_statistics_sampler);
-    assert_eq!(auto_mt.spektra_sampling, "mt19937");
+    assert_eq!(auto_mt.spektra_sampling.as_deref(), Some("mt19937"));
     params.film_render.grain.spektra_sampling = params::SpektraSampling::StatisticalPcg;
     let pcg = RenderConfiguration::from_runtime(&params, &profile, &profile).grain;
     assert!(!pcg.spektra_fast_statistics_sampler);
-    assert_eq!(pcg.spektra_sampling, "statistical_pcg");
+    assert_eq!(pcg.spektra_sampling.as_deref(), Some("statistical_pcg"));
     params.film_render.grain.spektra_sampling = params::SpektraSampling::Auto;
     params.settings.use_fast_stats = true;
     params.film_render.grain.engine = params::GrainEngine::Procedural;
@@ -1129,13 +1129,12 @@ fn grain_configuration_describes_effective_sampler_branches() {
     // hanatos2025.
     assert!(grain.active);
     assert!(!grain.spektra_fast_statistics_sampler);
+    assert!(grain.spektra_sampling.is_none());
     params.film_render.grain.engine = params::GrainEngine::Spektra;
     params.film_render.grain.active = false;
-    assert!(
-        !RenderConfiguration::from_runtime(&params, &profile, &profile)
-            .grain
-            .spektra_fast_statistics_sampler
-    );
+    let inactive = RenderConfiguration::from_runtime(&params, &profile, &profile).grain;
+    assert!(!inactive.spektra_fast_statistics_sampler);
+    assert!(inactive.spektra_sampling.is_none());
 }
 
 #[test]

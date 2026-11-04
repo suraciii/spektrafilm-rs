@@ -129,6 +129,11 @@ impl WgpuBackend {
                 let clump_image = mul(pixels, 24)?;
                 let layer_image = mul(image, layers)?;
                 let chunk = (window_limit / mul(12, layers.max(2))?).min(pixels);
+                let chunk = if gp.statistical_pcg {
+                    chunk.min(8_192)
+                } else {
+                    chunk
+                };
                 if chunk == 0 {
                     return Err("Spektra layer window cannot hold one pixel".into());
                 }
