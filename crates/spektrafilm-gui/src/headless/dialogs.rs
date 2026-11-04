@@ -725,22 +725,63 @@ fn cancelled_export_chooser_and_rejected_destination_do_not_commit_draft_prefere
     assert_eq!(h.state().export_options, committed);
 
     let existing = s.directory.path().join("rejected-destination.tiff");
+    let rejected = s.directory.path().join("rejected-destination.wrong");
     let original = b"existing user file";
     std::fs::write(&existing, original).unwrap();
+    std::fs::write(&rejected, b"confirmed path sentinel").unwrap();
     open_export(h);
     choose(h, "Format", "TIFF");
     choose(h, "Bit depth", "32 bit");
-    script(
-        h,
-        chooser::Chooser::chooser_path(&s.directory.path().join("rejected-destination.wrong")),
-    );
+    script(h, chooser::Chooser::chooser_path(&rejected));
     export_action(h, "Export file…");
     assert!(h.state().export_job.is_none());
     assert_eq!(h.state().export_options, committed);
     assert_eq!(std::fs::read(&existing).unwrap(), original);
+    assert_eq!(
+        std::fs::read(&rejected).unwrap(),
+        b"confirmed path sentinel"
+    );
     assert_eq!(h.state().params, params);
     assert_eq!(h.state().can_undo(), could_undo);
     assert_eq!(h.state().can_redo(), could_redo);
+}
+
+#[test]
+fn confirmed_image_names_and_containers_are_not_reinterpreted() {
+    let mut s = session();
+    let h = &mut s.harness;
+    preview(h);
+
+    // This is the chooser result, not the text typed into a native widget.
+    // A name with two suffixes is legal and its final extension selects Save.
+    let save = s.directory.path().join("retained.png.jpg");
+    let other_save = s.directory.path().join("retained.png");
+    std::fs::write(&save, b"save sentinel").unwrap();
+    std::fs::write(&other_save, b"other sentinel").unwrap();
+    script(h, chooser::Chooser::chooser_path(&save));
+    click(h, "SAVE");
+    wait_until(h, |app| app.pending_saves.is_empty());
+    assert!(
+        std::fs::read(&save)
+            .unwrap()
+            .starts_with(&[0xff, 0xd8, 0xff])
+    );
+    assert_eq!(std::fs::read(&other_save).unwrap(), b"other sentinel");
+
+    let export = s.directory.path().join("render.png.png");
+    let other_export = s.directory.path().join("render.png");
+    std::fs::write(&export, b"export sentinel").unwrap();
+    std::fs::write(&other_export, b"other sentinel").unwrap();
+    open_export(h);
+    script(h, chooser::Chooser::chooser_path(&export));
+    export_action(h, "Export file…");
+    wait_until(h, |app| app.export_job.is_none());
+    assert!(
+        std::fs::read(&export)
+            .unwrap()
+            .starts_with(b"\x89PNG\r\n\x1a\n")
+    );
+    assert_eq!(std::fs::read(&other_export).unwrap(), b"other sentinel");
 }
 
 // The export dialog is modal, but a modal window does not block drag-and-drop,

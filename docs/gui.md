@@ -32,6 +32,8 @@ Built-in reference thumbnails sit beside the compact card controls. The fixed-re
 
 The right inspector contains one continuous list, not mutually exclusive pages. Its sticky **Search controls**, **Only modified**, and stage-jump strip remain visible while controls scroll. The jumps reveal and scroll to **Input and capture**, **Film**, **Print**, **Scan**, or **Output** in that same list while preserving the active search and Only modified filter without changing parameters. Several stages and modules can remain open together. Folding a module changes its presentation only, and ordinary edits, render completion, and route changes retain its disclosure and scroll state.
 
+Fresh disclosure expands Workflow, Camera, and Tone & Color. A closed inactive module shows a compact **Inactive** state beside its title; expand it to read the actual reason without hover. Expanded controls replace duplicate key-control summaries.
+
 | Stage | Main modules |
 | --- | --- |
 | Input and capture | Workflow, Camera, Camera diffusion, Input, Import Raw, Source rotation, Crop and upscale, Input gamut compress, Spectral upsampling, Convert |
@@ -40,7 +42,9 @@ The right inspector contains one continuous list, not mutually exclusive pages. 
 | Scan | Scanner, Print viewing glare, Tone & Color |
 | Output | Output, Output gamut compress, CMYK ink style |
 
-The persistent **SCAN** and **SAVE** action bar stays below the inspector. SCAN shows `full-resolution effects`; SAVE shows `retained result · no rerender`. Preview updates automatically; there is no Preview button or enablement preference. **Settings** owns general application preferences, state files and startup defaults, display configuration, and Diagnostics. Independent file-delivery options belong to the **Export options** dialog, not a photographic module.
+The persistent **SCAN** and **SAVE** action bar stays below the inspector. SCAN shows `full-resolution effects`; SAVE identifies its retained operation and pixel dimensions, for example `Preview · 640 × 437 px`. It writes that result without rerendering. Preview updates automatically; there is no Preview button or enablement preference. **Settings** owns general application preferences, state files and startup defaults, display configuration, and Diagnostics. Independent file-delivery options belong to the **Export options** dialog, not a photographic module.
+
+Screen readers receive the retained result summary when SAVE is focused. An empty result uses a short unavailable caption.
 
 ## Interface language
 
@@ -70,9 +74,11 @@ GPU Preview and Scan reuse the current RGB input upload while its source, device
 
 Input color-space and CCTF controls reinterpret the accepted samples; they do not convert or rewrite the stored RAW carrier. Preview, Scan, input viewing, and Export use that accepted declaration, and queued exports keep the declaration captured at submission even if the active photograph changes.
 
+**Input and capture → Camera** keeps exposure compensation and automatic exposure directly visible. Its **Capture setup** (**拍摄设置**) group starts closed and contains Film Format, Frame Long Edge, metering, color filter, and capture illuminant. Search, Only modified, and canonical locators reveal the actual controls without changing values; Camera reset still owns the complete module.
+
 ### Film Format
 
-**Input and capture → Camera → Film Format** offers **35mm**, **120**, **4×5**, and **Custom**. These choices set the physical film scale for grain and other film effects. They do not crop, resize, or change the image's aspect ratio.
+**Input and capture → Camera → Capture setup → Film Format** offers **35mm**, **120**, **4×5**, and **Custom**. These choices set the physical film scale for grain and other film effects. They do not crop, resize, or change the image's aspect ratio.
 
 The choices use exposed-image long edges of 36 mm, 56 mm, and 127 mm respectively. **120** uses one representative size; it does not select a square crop. **Custom** reveals **Frame Long Edge** for precise millimeter input. Opening Custom alone does not change the photograph.
 
@@ -90,7 +96,9 @@ Simulated exposure remains a separate control at **Input and capture → Camera 
 
 Each numeric row places the parameter name on the left, then the unit and right-aligned value. Unitless rows keep the same value column. The slider spans the module width below the row. A modified row shows a marker beside its label and marks its value; the marker uses the same reset baseline as the module's `modified` chip. Tuple, optional, extra, and boolean rows use the same marker rule. The slider only moves the value; the field stays the row's editor. The slider is logarithmic when the declared range spans more than three decades, or when the declared minimum is zero and the declared maximum reaches one thousand or more. A signed range stays linear. A logarithmic slider anchors its smallest positive value at the parameter's declared step, so its floor matches the field's own granularity. A declared minimum of zero keeps zero as the track's leftmost stop.
 
-A boolean row is a switch that names the concept it enables. A choice row shows the parameter's name on the left and its selector on the right. A row marked experimental carries an `experimental` chip beside its name. A checkbox belongs to list selection only.
+Dimensionless rows omit the unit text while retaining value-column alignment. Real units stay readable without mid-word wrapping.
+
+A boolean row is a switch that names the concept it enables. A choice row shows the parameter's name before its selector. Film and print material selectors use a full-width line below the label when the selected identity does not fit the shared value column; long identities wrap instead of truncating. A row marked experimental carries an `experimental` chip beside its name. A checkbox belongs to list selection only.
 
 **Search controls** searches labels and canonical paths across all stages, including folded or inactive modules, plus Settings, Export, and viewer controls. Results name the real owner and module. Selecting a locator reveals, scrolls to, and focuses the actual control; Settings and Export results open their own surfaces rather than creating duplicate editors. The inspector query does not filter those dialogs or change their selected options. **clear filter** restores ordinary disclosure; an empty result names the unmatched query. Closed module headings offer content summaries in help. Inactive controls explain their applicability while retaining stored values. Opening an inactive module does not enable it.
 
@@ -100,7 +108,7 @@ Inactive rows retain valid stored values and explain whether an operation is abs
 
 For Settings and Export, the filter compares accepted preferences with typed factory defaults. Unsubmitted Export drafts do not change these results.
 
-A module header's **reset** restores only that module's controls. Tone & Color also provides individual row resets, described below. Other parameter rows, sliders, and Export options do not have separate reset buttons. Use **Undo** to reverse an adjustment. For example, resetting **Preflash** leaves main **Enlarger** exposure and filtration unchanged; resetting **Print viewing glare** leaves **Print chemistry** unchanged. Material-module reset restores its factory material selection and development time.
+A module header's **reset** restores only that module's controls. Parameter rows, sliders, and Export options do not have separate reset buttons. Use **Undo** to reverse an individual adjustment. For example, resetting **Preflash** leaves main **Enlarger** exposure and filtration unchanged; resetting **Print viewing glare** leaves **Print chemistry** unchanged. Material-module reset restores its factory material selection and development time.
 
 For other modules, reset uses current-film defaults only for stock-derived leaves; other values use factory defaults. Reset also releases explicit ownership in its scope, even when the value already matches, so a later film selection can refresh it.
 
@@ -133,7 +141,7 @@ Changing the route resets an ineligible scan polarity; leaving negative conversi
 
 The collapsed **Range** group provides **Enable Expand** to map black and white input references in fixed sRGB encoding. It defaults off, retaining its references when disabled; when enabled, even its default 0 and 1 references hard-clip. The references range from -0.25 to 1.25 and must be separated by at least 1/1024. Invalid edits are rejected, not reordered or widened. Hard clipping destroys differences for that render; later adjustments cannot recover them and do not guarantee an in-gamut result.
 
-Each row's reset restores that control alone, subject to the same valid-reference constraint; module reset restores all four daily controls and disables Expand with its default references. Undo and Redo include these edits. **Hold Tone & Color comparison** uses the primary mouse button or focused Space to temporarily bypass only Tone & Color, restoring it on release. It does not change stored controls, history, retained Save output, or independent Export, and does not bypass negative conversion, gamut processing, CMYK style, or output mix.
+Module reset restores all four daily controls and disables Expand with its default references. Undo and Redo include individual edits and the module reset. **Hold Tone & Color comparison** uses the primary mouse button or focused Space to temporarily bypass only Tone & Color, restoring it on release. It does not change stored controls, history, retained Save output, or independent Export, and does not bypass negative conversion, gamut processing, CMYK style, or output mix.
 
 Comparison preserves the retained Preview or Scan grid and detail effects. Releasing it restores the accepted tone and color adjustments on that same grid. Comparing alone does not make the retained result stale.
 
@@ -196,7 +204,7 @@ New edits replace queued work. Stale results cannot replace the latest output. T
 
 If adjustment preparation fails, the viewer keeps the last completed image and its original Preview or Scan identity. Correct the controls or use Undo to return to the last working settings. A rejected adjustment does not discard compatible runtime preparation.
 
-The viewer status strip identifies the retained **Preview** or **Scan**, pixel dimensions, and whether it matches the current adjustments. This identity stays visible while another operation runs. Preview has an explicit detail-effects caveat; independent Export is the file-delivery action.
+The viewer status strip identifies the retained **Preview** or **Scan**, pixel dimensions, and whether it matches the current adjustments. This identity stays visible while another operation runs and when Original or Paper back is selected. Preview has an explicit detail-effects caveat; independent Export is the file-delivery action.
 
 **SCAN** renders the full-resolution input with spatial and stochastic effects. Automatic backend selection chooses CPU only when a usable GPU is unavailable. A selected GPU computation failure fails the operation without substituting host arithmetic. The resulting full-resolution output is retained for Save and inspection in the viewport.
 
@@ -214,7 +222,7 @@ See the [GUI workflow specification](../specs/gui-workflow/spec.md) for the acti
 
 `100%`, `200%`, and `400%` map image pixels to exact device-pixel percentages. The viewer samples at device-pixel centers and treats image bounds as half-open, so fractional viewport origins and pans do not add or drop edge pixels. `fit` returns to the fitted zoom and keeps the pan; `reset view` also recentres it. Full-resolution Scan remains available in the viewport at these zoom levels. The preview long-edge limit controls Preview rendering, not Scan's available detail.
 
-The viewer accepts pointer gestures on its surface. The wheel and pinch zoom at the pointer. A primary-button drag pans. A Shift or secondary-button drag selects a rectangle and its release zooms so the selection fills the viewer. One click zooms one step at the pointer; a double click fits the view. Gestures change the retained view only and never saved or exported pixels.
+The viewer accepts pointer gestures on its surface. The wheel and pinch zoom at the pointer. A primary-button drag pans. A Shift or secondary-button drag selects a rectangle and its release zooms so the selection fills the viewer. A plain click can leave an editor without changing zoom or pan; a double click restores the fitted, centered view. Gestures change the retained view only and never saved or exported pixels.
 
 The `Paper back` layer is a viewer-only virtual rendering generated from paper texture, watermark, and noise. It is not an editable material stage and does not alter retained, saved, or exported pixels.
 
@@ -318,6 +326,8 @@ Export uses the in-memory input pixels with the simulation parameters. It runs a
 
 Export has no second options area in the inspector. Bottom **SAVE** chooses its format from the filename extension independently of Export preferences; it does not submit an Export request.
 
+Save and Export publish to the exact destination confirmed in the native chooser. Export rejects an extension that does not match the selected format instead of changing the filename. On GTK, **Ctrl+L** can select only the filename stem; use **Ctrl+A** to replace the whole name, including its extension, before entering a full path. Check the displayed final name before confirming replacement.
+
 Export's saving color space and transfer encoding are independent of Save's current simulation saving settings. Format capabilities follow the [shared writer](../specs/photo-export/spec.md) and [saving conversion rules](../specs/cli/spec.md#export-and-execution-options):
 
 | Format | Depth | Saving encoding | Compression or codec options |
@@ -339,7 +349,7 @@ The GUI warns that JPEG remains lossy even at quality 100. 4:2:0 can soften colo
 
 ## Save retained output
 
-**SAVE** saves the latest retained floating output without rerendering. If it no longer matches the accepted adjustments, an explicit confirmation offers to continue saving that frame or cancel before opening the file chooser. It uses **Output → Output → saving color space** and **saving cctf encoding**. The filename extension selects the format. `.jpg` is the default. Wait for automatic Preview or run Scan first when the file should reflect changed controls.
+**SAVE** saves the latest retained floating output without rerendering. Its caption identifies Preview or Scan and the retained pixel dimensions, not the source or independent Export dimensions. If it no longer matches the accepted adjustments, an explicit confirmation offers to continue saving that frame or cancel before opening the file chooser. It uses **Output → Output → saving color space** and **saving cctf encoding**. The filename extension selects the format. `.jpg` is the default. Wait for automatic Preview or run Scan first when the file should reflect changed controls.
 
 - JPEG/PNG use 8-bit integer samples.
 - TIFF uses 16-bit integer samples with ZIP compression.
@@ -364,6 +374,8 @@ Closing or replacing unsaved accepted work offers **Save record**, **Discard cha
 Select destinations and an explicit copy scope before **Copy adjustments**. The dialog states which controls will be replaced. Look and section scopes use the existing preset boundaries. Procedural-grain and Halation feature-profile scopes copy only their canonical owned leaves, including custom overrides, without changing feature enable or engine selection. Operator correction copies only its four correction values. Copy preserves each destination's source interpretation, RAW settings, geometry, source calibration, and delivery settings. Each destination validates independently and gets one reversible history transaction; a failed destination stays unchanged.
 
 Choose an output directory and explicitly permit replacement when needed, then submit selected entries. Duplicate destinations must be resolved before submission. The sequential queue captures source pixels, accepted adjustments, dependency identities, delivery options, and destinations independently of later edits or removal. Changed dependencies fail that submission rather than silently rendering another result.
+
+At submission, the queue resolves parent-directory symlinks and keeps the selected filename. Retargeting that directory alias does not redirect queued writes. If the final filename is a symlink, replacement replaces that link rather than its target.
 
 The queue shows waiting, running, completed, failed, and canceled outcomes. Cancel one job or all remaining jobs without removing completed files. A failure does not stop unrelated entries. **Retry submitted snapshot** repeats the failed submission, not current adjustments. Queue work and interactive Export share the existing staged publication path; the batch is not one atomic transaction. Restart recovery is not supported.
 

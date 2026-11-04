@@ -474,35 +474,53 @@ fn exact_zoom_obeys_dpi_drag_pans_double_click_resets_and_hover_reads_float_sour
 }
 
 #[test]
-fn click_steps_the_zoom_at_the_pointer_and_a_double_click_fits() {
+fn clicking_the_photograph_leaves_an_editor_without_changing_the_view() {
     let mut s = session();
     let h = &mut s.harness;
-    click(h, "Original");
-    let baseline = composed(h, 10.0);
-    let time = h.ctx.input(|input| input.time);
-    let image = baseline.image_rect;
-    let at = image.center() + egui::vec2(24.0, -18.0);
-    let fraction = (at - image.min) / image.size();
-    pointer(h, at, true, time + 1.0);
-    pointer(h, at, false, time + 1.1);
-    let zoomed = composed(h, time + 2.0);
-    assert!((h.state().viewer.zoom - 2.0).abs() < 1e-6);
-    assert_eq!(h.state().viewer.zoom_percent, None);
-    assert!((zoomed.image_rect.size() - image.size() * 2.0).length() < 0.5);
-    // The clicked content stays under the pointer.
-    let landed = zoomed.image_rect.min + fraction * zoomed.image_rect.size();
-    assert!(
-        (landed - at).length() < 1.5,
-        "clicked content moved: {landed:?}"
-    );
-    // A double click fits the view again.
-    pointer(h, at, true, time + 3.0);
-    pointer(h, at, false, time + 3.1);
-    pointer(h, at, true, time + 3.2);
-    pointer(h, at, false, time + 3.3);
-    assert_eq!(h.state().viewer.zoom, 1.0);
-    assert_eq!(h.state().viewer.zoom_percent, None);
-    assert_eq!(h.state().viewer.pan, egui::Vec2::ZERO);
+    for exact in [false, true] {
+        click(h, "reset view");
+        if exact {
+            click(h, "200%");
+        }
+        h.state_mut().viewer.pan = egui::vec2(17.0, -11.0);
+        reveal_control(h, "output_mix.amount");
+        h.get_by_role_and_label(egui::accesskit::Role::TextInput, "Simulation blend")
+            .focus();
+        h.step();
+        assert!(
+            h.get_by_role_and_label(egui::accesskit::Role::TextInput, "Simulation blend")
+                .is_focused()
+        );
+        let time = h.ctx.input(|input| input.time) + 1.0;
+        let baseline = composed(h, time);
+        let view = (
+            h.state().viewer.zoom,
+            h.state().viewer.zoom_percent,
+            h.state().viewer.pan,
+        );
+        let params = h.state().params.clone();
+        let revision = h.state().parameter_revision;
+        let at = baseline.image_rect.center() + egui::vec2(24.0, -18.0);
+        pointer(h, at, true, time + 1.0);
+        pointer(h, at, false, time + 1.1);
+        let after = composed(h, time + 2.0);
+        assert!(
+            !h.get_by_role_and_label(egui::accesskit::Role::TextInput, "Simulation blend")
+                .is_focused()
+        );
+        assert_eq!(
+            (
+                h.state().viewer.zoom,
+                h.state().viewer.zoom_percent,
+                h.state().viewer.pan,
+            ),
+            view
+        );
+        assert_eq!(after.image_rect, baseline.image_rect);
+        assert_eq!(after.pixels, baseline.pixels);
+        assert_eq!(h.state().params, params);
+        assert_eq!(h.state().parameter_revision, revision);
+    }
 }
 
 #[test]

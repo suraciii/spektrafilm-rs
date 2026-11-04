@@ -43,6 +43,7 @@ fn key(label: &str) -> Option<&'static str> {
         "selected material capability is unavailable" => {
             Some("controls.condition.material_unavailable")
         }
+        "Capture setup" => Some("controls.section.capture_setup"),
         "Finishing" | "finishing" => Some("controls.finishing.title"),
         "Brightness" => Some("controls.finishing.brightness"),
         "Tone & Color warmth" => Some("controls.finishing.warmth"),
@@ -51,21 +52,8 @@ fn key(label: &str) -> Option<&'static str> {
         "Enable Expand" => Some("controls.finishing.enable_expand"),
         "Black reference" => Some("controls.finishing.black"),
         "White reference" => Some("controls.finishing.white"),
-        "Reset Brightness" => Some("controls.finishing.reset_brightness"),
-        "Reset Contrast" => Some("controls.finishing.reset_contrast"),
-        "Reset Warmth" => Some("controls.finishing.reset_warmth"),
-        "Reset Saturation" => Some("controls.finishing.reset_saturation"),
-        "Reset Enable Expand" => Some("controls.finishing.reset_enabled"),
-        "Reset Black reference" => Some("controls.finishing.reset_black"),
-        "Reset White reference" => Some("controls.finishing.reset_white"),
         "Hold finishing comparison" => Some("controls.finishing.compare"),
         "Negative conversion (exposure domain)" => Some("controls.finishing.negative_conversion"),
-        "Finishing is inactive: the route does not deliver an eligible positive reading. Stored values are retained." => {
-            Some("controls.finishing.inactive")
-        }
-        "Reset only this finishing control to its default. An invalid Expand span cannot be accepted." => {
-            Some("controls.finishing.reset_help")
-        }
         "Raise or lower internal tones with less influence near reference endpoints. This is not source exposure or linear EV." => {
             Some("controls.finishing.brightness_help")
         }
@@ -89,6 +77,9 @@ fn key(label: &str) -> Option<&'static str> {
         }
         "Hold the primary mouse button or focused Space to bypass only finishing. Release to restore it. Saved and exported adjustments are unchanged." => {
             Some("controls.finishing.compare_help")
+        }
+        "Tone & Color is inactive: the route does not deliver an eligible positive reading. Stored values are retained." => {
+            Some("controls.finishing.inactive_help")
         }
         "hoya_x0" => Some("controls.scanner.filter_x0"),
         "hoya_x1" => Some("controls.scanner.filter_x1"),
@@ -712,12 +703,6 @@ fn key(label: &str) -> Option<&'static str> {
         }
         "JPEG: lossy 8-bit for web. PNG: lossless 8-bit. TIFF: 8/16-bit integer or 32-bit float, ZIP or uncompressed. EXR: 16/32-bit linear for compositing." => {
             Some("surfaces.export.format_help")
-        }
-        "Key controls: halation amount (strength) · halation spatial scale (size) · scatter amount (highlight glow)" => {
-            Some("controls.halation.key_controls")
-        }
-        "Key controls: inhibition samelayer (contrast) · inhibition interlayer (saturation) · inhibition amount (global)" => {
-            Some("controls.couplers.key_controls")
         }
         "Largest nonnested phase: %{phase} · %{ms} ms" => Some("surfaces.diagnostics.phase"),
         "Layer amounts" => Some("controls.grain.layer_amounts"),

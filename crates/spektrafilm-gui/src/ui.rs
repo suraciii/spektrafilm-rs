@@ -297,7 +297,7 @@ impl App {
             || self.export_job.is_some()
             || self.calibration_job.is_some();
         let width = (ui.available_width() - ui.spacing().item_spacing.x) * 0.5;
-        let action = |ui: &mut egui::Ui, enabled: bool, label_key, caption_key, icon, primary| {
+        let action = |ui: &mut egui::Ui, enabled: bool, label_key, caption: &str, icon, primary| {
             let label = crate::i18n::text(ui.ctx(), label_key);
             let mut text = egui::text::LayoutJob::default();
             text.append(
@@ -311,7 +311,7 @@ impl App {
             );
             text.append("\n", 0.0, egui::TextFormat::default());
             text.append(
-                &crate::i18n::text(ui.ctx(), caption_key),
+                caption,
                 0.0,
                 egui::TextFormat {
                     font_id: egui::FontId::proportional(theme::SIZE_HINT),
@@ -359,8 +359,10 @@ impl App {
             response.widget_info(|| {
                 egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, label.as_ref())
             });
-            ui.ctx()
-                .accesskit_node_builder(response.id, |node| node.set_label(label.as_ref()));
+            ui.ctx().accesskit_node_builder(response.id, |node| {
+                node.set_label(label.as_ref());
+                node.set_description(caption);
+            });
             controls::focus_feedback(ui, &response);
             response
         };
@@ -369,7 +371,7 @@ impl App {
                 ui,
                 self.image.is_some() && !busy,
                 "surfaces.action.scan",
-                "surfaces.action.scan_caption",
+                crate::i18n::text(ui.ctx(), "surfaces.action.scan_caption").as_ref(),
                 controls::Icon::Scan,
                 true,
             );
@@ -380,13 +382,14 @@ impl App {
                 self.dirty = true;
                 self.full_scan_requested = true;
             }
+            let save_caption = self.retained_save_caption(ui.ctx());
             let save = action(
                 ui,
                 (self.output_image.is_some() || self.output_retained.is_some())
                     && !busy
                     && self.pending_saves.is_empty(),
                 "surfaces.action.save_retained",
-                "surfaces.action.save_caption",
+                &save_caption,
                 controls::Icon::Save,
                 false,
             );
@@ -832,7 +835,7 @@ impl App {
             let disclosure_id = ui.make_persistent_id("open");
             let default_open = matches!(
                 section,
-                "Workflow" | "Camera" | "Film material" | "Print material" | "Output"
+                "Workflow" | "Camera" | "Film material" | "Print material" | "Output" | "Finishing"
             );
             let normal_open = ui.ctx().data_mut(|data| {
                 *data.get_persisted_mut_or_insert_with(disclosure_id, || default_open)
@@ -859,6 +862,21 @@ impl App {
                         theme::SPACE_1 as i8
                     },
                 ));
+            let inactive = ui
+                .ctx()
+                .data(|data| {
+                    data.get_temp::<Arc<InspectorMaterials>>(egui::Id::new(
+                        "inspector-material-context",
+                    ))
+                })
+                .and_then(|materials| {
+                    controls::module_applicability(
+                        section,
+                        &self.params,
+                        &materials.film,
+                        materials.print.as_deref(),
+                    )
+                });
             frame.show(ui, |ui| {
                 ui.set_min_width(ui.available_width());
                 ui.spacing_mut().item_spacing.y = theme::SPACE_2;
@@ -878,6 +896,21 @@ impl App {
                             .data_mut(|data| data.insert_persisted(disclosure_id, !normal_open));
                     }
                     heading = Some(response);
+                    if let Some(reason) = &inactive {
+                        let reason = controls::localized(ui.ctx(), reason);
+                        let badge = ui.label(
+                            egui::RichText::new(crate::i18n::text(
+                                ui.ctx(),
+                                "surfaces.section.inactive_compact",
+                            ))
+                            .small()
+                            .color(theme::FG_MUTED),
+                        );
+                        ui.ctx().accesskit_node_builder(badge.id, |node| {
+                            node.set_description(reason.as_ref())
+                        });
+                        badge.on_hover_text(reason);
+                    }
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         self.section_reset_controls_with_order(ui, section, true);
                     });
@@ -896,21 +929,12 @@ impl App {
                 if open {
                     ui.push_id("body", |ui| self.module_body(ui, section));
                 }
-                if let Some(materials) = ui.ctx().data(|data| {
-                    data.get_temp::<Arc<InspectorMaterials>>(egui::Id::new(
-                        "inspector-material-context",
-                    ))
-                }) && let Some(reason) = controls::module_applicability(
-                    section,
-                    &self.params,
-                    &materials.film,
-                    materials.print.as_deref(),
-                ) {
+                if open && let Some(reason) = &inactive {
                     ui.label(
                         egui::RichText::new(crate::tr!(
                             ui.ctx(),
                             "surfaces.section.inactive",
-                            reason = controls::localized(ui.ctx(), &reason)
+                            reason = controls::localized(ui.ctx(), reason)
                         ))
                         .color(theme::FG_MUTED)
                         .small(),
@@ -1875,9 +1899,8 @@ impl App {
 
     /// Result identity is independent from the current worker's operation.
     /// In particular, a pending Scan must not relabel a retained Preview.
-    pub(crate) fn retained_result_identity(&self, ctx: &egui::Context) -> String {
-        let Some([width, height]) = self
-            .output_retained
+    fn retained_dimensions(&self) -> Option<[u32; 2]> {
+        self.output_retained
             .as_ref()
             .map(|image| [image.width(), image.height()])
             .or_else(|| {
@@ -1885,7 +1908,29 @@ impl App {
                     .as_ref()
                     .map(|image| [image.width, image.height])
             })
-        else {
+    }
+
+    pub(crate) fn retained_save_caption(&self, ctx: &egui::Context) -> String {
+        self.retained_dimensions().map_or_else(
+            || crate::i18n::text(ctx, "surfaces.action.save_empty").into_owned(),
+            |[width, height]| {
+                crate::tr!(
+                    ctx,
+                    "surfaces.action.save_caption",
+                    operation = self.retained_kind.map_or_else(
+                        || crate::i18n::text(ctx, "result.identity.result").into_owned(),
+                        |kind| kind.message().localized(ctx),
+                    ),
+                    width = width,
+                    height = height
+                )
+                .into_owned()
+            },
+        )
+    }
+
+    pub(crate) fn retained_result_identity(&self, ctx: &egui::Context) -> String {
+        let Some([width, height]) = self.retained_dimensions() else {
             return crate::i18n::text(ctx, "result.identity.empty").into_owned();
         };
         let operation = self.retained_kind.map_or_else(
@@ -1916,10 +1961,16 @@ impl App {
         let original = self.viewer.settings.layer == display::ViewLayer::Input;
         let identity = if self.image.is_none() {
             crate::i18n::text(ui.ctx(), "result.identity.empty").into_owned()
-        } else if original {
-            crate::i18n::text(ui.ctx(), "surfaces.viewer.original_status").into_owned()
-        } else if self.viewer.settings.layer == display::ViewLayer::PaperBack {
-            crate::i18n::text(ui.ctx(), "surfaces.viewer.paper_status").into_owned()
+        } else if original || self.viewer.settings.layer == display::ViewLayer::PaperBack {
+            let layer = crate::i18n::text(
+                ui.ctx(),
+                if original {
+                    "surfaces.viewer.input"
+                } else {
+                    "surfaces.viewer.paper_back"
+                },
+            );
+            format!("{} · {}", layer, self.retained_result_identity(ui.ctx()))
         } else {
             self.retained_result_identity(ui.ctx())
         };
@@ -1982,7 +2033,7 @@ impl App {
                     egui::vec2(width, theme::HEIGHT_CONTROL),
                     egui::Layout::left_to_right(egui::Align::Center),
                     |ui| {
-                        let color = if !original && has_output && self.accepted_frame_is_stale() {
+                        let color = if has_output && self.accepted_frame_is_stale() {
                             theme::WARNING
                         } else {
                             theme::FG_SECONDARY

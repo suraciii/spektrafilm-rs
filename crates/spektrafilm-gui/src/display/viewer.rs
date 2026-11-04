@@ -1335,8 +1335,8 @@ impl Viewer {
         }
         // Viewer gestures change the retained view only. Wheel and pinch zoom
         // at the pointer; the primary button pans; a Shift or secondary-button
-        // drag selects a region that fills the view on release; one click
-        // steps the zoom at the pointer; a double click resets the view.
+        // drag selects a region that fills the view on release. A plain click
+        // can leave an editor without changing the view; a double click resets it.
         let selecting = ui
             .input(|i| i.modifiers.shift || i.pointer.button_down(egui::PointerButton::Secondary));
         if response.drag_started()
@@ -1385,12 +1385,6 @@ impl Viewer {
         if response.double_clicked() && !analysis_drag {
             self.reset_view();
             self.marquee = None;
-        } else if response.clicked()
-            && selection.is_none()
-            && !analysis_drag
-            && let Some(at) = response.interact_pointer_pos()
-        {
-            self.zoom_at(at, rect, 2.0);
         }
         if let Some((start, end)) = selection {
             self.zoom_to_selection(Rect::from_two_pos(start, end), rect);

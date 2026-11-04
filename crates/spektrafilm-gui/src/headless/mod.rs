@@ -951,21 +951,19 @@ fn scanner_ui_real_preview_scan_persistence_save_and_export() {
     .unwrap();
     assert_png(&export_path, &expected_export);
     assert_eq!(h.state().params.scanner.scan_output, "negative_to_positive");
-    // Extension correction must never silently overwrite an existing file.
+    // A mismatched confirmed path fails; no extension correction is attempted.
     let before = std::fs::read(&export_path).unwrap();
+    let rejected = s.directory.path().join("full.wrong-extension");
     let options = h.state().export_options.clone();
-    h.state_mut().start_export_to_path(
-        &ctx,
-        options,
-        &s.directory.path().join("full.wrong-extension"),
-    );
+    h.state_mut().start_export_to_path(&ctx, options, &rejected);
     assert!(h.state().export_job.is_none());
     assert!(
         h.state()
             .status
             .to_string()
-            .starts_with("Export destination already exists:")
+            .contains("full.wrong-extension")
     );
+    assert!(!rejected.exists());
     assert_eq!(std::fs::read(&export_path).unwrap(), before);
     h.state_mut()
         .apply_state_with_source(accepted.clone(), |_| {})

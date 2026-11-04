@@ -119,10 +119,15 @@ Expanded modules MUST use a quiet bounded surface. Collapsed modules MUST remain
 - Slider bounds, step, and entry decimals come from the same declaration under [numeric editor ranges](../gui-workflow/spec.md#numeric-editor-ranges). Presentation MUST NOT add a different slider-only bound or rounding rule.
 - Units MUST remain readable beside values without becoming part of the label or editable numeric text.
 - Numeric rows MUST place the unit before the right-aligned value.
-- A unitless row MUST retain the same value-column alignment.
+- A visible unit MUST NOT break in the middle of a word at a supported inspector width.
+- A dimensionless numeric row MUST leave the unit position empty rather than display `dimensionless` or a localized equivalent.
+- A unitless or dimensionless row MUST retain the same value-column alignment.
 - The slider MUST span the module's usable row width.
 - A tuple parameter row presents one editor per component, each with its component identifier.
 - A choice parameter row presents a selector as its editor. The row label is the selector's only label.
+- Film and print material selectors MUST present the complete selected display identity without truncation.
+- When the shared value column cannot contain that identity, the selector MUST use a full-width line below its label and MAY wrap the selected identity onto another line. This presentation MUST NOT change the selector's owner or available choices.
+- Switching between inline and stacked material-selector layouts MUST preserve keyboard focus.
 - A boolean parameter row presents a switch as its editor. A checkbox belongs to list selection only.
 
 ## Module headers and resets

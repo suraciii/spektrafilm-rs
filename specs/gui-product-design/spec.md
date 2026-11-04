@@ -118,7 +118,13 @@ The [stage and surface table](../gui-workflow/spec.md#stage-and-surface-ownershi
 
 Closed module headings MUST name their contents with physical terms and expose their modified and inactive states without color alone. Enabling a module MUST NOT be required to discover its contents. Inactive values MUST remain readable.
 
-Default disclosure MUST put the source workflow and camera exposure within reach before detailed material controls. Other modules MAY start collapsed. Folding one module MUST NOT close another.
+A collapsed module MUST confine its content summary and applicability state to its heading and help. It MUST NOT render a multi-line summary or applicability notice beneath its heading.
+
+Expanding the module MUST show the actual applicability reason without requiring hover. A summary that duplicates visible controls MUST NOT remain above the expanded controls.
+
+Default disclosure MUST put the source workflow, camera exposure, and daily tone and color adjustments within reach before detailed material and delivery controls. Workflow, Camera, and Tone & Color MUST start expanded in a fresh disclosure session.
+
+With default disclosure, the Scan jump MUST reveal Tone & Color without requiring a second module expansion. Other modules MAY start collapsed. Folding one module MUST NOT close another.
 
 A parameter edit, preview completion, or route change MUST NOT collapse the user's open modules or reset the inspector scroll position.
 
@@ -162,6 +168,12 @@ The HTML design reference is not an engine implementation. Its sample values, pa
 | Choose a look, change exposure, undo | The look applies atomically; its modified state follows owned controls; undo restores the previous edit without rewriting the preset file. |
 | Change only the film | The print selection remains; route defaulting and scanner normalization follow their owners and are reported. |
 | Expand several modules; edit and wait for preview | Open state, scroll, and numeric focus remain usable; the image remains visible. |
+| Use fresh disclosure and jump to Scan | Tone & Color is already expanded; its four daily controls have no row resets and no mid-word unit wrapping. |
+| Collapse an inactive module, then expand it | The closed heading retains a compact non-color state without a notice below it; the expanded module shows the actual reason without hover and does not repeat its content summary above the controls. |
+| Expand Camera and locate `camera.capture_illuminant` | Both exposure controls remain directly visible; Capture setup starts closed, the locator reveals the actual control without an edit, and Camera reset still covers the complete module. |
+| Select a long film or print material name | The complete selected identity remains readable without widening the inspector or truncating the selector. |
+| Click the photograph to leave a numeric editor | Editor focus changes without changing zoom, pan, the source, or accepted adjustments. |
+| Confirm Save and Export destinations through ordinary filename and native full-path entry | The published path and extension exactly match each confirmation; Save's explicit extension selects the actual container and overwrite checks use the confirmed path. |
 | Search a folded or inactive control by label or canonical path | The correct owner is revealed with its current value and applicability reason; no second editor or parameter change appears. |
 | Search an Export or display option | The result opens that dialog or setting; unrelated dialogs are not filtered by the inspector query. |
 | Use Only modified, reset a module, then undo | Filtering uses the reset baseline; reset changes only the module's owned scope; undo restores values and edit provenance. |

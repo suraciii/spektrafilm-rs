@@ -200,17 +200,18 @@ pub(crate) fn sections(
     if section == "Camera" {
         ui.scope(|ui| {
             let capture_active = crate::ui::control_inactive_reason(ui.ctx(), "camera.capture_illuminant", params).is_none();
-            if !capture_active {
-                ui.label(localized(ui.ctx(), "Capture illuminant inactive on this route; stored values are retained."));
-            }
             if filter_matches(filter, "exposure compensation ev") {
                 flags.runtime_changed |= applicable_control(ui, params, "camera.exposure_compensation_ev", |ui, params| param_numeric(ui, "exposure compensation ev", &mut params.camera.exposure_compensation_ev, "camera.exposure_compensation_ev", "Add a bias to the auto-exposure of the camera."));
             }
             if filter_matches(filter, "auto exposure") {
                 flags.runtime_changed |= applicable_control(ui, params, "camera.auto_exposure", |ui, params| toggle(ui, "auto exposure", &mut params.camera.auto_exposure, "Use the auto-exposure feature of the virtual camera."));
             }
+            section_header(ui, filter, "Capture setup", |ui, filter| {
+            if !capture_active {
+                ui.label(localized(ui.ctx(), "Capture illuminant inactive on this route; stored values are retained."));
+            }
             if filter_matches(filter, "Film Format") {
-                flags.runtime_changed |= film_format(ui, &mut params.camera.film_format_mm);
+                flags.runtime_changed |= film_format(ui, &mut params.camera.film_format_mm, filter.active());
             }
             if filter_matches(filter, "auto exposure method") {
                 flags.runtime_changed |= applicable_control(ui, params, "camera.auto_exposure_method", |ui, params| choice_tip(ui, "auto exposure method", &mut params.camera.auto_exposure_method, &["center_weighted", "matrix", "multi_zone", "partial", "highlight_weighted", "median", "average"], "Metering method used by the virtual camera's auto-exposure."));
@@ -235,6 +236,7 @@ pub(crate) fn sections(
                     );
                 });
             }
+            });
         });
     }
     if section == "Enlarger" {
@@ -447,7 +449,7 @@ pub(crate) fn sections(
 }
 
 /// Names are film specifications; values remain exposed-image long edges.
-fn film_format<T: egui::emath::Numeric>(ui: &mut Ui, value: &mut T) -> bool {
+fn film_format<T: egui::emath::Numeric>(ui: &mut Ui, value: &mut T, reveal_edge: bool) -> bool {
     const PATH: &str = "camera.film_format_mm";
     const FORMATS: [(&str, f64); 3] = [("35mm", 36.0), ("120", 56.0), ("4×5", 127.0)];
     const HELP: &str = "Sets the physical film scale for grain and other film effects. Does not crop, resize, or change the image's aspect ratio. 35mm uses a 36 mm frame long edge; 120 uses a representative 56 mm; 4×5 uses 127 mm.";
@@ -458,6 +460,19 @@ fn film_format<T: egui::emath::Numeric>(ui: &mut Ui, value: &mut T) -> bool {
     let current = value.to_f64();
     let preset = FORMATS.iter().position(|(_, mm)| *mm == current);
     let id = ui.make_persistent_id("film-format-custom");
+    let reveal_id = ui.make_persistent_id("film-format-located-edge");
+    if ui
+        .ctx()
+        .data(|data| data.get_temp::<(String, String)>(egui::Id::new("control_focus_request")))
+        .is_some_and(|(section, target)| section == "Camera" && target == PATH)
+    {
+        ui.ctx().data_mut(|data| data.insert_temp(reveal_id, true));
+    }
+    let located_edge = ui
+        .ctx()
+        .data(|data| data.get_temp::<bool>(reveal_id))
+        .unwrap_or(false);
+    let mut picked_format = false;
     let mut custom =
         ui.ctx().data(|data| data.get_temp::<f64>(id)) == Some(current) || preset.is_none();
     let mut selected = preset;
@@ -485,6 +500,7 @@ fn film_format<T: egui::emath::Numeric>(ui: &mut Ui, value: &mut T) -> bool {
                             .clicked()
                         {
                             selected = Some(index);
+                            picked_format = true;
                             custom = false;
                         }
                     }
@@ -496,6 +512,7 @@ fn film_format<T: egui::emath::Numeric>(ui: &mut Ui, value: &mut T) -> bool {
                         .clicked()
                     {
                         custom = true;
+                        picked_format = true;
                     }
                 })
                 .response
@@ -513,10 +530,13 @@ fn film_format<T: egui::emath::Numeric>(ui: &mut Ui, value: &mut T) -> bool {
             changed = true;
         }
     }
-    if custom {
+    if custom || reveal_edge || (located_edge && !picked_format) {
         changed |= param_numeric(ui, "Frame Long Edge", value, PATH, HELP);
     }
     ui.ctx().data_mut(|data| {
+        if picked_format {
+            data.remove::<bool>(reveal_id);
+        }
         if custom {
             data.insert_temp(id, value.to_f64());
         } else {

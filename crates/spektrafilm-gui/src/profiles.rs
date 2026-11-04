@@ -178,14 +178,58 @@ pub(super) fn profile_combo(
     };
     let display = selected_display(entries, selected_stock);
     let prev = selected_stock.clone();
+    let width = ui
+        .available_width()
+        .clamp(crate::theme::WIDTH_COMBO_MIN, crate::theme::WIDTH_COMBO_MAX);
+    let text_width = ui.fonts(|fonts| {
+        fonts
+            .layout_no_wrap(
+                display.clone(),
+                egui::TextStyle::Button.resolve(ui.style()),
+                egui::Color32::WHITE,
+            )
+            .size()
+            .x
+    });
+    let stacked = text_width
+        + ui.spacing().icon_width
+        + ui.spacing().icon_spacing
+        + 2.0 * ui.spacing().button_padding.x
+        > width;
+    let mut combo = |ui: &mut egui::Ui, width: f32, label_id: egui::Id| {
+        let response = egui::ComboBox::from_id_salt(salt)
+            .selected_text(&display)
+            .width(width)
+            .wrap_mode(egui::TextWrapMode::Wrap)
+            .show_ui(ui, |ui| {
+                for entry in entries {
+                    ui.selectable_value(selected_stock, entry.stock.clone(), &entry.display);
+                }
+            })
+            .response
+            .on_hover_text(format!(
+                "{}\n{display}",
+                crate::controls::localized(ui.ctx(), tooltip)
+            ))
+            .labelled_by(label_id);
+        ui.ctx()
+            .accesskit_node_builder(response.id, |node| node.clear_label());
+        response
+    };
+    let layout = if stacked {
+        egui::Layout::top_down(egui::Align::Min)
+    } else {
+        egui::Layout::left_to_right(egui::Align::Center)
+    };
     let response = ui
-        .horizontal(|ui| {
-            let width = ui
-                .available_width()
-                .clamp(crate::theme::WIDTH_COMBO_MIN, crate::theme::WIDTH_COMBO_MAX);
-            let label_width = (ui.available_width() - width - ui.spacing().item_spacing.x).max(0.0);
-            let label_response = ui
-                .allocate_ui_with_layout(
+        .with_layout(layout, |ui| {
+            let label_response = if stacked {
+                ui.label(crate::controls::localized(ui.ctx(), label))
+                    .on_hover_text(crate::controls::localized(ui.ctx(), tooltip))
+            } else {
+                let label_width =
+                    (ui.available_width() - width - ui.spacing().item_spacing.x).max(0.0);
+                ui.allocate_ui_with_layout(
                     egui::vec2(label_width, crate::theme::HEIGHT_CONTROL),
                     egui::Layout::top_down(egui::Align::Min),
                     |ui| {
@@ -195,25 +239,14 @@ pub(super) fn profile_combo(
                             .on_hover_text(crate::controls::localized(ui.ctx(), tooltip))
                     },
                 )
-                .inner;
-            let response = egui::ComboBox::from_id_salt(salt)
-                .selected_text(&display)
-                .width(width)
-                .wrap_mode(egui::TextWrapMode::Truncate)
-                .show_ui(ui, |ui| {
-                    for entry in entries {
-                        ui.selectable_value(selected_stock, entry.stock.clone(), &entry.display);
-                    }
-                })
-                .response
-                .on_hover_text(format!(
-                    "{}\n{display}",
-                    crate::controls::localized(ui.ctx(), tooltip)
-                ))
-                .labelled_by(label_response.id);
-            ui.ctx()
-                .accesskit_node_builder(response.id, |node| node.clear_label());
-            response
+                .inner
+            };
+            let width = if stacked {
+                (ui.available_width() - 2.0 * ui.spacing().button_padding.x).max(0.0)
+            } else {
+                width
+            };
+            combo(ui, width, label_response.id)
         })
         .inner;
     (prev != *selected_stock, response)
@@ -223,6 +256,71 @@ pub(super) fn profile_combo(
 mod headless {
     use super::*;
     use egui_kittest::{Harness, kittest::Queryable};
+
+    #[test]
+    fn long_material_identity_uses_a_bounded_full_width_selector() {
+        let entries = vec![ProfileEntry {
+            stock: "long".into(),
+            display: "A very long photographic material identity that must remain visible".into(),
+        }];
+        let harness = Harness::builder()
+            .with_size(egui::vec2(300.0, 240.0))
+            .build_state(
+                move |ctx, selected: &mut String| {
+                    egui::CentralPanel::default().show(ctx, |ui| {
+                        profile_combo(ui, "film", "Film", &entries, selected);
+                    });
+                },
+                "long".to_owned(),
+            );
+        let selector = harness.get_by_label("Film");
+        let bounds = selector.raw_bounds().unwrap();
+        let label = selector.labelled_by().next().unwrap().raw_bounds().unwrap();
+        assert!(bounds.y0 >= label.y1);
+        assert!(bounds.x1 <= 300.0);
+        assert_eq!(harness.state().as_str(), "long");
+    }
+
+    #[test]
+    fn material_focus_survives_short_and_long_identity_layouts() {
+        let entries = vec![
+            ProfileEntry {
+                stock: "short".into(),
+                display: "Short film".into(),
+            },
+            ProfileEntry {
+                stock: "long".into(),
+                display: "A very long photographic material identity that must remain visible"
+                    .into(),
+            },
+        ];
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(300.0, 240.0))
+            .build_state(
+                move |ctx, selected: &mut String| {
+                    egui::CentralPanel::default().show(ctx, |ui| {
+                        profile_combo(ui, "film", "Film", &entries, selected);
+                    });
+                },
+                "short".to_owned(),
+            );
+        harness.get_by_label("Film").focus();
+        harness.run();
+        assert!(harness.get_by_label("Film").is_focused());
+        // Undo and Redo can replace a selected identity without moving focus.
+        for stock in ["long", "short"] {
+            *harness.state_mut() = stock.to_owned();
+            harness.run();
+            assert!(harness.get_by_label("Film").is_focused());
+        }
+        harness.press_key(egui::Key::Space);
+        harness.run();
+        harness
+            .get_by_label("A very long photographic material identity that must remain visible")
+            .click();
+        harness.run();
+        assert_eq!(harness.state(), "long");
+    }
 
     #[test]
     fn profile_and_development_labels_resolve_to_selectors_and_select_real_values() {
