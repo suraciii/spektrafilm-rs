@@ -10,7 +10,7 @@ A preset document is a **look preset** or a **section preset**. A look preset ca
 
 A section preset carries exactly one section of the look and no profile reference; a section is a named set of look-owned parameter paths, defined by the [preset design](design.md). The kind is derived from the carried scope, never declared by a field, and a document that carries neither a whole look nor exactly one section MUST be rejected.
 
-Built-in look presets MUST enable the selected film profile's Hanatos2025 adaptation surface. The surface coefficients belong to the film profile. The user MAY turn the surface off after applying the preset.
+Built-in look presets MUST enable the selected film profile's Hanatos2025 adaptation surface, except `Classic Neg Inspired`, which MUST disable it to preserve its authored color response. The surface coefficients belong to the film profile. The user MAY change the surface switch after applying a preset.
 
 A preset **name** is its identity: the document `name`, the document file stem, and the selector used by the GUI and the CLI. A name MUST be unique inside its group and MAY repeat across groups. The groups are `Built-in` and `My Presets`.
 

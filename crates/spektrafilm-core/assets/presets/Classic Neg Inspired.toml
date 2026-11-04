@@ -1,0 +1,301 @@
+author = "SpektraFilm"
+description = "Classic Neg. inspired consumer print look with X-Tra 400, Crystal Archive Type II, tone-dependent color separation, and original-strength Spektra grain. Independently authored, not an official Fujifilm match. Adjust print exposure for each photograph; lower values make the print lighter."
+name = "Classic Neg Inspired"
+schema_version = 7
+
+[film_profile]
+stock = "fujifilm_xtra_400"
+version = "0.3.4"
+
+[parameters.camera]
+auto_exposure = false
+auto_exposure_method = "center_weighted"
+exposure_compensation_ev = 0.0
+
+[parameters.camera_diffusion_filter]
+active = false
+bloom_intensity = 1.0
+bloom_size = 1.0
+core_intensity = 1.0
+core_size = 1.0
+filter_family = "black_pro_mist"
+halo_intensity = 1.0
+halo_size = 1.0
+halo_warmth = 0.0
+spatial_scale = 1.0
+strength = 0.5
+
+[parameters.cmyk]
+active = false
+strength = 1.0
+
+[parameters.enlarger]
+illuminant = "TH-KG3"
+m_filter_shift = 0.0
+preflash_exposure = 0.0
+preflash_m_filter_shift = 0.0
+preflash_y_filter_shift = 0.0
+print_exposure = 0.6000000238418579
+print_exposure_mode = "auto"
+y_filter_shift = 0.0
+
+[parameters.enlarger.diffusion_filter]
+active = false
+bloom_intensity = 1.0
+bloom_size = 1.0
+core_intensity = 1.0
+core_size = 1.0
+filter_family = "black_pro_mist"
+halo_intensity = 1.0
+halo_size = 1.0
+halo_warmth = 0.0
+spatial_scale = 1.0
+strength = 0.5
+
+[parameters.film_render]
+density_curve_gamma = 1.0
+
+[parameters.film_render.base]
+active = true
+cyan = 1.0
+magenta = 1.0
+scale = 1.0
+tilt = 0.0
+yellow = 1.0
+
+[parameters.film_render.chemistry]
+active = true
+developer_exhaustion = 0.0
+gamma_factor = 1.0
+gamma_factor_blue = 1.0
+gamma_factor_fast = 1.0
+gamma_factor_green = 1.0
+gamma_factor_red = 1.0
+gamma_factor_slow = 1.0
+
+[parameters.film_render.convert]
+base_percentile = 99.0
+calibration = "1 0 0  0 1 0  0 0 1"
+exposure_compensation_ev = 0.0
+scan_illuminant = "D55"
+
+[parameters.film_render.dir_couplers]
+active = true
+amount = 1.0
+diffusion_size_um = 20.0
+diffusion_tail_um = 200.0
+diffusion_tail_weight = 0.03
+gamma_interlayer_b_to_rg = [
+    0.1829,
+    0.1799,
+]
+gamma_interlayer_g_to_rb = [
+    0.2227,
+    0.434,
+]
+gamma_interlayer_r_to_gb = [
+    0.4032,
+    0.2488,
+]
+gamma_samelayer_rgb = [
+    0.5159,
+    0.5934,
+    0.2829,
+]
+inhibition_interlayer = 1.0
+inhibition_samelayer = 1.0
+langmuir_donor_k_rgb = [
+    1.0,
+    1.0,
+    1.0,
+]
+langmuir_receiver_k_rgb = [
+    1.0,
+    1.0,
+    1.0,
+]
+
+[parameters.film_render.grain]
+active = true
+blur = 0.89
+blur_dye_clouds_um = 2.0
+channel_correlation = 0.0
+density_min = [
+    0.03,
+    0.03,
+    0.03,
+]
+dye_event_area_um2 = 1.28
+dye_scale = 1.0
+dye_strength = 1.0
+dye_support_um = 3.5
+engine = "spektra"
+micro_structure = [
+    0.2,
+    30.0,
+]
+mult_usm_amount = 1.5
+mult_usm_sigma = 0.7
+particle_scale_sublayers = [
+    1.0,
+    0.4,
+    0.25,
+]
+procedural_film_type = "negative"
+procedural_mode = "analogue"
+procedural_profile = "35mm250"
+procedural_resolution_type = 1
+procedural_timer = 0.0
+rms_granularity = [
+    4.0,
+    4.0,
+    4.0,
+]
+uniformity = [
+    0.97,
+    0.97,
+    0.97,
+]
+
+[parameters.film_render.grain.fotufilm]
+amount = 1.0
+clump_radius_um = 5.0
+coating_density_scale = 1.0
+color = 1.0
+fog_density = 0.03
+layer_size_ratio = [
+    1.0,
+    1.0,
+    1.0,
+]
+layer_weights = [
+    0.7,
+    1.0,
+    1.35,
+]
+layers = [
+    1.0,
+    1.0,
+    1.0,
+]
+material = "auto"
+radius_span = 6.0
+rms_density = 0.009
+size = 1.0
+softness = 1.0
+sublayer_shares = [
+    0.25,
+    0.25,
+    0.25,
+    0.25,
+]
+
+[parameters.film_render.halation]
+active = false
+boost_ev = 0.0
+boost_range = 0.30000001192092896
+halation_amount = 1.0
+halation_bounce_decay = 0.5
+halation_first_sigma_um = [
+    65.0,
+    65.0,
+    65.0,
+]
+halation_n_bounces = 3
+halation_renormalize = true
+halation_spatial_scale = 1.0
+halation_strength = [
+    0.08,
+    0.02,
+    0.0,
+]
+protect_ev = 4.0
+scatter_amount = 1.0
+scatter_core_um = [
+    2.2,
+    2.0,
+    1.6,
+]
+scatter_spatial_scale = 1.0
+scatter_tail_um = [
+    9.3,
+    9.7,
+    9.1,
+]
+scatter_tail_weight = [
+    0.78,
+    0.65,
+    0.67,
+]
+source_compression = 0.0
+
+[parameters.finishing]
+brightness = 0.5
+contrast = 0.1
+saturation = -0.2
+warmth = 0.0
+
+[parameters.finishing.expand]
+black = 0.0
+enabled = false
+white = 1.0
+
+[parameters.output_mix]
+amount = 1.0
+
+[parameters.print_render]
+density_curve_gamma = 1.0
+
+[parameters.print_render.base]
+active = true
+cyan = 1.0
+magenta = 1.0
+scale = 1.0
+yellow = 1.0
+
+[parameters.print_render.density_curves_morph]
+active = true
+developer_exhaustion = 0.0
+gamma_factor = 1.0
+gamma_factor_blue = 1.02
+gamma_factor_fast = 1.0
+gamma_factor_green = 0.94
+gamma_factor_red = 1.08
+gamma_factor_slow = 1.0
+
+[parameters.print_render.glare]
+active = false
+blur = 0.5
+percent = 0.029999999329447746
+roughness = 0.699999988079071
+
+[parameters.scanner]
+conversion_style = "standard"
+experimental_setup = false
+lens_blur = 0.0
+scan_output = "direct_scan"
+unsharp_mask = [
+    0.0,
+    0.0,
+]
+
+[parameters.scanner.operator]
+contrast = 1.0
+exposure_ev = 0.0
+tint_ev = 0.0
+warmth_ev = 0.0
+
+[parameters.settings]
+apply_hanatos2025_adaptation_surface = false
+apply_hanatos2025_adaptation_window = true
+print_exposure_ev_tracking = "follow_mode"
+spectral_gaussian_blur = 0.0
+use_cat16 = true
+
+[print_profile]
+stock = "fujifilm_crystal_archive_typeii"
+version = "0.3.4"
+
+[provenance]
+implementation_version = "0.3.4"
+model_version = "0.3.4"
