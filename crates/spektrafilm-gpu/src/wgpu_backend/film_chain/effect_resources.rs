@@ -155,11 +155,19 @@ impl WgpuBackend {
                 }
                 if gp.usm_sigma > 0.0 && gp.usm_amount > 0.0 {
                     bytes = add(bytes, add(mul(image, 3)?, gaussian)?)?;
-                    // One six-f32 mass pair, eight six-f32 accumulators, and
-                    // one retained left-child pair per recursion depth.
+                    // Exact-tree frontier/parent pages, bounded partials and
+                    // split-leaf carry belong to the reduction owner.
                     bytes = add(
                         bytes,
-                        add(24 + 192, mul(u64::from(pixels.ilog2() + 1), 24)?)?,
+                        add(
+                            24,
+                            super::super::grain::spektra::mass_workspace_bytes(
+                                u32::try_from(pixels)
+                                    .map_err(|_| "Spektra mass pixel indexing overflows")?,
+                                u32::try_from(window / 12)
+                                    .map_err(|_| "Spektra mass window indexing overflows")?,
+                            )?,
+                        )?,
                     )?;
                 }
                 // Every retained chunk uniform is below 2 KiB; include all
