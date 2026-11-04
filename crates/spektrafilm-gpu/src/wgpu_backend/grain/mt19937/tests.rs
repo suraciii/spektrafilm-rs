@@ -143,6 +143,7 @@ fn params(
         curve_x: curve.iter().flatten().copied().collect(),
         curve_layers: layers.iter().flatten().flatten().copied().collect(),
         mt19937_regime: true,
+        statistical_pcg: false,
     }
 }
 

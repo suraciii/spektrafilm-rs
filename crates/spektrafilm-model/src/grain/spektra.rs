@@ -410,7 +410,56 @@ pub fn apply_grain(
     base_seed: u64,
     backend: &dyn ComputeBackend,
 ) -> Result<ImageBuf, String> {
+    apply_grain_with_sampling(
+        density_cmy,
+        norm_curves_f64,
+        curves_layers,
+        prepared,
+        pixel_size_um,
+        grain_blur,
+        blur_dye_clouds_um,
+        micro_structure,
+        usm_sigma,
+        usm_amount,
+        positive_film,
+        monochrome,
+        use_fast_stats,
+        false,
+        base_seed,
+        backend,
+    )
+}
+
+/// Apply the original Spektra sampling law with an explicit statistical PCG
+/// selector. The existing [`apply_grain`] entry point remains the CPU/GPU
+/// reference wrapper and never selects the statistical realization.
+#[allow(clippy::too_many_arguments)]
+pub fn apply_grain_with_sampling(
+    density_cmy: &ImageBuf,
+    norm_curves_f64: &[[f64; 3]],
+    curves_layers: &[[[f64; 3]; 3]],
+    prepared: &PreparedGrain,
+    pixel_size_um: f64,
+    grain_blur: f64,
+    blur_dye_clouds_um: f64,
+    micro_structure: [f64; 2],
+    usm_sigma: f64,
+    usm_amount: f64,
+    positive_film: bool,
+    monochrome: bool,
+    use_fast_stats: bool,
+    statistical_pcg: bool,
+    base_seed: u64,
+    backend: &dyn ComputeBackend,
+) -> Result<ImageBuf, String> {
     validate_prepared(prepared)?;
+    if statistical_pcg {
+        return Err(
+            "Spektra statistical PCG sampling requires the GPU-resident Spektra stage; \
+             select spektra_sampling=mt19937 or fast_stats for CPU execution"
+                .into(),
+        );
+    }
     if !pixel_size_um.is_finite()
         || pixel_size_um <= 0.0
         || [
@@ -640,6 +689,36 @@ mod tests {
             row[1] = [0.0; 3];
         }
         assert!(prepare_grain(&layers, 3, 12.0, [6.0; 3], [1.0; 3], [0.03; 3], [0.97; 3]).is_err());
+    }
+
+    #[test]
+    fn statistical_pcg_rejects_the_cpu_realization() {
+        let (composite, layers) = curves();
+        let params = prepared(&layers, 3, 12.0);
+        let mut image = ImageBuf::new(64, 32);
+        for pixel in image.pixels_mut() {
+            pixel.fill(from_f64(1.1));
+        }
+        let error = apply_grain_with_sampling(
+            &image,
+            &composite,
+            &layers,
+            &params,
+            12.0,
+            0.0,
+            0.0,
+            [0.0; 2],
+            0.0,
+            0.0,
+            false,
+            false,
+            false,
+            true,
+            0,
+            &CpuBackend,
+        )
+        .unwrap_err();
+        assert!(error.contains("GPU-resident"), "{error}");
     }
 
     #[test]

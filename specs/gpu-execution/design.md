@@ -261,7 +261,17 @@ Scratch reuse MUST preserve dependent reads and writes in queue order. Mutable s
 
 Source working pages MAY supply an equal-geometry tail after their final source read. Reuse MUST preserve live inputs and each pass's required source and destination separation.
 
-Spektra raster storage windows preserve the original flattened pixel identity for fast statistics. Sequential MT19937 retains each plane's generator across windows and completes the complete-source Poisson walk before the binomial walk; a storage boundary never reseeds a plane. Multiplicative grain USM reduces complete-source mass before applying normalization.
+Spektra raster storage windows preserve the original flattened pixel identity for fast statistics. Sequential MT19937 retains each plane's generator across windows and completes the complete-source Poisson walk before the binomial walk; a storage boundary never reseeds a plane.
+
+Spektra's explicit `statistical_pcg` mode is a declared draw-identity-independent realization under the paragraph above. It uses a PCG32 stream addressed only by the request seed and global `(pixel, channel, sublayer)` identity.
+
+It preserves the reference Poisson/binomial branches in f32. Micro-structure uses the existing fresh-seeded fast-statistics clump field; it does not continue the sequential MT particle state.
+
+Storage windows, workgroup size, crop traversal, and queue order MUST NOT reseed it. It is GPU resident only; a CPU request MUST fail rather than substitute another realization.
+
+Its acceptance evidence MUST include reproducibility across storage windows, distribution moments, local variance/spectrum, and multi-seed statistics. Global mean/std alone is insufficient.
+
+Multiplicative grain USM reduces complete-source mass before applying normalization.
 
 Procedural grain gathers its original-coordinate conditioning samples on the device, retains the original dimensions in the resolution model, and carries tap accumulation rather than shortening support when a spatial footprint exceeds a binding. Image, layer, Poisson-seed, and mass-reduction transports are physically paged; no complete-source raster or complete layer stack MUST fit one physical GPU buffer.
 

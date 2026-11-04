@@ -83,6 +83,9 @@ fn build_spektra_grain_state_with_limit(
     limit: u64,
 ) -> Result<SpektraGrainState, String> {
     let window_limit = transport_window_limit(limit);
+    if params.statistical_pcg && params.mt19937_regime {
+        return Err("Spektra statistical PCG and MT19937 regimes are mutually exclusive".into());
+    }
     if !device
         .features()
         .contains(wgpu::Features::SHADER_F64 | wgpu::Features::SHADER_INT64)
@@ -111,6 +114,15 @@ fn build_spektra_grain_state_with_limit(
         .filter(|&n| n > 0 && n <= u32::MAX / 3)
         .ok_or("Spektra grain indexing overflows")?;
     let chunk = (window_limit / (12 * u64::from(n_layers).max(2))).min(u64::from(n_pixels)) as u32;
+    // The statistical PCG path owns one stream per pixel; cap its formation
+    // dispatch so a large binding limit cannot turn one batch into a
+    // watchdog-scale submission. The sequential MT regime keeps its existing
+    // chunking because its tape state is per plane.
+    let chunk = if params.statistical_pcg {
+        chunk.min(8_192)
+    } else {
+        chunk
+    };
     if chunk == 0 {
         return Err("Spektra grain minimum layer window exceeds storage binding limit".into());
     }
@@ -144,20 +156,32 @@ fn build_spektra_grain_state_with_limit(
         tail_padding: [u32; 4],
         pad_struct: [u32; 4],
     }
-    let pipe = backend.cached_pipeline(
-        concat!(
-            include_str!("../../../../../spektrafilm-shaders/wgsl/f64_math.wgsl"),
-            include_str!("../work_f32.wgsl"),
-            include_str!("spektra.wgsl")
-        ),
-        &[
-            wgpu::BufferBindingType::Uniform,
-            wgpu::BufferBindingType::Storage { read_only: true },
-            wgpu::BufferBindingType::Storage { read_only: true },
-            wgpu::BufferBindingType::Storage { read_only: true },
-            wgpu::BufferBindingType::Storage { read_only: false },
-        ],
-    );
+    let bindings = [
+        wgpu::BufferBindingType::Uniform,
+        wgpu::BufferBindingType::Storage { read_only: true },
+        wgpu::BufferBindingType::Storage { read_only: true },
+        wgpu::BufferBindingType::Storage { read_only: true },
+        wgpu::BufferBindingType::Storage { read_only: false },
+    ];
+    let pipe = if params.statistical_pcg {
+        backend.cached_pipeline(
+            concat!(
+                include_str!("../../../../../spektrafilm-shaders/wgsl/f64_math.wgsl"),
+                include_str!("../work_f32.wgsl"),
+                include_str!("spektra_pcg.wgsl")
+            ),
+            &bindings,
+        )
+    } else {
+        backend.cached_pipeline(
+            concat!(
+                include_str!("../../../../../spektrafilm-shaders/wgsl/f64_math.wgsl"),
+                include_str!("../work_f32.wgsl"),
+                include_str!("spektra.wgsl")
+            ),
+            &bindings,
+        )
+    };
     let make_params = |first, count| {
         device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("spektra_grain_params"),
@@ -178,7 +202,7 @@ fn build_spektra_grain_state_with_limit(
                     params.reference_f64 as u32,
                     params.monochrome as u32,
                     params.mt19937_regime as u32,
-                    0,
+                    params.statistical_pcg as u32,
                 ],
                 tail_padding: [first, count, 0, 0],
                 pad_struct: [0; 4],
