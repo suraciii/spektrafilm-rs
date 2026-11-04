@@ -68,6 +68,7 @@ The Simplified Chinese presentation MUST use these core terms consistently. The 
 | Brightness / Contrast | 明暗 / 反差 |
 | Warmth / Saturation | 冷暖 / 彩度 |
 | Film Format / Custom | 胶片规格 / 自定义 |
+| Capture setup | 拍摄设置 |
 | Frame Long Edge | 画面长边 |
 | reset <module> · help: Restore <module> to the factory state | 重置<模块> · 提示：将<模块>恢复为出厂状态 |
 | history: Reset <module> to factory | 历史：将<模块>恢复出厂值 |
@@ -213,7 +214,7 @@ The viewer MUST distinguish:
 - exact zoom percentages: source-pixel-to-device-pixel scale;
 - `select`: the Shift or secondary-button drag rectangle that zooms to its region on release.
 
-Viewer hints MUST name the gestures in this vocabulary: click zooms at the pointer, primary-button drag pans, Shift or secondary-button drag selects, and double click fits. A hint MUST NOT claim an effect on saved or exported pixels.
+Viewer hints MUST name the gestures in this vocabulary: the wheel or pinch zooms at the pointer, primary-button drag pans, Shift or secondary-button drag selects, and double click resets the fitted and centered view. A hint MUST NOT describe an unmodified primary-button click as a zoom gesture. A hint MUST NOT claim an effect on saved or exported pixels.
 
 ## Image-analysis language
 

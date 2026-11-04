@@ -1,5 +1,23 @@
 use super::*;
 
+#[test]
+fn finishing_opens_by_default_and_search_preserves_manual_disclosure() {
+    let mut s = session();
+    let h = &mut s.harness;
+    navigate_stage(h, controls::Stage::Scan);
+    assert!(h.query_by_label("Brightness").is_some());
+    click(h, "Tone & Color");
+    assert!(h.query_by_label("Brightness").is_none());
+    let before = h.state().params.clone();
+    let revision = h.state().parameter_revision;
+    search_controls(h, "Brightness");
+    assert!(h.query_by_label("Brightness").is_some());
+    search_controls(h, "");
+    assert!(h.query_by_label("Brightness").is_none());
+    assert_eq!(h.state().params, before);
+    assert_eq!(h.state().parameter_revision, revision);
+}
+
 fn edit_control(h: &mut Harness<'_, App>, path: &str, label: &str, text: &str) {
     reveal_control(h, path);
     edit(h, label, text);
@@ -663,7 +681,7 @@ fn film_format_specs_change_only_physical_scale_and_preserve_custom_values() {
             expected,
             "{name} must not change crop or effects"
         );
-        assert!(h.query_by_label("Frame Long Edge").is_none());
+        assert!(h.query_by_label("Frame Long Edge").is_some());
     }
     click(h, "Undo");
     assert_eq!(h.state().params.camera.film_format_mm, 56.0);
@@ -1286,7 +1304,7 @@ fn control_search_and_scan_tone_access_preserve_canonical_state() {
     let module = h.get_by_label("Tone & Color").raw_bounds().unwrap();
     assert!(scan_heading.y0 < module.y0 && module.y0 < output_heading.y0);
     assert_eq!(h.query_all_by_label("Tone & Color").count(), 1);
-    click(h, "Tone & Color");
+    assert!(h.query_by_label("Brightness").is_some());
     let scanner = h.state().params.scanner.clone();
     edit(h, "Brightness", "0.35");
     assert_eq!(h.state().params.finishing.brightness, 0.35);

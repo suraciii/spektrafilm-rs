@@ -534,6 +534,7 @@ fn real_language_selector_retains_invalid_and_deferred_numeric_drafts() {
         let mut independent = params.clone();
         independent.camera.auto_exposure = !independent.camera.auto_exposure;
         // The suspension must not monopolize another numeric field's wheel.
+        click(h, "拍摄设置");
         h.get_by_label("画面长边").hover();
         h.step();
         h.input_mut().events.push(egui::Event::MouseWheel {

@@ -63,9 +63,17 @@ A Preview MUST disclose that detail effects can differ from Scan under the exist
 
 Before Save publication, the GUI MUST identify the retained dimensions and disclose any mismatch with current adjustments. Saving a stale result MUST require an explicit choice to continue. Canceling that choice MUST leave controls and output unchanged.
 
+The persistent Save action MUST present the retained operation and pixel dimensions in a concise summary derived from the status strip's identity. This summary MUST NOT become a second identity owner or replace the mismatch confirmation. Selecting Original or Paper back MUST NOT hide the retained identity that Save will write.
+
+The Save action's accessible description MUST expose the same retained summary. With no retained result, the action MUST use a concise empty-state caption.
+
 Save MUST NOT silently render current adjustments.
 
 Export MUST be the primary file-delivery entry. Its submission surface MUST identify the accepted source, output dimensions, and delivery settings. This guidance MUST NOT merge Save and Export or change their [pixel contracts](../photo-export/spec.md).
+
+A native Save or Export destination confirmation MUST identify the exact publication path. After confirmation, the GUI MUST NOT append, remove, or replace an extension or directory component. Any extension completion MUST be visible and confirmed in the chooser.
+
+An incompatible confirmed destination MUST fail without publication rather than being renamed silently. These rules apply to ordinary filename entry and full-path or location-bar entry. Overwrite protection MUST apply to the exact confirmed path.
 
 ## Material controls and output composition
 
@@ -191,6 +199,12 @@ Each module has one editing owner. The inspector MUST contain these stages and m
 
 Rotation is a source operation and MUST NOT be offered as viewer-only pan or zoom. A read-only summary or action that locates its owner MAY appear elsewhere; a second editable copy MUST NOT.
 
+An expanded Camera module MUST keep exposure compensation and automatic exposure directly visible. Film Format, Frame Long Edge, metering method, color filter, and capture illuminant MUST belong to a nested **Capture setup** group within Camera.
+
+Capture setup MUST start collapsed in a fresh disclosure session. This grouping MUST NOT change Camera ownership, parameter identity, or the Camera module reset scope.
+
+Search, Only modified, and canonical locators MUST reveal Capture setup and its actual control without committing an edit.
+
 The stage jump strip MUST reveal and scroll to one heading in the continuous inspector. It MUST preserve the control-search query and Only modified filter.
 
 It MUST NOT close other stages or change any parameter. A heading toggle MUST affect only its own open state.
@@ -260,7 +274,7 @@ Modules expose resets under [Section reset](#section-reset). Control coverage ac
 
 A visible module reset MUST restore exactly that module's editable canonical paths to their reset baseline. A module reset MUST NOT reset another module because modules can share one serialized preset section.
 
-Tone & Color reset MUST affect only its own controls, including Range. Row reset MUST affect only its own control.
+Tone & Color reset MUST affect only its own controls, including Range. Individual tone and color adjustment reversal MUST use adjustment Undo; Tone & Color MUST NOT present row reset actions.
 
 In particular, Preflash reset MUST leave main Enlarger exposure and filtration unchanged, and Print viewing glare reset MUST leave Print chemistry unchanged. A material module reset MUST also restore its material selection and development time.
 
@@ -381,7 +395,7 @@ The explicitly armed [Select area tool](../gui-product-design/image-analysis/spe
 - The wheel and pinch zoom at the pointer.
 - A primary-button drag pans the view.
 - A Shift or secondary-button drag selects a rectangle. Its release zooms so the selection fills the viewer and its center lands at the viewer center.
-- One click zooms one step at the pointer.
+- An unmodified primary-button click without a drag MUST NOT change zoom or pan. In particular, clicking the photograph to leave an editor MUST NOT alter the retained view.
 - A double click resets the view to the fit zoom and the centered pan.
 
 A gesture that arrives while a composition runs MUST keep the last completed frame until the current frame is ready.

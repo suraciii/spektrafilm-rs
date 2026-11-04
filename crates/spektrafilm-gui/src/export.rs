@@ -1,7 +1,7 @@
 //! Full-render export preferences and a cancellable options draft.
 //! Search locates this draft's real controls without changing its format;
 //! inapplicable codec values remain readable, and only submission commits it.
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use crate::controls::{self, enum_choice};
 use crate::theme;
@@ -71,8 +71,7 @@ impl ExportFormat {
     pub(crate) fn argument(self) -> &'static str {
         self.image_format().name()
     }
-    /// Extension appended when the destination carries none. TIFF keeps the
-    /// longer spelling here (not core's first loader extension `tif`).
+    /// Default extension for generated filenames. TIFF uses the longer spelling.
     pub(crate) fn extension(self) -> &'static str {
         match self {
             Self::Jpeg => "jpg",
@@ -92,7 +91,7 @@ impl ExportFormat {
             Self::Exr => "EXR",
         }
     }
-    pub(crate) fn output_path(self, path: &Path) -> PathBuf {
+    pub(crate) fn validate_path(self, path: &Path) -> Result<(), crate::app::Message> {
         if path
             .extension()
             .and_then(|ext| ext.to_str())
@@ -102,9 +101,13 @@ impl ExportFormat {
                     .any(|legal| ext.eq_ignore_ascii_case(legal))
             })
         {
-            path.to_path_buf()
+            Ok(())
         } else {
-            path.with_extension(self.extension())
+            Err(
+                crate::app::Message::new("operations.export_extension_mismatch")
+                    .arg("path", path.display())
+                    .arg("format", self.label()),
+            )
         }
     }
 }
@@ -816,6 +819,22 @@ impl ExportDialog {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn export_paths_require_a_matching_extension_without_rewriting() {
+        for (format, names) in [
+            (ExportFormat::Jpeg, &["a.jpg", "a.JPEG"][..]),
+            (ExportFormat::Png, &["a.png", "a.PNG"][..]),
+            (ExportFormat::Tiff, &["a.tif", "a.TIFF"][..]),
+            (ExportFormat::Exr, &["a.exr", "a.EXR"][..]),
+        ] {
+            for name in names {
+                assert!(format.validate_path(Path::new(name)).is_ok());
+            }
+            assert!(format.validate_path(Path::new("a")).is_err());
+            assert!(format.validate_path(Path::new("a.wrong")).is_err());
+        }
+    }
 
     fn options(
         depth: BitDepth,

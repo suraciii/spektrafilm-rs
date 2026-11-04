@@ -361,6 +361,25 @@ pub(crate) fn section_header<R>(
         ui.make_persistent_id(egui::Id::new(title)),
         false,
     );
+    if title == "Capture setup"
+        && ui.ctx().data(|data| {
+            data.get_temp::<(String, String)>(egui::Id::new("control_focus_request"))
+                .is_some_and(|(section, target)| {
+                    section == "Camera"
+                        && lookup(&target).is_some_and(|entry| {
+                            matches!(
+                                entry.path.as_str(),
+                                "camera.film_format_mm"
+                                    | "camera.auto_exposure_method"
+                                    | "camera.color_filter"
+                                    | "camera.capture_illuminant"
+                            )
+                        })
+                })
+        })
+    {
+        state.set_open(true);
+    }
     let header = ui.horizontal(|ui| {
         if disclosure_header(ui, title, state.is_open()).clicked() {
             state.toggle(ui);
@@ -776,7 +795,7 @@ pub(crate) fn module_applicability(
             None => None,
         };
         return (!finishing_applicable(params, scanned.is_some_and(|profile| profile.is_paper() || profile.is_positive())))
-            .then(|| "Finishing is inactive: the route does not deliver an eligible positive reading. Stored values are retained.".to_owned());
+            .then(|| "Tone & Color is inactive: the route does not deliver an eligible positive reading. Stored values are retained.".to_owned());
     }
     // A module banner states that the whole module has no effect. Reporting
     // the first inactive control would promote an optional subfeature (the
@@ -1087,8 +1106,14 @@ mod tests {
     #[test]
     fn camera_capture_illuminant_control_sets_and_clears_the_option() {
         let ctx = egui::Context::default();
+        ctx.style_mut(|style| style.animation_time = 0.0);
         let mut params = RuntimeParams::default();
         // The control renders inside the Camera section, not Scanner/Convert.
+        let (_, output) = camera_frame(&ctx, &mut params, vec![]);
+        assert!(!has_text(&output, "Inherit (film profile) · D55"));
+        let setup = text_position(&output, "Capture setup");
+        camera_frame(&ctx, &mut params, click(setup, true));
+        camera_frame(&ctx, &mut params, click(setup, false));
         let (_, output) = camera_frame(&ctx, &mut params, vec![]);
         assert!(has_text(&output, "Inherit (film profile) · D55"));
         assert_eq!(params.camera.capture_illuminant, None);
@@ -1188,7 +1213,12 @@ mod tests {
     #[test]
     fn camera_capture_illuminant_accepts_custom_blackbody_text() {
         let ctx = egui::Context::default();
+        ctx.style_mut(|style| style.animation_time = 0.0);
         let mut params = RuntimeParams::default();
+        let (_, output) = camera_frame(&ctx, &mut params, vec![]);
+        let setup = text_position(&output, "Capture setup");
+        camera_frame(&ctx, &mut params, click(setup, true));
+        camera_frame(&ctx, &mut params, click(setup, false));
         let (_, output) = camera_frame(&ctx, &mut params, vec![]);
         let position = text_position(&output, "custom BB<kelvin>");
         camera_frame(&ctx, &mut params, click(position, true));

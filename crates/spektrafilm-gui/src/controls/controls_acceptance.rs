@@ -64,6 +64,9 @@ fn camera_rows_follow_route_without_losing_values() {
     params.camera.exposure_compensation_ev = 0.75;
     params.camera.film_format_mm = 50.0;
     let mut harness = Harness::new_ui_state(camera, params);
+    assert!(harness.query_by_label("Frame Long Edge").is_none());
+    harness.get_by_label("Capture setup").simulate_click();
+    harness.run();
     assert!(
         harness
             .get_by_label("Exposure compensation")
@@ -471,17 +474,18 @@ mod row_layout {
     use super::*;
     use egui_kittest::kittest::Queryable;
 
-    /// A parameter row presents its label before its value, on one line, and
-    /// every row on a page aligns to one label column.
+    /// Labels precede their editors, including within nested capture setup.
+    /// Editors retain the same right-aligned value column across the group.
     #[test]
     fn a_row_presents_its_label_before_its_value_on_one_line() {
         let params = scanner_params();
-        let harness = Harness::new_ui_state(camera, params);
+        let mut harness = Harness::new_ui_state(camera, params);
+        harness.get_by_label("Capture setup").simulate_click();
+        harness.run();
         // The label sits left of its editor and shares its vertical band, so
         // the pair reads as one row rather than a stacked pair.
         let rows = ["Frame Long Edge", "Exposure compensation"];
-        let mut left_edges: Vec<f64> = Vec::new();
-        let mut value_lefts: Vec<f64> = Vec::new();
+        let mut value_rights: Vec<f64> = Vec::new();
         for label in rows {
             let node = harness.get_by_label(label);
             let rect = node.raw_bounds().expect("row editor has no bounds");
@@ -496,23 +500,12 @@ mod row_layout {
             );
             let shared = label_rect.y0 < rect.y1 && rect.y0 < label_rect.y1;
             assert!(shared, "{label}: label and value must share one line");
-            left_edges.push(label_rect.x0);
-            value_lefts.push(rect.x0);
+            value_rights.push(rect.x1);
         }
-        // One label column per page: the labels share a left edge and the values
-        // share a left edge, so rows align rather than float independently.
-        let label_left = left_edges[0];
-        let value_left = value_lefts[0];
-        for (i, (l, v)) in left_edges.iter().zip(value_lefts.iter()).enumerate() {
-            assert!(
-                (l - label_left).abs() < 1.0,
-                "row {i} label column drifted: {l} vs {label_left}"
-            );
-            assert!(
-                (v - value_left).abs() < 1.0,
-                "row {i} value column drifted: {v} vs {value_left}"
-            );
-        }
+        assert!(
+            (value_rights[0] - value_rights[1]).abs() < 1.0,
+            "value columns must align"
+        );
     }
 
     /// The preflash exposure row carries the longest unit in the vocabulary, so
@@ -787,7 +780,7 @@ mod finishing_interactions {
     use super::*;
 
     #[test]
-    fn row_resets_are_scoped_and_expand_is_collapsed() {
+    fn finishing_rows_have_no_reset_and_range_starts_closed() {
         let mut params = RuntimeParams::default();
         params.finishing.brightness = 0.4;
         params.finishing.contrast = 0.3;
@@ -811,18 +804,14 @@ mod finishing_interactions {
             params,
         );
         assert!(h.query_by_label("Black reference").is_none());
-        h.get_by_label("Reset Brightness").simulate_click();
-        h.run();
-        assert_eq!(h.state().finishing.brightness, 0.0);
-        assert_eq!(h.state().finishing.contrast, 0.3);
-        assert!(h.state().finishing.expand.enabled);
+        assert!(h.query_by_label("Reset Brightness").is_none());
         h.get_by_label("Range").simulate_click();
         h.run();
-        h.get_by_label("Reset Black reference").simulate_click();
-        h.run();
-        assert_eq!(h.state().finishing.expand.black, 0.0);
-        assert!(h.state().finishing.expand.enabled);
+        assert!(h.query_by_label("Black reference").is_some());
+        assert!(h.query_by_label("Reset Black reference").is_none());
+        assert_eq!(h.state().finishing.brightness, 0.4);
         assert_eq!(h.state().finishing.contrast, 0.3);
+        assert!(h.state().finishing.expand.enabled);
     }
 
     #[test]
@@ -854,37 +843,6 @@ mod finishing_interactions {
             super::super::take_edited_paths(&h.ctx),
             ["finishing.expand.enabled"]
         );
-    }
-
-    #[test]
-    fn reference_reset_cannot_create_an_invalid_span() {
-        let mut params = RuntimeParams::default();
-        params.finishing.expand.black = 1.1;
-        params.finishing.expand.white = 1.2;
-        let mut h = Harness::new_ui_state(
-            |ui, params| {
-                super::super::show(
-                    ui,
-                    params,
-                    &mut serde_json::Value::Null,
-                    "Finishing",
-                    super::super::ScanMedium::Paper,
-                    true,
-                    "",
-                    &mut Default::default(),
-                    "D55",
-                    &crate::profiles::pick_data_dir(),
-                );
-            },
-            params,
-        );
-        h.get_by_label("Range").simulate_click();
-        h.run();
-        assert!(h.get_by_label("Reset White reference").node().is_disabled());
-        assert_eq!(h.state().finishing.expand.white, 1.2);
-        h.get_by_label("Reset Black reference").simulate_click();
-        h.run();
-        assert!(!h.get_by_label("Reset White reference").node().is_disabled());
     }
 
     #[test]

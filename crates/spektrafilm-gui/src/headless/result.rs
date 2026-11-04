@@ -116,11 +116,37 @@ fn viewer_keeps_retained_preview_identity_and_caveat_while_scan_is_pending() {
     let identity = h.state().retained_result_identity(&h.ctx);
     assert!(identity.contains("Preview"), "{identity}");
     assert!(identity.contains("128 × 64"), "{identity}");
+    let caption = h.state().retained_save_caption(&h.ctx);
+    assert!(caption.contains("Preview") && caption.contains("128 × 64"));
+    let save_description = h.get_by_label("SAVE").description().unwrap_or_default();
+    assert!(save_description.contains("Preview") && save_description.contains("128 × 64"));
     assert!(
         identity.contains("Matches current adjustments"),
         "{identity}"
     );
     assert!(h.query_by_label(&identity).is_some());
+    for (layer, label) in [
+        (display::ViewLayer::Input, "Original"),
+        (display::ViewLayer::PaperBack, "Paper back"),
+    ] {
+        h.state_mut().viewer.settings.layer = layer;
+        h.run_steps(2);
+        assert!(
+            h.query_all_by_role(egui::accesskit::Role::Label)
+                .any(|node| {
+                    node.value().is_some_and(|text| {
+                        text.contains(label)
+                            && text.contains("Preview")
+                            && text.contains("128")
+                            && text.contains("64")
+                            && text.contains("Matches current adjustments")
+                    })
+                })
+        );
+        assert_eq!(h.state().retained_save_caption(&h.ctx), caption);
+    }
+    h.state_mut().viewer.settings.layer = display::ViewLayer::Output;
+    h.run_steps(2);
 
     let active = h.state().render_worker.active.clone();
     let guard = active.lock();
@@ -143,7 +169,30 @@ fn viewer_keeps_retained_preview_identity_and_caveat_while_scan_is_pending() {
         identity.contains("Does not match current adjustments"),
         "{identity}"
     );
+    assert_eq!(h.state().retained_save_caption(&h.ctx), caption);
     assert!(h.query_by_label(&identity).is_some());
+    for (layer, label) in [
+        (display::ViewLayer::Input, "Original"),
+        (display::ViewLayer::PaperBack, "Paper back"),
+    ] {
+        h.state_mut().viewer.settings.layer = layer;
+        h.run_steps(2);
+        assert!(
+            h.query_all_by_role(egui::accesskit::Role::Label)
+                .any(|node| {
+                    node.value().is_some_and(|text| {
+                        text.contains(label)
+                            && text.contains("Preview")
+                            && text.contains("128")
+                            && text.contains("64")
+                            && text.contains("Does not match current adjustments")
+                    })
+                })
+        );
+        assert_eq!(h.state().retained_save_caption(&h.ctx), caption);
+    }
+    h.state_mut().viewer.settings.layer = display::ViewLayer::Output;
+    h.run_steps(2);
     assert!(
         h.query_by_label("Preview detail effects can differ from Scan.")
             .is_some()
@@ -159,6 +208,10 @@ fn viewer_keeps_retained_preview_identity_and_caveat_while_scan_is_pending() {
     let identity = h.state().retained_result_identity(&h.ctx);
     assert!(identity.contains("Scan"), "{identity}");
     assert!(identity.contains("160 × 80"), "{identity}");
+    let caption = h.state().retained_save_caption(&h.ctx);
+    assert!(caption.contains("Scan") && caption.contains("160 × 80"));
+    let save_description = h.get_by_label("SAVE").description().unwrap_or_default();
+    assert!(save_description.contains("Scan") && save_description.contains("160 × 80"));
     assert!(h.query_by_label(&identity).is_some());
     assert!(
         h.query_by_label("Preview detail effects can differ from Scan.")

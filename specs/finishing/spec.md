@@ -70,7 +70,7 @@ Help MUST state that hard clipping destroys differences for that render. Downstr
 
 Edit order MUST NOT change evaluation order. Every adjustment MUST evaluate from the compatible base positive, never from an earlier adjusted or clipped result.
 
-A row reset MUST restore only that control's default. A module reset MUST restore only tone and color controls, including disabled Expand and its default references.
+Individual adjustment reversal MUST use the workspace's adjustment Undo. Tone & Color MUST NOT present row reset actions. A module reset MUST restore only tone and color controls, including disabled Expand and its default references.
 
 The module MUST provide a transient comparison that bypasses only tone and color adjustments. Comparison MUST preserve stored controls and MUST NOT become a history edit, preset value, or export setting.
 

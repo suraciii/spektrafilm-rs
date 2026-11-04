@@ -17,11 +17,6 @@ pub(crate) fn sections(
         }
         ui.add_enabled_ui(inactive.is_none(), |ui| {
             let halation_active = params.film_render.halation.active;
-            ui.label(
-                egui::RichText::new(crate::i18n::text(ui.ctx(), "controls.halation.key_controls"))
-                    .small()
-                    .color(theme::FG_MUTED),
-            );
             if filter_matches(filter, "Halation Profiles") {
                 if !halation_active {
                     ui.label(egui::RichText::new(crate::i18n::text(ui.ctx(), "controls.halation.inactive_profile")).color(theme::FG_MUTED));
