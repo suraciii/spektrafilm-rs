@@ -13,6 +13,7 @@ use super::super::*;
 use super::mt19937::{SpektraMt19937State, build_spektra_mt19937_state_with_limit};
 use super::raster::{RasterCommands, RasterStorage, paged_transport, transport};
 use blur::{GrainBlurState, build_grain_blur_f64_paged, build_grain_blur_paged};
+pub(in crate::wgpu_backend) use post::mass::workspace_bytes as mass_workspace_bytes;
 use post::{GrainPostState, build_grain_post};
 use spektrafilm_backend::SpektraGrainGpuParams;
 
