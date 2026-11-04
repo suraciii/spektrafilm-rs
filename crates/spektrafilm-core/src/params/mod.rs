@@ -20,7 +20,7 @@ pub use diffusion::DiffusionFilterParams;
 pub use finishing::{ExpandParams, FinishingParams};
 use glare::GlareParams;
 pub use grain::{FotufilmGrainParams, FotufilmMaterial};
-pub use grain::{GrainEngine, GrainParams};
+pub use grain::{GrainEngine, GrainParams, SpektraSampling};
 pub use halation::HalationParams;
 pub use validation::{ValidationError, ValidationReason};
 

@@ -540,6 +540,9 @@ fn description(path: &str) -> Option<&'static str> {
         "film_render.grain.rms_granularity" => Some(
             "RMS granularity is distinct from Procedural Amount: Spektra derives statistical particle area from the film density curves; Dye uses relative strength G to scale per-channel event area, not a certified optical RMS target.",
         ),
+        "film_render.grain.spektra_sampling" => Some(
+            "Spektra sampling realization: auto follows settings.use_fast_stats; statistical_pcg is the explicit GPU-only per-pixel PCG32 mode.",
+        ),
         _ => None,
     }
 }

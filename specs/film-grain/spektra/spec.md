@@ -13,5 +13,9 @@
 - The sequential sampler MUST draw the complete Poisson plane before the complete binomial plane.
 - Its micro-structure field MUST continue the final active plane's NumPy random state.
 - `settings.use_fast_stats` MUST select the reference distribution branches with deterministic per-element streams. It MUST NOT claim pixel identity with upstream's schedule-dependent numba streams.
+- `film_render.grain.spektra_sampling` MUST select an explicit Spektra sampling realization. Its default `auto` MUST preserve the historical `settings.use_fast_stats` behavior.
+- `mt19937` and `fast_stats` MUST force the existing sequential and fast-statistics realizations. `statistical_pcg` MUST select the declared per-pixel PCG32 realization with exact Poisson/binomial branches.
+- The statistical PCG realization is a new realization, not an MT19937 identity claim. It MUST be GPU resident only in the current contract.
+- The `statistical_pcg` realization MUST preserve the prepared model, density floors, layer/channel identities, Poisson-before-binomial order per sample, f32 conditioning/products, and micro-structure continuation. It MUST use independent per-pixel streams and MUST NOT silently replace the default MT19937 path.
 - Active Spektra grain MUST run on the selected executor under [GPU algorithm alignment](../../gpu-execution/spec.md#algorithm-alignment). Missing device precision or resources MUST fail explicitly rather than substitute another engine or CPU image work.
 - `particle_area_um2`, `particle_scale`, `particle_scale_layers`, `sublayers_active`, and `n_sub_layers` are obsolete controls. Parameter sources MUST reject them rather than map them to the RMS model.

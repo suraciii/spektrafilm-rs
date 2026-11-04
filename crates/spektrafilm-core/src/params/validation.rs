@@ -553,6 +553,12 @@ pub(crate) fn enum_values(path: &str) -> Option<Vec<String>> {
         "film_render.grain.procedural_mode" => {
             ["analogue", "noise"].iter().map(|v| (*v).into()).collect()
         }
+        "film_render.grain.spektra_sampling" => {
+            ["auto", "mt19937", "fast_stats", "statistical_pcg"]
+                .iter()
+                .map(|v| (*v).into())
+                .collect()
+        }
         "film_render.grain.procedural_film_type" => ["negative", "positive"]
             .iter()
             .map(|v| (*v).into())
@@ -730,6 +736,9 @@ pub(crate) fn validate_enum_value_detailed(path: &str, value: &str) -> Result<()
             matches!(value, "auto" | "silver" | "dye_negative" | "dye_reversal")
         }
         "film_render.grain.procedural_mode" => matches!(value, "analogue" | "noise"),
+        "film_render.grain.spektra_sampling" => {
+            matches!(value, "auto" | "mt19937" | "fast_stats" | "statistical_pcg")
+        }
         "film_render.grain.procedural_film_type" => matches!(value, "negative" | "positive"),
         "film_render.grain.procedural_profile" => {
             value == "custom"

@@ -143,6 +143,7 @@ fn params(
         curve_x: curve.iter().flatten().copied().collect(),
         curve_layers: layers.iter().flatten().flatten().copied().collect(),
         mt19937_regime: true,
+        statistical_pcg: false,
     }
 }
 
@@ -183,6 +184,7 @@ fn reference(image: &ImageBuf, params: &spektrafilm_backend::SpektraGrainGpuPara
         params.usm_amount,
         params.lookup_sign < 0.0,
         params.monochrome,
+        false,
         false,
         params.base_seed,
         &CpuBackend,

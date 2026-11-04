@@ -362,6 +362,7 @@ mod tests {
             curve_x: vec![0.0, 0.0, 0.0, 1.0, 1.0, 1.0],
             curve_layers: vec![0.0; 18],
             mt19937_regime: false,
+            statistical_pcg: false,
         }
     }
 

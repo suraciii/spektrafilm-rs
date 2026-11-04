@@ -407,10 +407,18 @@ pub fn apply_grain(
     positive_film: bool,
     monochrome: bool,
     use_fast_stats: bool,
+    statistical_pcg: bool,
     base_seed: u64,
     backend: &dyn ComputeBackend,
 ) -> Result<ImageBuf, String> {
     validate_prepared(prepared)?;
+    if statistical_pcg {
+        return Err(
+            "Spektra statistical PCG sampling is only implemented by the GPU resident stage; \
+             select spektra_sampling=mt19937 or fast_stats for CPU execution"
+                .into(),
+        );
+    }
     if !pixel_size_um.is_finite()
         || pixel_size_um <= 0.0
         || [
@@ -592,6 +600,7 @@ mod tests {
             false,
             monochrome,
             fast,
+            false,
             0,
             &CpuBackend,
         )
@@ -640,6 +649,36 @@ mod tests {
             row[1] = [0.0; 3];
         }
         assert!(prepare_grain(&layers, 3, 12.0, [6.0; 3], [1.0; 3], [0.03; 3], [0.97; 3]).is_err());
+    }
+
+    #[test]
+    fn statistical_pcg_rejects_the_cpu_realization() {
+        let (composite, layers) = curves();
+        let params = prepared(&layers, 3, 12.0);
+        let mut image = ImageBuf::new(64, 32);
+        for pixel in image.pixels_mut() {
+            pixel.fill(from_f64(1.1));
+        }
+        let error = apply_grain(
+            &image,
+            &composite,
+            &layers,
+            &params,
+            12.0,
+            0.0,
+            0.0,
+            [0.0; 2],
+            0.0,
+            0.0,
+            false,
+            false,
+            false,
+            true,
+            0,
+            &CpuBackend,
+        )
+        .unwrap_err();
+        assert!(error.contains("GPU resident"), "{error}");
     }
 
     #[test]
@@ -725,6 +764,7 @@ mod tests {
             [0.0; 2],
             0.0,
             0.0,
+            false,
             false,
             false,
             false,

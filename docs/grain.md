@@ -36,6 +36,8 @@ Library callers that construct runtime parameters directly must supply a positiv
 
 `settings.use_fast_stats: false` uses the sequential NumPy/scipy sampling regime: all Poisson draws for a plane, then all binomial draws. Micro-structure continues the final plane's NumPy state. Fast-stats uses the reference distribution branches with repeatable per-element streams; it does not reproduce numba's schedule-dependent random realizations.
 
+`film_render.grain.spektra_sampling` adds an explicit sampling choice for Spektra. `auto` follows `settings.use_fast_stats` and preserves existing behavior. `statistical_pcg` is the opt-in GPU-resident realization: one PCG32 stream per pixel, channel and sublayer, with the same exact Poisson/binomial branches in f32. It is a different random realization, not a bit-identical MT19937 result, and CPU execution rejects it explicitly. It is intended for devices where the sequential MT path cannot meet the throughput target; it does not change the default.
+
 CPU and GPU use the same prepared model and precision boundaries. Grain working images remain f32 in both precision builds; curve preparation and reference-sensitive filtering use f64. GPU execution stays on the selected device and fails explicitly when the required precision or resources are unavailable. Preview disables active Spektra grain.
 
 Remove the obsolete controls `particle_area_um2`, `particle_scale`, `particle_scale_layers`, `sublayers_active`, and `n_sub_layers` from old parameter files. They are rejected. Use `rms_granularity` for grain strength; layer availability comes from the profile, not a toggle. Dye retains its independent defaults and relative-strength interpretation.
