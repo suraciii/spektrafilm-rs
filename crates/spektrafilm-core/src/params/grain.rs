@@ -94,42 +94,6 @@ impl Default for FotufilmGrainParams {
     }
 }
 
-/// Spektra random-sampling mode.
-///
-/// `Auto` keeps the historical behavior: `settings.use_fast_stats` selects
-/// the existing fast-statistics normal approximation or sequential MT19937.
-/// Explicit values override that global switch for Spektra only.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
-#[serde(rename_all = "snake_case")]
-pub enum SpektraSampling {
-    /// Follow `settings.use_fast_stats`.
-    #[default]
-    Auto,
-    /// Sequential NumPy-compatible MT19937 realization.
-    Mt19937,
-    /// Existing tagged fast-statistics normal approximation.
-    FastStats,
-    /// Per-pixel PCG32 with exact Poisson/binomial branches, GPU resident only.
-    StatisticalPcg,
-}
-
-impl SpektraSampling {
-    /// True for the default that follows the global fast-statistics switch.
-    pub fn is_auto(&self) -> bool {
-        matches!(self, Self::Auto)
-    }
-
-    /// Stable telemetry/document spelling.
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Auto => "auto",
-            Self::Mt19937 => "mt19937",
-            Self::FastStats => "fast_stats",
-            Self::StatisticalPcg => "statistical_pcg",
-        }
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct GrainParams {
@@ -244,11 +208,6 @@ pub struct GrainParams {
     /// (upstream n_channels==1 has a single emulsion); not user-facing.
     #[serde(default)]
     pub monochrome: bool,
-    /// Spektra sampling realization. `auto` preserves the historical
-    /// `settings.use_fast_stats` selection; `statistical_pcg` is the explicit
-    /// GPU statistical mode introduced for the A prototype.
-    #[serde(default, skip_serializing_if = "SpektraSampling::is_auto")]
-    pub spektra_sampling: SpektraSampling,
 }
 
 fn default_particle_scale_sublayers_f64() -> [f64; 3] {
@@ -348,7 +307,6 @@ impl Default for GrainParams {
             micro_sublayers: 1,
             micro_structure: [0.2, 30.0],
             monochrome: false,
-            spektra_sampling: SpektraSampling::Auto,
         }
     }
 }
@@ -516,36 +474,6 @@ mod fotufilm_tests {
         ] {
             assert!(serde_json::from_str::<GrainParams>(source).is_err());
         }
-    }
-
-    #[test]
-    fn spektra_sampling_is_explicit_and_defaults_to_auto() {
-        let default = GrainParams::default();
-        assert_eq!(default.spektra_sampling, SpektraSampling::Auto);
-        let saved = serde_json::to_value(&default).unwrap();
-        assert!(
-            !saved.as_object().unwrap().contains_key("spektra_sampling"),
-            "auto must not rewrite existing persisted grain documents"
-        );
-        for (name, expected) in [
-            ("mt19937", SpektraSampling::Mt19937),
-            ("fast_stats", SpektraSampling::FastStats),
-            ("statistical_pcg", SpektraSampling::StatisticalPcg),
-        ] {
-            let params: GrainParams =
-                serde_json::from_value(serde_json::json!({"spektra_sampling": name})).unwrap();
-            assert_eq!(params.spektra_sampling, expected);
-            let saved = serde_json::to_value(&params).unwrap();
-            assert_eq!(
-                serde_json::from_value::<GrainParams>(saved).unwrap(),
-                params
-            );
-        }
-        assert!(serde_json::from_str::<GrainParams>(r#"{"spektra_sampling":"unknown"}"#).is_err());
-        assert_eq!(
-            crate::params::validation::enum_values("film_render.grain.spektra_sampling").unwrap(),
-            ["auto", "mt19937", "fast_stats", "statistical_pcg"]
-        );
     }
 
     /// A named control and the setter that writes it.

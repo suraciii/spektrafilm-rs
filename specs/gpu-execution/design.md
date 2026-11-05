@@ -263,11 +263,11 @@ Source working pages MAY supply an equal-geometry tail after their final source 
 
 Spektra raster storage windows preserve the original flattened pixel identity for fast statistics. Sequential MT19937 retains each plane's generator across windows and completes the complete-source Poisson walk before the binomial walk; a storage boundary never reseeds a plane.
 
-Spektra's explicit `statistical_pcg` mode is a declared draw-identity-independent realization under the paragraph above. It uses a PCG32 stream addressed only by the request seed and global `(pixel, channel, sublayer)` identity.
+Spektra's GPU realization is a declared draw-identity-independent PCG32 realization under the paragraph above. It uses a PCG32 stream addressed only by the request seed and global `(pixel, channel, sublayer)` identity. CPU Spektra retains the original sequential MT19937 realization; there is no GPU sampler selector.
 
-It preserves the reference Poisson/binomial branches in f32. Micro-structure uses the existing fresh-seeded fast-statistics clump field; it does not continue the sequential MT particle state.
+It preserves the reference Poisson/binomial branches in f32. Micro-structure uses a PCG32 lognormal clump field; it does not continue a sequential MT particle state.
 
-Storage windows, workgroup size, crop traversal, and queue order MUST NOT reseed it. It is GPU resident only; a CPU request MUST fail rather than substitute another realization.
+Storage windows, workgroup size, crop traversal, and queue order MUST NOT reseed it. It is GPU resident only; CPU execution uses the original MT19937 realization instead.
 
 Its acceptance evidence MUST include reproducibility across storage windows, distribution moments, local variance/spectrum, and multi-seed statistics. Global mean/std alone is insufficient.
 

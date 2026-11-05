@@ -4,7 +4,6 @@ pub mod dye;
 mod dye_law;
 mod dye_law_paged;
 pub(in crate::wgpu_backend) mod fotufilm;
-pub(in crate::wgpu_backend) mod mt19937;
 pub(in crate::wgpu_backend) mod raster;
 pub mod spektra;
 pub(in crate::wgpu_backend) use raster::RasterStorage;

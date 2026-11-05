@@ -16,7 +16,7 @@ The recorded Python 0.3.4 differential rows are historical evidence. They do not
 | #3 [02] runtime parameter/preview/debug/tap contracts | `debug.*`, `taps.*` groups absent; `digest_params` step absent (preview_mode, lut_mode, deactivate_spatial/stochastic); stock-specific DIR presets (velvia, provia) and halation presets unported; `use_enlarger_lut` + `lut_resolution` unread | 12+ fields affected |
 | #4 [03] color spaces & gamut | 4 input/output spaces supported; unknown names silently fall back; input CCTF decode ignored; jzazbz/oklrab + non-sRGB gamut fallback; output clipping semantics | 6 divergence clusters |
 | #5 [04] UV/IR + Hanatos adaptation | `filter_uv`/`filter_ir` unread; `apply_hanatos2025_adaptation_surface` + `spectral_gaussian_blur` unread (window adaptation **is** ported) | 4 fields |
-| #6 [05] layered grain | whole layers path (sublayers_active, particle_scale_layers, blur_dye_clouds_um, micro_structure, use_fast_stats, density_curves_layers data) unported | default-effect path |
+| #6 [05] layered grain | whole layers path (sublayers_active, particle_scale_layers, blur_dye_clouds_um, micro_structure, density_curves_layers data) unported | default-effect path |
 | #7 [06] crop/resize | crop controls unread; AE/rescale order differs from upstream preprocess | 4 items |
 | #8 [07] scan/glare semantics | direct-scan glare applied by Rust (upstream: none); glare RNG fixed seed 42 | 2 clusters |
 | #9 [08] formats/ICC/metadata | 166 ICC + license not bundled; OIIO float-depth/metadata preservation absent | 167 files |

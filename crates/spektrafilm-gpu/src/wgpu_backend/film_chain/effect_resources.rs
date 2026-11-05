@@ -128,12 +128,9 @@ impl WgpuBackend {
                 // samples, while density and particle fields remain binary32.
                 let clump_image = mul(pixels, 24)?;
                 let layer_image = mul(image, layers)?;
-                let chunk = (window_limit / mul(12, layers.max(2))?).min(pixels);
-                let chunk = if gp.statistical_pcg {
-                    chunk.min(8_192)
-                } else {
-                    chunk
-                };
+                let chunk = (window_limit / mul(12, layers.max(2))?)
+                    .min(pixels)
+                    .min(8_192);
                 if chunk == 0 {
                     return Err("Spektra layer window cannot hold one pixel".into());
                 }
@@ -184,21 +181,6 @@ impl WgpuBackend {
                         16 * 2048,
                     )?,
                 )?;
-                if gp.mt19937_regime || gp.micro_sigma > 0.05 {
-                    if gp.mt19937_regime {
-                        let planes = mul(layers, if gp.monochrome { 1 } else { 3 })?;
-                        bytes = add(bytes, mul(planes, add(mul(pixels, 8)?, 2520 + 1024)?)?)?;
-                    } else {
-                        // Fast particle draws do not advance NumPy's generator;
-                        // clumps still retain a fresh MT state and its uniform.
-                        bytes = add(bytes, 2520 + 1024)?;
-                    }
-                    let mt_chunk = (limit / 24)
-                        .min(u64::from(super::super::grain::mt19937::CHUNK_ELEMENTS))
-                        .max(1);
-                    // Density/field/seed windows plus HWC binary64 clumps.
-                    bytes = add(bytes, mul(mt_chunk, 56)?)?;
-                }
                 bytes
             }
             "grain_procedural" => {

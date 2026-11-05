@@ -109,7 +109,6 @@ impl GuiState {
             ("use_enlarger_lut", json!(true)),
             ("use_scanner_lut", json!(true)),
             ("lut_resolution", json!(17)),
-            ("use_fast_stats", json!(true)),
         ] {
             runtime["settings"][key] = value;
         }

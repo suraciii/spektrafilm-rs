@@ -462,12 +462,11 @@ fn exclusion(path: &str, description: &Value) -> Option<&'static str> {
         "settings.preview_mode" => {
             Some("render.rs derives this request flag from Preview versus Scan")
         }
-        "settings.use_enlarger_lut"
-        | "settings.use_scanner_lut"
-        | "settings.lut_resolution"
-        | "settings.use_fast_stats" => Some(
-            "core SettingsParams / params_builder: execution approximation and performance configuration, outside photographic look ownership; specs/presets/design.md",
-        ),
+        "settings.use_enlarger_lut" | "settings.use_scanner_lut" | "settings.lut_resolution" => {
+            Some(
+                "core SettingsParams / params_builder: execution approximation and performance configuration, outside photographic look ownership; specs/presets/design.md",
+            )
+        }
         "settings.neutral_print_filters_from_database" => Some(
             "core params_builder::apply_database_neutral_print_filters: calibration preparation policy, not a photographic editor",
         ),

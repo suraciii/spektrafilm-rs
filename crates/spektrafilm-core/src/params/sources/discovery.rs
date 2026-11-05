@@ -135,9 +135,6 @@ pub(super) fn schema_value() -> &'static Value {
             .as_object_mut()
             .unwrap()
             .remove("monochrome");
-        // `auto` is omitted from typed serialization so captured presets keep
-        // their historical byte shape. Discovery still exposes the control.
-        value["film_render"]["grain"]["spektra_sampling"] = Value::String("auto".into());
         value
     });
     &SCHEMA
