@@ -54,7 +54,7 @@ def run_upstream(img, route, out):
     code = r'''import json, numpy as np, sys
 sys.path.insert(0, sys.argv[1]); from spektrafilm.runtime.api import init_params, simulate
 p=init_params("kodak_portra_400", "kodak_portra_endura"); p.workflow.route=sys.argv[2]
-p.settings.use_fast_stats=True; p.io.input_color_space="sRGB"; p.io.output_color_space="sRGB"
+p.settings.use_fast_stats=False; p.io.input_color_space="sRGB"; p.io.output_color_space="sRGB"
 p.io.input_cctf_decoding=False; p.io.output_cctf_encoding=False
 p.camera.auto_exposure=False; p.film_render.grain.active=False
 p.print_render.glare.active=False
@@ -75,7 +75,7 @@ x=np.fromfile(sys.argv[3],dtype=np.float32).reshape(24,32,3); np.asarray(simulat
 
 def run_rust(img, route, out):
     inp=out/"input.tif"; save_tiff(img, inp); dst=out/("rs-"+str(ROUTES.index(route))+".f64")
-    params={"settings":{"use_fast_stats":True},"workflow":{"route":route},"camera":{"auto_exposure":False},
+    params={"settings":{"use_fast_stats":False},"workflow":{"route":route},"camera":{"auto_exposure":False},
             "io":{"input_color_space":"sRGB","input_cctf_decoding":False,
                   "output_color_space":"sRGB","output_cctf_encoding":False,
                   "output_gamut_compress":{"algorithm":"oklch","knee":[0.95,1.0,1.6]}},

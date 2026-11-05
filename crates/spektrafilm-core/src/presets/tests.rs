@@ -1354,24 +1354,3 @@ fn historical_sparse_grain_presets_write_canonical_and_match_actual_values() {
         }
     }
 }
-
-#[test]
-fn capture_omits_default_spektra_sampling_and_writes_explicit_opt_in() {
-    let default_look = LookParameters::capture(&RuntimeParams::default());
-    let value = serde_json::to_value(&default_look).unwrap();
-    assert!(
-        value
-            .pointer("/film_render/grain/spektra_sampling")
-            .is_none(),
-        "auto must not rewrite existing preset carriers"
-    );
-
-    let mut params = RuntimeParams::default();
-    params.film_render.grain.spektra_sampling = crate::params::SpektraSampling::StatisticalPcg;
-    let opted_in = LookParameters::capture(&params);
-    let value = serde_json::to_value(&opted_in).unwrap();
-    assert_eq!(
-        value.pointer("/film_render/grain/spektra_sampling"),
-        Some(&serde_json::Value::String("statistical_pcg".into()))
-    );
-}

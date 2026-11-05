@@ -20,7 +20,7 @@ pub use diffusion::DiffusionFilterParams;
 pub use finishing::{ExpandParams, FinishingParams};
 use glare::GlareParams;
 pub use grain::{FotufilmGrainParams, FotufilmMaterial};
-pub use grain::{GrainEngine, GrainParams, SpektraSampling};
+pub use grain::{GrainEngine, GrainParams};
 pub use halation::HalationParams;
 pub use validation::{ValidationError, ValidationReason};
 
@@ -719,8 +719,6 @@ pub struct SettingsParams {
     pub use_scanner_lut: bool,
     #[serde(default = "default_17")]
     pub lut_resolution: u32,
-    #[serde(default)]
-    pub use_fast_stats: bool,
     #[serde(default = "default_640")]
     pub preview_max_size: u32,
     #[serde(default)]
@@ -751,7 +749,6 @@ impl Default for SettingsParams {
             use_enlarger_lut: false,
             use_scanner_lut: false,
             lut_resolution: 17,
-            use_fast_stats: false,
             preview_max_size: 640,
             preview_mode: false,
             neutral_print_filters_from_database: true,

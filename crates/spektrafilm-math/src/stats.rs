@@ -16,7 +16,7 @@
 /// preserved, bit-identical texture is not (and cannot be, upstream).
 use rayon::prelude::*;
 
-/// Deterministic RNG for the `fast_stats` sampling regime.
+/// Deterministic RNG for the fast-statistics helpers used by Dye.
 ///
 /// `rand()` returns a 53-bit double in `[0, 1)` (numpy `rk_double`
 /// resolution); `randn()` is the Marsaglia polar normal with the spare

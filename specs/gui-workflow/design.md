@@ -95,7 +95,7 @@ The shared settings boundary is:
 | Scope | `SettingsParams` fields |
 | --- | --- |
 | Photograph | `spectral_shape`, `rgb_to_raw_method`, `apply_hanatos2025_adaptation_window`, `apply_hanatos2025_adaptation_surface`, `spectral_gaussian_blur`, `use_cat16`, `print_exposure_ev_tracking` |
-| Session | `preview_max_size`, `preview_mode`, `use_enlarger_lut`, `use_scanner_lut`, `lut_resolution`, `use_fast_stats`, `neutral_print_filters_from_database` |
+| Session | `preview_max_size`, `preview_mode`, `use_enlarger_lut`, `use_scanner_lut`, `lut_resolution`, `neutral_print_filters_from_database` |
 
 History snapshots and photograph documents MUST retain their existing normalization values. History replay and photograph activation MUST preserve the current session settings through the shared copy operation. Seed handling, accepted RAW settings, applied-preset markers, rotation, and preparation ownership remain with each operation; they MUST NOT be folded into one universal state identity.
 

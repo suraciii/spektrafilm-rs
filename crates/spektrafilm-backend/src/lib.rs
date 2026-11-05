@@ -1234,12 +1234,11 @@ pub struct InputDecodeGpuParams {
 /// `curve_x` is the composite axis, negated for positive film, and
 /// `curve_layers` is the matching fixed-three-slot layer tensor. Device
 /// interpolation uses these f64 tables, then grain working arithmetic is f32.
-/// Both tagged fast-statistics and sequential NumPy MT19937 sampling remain
-/// resident, including continuation into NumPy microstructure normals. The
-/// explicit statistical PCG realization is a separate opt-in shader.
+/// The GPU realization is per-pixel PCG32, including the micro-structure
+/// clump field. CPU uses the original sequential MT19937 realization.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SpektraGrainGpuParams {
-    /// Request seed shared by the plane MT19937 and tagged fast-statistics draws.
+    /// Request seed shared by the PCG32 streams.
     pub base_seed: u64,
     /// Active layers in the fixed three-slot profile carrier (1..=3).
     pub layer_count: u32,
@@ -1277,12 +1276,6 @@ pub struct SpektraGrainGpuParams {
     pub curve_x: Vec<f64>,
     /// Layer curve tensor, `knots` rows × 3 sublayers × 3 channels.
     pub curve_layers: Vec<f64>,
-    /// Preserves sequential NumPy draws instead of independent fast streams.
-    pub mt19937_regime: bool,
-    /// Select the explicit per-pixel PCG32 statistical realization instead of
-    /// the fast-statistics normal approximation. Requires the GPU resident
-    /// Spektra stage; the CPU model rejects it.
-    pub statistical_pcg: bool,
 }
 
 /// One auto-exposure metering request.

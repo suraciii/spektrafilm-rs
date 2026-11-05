@@ -10,7 +10,6 @@ pub(in crate::wgpu_backend) mod blur;
 mod post;
 
 use super::super::*;
-use super::mt19937::{SpektraMt19937State, build_spektra_mt19937_state_with_limit};
 use super::raster::{RasterCommands, RasterStorage, paged_transport, transport};
 use blur::{GrainBlurState, build_grain_blur_f64_paged, build_grain_blur_paged};
 pub(in crate::wgpu_backend) use post::mass::workspace_bytes as mass_workspace_bytes;
@@ -29,18 +28,18 @@ pub(in crate::wgpu_backend) fn transport_window_limit(binding_limit: u64) -> u64
 /// Resident grain formation, layer optics, clumping, and density finishing.
 pub(in crate::wgpu_backend) struct SpektraGrainState {
     dispatch: RasterCommands,
+    clump_dispatch: Option<RasterCommands>,
     layer_blurs: Vec<GrainBlurState>,
     clump_blur: Option<GrainBlurState>,
     compose: RasterCommands,
     post: GrainPostState,
-    mt19937: Option<SpektraMt19937State>,
 }
 
 impl SpektraGrainState {
     pub(in crate::wgpu_backend) fn submit(&self, backend: &WgpuBackend) -> Result<(), String> {
         self.dispatch.submit(backend)?;
-        if let Some(mt) = &self.mt19937 {
-            mt.submit(backend)?;
+        if let Some(clump) = &self.clump_dispatch {
+            clump.submit(backend)?;
         }
         for blur in &self.layer_blurs {
             blur.submit(backend)?;
@@ -83,9 +82,6 @@ fn build_spektra_grain_state_with_limit(
     limit: u64,
 ) -> Result<SpektraGrainState, String> {
     let window_limit = transport_window_limit(limit);
-    if params.statistical_pcg && params.mt19937_regime {
-        return Err("Spektra statistical PCG and MT19937 regimes are mutually exclusive".into());
-    }
     if !device
         .features()
         .contains(wgpu::Features::SHADER_F64 | wgpu::Features::SHADER_INT64)
@@ -113,16 +109,11 @@ fn build_spektra_grain_state_with_limit(
         .checked_mul(height)
         .filter(|&n| n > 0 && n <= u32::MAX / 3)
         .ok_or("Spektra grain indexing overflows")?;
-    let chunk = (window_limit / (12 * u64::from(n_layers).max(2))).min(u64::from(n_pixels)) as u32;
-    // The statistical PCG path owns one stream per pixel; cap its formation
-    // dispatch so a large binding limit cannot turn one batch into a
-    // watchdog-scale submission. The sequential MT regime keeps its existing
-    // chunking because its tape state is per plane.
-    let chunk = if params.statistical_pcg {
-        chunk.min(8_192)
-    } else {
-        chunk
-    };
+    // PCG32 owns one stream per pixel; cap formation so a large binding
+    // limit cannot turn one batch into a watchdog-scale submission.
+    let chunk = ((window_limit / (12 * u64::from(n_layers).max(2))).min(u64::from(n_pixels))
+        as u32)
+        .min(8_192);
     if chunk == 0 {
         return Err("Spektra grain minimum layer window exceeds storage binding limit".into());
     }
@@ -163,25 +154,14 @@ fn build_spektra_grain_state_with_limit(
         wgpu::BufferBindingType::Storage { read_only: true },
         wgpu::BufferBindingType::Storage { read_only: false },
     ];
-    let pipe = if params.statistical_pcg {
-        backend.cached_pipeline(
-            concat!(
-                include_str!("../../../../../spektrafilm-shaders/wgsl/f64_math.wgsl"),
-                include_str!("../work_f32.wgsl"),
-                include_str!("spektra_pcg.wgsl")
-            ),
-            &bindings,
-        )
-    } else {
-        backend.cached_pipeline(
-            concat!(
-                include_str!("../../../../../spektrafilm-shaders/wgsl/f64_math.wgsl"),
-                include_str!("../work_f32.wgsl"),
-                include_str!("spektra.wgsl")
-            ),
-            &bindings,
-        )
-    };
+    let pipe = backend.cached_pipeline(
+        concat!(
+            include_str!("../../../../../spektrafilm-shaders/wgsl/f64_math.wgsl"),
+            include_str!("../work_f32.wgsl"),
+            include_str!("spektra_pcg.wgsl")
+        ),
+        &bindings,
+    );
     let make_params = |first, count| {
         device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("spektra_grain_params"),
@@ -198,12 +178,7 @@ fn build_spektra_grain_state_with_limit(
                 n_particles: pad9(params.n_particles),
                 lookup_sign: params.lookup_sign,
                 pad_flags: [0; 3],
-                flags: [
-                    params.reference_f64 as u32,
-                    params.monochrome as u32,
-                    params.mt19937_regime as u32,
-                    params.statistical_pcg as u32,
-                ],
+                flags: [params.reference_f64 as u32, params.monochrome as u32, 0, 0],
                 tail_padding: [first, count, 0, 0],
                 pad_struct: [0; 4],
             }),
@@ -244,9 +219,6 @@ fn build_spektra_grain_state_with_limit(
     )?;
     let mut dispatch = RasterCommands::default();
     for first in (0..n_pixels).step_by(chunk as usize) {
-        if params.mt19937_regime {
-            break;
-        }
         let count = chunk.min(n_pixels - first);
         let params_buf = make_params(first, count);
         dispatch.copy(
@@ -270,16 +242,14 @@ fn build_spektra_grain_state_with_limit(
             backend,
             Some("spektra_particle_formation"),
         );
-        if !params.mt19937_regime {
-            for sl in 0..n_layers {
-                dispatch.copy(
-                    &layers_window,
-                    u64::from(sl * count) * 12,
-                    &layers,
-                    (u64::from(sl) * u64::from(n_pixels) + u64::from(first)) * 12,
-                    u64::from(count) * 12,
-                );
-            }
+        for sl in 0..n_layers {
+            dispatch.copy(
+                &layers_window,
+                u64::from(sl * count) * 12,
+                &layers,
+                (u64::from(sl) * u64::from(n_pixels) + u64::from(first)) * 12,
+                u64::from(count) * 12,
+            );
         }
     }
     let filtered_layers = (params.blur_dye_clouds > 0.0)
@@ -382,29 +352,75 @@ fn build_spektra_grain_state_with_limit(
             u64::from(count) * 12,
         );
     }
-    let post = build_grain_post(backend, width, height, density, params)?;
-    let mt19937 = if params.mt19937_regime || params.micro_sigma > 0.05 {
-        Some(build_spektra_mt19937_state_with_limit(
-            device,
-            width,
-            height,
-            density,
-            &layers,
-            &clump,
-            params,
-            backend,
-            window_limit,
-        )?)
+    let clump_dispatch = if micro_active {
+        let clump_pipe = backend.cached_pipeline(
+            concat!(
+                include_str!("../../../../../spektrafilm-shaders/wgsl/f64_math.wgsl"),
+                include_str!("clump_pcg.wgsl")
+            ),
+            &[
+                wgpu::BufferBindingType::Uniform,
+                wgpu::BufferBindingType::Storage { read_only: false },
+            ],
+        );
+        let clump_params = |first: u32, count: u32| {
+            #[repr(C)]
+            #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+            struct ClumpParams {
+                first: u32,
+                count: u32,
+                base_seed: u64,
+                micro_sigma: f64,
+                monochrome: u32,
+                pad0: u32,
+                pad: [u32; 4],
+            }
+            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("spektra_clump_params"),
+                contents: bytemuck::bytes_of(&ClumpParams {
+                    first,
+                    count,
+                    base_seed: params.base_seed,
+                    micro_sigma: params.micro_sigma,
+                    monochrome: params.monochrome as u32,
+                    pad0: 0,
+                    pad: [0; 4],
+                }),
+                usage: wgpu::BufferUsages::UNIFORM,
+            })
+        };
+        let mut commands = RasterCommands::default();
+        for first in (0..n_pixels).step_by(chunk as usize) {
+            let count = chunk.min(n_pixels - first);
+            let params_buf = clump_params(first, count);
+            commands.dispatch_named(
+                &clump_pipe,
+                &[&params_buf, &clump_window],
+                count,
+                false,
+                backend,
+                Some("spektra_clump_formation"),
+            );
+            commands.copy(
+                &clump_window,
+                0,
+                &clump,
+                u64::from(first) * 24,
+                u64::from(count) * 24,
+            );
+        }
+        Some(commands)
     } else {
         None
     };
+    let post = build_grain_post(backend, width, height, density, params)?;
     Ok(SpektraGrainState {
         dispatch,
+        clump_dispatch,
         layer_blurs,
         clump_blur,
         compose,
         post,
-        mt19937,
     })
 }
 

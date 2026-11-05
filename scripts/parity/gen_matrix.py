@@ -194,7 +194,6 @@ RUNTIME_FIELDS = {
         "use_enlarger_lut": (S, None, "printing.rs:201-215"),
         "use_scanner_lut": (S, None, "scanning/spectral.rs::scan_spectral_rgb"),
         "lut_resolution": (S, None, "printing.rs:214; scanning/spectral.rs::scan_spectral_rgb"),
-        "use_fast_stats": (S, None, "filming.rs:557"),
         "preview_max_size": (S, None, "runtime.rs:133-141"),
         "preview_mode": (S, None, "params_builder.rs:61-73"),
         "neutral_print_filters_from_database": (S, None, "neutral_filters.rs"),
@@ -240,7 +239,6 @@ AUDIT_RUNTIME_STATUSES = {
     "settings.spectral_gaussian_blur": UNREAD,
     "settings.use_enlarger_lut": UNREAD,
     "settings.lut_resolution": UNREAD,
-    "settings.use_fast_stats": UNREAD,
     "settings.preview_max_size": UNREAD,
     "settings.preview_mode": UNREAD,
 }

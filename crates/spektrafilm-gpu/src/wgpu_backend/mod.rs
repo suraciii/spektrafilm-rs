@@ -144,11 +144,10 @@ impl WgpuBackend {
             // Spektra grain conditions its Poisson/binomial decisions on
             // f64 values the reference reads from JSON at full precision
             // (`specs/film-grain/spektra/design.md`: f32 conversion before those
-            // decisions is not allowed), and its per-element `fast_stats`
-            // streams are splitmix64. The device therefore asks for native
-            // f64 and 64-bit integers; an adapter without them simply does
-            // not report the features, and the Spektra pass declines to the
-            // host fence rather than approximating (see `grain::spektra`).
+            // decisions is not allowed). The GPU PCG32 realization also uses
+            // native f64 and 64-bit integers. An adapter without them simply
+            // does not report the features, and the Spektra pass declines to
+            // the host fence rather than approximating (see `grain::spektra`).
             features |=
                 adapter.features() & (wgpu::Features::SHADER_F64 | wgpu::Features::SHADER_INT64);
             // Acceptance hook: simulate an adapter without 64-bit shader

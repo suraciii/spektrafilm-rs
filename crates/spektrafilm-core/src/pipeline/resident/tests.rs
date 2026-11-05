@@ -330,7 +330,7 @@ fn enlarger_diffusion_print_fence_matches_cpu() {
 /// This inherited whole-pipeline budget includes upstream film conditioning;
 /// sampler draw order and f32 storage boundaries have separate device checks.
 #[test]
-fn spektra_grain_resident_matches_cpu() {
+fn spektra_grain_resident_statistically_matches_cpu() {
     use spektrafilm_math::precision::from_f64;
 
     let gpu = spektrafilm_gpu::test_support::adapter();
@@ -1102,9 +1102,9 @@ fn explicit_gpu_request_runs_the_dye_field_on_the_device() {
 }
 
 /// Both the profile's three-sublayer model and the single-curve model must
-/// execute on the selected device with the sequential NumPy draw order.
+/// execute on the selected device with the PCG32 realization.
 #[test]
-fn spektra_mt19937_grain_runs_on_the_device() {
+fn spektra_pcg_grain_runs_on_the_device() {
     use spektrafilm_math::precision::from_f64;
 
     let gpu = spektrafilm_gpu::test_support::adapter();
@@ -1124,7 +1124,6 @@ fn spektra_mt19937_grain_runs_on_the_device() {
         params.io.output_cctf_encoding = false;
         params.io.output_gamut_compress.algorithm = "off".into();
         params.camera.auto_exposure = false;
-        params.settings.use_fast_stats = false;
         params.film_render.grain.active = true;
         params.film_render.grain.engine = crate::params::grain::GrainEngine::Spektra;
         params.film_render.grain.rms_granularity = [6.0, 8.0, 10.0];
@@ -1142,7 +1141,7 @@ fn spektra_mt19937_grain_runs_on_the_device() {
                 .observations
                 .iter()
                 .any(|stage| stage.executor == Some(spektrafilm_backend::telemetry::Executor::Cpu)),
-            "the MT19937 regime executed CPU image arithmetic (single_curve={single_curve}): {:?}",
+            "the PCG GPU path executed CPU image arithmetic (single_curve={single_curve}): {:?}",
             snapshot.observations
         );
 
@@ -1165,11 +1164,11 @@ fn spektra_mt19937_grain_runs_on_the_device() {
         let mean = sum / out_cpu.data.len() as f64;
         assert!(
             mean < 5e-2,
-            "MT19937 grain mean divergence (single_curve={single_curve}): {mean}"
+            "CPU MT vs GPU PCG mean divergence (single_curve={single_curve}): {mean}"
         );
         assert!(
             max_diff < 5e-1,
-            "MT19937 grain max divergence (single_curve={single_curve}): {max_diff}"
+            "CPU MT vs GPU PCG max divergence (single_curve={single_curve}): {max_diff}"
         );
     }
 }

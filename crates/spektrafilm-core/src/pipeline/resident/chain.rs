@@ -569,7 +569,6 @@ impl Pipeline {
                 &self.film,
                 &self.params.film_render.grain,
                 film_curves_norm,
-                self.params.settings.use_fast_stats,
                 self.params.random_seed,
                 pixel_size_um,
             )?)

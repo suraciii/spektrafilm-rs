@@ -304,7 +304,6 @@ pub fn develop(
             film,
             grain,
             norm_curves_f64,
-            params.settings.use_fast_stats,
             params.random_seed,
             pixel_size_um,
             backend,
@@ -360,26 +359,11 @@ fn prepare_spektra(
     })
 }
 
-/// Resolve Spektra's sampling mode without changing the historical default:
-/// `Auto` follows `settings.use_fast_stats`, while an explicit choice wins.
-fn resolve_spektra_sampling(
-    sampling: crate::params::grain::SpektraSampling,
-    use_fast_stats: bool,
-) -> crate::params::grain::SpektraSampling {
-    use crate::params::grain::SpektraSampling;
-    match sampling {
-        SpektraSampling::Auto if use_fast_stats => SpektraSampling::FastStats,
-        SpektraSampling::Auto => SpektraSampling::Mt19937,
-        explicit => explicit,
-    }
-}
-
 /// Resolve the same curve-based RMS preparation used by the CPU sampler.
 pub(crate) fn spektra_grain_device_params(
     film: &Profile,
     grain: &crate::params::grain::GrainParams,
     norm_curves_f64: &[[f64; 3]],
-    use_fast_stats: bool,
     random_seed: u64,
     pixel_size_um: f64,
 ) -> Result<spektrafilm_backend::SpektraGrainGpuParams, String> {
@@ -387,9 +371,6 @@ pub(crate) fn spektra_grain_device_params(
         layers_tensor,
         grain: prepared,
     } = prepare_spektra(film, grain, norm_curves_f64, pixel_size_um)?;
-    let sampling = resolve_spektra_sampling(grain.spektra_sampling, use_fast_stats);
-    let statistical_pcg = sampling == crate::params::grain::SpektraSampling::StatisticalPcg;
-    let mt19937_regime = sampling == crate::params::grain::SpektraSampling::Mt19937;
     let sign = if film.is_positive() { -1.0 } else { 1.0 };
     let mut curve_x = Vec::with_capacity(norm_curves_f64.len() * 3);
     for row in norm_curves_f64 {
@@ -422,8 +403,6 @@ pub(crate) fn spektra_grain_device_params(
         usm_amount: grain.mult_usm_amount,
         curve_x,
         curve_layers,
-        mt19937_regime,
-        statistical_pcg,
     })
 }
 
@@ -433,14 +412,12 @@ pub(crate) fn apply_spektra_grain(
     film: &Profile,
     grain: &crate::params::grain::GrainParams,
     norm_curves_f64: &[[f64; 3]],
-    use_fast_stats: bool,
     random_seed: u64,
     pixel_size_um: f64,
     backend: &dyn ComputeBackend,
 ) -> Result<ImageBuf, String> {
     let prepared = prepare_spektra(film, grain, norm_curves_f64, pixel_size_um)?;
-    let sampling = resolve_spektra_sampling(grain.spektra_sampling, use_fast_stats);
-    spektrafilm_model::grain::spektra::apply_grain_with_sampling(
+    spektrafilm_model::grain::spektra::apply_grain(
         &density_cmy,
         norm_curves_f64,
         &prepared.layers_tensor,
@@ -453,8 +430,6 @@ pub(crate) fn apply_spektra_grain(
         grain.mult_usm_amount,
         film.is_positive(),
         grain.monochrome,
-        sampling == crate::params::grain::SpektraSampling::FastStats,
-        sampling == crate::params::grain::SpektraSampling::StatisticalPcg,
         random_seed,
         backend,
     )
@@ -612,7 +587,6 @@ mod tests {
                 &film,
                 g,
                 &curves,
-                false,
                 0,
                 aperture_area.sqrt(),
                 &CpuBackend,
@@ -626,66 +600,6 @@ mod tests {
                 assert!(
                     (sigma - expected).abs() < expected * 0.05,
                     "channel {ch}: sigma {sigma}, target {expected}"
-                );
-            }
-        }
-
-        #[test]
-        fn spektra_sampling_maps_explicit_modes_and_auto_precedence() {
-            let film = portra();
-            let norm = spektrafilm_model::density_curves::normalize_density_curves_f64(
-                &film.density_curves_f64(),
-            );
-            let mut params = base_params();
-            let grain = &mut params.film_render.grain;
-            let resolve = |grain: &crate::params::grain::GrainParams, fast| {
-                spektra_grain_device_params(&film, grain, &norm, fast, 7, 12.0).unwrap()
-            };
-
-            grain.spektra_sampling = crate::params::SpektraSampling::Auto;
-            let mt = resolve(grain, false);
-            assert!(mt.mt19937_regime && !mt.statistical_pcg);
-            let fast = resolve(grain, true);
-            assert!(!fast.mt19937_regime && !fast.statistical_pcg);
-
-            grain.spektra_sampling = crate::params::SpektraSampling::Mt19937;
-            let forced_mt = resolve(grain, true);
-            assert!(forced_mt.mt19937_regime && !forced_mt.statistical_pcg);
-
-            grain.spektra_sampling = crate::params::SpektraSampling::FastStats;
-            let forced_fast = resolve(grain, false);
-            assert!(!forced_fast.mt19937_regime && !forced_fast.statistical_pcg);
-
-            grain.spektra_sampling = crate::params::SpektraSampling::StatisticalPcg;
-            let pcg = resolve(grain, false);
-            assert!(!pcg.mt19937_regime && pcg.statistical_pcg);
-        }
-
-        /// `use_fast_stats` switches the layered sampler's RNG regime:
-        /// different texture, same statistical center (bounded comparison
-        /// — bit parity is impossible for upstream's numba kernels).
-        #[test]
-        fn use_fast_stats_switches_regime() {
-            let film = portra();
-            let backend = CpuBackend;
-            let log_raw = log_raw();
-            let mut params = base_params();
-            params.film_render.grain.blur = 0.0; // raw particle field
-            params.film_render.grain.blur_dye_clouds_um = 0.0;
-
-            params.settings.use_fast_stats = false;
-            let scipy = develop(&log_raw, &film, &params, &backend, 12.0)
-                .expect("SciPy-statistics film development failed");
-            params.settings.use_fast_stats = true;
-            let fast = develop(&log_raw, &film, &params, &backend, 12.0)
-                .expect("fast-statistics film development failed");
-            assert_ne!(scipy.data, fast.data);
-            for ch in 0..3 {
-                assert!(
-                    (ch_mean(&scipy, ch) - ch_mean(&fast, ch)).abs() < 0.1,
-                    "ch {ch}: {} vs {}",
-                    ch_mean(&scipy, ch),
-                    ch_mean(&fast, ch)
                 );
             }
         }

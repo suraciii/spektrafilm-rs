@@ -83,7 +83,6 @@ pub(crate) fn copy_session_settings(target: &mut SettingsParams, source: &Settin
     target.use_enlarger_lut = source.use_enlarger_lut;
     target.use_scanner_lut = source.use_scanner_lut;
     target.lut_resolution = source.lut_resolution;
-    target.use_fast_stats = source.use_fast_stats;
     target.neutral_print_filters_from_database = source.neutral_print_filters_from_database;
 }
 

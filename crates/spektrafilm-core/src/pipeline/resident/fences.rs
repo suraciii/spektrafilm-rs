@@ -44,7 +44,6 @@ impl super::super::Pipeline {
                     let film = &self.film;
                     let grain = &self.params.film_render.grain;
                     let norm_curves = film_curves_norm;
-                    let use_fast_stats = self.params.settings.use_fast_stats;
                     let random_seed = self.params.random_seed;
                     let seed_backend = backend;
                     let closure: CpuStageFn<'_> = Box::new(move |density| {
@@ -56,7 +55,6 @@ impl super::super::Pipeline {
                             film,
                             grain,
                             norm_curves,
-                            use_fast_stats,
                             random_seed,
                             pixel_size_um,
                             observed,

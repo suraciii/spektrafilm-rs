@@ -924,7 +924,6 @@ mod tests {
         app.params.settings.use_enlarger_lut = true;
         app.params.settings.use_scanner_lut = true;
         app.params.settings.lut_resolution = 33;
-        app.params.settings.use_fast_stats = true;
         app.params.settings.neutral_print_filters_from_database = false;
         app.params.random_seed = 73;
         app.end_adjustment_frame(&ctx);
