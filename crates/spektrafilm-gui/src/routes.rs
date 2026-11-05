@@ -104,27 +104,27 @@ pub(crate) struct RouteChoice {
 pub(crate) const CHOICES: [RouteChoice; 6] = [
     RouteChoice {
         value: "input",
-        label: "input",
+        label: "Color-manage input",
     },
     RouteChoice {
         value: "input > film > scan",
-        label: "input > film > scan",
+        label: "Expose film, scan film",
     },
     RouteChoice {
         value: "input > film > print > scan",
-        label: "input > film > print > scan",
+        label: "Expose film, print, scan",
     },
     RouteChoice {
         value: "input > convert-film > print > scan",
-        label: "input > convert-film > print > scan",
+        label: "Convert negative, print, scan",
     },
     RouteChoice {
         value: "input > convert-film > scan-minus-base",
-        label: "input > convert-film > scan-minus-base",
+        label: "Convert negative, scan (no base)",
     },
     RouteChoice {
         value: "input > convert-film > scan",
-        label: "input > convert-film > scan",
+        label: "Convert negative, scan",
     },
 ];
 

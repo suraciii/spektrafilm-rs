@@ -44,7 +44,7 @@ The query MUST NOT persist across restarts or enter GUI-state files or preset do
 
 ### Preset discovery aids
 
-The browser MUST offer Favorites and Recently used filters within the existing library. Both MUST retain group identity, deterministic row ordering, and the applied or missing context under [Browser search](#browser-search). Recent membership MUST record successful look application, not browsing or failed application.
+The browser MUST offer Favorites and Recent filters within the existing library. Both MUST retain group identity, deterministic row ordering, and the applied or missing context under [Browser search](#browser-search). Recent membership MUST record successful look application, not browsing or failed application.
 
 It MUST contain the latest ten distinct applied look identities.
 

@@ -28,7 +28,7 @@ The left **Presets** browser is collapsible and resizable. **Search presets** fi
 At narrow window widths, the browser automatically becomes a reopenable rail under the [responsive preset layout](../specs/presets/design.md#boundaries). Reopening it while narrow is session-only; it does not change the saved expanded preference, which returns in a wider window.
 Built-in reference thumbnails sit beside the compact card controls. The fixed-reference warning, attribution, and license stay in a footer below the scrolling list. Each card's visible action menu supports pointer and keyboard activation, with focused controls scrolled into view. Library issues precede the cards. The current-look summary stays above the list, including when a filter hides the applied look. Without an applied preset, it identifies current adjustments.
 
-**Favorites** and **Recently used** filter the same library together with search. Favoriting or browsing does not apply a look. Recently used retains ten distinct successful whole-look applications. These discovery preferences persist separately from photographic controls and preset files. Reference thumbnails use one licensed photograph, not the active source; missing or outdated assets show an unavailable reference instead of a misleading image.
+**Favorites** and **Recent** filter the same library together with search. Favoriting or browsing does not apply a look. Recent retains ten distinct successful whole-look applications. These discovery preferences persist separately from photographic controls and preset files. Reference thumbnails use one licensed photograph, not the active source; missing or outdated assets show an unavailable reference instead of a misleading image.
 
 The right inspector contains one continuous list, not mutually exclusive pages. Its sticky **Search controls**, **Only modified**, and stage-jump strip remain visible while controls scroll. The jumps reveal and scroll to **Input and capture**, **Film**, **Print**, **Scan**, or **Output** in that same list while preserving the active search and Only modified filter without changing parameters. Several stages and modules can remain open together. Folding a module changes its presentation only, and ordinary edits, render completion, and route changes retain its disclosure and scroll state.
 
@@ -381,7 +381,7 @@ The queue shows waiting, running, completed, failed, and canceled outcomes. Canc
 
 ## State and defaults
 
-**Settings → GUI parameters → Save current to file / Load from file** exchange the pinned Python 0.3.4 GUI JSON sections. Partial files merge into factory values. Legacy input aliases and nested sections normalize to the flat upstream format. Invalid JSON, field types, selections, or Rust extension versions appear in the header status without replacing accepted state. A successful load begins a new adjustment history rather than restoring an old undo stack.
+**Settings → State and startup → Save current to file / Load from file** exchange the pinned Python 0.3.4 GUI JSON sections. Partial files merge into factory values. Legacy input aliases and nested sections normalize to the flat upstream format. Invalid JSON, field types, selections, or Rust extension versions appear in the header status without replacing accepted state. A successful load begins a new adjustment history rather than restoring an old undo stack.
 
 An invalid supplied enlarger mirror fails even if another valid mirror would win. Valid mirror precedence stays unchanged. For example, a valid `simulation.enlarger.illuminant` cannot conceal an invalid `preflashing.illuminant`.
 
@@ -425,7 +425,7 @@ For controlled launches, `SPEKTRAFILM_GUI_DIAGNOSTICS_DIR` can override the auto
 
 ## Application configuration
 
-**Settings** contains **General**, **GUI parameters**, **Display**, and **Diagnostics**. General and Display start open. Settings and Export block background pointer and keyboard input while open; a backdrop click does not dismiss them. **Close settings**, an explicit window close action, or Escape when Settings is the topmost modal returns to the workspace and restores focus to the invoking control. Closing Export options likewise restores its opener's focus. Factory-default confirmation can stack above Settings; Escape dismisses only the topmost modal.
+**Settings** contains **General**, **State and startup**, **Display**, and **Diagnostics**. General and Display start open. Settings and Export block background pointer and keyboard input while open; a backdrop click does not dismiss them. **Close settings**, an explicit window close action, or Escape when Settings is the topmost modal returns to the workspace and restores focus to the invoking control. Closing Export options likewise restores its opener's focus. Factory-default confirmation can stack above Settings; Escape dismisses only the topmost modal.
 
 The viewer interpolation mode, canvas, white padding, and display transform affect the disposable viewer raster. See [Viewer](#viewer).
 

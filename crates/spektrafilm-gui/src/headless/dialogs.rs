@@ -16,9 +16,11 @@ fn expand_preset_library(h: &mut Harness<'_, App>) {
 fn scroll_preset_into_view(h: &mut Harness<'_, App>, label: &str) {
     for _ in 0..32 {
         let search = h.get_by_label("Search presets").raw_bounds().unwrap();
-        let filters = h.get_by_label("Recently used").raw_bounds().unwrap();
+        let filters = h.get_by_label("Recent").raw_bounds().unwrap();
         let top = filters.y1 + 8.0;
-        let bottom = h.ctx.screen_rect().bottom() as f64 - 8.0;
+        // The preset browser's scroll clip ends above the shared footer; a
+        // row only one screen margin from the bottom can still be clipped.
+        let bottom = h.ctx.screen_rect().bottom() as f64 - 72.0;
         let bounds = h.get_by_label(label).raw_bounds().unwrap();
         let delta = if bounds.y0 < top {
             top - bounds.y0 + 12.0

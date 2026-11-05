@@ -476,7 +476,7 @@ local header crops: whole-row OCR can omit its amber label even when adjacent
 Open, Undo, Redo and Settings are recognized. Coordinates still come from the
 rendered text; no fixed-position click substitutes for observing Export.
 The highlighted Settings state toolbar is similarly read as an independent
-row anchored below the observed GUI parameters heading, rather than being
+row anchored below the observed State and startup heading, rather than being
 borrowed from inspector locator text or inferred from button order.
 Settings also has an independent modal observation beside the preset panel;
 once a photograph is rendered, including that photograph in the same OCR block

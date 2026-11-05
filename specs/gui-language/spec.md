@@ -18,7 +18,7 @@ The GUI MUST support English and Simplified Chinese. English labels in this spec
 
 The language selector MUST reside in **Settings → General**, or **设置 → 通用** in Simplified Chinese. Its label MUST always be **语言 / Language**. Its options MUST remain recognizable in either language: **跟随系统 / System**, **简体中文**, and **English**.
 
-General replaces the visible Session settings group; it retains that group's existing controls and scopes. GUI parameters, Display, Diagnostics, and independent Export keep their distinct owners. This change does not add an appearance setting or move photographic controls into Settings.
+General replaces the visible Session settings group; it retains that group's existing controls and scopes. State and startup, Display, Diagnostics, and independent Export keep their distinct owners. This change does not add an appearance setting or move photographic controls into Settings.
 
 The initial preference MUST be System. System MUST resolve the operating system's ordered interface-language preferences to a supported language at startup. Explicit Simplified Chinese script tags, including `zh-Hans`, and Chinese region tags for mainland China or Singapore without a conflicting script MUST resolve to Simplified Chinese.
 

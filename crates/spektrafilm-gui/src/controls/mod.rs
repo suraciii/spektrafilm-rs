@@ -682,13 +682,26 @@ fn paint_focus_feedback(ui: &Ui, response: &egui::Response, located: bool) {
         egui::StrokeKind::Outside,
     );
     if located {
-        ui.painter().text(
-            response.rect.left_top() - egui::vec2(0.0, theme::SPACE_1),
-            egui::Align2::LEFT_BOTTOM,
-            localized(ui.ctx(), "Located control"),
-            theme::text(theme::TEXT_READOUT, theme::SIZE_HINT),
-            theme::FG,
-        );
+        let text = localized(ui.ctx(), "Located control");
+        let font = theme::text(theme::TEXT_READOUT, theme::SIZE_HINT);
+        let width = ui.fonts(|fonts| {
+            fonts
+                .layout_no_wrap(text.to_string(), font.clone(), theme::FG)
+                .size()
+                .x
+        });
+        let (pos, align) = if response.rect.left() + width > ui.clip_rect().right() {
+            (
+                response.rect.right_top() - egui::vec2(0.0, theme::SPACE_1),
+                egui::Align2::RIGHT_BOTTOM,
+            )
+        } else {
+            (
+                response.rect.left_top() - egui::vec2(0.0, theme::SPACE_1),
+                egui::Align2::LEFT_BOTTOM,
+            )
+        };
+        ui.painter().text(pos, align, text, font, theme::FG);
     }
 }
 

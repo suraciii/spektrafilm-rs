@@ -766,6 +766,7 @@ impl Viewer {
         source_available: bool,
         modal_open: bool,
     ) -> egui::Id {
+        let compact_actions = ui.available_width() < 600.0;
         ui.allocate_ui_with_layout(
             ui.available_size(),
             egui::Layout::left_to_right(egui::Align::Center),
@@ -778,7 +779,40 @@ impl Viewer {
                     let analysis_label = crate::i18n::text(ui.ctx(), "surfaces.analysis.title");
                     let action = ui
                         .push_id("viewer-analysis-action", |ui| {
-                            ui.selectable_label(*analysis_visible, analysis_label)
+                            if compact_actions {
+                                let response = ui
+                                    .add_sized(
+                                        [theme::HEIGHT_CONTROL, theme::HEIGHT_CONTROL],
+                                        egui::Button::new("").selected(*analysis_visible),
+                                    )
+                                    .on_hover_text(analysis_label.as_ref());
+                                response.widget_info(|| {
+                                    egui::WidgetInfo::selected(
+                                        egui::WidgetType::SelectableLabel,
+                                        true,
+                                        *analysis_visible,
+                                        analysis_label.as_ref(),
+                                    )
+                                });
+                                ui.ctx().accesskit_node_builder(response.id, |node| {
+                                    node.set_label(analysis_label.as_ref());
+                                    node.set_toggled(if *analysis_visible {
+                                        egui::accesskit::Toggled::True
+                                    } else {
+                                        egui::accesskit::Toggled::False
+                                    });
+                                });
+                                crate::controls::paint_icon(
+                                    ui.painter(),
+                                    response.rect,
+                                    crate::controls::Icon::Analysis,
+                                    ui.style().interact(&response).text_color(),
+                                );
+                                crate::controls::focus_feedback(ui, &response);
+                                response
+                            } else {
+                                ui.selectable_label(*analysis_visible, analysis_label.clone())
+                            }
                         })
                         .inner;
                     if !space_available {
@@ -1032,7 +1066,7 @@ impl Viewer {
             ui.memory_mut(|memory| memory.open_popup(popup_id));
         }
         let label = crate::i18n::text(ui.ctx(), "surfaces.viewer.transitions");
-        let menu = if ui.available_width() < 480.0 {
+        let menu = if ui.available_width() < 600.0 {
             crate::controls::icon_button(ui, label.as_ref(), crate::controls::Icon::Transitions)
         } else {
             ui.button(label)
@@ -1842,14 +1876,33 @@ impl Viewer {
         }
         if input_source.is_none() {
             let painter = ui.painter_at(rect);
+            // With no accepted source, the paper decoration and watermark are
+            // not product state. Replace them with one quiet surface so the
+            // empty message keeps readable contrast and the next action leads.
+            painter.rect_filled(rect, 0.0, crate::theme::BG);
+            let card = Rect::from_center_size(
+                rect.center(),
+                Vec2::new(
+                    (rect.width() - 2.0 * crate::theme::SPACE_4).clamp(1.0, 400.0),
+                    104.0,
+                ),
+            )
+            .intersect(rect);
+            painter.rect_filled(card, crate::theme::RADIUS_CARD, crate::theme::SURFACE);
+            painter.rect_stroke(
+                card,
+                crate::theme::RADIUS_CARD,
+                crate::theme::stroke(crate::theme::BORDER),
+                egui::StrokeKind::Inside,
+            );
             let message = crate::i18n::text(ui.ctx(), "surfaces.viewer.empty");
             let galley = painter.layout(
                 message.to_string(),
                 crate::theme::text(egui::TextStyle::Body, crate::theme::SIZE_TITLE),
                 crate::theme::FG_SECONDARY,
-                rect.width(),
+                (card.width() - 2.0 * crate::theme::SPACE_4).max(1.0),
             );
-            let pos = rect.center() - galley.size() * 0.5;
+            let pos = card.center() - galley.size() * 0.5;
             painter.galley(pos, galley, crate::theme::FG_SECONDARY);
         }
         let source = match layer {

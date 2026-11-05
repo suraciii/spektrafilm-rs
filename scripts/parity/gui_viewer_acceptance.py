@@ -495,7 +495,7 @@ def accept_viewer(driver, root, state, pixels, exporter):
     animation_path = _state_path(root, "viewer-animation.json", animation_state)
     # Loading complete state clears the old output. Capture its first automatic
     # output across chooser closure, before OCR can outlive the reveal.
-    driver.reveal("action.load_state", "Settings", "GUI parameters")
+    driver.reveal("action.load_state", "Settings", "State and startup")
     driver.click("Load from file")
 
     def first_output():

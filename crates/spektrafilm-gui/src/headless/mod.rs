@@ -515,12 +515,16 @@ fn import_file(h: &mut Harness<'_, App>, _raw: bool) {
 fn choose(h: &mut Harness<'_, App>, label: &str, option: &str) {
     await_input(h);
     scroll_controls_into_view(h, label);
+    // Acceptance selects canonical values (routes and feature-profile names)
+    // while the visible option carries the product-language display label.
+    let option_label =
+        crate::controls::localized_for(crate::i18n::locale(&h.ctx), option).into_owned();
     h.get_by_role_and_label(egui::accesskit::Role::ComboBox, label)
         .focus();
     h.run_steps(3);
     h.press_key(egui::Key::Space);
     h.run_steps(3);
-    h.get_by_role_and_label(egui::accesskit::Role::Button, option)
+    h.get_by_role_and_label(egui::accesskit::Role::Button, option_label.as_str())
         .click();
     h.run_steps(3);
     await_input(h);

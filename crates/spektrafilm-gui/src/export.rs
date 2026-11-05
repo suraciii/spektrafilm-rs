@@ -356,43 +356,38 @@ fn section_break(ui: &mut egui::Ui) {
 /// option's state rather than a disabled editor. Its bounded reason line is
 /// visible rather than hover-only, and is also the accessible description.
 fn readonly_row(ui: &mut egui::Ui, label: &str, value: &str, help: &str, path: &str) {
-    ui.horizontal(|ui| {
-        ui.label(
-            egui::RichText::new(controls::localized(ui.ctx(), label)).color(theme::FG_SECONDARY),
-        )
-        .on_hover_text(help);
-        let cell = editor_width(ui);
-        ui.add_space((ui.available_width() - cell).max(0.0));
-        ui.vertical(|ui| {
-            ui.set_min_width(cell);
-            ui.set_max_width(cell);
-            ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
-            let response = ui
-                .add_sized(
-                    egui::vec2(cell, theme::HEIGHT_CONTROL),
-                    egui::Label::new(
-                        egui::RichText::new(value)
-                            .color(theme::FG_SECONDARY)
-                            .size(theme::SIZE_LABEL),
-                    )
-                    .halign(egui::Align::Max)
-                    .sense(egui::Sense::focusable_noninteractive()),
+    let response = ui
+        .horizontal(|ui| {
+            ui.label(
+                egui::RichText::new(controls::localized(ui.ctx(), label))
+                    .color(theme::FG_SECONDARY),
+            )
+            .on_hover_text(help);
+            let cell = editor_width(ui);
+            ui.add_space((ui.available_width() - cell).max(0.0));
+            ui.add_sized(
+                egui::vec2(cell, theme::HEIGHT_CONTROL),
+                egui::Label::new(
+                    egui::RichText::new(value)
+                        .color(theme::FG_SECONDARY)
+                        .size(theme::SIZE_LABEL),
                 )
-                .on_hover_text(help);
-            let reason = ui.add(
-                egui::Label::new(egui::RichText::new(help).small().color(theme::FG_MUTED))
-                    .halign(egui::Align::Max),
-            );
-            reason.on_hover_text(help);
-            let name = controls::localized(ui.ctx(), label);
-            ui.ctx().accesskit_node_builder(response.id, |node| {
-                node.set_label(name.as_ref());
-                node.set_value(value);
-                node.set_description(help);
-            });
-            controls::locate_row(ui, path, &response);
-        });
+                .halign(egui::Align::Max)
+                .sense(egui::Sense::focusable_noninteractive()),
+            )
+            .on_hover_text(help)
+        })
+        .inner;
+    // Fixed reasons read as full-width row notes instead of a right-aligned
+    // footnote under the value, where long text became a ragged column.
+    ui.add(egui::Label::new(egui::RichText::new(help).small().color(theme::FG_MUTED)).wrap());
+    let name = controls::localized(ui.ctx(), label);
+    ui.ctx().accesskit_node_builder(response.id, |node| {
+        node.set_label(name.as_ref());
+        node.set_value(value);
+        node.set_description(help);
     });
+    controls::locate_row(ui, path, &response);
 }
 
 #[derive(Default)]
