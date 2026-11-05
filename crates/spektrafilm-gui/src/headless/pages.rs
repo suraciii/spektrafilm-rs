@@ -85,7 +85,7 @@ fn edit_calibration(h: &mut Harness<'_, App>, text: &str) {
 
 /// Exercise the production Settings state writer and loader, not a runtime-only
 /// serialization roundtrip. Dialog navigation must not change accepted values.
-/// Saving GUI parameters is not saving the photograph record: reloading must
+/// Saving state is not saving the photograph record: reloading must
 /// preserve the current adjustment until the user explicitly discards it.
 fn save_mutate_and_reload(
     s: &mut Session,
@@ -96,7 +96,7 @@ fn save_mutate_and_reload(
     let path = s.directory.path().join(file_name);
     open_settings(&mut s.harness);
     if s.harness.query_by_label("Save current to file").is_none() {
-        click(&mut s.harness, "GUI parameters");
+        click(&mut s.harness, "State and startup");
     }
     script(
         &mut s.harness,
@@ -116,7 +116,7 @@ fn save_mutate_and_reload(
     let revision = s.harness.state().parameter_revision;
     open_settings(&mut s.harness);
     if s.harness.query_by_label("Load from file").is_none() {
-        click(&mut s.harness, "GUI parameters");
+        click(&mut s.harness, "State and startup");
     }
     script(&mut s.harness, chooser::ChooserResult::Scripted(path));
     click(&mut s.harness, "Load from file");

@@ -299,13 +299,32 @@ impl App {
         let width = (ui.available_width() - ui.spacing().item_spacing.x) * 0.5;
         let action = |ui: &mut egui::Ui, enabled: bool, label_key, caption: &str, icon, primary| {
             let label = crate::i18n::text(ui.ctx(), label_key);
+            let label_color = if !enabled {
+                theme::FG_MUTED
+            } else if primary {
+                theme::ACCENT
+            } else {
+                theme::FG
+            };
+            let caption_color = if enabled {
+                theme::FG_SECONDARY
+            } else {
+                theme::FG_MUTED
+            };
+            let icon_color = if !enabled {
+                theme::FG_MUTED
+            } else if primary {
+                theme::ACCENT
+            } else {
+                theme::FG_SECONDARY
+            };
             let mut text = egui::text::LayoutJob::default();
             text.append(
                 &label,
                 0.0,
                 egui::TextFormat {
                     font_id: egui::FontId::proportional(theme::SIZE_LABEL),
-                    color: if primary { theme::ACCENT } else { theme::FG },
+                    color: label_color,
                     ..Default::default()
                 },
             );
@@ -315,19 +334,19 @@ impl App {
                 0.0,
                 egui::TextFormat {
                     font_id: egui::FontId::proportional(theme::SIZE_HINT),
-                    color: theme::FG_SECONDARY,
+                    color: caption_color,
                     ..Default::default()
                 },
             );
             text.wrap.max_width = (width - 44.0).max(1.0);
             let galley = ui.fonts(|fonts| fonts.layout_job(text));
             let button = egui::Button::new("")
-                .fill(if primary {
+                .fill(if primary || !enabled {
                     theme::SURFACE2
                 } else {
                     theme::SURFACE3
                 })
-                .stroke(theme::stroke(if primary {
+                .stroke(theme::stroke(if primary && enabled {
                     theme::ACCENT_DIM
                 } else {
                     theme::BORDER
@@ -338,23 +357,14 @@ impl App {
                 egui::pos2(response.rect.left() + 20.0, response.rect.center().y),
                 egui::vec2(17.0, 17.0),
             );
-            controls::paint_icon(
-                ui.painter(),
-                icon_rect,
-                icon,
-                if primary {
-                    theme::ACCENT
-                } else {
-                    theme::FG_SECONDARY
-                },
-            );
+            controls::paint_icon(ui.painter(), icon_rect, icon, icon_color);
             ui.painter().galley(
                 egui::pos2(
                     response.rect.left() + 36.0,
                     response.rect.center().y - galley.size().y * 0.5,
                 ),
                 galley,
-                theme::FG,
+                label_color,
             );
             response.widget_info(|| {
                 egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, label.as_ref())
@@ -367,11 +377,16 @@ impl App {
             response
         };
         ui.horizontal(|ui| {
+            let scan_caption = if self.image.is_some() {
+                crate::i18n::text(ui.ctx(), "surfaces.action.scan_caption")
+            } else {
+                crate::i18n::text(ui.ctx(), "surfaces.action.scan_unavailable")
+            };
             let scan = action(
                 ui,
                 self.image.is_some() && !busy,
                 "surfaces.action.scan",
-                crate::i18n::text(ui.ctx(), "surfaces.action.scan_caption").as_ref(),
+                scan_caption.as_ref(),
                 controls::Icon::Scan,
                 true,
             );
@@ -1701,7 +1716,7 @@ impl App {
                     ui.spacing_mut().item_spacing = egui::vec2(theme::SPACE_2, theme::SPACE_2);
                     // Search opens this owner without filtering its contents. A
                     // canonical target scrolls its actual response, not the header.
-                    for section in ["Session", "GUI parameters", "Display", "Diagnostics"] {
+                    for section in ["Session", "State and startup", "Display", "Diagnostics"] {
                         let reveal = self.pending_scroll.as_deref() == Some(section);
                         let canonical_target = ctx.data(|data| {
                             data.get_temp::<(String, String)>(egui::Id::new("control_focus_request"))
@@ -1784,7 +1799,7 @@ impl App {
                                     });
                                     self.settings_parameter_controls(ui, "Session");
                                 }
-                                "GUI parameters" => self.state_toolbar(ui),
+                                "State and startup" => self.state_toolbar(ui),
                                 "Display" => {
                                     self.display_profile_controls(ui);
                                     let transform = controls::toggle_row(ui,
@@ -2041,11 +2056,30 @@ impl App {
                         let (dot, _) =
                             ui.allocate_exact_size(egui::vec2(6.0, 6.0), egui::Sense::hover());
                         ui.painter().circle_filled(dot.center(), 2.5, color);
-                        let identity_width = if preview {
-                            ui.available_width() * 0.62
+                        let caveat = preview
+                            .then(|| crate::i18n::text(ui.ctx(), "result.identity.preview_caveat"));
+                        // Reserve the whole warning before the identity gets
+                        // the rest; truncating the warning makes a required
+                        // Preview/Scan distinction hover-only.
+                        let caveat_width = caveat.as_ref().map_or(0.0, |caveat| {
+                            ui.fonts(|fonts| {
+                                fonts
+                                    .layout_no_wrap(
+                                        caveat.to_string(),
+                                        egui::FontId::proportional(theme::SIZE_HINT),
+                                        theme::FG_MUTED,
+                                    )
+                                    .size()
+                                    .x
+                            }) + theme::SPACE_4
+                        });
+                        let separator_width = if preview {
+                            ui.spacing().item_spacing.x * 2.0 + 1.0
                         } else {
-                            ui.available_width()
+                            0.0
                         };
+                        let identity_width =
+                            (ui.available_width() - caveat_width - separator_width).max(0.0);
                         ui.allocate_ui_with_layout(
                             egui::vec2(identity_width, theme::HEIGHT_CONTROL),
                             egui::Layout::left_to_right(egui::Align::Center),
@@ -2061,19 +2095,23 @@ impl App {
                         )
                         .inner
                         .on_hover_text(&identity);
-                        if preview {
+                        if let Some(caveat) = caveat {
                             ui.separator();
-                            let caveat =
-                                crate::i18n::text(ui.ctx(), "result.identity.preview_caveat");
-                            ui.add(
-                                egui::Label::new(
-                                    egui::RichText::new(caveat.as_ref())
-                                        .small()
-                                        .color(theme::FG_MUTED),
-                                )
-                                .truncate(),
-                            )
-                            .on_hover_text(caveat);
+                            ui.allocate_ui_with_layout(
+                                egui::vec2(caveat_width, theme::HEIGHT_CONTROL),
+                                egui::Layout::left_to_right(egui::Align::Center),
+                                |ui| {
+                                    ui.add(
+                                        egui::Label::new(
+                                            egui::RichText::new(caveat.as_ref())
+                                                .small()
+                                                .color(theme::FG_MUTED),
+                                        )
+                                        .truncate(),
+                                    )
+                                    .on_hover_text(caveat.to_string());
+                                },
+                            );
                         }
                     },
                 );
@@ -2601,6 +2639,12 @@ impl eframe::App for App {
                                 ui.ctx(),
                                 "surfaces.search.stage_help",
                             ));
+                        // A pointer activation navigates to the heading; the
+                        // boxed keyboard-focus ring must not linger and read as
+                        // a selected tab.
+                        if response.clicked() && ui.input(|input| input.pointer.any_click()) {
+                            response.surrender_focus();
+                        }
                         controls::focus_feedback(ui, &response);
                         let accessible_name = controls::localized(ui.ctx(), stage.label());
                         ui.ctx().accesskit_node_builder(response.id, |node| {

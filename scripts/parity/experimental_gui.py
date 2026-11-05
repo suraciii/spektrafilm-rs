@@ -43,6 +43,16 @@ ROUTES = [
     'input > convert-film > scan-minus-base',
     'input > convert-film > scan',
 ]
+# The closed selector and option rows show product-language labels; state and
+# reports keep the serialized route values above.
+ROUTE_LABELS = [
+    'Color-manage input',
+    'Expose film, scan film',
+    'Expose film, print, scan',
+    'Convert negative, print, scan',
+    'Convert negative, scan (no base)',
+    'Convert negative, scan',
+]
 
 
 def sha(path):
@@ -148,11 +158,13 @@ class ExperimentalDesktop(X11):
                                   min(image.height, int(max(word[2] + word[4] for word in row) + 4)), 13)
                         if region not in regions:
                             regions.append(region)
-                # The state toolbar follows the observed GUI parameters
+                # The state toolbar follows the observed State and startup
                 # heading. Read it as one row; block OCR drops highlighted Save.
                 for row in grouped.values():
-                    labels = [word for word in row if words(word[0]) in (['gui'], ['parameters'])]
-                    if {tuple(words(word[0])) for word in labels} != {('gui',), ('parameters',)}:
+                    labels = [word for word in row
+                              if words(word[0]) in (['state'], ['and'], ['startup'])]
+                    if [tuple(words(word[0])) for word in labels] != [
+                            ('state',), ('and',), ('startup',)]:
                         continue
                     if min(word[1] for word in labels) >= image.width - 520:
                         continue
@@ -306,7 +318,7 @@ class ExperimentalDesktop(X11):
 
     def state_action(self, label, path, save=False):
         self.reveal('action.save_state' if save else 'action.load_state',
-                    'Settings', 'GUI parameters')
+                    'Settings', 'State and startup')
         self.click(label)
         if not save:
             self.drain_reports()
@@ -344,7 +356,7 @@ class ExperimentalDesktop(X11):
 
     def startup_action(self, label):
         self.reveal('action.save_startup' if label == 'Save current as default'
-                    else 'action.restore_factory', 'Settings', 'GUI parameters')
+                    else 'action.restore_factory', 'Settings', 'State and startup')
         self.click(label)
         if label == 'Restore factory default':
             def confirmation():
@@ -476,7 +488,7 @@ class ExperimentalDesktop(X11):
 
     def choose_route(self, index):
         self.reveal('workflow.route', 'Input and capture', 'Workflow')
-        self.choose('workflow', ROUTES[index])
+        self.choose('workflow', ROUTE_LABELS[index])
 
     def surfaces(self):
         for label in ('Open', 'Undo', 'Redo', 'Settings', 'Export'):
@@ -487,7 +499,7 @@ class ExperimentalDesktop(X11):
                 require(self.locate(label, bottom=True), f'{name}: persistent {label} missing')
             require(self.locate('PREVIEW', bottom=True) is None,
                     f'{name}: retired PREVIEW action remains visible')
-        self.reveal('action.save_state', 'Settings', 'GUI parameters')
+        self.reveal('action.save_state', 'Settings', 'State and startup')
         require(self.locate('Save current to file'), 'Settings state controls missing')
         self.close_settings()
 

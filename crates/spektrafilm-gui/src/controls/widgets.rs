@@ -23,7 +23,9 @@ pub(crate) enum Icon {
     Help,
     Aperture,
     ChevronLeft,
+    ChevronRight,
     Scan,
+    Analysis,
     Save,
     Layers,
     Transitions,
@@ -185,6 +187,13 @@ pub(crate) fn paint_icon(
             }
         }
         Icon::ChevronLeft => path(&[[2.0, -4.0], [-2.0, 0.0], [2.0, 4.0]]),
+        Icon::ChevronRight => path(&[[-2.0, -4.0], [2.0, 0.0], [-2.0, 4.0]]),
+        Icon::Analysis => {
+            for x in [-5.0, 0.0, 5.0] {
+                line([x, 1.5], [x, 7.0]);
+            }
+            line([-7.0, 7.0], [7.0, 7.0]);
+        }
         Icon::Scan => {
             for points in [
                 [[-3.0, -6.0], [-6.0, -6.0], [-6.0, -3.0]],
@@ -826,19 +835,23 @@ pub(crate) fn toggle_row(
 pub(crate) fn module_reset(ui: &mut Ui, section: &str) -> egui::Response {
     let response = ui
         .add(
-            egui::Button::new(
-                egui::RichText::new(crate::i18n::text(ui.ctx(), "surfaces.state.reset"))
-                    .color(theme::FG_SECONDARY)
-                    .size(theme::SIZE_UNIT),
-            )
-            .frame(false)
-            .min_size(egui::vec2(theme::SPACE_4 * 3.0, theme::SPACE_3 * 2.0)),
+            egui::Button::new("")
+                .frame(false)
+                .min_size(egui::vec2(theme::HEIGHT_CONTROL, theme::HEIGHT_CONTROL)),
         )
         .on_hover_text(crate::tr!(
             ui.ctx(),
             "surfaces.section.restore",
             section = super::localized(ui.ctx(), section)
         ));
+    // The icon keeps the repeated module actions quiet while the accessible
+    // name and description still identify the section and its factory baseline.
+    paint_icon(
+        ui.painter(),
+        response.rect,
+        Icon::Reset,
+        ui.style().interact(&response).text_color(),
+    );
     // Name the action after its section, so one reset is addressable among
     // the sections on a page, and carry the factory-baseline sentence as the
     // node's description.
@@ -1082,7 +1095,24 @@ pub(crate) fn choice_tip_options<'a>(
         .unwrap_or_else(|| value.as_str())
         .to_owned();
     let prev = value.clone();
-    let stacked = label == "workflow";
+    let selected_text = if translate_options {
+        crate::controls::localized(ui.ctx(), &selected_label)
+    } else {
+        std::borrow::Cow::Borrowed(selected_label.as_str())
+    };
+    let selected_width = ui.fonts(|fonts| {
+        fonts
+            .layout_no_wrap(
+                selected_text.to_string(),
+                egui::FontId::proportional(theme::SIZE_LABEL),
+                theme::FG,
+            )
+            .size()
+            .x
+    });
+    // A long selected value gets the full row instead of a truncated field;
+    // the closed control must name its state without hover.
+    let stacked = label == "workflow" || selected_width > theme::WIDTH_COMBO_MAX - 36.0;
     let row = |ui: &mut Ui| {
         row_label(ui, label, experimental)
             .on_hover_text(crate::controls::localized(ui.ctx(), tooltip));
@@ -1096,11 +1126,7 @@ pub(crate) fn choice_tip_options<'a>(
             ui.add_space((ui.available_width() - width).max(0.0));
         }
         let response = egui::ComboBox::from_id_salt(label)
-            .selected_text(if translate_options {
-                crate::controls::localized(ui.ctx(), &selected_label)
-            } else {
-                std::borrow::Cow::Borrowed(selected_label.as_str())
-            })
+            .selected_text(selected_text.clone())
             .width(width)
             .wrap_mode(egui::TextWrapMode::Truncate)
             .show_ui(ui, |ui| {

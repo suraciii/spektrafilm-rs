@@ -211,7 +211,7 @@ impl App {
                         crate::controls::icon_button(
                             ui,
                             toggle_name.as_ref(),
-                            crate::controls::Icon::Image,
+                            crate::controls::Icon::ChevronRight,
                         )
                     })
                     .clicked()
@@ -222,6 +222,11 @@ impl App {
                             self.presets.narrow_open = true;
                         }
                     }
+                    ui.label(
+                        egui::RichText::new(crate::i18n::text(ui.ctx(), "surfaces.presets.title"))
+                            .size(theme::SIZE_HINT)
+                            .color(theme::FG_MUTED),
+                    );
                 });
             }
             if !expanded {
@@ -538,7 +543,7 @@ impl App {
                                     egui::Color32::TRANSPARENT
                                 })
                                 .stroke(if active {
-                                    theme::stroke(theme::ACCENT_DIM)
+                                    theme::stroke(theme::ACCENT)
                                 } else {
                                     egui::Stroke::NONE
                                 })
@@ -625,7 +630,7 @@ impl App {
                                                             .color(theme::FG_SECONDARY)
                                                             .size(theme::SIZE_HINT),
                                                     )
-                                                    .truncate(),
+                                                    .wrap(),
                                                 );
                                                 ui.ctx().accesskit_node_builder(
                                                     material.id,
@@ -726,20 +731,45 @@ impl App {
                                         ));
                                         let actions = ui.push_id(entry_id, |ui| {
                                             let actions = quiet_button(ui, |ui| {
-                                                egui::menu::menu_custom_button(
-                                                    ui,
+                                                let popup_id =
+                                                    ui.make_persistent_id("preset-actions");
+                                                let button = ui.add(
                                                     egui::Button::new("").min_size(egui::vec2(
                                                         theme::HEIGHT_CONTROL,
                                                         CARD_ACTION_HEIGHT,
                                                     )),
-                                                    |ui| {
-                                                        ui.spacing_mut().interact_size.y =
-                                                            theme::HEIGHT_CONTROL;
-                                                        ui.spacing_mut().button_padding.y =
-                                                            theme::SPACE_1;
-                                                        self.preset_actions(ui, entry)
-                                                    },
-                                                )
+                                                );
+                                                if button.clicked() {
+                                                    ui.memory_mut(|memory| {
+                                                        memory.toggle_popup(popup_id)
+                                                    });
+                                                }
+                                                // A card at the bottom of the library cannot
+                                                // open its menu downward; choose the side
+                                                // with room instead of clipping the actions.
+                                                let above = button.rect.bottom() + 220.0
+                                                    > ui.ctx().screen_rect().bottom();
+                                                let selected =
+                                                    egui::popup::popup_above_or_below_widget(
+                                                        ui,
+                                                        popup_id,
+                                                        &button,
+                                                        if above {
+                                                            egui::AboveOrBelow::Above
+                                                        } else {
+                                                            egui::AboveOrBelow::Below
+                                                        },
+                                                        egui::popup::PopupCloseBehavior::CloseOnClick,
+                                                        |ui| {
+                                                            ui.set_min_width(180.0);
+                                                            ui.spacing_mut().interact_size.y =
+                                                                theme::HEIGHT_CONTROL;
+                                                            ui.spacing_mut().button_padding.y =
+                                                                theme::SPACE_1;
+                                                            self.preset_actions(ui, entry)
+                                                        },
+                                                    );
+                                                egui::InnerResponse::new(selected, button)
                                             });
                                             // The affordance is drawn rather than
                                             // typeset: three dots cannot go missing
@@ -1109,9 +1139,10 @@ impl App {
         }
     }
 }
-/// The collapsed library rail and the prototype's card metrics: a 48 pt rail,
-/// and 64 pt rows around the 46 pt fixed-reference thumbnail.
-const RAIL_WIDTH: f32 = 48.0;
+/// The collapsed library rail and the prototype's card metrics: a 56 pt rail
+/// leaves room for the visible Presets label, and 64 pt rows surround the
+/// 46 pt fixed-reference thumbnail.
+const RAIL_WIDTH: f32 = 56.0;
 const CARD_HEIGHT: f32 = 64.0;
 const THUMBNAIL: f32 = 46.0;
 /// Two visible controls and a 2 pt gap fit inside the reference image height.

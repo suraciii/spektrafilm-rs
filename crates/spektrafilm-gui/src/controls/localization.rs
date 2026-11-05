@@ -580,7 +580,7 @@ fn key(label: &str) -> Option<&'static str> {
         "Frame Long Edge" => Some("controls.scanner.frame_long_edge"),
         "GPU passes and measurement availability" => Some("surfaces.diagnostics.gpu"),
         "GPU timing" => Some("surfaces.diagnostics.gpu_timing"),
-        "GUI parameters" => Some("controls.label.gui_parameters"),
+        "State and startup" => Some("controls.label.state_and_startup"),
         "Gamma applied to the film density curves during development or a calibrated film-curve reference; 1.0 keeps the profile curves unchanged." => {
             Some("controls.chemistry.film_density_curve_gamma_help")
         }
@@ -621,6 +621,16 @@ fn key(label: &str) -> Option<&'static str> {
         "Green–magenta tint" => Some("controls.scanner.tint"),
         "Halation" => Some("controls.halation.section"),
         "Halation Profiles" => Some("controls.halation.profiles"),
+        "still_strong" | "Still / strong antihalation" => {
+            Some("controls.halation.profile_still_strong")
+        }
+        "still_weak" | "Still / weak antihalation" => Some("controls.halation.profile_still_weak"),
+        "still_no" | "Still / no antihalation" => Some("controls.halation.profile_still_no"),
+        "cine_strong" | "Cine / strong antihalation" => {
+            Some("controls.halation.profile_cine_strong")
+        }
+        "cine_weak" | "Cine / weak antihalation" => Some("controls.halation.profile_cine_weak"),
+        "cine_no" | "Cine / no antihalation" => Some("controls.halation.profile_cine_no"),
         "Halation is inactive; stored profile values retained and available when enabled." => {
             Some("controls.halation.inactive_profile")
         }
@@ -650,6 +660,23 @@ fn key(label: &str) -> Option<&'static str> {
         }
         "Import" => Some("surfaces.presets.import"),
         "Import Raw" => Some("controls.label.import_raw"),
+        // Workflow choices store the canonical route and present a physical
+        // process label. Both spellings resolve here so acceptance can select
+        // the canonical value while the visible option remains product language.
+        "input" | "Color-manage input" => Some("controls.route.input"),
+        "input > film > scan" | "Expose film, scan film" => Some("controls.route.film_scan"),
+        "input > film > print > scan" | "Expose film, print, scan" => {
+            Some("controls.route.film_print_scan")
+        }
+        "input > convert-film > print > scan" | "Convert negative, print, scan" => {
+            Some("controls.route.convert_film_print_scan")
+        }
+        "input > convert-film > scan-minus-base" | "Convert negative, scan (no base)" => {
+            Some("controls.route.convert_film_scan_minus_base")
+        }
+        "input > convert-film > scan" | "Convert negative, scan" => {
+            Some("controls.route.convert_film_scan")
+        }
         "Import failed. You can import a renamed copy. %{detail}" => {
             Some("surfaces.presets.import_rename")
         }
