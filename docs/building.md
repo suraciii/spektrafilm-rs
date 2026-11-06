@@ -89,6 +89,10 @@ Extract the entire archive and launch the wrappers in `bin/`. They locate bundle
 
 The default and integration branch is `main-0.3.4`; pull requests require the `PR lightweight` check, which runs `just ci-pr` through `just verify-pr`. Pushes to `main-0.3.4` and manual dispatch run the `Main CI` workflow: the `Main full verification` job runs the full gate through `just verify`, and the three-platform `Build packages` job then produces nightly packages as workflow artifacts. Version tags and manual dispatch run the `Release` workflow: a gate job verifies that the tag sits on `main-0.3.4` and matches the workspace version, and the shared three-platform build attaches the packages to the GitHub Release.
 
+The Linux verification environment is maintained separately from source changes.
+See [verification environment maintenance](../eng/verification-environment.md)
+for image validation, promotion, and rollback.
+
 ## Package and GUI verification
 
 See [scripts/parity/README.md](../scripts/parity/README.md) for release package smoke, headless GUI checks, and native GUI acceptance.
