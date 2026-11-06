@@ -1115,6 +1115,9 @@ fn key(label: &str) -> Option<&'static str> {
         "Slide" => Some("controls.scanner.slide"),
         "Softness" => Some("controls.grain.softness"),
         "Software compute adapter — not a hardware GPU." => Some("surfaces.diagnostics.software"),
+        "Black-and-white print contrast cannot be calibrated by color neutralization." => {
+            Some("controls.convert.bw_neutralization_inactive")
+        }
         "Solve main enlarger M/Y shifts so the current film base midgray prints neutral. Writes the Enlarger controls." => {
             Some("controls.convert.neutralize_filters_help")
         }

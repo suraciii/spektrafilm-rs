@@ -1432,8 +1432,11 @@ impl App {
         } else {
             &self.print_dev_times
         };
-        if times.len() <= 1 {
-            let effective = times.first().copied().unwrap_or(1.0);
+        if times.is_empty() {
+            return;
+        }
+        if times.len() == 1 {
+            let effective = times[0];
             ui.label(crate::tr!(
                 ui.ctx(),
                 "surfaces.chemistry.material_time",
@@ -1505,17 +1508,16 @@ impl App {
             self.params.io.input_cctf_decoding,
         );
         let cache_id = egui::Id::new("inspector-material-context");
-        let route = self.params.workflow.route_enum();
-        let need_print = route.executes_print_exposure(&self.params.taps)
-            || route.executes_print_development(&self.params.taps)
-            || route.executes_print_readout(&self.params.taps);
+        // The Convert filter-calibration action uses the selected print stock
+        // even when the current render route does not print. Cache both materials
+        // so its applicability cannot depend on a previous route's cache state.
         let cached = ui
             .ctx()
             .data(|data| data.get_temp::<Arc<InspectorMaterials>>(cache_id));
         let cache_current = cached.as_ref().is_some_and(|materials| {
             materials.film_name == self.film_name
                 && materials.print_name == self.print_name
-                && (!need_print || materials.print.is_some())
+                && materials.print.is_some()
         });
         if !cache_current {
             let film = cached
@@ -1527,19 +1529,15 @@ impl App {
                         .ok()
                         .map(Arc::new)
                 });
-            let print = if need_print {
-                cached
-                    .as_ref()
-                    .filter(|materials| materials.print_name == self.print_name)
-                    .and_then(|materials| materials.print.as_ref().map(Arc::clone))
-                    .or_else(|| {
-                        profile::load_profile_by_name(&self.data_dir, &self.print_name)
-                            .ok()
-                            .map(Arc::new)
-                    })
-            } else {
-                None
-            };
+            let print = cached
+                .as_ref()
+                .filter(|materials| materials.print_name == self.print_name)
+                .and_then(|materials| materials.print.as_ref().map(Arc::clone))
+                .or_else(|| {
+                    profile::load_profile_by_name(&self.data_dir, &self.print_name)
+                        .ok()
+                        .map(Arc::new)
+                });
             if let Some(film) = film {
                 ui.ctx().data_mut(|data| {
                     data.insert_temp(

@@ -802,6 +802,31 @@ mod tests {
         rgb.data.iter().map(|v| to_f64(*v)).collect()
     }
 
+    #[test]
+    fn polymax_scan_counts_silver_once_and_normalizes_paper_white() {
+        let source =
+            crate::profile::load_profile_by_name(&data_dir(), "kodak_polymax_fine_art").unwrap();
+        let mut paper = crate::profile::resolve_for_render(source, None);
+        let params = params();
+        let white = scan(&[0.; 3], &paper, &style::STANDARD, &params);
+        let density = [0., 0.25, 1., 2.];
+        let values: Vec<f64> = density.iter().flat_map(|d| [*d; 3]).collect();
+        let output = scan(&values, &paper, &style::STANDARD, &params);
+        for (rgb, d) in output.as_chunks::<3>().0.iter().zip(density) {
+            for channel in 0..3 {
+                assert!((rgb[channel] / white[channel] - 10.0f64.powf(-d)).abs() < 2e-6);
+            }
+        }
+        paper.data.base_density.fill(0.5);
+        let changed_base = scan(&values, &paper, &style::STANDARD, &params);
+        for (a, b) in output.iter().zip(changed_base) {
+            assert!(
+                (a - b).abs() < 2e-6,
+                "paper-white-relative output changed: {a} {b}"
+            );
+        }
+    }
+
     /// Neutral scan model self-checks, mirroring the research reference
     /// implementation (`k64-neutral-scan-v2`): a clear film reads the output
     /// white, so the base tint is removed rather than baked in. The residual

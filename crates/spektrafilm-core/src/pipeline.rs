@@ -37,6 +37,8 @@ pub(crate) mod scan_frame;
 mod stages;
 
 #[cfg(test)]
+mod polymax_tests;
+#[cfg(test)]
 mod tests;
 
 /// Diagnostic helper: when env var `$var` is set, dump the image's f64

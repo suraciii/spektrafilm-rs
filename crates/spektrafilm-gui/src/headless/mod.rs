@@ -13,6 +13,7 @@ mod lifecycle;
 mod operator;
 mod pages;
 mod panels;
+mod polymax;
 mod raw;
 mod result;
 mod viewer;

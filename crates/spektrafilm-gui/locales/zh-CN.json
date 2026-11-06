@@ -690,6 +690,7 @@
   "controls.convert.blind_calibration": "盲校准",
   "controls.convert.blind_calibration_help": "从当前色彩丰富的图像拟合校正矩阵；完成后请检查拟合值。",
   "controls.convert.neutralize_filters": "中和印相滤镜",
+  "controls.convert.bw_neutralization_inactive": "黑白相纸或印片胶片的反差不能通过色彩中和来校准。",
   "controls.convert.neutralize_filters_help": "求解放大机主 M/Y 偏移，使当前胶片片基中灰印成中性。结果会写入放大机控件。",
   "controls.convert.film_channel_swap": "胶片通道交换",
   "controls.convert.print_channel_swap": "印相通道交换",

@@ -5,7 +5,10 @@ This page records the sources credited by the Rust port and the licenses for the
 ## Credits
 
 Andrea Volpato wrote the original Python implementation: [andreavolpato/spektrafilm](https://github.com/andreavolpato/spektrafilm).
-All spectral data, film/paper profiles, and pipeline architecture come from that project.
+The original spectral data, film/paper profiles, and pipeline architecture come from that project.
+Later source reconstructions carry their own attribution notices.
+The [Polymax fixed-condition profiles](polymax.md) use Kodak G-24 vector curves,
+with a separate [source and reconstruction notice](../data/license/POLYMAX.txt).
 
 The spectral-upsampling LUT (`hanatos2025_*`) is named after [Johannes Hanatos](https://github.com/hanatos), author of [vkdt](https://github.com/hanatos/vkdt).
 Hanatos provided the upstream Python project with the LUT files and sample code that drive the RGB → spectrum step.

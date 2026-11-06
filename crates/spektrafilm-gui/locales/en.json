@@ -690,6 +690,7 @@
   "controls.convert.blind_calibration": "blind calibration",
   "controls.convert.blind_calibration_help": "Fit the correction matrix from the current vibrant image; review the fitted values afterwards.",
   "controls.convert.neutralize_filters": "neutralize print filters",
+  "controls.convert.bw_neutralization_inactive": "Black-and-white print contrast cannot be calibrated by color neutralization.",
   "controls.convert.neutralize_filters_help": "Solve main enlarger M/Y shifts so the current film base midgray prints neutral. Writes the Enlarger controls.",
   "controls.convert.film_channel_swap": "Film channel order",
   "controls.convert.print_channel_swap": "Print channel order",
