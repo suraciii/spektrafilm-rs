@@ -250,6 +250,12 @@ impl App {
             &gui_state.sections,
             spektrafilm_core::presets::PresetLibrary::new(config_directory.join("presets")),
         );
+        // Automatic startup restores layout only: an applied identity embedded
+        // in startup defaults must not label unrelated controls, including when
+        // the browser carrier is absent or unreadable.
+        if !explicit_state {
+            presets.state.applied = None;
+        }
         match presets::BrowserState::restore(
             &gui_state.sections,
             explicit_state,

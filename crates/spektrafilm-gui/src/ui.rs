@@ -2232,10 +2232,22 @@ impl App {
                                     || source_label.into_owned(),
                                     |path| path.display().to_string(),
                                 ));
+                                let mut print =
+                                    profiles::selected_display(&self.papers, &self.print_name);
+                                if !routes::vocabulary::route_includes_print(
+                                    &self.params.workflow.route,
+                                ) {
+                                    print.push_str(&format!(
+                                        " ({})",
+                                        crate::i18n::text(
+                                            ctx,
+                                            "surfaces.status.stored_print_inactive"
+                                        )
+                                    ));
+                                }
                                 let context = format!(
-                                    "{} · {} · {}",
+                                    "{} · {print} · {}",
                                     profiles::selected_display(&self.films, &self.film_name),
-                                    profiles::selected_display(&self.papers, &self.print_name),
                                     controls::localized(
                                         ctx,
                                         routes::vocabulary::route_description(

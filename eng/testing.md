@@ -14,18 +14,7 @@ Parameterized device tests should acquire one backend outside the case loop unle
 
 Prepared device banks may be reused within one test when formation parameters and sampling footprints match. Keep them on the backend that prepared them. Keep image and readout buffers local to each case. Prepared-bank reuse must not replace cold production-path acceptance.
 
-**Preset previews:** The [current-photograph thumbnail contract](../specs/presets/spec.md#current-photograph-thumbnails) defines the implementation target. Its [native cutover](../specs/presets/design.md#implementation-boundary) replaces fixed-reference assets with isolated runtime candidate renders and stale-result, ownership, and bounded-work regressions.
-
-Until that cutover removes the shipped reference bundle, a built-in look or material change must still regenerate and verify its existing bundle entry with the real-CPU authoring operation:
-
-```bash
-cargo test --locked -p spektrafilm-gui --bin spektrafilm-gui \
-  presets::thumbnails::tests::generate_fixed_reference_thumbnails -- --exact --ignored
-cargo test --locked -p spektrafilm-gui --bin spektrafilm-gui \
-  presets::thumbnails::tests::distributed_bundle_contains_current_real_render_for_every_builtin_look -- --exact
-```
-
-The legacy authoring command uses default-f32 and writes the distributed bundle from actual CPU renders. Do not substitute another look's image, edit fingerprints by hand, or disable its completeness check before the native replacement lands.
+**Preset previews:** The [current-photograph thumbnail contract](../specs/presets/spec.md#current-photograph-thumbnails) is the shipped implementation. Preset cards render isolated runtime candidates from the accepted photograph; there is no fixed-reference bundle to regenerate. Built-in look or material changes remain covered by the normal preset, material, and render suites rather than a thumbnail authoring command.
 
 **Main cost:** The full gate must stay within the `Main full verification` timeout in [.github/workflows/ci.yml](../.github/workflows/ci.yml). A change that adds rendering or preparation work reports the measured wall clock of the affected suites in the pull request. Test codegen uses `[profile.test] opt-level = 2` in [Cargo.toml](../Cargo.toml); it still inherits `dev`, so debug assertions and overflow checks stay enabled and only code generation differs.
 

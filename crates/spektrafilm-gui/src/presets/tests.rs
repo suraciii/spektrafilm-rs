@@ -53,7 +53,6 @@ fn a_failed_preset_preserves_the_entire_application_transaction() {
         let before = serde_json::to_value(&app.params).unwrap();
         let state = app.current_state().unwrap().sections;
         let browser = app.presets.state.clone();
-        let preferences = app.presets.preferences.clone();
         let film = app.film_name.clone();
         let print = app.print_name.clone();
         let film_times = app.film_dev_times.clone();
@@ -72,7 +71,6 @@ fn a_failed_preset_preserves_the_entire_application_transaction() {
         assert_eq!(serde_json::to_value(&app.params).unwrap(), before);
         assert_eq!(app.current_state().unwrap().sections, state);
         assert_eq!(app.presets.state, browser);
-        assert_eq!(app.presets.preferences, preferences);
         assert_eq!(app.film_name, film);
         assert_eq!(app.print_name, print);
         assert_eq!(app.film_dev_times, film_times);
@@ -129,7 +127,12 @@ fn ordinary_restart_restores_browser_only_and_explicit_state_wins() {
     );
     assert_eq!(restarted.film_name, startup.film());
     assert_eq!(restarted.print_name, startup.paper());
-    assert_eq!(restarted.presets.state, remembered);
+    assert_eq!(restarted.presets.state.width, remembered.width);
+    assert_eq!(restarted.presets.state.expanded, remembered.expanded);
+    assert!(
+        restarted.presets.state.applied.is_none(),
+        "the global carrier restores layout only"
+    );
     assert!(!restarted.dirty);
     assert_eq!(restarted.parameter_revision, 0);
     assert!(restarted.scan_for_print_snapshot.is_none());
@@ -171,7 +174,14 @@ fn ordinary_restart_restores_browser_only_and_explicit_state_wins() {
     );
     restarted.apply_state(explicit.clone()).unwrap();
     restarted.persist_browser_state(true);
-    assert_eq!(reopen(None).presets.state, explicit_app.presets.state);
+    assert_eq!(
+        reopen(None).presets.state,
+        BrowserState {
+            width: explicit_app.presets.state.width,
+            expanded: explicit_app.presets.state.expanded,
+            applied: None,
+        }
+    );
     restarted.apply_state(state::GuiState::factory()).unwrap();
     restarted.persist_browser_state(true);
     assert_eq!(reopen(None).presets.state, BrowserState::default());
@@ -835,4 +845,69 @@ fn look_application_preserves_existing_explicit_ownership_and_legacy_camera_omis
         ownership.explicit_section_paths
     );
     std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn automatic_startup_ignores_embedded_applied_identity_but_explicit_state_keeps_it() {
+    let mut extras = state::GuiState::factory().sections;
+    extras["rust"]["presets"] = serde_json::json!({
+        "width": 300.0,
+        "expanded": false,
+        "applied": {"group": PresetGroup::User, "name": "Remembered"},
+    });
+    let missing = std::env::temp_dir().join(format!(
+        "spektrafilm-missing-browser-carrier-{}",
+        std::process::id()
+    ));
+    let automatic = BrowserState::restore(&extras, false, &missing).unwrap();
+    assert_eq!(automatic.width, 300.0);
+    assert!(!automatic.expanded);
+    assert!(
+        automatic.applied.is_none(),
+        "automatic startup restores layout only"
+    );
+    let explicit = BrowserState::restore(&extras, true, &missing).unwrap();
+    assert_eq!(
+        explicit
+            .applied
+            .as_ref()
+            .map(|applied| applied.name.as_str()),
+        Some("Remembered")
+    );
+}
+
+#[test]
+fn proposed_copy_names_fit_the_preset_name_limit() {
+    let base = format!("{} copy", "x".repeat(60));
+    let name = available_name(&base, &[]);
+    assert!(
+        spektrafilm_core::presets::validate_name(&name).is_ok(),
+        "proposed name must already be valid: {name:?}"
+    );
+    assert!(name.chars().count() <= 64);
+}
+
+#[test]
+fn keyboard_order_crosses_preset_group_boundaries() {
+    let entries: Vec<LibraryEntry> = [
+        (PresetGroup::BuiltIn, "Alpha"),
+        (PresetGroup::User, "Mine"),
+        (PresetGroup::BuiltIn, "Zulu"),
+    ]
+    .into_iter()
+    .map(|(group, name)| LibraryEntry {
+        group,
+        name: name.into(),
+        film_profile: None,
+        print_profile: None,
+        path: None,
+        fault: None,
+        preset: None,
+    })
+    .collect();
+    assert_eq!(
+        super::render::presentation_order(&[0, 1, 2], &entries),
+        vec![0, 2, 1],
+        "arrow navigation follows the rendered groups, not library scan order"
+    );
 }
