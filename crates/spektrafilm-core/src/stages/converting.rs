@@ -632,6 +632,9 @@ pub fn neutralize_filters(
     data: &std::path::Path,
     backend: &dyn spektrafilm_backend::ComputeBackend,
 ) -> Result<(f32, f32), String> {
+    if print.is_bw() {
+        return Err("Print filter color neutralization requires a color print material; black-and-white contrast is not identified by RGB chroma".into());
+    }
     let mut p = params.clone();
     p.workflow.route = "input > film > print > scan".into();
     p.io.scan_film = false;

@@ -1,0 +1,31 @@
+Kodak Polymax Fine-Art F unfiltered profile
+
+New coordinate-extraction and reconstruction contributions:
+Copyright (c) 2026 SpektraFilm contributors.
+Creative Commons Attribution-ShareAlike 4.0 International:
+https://creativecommons.org/licenses/by-sa/4.0/
+https://creativecommons.org/licenses/by-sa/4.0/legalcode
+The legal text is reproduced in SPEKTRAFILM_LICENSE.txt. Its Andrea Volpato
+preamble identifies his original assets, not the origin of this reconstruction.
+
+Original Kodak technical material remains the property of its rights holder.
+Source: KODAK PROFESSIONAL POLYMAX Fine-Art Paper, G-24, June 2005, page 5.
+https://125px.com/docs/paper/kodak/g24.pdf
+The manufacturer PDF and complete SVG artwork are not distributed here.
+A license on new contributions does not grant rights in the Kodak publication.
+
+Characteristic and threshold-sensitivity coordinates were extracted directly
+from the publication's vector centerlines. Jan Lohse's independent digitization
+was used as a cross-check only; its point dictionaries are not copied into the
+shipped source arrays. The pinned cross-check source is:
+https://github.com/JanLohse/spectral_film_lut/blob/6307a98f3cf4f2d7b6d09bab82fbf6f64356ccfe/src/spectral_film_lut/bw_print_film/kodak_polymax_fine_art.py
+Copyright (c) 2026 Jan Lohse; MIT notice in JAN_LOHSE_MIT.txt.
+That MIT license is not a blanket redistribution license for Kodak publications.
+
+The profile uses neutral silver and base approximations, one effective threshold
+sensitivity, explicit unmeasured spectral tails, and the unfiltered condition.
+It does not identify physical emulsion components, fluorescence, paper texture,
+BRDF, or arbitrary-filter variable contrast. No other stock supplies its curve.
+
+Source identity and axis mappings: ../profile_sources/kodak_polymax_fine_art.json
+Generation, usage, and limitations: ../../docs/polymax.md

@@ -211,20 +211,20 @@ pub(crate) fn apply_database_neutral_print_filters_protected(
     }
     let print_stock = print.info.stock.as_deref().unwrap_or("");
     let film_stock = film.info.stock.as_deref().unwrap_or("");
-    if let Some([c, m, y]) =
-        database.and_then(|db| db.lookup(print_stock, &params.enlarger.illuminant, film_stock))
-    {
-        let protected = authored_filter_axes(protection);
-        if !protected[0] {
-            params.enlarger.c_filter_neutral = c as f32;
-        }
-        if !protected[1] {
-            params.enlarger.m_filter_neutral = m as f32;
-        }
-        if !protected[2] {
-            params.enlarger.y_filter_neutral = y as f32;
-        }
-    }
+    let controls = [
+        params.enlarger.c_filter_neutral as f64,
+        params.enlarger.m_filter_neutral as f64,
+        params.enlarger.y_filter_neutral as f64,
+    ];
+    let [c, m, y] = crate::neutral_filters::resolve_baseline(
+        controls,
+        authored_filter_axes(protection),
+        print.is_bw() && print.is_paper(),
+        database.and_then(|db| db.lookup(print_stock, &params.enlarger.illuminant, film_stock)),
+    );
+    params.enlarger.c_filter_neutral = c as f32;
+    params.enlarger.m_filter_neutral = m as f32;
+    params.enlarger.y_filter_neutral = y as f32;
     params
 }
 
@@ -909,6 +909,40 @@ mod tests {
         assert_eq!(bw_params.film_render.grain.rms_granularity, [14.0; 3]);
         assert_eq!(bw_params.film_render.grain.uniformity, [0.6; 3]);
         assert_eq!(bw_params.film_render.grain.density_min, [0.01; 3]);
+    }
+
+    #[test]
+    fn polymax_neutral_baseline_preserves_authored_filters_and_manual_policy() {
+        let data = crate::test_support::data_dir();
+        let film = crate::profile::load_profile_by_name(&data, "kodak_doublex").unwrap();
+        let paper = crate::profile::load_profile_by_name(&data, "kodak_polymax_fine_art").unwrap();
+        for enabled in [true, false] {
+            let mut params = RuntimeParams::default();
+            params.settings.neutral_print_filters_from_database = enabled;
+            params.enlarger.c_filter_neutral = 17.;
+            params.enlarger.m_filter_neutral = 23.;
+            params.enlarger.y_filter_neutral = 91.;
+            params.neutral_print_filters_protected = Some([false, true, false]);
+            let expected = if enabled {
+                [0., 23., 0.]
+            } else {
+                [17., 23., 91.]
+            };
+            let cold =
+                crate::pipeline_calibration::NeutralInputs::new(&film, &paper, &params, true)
+                    .build(Some(&data))
+                    .unwrap();
+            assert_eq!(cold, expected.map(f64::from));
+            let digested = apply_database_neutral_print_filters(params, &film, &paper, None);
+            assert_eq!(
+                [
+                    digested.enlarger.c_filter_neutral,
+                    digested.enlarger.m_filter_neutral,
+                    digested.enlarger.y_filter_neutral
+                ],
+                expected
+            );
+        }
     }
 
     #[test]

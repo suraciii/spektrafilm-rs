@@ -17,6 +17,29 @@ pub struct NeutralFilters {
     db: FilterDb,
 }
 
+/// Resolve the automatic baseline without overwriting authored axes.
+/// Black-and-white paper has no chromatic neutralization target. Keep its
+/// baseline light unfiltered; existing print-film and color behavior is unchanged.
+pub(crate) fn resolve_baseline(
+    controls: [f64; 3],
+    protected: [bool; 3],
+    monochrome_paper: bool,
+    database: Option<[f64; 3]>,
+) -> [f64; 3] {
+    let baseline = if monochrome_paper {
+        Some([0.0; 3])
+    } else {
+        database
+    };
+    std::array::from_fn(|axis| {
+        if protected[axis] {
+            controls[axis]
+        } else {
+            baseline.map_or(controls[axis], |v| v[axis])
+        }
+    })
+}
+
 impl NeutralFilters {
     /// Load the JSON database from `<data_dir>/filters/neutral_print_filters.json`.
     /// A missing file is an explicit no-op, matching Python's optional database.

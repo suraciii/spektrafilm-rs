@@ -194,6 +194,14 @@ The [Print exposure composition](../output-mix/design.md#print-exposure-composit
 - Scanner lens blur acts on transmitted light before density reconstruction. [Tone & Color](../finishing/design.md#color-and-order) follows positive interpretation before the existing output tail.
 - `negative_to_positive` accepts every grain engine, because Procedural composites on the encoded scanner output. Backend selection follows [GPU execution](../gpu-execution/spec.md#backend-selection).
 
+## Fixed-condition black-and-white paper
+
+- A fixed-condition paper profile MUST identify its source filtration and processing conditions. It MUST NOT label filter numbers as development times or claim arbitrary-spectrum variable contrast.
+- Polymax Fine-Art MUST expose one print material using the published unfiltered condition. Other source filtration curves MUST NOT appear as selectable materials.
+- With automatic neutral filters enabled, black-and-white paper MUST use zero CMY baseline values for unauthored axes. Authored axes and disabled automatic-filter policy MUST retain configured values.
+- Color-neutralization calibration MUST reject black-and-white print materials without changing stored parameters. The GUI MUST disable that action when the selected print material is black-and-white.
+- A material with no development-time family MUST NOT display a fabricated development time.
+
 ## Print exposure mode
 
 - `enlarger.print_exposure_mode` selects `manual` or `auto`. `auto` is the default.

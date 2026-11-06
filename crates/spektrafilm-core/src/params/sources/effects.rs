@@ -613,6 +613,11 @@ pub fn inactive_reason_with_materials(
     film: Option<&Profile>,
     print: Option<&Profile>,
 ) -> Option<String> {
+    if path == "action.neutralize_filters" && print.is_some_and(Profile::is_bw) {
+        return Some(
+            "Black-and-white print contrast cannot be calibrated by color neutralization.".into(),
+        );
+    }
     if path.starts_with("film_render.grain.") {
         let reason = grain_inactive_reason(path, params, film, None);
         if reason.is_some() {

@@ -5,6 +5,8 @@
 
 mod io;
 mod model;
+#[cfg(test)]
+mod polymax_tests;
 mod render;
 mod validation;
 
