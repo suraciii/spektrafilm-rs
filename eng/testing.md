@@ -6,13 +6,24 @@
 
 **Main — `ci`:** Run workspace type checks in both precisions, Clippy, and the full workspace suite, including rendering, GPU, GUI workers, benchmark, and statistical tests. These checks run after merge and do not block PR integration. A failure is handled as a separate integration repair. Moving tests out of PR must preserve regression coverage.
 
-The full gate runs the default workspace once, including the benchmark package.
-`test-ci-tail` adds the device-free GPU policy in both precisions and the existing
-f64 fast selections. It does not repeat the default fast selections or the
-benchmark package. Workspace features define the main gate's default coverage;
-package-only minimal dependency features are not a separate main-gate contract.
-`test-fast` and `benchmark-test` remain available as standalone developer commands.
-Fast selections run in precision groups to reduce configuration switches.
+The full gate uses `test-main`. Cargo runs the complete default workspace,
+including the benchmark package, integration harnesses, and doctests. The gate
+then reuses that invocation's GPU test executable for the device-free policy.
+It compiles the f64 fast targets together and runs the existing selections.
+`test-ci-tail` provides the same tail after a separate workspace invocation.
+
+[The selected-test script](../scripts/test_selected.py) owns the fast filters.
+It selects executables from the current Cargo JSON artifact stream by package
+and target identity. Missing or duplicate targets fail. Tests run from their
+package directory, and a compiler or test failure fails the gate. The GPU logic
+selection sets `SPEKTRAFILM_TEST_NO_DEVICE=1` in both precisions.
+
+Workspace features define the main gate's default coverage. The f64 selection
+uses the union of its selected packages' features. Package-only minimal
+dependency features are not a separate main-gate contract. `test-fast` compiles
+its targets once per precision. `benchmark-test` remains a standalone command.
+`parity-backend` uses the existing optimized test profile, retaining debug
+assertions, overflow checks, and the same numerical budgets.
 
 Main verification and packaging have separate concurrency groups. Packaging
 still requires successful verification of the same workflow commit, but an older
@@ -76,7 +87,8 @@ For successful CLI image publication, assert decoded output, replacement behavio
 
 Preset-preview regression coverage follows the [preset acceptance scenarios](../specs/presets/spec.md#acceptance). Use small deterministic real-render cases for candidate equivalence and isolation; use state transitions for stale source, dependency invalidation, priority, and cache bounds rather than wording or wiring assertions.
 
-The [Justfile](../Justfile) defines test selection. The [README](../README.md#build) documents dependencies and verification commands.
+The [Justfile](../Justfile) defines the gates; the selected-test script defines
+the fast test filters. The [README](../README.md#build) documents dependencies and verification commands.
 
 ## CPU and GPU are allowed to disagree
 

@@ -11,12 +11,12 @@ permissions:
 
 jobs:
   verify:
-    name: Diagnose restored Cargo builds
+    name: Main full verification
     runs-on: ubuntu-24.04
     concurrency:
       group: main-verify-${{ github.ref }}
       cancel-in-progress: false
-    timeout-minutes: 30
+    timeout-minutes: 45
     env:
       # Type checks and the parity example do not need debug symbols in CI.
       CARGO_PROFILE_DEV_DEBUG: '0'
@@ -36,7 +36,7 @@ jobs:
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
           git rev-parse --show-toplevel
           cat /opt/verification/tools.txt
-          echo "identity=8d4afdd3e1fe78a13ff552e66c6c2cb9bdce92871cf27d4c9ff242931e205cb5" >> "$GITHUB_OUTPUT"
+          echo "identity=$(cat .github/ci/Dockerfile .github/workflows/ci.yml | sha256sum | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
           vulkaninfo --summary
       - name: Restore Cargo cache
         id: cargo-cache
@@ -52,14 +52,7 @@ jobs:
             verification-container-v1-${{ runner.arch }}-${{ steps.environment.outputs.identity }}-
       - name: Run full main gate with evidence
         id: gate
-        env:
-          CARGO_LOG: cargo::compiler::fingerprint=info
-        run: |
-          mkdir -p "$RUNNER_TEMP/verification"
-          { time cargo test --locked --workspace --no-run; } 2>&1 | tee "$RUNNER_TEMP/verification/workspace.log"
-          { time cargo test --locked -p spektrafilm-gpu --lib --no-run; } 2>&1 | tee "$RUNNER_TEMP/verification/gpu.log"
-          { time cargo test --locked -p spektrafilm-gpu --lib --features precision-f64 --no-run; } 2>&1 | tee "$RUNNER_TEMP/verification/gpu-f64.log"
-          { time cargo test --locked -p spektrafilm-core --lib --features precision-f64 --no-run; } 2>&1 | tee "$RUNNER_TEMP/verification/core-f64.log"
+        run: just verify "$RUNNER_TEMP/verification"
       - name: Preserve verification evidence
         if: always() && steps.gate.outcome != 'skipped'
         uses: actions/upload-artifact@v4
@@ -67,3 +60,24 @@ jobs:
           name: verification-evidence
           path: ${{ runner.temp }}/verification
           if-no-files-found: error
+      - name: Save Cargo cache
+        if: always() && steps.gate.outcome != 'skipped' && steps.cargo-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            /opt/cargo/registry
+            /opt/cargo/git
+            target
+          key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
+
+  packages:
+    name: Build packages
+    needs: verify
+    concurrency:
+      group: main-packages-${{ github.ref }}
+      cancel-in-progress: false
+    permissions:
+      contents: read
+    uses: ./.github/workflows/build.yml
+    with:
+      attach_release: false
