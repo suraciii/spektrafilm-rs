@@ -2,9 +2,21 @@
 
 **Tests must catch meaningful failures, not serve as formalities; speed must never weaken assertions.**
 
-**PR — `ci-pr`:** Check tracked Python syntax, bytecode hygiene, documentation links and presentation, and workspace formatting; run the pure math unit tests in f32 and f64. This required gate must not restore the full workspace cache, install native libraries, compile the GUI/renderer, download image fixtures, or run native, rendering, GPU, browser, or platform acceptance. It uses a separate math-only cache with debug information disabled. Main refreshes that cache for subsequent PRs. New checks must add no more than 30 seconds, including preparation, compilation, linking, and execution.
+**PR — `ci-pr`:** Check tracked Python syntax, bytecode hygiene, documentation links and presentation, and workspace formatting; run the pure math unit tests in f32 and f64. This required gate must not restore the full workspace cache, install native libraries, compile the GUI/renderer, download image fixtures, or run native, rendering, GPU, browser, or platform acceptance. It uses a separate math-only cache with debug information disabled. New checks must add no more than 30 seconds, including preparation, compilation, linking, and execution.
 
 **Main — `ci`:** Run workspace type checks in both precisions, Clippy, and the full workspace suite, including rendering, GPU, GUI workers, benchmark, and statistical tests. These checks run after merge and do not block PR integration. A failure is handled as a separate integration repair. Moving tests out of PR must preserve regression coverage.
+
+The full gate runs the default workspace once, including the benchmark package.
+`test-ci-tail` adds the device-free GPU policy in both precisions and the existing
+f64 fast selections. It does not repeat the default fast selections or the
+benchmark package. Workspace features define the main gate's default coverage;
+package-only minimal dependency features are not a separate main-gate contract.
+`test-fast` and `benchmark-test` remain available as standalone developer commands.
+Fast selections run in precision groups to reduce configuration switches.
+
+Main verification and packaging have separate concurrency groups. Packaging
+still requires successful verification of the same workflow commit, but an older
+package build does not hold the next verification job's concurrency slot.
 
 **Fixtures:** A case must reuse a prepared fixture that another case in the same binary already prepared when both need the same inputs. A case must not rebuild a population, bank, or calibration that already exists for its inputs.
 

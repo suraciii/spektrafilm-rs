@@ -9,14 +9,13 @@ permissions:
   contents: read
   packages: read
 
-concurrency:
-  group: main-ci-${{ github.ref }}
-  cancel-in-progress: false
-
 jobs:
   verify:
     name: Main full verification
     runs-on: ubuntu-24.04
+    concurrency:
+      group: main-verify-${{ github.ref }}
+      cancel-in-progress: false
     timeout-minutes: 45
     env:
       # Type checks and the parity example do not need debug symbols in CI.
@@ -74,6 +73,9 @@ jobs:
   packages:
     name: Build packages
     needs: verify
+    concurrency:
+      group: main-packages-${{ github.ref }}
+      cancel-in-progress: false
     permissions:
       contents: read
     uses: ./.github/workflows/build.yml
