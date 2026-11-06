@@ -10,7 +10,10 @@ fn production_markers_select_procedural_and_raw_without_other_grain_engines() {
     let spektra = concat!(
         include_str!("../../spektrafilm-shaders/wgsl/f64_math.wgsl"),
         include_str!("../src/wgpu_backend/grain/work_f32.wgsl"),
-        include_str!("../src/wgpu_backend/grain/spektra/spektra_pcg.wgsl"),
+        include_str!("../src/wgpu_backend/grain/spektra/spektra_pcg.wgsl")
+    );
+    let clump = concat!(
+        include_str!("../../spektrafilm-shaders/wgsl/f64_math.wgsl"),
         include_str!("../src/wgpu_backend/grain/spektra/clump_pcg.wgsl")
     );
     // A small well-formed stream with one ordinary add. Feed the actual parsed
@@ -29,7 +32,12 @@ fn production_markers_select_procedural_and_raw_without_other_grain_engines() {
         3,
         4,
     ];
-    for (source, selected) in [(procedural, true), (raw, true), (spektra, false)] {
+    for (source, selected) in [
+        (procedural, true),
+        (raw, true),
+        (spektra, false),
+        (clump, false),
+    ] {
         let module = naga::front::wgsl::parse_str(source).unwrap();
         let after = procedural_math::preserve_operations(&module, words.clone()).unwrap();
         assert_eq!(after != words, selected);
