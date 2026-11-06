@@ -18,7 +18,6 @@ pub(crate) enum Icon {
     Export,
     Reset,
     Close,
-    Add,
     Image,
     Help,
     Aperture,
@@ -126,10 +125,6 @@ pub(crate) fn paint_icon(
         Icon::Close => {
             line([-5.0, -5.0], [5.0, 5.0]);
             line([5.0, -5.0], [-5.0, 5.0]);
-        }
-        Icon::Add => {
-            line([-6.0, 0.0], [6.0, 0.0]);
-            line([0.0, -6.0], [0.0, 6.0]);
         }
         Icon::Image => {
             painter.rect_stroke(
@@ -1414,7 +1409,7 @@ mod layout_tests {
     fn painter_actions_keep_button_names_and_keyboard_activation() {
         use egui_kittest::{Harness, kittest::Queryable};
 
-        const ACTIONS: [(&str, Icon); 11] = [
+        const ACTIONS: [(&str, Icon); 10] = [
             ("Open image", Icon::Open),
             ("Undo adjustment", Icon::Undo),
             ("Redo adjustment", Icon::Redo),
@@ -1422,7 +1417,6 @@ mod layout_tests {
             ("Export image", Icon::Export),
             ("Reset module", Icon::Reset),
             ("Close dialog", Icon::Close),
-            ("Add preset", Icon::Add),
             ("Show image", Icon::Image),
             ("Help", Icon::Help),
             ("Aperture", Icon::Aperture),

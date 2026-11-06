@@ -46,6 +46,8 @@ Both languages MUST cover all application-owned workspace, inspector, viewer, pr
 
 Brand, material, and product names; film specification codes such as `35mm`, `120`, and `4×5`; standard color-space and illuminant names; file-format names; mathematical symbols; and unit tokens MUST retain their identity. User-authored preset names, descriptions, and paths MUST NOT be translated. Built-in descriptive text MUST be localized without renaming the underlying preset or profile.
 
+Preset card labels and thumbnail states MUST be concise, localized, and accessible. Explanatory help is disclosed on demand rather than as a default per-card paragraph; material identities remain available in accessible descriptions under [browser interaction](../presets/spec.md#browser-interaction).
+
 Recognized parameter choices MAY have translated display names, but their stored enum values MUST remain exact.
 
 Application errors MUST provide a localized explanation and any known recovery action without hiding the failing path, rejected value, or technical detail. Unmodified third-party and operating-system error text MAY appear as diagnostic detail. The application MUST NOT guess a translated failure category from arbitrary error prose.
@@ -257,7 +259,7 @@ Actions MUST use one stable verb and one explicit target:
 | `Scan` or `SCAN` | Render the original working resolution using current runtime controls. |
 | `Save…` or `SAVE` | Write retained output without rerendering. |
 | `Export file…` | Start independent export rendering and writing. |
-| `Save preset…` | Capture the current look in a preset. |
+| `Save preset…` | Open the name dialog to save the current look as a new user copy or explicitly replace an eligible user look under [saving and replacing](../presets/spec.md#saving-and-replacing). |
 | `Save current to file` | Write GUI state to a selected state file. |
 | `Load from file` | Load GUI state from a selected state file. |
 | `Save current as default` | Replace the startup GUI state. |

@@ -28,7 +28,6 @@ impl App {
                     group,
                     name: name.to_owned(),
                 });
-                self.presets.record_application(group, name);
                 self.invalidate_look_render();
                 self.label_adjustment_message(
                     crate::app::Message::new("operations.history.apply_named_look")
@@ -60,9 +59,15 @@ impl App {
             &self.params,
             provenance(),
         );
+        let name = rust_i18n::t!(
+            "surfaces.presets.new_name",
+            locale = self.resolved_locale.as_str()
+        )
+        .into_owned();
+        let name = available_name(&name, &self.presets.entries);
         self.presets.name_dialog = Some(NameDialog {
             action: NameAction::Save(preset),
-            name: String::new(),
+            name,
             error: None,
         });
     }
@@ -74,29 +79,6 @@ impl App {
                 let name = entry.name.clone();
                 self.load_preset(group, &name);
             }
-            PresetAction::Update => {
-                let preset = entry.preset.as_ref().unwrap();
-                let mut captured = Preset::capture(
-                    &entry.name,
-                    &self.film_name,
-                    &self.print_name,
-                    &self.params,
-                    preset.provenance.clone(),
-                );
-                captured.author = preset.author.clone();
-                captured.description = preset.description.clone();
-                self.status = match self
-                    .presets
-                    .library
-                    .update_detailed(&captured, &self.data_dir)
-                {
-                    Ok(_) => crate::app::Message::new("surfaces.status.preset_updated")
-                        .arg("name", &entry.name),
-                    Err(e) => crate::app::Message::new("surfaces.status.preset_error")
-                        .message_arg("error", super::render::library_error_message(&e)),
-                };
-                self.presets.refresh();
-            }
             PresetAction::Rename => {
                 self.presets.name_dialog = Some(NameDialog {
                     action: NameAction::Rename(entry.name.clone()),
@@ -107,12 +89,14 @@ impl App {
             PresetAction::Duplicate => {
                 self.presets.name_dialog = Some(NameDialog {
                     action: NameAction::Duplicate(entry.preset.as_ref().unwrap().clone()),
-                    name: rust_i18n::t!(
-                        "surfaces.presets.copy_name",
-                        locale = self.resolved_locale.as_str(),
-                        name = &entry.name
-                    )
-                    .into_owned(),
+                    name: available_name(
+                        &rust_i18n::t!(
+                            "surfaces.presets.copy_name",
+                            locale = self.resolved_locale.as_str(),
+                            name = &entry.name
+                        ),
+                        &self.presets.entries,
+                    ),
                     error: None,
                 });
             }
@@ -155,15 +139,24 @@ impl App {
                 Ok(path) => {
                     self.status = crate::app::Message::new("surfaces.status.preset_imported")
                         .arg("path", path.display());
+                    if let Some(name) = path.file_stem().and_then(|stem| stem.to_str()) {
+                        self.presets.query.clear();
+                        self.presets.reveal = Some((PresetGroup::User, name.to_owned()));
+                    }
                     self.presets.refresh();
                 }
                 Err(e) => {
                     let detail = e;
                     self.status = crate::app::Message::new("surfaces.status.preset_error")
                         .message_arg("error", detail.clone());
+                    let base = path
+                        .file_stem()
+                        .and_then(|stem| stem.to_str())
+                        .unwrap_or("Preset");
+                    let name = available_name(base, &self.presets.entries);
                     self.presets.name_dialog = Some(NameDialog {
                         action: NameAction::Import(path),
-                        name: String::new(),
+                        name,
                         error: Some(
                             crate::app::Message::new("surfaces.presets.import_rename")
                                 .message_arg("detail", detail),

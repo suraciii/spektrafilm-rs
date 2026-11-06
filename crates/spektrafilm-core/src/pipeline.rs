@@ -461,8 +461,13 @@ impl Pipeline {
         self.fotufilm_prepared.bank_identity()
     }
     pub fn with_cancellation(mut self, cancellation: Option<Arc<AtomicBool>>) -> Self {
-        self.cancellation = cancellation;
+        self.set_cancellation(cancellation);
         self
+    }
+
+    /// Rebind cancellation without rebuilding the prepared pipeline.
+    pub fn set_cancellation(&mut self, cancellation: Option<Arc<AtomicBool>>) {
+        self.cancellation = cancellation;
     }
 
     fn check_cancelled(&self) -> Result<(), String> {

@@ -176,9 +176,14 @@ pub struct Runtime {
 impl Runtime {
     /// Bind a caller-owned cancellation signal while retaining prepared film grain caches.
     pub fn with_cancellation(mut self, cancellation: Option<Arc<AtomicBool>>) -> Self {
-        self.cancellation = cancellation.clone();
-        self.pipeline = self.pipeline.with_cancellation(cancellation);
+        self.set_cancellation(cancellation);
         self
+    }
+
+    /// Rebind cancellation on this prepared runtime for its next operation.
+    pub fn set_cancellation(&mut self, cancellation: Option<Arc<AtomicBool>>) {
+        self.cancellation = cancellation.clone();
+        self.pipeline.set_cancellation(cancellation);
     }
     /// Prepare the CPU reference runtime. For selected-GPU processing use
     /// [`Self::new_with_backend`], or migrate with [`Self::with_params_with_backend`]
