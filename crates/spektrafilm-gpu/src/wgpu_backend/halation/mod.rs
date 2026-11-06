@@ -325,8 +325,18 @@ pub(super) fn build_halation_state(
         let mut accumulate = Vec::new();
         if a_eff.iter().any(|&value| value != 0.0) {
             for (k, &wk) in decay.iter().enumerate() {
+                // A channel with zero effective amplitude contributes nothing:
+                // its accumulate weight is zero and renormalization uses
+                // `a_tot`, which stays unchanged. A zero sigma copies the
+                // channel instead of running a Gaussian whose result is
+                // multiplied by zero.
                 let sigma: [f64; 3] = std::array::from_fn(|c| {
-                    (f64::from(hp.halation_first_sigma_px[c]) * ((k as f64) + 1.0).sqrt()).max(1e-6)
+                    if a_eff[c] == 0.0 {
+                        0.0
+                    } else {
+                        (f64::from(hp.halation_first_sigma_px[c]) * ((k as f64) + 1.0).sqrt())
+                            .max(1e-6)
+                    }
                 });
                 blurs.push(
                     build_grain_blur_paged_with_scratch(
