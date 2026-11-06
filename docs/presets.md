@@ -50,7 +50,7 @@ Versioned states and recipes permit an absent or null `io.output_gamut_compress.
 
 A saved look can be exported without an active workflow. Application validates the current scan configuration. CLI composition validates after explicit workflow choices.
 
-Library writes reject names already owned by another document. This includes concurrent writes with different letter case or carriers. Export into My Presets creates a new name. Use Update to replace an existing document.
+Library writes reject names already owned by another document. This includes concurrent writes with different letter case or carriers. Export into My Presets creates a new name. Saving the current look under an existing My Presets name offers an explicit **Replace "name"** action instead of overwriting silently.
 
 ## See also
 

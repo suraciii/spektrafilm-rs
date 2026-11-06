@@ -359,7 +359,7 @@ function Copy-NativeBundle([string]$Destination) {
     }
     Copy-Item -LiteralPath "licenses\lensfun-cc-by-sa-3.0.txt" -Destination (Join-Path $licenses "lensfun-database-CC-BY-SA-3.0.txt")
     Copy-Item -LiteralPath "LICENSE" -Destination (Join-Path $licenses "spektrafilm-GPL-3.0.txt")
-    foreach ($guiAssetNotice in @("NotoSansSC-OFL.txt", "NotoSansSC-NOTICE.txt", "PRESET_REFERENCE_LICENSE.txt")) {
+    foreach ($guiAssetNotice in @("NotoSansSC-OFL.txt", "NotoSansSC-NOTICE.txt")) {
         $source = Join-Path "crates\spektrafilm-gui\assets" $guiAssetNotice
         if (-not (Test-Path -LiteralPath $source)) { throw "GUI asset notice missing: $guiAssetNotice" }
         Copy-Item -LiteralPath $source -Destination (Join-Path $licenses $guiAssetNotice)

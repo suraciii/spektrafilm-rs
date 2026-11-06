@@ -103,7 +103,6 @@ fn key(label: &str) -> Option<&'static str> {
         "Retained image" => Some("controls.section.retained_image"),
         "Photograph records" => Some("controls.section.photograph_records"),
         "Export queue" => Some("photo.queue.title"),
-        "Preset discovery" => Some("controls.section.preset_discovery"),
         "Shadow clipping warning" => Some("surfaces.viewer.clipping_shadows"),
         "Highlight clipping warning" => Some("surfaces.viewer.clipping_highlights"),
         "Continue saving retained pixels" => Some("result.save.continue"),
@@ -122,10 +121,6 @@ fn key(label: &str) -> Option<&'static str> {
         "Cancel remaining queue entries" => Some("photo.queue.cancel_remaining"),
         "Cancel this export" => Some("photo.queue.cancel"),
         "Retry submitted snapshot" => Some("photo.queue.retry_snapshot"),
-        "All looks" => Some("surfaces.presets.discovery_all"),
-        "Favorites" => Some("surfaces.presets.discovery_favorites"),
-        "Recently used" => Some("surfaces.presets.discovery_recent"),
-        "Clear search and filters" => Some("surfaces.presets.discovery_reset"),
         "retained image" => Some("controls.condition.retained_image"),
         "stale Save confirmation is open" => Some("controls.condition.stale_save"),
         "adjacent work list entry" => Some("controls.condition.work_adjacent"),
@@ -137,10 +132,6 @@ fn key(label: &str) -> Option<&'static str> {
         "pending queued exports" => Some("controls.condition.queue_pending"),
         "pending queue entry; first eligible entry" => Some("controls.condition.queue_cancel"),
         "failed queue entry; first eligible entry" => Some("controls.condition.queue_retry"),
-        "favorites retain built-in or user group identity" => {
-            Some("controls.condition.preset_favorites")
-        }
-        "no matching presets" => Some("controls.condition.preset_empty"),
         " • applied" => Some("surfaces.presets.suffix_applied"),
         " • missing" => Some("surfaces.presets.suffix_missing"),
         " • modified" => Some("surfaces.presets.suffix_modified"),
@@ -658,7 +649,7 @@ fn key(label: &str) -> Option<&'static str> {
         "If enabled, divide by (1 + sum of bounce amplitudes) so mid-grey is preserved. If disabled, halation is purely additive and subtly lifts shadows as well as highlights." => {
             Some("controls.halation.renormalize_help")
         }
-        "Import" => Some("surfaces.presets.import"),
+        "Import preset" => Some("surfaces.presets.import"),
         "Import Raw" => Some("controls.label.import_raw"),
         // Workflow choices store the canonical route and present a physical
         // process label. Both spellings resolve here so acceptance can select
@@ -987,7 +978,7 @@ fn key(label: &str) -> Option<&'static str> {
         }
         "Redo" => Some("surfaces.action.redo"),
         "Redo %{label}" => Some("surfaces.history.redo"),
-        "Refresh" => Some("surfaces.presets.refresh"),
+        "Refresh presets" => Some("surfaces.presets.refresh"),
         "Refreshed preset library" => Some("surfaces.status.presets_refreshed"),
         "Reinhard knee (threshold, limit, power) on normalized chroma C/C_max. Default (0.0, 1.0, 6.0) rolls off smoothly from the center with the asymptote on the output cube edge." => {
             Some("controls.gamut.output_knee_help")
@@ -1033,7 +1024,6 @@ fn key(label: &str) -> Option<&'static str> {
         "Reveal and scroll to this stage in the continuous inspector." => {
             Some("surfaces.search.stage_help")
         }
-        "Revert" => Some("surfaces.presets.revert"),
         "Rotate the retained source 90° clockwise; this is not a viewer transform." => {
             Some("surfaces.source.rotate_cw_help")
         }
@@ -1072,6 +1062,10 @@ fn key(label: &str) -> Option<&'static str> {
         }
         "Search controls" => Some("surfaces.search.label"),
         "Search presets" => Some("surfaces.presets.search"),
+        "Preset card" => Some("surfaces.presets.card"),
+        "visible look card" => Some("controls.condition.preset_card"),
+        "Save preset" => Some("surfaces.presets.save"),
+        "Preset library actions" => Some("surfaces.presets.library"),
         "Select the JPEG chroma subsampling." => Some("surfaces.export.subsampling_help"),
         "Select the TIFF compression method." => Some("surfaces.export.compression_help"),
         "Select the bit depth." => Some("surfaces.export.depth_help"),
@@ -1091,7 +1085,7 @@ fn key(label: &str) -> Option<&'static str> {
         "Show controls that differ from their factory baseline, independently of an applied preset." => {
             Some("surfaces.search.modified_help")
         }
-        "Show directory" => Some("surfaces.presets.show_directory"),
+        "Open preset folder" => Some("surfaces.presets.show_directory"),
         "Show file" => Some("surfaces.presets.show_file"),
         "Show the retained image at %{percent}% — one source pixel per device pixel at 100%. Viewer only; retained and written pixels are unchanged." => {
             Some("surfaces.viewer.zoom_exact_help")
@@ -1178,11 +1172,9 @@ fn key(label: &str) -> Option<&'static str> {
         "Undo" => Some("surfaces.action.undo"),
         "Undo %{label}" => Some("surfaces.history.undo"),
         "Unsharp mask (digital sharpening)" => Some("controls.scanner.unsharp_mask"),
-        "Update" => Some("surfaces.presets.update"),
-        "Update, rename, duplicate, export, reveal or delete %{name}" => {
+        "Rename, duplicate, export, reveal or delete %{name}" => {
             Some("surfaces.presets.actions_help")
         }
-        "Updated preset '%{name}'" => Some("surfaces.status.preset_updated"),
         "Use the CAT16 chromatic adaptation transform for the input RGB to film-space adaptation that feeds the Hanatos spectral upsampling. Off selects CAT02, the pre-0.3.4 behavior." => {
             Some("controls.upsampling.use_cat16_help")
         }

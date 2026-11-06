@@ -478,11 +478,7 @@ mod tests {
                 "Work list",
             ),
             ("photo.queue.retry", ControlOwner::WorkList, "Export queue"),
-            (
-                "presets.discovery.favorites",
-                ControlOwner::Presets,
-                "Preset discovery",
-            ),
+            ("presets.save", ControlOwner::Presets, "Presets"),
         ] {
             let found = build_filtered(&path.to_uppercase(), &params, &extras, false);
             assert_eq!(found.len(), 1, "{path}");
@@ -507,7 +503,7 @@ mod tests {
             "viewer.clipping.highlights",
             "photo_work.list.add",
             "photo.queue.retry",
-            "presets.discovery.favorites",
+            "presets.save",
         ] {
             let entry = lookup(path).unwrap();
             for locale in [
@@ -526,7 +522,7 @@ mod tests {
             assert!(build_filtered(path, &params, &extras, true).is_empty());
         }
         assert!(lookup("photo.queue.retry.0").is_none());
-        assert!(lookup("presets.discovery.favorite.BuiltIn.example").is_none());
+        assert!(lookup("presets.card.BuiltIn.example").is_none());
     }
 
     #[test]
@@ -540,7 +536,7 @@ mod tests {
             "viewer.clipping.highlights",
             "photo_work.list.copy",
             "photo.queue.retry",
-            "presets.discovery.favorites",
+            "presets.save",
         ] {
             let entry = lookup(path).unwrap();
             let request_id = egui::Id::new("control_focus_request");

@@ -25,7 +25,7 @@ flowchart LR
     W --> Q[Queue exports]
 ```
 
-[Result identity](../gui-workflow/spec.md#result-identity-and-delivery-guidance) owns confidence in the displayed and delivered image. [Visual hierarchy](../gui-presentation/spec.md#visual-hierarchy) owns control density. [Preset discovery aids](../presets/spec.md#preset-discovery-aids) owns reference thumbnails, favorites, and recently used looks.
+[Result identity](../gui-workflow/spec.md#result-identity-and-delivery-guidance) owns confidence in the displayed and delivered image. [Visual hierarchy](../gui-presentation/spec.md#visual-hierarchy) owns control density. [Preset browser interaction](../presets/spec.md#browser-interaction) and [current-photograph thumbnails](../presets/spec.md#current-photograph-thumbnails) own look discovery and candidate images.
 
 [Photograph work](photo-work/spec.md) owns Original/Modified inspection, adjustment records, and multi-photograph work.
 
@@ -74,7 +74,9 @@ RAW decoding and reprocessing MUST remain distinguishable from simulated camera 
 
 ### Choose a look or a material
 
-A look preset selects the material pair and its owned controls under [Presets](../presets/spec.md#apply). The browser MUST support search and distinguish applied, modified, and missing states. Built-in presets remain read-only.
+A look preset selects the material pair and its owned controls under [Presets](../presets/spec.md#apply). The browser MUST support search and distinguish applied, modified, and missing states.
+
+Built-in presets remain read-only. Compact cards and their accessible material descriptions follow [browser interaction](../presets/spec.md#browser-interaction).
 
 Choosing a film alone MUST retain the selected print material. Choosing a print material alone MUST retain the selected film. Workflow defaulting and scanner normalization MUST follow the existing [material-selection rules](../presets/spec.md#workflow-defaulting), not the browser prototype's behavior.
 
@@ -156,7 +158,7 @@ Closing a dialog MUST return focus to its invoking control. Labels and state cue
 
 ## Non-goals
 
-This specification does not introduce new film algorithms, artistic macro parameters, parameter aliases, basic/expert modes, a second preset library, live current-photograph preset thumbnails, media cataloging, or a new GUI framework. It does not restore retired output-lightness or draft digital-response controls. Favorites and multi-photograph work follow the owners in the [capability map](#capability-map).
+This specification does not introduce new film algorithms, artistic macro parameters, parameter aliases, basic/expert modes, a second preset library, media cataloging, or a new GUI framework. It does not restore retired output-lightness or draft digital-response controls. Preset thumbnails and multi-photograph work follow the owners in the [capability map](#capability-map).
 
 The HTML design reference is not an engine implementation. Its sample values, parameter count, browser storage, image assets, and disabled engine actions are not native product contracts. Native acceptance MUST use actual source images, production controls, and real render and writer operations.
 

@@ -65,6 +65,12 @@ pub(crate) mod vocabulary {
     /// The direct physical description of one exact route value, describing
     /// the process sequence the image takes. The descriptions are the constants
     /// below, so the selector table and any other reader share one wording.
+    /// The route reaches a photographic print stage, so the stored paper
+    /// reference contributes to the displayed result.
+    pub(crate) fn route_includes_print(value: &str) -> bool {
+        value.split(" > ").any(|stage| stage == "print")
+    }
+
     pub(crate) fn route_description(value: &str) -> &'static str {
         match value {
             "input" => INPUT,
@@ -174,6 +180,24 @@ mod tests {
         // An unknown route keeps an empty description rather than borrowing a
         // neighbouring route's wording.
         assert_eq!(vocabulary::route_description("input > film"), "");
+    }
+
+    #[test]
+    fn only_print_routes_make_the_stored_paper_active() {
+        for route in [
+            "input > film > print > scan",
+            "input > convert-film > print > scan",
+        ] {
+            assert!(vocabulary::route_includes_print(route), "{route}");
+        }
+        for route in [
+            "input",
+            "input > film > scan",
+            "input > convert-film > scan",
+            "input > convert-film > scan-minus-base",
+        ] {
+            assert!(!vocabulary::route_includes_print(route), "{route}");
+        }
     }
 
     #[test]
