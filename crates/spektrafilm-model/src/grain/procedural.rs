@@ -1142,13 +1142,13 @@ mod tests {
                 });
                 let gsf = (5200. / 37.0f32).max(3100. / 23.0f32);
                 let canvas = [(37.0f32 * gsf).floor(), (23.0f32 * gsf).floor()];
-                let table_ref = CanvasTable::build(&source, canvas, p, phase);
-                let mean = canvas_mean(&table_ref, canvas, p, 37, 23);
-                let mut expected = source.clone();
+                // Build only the oracle samples this scan reads. Keep the
+                // independent per-tap generator and half-storage rounding;
+                // dense-table equivalence is checked on the small canvas above.
+                let mut grains = Vec::new();
+                let mut sum = [0f64; 3];
                 for y in 0..23u32 {
                     for x in 0..37u32 {
-                        let rgb = source.get(x, y).map(to_f32);
-                        let luma = rgb[0] * 0.2125 + rgb[1] * 0.7154 + rgb[2] * 0.0721;
                         let uv = [x as f32 * (1. / 36.0f32), y as f32 * (1. / 22.0f32)];
                         let gx = (uv[0] * (canvas[0] / p.resampler_scale())) as i32;
                         let gy = (uv[1] * (canvas[1] / p.resampler_scale())) as i32;
@@ -1174,6 +1174,19 @@ mod tests {
                             gx,
                             gy,
                         );
+                        for c in 0..3 {
+                            sum[c] += f64::from(g[c]);
+                        }
+                        grains.push(g);
+                    }
+                }
+                let mean = sum.map(|v| (v / grains.len() as f64) as f32);
+                let mut expected = source.clone();
+                for y in 0..23u32 {
+                    for x in 0..37u32 {
+                        let rgb = source.get(x, y).map(to_f32);
+                        let luma = rgb[0] * 0.2125 + rgb[1] * 0.7154 + rgb[2] * 0.0721;
+                        let g = grains[(y * 37 + x) as usize];
                         let a_raw = p.amount.clamp(0., 1.);
                         let a = effective_control(a_raw);
                         let weight = [

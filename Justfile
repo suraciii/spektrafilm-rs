@@ -67,15 +67,11 @@ test-ci:
     set -euo pipefail
     export OPENBLAS_NUM_THREADS=1 RAYON_NUM_THREADS=2
     export CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0 CARGO_INCREMENTAL=0
-    just test
-    just test-ci-tail
+    python3 scripts/test_selected.py ci
 
 # Run audited GPU host logic in both precisions; device acquisition is an error.
-test-gpu-logic: (test-gpu-logic-precision "") (test-gpu-logic-precision "--features precision-f64")
-
-[private]
-test-gpu-logic-precision precision_args:
-    SPEKTRAFILM_TEST_NO_DEVICE=1 cargo test --locked -p spektrafilm-gpu --lib {{precision_args}} -- logic_tests::
+test-gpu-logic:
+    python3 scripts/test_selected.py logic
 
 # Run the full suite on the software Vulkan adapter. This matches CI's adapter
 # and avoids the workstation amdgpu context loss (`radv/amdgpu: The CS has been
@@ -85,24 +81,17 @@ test-gpu-logic-precision precision_args:
 test-software:
     VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.json cargo test --locked --workspace
 
-# Run measured deterministic logic and isolated file tests in both precisions.
-test-fast: (test-fast-group "") (test-fast-group "--features precision-f64")
+# Compile each precision's selected targets together, then run their libtest filters.
+test-fast:
+    python3 scripts/test_selected.py fast
 
-# Full f32 workspace already covers the default fast selections and benchmark.
-# Device-free acquisition policy is an additional contract in both precisions.
-test-ci-tail: (test-gpu-logic-precision "") (test-fast-group "--features precision-f64")
+# Standalone tail for a preceding default workspace run.
+test-ci-tail:
+    python3 scripts/test_selected.py tail
 
-[private]
-test-fast-group precision_args: (test-gpu-logic-precision precision_args) (test-fast-precision precision_args)
-
-# Positive module selection keeps new rendering/device tests in main by default.
-[private]
-test-fast-precision precision_args:
-    cargo test --locked -p spektrafilm-math --lib {{precision_args}}
-    cargo test --locked -p spektrafilm-model --lib {{precision_args}} -- density_curves:: illuminants:: couplers:: glare:: grain::spektra:: grain::fotufilm:: diffusion::
-    cargo test --locked -p spektrafilm-core --lib {{precision_args}} -- params::sources:: params::tests:: params::validation:: params_builder:: pipeline_calibration::tests:: resizing:: suggest:: cmyk:: input_gamut:: gamut_compression:: lut_formats:: lut_ocio:: lut_delivery:: --skip process_params::
-    cargo test --locked -p spektrafilm-core --test telemetry {{precision_args}}
-    cargo test --locked -p spektrafilm-gui --bin spektrafilm-gui {{precision_args}} -- state::tests:: numeric::tests::
+# Full default workspace, reuse its GPU harness, then build the f64 selection once.
+test-main:
+    python3 scripts/test_selected.py ci
 
 # Run the native appearance benchmark regressions.
 benchmark-test:
@@ -110,7 +99,7 @@ benchmark-test:
 
 # Measure CPU-reference vs GPU parity; fails on a budget breach or missing adapter.
 parity-backend:
-    cargo run --locked -p spektrafilm-core --example backend_parity --features precision-f64 -- data
+    cargo run --locked --profile test -p spektrafilm-core --example backend_parity --features precision-f64 -- data
 
 # Exercise the real GUI App and CPU workers without a desktop or OCR.
 gui-headless:
@@ -158,6 +147,10 @@ check-device-lock-guard:
 check-device-lock-tests:
     python3 scripts/test_check_device_lock.py
 
+# Keep missing or ambiguous Cargo artifacts from becoming a passing selection.
+check-test-selection:
+    PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_test_selected.py
+
 # Reject broken documentation links, heading defects, and presentation violations.
 check-specs: check-specs-tests
     python3 scripts/check_specs.py --strict
@@ -170,10 +163,10 @@ test-pr:
     cargo test --locked -p spektrafilm-math --lib
     cargo test --locked -p spektrafilm-math --lib --features precision-f64
 # Required PR gate; workspace compilation and native suites run after merge.
-ci-pr: check-python-cache check-python check-device-lock check-specs fmt test-pr
+ci-pr: check-python-cache check-python check-test-selection check-device-lock check-specs fmt test-pr
 
 # Full local and main-branch gate, including slow rendering and GPU tests.
-ci: check-python-cache check-python check-device-lock check-specs fmt check clippy check-f64 clippy-f64 test test-ci-tail parity-backend
+ci: check-python-cache check-python check-test-selection check-device-lock check-specs fmt check clippy check-f64 clippy-f64 test-main parity-backend
 
 # Run the full gate and retain source provenance, output, and exit status.
 verify evidence_dir:
