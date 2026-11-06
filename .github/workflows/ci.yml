@@ -64,16 +64,35 @@ jobs:
         run: |
           echo "PKG_CONFIG_PATH=$RUNNER_TEMP/libraw-022/lib/pkgconfig" >> "$GITHUB_ENV"
           echo "LD_LIBRARY_PATH=$RUNNER_TEMP/libraw-022/lib" >> "$GITHUB_ENV"
-      - name: Install native build dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            build-essential pkg-config curl ca-certificates \
-            libgtk-3-dev libudev-dev libxkbcommon-dev \
-            liblensfun-dev libexiv2-dev libglib2.0-dev libopenimageio-dev \
-            libjpeg-dev zlib1g-dev libopenblas-dev
-      - name: Install software GPU for full verification
-        run: sudo apt-get install -y --no-install-recommends libvulkan1 mesa-vulkan-drivers
+      - name: Identify native dependency cache
+        id: native-cache-key
+        # Refresh immutable caches weekly as Ubuntu publishes package updates.
+        run: echo "week=$(date -u +%G-%V)" >> "$GITHUB_OUTPUT"
+      - name: Restore native dependency downloads
+        id: native-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ runner.temp }}/apt-archives/*.deb
+          key: native-apt-v1-ubuntu-24.04-${{ runner.arch }}-${{ hashFiles('scripts/install_ci_native_dependencies.sh') }}-${{ steps.native-cache-key.outputs.week }}
+          restore-keys: |
+            native-apt-v1-ubuntu-24.04-${{ runner.arch }}-${{ hashFiles('scripts/install_ci_native_dependencies.sh') }}-
+      - name: Install native build and software GPU dependencies
+        id: native-install
+        timeout-minutes: 11
+        run: sudo bash scripts/install_ci_native_dependencies.sh "$RUNNER_TEMP/apt-archives" "$RUNNER_TEMP/native-dependencies"
+      - name: Save native dependency downloads
+        if: steps.native-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ runner.temp }}/apt-archives/*.deb
+          key: ${{ steps.native-cache.outputs.cache-primary-key }}
+      - name: Preserve native dependency evidence
+        if: always() && steps.native-install.outcome != 'skipped'
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-dependency-evidence
+          path: ${{ runner.temp }}/native-dependencies
+          if-no-files-found: warn
       - name: Cache pinned LibRaw
         id: libraw
         uses: actions/cache@v4
