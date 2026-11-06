@@ -14,7 +14,9 @@ Parameterized device tests should acquire one backend outside the case loop unle
 
 Prepared device banks may be reused within one test when formation parameters and sampling footprints match. Keep them on the backend that prepared them. Keep image and readout buffers local to each case. Prepared-bank reuse must not replace cold production-path acceptance.
 
-**Built-in look references:** Each shipped look needs a current entry in `crates/spektrafilm-gui/assets/preset-thumbnails.json`. After adding or changing a look or its material dependencies, run the existing real-CPU authoring operation and the normal completeness check:
+**Preset previews:** The [current-photograph thumbnail contract](../specs/presets/spec.md#current-photograph-thumbnails) defines the implementation target. Its [native cutover](../specs/presets/design.md#implementation-boundary) replaces fixed-reference assets with isolated runtime candidate renders and stale-result, ownership, and bounded-work regressions.
+
+Until that cutover removes the shipped reference bundle, a built-in look or material change must still regenerate and verify its existing bundle entry with the real-CPU authoring operation:
 
 ```bash
 cargo test --locked -p spektrafilm-gui --bin spektrafilm-gui \
@@ -23,7 +25,7 @@ cargo test --locked -p spektrafilm-gui --bin spektrafilm-gui \
   presets::thumbnails::tests::distributed_bundle_contains_current_real_render_for_every_builtin_look -- --exact
 ```
 
-The authoring command uses the default-f32 configuration and writes the distributed bundle from actual CPU renders. Do not replace a missing reference with another look's image or edit its fingerprint by hand. The normal completeness check remains enabled.
+The legacy authoring command uses default-f32 and writes the distributed bundle from actual CPU renders. Do not substitute another look's image, edit fingerprints by hand, or disable its completeness check before the native replacement lands.
 
 **Main cost:** The full gate must stay within the `Main full verification` timeout in [.github/workflows/ci.yml](../.github/workflows/ci.yml). A change that adds rendering or preparation work reports the measured wall clock of the affected suites in the pull request. Test codegen uses `[profile.test] opt-level = 2` in [Cargo.toml](../Cargo.toml); it still inherits `dev`, so debug assertions and overflow checks stay enabled and only code generation differs.
 
@@ -71,7 +73,7 @@ When asserting pixel invariance, compare decoded dimensions and samples rather t
 
 For successful CLI image publication, assert decoded output, replacement behavior, supported metadata, and staging-file cleanup. Do not assert incidental progress-message wording or require warning-free stderr. Valid inactive-setting feedback can accompany a successful write.
 
-Built-in look changes must ship with regenerated reference thumbnails. Use the existing real-CPU asset producer, `cargo test --locked -p spektrafilm-gui --bin spektrafilm-gui presets::thumbnails::tests::generate_fixed_reference_thumbnails -- --ignored --exact`, then verify the distributed bundle. Do not update fingerprints without rendering their images.
+Preset-preview regression coverage follows the [preset acceptance scenarios](../specs/presets/spec.md#acceptance). Use small deterministic real-render cases for candidate equivalence and isolation; use state transitions for stale source, dependency invalidation, priority, and cache bounds rather than wording or wiring assertions.
 
 The [Justfile](../Justfile) defines test selection. The [README](../README.md#build) documents dependencies and verification commands.
 

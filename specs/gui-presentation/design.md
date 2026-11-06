@@ -34,7 +34,9 @@ Cross-surface search results MUST use locator rows distinct from editable parame
 
 Reaching a result MUST expose a visible, non-color destination cue at the real editing owner. A locator MUST NOT contain a slider, switch, numeric entry, or other duplicate editor. In-place inspector matches retain their real rows under the workflow search contract.
 
-The preset browser MUST scroll independently from the inspector. Its collapse and reopen control MUST remain reachable when the browser is collapsed. Preset selection and keyboard focus MUST use distinct cues without changing the stock identifier used elsewhere.
+The preset browser MUST scroll independently from the inspector. Its collapse and reopen control MUST remain reachable when the browser is collapsed.
+
+Applied state and keyboard focus MUST use distinct cues. Compact cards and thumbnail states follow [browser interaction](../presets/spec.md#browser-interaction); thumbnail publication MUST preserve focus and remain separate from retained viewer output.
 
 ## Numeric editing presentation
 

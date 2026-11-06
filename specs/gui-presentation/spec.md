@@ -184,13 +184,13 @@ Linked sample markers MUST remain distinguishable from aggregate traces and plot
 
 ## Preset browser
 
-- A preset entry presents its film stock and its print stock.
-- A stock presents the same visual identifier everywhere it appears.
+- A compact preset card presents a current-photograph thumbnail, name, and applied state under [browser interaction](../presets/spec.md#browser-interaction). Pending and unavailable thumbnails remain explicit under [current-photograph thumbnails](../presets/spec.md#current-photograph-thumbnails).
+- Film and print material identities remain available in accessible descriptions and the current inspector; cards MUST NOT require always-visible explanatory paragraphs. Detailed help is disclosed on demand.
 - The browser MUST have a labeled, keyboard-operable collapse and reopen control. Collapsing it MUST NOT hide the only indication of how to reopen it.
-- Selection, hover, and keyboard focus MUST remain visually distinct. A selected preset MUST have a non-color cue.
-- Preset names and material identifiers MUST remain readable in long lists. Truncated names MUST remain available through accessible text and help.
-- The browser MUST keep the current-look summary independent of search and filters. Without an applied preset, it MUST identify current adjustments without inventing an applied look.
-- Reference credit MUST remain in a fixed footer outside the scrolling cards.
+- Applied state, hover, and keyboard focus MUST remain visually distinct. Applied state MUST have a non-color cue.
+- Preset names MUST remain readable in long lists. Truncated names and material identities MUST remain available through accessible text and help.
+- The browser MUST keep the current-look summary independent of search. Without an applied preset, it MUST identify current adjustments without inventing an applied look.
+- Thumbnail updates MUST NOT steal keyboard focus or imply that the retained viewer result already reflects the applied controls.
 
 ## States
 

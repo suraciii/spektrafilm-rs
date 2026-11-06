@@ -76,6 +76,12 @@ _Avoid_: Chart group
 
 **Patch window**: The declared rectangular area of one grid patch used for visual inspection. It may cover the patch or a smaller central area, but it does not include an inferred correspondence to another set.
 
+**Look preset**: A named, reusable choice of film and print materials with their look-owned adjustments. It is a starting point for a photograph, not a saved photograph or a complete application setup.
+_Avoid_: Photograph record, startup state, LUT
+
+**Preset thumbnail**: A small rendering of the current photograph with a candidate look preset, used to compare looks without changing accepted adjustments. It is not a reference sample or the retained Preview result.
+_Avoid_: Reference thumbnail, saved preset image
+
 **Feature profile**: A named, reusable parameter set for one film-chain feature. It resolves only that feature's editable controls and does not select film or print materials, change workflow, or represent a complete look.
 
 **Feature profile family**: The named alternatives for one feature, including the feature's `custom` state when the feature exposes editable overrides. A family owns one parameter schema and one resolver; its entries do not become film profiles or look presets.

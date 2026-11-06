@@ -51,6 +51,8 @@ A route or film profile change that makes the selected mode ineligible resets it
 
 The viewer status strip above the canvas MUST be the single owner of retained-result identity. It MUST identify the retained result's operation, pixel dimensions, and whether it matches current adjustments. A pending operation MUST NOT hide that identity or imply that the retained result is current.
 
+Preset candidate thumbnails are read-only auxiliary results under [current-photograph thumbnails](../presets/spec.md#current-photograph-thumbnails), not retained viewer output or input to Save or Export. Accepted look controls MAY be identified immediately, but the viewer MUST NOT report that its retained image reflects them until the corresponding image exists and is accepted.
+
 ```mermaid
 flowchart LR
     A[Accepted adjustments] --> P[Preview or Scan]
@@ -119,7 +121,7 @@ The window has three regions and one header.
 - The adjustment inspector occupies the right region. It owns photographic parameter editors, stage headings and their jump strip, and control search.
 - The adjustment inspector MUST NOT contain image-analysis controls or plots.
 - Application settings and Export own their separate editors under [Stage and surface ownership](#stage-and-surface-ownership).
-- The preset browser occupies the left region and is collapsible. Its width and expanded state follow [the preset browser design](../presets/design.md).
+- The preset browser occupies the left region and is collapsible. Its width and expanded state follow [the preset browser boundary](../presets/design.md#boundaries); browser interaction and state follow [Presets](../presets/spec.md#browser-interaction) and [browser state ownership](../presets/design.md#browser-state-ownership).
 - The window header spans the three regions. It owns Open image, Undo, Redo, application settings, and independent Export actions.
 - It shows the accepted source, current film profile, print profile, and physical workflow as read-only context. Status ownership follows [Labels and surfaces](#labels-and-surfaces).
 - Scan and Save remain reachable from a persistent action area without opening an inspector module.
@@ -290,7 +292,7 @@ Reset MUST preserve the value and optional state of preparation metadata outside
 
 The row marker, module marker, Only modified filter, and reset action MUST use the same baseline and comparison under [GUI presentation](../gui-presentation/design.md#factory-projection-and-modified-state).
 
-The reset action MUST name its scope and baseline. Reset and Revert to applied preset MUST remain separate actions.
+The reset action MUST name its scope and baseline. Reapplying a look through the browser is distinct from module reset under [browser interaction](../presets/spec.md#browser-interaction).
 
 A module reset MUST NOT change a preset file or startup default. It is one reversible edit; normal validation MUST complete before it changes accepted controls.
 
