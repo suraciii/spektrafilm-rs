@@ -18,6 +18,9 @@ jobs:
     name: Main full verification
     runs-on: ubuntu-24.04
     timeout-minutes: 45
+    env:
+      # Type checks and the parity example do not need debug symbols in CI.
+      CARGO_PROFILE_DEV_DEBUG: '0'
     container:
       image: ghcr.io/suraciii/spektrafilm-verification@sha256:701bc91921c05fbaeff92e66e7f76cd2ef1517c5333200dd3cdcfff3de57bf13
       credentials:
