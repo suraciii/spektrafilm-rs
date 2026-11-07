@@ -40,7 +40,7 @@ fn apple_libomp_prefix() -> Option<PathBuf> {
         .find(|prefix| prefix.join("lib/libomp.dylib").is_file())
 }
 
-fn configure_libraw_openmp(build: &mut cc::Build, library: &pkg_config::Library) {
+fn configure_libraw_openmp(build: &mut cc::Build, library: &pkg_config::Library) -> Option<String> {
     let mut command = std::process::Command::new(
         pkg_config_env("PKG_CONFIG").unwrap_or_else(|| "pkg-config".into()),
     );
@@ -106,9 +106,10 @@ fn configure_libraw_openmp(build: &mut cc::Build, library: &pkg_config::Library)
             build.include(prefix.join("include"));
         }
         if explicit_runtime.is_none() {
-            println!("cargo:rustc-link-lib={runtime}");
+            return Some(runtime.to_string());
         }
     }
+    None
 }
 
 fn link_libraw(library: &pkg_config::Library) {
@@ -244,23 +245,44 @@ fn main() {
         .std("c++17")
         .file("native/raw.cpp")
         .file("native/lens.cpp");
+    let mut libraw = None;
+    let mut deferred_openmp = None;
+    let mut deferred_packages = Vec::new();
     for package in ["libraw", "lensfun", "exiv2", "glib-2.0"] {
         let mut config = pkg_config::Config::new();
+        config.cargo_metadata(false);
         if package == "libraw" {
-            config.atleast_version("0.22.0").cargo_metadata(false);
+            config.atleast_version("0.22.0");
         }
         let library = config.probe(package).unwrap_or_else(|error| {
             panic!("spektrafilm-raw requires native {package} development files: {error}. See README native dependencies and PKG_CONFIG_PATH.")
         });
-        if package == "libraw" {
-            link_libraw(&library);
-            configure_libraw_openmp(&mut build, &library);
-        }
-        for include in library.include_paths {
+        for include in &library.include_paths {
             build.include(include);
         }
+        if package == "libraw" {
+            deferred_openmp = configure_libraw_openmp(&mut build, &library);
+            libraw = Some(library);
+        } else {
+            deferred_packages.push(package);
+        }
     }
+    // The bridge archive must precede every library it references: GNU ld on
+    // Windows resolves an import library only against symbols already pending.
     build.compile("spektrafilm_raw_native");
+    if let Some(library) = &libraw {
+        link_libraw(library);
+    }
+    if let Some(runtime) = deferred_openmp {
+        println!("cargo:rustc-link-lib={runtime}");
+    }
+    for package in deferred_packages {
+        pkg_config::Config::new()
+            .probe(package)
+            .unwrap_or_else(|error| {
+                panic!("spektrafilm-raw requires native {package} development files: {error}. See README native dependencies and PKG_CONFIG_PATH.")
+            });
+    }
     println!("cargo:rerun-if-changed=native/raw.cpp");
     println!("cargo:rerun-if-changed=native/lens.cpp");
     println!("cargo:rerun-if-changed=native/float_reference.cpp");
