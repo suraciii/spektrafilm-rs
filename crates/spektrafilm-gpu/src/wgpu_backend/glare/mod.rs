@@ -39,12 +39,10 @@ pub(super) fn build_glare_state(
         ));
     }
     let scratch = paged_transport(backend, img_bytes, "glare_noise")?;
-    let capacity = (limit / 12).min(4096) as u32;
-    let window = transport(
-        backend,
-        u64::from(capacity.min(n_pixels)) * 12,
-        "glare_generator_window",
-    )?;
+    // The reference stream is sequential, so one workgroup owns the generator.
+    // Larger bounded dispatches amortize launch and bind-group setup; 262,144
+    // pixels stays far below a driver watchdog on a slow adapter.
+    const WINDOW_PIXELS: u32 = 262_144;
     let generator = transport(backend, STATE_BYTES, "glare_mt19937_state")?;
     let pipeline = backend.cached_pipeline(
         concat!(
@@ -63,35 +61,43 @@ pub(super) fn build_glare_state(
         count: u32,
         first: u32,
         seed: u32,
-        pad: u32,
+        base: u32,
         mu: f32,
         sigma: f32,
         pad_tail: [u32; 2],
     }
+    // Generate straight into each destination page. `first` stays the global
+    // stream index (the shader reseeds only at pixel zero); `base` is the
+    // page-local write offset.
     let mut gen_dispatch = RasterCommands::default();
-    for first in (0..n_pixels).step_by(capacity as usize) {
-        backend.check_cancelled()?;
-        let count = capacity.min(n_pixels - first);
-        let params = uniform(
-            backend,
-            &GenParams {
-                count,
-                first,
-                seed: gp.base_seed,
-                pad: 0,
-                mu: gp.mu,
-                sigma: gp.sigma,
-                pad_tail: [0; 2],
-            },
-        );
-        gen_dispatch.dispatch(&pipeline, &[&params, &window, &generator], 1, true, backend);
-        gen_dispatch.copy(
-            &window,
-            0,
-            &scratch,
-            u64::from(first) * 12,
-            u64::from(count) * 12,
-        );
+    let mut first = 0u32;
+    for page in &scratch {
+        let mut base = 0u32;
+        while base < page.n_pixels {
+            backend.check_cancelled()?;
+            let count = WINDOW_PIXELS.min(page.n_pixels - base);
+            let params = uniform(
+                backend,
+                &GenParams {
+                    count,
+                    first,
+                    seed: gp.base_seed,
+                    base,
+                    mu: gp.mu,
+                    sigma: gp.sigma,
+                    pad_tail: [0; 2],
+                },
+            );
+            gen_dispatch.dispatch(
+                &pipeline,
+                &[&params, &page.buffer, &generator],
+                1,
+                true,
+                backend,
+            );
+            base += count;
+            first += count;
+        }
     }
     let blur = if gp.blur_px > 0.0 {
         let buffers = gaussian_scratch.buffers(backend, width, height)?;
