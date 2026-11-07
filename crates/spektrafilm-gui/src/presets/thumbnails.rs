@@ -1,10 +1,15 @@
-//! Current-photograph preset thumbnails: bounded session cache and demand.
+//! Current-photograph preset thumbnails: identity, bounded session cache, and demand.
 use super::thumbnail_worker::{
     Candidate, Outcome, ThumbnailContext, ThumbnailKey, ThumbnailResult, ThumbnailWorker,
 };
+use crate::App;
 use eframe::egui;
-use spektrafilm_core::presets::Preset;
+use spektrafilm_core::presets::{LibraryEntry, Preset, PresetGroup, PresetKind};
+use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, BTreeSet};
+use std::hash::{Hash, Hasher};
+use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
 /// Visible cards the worker may render. This is the explicit entry ceiling:
 /// at most this many textures of `THUMBNAIL_SIZE`'s long edge (about 15 MiB)
@@ -14,13 +19,181 @@ use std::collections::{BTreeMap, BTreeSet};
 const MAX_VISIBLE_DEMAND: usize = 64;
 /// Seconds between an accepted-context change and the first candidate request.
 const SETTLE_SECONDS: f64 = 0.25;
+/// Long edge of one candidate preview. Small enough for a two-column browser,
+/// large enough that the accepted look is recognizable.
+pub(super) const THUMBNAIL_SIZE: u32 = 240;
+
+/// Display-profile content identity, rechecked at most once per second so a
+/// same-metadata replacement is still detected without reading the ICC file
+/// on every frame.
+#[derive(Default)]
+struct DisplayIdentity {
+    cached: RefCell<Option<(PathBuf, Instant, u64)>>,
+    recheck: Cell<Option<Instant>>,
+}
+
+impl DisplayIdentity {
+    fn fingerprint(&self, path: &Path) -> u64 {
+        let now = Instant::now();
+        let mut cached = self.cached.borrow_mut();
+        if let Some((cached_path, checked, identity)) = cached.as_ref()
+            && cached_path == path
+            && now.duration_since(*checked) < Duration::from_secs(1)
+        {
+            self.recheck.set(Some(*checked + Duration::from_secs(1)));
+            return *identity;
+        }
+        let identity = std::fs::read(path)
+            .map(|bytes| {
+                let mut hasher = std::collections::hash_map::DefaultHasher::new();
+                bytes.hash(&mut hasher);
+                hasher.finish()
+            })
+            .unwrap_or(0);
+        *cached = Some((path.to_path_buf(), now, identity));
+        // Keep a 1 Hz content check alive while the browser is idle, so an ICC
+        // replacement is still detected after this fresh read.
+        self.recheck.set(Some(now + Duration::from_secs(1)));
+        identity
+    }
+
+    fn recheck_at(&self) -> Option<Instant> {
+        self.recheck.get()
+    }
+}
+
+/// Cheap content proxy for a file the candidates read: size and modification
+/// time change with ordinary rewrites, without hashing the whole file per frame.
+fn file_fingerprint(path: &Path) -> u64 {
+    let Ok(metadata) = std::fs::metadata(path) else {
+        return 0;
+    };
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    metadata.len().hash(&mut hasher);
+    metadata.modified().ok().hash(&mut hasher);
+    hasher.finish()
+}
+
+fn content_fingerprint(preset: &Preset) -> u64 {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    match preset.to_json() {
+        Ok(document) => document.hash(&mut hasher),
+        Err(_) => 0_u8.hash(&mut hasher),
+    }
+    hasher.finish()
+}
+
+/// Identity of the materials candidate preparation reads. File metadata
+/// changes on ordinary edits; the profile reference pins the intended content.
+fn material_fingerprint(data_dir: &Path, entries: &[LibraryEntry]) -> u64 {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    for entry in entries {
+        for reference in [&entry.film_profile, &entry.print_profile]
+            .into_iter()
+            .flatten()
+        {
+            reference.stock.hash(&mut hasher);
+            reference.version.hash(&mut hasher);
+            reference.content_identity.hash(&mut hasher);
+            file_fingerprint(
+                &data_dir
+                    .join("profiles")
+                    .join(format!("{}.json", reference.stock)),
+            )
+            .hash(&mut hasher);
+        }
+    }
+    file_fingerprint(&data_dir.join("filters").join("neutral_print_filters.json"))
+        .hash(&mut hasher);
+    let mut styles: Vec<PathBuf> = std::fs::read_dir(data_dir.join("scan-styles"))
+        .map(|entries| {
+            entries
+                .flatten()
+                .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_file()))
+                .map(|entry| entry.path())
+                .collect()
+        })
+        .unwrap_or_default();
+    styles.sort();
+    for path in styles {
+        path.file_name().hash(&mut hasher);
+        file_fingerprint(&path).hash(&mut hasher);
+    }
+    hasher.finish()
+}
+
+/// The display profile the candidate display path consumes, including the
+/// platform-discovered fallback that an unset selection uses.
+fn effective_display_profile(app: &App) -> Option<PathBuf> {
+    app.gui_state
+        .display_profile()
+        .map(PathBuf::from)
+        .or_else(|| {
+            app.viewer
+                .settings
+                .use_display_transform
+                .then(crate::display::effective_display_profile)
+                .flatten()
+        })
+}
+
+/// Identity of everything the accepted candidates depend on. A changed
+/// signature invalidates every cached thumbnail, including failures.
+fn thumbnail_signature(app: &App, display: &DisplayIdentity) -> Option<u64> {
+    app.image.as_ref()?;
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    app.input_epoch.hash(&mut hasher);
+    app.parameter_revision.hash(&mut hasher);
+    app.input_rotation.hash(&mut hasher);
+    app.viewer.settings.use_display_transform.hash(&mut hasher);
+    app.scan_for_print_snapshot.hash(&mut hasher);
+    app.presets.refresh_epoch.hash(&mut hasher);
+    material_fingerprint(&app.data_dir, &app.presets.entries).hash(&mut hasher);
+    let display_profile = effective_display_profile(app);
+    display_profile.hash(&mut hasher);
+    display_profile
+        .as_deref()
+        .map(|path| display.fingerprint(path))
+        .hash(&mut hasher);
+    app.backend.preparation_device_id().hash(&mut hasher);
+    THUMBNAIL_SIZE.hash(&mut hasher);
+    Some(hasher.finish())
+}
+
+fn thumbnail_context(app: &App) -> ThumbnailContext {
+    let mut params = app.params.clone();
+    if let Some(glare) = app.scan_for_print_snapshot {
+        params.print_render.glare.active = glare;
+    }
+    ThumbnailContext {
+        source: app.image.clone().expect("signature requires a source"),
+        params,
+        data_dir: app.data_dir.clone(),
+        special: app.gui_state.special().clone(),
+        backend: app.backend.clone(),
+        display_enabled: app.viewer.settings.use_display_transform,
+        display_profile: effective_display_profile(app),
+        rotation_quarter_turns: app.input_rotation.rem_euclid(4) as u32,
+        cache_epoch: {
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            app.presets.refresh_epoch.hash(&mut hasher);
+            material_fingerprint(&app.data_dir, &app.presets.entries).hash(&mut hasher);
+            hasher.finish()
+        },
+        size: THUMBNAIL_SIZE,
+    }
+}
 
 pub(super) struct Thumbnails {
     worker: ThumbnailWorker,
     entries: BTreeMap<ThumbnailKey, Entry>,
     pending: BTreeSet<ThumbnailKey>,
+    /// Validated document fingerprints, so a candidate follows its document
+    /// contents rather than its name or position.
+    content: BTreeMap<(PresetGroup, String), u64>,
     context: Option<ThumbnailContext>,
     signature: Option<u64>,
+    display_identity: DisplayIdentity,
     /// Bumped whenever the accepted context changes, so results rendered
     /// against the previous context cannot enter the cleared cache.
     request: u64,
@@ -47,8 +220,10 @@ impl Default for Thumbnails {
             worker: ThumbnailWorker::new(),
             entries: BTreeMap::new(),
             pending: BTreeSet::new(),
+            content: BTreeMap::new(),
             context: None,
             signature: None,
+            display_identity: DisplayIdentity::default(),
             request: 0,
             ready_at: 0.0,
             #[cfg(test)]
@@ -62,6 +237,52 @@ impl Thumbnails {
     /// under. A change discards every candidate, including failures.
     pub(super) fn signature(&self) -> Option<u64> {
         self.signature
+    }
+
+    /// Identity of the accepted dependencies right now. A change invalidates
+    /// every cached candidate; the context itself is only cloned on reset.
+    pub(super) fn accepted_signature(&self, app: &App) -> Option<u64> {
+        thumbnail_signature(app, &self.display_identity)
+    }
+
+    /// Render context for an accepted signature. Callers only need this when
+    /// `signature` changes from the cached one.
+    pub(super) fn accepted_context(&self, app: &App) -> ThumbnailContext {
+        thumbnail_context(app)
+    }
+
+    /// Deadline for the next display-ICC content check, if a profile is used.
+    pub(super) fn display_recheck_at(&self) -> Option<Instant> {
+        self.display_identity.recheck_at()
+    }
+
+    /// Rebuild candidate document fingerprints after a library scan.
+    pub(super) fn update_content(&mut self, entries: &[LibraryEntry]) {
+        self.content.clear();
+        for entry in entries {
+            if let Some(preset) = &entry.preset
+                && preset.kind() == Ok(PresetKind::Look)
+            {
+                self.content.insert(
+                    (entry.group, entry.name.clone()),
+                    content_fingerprint(preset),
+                );
+            }
+        }
+    }
+
+    /// Candidate cache key for the accepted `generation` and the entry's
+    /// validated document contents.
+    pub(super) fn candidate_key(&self, generation: u64, entry: &LibraryEntry) -> ThumbnailKey {
+        ThumbnailKey::new(
+            generation,
+            entry.group,
+            &entry.name,
+            self.content
+                .get(&(entry.group, entry.name.clone()))
+                .copied()
+                .unwrap_or(0),
+        )
     }
 
     /// Adopt the accepted context for `signature`. A changed signature drops
