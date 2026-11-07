@@ -1451,7 +1451,12 @@ fn trix400_builtin_is_one_source_print_look_and_preserves_photo_context() {
     }
     current.workflow.route = "input > film > scan".into();
     let resolved = preset.resolve(&data(), &current).unwrap();
-    assert_eq!(resolved.params.workflow.route, current.workflow.route);
+    // A print look must not leave a direct-scan negative on a caller film-scan route.
+    assert_eq!(
+        resolved.params.workflow.route,
+        "input > film > print > scan"
+    );
+    assert!(!resolved.params.io.scan_film);
     assert_eq!(resolved.params.scanner.scan_output, "direct_scan");
 }
 
