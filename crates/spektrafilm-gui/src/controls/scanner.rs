@@ -199,7 +199,7 @@ pub(crate) fn sections(
     }
     if section == "Camera" {
         ui.scope(|ui| {
-            let capture_active = crate::ui::control_inactive_reason(ui.ctx(), "camera.capture_illuminant", params).is_none();
+            let capture_active = crate::controls::control_inactive_reason(ui.ctx(), "camera.capture_illuminant", params).is_none();
             if filter_matches(filter, "exposure compensation ev") {
                 flags.runtime_changed |= applicable_control(ui, params, "camera.exposure_compensation_ev", |ui, params| param_numeric(ui, "exposure compensation ev", &mut params.camera.exposure_compensation_ev, "camera.exposure_compensation_ev", "Add a bias to the auto-exposure of the camera."));
             }
@@ -241,7 +241,7 @@ pub(crate) fn sections(
     }
     if section == "Enlarger" {
         let print_active =
-            crate::ui::control_inactive_reason(ui.ctx(), "enlarger.print_exposure", params)
+            crate::controls::control_inactive_reason(ui.ctx(), "enlarger.print_exposure", params)
                 .is_none();
         if !print_active {
             ui.label(localized(
@@ -288,7 +288,7 @@ pub(crate) fn sections(
     }
     if section == "Scanner" {
         ui.scope(|ui| {
-            let scan_active = crate::ui::control_inactive_reason(ui.ctx(), "scanner.scan_output", params).is_none();
+            let scan_active = crate::controls::control_inactive_reason(ui.ctx(), "scanner.scan_output", params).is_none();
             let medium = if scan_active { film_medium.for_route(&params.workflow.route) } else { ScanMedium::None };
             let positive_route = scan_active && medium.positive_output_eligible(&params.workflow.route);
             let medium_label = match medium {
@@ -430,7 +430,7 @@ pub(crate) fn sections(
         } else {
             "enlarger.diffusion_filter.active"
         };
-        let inactive = crate::ui::control_inactive_reason(ui.ctx(), path, params);
+        let inactive = crate::controls::control_inactive_reason(ui.ctx(), path, params);
         if let Some(reason) = &inactive {
             ui.label(localized(ui.ctx(), reason));
         }
@@ -565,8 +565,9 @@ fn preflash_controls(
     ) {
         return;
     }
-    let active = crate::ui::control_inactive_reason(ui.ctx(), "enlarger.preflash_exposure", params)
-        .is_none();
+    let active =
+        crate::controls::control_inactive_reason(ui.ctx(), "enlarger.preflash_exposure", params)
+            .is_none();
     if !active {
         ui.label(localized(
             ui.ctx(),

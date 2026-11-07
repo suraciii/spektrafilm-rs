@@ -10,8 +10,11 @@ pub(crate) fn sections(
     filter: &mut ControlFilter<'_>,
 ) {
     if section == "Halation" {
-        let inactive =
-            crate::ui::control_inactive_reason(ui.ctx(), "film_render.halation.active", params);
+        let inactive = crate::controls::control_inactive_reason(
+            ui.ctx(),
+            "film_render.halation.active",
+            params,
+        );
         if let Some(reason) = &inactive {
             ui.label(localized(ui.ctx(), reason));
         }

@@ -771,6 +771,27 @@ impl App {
     }
 }
 
+impl App {
+    pub(crate) fn sync_display_controls(&mut self) {
+        let display = self.viewer.settings.to_json();
+        let mut changed = false;
+        for key in [
+            "use_display_transform",
+            "gray_18_canvas",
+            "white_padding",
+            "output_interpolation",
+        ] {
+            if self.gui_state.sections["display"][key] != display[key] {
+                self.gui_state.sections["display"][key] = display[key].clone();
+                changed = true;
+            }
+        }
+        if changed {
+            self.search_index.reset();
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     //! Automatic session diagnostics at the real GUI startup boundary: the

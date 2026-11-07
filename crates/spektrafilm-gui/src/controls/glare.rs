@@ -11,8 +11,11 @@ pub(crate) fn sections(
 ) {
     if section == "Glare" {
         section_header(ui, filter, "Print viewing glare", |ui, filter| {
-            let reason =
-                crate::ui::control_inactive_reason(ui.ctx(), "print_render.glare.active", params);
+            let reason = crate::controls::control_inactive_reason(
+                ui.ctx(),
+                "print_render.glare.active",
+                params,
+            );
             if let Some(reason) = &reason {
                 ui.label(localized(ui.ctx(), reason));
             }
