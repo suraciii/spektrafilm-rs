@@ -668,3 +668,6 @@ impl Pipeline {
 
 #[cfg(test)]
 mod trix400_tests;
+
+#[cfg(test)]
+mod astia100f_tests;

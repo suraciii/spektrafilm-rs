@@ -55,3 +55,10 @@ The still-negative [Tri-X 400 profile and built-in look](trix400.md) use a direc
 reconstruction of Kodak F-4017's 35 mm T-MAX six-minute curve. The
 [attribution notice](../data/license/TRIX_400.txt) separates new contributions
 from Kodak's original technical material and describes the cross-check sources.
+
+## Fujifilm Astia 100F
+
+The [Astia 100F profile and built-in look](astia100f.md) reconstruct the
+AF3-149E RAP100F publication curves with an inferred clear-film spectrum.
+The [source notice](../data/license/ASTIA_100F.txt) distinguishes new contributions,
+the MIT-licensed Status A table transcription and Fujifilm's original material.
