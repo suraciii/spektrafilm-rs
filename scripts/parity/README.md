@@ -598,8 +598,12 @@ screenshots or PNG-clamped comparisons are not substitutes.
 
 
 The package smoke exports the pinned 0.3.4 bare-chain midgray through the real
-spectral assets and compares the saved 32-bit TIFF against the recorded Python
-result within `1e-6`. Saving into the output layer's own colour space and
+spectral assets and the shipped image writer, then separately runs the
+`input > film > print` route and compares the `cmy_print` f64 density artifact
+against the recorded Python material result within `1e-6`. The final scan
+comparison was retired because the pinned Python oracle predates the neutral
+scan model v2; the image export still proves the installed image path and
+spectral assets end to end. Saving into the output layer's own colour space and
 encoding is a bit-exact copy of the pipeline buffer — the pinned Python save
 guard skips the transform there, and re-running the 4-digit IEC sRGB matrices
 would shift pixels by ~2e-5 (`crates/spektrafilm-core/src/image_io.rs`).
