@@ -25,6 +25,19 @@ pub(in crate::wgpu_backend) fn transport_window_limit(binding_limit: u64) -> u64
     binding_limit.min(super::super::resources::WORKSPACE_BINDING_BYTES)
 }
 
+/// Formation and composition partition, shared by execution and workspace
+/// planning. PCG32 owns one stream per pixel, so a partition never changes the
+/// realized grain. The cap keeps one batch below a driver watchdog while
+/// avoiding tens of thousands of tiny copies on a full-resolution source.
+pub(in crate::wgpu_backend) fn transport_chunk(
+    window_limit: u64,
+    n_pixels: u32,
+    n_layers: u32,
+) -> u32 {
+    let layers = u64::from(n_layers.max(2));
+    ((window_limit / (12 * layers)).min(u64::from(n_pixels)) as u32).min(262_144)
+}
+
 /// Resident grain formation, layer optics, clumping, and density finishing.
 pub(in crate::wgpu_backend) struct SpektraGrainState {
     dispatch: RasterCommands,
@@ -109,11 +122,7 @@ fn build_spektra_grain_state_with_limit(
         .checked_mul(height)
         .filter(|&n| n > 0 && n <= u32::MAX / 3)
         .ok_or("Spektra grain indexing overflows")?;
-    // PCG32 owns one stream per pixel; cap formation so a large binding
-    // limit cannot turn one batch into a watchdog-scale submission.
-    let chunk = ((window_limit / (12 * u64::from(n_layers).max(2))).min(u64::from(n_pixels))
-        as u32)
-        .min(8_192);
+    let chunk = transport_chunk(window_limit, n_pixels, n_layers);
     if chunk == 0 {
         return Err("Spektra grain minimum layer window exceeds storage binding limit".into());
     }

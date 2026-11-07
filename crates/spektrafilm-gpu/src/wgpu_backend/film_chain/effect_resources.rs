@@ -128,9 +128,11 @@ impl WgpuBackend {
                 // samples, while density and particle fields remain binary32.
                 let clump_image = mul(pixels, 24)?;
                 let layer_image = mul(image, layers)?;
-                let chunk = (window_limit / mul(12, layers.max(2))?)
-                    .min(pixels)
-                    .min(8_192);
+                let chunk = u64::from(super::super::grain::spektra::transport_chunk(
+                    window_limit,
+                    u32::try_from(pixels).map_err(|_| "Spektra grain pixel indexing overflows")?,
+                    gp.layer_count,
+                ));
                 if chunk == 0 {
                     return Err("Spektra layer window cannot hold one pixel".into());
                 }
