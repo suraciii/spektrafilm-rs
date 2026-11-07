@@ -2,10 +2,12 @@
 use crate::routes::vocabulary;
 use crate::theme;
 mod applicability;
+mod component_name;
 mod localization;
 pub(crate) use applicability::{
     control_inactive_reason, grain_control_inactive_reason, install_material_context, materials,
 };
+pub(crate) use component_name::component_name;
 use egui::Ui;
 pub(crate) use localization::{localized, localized_for};
 use serde_json::Value;

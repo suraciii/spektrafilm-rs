@@ -1573,386 +1573,60 @@ pub(crate) fn localized<'a>(ctx: &egui::Context, label: &'a str) -> Cow<'a, str>
     localized_for(crate::i18n::locale(ctx), label)
 }
 
+/// Composite labels join a known control label and one of its component ids.
+///
+/// The explicit base/component pairs keep names supplied by profiles, standards
+/// and users from being recomposed just because they contain a space.
+const COMPOSITE_LABELS: &[(&str, &[&str])] = &[
+    ("Layer amounts", &["0", "1", "2"]),
+    ("Layer size ratio", &["0", "1", "2"]),
+    ("Layer weights", &["0", "1", "2"]),
+    ("Unsharp mask (digital sharpening)", &["amount", "sigma"]),
+    ("crop center", &["x", "y"]),
+    ("crop size", &["x", "y"]),
+    ("density min", &["B", "G", "R"]),
+    ("gamma interlayer b to rg", &["G", "R"]),
+    ("gamma interlayer g to rb", &["B", "R"]),
+    ("gamma interlayer r to gb", &["B", "G"]),
+    ("gamma samelayer rgb", &["B", "G", "R"]),
+    ("halation first sigma um", &["B", "G", "R"]),
+    ("halation strength", &["B", "G", "R"]),
+    ("knee", &["limit", "power", "threshold"]),
+    ("langmuir donor k rgb", &["B", "G", "R"]),
+    ("langmuir receiver k rgb", &["B", "G", "R"]),
+    ("micro structure", &["blur", "clump"]),
+    ("particle scale sublayers", &["0", "1", "2"]),
+    ("rms granularity", &["B", "G", "R"]),
+    ("scatter core um", &["B", "G", "R"]),
+    ("scatter tail um", &["B", "G", "R"]),
+    ("scatter tail weight", &["B", "G", "R"]),
+    ("uniformity", &["B", "G", "R"]),
+];
+
+fn composite_label(locale: crate::i18n::Locale, label: &str) -> Option<Cow<'static, str>> {
+    let (base, component) = label.rsplit_once(' ')?;
+    let (_, components) = COMPOSITE_LABELS.iter().find(|(known, _)| *known == base)?;
+    if !components.contains(&component) {
+        return None;
+    }
+    let label = crate::i18n::text_for(locale, key(base)?);
+    Some(super::component_name(
+        locale,
+        label,
+        localized_for(locale, component),
+    ))
+}
+
 pub(crate) fn localized_for<'a>(locale: crate::i18n::Locale, label: &'a str) -> Cow<'a, str> {
     if let Some(key) = key(label) {
         return crate::i18n::text_for(locale, key);
     }
-    match label {
-        "Layer amounts 0" => rust_i18n::t!(
-            "controls.component.name",
-            locale = locale.as_str(),
-            label = crate::i18n::text_for(locale, "controls.grain.layer_amounts"),
-            component = Cow::Borrowed("0")
-        ),
-        "Layer amounts 1" => rust_i18n::t!(
-            "controls.component.name",
-            locale = locale.as_str(),
-            label = crate::i18n::text_for(locale, "controls.grain.layer_amounts"),
-            component = Cow::Borrowed("1")
-        ),
-        "Layer amounts 2" => rust_i18n::t!(
-            "controls.component.name",
-            locale = locale.as_str(),
-            label = crate::i18n::text_for(locale, "controls.grain.layer_amounts"),
-            component = Cow::Borrowed("2")
-        ),
-        "Layer size ratio 0" => rust_i18n::t!(
-            "controls.component.name",
-            locale = locale.as_str(),
-            label = crate::i18n::text_for(locale, "controls.grain.layer_size_ratio"),
-            component = Cow::Borrowed("0")
-        ),
-        "Layer size ratio 1" => rust_i18n::t!(
-            "controls.component.name",
-            locale = locale.as_str(),
-            label = crate::i18n::text_for(locale, "controls.grain.layer_size_ratio"),
-            component = Cow::Borrowed("1")
-        ),
-        "Layer size ratio 2" => rust_i18n::t!(
-            "controls.component.name",
-            locale = locale.as_str(),
-            label = crate::i18n::text_for(locale, "controls.grain.layer_size_ratio"),
-            component = Cow::Borrowed("2")
-        ),
-        "Layer weights 0" => rust_i18n::t!(
-            "controls.component.name",
-            locale = locale.as_str(),
-            label = crate::i18n::text_for(locale, "controls.grain.layer_weights"),
-            component = Cow::Borrowed("0")
-        ),
-        "Layer weights 1" => rust_i18n::t!(
-            "controls.component.name",
-            locale = locale.as_str(),
-            label = crate::i18n::text_for(locale, "controls.grain.layer_weights"),
-            component = Cow::Borrowed("1")
-        ),
-        "Layer weights 2" => rust_i18n::t!(
-            "controls.component.name",
-            locale = locale.as_str(),
-            label = crate::i18n::text_for(locale, "controls.grain.layer_weights"),
-            component = Cow::Borrowed("2")
-        ),
-        "Unsharp mask (digital sharpening) amount" => rust_i18n::t!(
-            "controls.component.name",
-            locale = locale.as_str(),
-            label = crate::i18n::text_for(locale, "controls.scanner.unsharp_mask"),
-            component = crate::i18n::text_for(locale, "controls.label.amount")
-        ),
-        "Unsharp mask (digital sharpening) sigma" => rust_i18n::t!(
-            "controls.component.name",
-            locale = locale.as_str(),
-            label = crate::i18n::text_for(locale, "controls.scanner.unsharp_mask"),
-            component = crate::i18n::text_for(locale, "controls.label.sigma")
-        ),
-        "crop center x" => rust_i18n::t!(
-            "controls.component.name",
-            locale = locale.as_str(),
-            label = crate::i18n::text_for(locale, "controls.crop.center"),
-            component = Cow::Borrowed("x")
-        ),
-        "crop center y" => rust_i18n::t!(
-            "controls.component.name",
-            locale = locale.as_str(),
-            label = crate::i18n::text_for(locale, "controls.crop.center"),
-            component = Cow::Borrowed("y")
-        ),
-        "crop size x" => rust_i18n::t!(
-            "controls.component.name",
-            locale = locale.as_str(),
-            label = crate::i18n::text_for(locale, "controls.crop.size"),
-            component = Cow::Borrowed("x")
-        ),
-        "crop size y" => rust_i18n::t!(
-            "controls.component.name",
-            locale = locale.as_str(),
-            label = crate::i18n::text_for(locale, "controls.crop.size"),
-            component = Cow::Borrowed("y")
-        ),
-        "density min B" => rust_i18n::t!(
-            "controls.component.name",
-            locale = locale.as_str(),
-            label = crate::i18n::text_for(locale, "controls.grain.density_min"),
-            component = Cow::Borrowed("B")
-        ),
-        "density min G" => rust_i18n::t!(
-            "controls.component.name",
-            locale = locale.as_str(),
-            label = crate::i18n::text_for(locale, "controls.grain.density_min"),
-            component = Cow::Borrowed("G")
-        ),
-        "density min R" => rust_i18n::t!(
-            "controls.component.name",
-            locale = locale.as_str(),
-            label = crate::i18n::text_for(locale, "controls.grain.density_min"),
-            component = Cow::Borrowed("R")
-        ),
-        "gamma interlayer b to rg G" => rust_i18n::t!(
-            "controls.component.name",
-            locale = locale.as_str(),
-            label = crate::i18n::text_for(locale, "controls.couplers.gamma_blue_to_red_green"),
-            component = Cow::Borrowed("G")
-        ),
-        "gamma interlayer b to rg R" => rust_i18n::t!(
-            "controls.component.name",
-            locale = locale.as_str(),
-            label = crate::i18n::text_for(locale, "controls.couplers.gamma_blue_to_red_green"),
-            component = Cow::Borrowed("R")
-        ),
-        "gamma interlayer g to rb B" => rust_i18n::t!(
-            "controls.component.name",
-            locale = locale.as_str(),
-            label = crate::i18n::text_for(locale, "controls.couplers.gamma_green_to_red_blue"),
-            component = Cow::Borrowed("B")
-        ),
-        "gamma interlayer g to rb R" => rust_i18n::t!(
-            "controls.component.name",
-            locale = locale.as_str(),
-            label = crate::i18n::text_for(locale, "controls.couplers.gamma_green_to_red_blue"),
-            component = Cow::Borrowed("R")
-        ),
-        "gamma interlayer r to gb B" => rust_i18n::t!(
-            "controls.component.name",
-            locale = locale.as_str(),
-            label = crate::i18n::text_for(locale, "controls.couplers.gamma_red_to_green_blue"),
-            component = Cow::Borrowed("B")
-        ),
-        "gamma interlayer r to gb G" => rust_i18n::t!(
-            "controls.component.name",
-            locale = locale.as_str(),
-            label = crate::i18n::text_for(locale, "controls.couplers.gamma_red_to_green_blue"),
-            component = Cow::Borrowed("G")
-        ),
-        "gamma samelayer rgb B" => rust_i18n::t!(
-            "controls.component.name",
-            locale = locale.as_str(),
-            label = crate::i18n::text_for(locale, "controls.couplers.gamma_samelayer"),
-            component = Cow::Borrowed("B")
-        ),
-        "gamma samelayer rgb G" => rust_i18n::t!(
-            "controls.component.name",
-            locale = locale.as_str(),
-            label = crate::i18n::text_for(locale, "controls.couplers.gamma_samelayer"),
-            component = Cow::Borrowed("G")
-        ),
-        "gamma samelayer rgb R" => rust_i18n::t!(
-            "controls.component.name",
-            locale = locale.as_str(),
-            label = crate::i18n::text_for(locale, "controls.couplers.gamma_samelayer"),
-            component = Cow::Borrowed("R")
-        ),
-        "halation first sigma um B" => rust_i18n::t!(
-            "controls.component.name",
-            locale = locale.as_str(),
-            label = crate::i18n::text_for(locale, "controls.halation.first_sigma"),
-            component = Cow::Borrowed("B")
-        ),
-        "halation first sigma um G" => rust_i18n::t!(
-            "controls.component.name",
-            locale = locale.as_str(),
-            label = crate::i18n::text_for(locale, "controls.halation.first_sigma"),
-            component = Cow::Borrowed("G")
-        ),
-        "halation first sigma um R" => rust_i18n::t!(
-            "controls.component.name",
-            locale = locale.as_str(),
-            label = crate::i18n::text_for(locale, "controls.halation.first_sigma"),
-            component = Cow::Borrowed("R")
-        ),
-        "halation strength B" => rust_i18n::t!(
-            "controls.component.name",
-            locale = locale.as_str(),
-            label = crate::i18n::text_for(locale, "controls.halation.halation_strength"),
-            component = Cow::Borrowed("B")
-        ),
-        "halation strength G" => rust_i18n::t!(
-            "controls.component.name",
-            locale = locale.as_str(),
-            label = crate::i18n::text_for(locale, "controls.halation.halation_strength"),
-            component = Cow::Borrowed("G")
-        ),
-        "halation strength R" => rust_i18n::t!(
-            "controls.component.name",
-            locale = locale.as_str(),
-            label = crate::i18n::text_for(locale, "controls.halation.halation_strength"),
-            component = Cow::Borrowed("R")
-        ),
-        "knee limit" => rust_i18n::t!(
-            "controls.component.name",
-            locale = locale.as_str(),
-            label = crate::i18n::text_for(locale, "controls.gamut.knee"),
-            component = crate::i18n::text_for(locale, "controls.label.limit")
-        ),
-        "knee power" => rust_i18n::t!(
-            "controls.component.name",
-            locale = locale.as_str(),
-            label = crate::i18n::text_for(locale, "controls.gamut.knee"),
-            component = crate::i18n::text_for(locale, "controls.label.power")
-        ),
-        "knee threshold" => rust_i18n::t!(
-            "controls.component.name",
-            locale = locale.as_str(),
-            label = crate::i18n::text_for(locale, "controls.gamut.knee"),
-            component = crate::i18n::text_for(locale, "controls.label.threshold")
-        ),
-        "langmuir donor k rgb B" => rust_i18n::t!(
-            "controls.component.name",
-            locale = locale.as_str(),
-            label = crate::i18n::text_for(locale, "controls.couplers.langmuir_donor"),
-            component = Cow::Borrowed("B")
-        ),
-        "langmuir donor k rgb G" => rust_i18n::t!(
-            "controls.component.name",
-            locale = locale.as_str(),
-            label = crate::i18n::text_for(locale, "controls.couplers.langmuir_donor"),
-            component = Cow::Borrowed("G")
-        ),
-        "langmuir donor k rgb R" => rust_i18n::t!(
-            "controls.component.name",
-            locale = locale.as_str(),
-            label = crate::i18n::text_for(locale, "controls.couplers.langmuir_donor"),
-            component = Cow::Borrowed("R")
-        ),
-        "langmuir receiver k rgb B" => rust_i18n::t!(
-            "controls.component.name",
-            locale = locale.as_str(),
-            label = crate::i18n::text_for(locale, "controls.couplers.langmuir_receiver"),
-            component = Cow::Borrowed("B")
-        ),
-        "langmuir receiver k rgb G" => rust_i18n::t!(
-            "controls.component.name",
-            locale = locale.as_str(),
-            label = crate::i18n::text_for(locale, "controls.couplers.langmuir_receiver"),
-            component = Cow::Borrowed("G")
-        ),
-        "langmuir receiver k rgb R" => rust_i18n::t!(
-            "controls.component.name",
-            locale = locale.as_str(),
-            label = crate::i18n::text_for(locale, "controls.couplers.langmuir_receiver"),
-            component = Cow::Borrowed("R")
-        ),
-        "micro structure blur" => rust_i18n::t!(
-            "controls.component.name",
-            locale = locale.as_str(),
-            label = crate::i18n::text_for(locale, "controls.grain.micro_structure"),
-            component = crate::i18n::text_for(locale, "controls.grain.blur")
-        ),
-        "micro structure clump" => rust_i18n::t!(
-            "controls.component.name",
-            locale = locale.as_str(),
-            label = crate::i18n::text_for(locale, "controls.grain.micro_structure"),
-            component = crate::i18n::text_for(locale, "controls.label.clump")
-        ),
-        "particle scale sublayers 0" => rust_i18n::t!(
-            "controls.component.name",
-            locale = locale.as_str(),
-            label = crate::i18n::text_for(locale, "controls.grain.particle_scale_sublayers"),
-            component = Cow::Borrowed("0")
-        ),
-        "particle scale sublayers 1" => rust_i18n::t!(
-            "controls.component.name",
-            locale = locale.as_str(),
-            label = crate::i18n::text_for(locale, "controls.grain.particle_scale_sublayers"),
-            component = Cow::Borrowed("1")
-        ),
-        "particle scale sublayers 2" => rust_i18n::t!(
-            "controls.component.name",
-            locale = locale.as_str(),
-            label = crate::i18n::text_for(locale, "controls.grain.particle_scale_sublayers"),
-            component = Cow::Borrowed("2")
-        ),
-        "rms granularity B" => rust_i18n::t!(
-            "controls.component.name",
-            locale = locale.as_str(),
-            label = crate::i18n::text_for(locale, "controls.grain.rms_granularity"),
-            component = Cow::Borrowed("B")
-        ),
-        "rms granularity G" => rust_i18n::t!(
-            "controls.component.name",
-            locale = locale.as_str(),
-            label = crate::i18n::text_for(locale, "controls.grain.rms_granularity"),
-            component = Cow::Borrowed("G")
-        ),
-        "rms granularity R" => rust_i18n::t!(
-            "controls.component.name",
-            locale = locale.as_str(),
-            label = crate::i18n::text_for(locale, "controls.grain.rms_granularity"),
-            component = Cow::Borrowed("R")
-        ),
-        "scatter core um B" => rust_i18n::t!(
-            "controls.component.name",
-            locale = locale.as_str(),
-            label = crate::i18n::text_for(locale, "controls.halation.scatter_core"),
-            component = Cow::Borrowed("B")
-        ),
-        "scatter core um G" => rust_i18n::t!(
-            "controls.component.name",
-            locale = locale.as_str(),
-            label = crate::i18n::text_for(locale, "controls.halation.scatter_core"),
-            component = Cow::Borrowed("G")
-        ),
-        "scatter core um R" => rust_i18n::t!(
-            "controls.component.name",
-            locale = locale.as_str(),
-            label = crate::i18n::text_for(locale, "controls.halation.scatter_core"),
-            component = Cow::Borrowed("R")
-        ),
-        "scatter tail um B" => rust_i18n::t!(
-            "controls.component.name",
-            locale = locale.as_str(),
-            label = crate::i18n::text_for(locale, "controls.halation.scatter_tail"),
-            component = Cow::Borrowed("B")
-        ),
-        "scatter tail um G" => rust_i18n::t!(
-            "controls.component.name",
-            locale = locale.as_str(),
-            label = crate::i18n::text_for(locale, "controls.halation.scatter_tail"),
-            component = Cow::Borrowed("G")
-        ),
-        "scatter tail um R" => rust_i18n::t!(
-            "controls.component.name",
-            locale = locale.as_str(),
-            label = crate::i18n::text_for(locale, "controls.halation.scatter_tail"),
-            component = Cow::Borrowed("R")
-        ),
-        "scatter tail weight B" => rust_i18n::t!(
-            "controls.component.name",
-            locale = locale.as_str(),
-            label = crate::i18n::text_for(locale, "controls.halation.scatter_tail_weight"),
-            component = Cow::Borrowed("B")
-        ),
-        "scatter tail weight G" => rust_i18n::t!(
-            "controls.component.name",
-            locale = locale.as_str(),
-            label = crate::i18n::text_for(locale, "controls.halation.scatter_tail_weight"),
-            component = Cow::Borrowed("G")
-        ),
-        "scatter tail weight R" => rust_i18n::t!(
-            "controls.component.name",
-            locale = locale.as_str(),
-            label = crate::i18n::text_for(locale, "controls.halation.scatter_tail_weight"),
-            component = Cow::Borrowed("R")
-        ),
-        "uniformity B" => rust_i18n::t!(
-            "controls.component.name",
-            locale = locale.as_str(),
-            label = crate::i18n::text_for(locale, "controls.grain.uniformity"),
-            component = Cow::Borrowed("B")
-        ),
-        "uniformity G" => rust_i18n::t!(
-            "controls.component.name",
-            locale = locale.as_str(),
-            label = crate::i18n::text_for(locale, "controls.grain.uniformity"),
-            component = Cow::Borrowed("G")
-        ),
-        "uniformity R" => rust_i18n::t!(
-            "controls.component.name",
-            locale = locale.as_str(),
-            label = crate::i18n::text_for(locale, "controls.grain.uniformity"),
-            component = Cow::Borrowed("R")
-        ),
-        // Names supplied by profiles, standards and users retain their identity.
-        _ => Cow::Borrowed(label),
+    if let Some(composite) = composite_label(locale, label) {
+        return composite;
     }
+
+    // Names supplied by profiles, standards and users retain their identity.
+    Cow::Borrowed(label)
 }
 
 #[cfg(test)]
@@ -2005,6 +1679,29 @@ mod tests {
                 assert!(!display.contains('_'), "{display}");
                 assert!(!display.contains('='), "{display}");
             }
+        }
+    }
+
+    #[test]
+    fn composite_labels_reuse_the_component_name_rule() {
+        for (locale, label, display) in [
+            (Locale::SimplifiedChinese, "Layer amounts 0", "各层颗粒量 0"),
+            (
+                Locale::SimplifiedChinese,
+                "Unsharp mask (digital sharpening) amount",
+                "反差蒙版（数字锐化） 数量",
+            ),
+            (
+                Locale::SimplifiedChinese,
+                "gamma samelayer rgb R",
+                "同层伽马 RGB R",
+            ),
+            (Locale::SimplifiedChinese, "knee threshold", "拐点 阈值"),
+        ] {
+            assert_eq!(localized_for(locale, label), display);
+        }
+        for label in ["My Profile 0", "knee 0"] {
+            assert_eq!(localized_for(Locale::SimplifiedChinese, label), label);
         }
     }
 }
