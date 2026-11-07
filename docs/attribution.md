@@ -62,3 +62,11 @@ The [Astia 100F profile and built-in look](astia100f.md) reconstruct the
 AF3-149E RAP100F publication curves with an inferred clear-film spectrum.
 The [source notice](../data/license/ASTIA_100F.txt) distinguishes new contributions,
 the MIT-licensed Status A table transcription and Fujifilm's original material.
+
+## Fujifilm Neopan Acros 100 II
+
+The [Acros 100 II profile and built-in look](acros100ii.md) reconstruct the
+AF3-0258E Microfine 10-minute characteristic and relative log spectral curves
+from 300 dpi publication plots. The [source notice](../data/license/ACROS_100_II.txt)
+distinguishes new coordinate-extraction contributions from Fujifilm's original
+technical material. The plots are raster images, not vector centerlines.
