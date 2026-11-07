@@ -388,13 +388,20 @@ python scripts/parity/lut_acceptance.py \
     --evidence-dir target/lut-acceptance
 ```
 
-The LUT gate compares numeric QA metrics and the original PASS/FAIL/INFO
-statuses independently. An upstream quality failure remains a failure in the
-delivered QA report; acceptance requires the same result as the pinned Python
-implementation. Relative tolerance is `1e-5` with a `1e-7` absolute floor.
-Independent format readers and OCIO processors exercise the delivered files.
-The same gate compares 32 additional diagnostic results for disabled xy and
-active oklch input compression, separately from the 112 baseline results.
+The pinned Python creator still models the retired pre-v2 scanner, so the gate
+compares every material-stage lattice (`range != output_rgb`) at the
+unchanged `2e-6` budget against it and marks scan-inclusive roots as
+`skipped-retired-scan-model`.
+That covers the film, exposure, develop, print-expose and material combination
+stages; delivered scan-inclusive roots are exercised through the QA and
+artifact contracts instead. The QA check requires the pinned 16-scenario set
+and order, finite numeric summaries, truthful PASS/FAIL/INFO aggregation, and
+the delivered report/HTML bytes. Independent format readers and OCIO
+processors exercise the delivered files. The same gate checks 32 additional
+diagnostic results for disabled xy and active oklch input compression,
+separately from the 112 baseline scenarios. This split follows the scan-model
+v2 retirement in PR #315 and the package acceptance repair in issue #323; it
+does not compare a retired model's pixels.
 
 
 The package smoke command always covers installed image/metadata/RAW paths,

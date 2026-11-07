@@ -1300,11 +1300,33 @@ mod layout_snapshots {
     }
 }
 
-/// A session whose data directory is a symlink farm over the repository data
-/// plus a real `scan-styles/` the test authors. Nothing ships a style, so an
-/// end-to-end style check needs a directory the test controls; symlinks keep
-/// the heavy `luts`/`profiles` payloads shared instead of copied, and no test
-/// ever writes into the repository data dir.
+/// Share one repository data entry into the test's temporary data directory.
+/// Unix keeps the heavy `luts`/`profiles` payloads shared with symlinks;
+/// Windows has no unprivileged equivalent, so the one style session copies the
+/// 60 MB payload instead of requiring developer-mode symlink rights.
+#[cfg(unix)]
+fn share_data_entry(source: &std::path::Path, target: std::path::PathBuf) {
+    std::os::unix::fs::symlink(source, target).unwrap();
+}
+
+#[cfg(windows)]
+fn share_data_entry(source: &std::path::Path, target: std::path::PathBuf) {
+    if source.is_dir() {
+        std::fs::create_dir_all(&target).unwrap();
+        for entry in std::fs::read_dir(source).unwrap() {
+            let entry = entry.unwrap();
+            share_data_entry(&entry.path(), target.join(entry.file_name()));
+        }
+    } else {
+        std::fs::copy(source, target).unwrap();
+    }
+}
+
+/// A session whose data directory shares the repository data plus a real
+/// `scan-styles/` the test authors. Nothing ships a style, so an end-to-end
+/// style check needs a directory the test controls; sharing keeps the heavy
+/// `luts`/`profiles` payloads out of the test's write path, and no test ever
+/// writes into the repository data dir.
 fn style_session(styles: &[(&str, &str)]) -> Session {
     let directory = tempfile::tempdir().unwrap();
     let data = directory.path().join("data");
@@ -1315,7 +1337,7 @@ fn style_session(styles: &[(&str, &str)]) -> Session {
         if name == "scan-styles" {
             continue;
         }
-        std::os::unix::fs::symlink(entry.path(), data.join(name)).unwrap();
+        share_data_entry(&entry.path(), data.join(name));
     }
     for (name, body) in styles {
         std::fs::write(data.join("scan-styles").join(format!("{name}.json")), body).unwrap();
