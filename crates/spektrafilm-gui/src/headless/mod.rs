@@ -1576,3 +1576,5 @@ fn american_reminiscence_browser_restores_virtual_exposure_and_render() {
         assert!((*a as f64 - *b as f64).abs() < 1e-6);
     }
 }
+
+mod astia100f;

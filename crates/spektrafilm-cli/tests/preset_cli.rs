@@ -373,6 +373,11 @@ fn preset_discovery_exports_both_carriers_and_reloads_same_parameters() {
             "kodak_trix_400",
             "kodak_polymax_fine_art",
         ),
+        (
+            "Fujifilm Astia 100F",
+            "fujifilm_astia_100f",
+            "fujifilm_crystal_archive_typeii",
+        ),
     ] {
         let entry = listed
             .as_array()
