@@ -1,18 +1,18 @@
 {
   "artifact_sha256": {
-    "spectral.json": "811b900ed06a884d73663a0cc11433dc437099ff4c6a257e0939a8caed92538e"
+    "spectral.json": "6c4f86957c82d8abe4a67d5c836a332a39839d61e403e7bc6c814987a0dfa3d4"
   },
-  "generation_command": "/tmp/spektrafilm-upstream-034/.venv/bin/python scripts/parity/package_reference.py --repo /tmp/spektrafilm-upstream-28bf --out-dir scripts/parity/fixtures/package_28bf883",
-  "generator_sha256": "31254838eb2328294335e08e9065383e3d5bfe60501966174f6d4ecf2c2afec1",
-  "numpy_version": "2.5.3",
-  "oracle": "SimulationPipeline(digest_params(init_params with package spectral overrides)).process(float32 input)",
+  "generation_command": "/data/tmp/colour-env/bin/python scripts/parity/package_reference.py --repo /data/tmp/pyexp --out-dir scripts/parity/fixtures/package_28bf883",
+  "generator_sha256": "03beafb527601ad30fe73408dd2646c14f7a83eb0f7f9aa123eaed755e8a016f",
+  "numpy_version": "2.5.4",
+  "oracle": "SimulationPipeline(digest_params(init_params with package spectral overrides)).process(float32 input) for rgb_out and cmy_print",
   "profile_and_preset_data": {
     "files": 238,
     "root": "src/spektrafilm/data",
     "tree_sha256": "0aa947801de503940d29b7bbe829c967812226276d11f8543e548e63d78de678"
   },
-  "python_version": "3.13.12 (main, Feb  3 2026, 22:52:12) [Clang 21.1.4 ]",
-  "scenario_source_sha256": "a7448969164ab3698fa99c8a774a5540985d16511775bef173b4bf5c454ad459",
+  "python_version": "3.14.4 (main, Aug 20 2026, 10:41:58) [GCC 15.2.0]",
+  "scenario_source_sha256": "fd814ddba944e42554fd03492ba947ba1df775136390b2d9df676798a52755a5",
   "source_sha256": {
     "src/spektrafilm/__init__.py": "add2413f153e1e4a456e5a7fc83e21b4e8706442cbedaaf2b3d522f1298451f5",
     "src/spektrafilm/config.py": "e960494b6607ce5a42d062a7cf3aa7ad52cea73f4fe4b6670d3ff23c3b94eaac",
