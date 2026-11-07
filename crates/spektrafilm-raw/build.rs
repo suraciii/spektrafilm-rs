@@ -95,14 +95,15 @@ fn configure_libraw_openmp(build: &mut cc::Build, library: &pkg_config::Library)
     }));
     if let Some(runtime) = runtime {
         build.define("SF_RAW_OPENMP", None);
-        if env::var("TARGET").is_ok_and(|target| target.contains("apple")) && runtime == "omp" {
-            if let Some(prefix) = apple_libomp_prefix() {
-                println!(
-                    "cargo:rustc-link-search=native={}",
-                    prefix.join("lib").display()
-                );
-                build.include(prefix.join("include"));
-            }
+        if env::var("TARGET").is_ok_and(|target| target.contains("apple"))
+            && runtime == "omp"
+            && let Some(prefix) = apple_libomp_prefix()
+        {
+            println!(
+                "cargo:rustc-link-search=native={}",
+                prefix.join("lib").display()
+            );
+            build.include(prefix.join("include"));
         }
         if explicit_runtime.is_none() {
             println!("cargo:rustc-link-lib={runtime}");
