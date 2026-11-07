@@ -29,6 +29,13 @@ Main verification and packaging have separate concurrency groups. Packaging
 still requires successful verification of the same workflow commit, but an older
 package build does not hold the next verification job's concurrency slot.
 
+**Platform packages:** Windows and Linux execute the workspace suite in their
+package jobs. The macOS job compiles every workspace test target with
+`--no-run` but does not execute the device suite: Metal exposes no binary64
+shader arithmetic, while Main CI's llvmpipe lane owns the executable GPU
+coverage. The macOS job still packages the app and runs the installed package
+smoke.
+
 **Fixtures:** A case must reuse a prepared fixture that another case in the same binary already prepared when both need the same inputs. A case must not rebuild a population, bank, or calibration that already exists for its inputs.
 
 Shared host fixtures may retain prepared populations, CPU banks, and parameter records. Initialize them before acquiring a device guard. Reuse the same input image for both sides of a parity comparison when the inputs are identical.
