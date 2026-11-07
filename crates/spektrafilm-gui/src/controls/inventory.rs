@@ -184,11 +184,10 @@ impl ControlEntry {
             )
             .into_owned();
         }
-        rust_i18n::t!(
-            "controls.component.name",
-            locale = locale.as_str(),
-            label = super::localized_for(locale, &self.label),
-            component = super::localized_for(locale, &component.id)
+        super::component_name(
+            locale,
+            super::localized_for(locale, &self.label),
+            super::localized_for(locale, &component.id),
         )
         .into_owned()
     }

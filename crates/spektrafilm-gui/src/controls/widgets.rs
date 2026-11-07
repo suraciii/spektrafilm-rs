@@ -1296,11 +1296,10 @@ fn tuple_marked<T: egui::emath::Numeric, const N: usize>(
                                 Some(identifier_response.id),
                             );
                             let field_id = ui.make_persistent_id(("numeric-field", (label, index)));
-                            let accessible_label = crate::tr!(
-                                ui.ctx(),
-                                "controls.component.name",
-                                label = super::localized(ui.ctx(), label),
-                                component = super::localized(ui.ctx(), identifier)
+                            let accessible_label = super::component_name(
+                                crate::i18n::locale(ui.ctx()),
+                                super::localized(ui.ctx(), label),
+                                super::localized(ui.ctx(), identifier),
                             );
                             ui.ctx().accesskit_node_builder(field_id, |node| {
                                 node.set_label(accessible_label.as_ref());
