@@ -39,4 +39,5 @@ mod effect_resources;
 mod input_geometry;
 mod output_samples;
 mod passes;
-pub(super) use passes::{required_buffer_exceeds_limits, required_chain_buffers};
+mod plan;
+pub(super) use plan::{required_buffer_exceeds_limits, required_chain_buffers};
