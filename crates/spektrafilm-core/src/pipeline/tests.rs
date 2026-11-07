@@ -944,13 +944,31 @@ fn fotufilm_reference_survives_amount_and_calibration_edits() {
 ///
 /// No style ships with the product, so the test data directory is overlaid
 /// with a user-authored `scan-styles/warm-probe.json`.
+#[cfg(unix)]
+fn share_data_entry(source: &std::path::Path, target: std::path::PathBuf) {
+    std::os::unix::fs::symlink(source, target).unwrap();
+}
+
+#[cfg(windows)]
+fn share_data_entry(source: &std::path::Path, target: std::path::PathBuf) {
+    if source.is_dir() {
+        std::fs::create_dir_all(&target).unwrap();
+        for entry in std::fs::read_dir(source).unwrap() {
+            let entry = entry.unwrap();
+            share_data_entry(&entry.path(), target.join(entry.file_name()));
+        }
+    } else {
+        std::fs::copy(source, target).unwrap();
+    }
+}
+
 #[test]
 fn with_params_resolves_a_changed_conversion_style() {
     let data = data_dir();
     let overlay = tempfile::tempdir().unwrap();
     for entry in std::fs::read_dir(&data).unwrap() {
         let entry = entry.unwrap();
-        std::os::unix::fs::symlink(entry.path(), overlay.path().join(entry.file_name())).unwrap();
+        share_data_entry(&entry.path(), overlay.path().join(entry.file_name()));
     }
     let styles = overlay.path().join("scan-styles");
     std::fs::create_dir(&styles).unwrap();
