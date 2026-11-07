@@ -362,29 +362,42 @@ fn preset_discovery_exports_both_carriers_and_reloads_same_parameters() {
         String::from_utf8_lossy(&list.stderr)
     );
     let listed: Value = serde_json::from_slice(&list.stdout).unwrap();
-    let portra = listed
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|entry| entry["name"] == "Kodak Portra 400")
-        .unwrap();
-    assert_eq!(portra["film_profile"]["stock"], "kodak_portra_400");
-    assert_eq!(portra["print_profile"]["stock"], "kodak_portra_endura");
-    let mut reports = Vec::new();
-    for format in ["json", "toml"] {
-        let shown = f.run(&["preset", "show", "Kodak Portra 400", "--format", format]);
-        assert!(
-            shown.status.success(),
-            "{}",
-            String::from_utf8_lossy(&shown.stderr)
-        );
-        let path = f.root.join(format!("portable.{format}"));
-        std::fs::write(&path, &shown.stdout).unwrap();
-        let before = std::fs::read(&path).unwrap();
-        reports.push(f.report(&["--preset", path.to_str().unwrap(), "--dry-run"]));
-        assert_eq!(std::fs::read(&path).unwrap(), before);
+    for (name, film, paper) in [
+        (
+            "Kodak Portra 400",
+            "kodak_portra_400",
+            "kodak_portra_endura",
+        ),
+        (
+            "Kodak Tri-X 400",
+            "kodak_trix_400",
+            "kodak_polymax_fine_art",
+        ),
+    ] {
+        let entry = listed
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|entry| entry["name"] == name)
+            .unwrap();
+        assert_eq!(entry["film_profile"]["stock"], film);
+        assert_eq!(entry["print_profile"]["stock"], paper);
+        let mut reports = Vec::new();
+        for format in ["json", "toml"] {
+            let shown = f.run(&["preset", "show", name, "--format", format]);
+            assert!(
+                shown.status.success(),
+                "{}",
+                String::from_utf8_lossy(&shown.stderr)
+            );
+            let path = f.root.join(format!("portable-{film}.{format}"));
+            std::fs::write(&path, &shown.stdout).unwrap();
+            let before = std::fs::read(&path).unwrap();
+            reports.push(f.report(&["--preset", path.to_str().unwrap(), "--dry-run"]));
+            assert_eq!(std::fs::read(&path).unwrap(), before);
+        }
+        assert_eq!(reports[0], reports[1], "{name}");
     }
-    assert_eq!(reports[0], reports[1]);
     let description = f.run(&[
         "describe",
         "--module",

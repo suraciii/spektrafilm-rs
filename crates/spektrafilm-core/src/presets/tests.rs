@@ -1354,3 +1354,61 @@ fn historical_sparse_grain_presets_write_canonical_and_match_actual_values() {
         }
     }
 }
+
+#[test]
+fn trix400_builtin_is_one_source_print_look_and_preserves_photo_context() {
+    let library = builtin_presets();
+    let matches: Vec<_> = library
+        .iter()
+        .filter(|p| p.name == "Kodak Tri-X 400")
+        .collect();
+    assert_eq!(matches.len(), 1);
+    let preset = matches[0];
+    let mut current = RuntimeParams::default();
+    current.camera.exposure_compensation_ev = 1.25;
+    current.camera.auto_exposure = false;
+    current.camera.film_format_mm = 60.;
+    current.io.crop = true;
+    current.io.crop_size = [0.7, 0.8];
+    for carrier in [
+        Preset::from_json_str(&preset.to_json().unwrap()).unwrap(),
+        Preset::from_toml_str(&preset.to_toml().unwrap()).unwrap(),
+    ] {
+        let resolved = carrier.resolve(&data(), &current).unwrap();
+        assert_eq!(resolved.film_name, "kodak_trix_400");
+        assert_eq!(resolved.print_name, "kodak_polymax_fine_art");
+        let p = crate::params_builder::digest_params(
+            resolved.params,
+            &resolved.film,
+            &resolved.print,
+            None,
+            false,
+        );
+        assert_eq!(p.workflow.route, "input > film > print > scan");
+        assert_eq!(p.scanner.scan_output, "direct_scan");
+        assert_eq!(p.camera.exposure_compensation_ev, 1.25);
+        assert!(!p.camera.auto_exposure);
+        assert_eq!(p.camera.film_format_mm, 60.);
+        assert_eq!(p.io.crop_size, current.io.crop_size);
+        assert!(
+            !p.film_render.grain.active
+                && !p.film_render.halation.active
+                && !p.film_render.dir_couplers.active
+                && !p.print_render.glare.active
+        );
+        assert_eq!(p.enlarger.illuminant, "T");
+        assert_eq!(
+            [
+                p.enlarger.c_filter_neutral,
+                p.enlarger.m_filter_neutral,
+                p.enlarger.y_filter_neutral
+            ],
+            [0.; 3]
+        );
+        assert_eq!(p.finishing, crate::params::FinishingParams::default());
+    }
+    current.workflow.route = "input > film > scan".into();
+    let resolved = preset.resolve(&data(), &current).unwrap();
+    assert_eq!(resolved.params.workflow.route, current.workflow.route);
+    assert_eq!(resolved.params.scanner.scan_output, "direct_scan");
+}

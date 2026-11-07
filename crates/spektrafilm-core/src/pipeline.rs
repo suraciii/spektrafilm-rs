@@ -665,3 +665,6 @@ impl Pipeline {
         resized
     }
 }
+
+#[cfg(test)]
+mod trix400_tests;
