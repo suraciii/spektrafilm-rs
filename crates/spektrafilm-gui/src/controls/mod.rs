@@ -1,7 +1,11 @@
 //! Editors for the pinned experimental GUI sections.
 use crate::routes::vocabulary;
 use crate::theme;
+mod applicability;
 mod localization;
+pub(crate) use applicability::{
+    control_inactive_reason, grain_control_inactive_reason, install_material_context, materials,
+};
 use egui::Ui;
 pub(crate) use localization::{localized, localized_for};
 use serde_json::Value;
@@ -390,7 +394,7 @@ pub(crate) fn section_header<R>(
     // A closed sub-section states what it holds, so a page of collapsed
     // headers still names its controls. Display-only: it reads no value.
     if openness <= 0.0
-        && let Some(summary) = section_summary(title)
+        && let Some(summary) = sub_section_summary(title)
     {
         ui.label(
             egui::RichText::new(crate::controls::localized(ui.ctx(), summary))
@@ -400,22 +404,54 @@ pub(crate) fn section_header<R>(
     }
 }
 
-/// What a closed sub-section holds, in one line naming its own controls.
-///
-/// Keyed by the header title the sub-section renders, so the wording stays with
-/// the section that owns it. A sub-section without an entry shows its header
-/// alone.
-fn section_summary(title: &str) -> Option<&'static str> {
+/// Entries shared by a module header and the sub-section with the same title.
+fn shared_summary(title: &str) -> Option<&'static str> {
     match title {
-        "Base" => Some("Base density: scale and per-channel masks"),
-        "Print viewing glare" => Some("Print viewing glare: percent, roughness, blur"),
         "Input gamut compress" => Some("Input gamut compression: algorithm, knee, hull detail"),
         "Output gamut compress" => Some("Output gamut compression: algorithm, knee"),
+        _ => None,
+    }
+}
+
+/// What a closed module holds, in one line naming its own controls.
+///
+/// Keyed by the module header the inspector renders. A module without an entry
+/// shows its header alone.
+pub(crate) fn section_summary(title: &str) -> Option<&'static str> {
+    shared_summary(title).or(match title {
+        "Film base" => Some("Base density: scale, tilt, and per-channel masks"),
+        "Print base" => Some("Base density: scale and per-channel masks"),
+        "Halation" => {
+            Some("Highlight scatter and back-reflection; source response and RGB controls")
+        }
+        "Couplers" => Some("DIR couplers: inhibition and interlayer response"),
+        "Convert" => {
+            Some("Real negative capture: exposure, base estimation, calibration, channel swaps")
+        }
+        "Camera diffusion" => Some("Taking-lens diffusion: core, tail, and warmth"),
+        "Glare" => Some("Readout stray light: percent, roughness, blur"),
+        "Enlarger diffusion" => Some("Enlarger optics: core, tail, and warmth"),
+        "Preflash" => Some("Linear flash exposure and independent Yellow and Magenta shifts"),
+        "Film chemistry" | "Print chemistry" => {
+            Some("Density curves: development time, gamma, developer exhaustion")
+        }
+        _ => None,
+    })
+}
+
+/// What a closed sub-section holds, in one line naming its own controls.
+///
+/// Keyed by the sub-section header the controls render. A sub-section without an
+/// entry shows its header alone.
+fn sub_section_summary(title: &str) -> Option<&'static str> {
+    shared_summary(title).or(match title {
+        "Base" => Some("Base density: scale and per-channel masks"),
+        "Print viewing glare" => Some("Print viewing glare: percent, roughness, blur"),
         "Spectral upsampling" => Some("Spectral reconstruction: method, adaptation, blur"),
         "Input" => Some("Input decoding: color space and cctf"),
         "Crop and upscale" => Some("Geometry: crop toggle, center, size, upscale factor"),
         _ => None,
-    }
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -785,7 +821,7 @@ pub(crate) fn applicable_control(
     path: &str,
     edit: impl FnOnce(&mut Ui, &mut RuntimeParams) -> bool,
 ) -> bool {
-    let inactive = crate::ui::control_inactive_reason(ui.ctx(), path, params);
+    let inactive = crate::controls::control_inactive_reason(ui.ctx(), path, params);
     let changed = ui
         .add_enabled_ui(inactive.is_none(), |ui| edit(ui, params))
         .inner;

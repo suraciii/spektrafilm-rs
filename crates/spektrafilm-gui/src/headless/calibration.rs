@@ -432,7 +432,7 @@ fn calibration_result_from_a_run_superseded_by_a_parameter_change_is_discarded()
     press(h, "detect base");
     assert!(h.state().calibration_job.is_some());
     // A parameter edit while the worker runs is the product's supersede path
-    // (ui.rs marks changed parameters invalidating calibration).
+    // (app/state.rs marks changed parameters invalidating calibration).
     h.state_mut()
         .mark_parameters_changed_invalidating_calibration();
     let revision = revision.wrapping_add(1);

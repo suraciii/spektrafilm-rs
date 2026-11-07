@@ -10,9 +10,12 @@ pub(crate) fn sections(
     filter: &mut ControlFilter<'_>,
 ) {
     if section == "Film chemistry" {
-        let inactive =
-            crate::ui::control_inactive_reason(ui.ctx(), "film_render.chemistry.active", params);
-        let values_inactive = crate::ui::control_inactive_reason(
+        let inactive = crate::controls::control_inactive_reason(
+            ui.ctx(),
+            "film_render.chemistry.active",
+            params,
+        );
+        let values_inactive = crate::controls::control_inactive_reason(
             ui.ctx(),
             "film_render.chemistry.gamma_factor",
             params,
@@ -48,12 +51,12 @@ pub(crate) fn sections(
         }
     }
     if section == "Print chemistry" {
-        let inactive = crate::ui::control_inactive_reason(
+        let inactive = crate::controls::control_inactive_reason(
             ui.ctx(),
             "print_render.density_curves_morph.active",
             params,
         );
-        let values_inactive = crate::ui::control_inactive_reason(
+        let values_inactive = crate::controls::control_inactive_reason(
             ui.ctx(),
             "print_render.density_curves_morph.gamma_factor",
             params,

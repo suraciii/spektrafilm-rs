@@ -24,7 +24,7 @@ fn control(
     if !filter_matches(filter, label) || !row_path_matches(ui.ctx(), path) {
         return false;
     }
-    let reason = crate::ui::grain_control_inactive_reason(ui.ctx(), path, params, None);
+    let reason = crate::controls::grain_control_inactive_reason(ui.ctx(), path, params, None);
     if reason.is_some() && !filter.active() {
         return false;
     }
@@ -55,7 +55,7 @@ fn grain_tuple<T: egui::emath::Numeric, const N: usize>(
     let discovery = filter.active();
     control(ui, params, filter, label, path, |ui, params| {
         let reasons = std::array::from_fn(|index| {
-            crate::ui::grain_control_inactive_reason(ui.ctx(), path, params, Some(index))
+            crate::controls::grain_control_inactive_reason(ui.ctx(), path, params, Some(index))
         });
         widgets::param_tuple_applicable(
             ui,

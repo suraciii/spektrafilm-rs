@@ -42,7 +42,7 @@ pub(crate) fn sections(
                         ("neutralize print filters", "action.neutralize_filters", CalibrationAction::NeutralizeFilters, "Solve main enlarger M/Y shifts so the current film base midgray prints neutral. Writes the Enlarger controls."),
                     ] {
                         if filter_matches(filter, label) {
-                            let inactive = crate::ui::control_inactive_reason(ui.ctx(), path, params);
+                            let inactive = crate::controls::control_inactive_reason(ui.ctx(), path, params);
                             let response = ui.push_id(path, |ui| {
                                 let response = ui.add_enabled(inactive.is_none(), egui::Button::new(localized(ui.ctx(), label)))
                                     .on_hover_text(localized(ui.ctx(), help));
