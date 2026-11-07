@@ -308,3 +308,6 @@ mod tests {
         std::fs::remove_dir_all(directory).unwrap();
     }
 }
+
+#[cfg(test)]
+mod trix400_tests;

@@ -48,3 +48,10 @@ Its grain parameters are explicitly authored effective values rather than measur
 - [Grain](grain.md).
 - [LUTs](luts.md) for LUT bundle attribution details.
 - [Fotufilm grain specification](../specs/film-grain/fotufilm/spec.md).
+
+## Kodak Tri-X 400 / 400TX
+
+The still-negative [Tri-X 400 profile and built-in look](trix400.md) use a direct
+reconstruction of Kodak F-4017's 35 mm T-MAX six-minute curve. The
+[attribution notice](../data/license/TRIX_400.txt) separates new contributions
+from Kodak's original technical material and describes the cross-check sources.
