@@ -1,29 +1,18 @@
-use super::thumbnail_worker::{ThumbnailContext, ThumbnailKey};
+use super::thumbnail_worker::ThumbnailKey;
 use super::thumbnails::Status;
 use super::*;
 use crate::theme;
-use std::collections::BTreeMap;
-use std::hash::{Hash, Hasher};
 
 pub struct Browser {
     pub state: BrowserState,
     /// Session-only presentation state; deliberately outside BrowserState.
     pub(crate) query: String,
     pub(super) search: Option<(String, Vec<usize>)>,
-    /// Validated document fingerprints, so a preview follows the document
-    /// contents rather than its name or position.
-    pub(super) content: BTreeMap<(PresetGroup, String), u64>,
     /// Row to scroll into view after a successful addition.
     pub(super) reveal: Option<(PresetGroup, String)>,
     /// Preset-library generation; candidate runtime state is rebuilt when it
     /// changes, so referenced documents are re-read.
     pub(super) refresh_epoch: u64,
-    /// Content identity of the effective display ICC profile, refreshed at
-    /// most once per second so a same-metadata replacement is still detected.
-    pub(super) display_identity: std::cell::RefCell<Option<(PathBuf, std::time::Instant, u64)>>,
-    /// When the cached display identity must be rechecked even if no other
-    /// frame is produced.
-    pub(super) display_identity_recheck: std::cell::RefCell<Option<std::time::Instant>>,
     thumbnails: super::thumbnails::Thumbnails,
     pub(crate) library: PresetLibrary,
     pub(crate) entries: Vec<LibraryEntry>,
@@ -43,11 +32,8 @@ impl Browser {
             state: serde_json::from_value(extras["rust"]["presets"].clone()).unwrap_or_default(),
             query: String::new(),
             search: None,
-            content: BTreeMap::new(),
             reveal: None,
             refresh_epoch: 0,
-            display_identity: std::cell::RefCell::new(None),
-            display_identity_recheck: std::cell::RefCell::new(None),
             thumbnails: Default::default(),
             library,
             entries: vec![],
@@ -64,22 +50,13 @@ impl Browser {
     }
     pub(crate) fn refresh(&mut self) {
         self.search = None;
-        self.content.clear();
+        self.thumbnails.update_content(&[]);
         self.refresh_epoch = self.refresh_epoch.wrapping_add(1);
         match self.library.scan() {
             Ok(entries) => {
                 self.entries = entries;
                 self.scan_error = None;
-                for entry in &self.entries {
-                    if let Some(preset) = &entry.preset
-                        && preset.kind() == Ok(PresetKind::Look)
-                    {
-                        self.content.insert(
-                            (entry.group, entry.name.clone()),
-                            content_fingerprint(preset),
-                        );
-                    }
-                }
+                self.thumbnails.update_content(&self.entries);
             }
             Err(e) => {
                 self.entries.clear();
@@ -145,163 +122,7 @@ impl Browser {
     }
 }
 
-/// Cheap content proxy for a file the candidates read: size and modification
-/// time change with ordinary rewrites, without hashing the whole file per frame.
-fn file_fingerprint(path: &Path) -> u64 {
-    let Ok(metadata) = std::fs::metadata(path) else {
-        return 0;
-    };
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    metadata.len().hash(&mut hasher);
-    metadata.modified().ok().hash(&mut hasher);
-    hasher.finish()
-}
-
-fn content_fingerprint(preset: &Preset) -> u64 {
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    match preset.to_json() {
-        Ok(document) => document.hash(&mut hasher),
-        Err(_) => 0_u8.hash(&mut hasher),
-    }
-    hasher.finish()
-}
-
 impl App {
-    /// Identity of the materials candidate preparation reads. File metadata
-    /// changes on ordinary edits; the profile reference pins the intended content.
-    fn material_fingerprint(&self) -> u64 {
-        let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        for entry in &self.presets.entries {
-            for reference in [&entry.film_profile, &entry.print_profile]
-                .into_iter()
-                .flatten()
-            {
-                reference.stock.hash(&mut hasher);
-                reference.version.hash(&mut hasher);
-                reference.content_identity.hash(&mut hasher);
-                file_fingerprint(
-                    &self
-                        .data_dir
-                        .join("profiles")
-                        .join(format!("{}.json", reference.stock)),
-                )
-                .hash(&mut hasher);
-            }
-        }
-        file_fingerprint(
-            &self
-                .data_dir
-                .join("filters")
-                .join("neutral_print_filters.json"),
-        )
-        .hash(&mut hasher);
-        let mut styles: Vec<PathBuf> = std::fs::read_dir(self.data_dir.join("scan-styles"))
-            .map(|entries| {
-                entries
-                    .flatten()
-                    .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_file()))
-                    .map(|entry| entry.path())
-                    .collect()
-            })
-            .unwrap_or_default();
-        styles.sort();
-        for path in styles {
-            path.file_name().hash(&mut hasher);
-            file_fingerprint(&path).hash(&mut hasher);
-        }
-        hasher.finish()
-    }
-
-    /// Content identity of the effective display profile. The short cache keeps
-    /// the dependency honest without reading a large ICC file every frame.
-    fn display_profile_fingerprint(&self, path: &Path) -> u64 {
-        let now = std::time::Instant::now();
-        let mut cached = self.presets.display_identity.borrow_mut();
-        if let Some((cached_path, checked, identity)) = cached.as_ref()
-            && cached_path == path
-            && now.duration_since(*checked) < std::time::Duration::from_secs(1)
-        {
-            *self.presets.display_identity_recheck.borrow_mut() =
-                Some(*checked + std::time::Duration::from_secs(1));
-            return *identity;
-        }
-        let identity = std::fs::read(path)
-            .map(|bytes| {
-                let mut hasher = std::collections::hash_map::DefaultHasher::new();
-                bytes.hash(&mut hasher);
-                hasher.finish()
-            })
-            .unwrap_or(0);
-        *cached = Some((path.to_path_buf(), now, identity));
-        // Keep a 1 Hz content check alive while the browser is idle, so an ICC
-        // replacement is still detected after this fresh read.
-        *self.presets.display_identity_recheck.borrow_mut() =
-            Some(now + std::time::Duration::from_secs(1));
-        identity
-    }
-
-    /// The display profile the candidate display path consumes, including the
-    /// platform-discovered fallback that an unset selection uses.
-    fn effective_display_profile(&self) -> Option<PathBuf> {
-        self.gui_state
-            .display_profile()
-            .map(PathBuf::from)
-            .or_else(|| {
-                self.viewer
-                    .settings
-                    .use_display_transform
-                    .then(crate::display::effective_display_profile)
-                    .flatten()
-            })
-    }
-
-    /// Identity of everything the accepted candidate renders depend on. A
-    /// changed signature invalidates every cached thumbnail, including failures.
-    fn thumbnail_signature(&self) -> Option<u64> {
-        self.image.as_ref()?;
-        let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        self.input_epoch.hash(&mut hasher);
-        self.parameter_revision.hash(&mut hasher);
-        self.input_rotation.hash(&mut hasher);
-        self.viewer.settings.use_display_transform.hash(&mut hasher);
-        self.scan_for_print_snapshot.hash(&mut hasher);
-        self.presets.refresh_epoch.hash(&mut hasher);
-        self.material_fingerprint().hash(&mut hasher);
-        let display_profile = self.effective_display_profile();
-        display_profile.hash(&mut hasher);
-        display_profile
-            .as_deref()
-            .map(|path| self.display_profile_fingerprint(path))
-            .hash(&mut hasher);
-        self.backend.preparation_device_id().hash(&mut hasher);
-        THUMBNAIL_SIZE.hash(&mut hasher);
-        Some(hasher.finish())
-    }
-
-    fn thumbnail_context(&self) -> ThumbnailContext {
-        let mut params = self.params.clone();
-        if let Some(glare) = self.scan_for_print_snapshot {
-            params.print_render.glare.active = glare;
-        }
-        ThumbnailContext {
-            source: self.image.clone().expect("signature requires a source"),
-            params,
-            data_dir: self.data_dir.clone(),
-            special: self.gui_state.special().clone(),
-            backend: self.backend.clone(),
-            display_enabled: self.viewer.settings.use_display_transform,
-            display_profile: self.effective_display_profile(),
-            rotation_quarter_turns: self.input_rotation.rem_euclid(4) as u32,
-            cache_epoch: {
-                let mut hasher = std::collections::hash_map::DefaultHasher::new();
-                self.presets.refresh_epoch.hash(&mut hasher);
-                self.material_fingerprint().hash(&mut hasher);
-                hasher.finish()
-            },
-            size: THUMBNAIL_SIZE,
-        }
-    }
-
     pub(crate) fn preset_panel(&mut self, ctx: &egui::Context) {
         // Responsive collapse: at compact workspace widths the library lives in
         // the narrow rail unless the user reopens it for the session.
@@ -533,8 +354,8 @@ impl App {
                     self.presets.query.clear();
                 }
             }
-            let signature = self.thumbnail_signature();
-            if let Some(recheck) = *self.presets.display_identity_recheck.borrow() {
+            let signature = self.presets.thumbnails.accepted_signature(self);
+            if let Some(recheck) = self.presets.thumbnails.display_recheck_at() {
                 ctx.request_repaint_after(
                     recheck
                         .saturating_duration_since(std::time::Instant::now())
@@ -543,7 +364,7 @@ impl App {
             }
             if self.presets.thumbnails.signature() != signature {
                 let now = ui.ctx().input(|input| input.time);
-                let context = signature.map(|_| self.thumbnail_context());
+                let context = signature.map(|_| self.presets.thumbnails.accepted_context(self));
                 self.presets.thumbnails.reset(signature, context, now);
             }
             let visible = self.presets.visible_indices().to_vec();
@@ -565,18 +386,7 @@ impl App {
             for index in &visible {
                 let entry = &self.presets.entries[*index];
                 if let Some(signature) = signature {
-                    let content = self
-                        .presets
-                        .content
-                        .get(&(entry.group, entry.name.clone()))
-                        .copied()
-                        .unwrap_or(0);
-                    keys[*index] = Some(ThumbnailKey::new(
-                        signature,
-                        entry.group,
-                        &entry.name,
-                        content,
-                    ));
+                    keys[*index] = Some(self.presets.thumbnails.candidate_key(signature, entry));
                 }
             }
             let mut demand: Vec<(ThumbnailKey, Preset)> = Vec::new();
@@ -1442,9 +1252,6 @@ impl App {
 /// The collapsed library rail: a 56 pt strip leaves room for the visible
 /// Presets label.
 const RAIL_WIDTH: f32 = 56.0;
-/// Long edge of one candidate preview. Small enough for a two-column browser,
-/// large enough that the accepted look is recognizable.
-const THUMBNAIL_SIZE: u32 = 240;
 /// The visible actions control inside a card row.
 const CARD_ACTION_HEIGHT: f32 = 22.0;
 /// The size of the current look's painted check.
