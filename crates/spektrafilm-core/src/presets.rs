@@ -1072,19 +1072,22 @@ impl Preset {
             look.enlarger.y_filter_neutral != defaults.y_filter_neutral,
         ]);
         let default_route = workflow_default(&film);
-        // A caller that already declared a film-scan route keeps it. The route and
-        // the scan mode it selects are a workflow choice; overriding the route here
-        // would silently discard the scan mode an authored document carries.
+        // A caller that already declared a film-scan route keeps it only when the
+        // authored look also selects negative-to-positive conversion, or the film is
+        // positive. A direct-scan negative look otherwise uses the profile default
+        // (print) instead of leaving the image as a negative.
         let caller_declared_film_scan = matches!(
             current.workflow.route.as_str(),
             "input > film > scan" | "input > convert-film > scan"
         );
-        params.workflow.route = if caller_declared_film_scan {
+        let keeps_film_scan = caller_declared_film_scan
+            && (film.is_positive() || params.scanner.scan_output == "negative_to_positive");
+        params.workflow.route = if keeps_film_scan {
             current.workflow.route.clone()
         } else {
             default_route.clone()
         };
-        params.io.scan_film = film.is_positive();
+        params.io.scan_film = params.workflow.route_enum().scans_film();
         if film.is_positive()
             || !matches!(
                 params.workflow.route.as_str(),

@@ -847,7 +847,49 @@ fn look_resolution_keeps_a_declared_film_scan_route_and_its_scan_mode() {
         let resolved = preset.resolve(&data(), &current).unwrap();
         assert_eq!(resolved.params.scanner.scan_output, expected_mode);
         assert_eq!(resolved.params.workflow.route, "input > film > scan");
+        assert!(resolved.params.io.scan_film);
     }
+}
+
+#[test]
+fn a_direct_negative_look_uses_the_print_default_over_a_declared_film_scan_route() {
+    let mut current = RuntimeParams::default();
+    current.workflow.route = "input > film > scan".into();
+    current.io.scan_film = true;
+    current.scanner.scan_output = "direct_scan".into();
+    let preset = Preset::capture(
+        "Print look",
+        "kodak_portra_400",
+        "kodak_portra_endura",
+        &current,
+        provenance(),
+    );
+    let resolved = preset.resolve(&data(), &current).unwrap();
+    assert_eq!(
+        resolved.params.workflow.route,
+        "input > film > print > scan"
+    );
+    assert!(!resolved.params.io.scan_film);
+    assert_eq!(resolved.params.scanner.scan_output, "direct_scan");
+}
+
+#[test]
+fn a_positive_look_selects_the_film_scan_default() {
+    let mut current = RuntimeParams::default();
+    current.workflow.route = "input > film > print > scan".into();
+    current.io.scan_film = false;
+    current.scanner.scan_output = "direct_scan".into();
+    let preset = Preset::capture(
+        "Positive look",
+        "kodak_ektachrome_100",
+        "kodak_portra_endura",
+        &current,
+        provenance(),
+    );
+    let resolved = preset.resolve(&data(), &current).unwrap();
+    assert_eq!(resolved.params.workflow.route, "input > film > scan");
+    assert!(resolved.params.io.scan_film);
+    assert_eq!(resolved.params.scanner.scan_output, "direct_scan");
 }
 
 #[test]
