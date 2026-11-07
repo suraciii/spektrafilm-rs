@@ -290,7 +290,10 @@ jobs:
         shell: bash
         run: |
           cargo build --release -p spektrafilm-cli --bin spektrafilm-lab --features precision-f64
-          cargo test --workspace --features precision-f64 --no-fail-fast
+          # Apple GPUs expose no binary64 shader arithmetic, so the device suite
+          # cannot execute here. Main CI owns the executable suite on llvmpipe;
+          # this job compiles every target to keep platform and link coverage.
+          cargo test --workspace --features precision-f64 --no-run
           bash scripts/package_macos_app.sh
           ./target/release/spektrafilm-lab --help
           python scripts/parity/package_smoke.py --cli dist/spektrafilm-macos/Spektrafilm.app/Contents/MacOS/spektrafilm --exporter dist/spektrafilm-macos/Spektrafilm.app/Contents/MacOS/spektrafilm-f64 --raw-helper dist/spektrafilm-macos/Spektrafilm.app/Contents/MacOS/decode_raw_gui --package-root dist/spektrafilm-macos --data-dir dist/spektrafilm-macos/Spektrafilm.app/Contents/Resources/data --evidence-dir "$RUNNER_TEMP/package-smoke"
