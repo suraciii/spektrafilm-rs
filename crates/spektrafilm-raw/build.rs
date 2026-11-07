@@ -23,6 +23,23 @@ fn pkg_config_env(name: &str) -> Option<std::ffi::OsString> {
     })
 }
 
+/// Homebrew's libomp is keg-only, so pkg-config usually cannot see it even
+/// though Homebrew LibRaw advertises plain `-fopenmp`. Keep the same runtime
+/// LibRaw links rather than guessing another OpenMP implementation.
+fn apple_libomp_prefix() -> Option<PathBuf> {
+    let mut prefixes = Vec::new();
+    if let Some(prefix) = env::var_os("HOMEBREW_PREFIX") {
+        prefixes.push(PathBuf::from(prefix).join("opt/libomp"));
+    }
+    prefixes.extend([
+        PathBuf::from("/opt/homebrew/opt/libomp"),
+        PathBuf::from("/usr/local/opt/libomp"),
+    ]);
+    prefixes
+        .into_iter()
+        .find(|prefix| prefix.join("lib/libomp.dylib").is_file())
+}
+
 fn configure_libraw_openmp(build: &mut cc::Build, library: &pkg_config::Library) {
     let mut command = std::process::Command::new(
         pkg_config_env("PKG_CONFIG").unwrap_or_else(|| "pkg-config".into()),
@@ -64,6 +81,11 @@ fn configure_libraw_openmp(build: &mut cc::Build, library: &pkg_config::Library)
         "-fopenmp=libgomp" => "gomp",
         "-fopenmp=libomp" => "omp",
         "-fopenmp=libiomp5" => "iomp5",
+        "-fopenmp" if env::var("TARGET").is_ok_and(|target| target.contains("apple")) => {
+            // Homebrew LibRaw builds against libomp but leaves the
+            // compiler-driver spelling in libraw.pc.
+            "omp"
+        }
         "-fopenmp" => {
             assert!(build.get_compiler().is_like_gnu(), "LibRaw advertises ambiguous -fopenmp with a non-GNU bridge compiler; name its actual OpenMP runtime in libraw.pc (-lgomp, -lomp, -liomp5, or -fopenmp=lib...) so ordered X-Trans controls the same runtime");
             "gomp"
@@ -73,6 +95,15 @@ fn configure_libraw_openmp(build: &mut cc::Build, library: &pkg_config::Library)
     }));
     if let Some(runtime) = runtime {
         build.define("SF_RAW_OPENMP", None);
+        if env::var("TARGET").is_ok_and(|target| target.contains("apple")) && runtime == "omp" {
+            if let Some(prefix) = apple_libomp_prefix() {
+                println!(
+                    "cargo:rustc-link-search=native={}",
+                    prefix.join("lib").display()
+                );
+                build.include(prefix.join("include"));
+            }
+        }
         if explicit_runtime.is_none() {
             println!("cargo:rustc-link-lib={runtime}");
         }
