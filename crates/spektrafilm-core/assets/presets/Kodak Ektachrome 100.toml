@@ -2,13 +2,13 @@ schema_version = 7
 
 name = "Kodak Ektachrome 100"
 author = "SpektraFilm"
-description = "An E100-inspired slide look using the existing SpektraFilm Ektachrome 100 profile, with modest color restraint and Spektra grain. Exact emulsion-generation calibration is unverified. Use the film-scan route and adjust exposure and white balance per photograph."
+description = "An E100-inspired slide look using the existing SpektraFilm Ektachrome 100 profile and Spektra grain, with no additional finishing adjustment. Exact emulsion-generation calibration is unverified. Use the film-scan route and adjust exposure and white balance per photograph."
 
 [parameters.finishing]
 brightness = 0.0
 contrast = 0.0
 warmth = 0.0
-saturation = -0.15
+saturation = 0.0
 [parameters.finishing.expand]
 enabled = false
 black = 0.0
