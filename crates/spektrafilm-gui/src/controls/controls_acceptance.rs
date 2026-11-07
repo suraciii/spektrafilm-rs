@@ -42,6 +42,21 @@ fn camera(ui: &mut egui::Ui, params: &mut RuntimeParams) {
     );
 }
 
+fn print_base(ui: &mut egui::Ui, params: &mut RuntimeParams) {
+    super::show(
+        ui,
+        params,
+        &mut serde_json::Value::Null,
+        "Print base",
+        super::ScanMedium::Negative,
+        false,
+        "",
+        &mut Default::default(),
+        "D65",
+        &crate::profiles::pick_data_dir(),
+    );
+}
+
 fn preflash(ui: &mut egui::Ui, params: &mut RuntimeParams) {
     super::show(
         ui,
@@ -84,6 +99,39 @@ fn camera_rows_follow_route_without_losing_values() {
     );
     assert_eq!(harness.state().camera.exposure_compensation_ev, 0.75);
     assert_eq!(harness.state().camera.film_format_mm, 50.0);
+}
+
+#[test]
+fn print_base_rows_follow_print_interpretation_and_retain_values() {
+    let mut params = RuntimeParams::default();
+    params.workflow.route = "input > film > scan".into();
+    params.io.scan_film = true;
+    params.print_render.base.scale = 1.6;
+    let mut harness = Harness::new_ui_state(print_base, params);
+    harness.get_by_label("Base").simulate_click();
+    harness.run();
+    assert!(
+        harness.get_by_label("scale").node().is_disabled(),
+        "print base has no effect without a print interpretation"
+    );
+    assert_eq!(harness.state().print_render.base.scale, 1.6);
+
+    harness.state_mut().workflow.route = "input > film > print > scan".into();
+    harness.state_mut().io.scan_film = false;
+    harness.run();
+    assert!(!harness.get_by_label("scale").node().is_disabled());
+    assert_eq!(harness.state().print_render.base.scale, 1.6);
+
+    harness.state_mut().print_render.base.active = false;
+    harness.run();
+    assert!(harness.get_by_label("scale").node().is_disabled());
+    assert!(
+        !harness
+            .get_by_label("Enable print base")
+            .node()
+            .is_disabled(),
+        "the enable switch stays reachable so values can be restored"
+    );
 }
 
 #[test]

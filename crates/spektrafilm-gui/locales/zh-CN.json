@@ -766,6 +766,7 @@
   "controls.base.yellow": "黄",
   "controls.base.yellow_film_help": "460 nm 附近黄通道的胶片片基密度偏移（1.0 = 中性；增加 (value - 1) 密度）。",
   "controls.base.print_section": "片基",
+  "controls.base.print_base_note": "扫描仪以相纸基底为白点，均匀的基底变化会被归一化。需要可见调整时请使用印相曝光或影调与色彩。",
   "controls.base.enable_print": "启用印相片基",
   "controls.base.enable_print_help": "启用印相片基密度调整。",
   "controls.base.print_scale_help": "印相片基密度的整体倍率。",

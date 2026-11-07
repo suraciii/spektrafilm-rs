@@ -766,6 +766,7 @@
   "controls.base.yellow": "yellow",
   "controls.base.yellow_film_help": "Yellow-channel film base density shift around 460 nm (1.0 = neutral; adds (value - 1) density).",
   "controls.base.print_section": "Base",
+  "controls.base.print_base_note": "The scanner reads the paper base as white, so uniform base changes are normalized. Use Print exposure or Tone & Color for a visible adjustment.",
   "controls.base.enable_print": "Enable print base",
   "controls.base.enable_print_help": "Enable print base-density tuning.",
   "controls.base.print_scale_help": "Overall multiplier on the print base density.",
