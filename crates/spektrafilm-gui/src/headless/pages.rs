@@ -402,12 +402,14 @@ fn print_chemistry_base_glare_and_diffusion_controls_accept_edits_and_persist() 
     );
 
     let base_active = h.state().params.print_render.base.active;
-    toggle_control(h, "print_render.base.active", "Enable print base");
     edit_control(h, "print_render.base.scale", "scale", "1.25");
     edit_control(h, "print_render.base.cyan", "cyan", "0.75");
+    toggle_control(h, "print_render.base.active", "Enable print base");
     assert_eq!(h.state().params.print_render.base.active, !base_active);
     assert_eq!(h.state().params.print_render.base.scale, 1.25);
     assert_eq!(h.state().params.print_render.base.cyan, 0.75);
+    toggle_control(h, "print_render.base.active", "Enable print base");
+    assert_eq!(h.state().params.print_render.base.active, base_active);
 
     let glare_active = h.state().params.print_render.glare.active;
     toggle_control(h, "print_render.glare.active", "Enable print glare");
