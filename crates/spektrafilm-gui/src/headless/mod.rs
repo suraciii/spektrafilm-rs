@@ -1608,3 +1608,5 @@ mod tmax100;
 mod doublex;
 
 mod hp5;
+
+mod vision3_250d;

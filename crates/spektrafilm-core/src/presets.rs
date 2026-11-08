@@ -1343,7 +1343,9 @@ fn validate_profile_ref(
     let valid = if kind == "film" {
         profile.is_film() && profile.is_filming()
     } else {
-        profile.is_paper() && profile.is_printing()
+        // The process layer supports both paper and film print stocks; the
+        // preset schema must not reject a valid VISION3 + 2383 print chain.
+        profile.is_print_stock()
     };
     if !valid {
         return Err(PresetDocumentError::new(

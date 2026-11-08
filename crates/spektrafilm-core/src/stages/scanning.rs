@@ -449,8 +449,16 @@ fn scan_with_capture(
         gamut,
         scan_context,
         output_space,
-        profile.is_paper() || profile.is_positive(),
+        scanned_medium_is_positive(profile),
     )
+}
+
+/// A scanned paper or film print is a positive readout; a camera negative is
+/// not. Print films (e.g. VISION 2383) are negative-working materials but the
+/// print itself is the positive image, so common finishing applies after the
+/// print scan.
+fn scanned_medium_is_positive(profile: &Profile) -> bool {
+    profile.is_paper() || profile.is_positive() || profile.is_print_stock()
 }
 
 /// The post-capture tail shared by the full scan and a pre-captured readout:
@@ -629,7 +637,7 @@ pub fn finish_capture(
         backend,
         gamut,
         &prepared.scan,
-        profile.is_paper() || profile.is_positive(),
+        scanned_medium_is_positive(profile),
     )
 }
 
@@ -861,6 +869,17 @@ mod tests {
         assert_eq!(negative.readout_illuminant(), "D50");
         assert_eq!(cine_print.readout_illuminant(), "BB5800");
         assert_eq!(bw_print.readout_illuminant(), "D50");
+    }
+
+    #[test]
+    fn print_film_is_a_positive_readout_but_camera_negative_is_not() {
+        let data = crate::test_support::data_dir();
+        let print = crate::profile::load_profile_by_name(&data, "kodak_2383").unwrap();
+        let camera = crate::profile::load_profile_by_name(&data, "kodak_vision3_250d").unwrap();
+        assert!(print.is_print_stock());
+        assert!(!print.is_positive());
+        assert!(scanned_medium_is_positive(&print));
+        assert!(!scanned_medium_is_positive(&camera));
     }
 
     #[test]
@@ -1236,7 +1255,7 @@ mod prepared_capture_tests {
                 &backend,
                 &gamut,
                 &color.scan,
-                profile.is_paper() || profile.is_positive(),
+                scanned_medium_is_positive(&profile),
             )
             .unwrap();
             let full = process(
