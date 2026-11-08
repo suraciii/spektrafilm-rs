@@ -388,6 +388,11 @@ fn preset_discovery_exports_both_carriers_and_reloads_same_parameters() {
             "kodak_tmax_100",
             "kodak_polymax_fine_art",
         ),
+        (
+            "Kodak Double-X 5222",
+            "kodak_doublex",
+            "kodak_polymax_fine_art",
+        ),
     ] {
         let entry = listed
             .as_array()
