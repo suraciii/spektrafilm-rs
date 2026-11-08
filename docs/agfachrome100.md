@@ -20,7 +20,10 @@ AP44/E-6, daylight 1/100 s, Status A/M densitometry.
   independently transcribed anchors are compared in source audit.
 - The profile resamples the 380–780 nm grid. The RGB sensitivity curves are
   `lg Sensitivity`; the characteristic curves are Green/Red/Blue density; the
-  CMY dye curves are additive effective bases.
+  CMY dye curves are additive effective bases. The profile stores dye columns
+  in runtime **C/M/Y** order (source plots are labelled Y/M/C); an early
+  Y/M/C storage order produced blue skin and is now covered by a regression
+  test.
 - The clear-film/base spectrum is not published. The reconstruction uses a
   neutral clear-end prior and moves residual dye minima into the inferred base;
   this is an assumption, not a measured base spectrum.

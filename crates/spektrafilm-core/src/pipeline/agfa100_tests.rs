@@ -200,3 +200,26 @@ fn agfa100_grain_stage_matches_rms10_at_48um() {
     assert!((mean - 1.0).abs() < 1e-3, "mean {mean}");
     assert!((sigma - 10.0e-3).abs() < 1.5e-3, "sigma {sigma}");
 }
+
+#[test]
+fn agfa100_channel_density_uses_runtime_cmy_order() {
+    let data = crate::test_support::data_dir();
+    let film = crate::profile::load_profile_by_name(&data, "agfachrome_rsx_ii_100").unwrap();
+    let wavelengths = film.data.wavelengths.clone();
+    // Runtime channel 0 is cyan (absorbs red), 1 magenta (green), 2 yellow
+    // (blue). A Y/M/C storage order is the bug that produced blue skin.
+    for (channel, expected_nm) in [(0usize, 660.0), (1, 545.0), (2, 445.0)] {
+        let peak = film
+            .data
+            .channel_density
+            .iter()
+            .enumerate()
+            .max_by(|a, b| a.1[channel].total_cmp(&b.1[channel]))
+            .map(|(index, _)| wavelengths[index])
+            .unwrap();
+        assert!(
+            (peak - expected_nm).abs() <= 5.0,
+            "channel {channel}: peak {peak} nm, expected {expected_nm} nm"
+        );
+    }
+}

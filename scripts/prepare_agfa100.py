@@ -77,7 +77,10 @@ def reconstruct(source):
     # applying the Status A measure.
     target = target[:, [1, 0, 2]]
     base = np.full(len(WL), float(target.min()))
-    dyes = np.stack([resample(values[k]) for k in ('yellow', 'magenta', 'cyan')], axis=1)
+    # Runtime channel_density is C/M/Y (cyan absorbs red, magenta green, yellow
+    # blue); source plots are labelled Yellow/Magenta/Cyan. Keep the profile in
+    # the runtime order and carry the same order through density_curves.
+    dyes = np.stack([resample(values[k]) for k in ('cyan', 'magenta', 'yellow')], axis=1)
     weights = status_weights(source['status_a'])
     amounts, condition, p = [], [], np.ones(3)
     for row in target:
