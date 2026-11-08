@@ -1007,7 +1007,13 @@ fn look_and_section_documents_reject_active_invalid_chemistry() {
 /// dropped because look documents carry only the look settings subset, and
 /// `cmyk` is dropped because the caller supplies the legacy spelling.
 fn legacy_cmyk_look(version: u32, parameters: serde_json::Map<String, Value>) -> Value {
-    let mut value = serde_json::to_value(builtin_presets().remove(0)).unwrap();
+    // Keep the legacy fixture on a negative look: built-in ordering changes
+    // over time, and a positive preset would resolve to direct film scan.
+    let preset = builtin_presets()
+        .into_iter()
+        .find(|preset| preset.name == "American Reminiscence")
+        .expect("negative built-in preset fixture");
+    let mut value = serde_json::to_value(preset).unwrap();
     let object = value.as_object_mut().unwrap();
     object.insert("schema_version".into(), version.into());
     let mut look = serde_json::Map::new();
