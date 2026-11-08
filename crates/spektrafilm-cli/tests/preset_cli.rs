@@ -378,6 +378,11 @@ fn preset_discovery_exports_both_carriers_and_reloads_same_parameters() {
             "fujifilm_astia_100f",
             "fujifilm_crystal_archive_typeii",
         ),
+        (
+            "Fujifilm Acros 100 II",
+            "fujifilm_acros_100_ii",
+            "kodak_polymax_fine_art",
+        ),
     ] {
         let entry = listed
             .as_array()

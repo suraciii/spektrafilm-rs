@@ -1,0 +1,23 @@
+FUJIFILM NEOPAN 100 ACROS II (135) source approximation
+
+Manufacturer source: Fuji Photo Film Co., Ltd., AF3-0258E (20.02-BX),
+February 2020, pages 2-3. Microfine stock, small tank, 20 C, 10 minutes;
+p3 characteristic curves and relative log spectral sensitivity.
+https://asset.fujifilm.com/www/us/files/2020-08/73080443d0289b1a7b116add14a9bdfc/films_neopan100acros2_135_01_0.pdf
+PDF SHA256 afb5e24db0d9b7a219b6682b640237a525b7927e8cf1b95ba2299c0be6385cdd
+
+Source data and trademarks remain the property of their respective holders.
+The original PDF is not included in the product repository. Public availability
+is not an open redistribution grant. No manufacturer permission for
+redistribution of digitized curves or derived parameters is established by
+this technical work.
+
+New coordinate-extraction and reconstruction contributions:
+Copyright (c) 2026 SpektraFilm contributors, CC BY-SA 4.0.
+https://creativecommons.org/licenses/by-sa/4.0/
+This contribution license does not relicense manufacturer material.
+
+The p3 plots are 300 dpi raster images, not vector centerlines. The profile is
+an effective aggregate silver-record approximation. It does not identify a
+real emulsion sublayer decomposition, measured base spectrum, scanner
+response, or a stock-specific grain/halation PSF. See docs/acros100ii.md.
