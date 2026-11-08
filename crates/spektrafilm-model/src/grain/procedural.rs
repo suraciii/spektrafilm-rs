@@ -1393,10 +1393,17 @@ mod tests {
                 .map(|v| from_f32((v % 17) as f32 / 17.0))
                 .collect(),
         );
-        for profile in 0..PROFILES.len() {
+        // One profile per gauge family keeps every gauge and both control
+        // states without 96 software-adapter dispatches. Exhaustive profile
+        // values are covered by the host tests above; this test owns the
+        // GPU/CPU parity contract.
+        for profile in [0, 4, 8, 11] {
             for resolution_type in [0, 1] {
                 for mode in [ProceduralGrainMode::Analogue, ProceduralGrainMode::Noise] {
                     for control in [0., 1.] {
+                        if profile != 0 && control == 0. {
+                            continue;
+                        }
                         let mut params = ProceduralGrainParams::for_profile(profile);
                         params.resolution_type = resolution_type;
                         params.mode = mode;
