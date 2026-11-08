@@ -383,6 +383,11 @@ fn preset_discovery_exports_both_carriers_and_reloads_same_parameters() {
             "fujifilm_acros_100_ii",
             "kodak_polymax_fine_art",
         ),
+        (
+            "Kodak T-MAX 100",
+            "kodak_tmax_100",
+            "kodak_polymax_fine_art",
+        ),
     ] {
         let entry = listed
             .as_array()
