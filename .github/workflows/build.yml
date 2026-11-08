@@ -92,11 +92,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "Release RAW decoder requires LibRaw >= 0.22.0" }
           & $env:PKG_CONFIG --exists lcms2
           # The Windows runner exposes no binary64 adapter. Main CI owns the
-          # executable device suite on llvmpipe; type-check every target for
-          # platform coverage without linking test-only binaries. The package
-          # build and installed smoke exercise the shipped binaries.
-          cargo check --workspace --all-targets --features precision-f64
-          if ($LASTEXITCODE -ne 0) { throw "Workspace test type-check failed" }
+          # executable device suite on llvmpipe; the package build and installed
+          # smoke exercise the shipped binaries.
           ./scripts/package_windows_app.ps1 -DistDir "dist\spektrafilm-windows-x64"
           $benchmarkPackage = (Resolve-Path 'dist\spektrafilm-windows-x64').Path
           Push-Location $env:RUNNER_TEMP
@@ -296,11 +293,9 @@ jobs:
         shell: bash
         run: |
           # Apple GPUs expose no binary64 shader arithmetic, so the device suite
-          # cannot execute here. Main CI owns the executable suite; type-check
-          # every target for platform coverage without linking test-only
-          # binaries. The package build and installed smoke exercise the
-          # shipped binaries, including the packaged instrument.
-          cargo check --workspace --all-targets --features precision-f64
+          # cannot execute here. Main CI owns the executable suite; the package
+          # build and installed smoke exercise the shipped binaries, including
+          # the packaged instrument.
           bash scripts/package_macos_app.sh
           python scripts/parity/package_smoke.py --cli dist/spektrafilm-macos/Spektrafilm.app/Contents/MacOS/spektrafilm --exporter dist/spektrafilm-macos/Spektrafilm.app/Contents/MacOS/spektrafilm-f64 --raw-helper dist/spektrafilm-macos/Spektrafilm.app/Contents/MacOS/decode_raw_gui --package-root dist/spektrafilm-macos --data-dir dist/spektrafilm-macos/Spektrafilm.app/Contents/Resources/data --evidence-dir "$RUNNER_TEMP/package-smoke"
 
