@@ -29,11 +29,16 @@ Main verification and packaging have separate concurrency groups. Packaging
 still requires successful verification of the same workflow commit, but an older
 package build does not hold the next verification job's concurrency slot.
 
-**Platform packages:** Linux executes the workspace suite in its package job.
-Windows and macOS compile every workspace test target with `--no-run` but do
-not execute the device suite: their CI runners expose no binary64 shader
-arithmetic, while Main CI's llvmpipe lane owns the executable GPU coverage. All
-three package jobs still build the app and run the installed package smoke.
+**Platform packages:** Linux executes the `spektrafilm-cli` f64 test package in
+its package job. That lane owns the f64-only CLI and instrument acceptance that
+the f32 workspace cannot execute; the full f64 workspace remains the local
+`just test-f64` gate. Windows and macOS type-check every workspace test target
+with `cargo check --workspace --all-targets --features precision-f64`; they do
+not link or execute the device suite: their CI runners expose no binary64
+shader arithmetic, while Main CI's llvmpipe lane owns the executable GPU
+coverage. Test-only link coverage is not a product contract; the package build
+links and smoke-tests the shipped binaries. All three package jobs still build
+the app and run the installed package smoke.
 
 **Fixtures:** A case must reuse a prepared fixture that another case in the same binary already prepared when both need the same inputs. A case must not rebuild a population, bank, or calibration that already exists for its inputs.
 
