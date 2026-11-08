@@ -679,3 +679,6 @@ mod acros100ii_tests;
 mod hp5_tests;
 #[cfg(test)]
 mod tmax100_tests;
+
+#[cfg(test)]
+mod agfa100_tests;

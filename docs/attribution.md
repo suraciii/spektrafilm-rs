@@ -91,3 +91,12 @@ the manufacturer's original technical material. The spectral ordinate is an
 explicit linear, zero-based interpretation; Harman prints only "Sensitivity".
 The 2850 K tungsten wedge is not equal-energy corrected; the 380-355 nm and
 660-780 nm tails are endpoint-slope extrapolations, not measurements.
+
+## Agfachrome RSX II 100
+
+The [Agfachrome RSX II 100 profile and built-in look](agfachrome100.md)
+reconstruct the Agfa F-PF-E4 (August 2004) page-8 curves: RGB `lg Sensitivity`,
+independent Yellow/Magenta/Cyan spectral density plus visual grey, RGB
+characteristic curves, MTF and RMS 10. The [source notice](../data/license/AGFA_RSX_100.txt)
+separates new extraction/reconstruction contributions from Agfa's original
+material. The clear-film spectrum is inferred, not measured.

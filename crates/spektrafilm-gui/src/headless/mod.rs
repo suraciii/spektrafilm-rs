@@ -1601,6 +1601,8 @@ fn american_reminiscence_browser_restores_virtual_exposure_and_render() {
 
 mod astia100f;
 
+mod agfa100;
+
 mod acros100ii;
 
 mod tmax100;

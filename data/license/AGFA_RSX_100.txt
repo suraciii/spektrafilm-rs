@@ -1,0 +1,26 @@
+AGFACHROME RSX II 100 — source notice
+
+The profile and built-in look reconstruct coordinate data from:
+Agfa, Professional Films, F-PF-E4, fourth edition, August 2004,
+page 5 measurement conditions and page 8 Agfachrome RSX II 100 curves.
+
+The technical guide is published by Agfa-Gevaert / AgfaPhoto.
+Copyright in the original technical material remains with its rights holder.
+No manufacturer permission to redistribute the guide, artwork, or derived
+profile is claimed.
+
+New contributions in this repository — coordinate extraction, curve
+reconstruction, profile preparation, tests and documentation — are released
+under CC BY-SA 4.0:
+https://creativecommons.org/licenses/by-sa/4.0/
+
+Status A instrument-table transcription: Jan Lohse, spectral_film_lut,
+commit 6307a98f3cf4f2d7b6d09bab82fbf6f64356ccfe, densiometry.py.
+MIT license: see JAN_LOHSE_MIT.txt.
+
+The clear-film spectrum is not published; the reconstruction uses a neutral
+clear-end prior and residual dye minima. The 2850 K spectrogram has an explicit
+lg Sensitivity axis but no equal-energy correction or source spectrum.
+No physical film, scanner, grain, halation or absolute colour calibration is
+claimed. This is a historical source approximation, not a current Agfa product
+or manufacturer-endorsed reproduction.

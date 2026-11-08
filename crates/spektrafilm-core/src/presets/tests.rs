@@ -1822,3 +1822,66 @@ fn astia100f_builtin_preserves_context_and_resolves_native_positive() {
         }
     }
 }
+
+#[test]
+fn agfa100_builtin_preserves_context_and_resolves_native_positive() {
+    let library = builtin_presets();
+    let matches: Vec<_> = library
+        .iter()
+        .filter(|p| p.name == "Agfachrome RSX II 100")
+        .collect();
+    assert_eq!(matches.len(), 1);
+    let preset = matches[0];
+    let mut current = RuntimeParams::default();
+    current.camera.exposure_compensation_ev = 1.25;
+    current.camera.auto_exposure = false;
+    current.camera.film_format_mm = 60.;
+    current.io.crop = true;
+    current.io.crop_size = [0.7, 0.8];
+    current.scanner.scan_output = "negative_to_positive".into();
+    current.settings.use_cat16 = true;
+    for carrier in [
+        Preset::from_json_str(&preset.to_json().unwrap()).unwrap(),
+        Preset::from_toml_str(&preset.to_toml().unwrap()).unwrap(),
+    ] {
+        for route in [
+            "input > film > print > scan",
+            "input > film > scan",
+            "input > convert-film > scan",
+        ] {
+            current.workflow.route = route.into();
+            let resolved = carrier.resolve(&data(), &current).unwrap();
+            assert_eq!(resolved.film_name, "agfachrome_rsx_ii_100");
+            assert!(resolved.film.is_positive());
+            assert_eq!(resolved.print_name, "fujifilm_crystal_archive_typeii");
+            let p = crate::params_builder::digest_params(
+                resolved.params,
+                &resolved.film,
+                &resolved.print,
+                None,
+                false,
+            );
+            assert_eq!(
+                p.workflow.route,
+                if route.contains("convert-film") {
+                    route
+                } else {
+                    "input > film > scan"
+                }
+            );
+            assert_eq!(p.scanner.scan_output, "direct_scan");
+            assert_eq!(p.camera.exposure_compensation_ev, 1.25);
+            assert!(!p.camera.auto_exposure);
+            assert_eq!(p.camera.film_format_mm, 60.);
+            assert_eq!(p.io.crop_size, current.io.crop_size);
+            assert!(p.film_render.grain.active && p.film_render.halation.active);
+            assert_eq!(p.film_render.grain.rms_granularity, [11.78; 3]);
+            assert_eq!(p.film_render.grain.mult_usm_amount, 0.);
+            assert_eq!(p.film_render.halation.scatter_amount, 0.2);
+            assert_eq!(p.film_render.halation.halation_amount, 0.15);
+            assert!(!p.settings.use_cat16);
+            assert_eq!(p.scanner.unsharp_mask, [0., 0.]);
+            assert_eq!(p.finishing, crate::params::FinishingParams::default());
+        }
+    }
+}
