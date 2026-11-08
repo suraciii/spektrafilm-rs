@@ -398,6 +398,7 @@ fn preset_discovery_exports_both_carriers_and_reloads_same_parameters() {
             "ilford_hp5_plus",
             "kodak_polymax_fine_art",
         ),
+        ("Kodak Vision3 250D", "kodak_vision3_250d", "kodak_2383"),
     ] {
         let entry = listed
             .as_array()
