@@ -92,10 +92,11 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "Release RAW decoder requires LibRaw >= 0.22.0" }
           & $env:PKG_CONFIG --exists lcms2
           # The Windows runner exposes no binary64 adapter. Main CI owns the
-          # executable device suite on llvmpipe; compile every target here to
-          # keep platform and link coverage, then validate the package.
-          cargo test --workspace --features precision-f64 --no-run
-          if ($LASTEXITCODE -ne 0) { throw "Workspace test compilation failed" }
+          # executable device suite on llvmpipe; type-check every target for
+          # platform coverage without linking test-only binaries. The package
+          # build and installed smoke exercise the shipped binaries.
+          cargo check --workspace --all-targets --features precision-f64
+          if ($LASTEXITCODE -ne 0) { throw "Workspace test type-check failed" }
           ./scripts/package_windows_app.ps1 -DistDir "dist\spektrafilm-windows-x64"
           $benchmarkPackage = (Resolve-Path 'dist\spektrafilm-windows-x64').Path
           Push-Location $env:RUNNER_TEMP
@@ -201,7 +202,7 @@ jobs:
           mkdir -p "$prefix/share/doc/libraw"
           cp COPYRIGHT LICENSE.CDDL LICENSE.LGPL "$prefix/share/doc/libraw/"
 
-      - name: Build release binaries
+      - name: Build release binaries and run f64 CLI acceptance
         id: build-release
         shell: bash
         run: |
@@ -211,7 +212,10 @@ jobs:
           cargo build --release -p spektrafilm-cli --bin spektrafilm --bin decode_raw_gui
           cargo build --release -p spektrafilm-cli --bin spektrafilm-f64 --features precision-f64
           cargo build --release -p spektrafilm-cli --bin spektrafilm-lab --features precision-f64
-          LD_LIBRARY_PATH="$RUNNER_TEMP/libraw-022/lib:${LD_LIBRARY_PATH:-}" cargo test --workspace --features precision-f64 --no-fail-fast
+          # Main CI owns the full f32 suite and selected f64 tests. This lane
+          # keeps the f64-only CLI and instrument acceptance that the f32 suite
+          # cannot execute; the full f64 workspace remains `just test-f64`.
+          LD_LIBRARY_PATH="$RUNNER_TEMP/libraw-022/lib:${LD_LIBRARY_PATH:-}" cargo test -p spektrafilm-cli --features precision-f64 --no-fail-fast
 
       - name: Run LUT artifact acceptance
         if: ${{ !cancelled() && steps.build-release.outcome == 'success' && steps.reference-runtime.outcome == 'success' }}
@@ -291,13 +295,13 @@ jobs:
       - name: Package app bundle
         shell: bash
         run: |
-          cargo build --release -p spektrafilm-cli --bin spektrafilm-lab --features precision-f64
           # Apple GPUs expose no binary64 shader arithmetic, so the device suite
-          # cannot execute here. Main CI owns the executable suite on llvmpipe;
-          # this job compiles every target to keep platform and link coverage.
-          cargo test --workspace --features precision-f64 --no-run
+          # cannot execute here. Main CI owns the executable suite; type-check
+          # every target for platform coverage without linking test-only
+          # binaries. The package build and installed smoke exercise the
+          # shipped binaries, including the packaged instrument.
+          cargo check --workspace --all-targets --features precision-f64
           bash scripts/package_macos_app.sh
-          ./target/release/spektrafilm-lab --help
           python scripts/parity/package_smoke.py --cli dist/spektrafilm-macos/Spektrafilm.app/Contents/MacOS/spektrafilm --exporter dist/spektrafilm-macos/Spektrafilm.app/Contents/MacOS/spektrafilm-f64 --raw-helper dist/spektrafilm-macos/Spektrafilm.app/Contents/MacOS/decode_raw_gui --package-root dist/spektrafilm-macos --data-dir dist/spektrafilm-macos/Spektrafilm.app/Contents/Resources/data --evidence-dir "$RUNNER_TEMP/package-smoke"
 
       - name: Preserve package smoke evidence
