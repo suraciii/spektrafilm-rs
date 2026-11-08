@@ -70,3 +70,13 @@ AF3-0258E Microfine 10-minute characteristic and relative log spectral curves
 from 300 dpi publication plots. The [source notice](../data/license/ACROS_100_II.txt)
 distinguishes new coordinate-extraction contributions from Fujifilm's original
 technical material. The plots are raster images, not vector centerlines.
+
+## Kodak T-MAX 100 / 100TMX
+
+The [T-MAX 100 profile and built-in look](tmax100.md) reconstruct the F-4016
+D-76 20 C 7.5-minute characteristic curve and the 0.3-above-D-min log
+sensitivity curve from page-8 vector paths. The
+[source notice](../data/license/TMAX_100.txt) distinguishes new coordinate
+extraction and reconstruction contributions from Kodak's original technical
+material. The 1.0-above-D-min curve is retained for an ablation, not as a
+second layer.
