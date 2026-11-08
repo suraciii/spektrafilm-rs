@@ -393,6 +393,11 @@ fn preset_discovery_exports_both_carriers_and_reloads_same_parameters() {
             "kodak_doublex",
             "kodak_polymax_fine_art",
         ),
+        (
+            "Ilford HP5 Plus 400",
+            "ilford_hp5_plus",
+            "kodak_polymax_fine_art",
+        ),
     ] {
         let entry = listed
             .as_array()

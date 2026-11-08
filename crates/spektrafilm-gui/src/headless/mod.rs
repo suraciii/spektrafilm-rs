@@ -1606,3 +1606,5 @@ mod acros100ii;
 mod tmax100;
 
 mod doublex;
+
+mod hp5;
