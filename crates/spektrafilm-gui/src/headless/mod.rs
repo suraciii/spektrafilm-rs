@@ -1604,3 +1604,5 @@ mod astia100f;
 mod acros100ii;
 
 mod tmax100;
+
+mod doublex;

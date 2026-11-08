@@ -1582,6 +1582,63 @@ fn tmax100_builtin_is_one_source_print_look_and_preserves_photo_context() {
 }
 
 #[test]
+fn doublex_builtin_is_one_source_print_look_and_uses_d96_nearest_curve() {
+    let library = builtin_presets();
+    let matches: Vec<_> = library
+        .iter()
+        .filter(|p| p.name == "Kodak Double-X 5222")
+        .collect();
+    assert_eq!(matches.len(), 1);
+    let preset = matches[0];
+    let mut current = RuntimeParams::default();
+    current.camera.exposure_compensation_ev = 1.25;
+    current.camera.auto_exposure = false;
+    current.camera.film_format_mm = 60.;
+    current.io.crop = true;
+    current.io.crop_size = [0.7, 0.8];
+    for carrier in [
+        Preset::from_json_str(&preset.to_json().unwrap()).unwrap(),
+        Preset::from_toml_str(&preset.to_toml().unwrap()).unwrap(),
+    ] {
+        let resolved = carrier.resolve(&data(), &current).unwrap();
+        assert_eq!(resolved.film_name, "kodak_doublex");
+        assert_eq!(resolved.print_name, "kodak_polymax_fine_art");
+        let p = crate::params_builder::digest_params(
+            resolved.params,
+            &resolved.film,
+            &resolved.print,
+            None,
+            false,
+        );
+        assert_eq!(p.workflow.route, "input > film > print > scan");
+        assert_eq!(p.scanner.scan_output, "direct_scan");
+        assert_eq!(p.camera.exposure_compensation_ev, 1.25);
+        assert!(!p.camera.auto_exposure);
+        assert_eq!(p.camera.film_format_mm, 60.);
+        assert_eq!(p.io.crop_size, current.io.crop_size);
+        assert!(p.film_render.grain.active && p.film_render.halation.active);
+        assert_eq!(p.film_render.development_time, Some(6.5));
+        assert_eq!(p.film_render.grain.rms_granularity, [14.; 3]);
+        assert_eq!(p.film_render.grain.mult_usm_amount, 0.);
+        assert_eq!(p.film_render.halation.halation_strength, [0.05, 0.015, 0.]);
+        assert_eq!(p.scanner.unsharp_mask, [0., 0.]);
+        assert_eq!(p.scanner.lens_blur, 0.);
+        assert!(!p.film_render.dir_couplers.active);
+        assert_eq!(p.enlarger.illuminant, "T");
+        assert_eq!(p.finishing, crate::params::FinishingParams::default());
+        assert!(!p.settings.use_cat16);
+    }
+    current.workflow.route = "input > film > scan".into();
+    let resolved = preset.resolve(&data(), &current).unwrap();
+    assert_eq!(
+        resolved.params.workflow.route,
+        "input > film > print > scan"
+    );
+    assert!(!resolved.params.io.scan_film);
+    assert_eq!(resolved.params.scanner.scan_output, "direct_scan");
+}
+
+#[test]
 fn astia100f_builtin_preserves_context_and_resolves_native_positive() {
     let library = builtin_presets();
     let matches: Vec<_> = library
