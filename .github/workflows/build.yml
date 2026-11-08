@@ -63,11 +63,32 @@ jobs:
             mingw-w64-ucrt-x86_64-glib2
             mingw-w64-ucrt-x86_64-openimageio
 
+      - name: Restore pinned LibRaw 0.22.0
+        id: libraw-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ runner.temp }}/libraw-022
+          key: libraw-022-windows-${{ hashFiles('scripts/build_windows_libraw.sh') }}
+          restore-keys: |
+            libraw-022-windows-
+
+      - name: Record MSYS2 prefix
+        shell: msys2 {0}
+        run: |
+          printf 'SPEKTRAFILM_UCRT_PREFIX=%s\n' "$(cygpath -m /ucrt64)" >> "$GITHUB_ENV"
+
       - name: Build pinned LibRaw 0.22.0
+        if: steps.libraw-cache.outputs.cache-hit != 'true'
         shell: msys2 {0}
         run: |
           bash scripts/build_windows_libraw.sh "$RUNNER_TEMP/libraw-022"
-          printf 'SPEKTRAFILM_UCRT_PREFIX=%s\n' "$(cygpath -m /ucrt64)" >> "$GITHUB_ENV"
+
+      - name: Save pinned LibRaw 0.22.0
+        if: steps.libraw-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ runner.temp }}/libraw-022
+          key: libraw-022-windows-${{ hashFiles('scripts/build_windows_libraw.sh') }}
 
       - name: Install matching Rust target
         shell: pwsh

@@ -392,18 +392,12 @@ try {
         if ($LASTEXITCODE -ne 0) { throw "Native development package missing: $package" }
     }
     New-AppIcon -Source $IconSource -Destination $iconPath
-    foreach ($binary in @("spektrafilm", "decode_raw_gui")) {
-        cargo build --release -p spektrafilm-cli --bin $binary --target-dir $BuildTargetDir
-        if ($LASTEXITCODE -ne 0) { throw "Failed building $binary" }
-    }
-    cargo build --release -p spektrafilm-cli --bin spektrafilm-lab --features precision-f64 --target-dir $BuildTargetDir
-    if ($LASTEXITCODE -ne 0) { throw "Failed building the instrument binary" }
+    cargo build --release -p spektrafilm-cli --bin spektrafilm --bin decode_raw_gui --target-dir $BuildTargetDir
+    if ($LASTEXITCODE -ne 0) { throw "Failed building default CLI binaries" }
 
     if ($Aio) {
-        cargo build --release -p spektrafilm-cli --features precision-f64 --bin spektrafilm-f64 --target-dir $BuildTargetDir
-        if ($LASTEXITCODE -ne 0) { throw "Failed building f64 exporter" }
-        cargo build --release -p spektrafilm-cli --bin spektrafilm-lab --features precision-f64 --target-dir $BuildTargetDir
-        if ($LASTEXITCODE -ne 0) { throw "Failed building the instrument binary" }
+        cargo build --release -p spektrafilm-cli --features precision-f64 --bin spektrafilm-f64 --bin spektrafilm-lab --target-dir $BuildTargetDir
+        if ($LASTEXITCODE -ne 0) { throw "Failed building f64 binaries" }
         $releaseDir = Join-Path $BuildTargetDir $(if ($env:SPEKTRAFILM_RELEASE_SUBDIR) { $env:SPEKTRAFILM_RELEASE_SUBDIR } else { "release" })
         $manifestPath = Join-Path $repo "target\packaging\embedded_bundle.rs"
         New-EmbedManifest -DataDir "data" -F64Exe (Join-Path $releaseDir "spektrafilm-f64.exe") -Destination $manifestPath
@@ -454,10 +448,8 @@ Backends:
     } else {
         cargo build --release -p spektrafilm-gui --target-dir $BuildTargetDir
         if ($LASTEXITCODE -ne 0) { throw "Failed building GUI" }
-        cargo build --release -p spektrafilm-cli --features precision-f64 --bin spektrafilm-f64 --target-dir $BuildTargetDir
-        if ($LASTEXITCODE -ne 0) { throw "Failed building f64 exporter" }
-        cargo build --release -p spektrafilm-cli --bin spektrafilm-lab --features precision-f64 --target-dir $BuildTargetDir
-        if ($LASTEXITCODE -ne 0) { throw "Failed building the instrument binary" }
+        cargo build --release -p spektrafilm-cli --features precision-f64 --bin spektrafilm-f64 --bin spektrafilm-lab --target-dir $BuildTargetDir
+        if ($LASTEXITCODE -ne 0) { throw "Failed building f64 binaries" }
 
         $releaseDir = Join-Path $BuildTargetDir $(if ($env:SPEKTRAFILM_RELEASE_SUBDIR) { $env:SPEKTRAFILM_RELEASE_SUBDIR } else { "release" })
         $guiExe = Join-Path $releaseDir "spektrafilm-gui.exe"
