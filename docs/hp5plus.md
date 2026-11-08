@@ -41,7 +41,8 @@ page-1 wedge spectrogram.
   consistency, not a print-digitization error.
 - The profile is one aggregate `channel_model=bw` silver record with
   `development_time=[6.5]`. It is not a measured emulsion-layer
-  decomposition.
+  decomposition. `log_sensitivity_density_over_min=1.0` marks the base+1.0
+  curve reference; it is not a separately measured threshold.
 - The 81-point channel is resampled to 380-780 nm; the 380-355 nm and
   660-780 nm tails are endpoint-slope extrapolations clamped at `1e-12`, not
   measured cutoffs.
