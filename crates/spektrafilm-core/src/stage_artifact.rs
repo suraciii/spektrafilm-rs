@@ -680,7 +680,7 @@ fn write_with_native(
     // Windows cannot rename a directory that still has an open handle. Release
     // the TempDir and stage.json handles before publication; remove the staging
     // tree ourselves if the no-replace publication fails.
-    let staging_path = staging.into_path();
+    let staging_path = staging.keep();
     if let Err(error) = publication::publish(&staging_path, path) {
         let _ = std::fs::remove_dir_all(&staging_path);
         return Err(error);
