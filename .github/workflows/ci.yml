@@ -46,7 +46,9 @@ jobs:
             /opt/cargo/registry
             /opt/cargo/git
             target
-          key: verification-container-v1-${{ runner.arch }}-${{ steps.environment.outputs.identity }}-${{ hashFiles('Cargo.lock') }}-${{ github.sha }}
+          # Keep this key source-independent: Cargo fingerprints invalidate
+          # changed crates, while dependencies and unchanged artifacts stay warm.
+          key: verification-container-v1-${{ runner.arch }}-${{ steps.environment.outputs.identity }}-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
             verification-container-v1-${{ runner.arch }}-${{ steps.environment.outputs.identity }}-${{ hashFiles('Cargo.lock') }}-
             verification-container-v1-${{ runner.arch }}-${{ steps.environment.outputs.identity }}-
