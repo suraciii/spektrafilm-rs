@@ -379,6 +379,11 @@ fn preset_discovery_exports_both_carriers_and_reloads_same_parameters() {
             "fujifilm_crystal_archive_typeii",
         ),
         (
+            "Agfachrome RSX II 100",
+            "agfachrome_rsx_ii_100",
+            "fujifilm_crystal_archive_typeii",
+        ),
+        (
             "Fujifilm Acros 100 II",
             "fujifilm_acros_100_ii",
             "kodak_polymax_fine_art",
