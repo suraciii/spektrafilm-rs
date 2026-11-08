@@ -674,11 +674,18 @@ fn write_with_native(
         .open(staging.path().join("stage.json"))?;
     file.write_all(&bytes)?;
     file.sync_all()?;
+    drop(file);
     #[cfg(unix)]
     std::fs::File::open(staging.path())?.sync_all()?;
-    publication::publish(staging.path(), path)?;
-    // The temporary directory no longer exists after the rename; its guard's
-    // cleanup is harmless and handles every error before publication.
+    // Windows cannot rename a directory that still has an open handle. Release
+    // the TempDir and stage.json handles before publication; remove the staging
+    // tree ourselves if the no-replace publication fails.
+    let staging_path = staging.into_path();
+    if let Err(error) = publication::publish(&staging_path, path) {
+        let _ = std::fs::remove_dir_all(&staging_path);
+        return Err(error);
+    }
+    // The temporary directory no longer exists after the rename.
     Ok(())
 }
 
