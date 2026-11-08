@@ -80,3 +80,14 @@ sensitivity curve from page-8 vector paths. The
 extraction and reconstruction contributions from Kodak's original technical
 material. The 1.0-above-D-min curve is retained for an ablation, not as a
 second layer.
+
+## Ilford HP5 Plus 400
+
+The [HP5 Plus profile and built-in look](hp5plus.md) reconstruct the
+November 2018 Harman/ILFORD page-5 characteristic curve and page-1 wedge
+spectrogram from embedded raster plots. The [source notice](../data/license/HP5_PLUS.txt)
+distinguishes new coordinate-extraction and reconstruction contributions from
+the manufacturer's original technical material. The spectral ordinate is an
+explicit linear, zero-based interpretation; Harman prints only "Sensitivity".
+The 2850 K tungsten wedge is not equal-energy corrected; the 380-355 nm and
+660-780 nm tails are endpoint-slope extrapolations, not measurements.

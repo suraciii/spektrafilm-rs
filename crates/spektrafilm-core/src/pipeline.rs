@@ -676,4 +676,6 @@ mod astia100f_tests;
 mod acros100ii_tests;
 
 #[cfg(test)]
+mod hp5_tests;
+#[cfg(test)]
 mod tmax100_tests;
