@@ -39,8 +39,10 @@ pick up newer distribution packages. Toolchain updates are explicit.
 
 Normal verification pulls the fixed digest, restores an optional Cargo cache,
 runs `just verify`, and preserves the result. It does not install system packages
-or build LibRaw. Cache misses cause compilation; they never skip tests or select
-another environment. Use an explicit Bash shell for container job steps.
+or build LibRaw. The Cargo cache key covers the environment identity and
+`Cargo.lock`, not the commit; Cargo fingerprints invalidate changed crates.
+Cache misses cause compilation; they never skip tests or select another
+environment. Use an explicit Bash shell for container job steps.
 
 The image package must grant this repository read access before promotion.
 Only the environment publisher needs package write access. Image pull failures
