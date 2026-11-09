@@ -79,6 +79,8 @@ pub(crate) struct ViewerAnalysis {
     /// Normalized image rectangle for plot-to-image inspection.
     pub band: Option<[f64; 4]>,
     pub sample: Option<ViewerAnalysisSample>,
+    /// Plot inspection currently owns linked correspondence.
+    pub plot_inspecting: bool,
     pub suspended: bool,
     /// Completed normalized image rectangle, consumed by the caller after show.
     pub completed: Option<[f64; 4]>,
@@ -86,6 +88,7 @@ pub(crate) struct ViewerAnalysis {
     drag_start: Option<[f64; 2]>,
     suppress_drag: bool,
     draft_subject: Option<(ViewLayer, [usize; 2])>,
+    pub cursor_control: Option<egui::Id>,
     cursor: Option<[u32; 2]>,
 }
 
@@ -1774,68 +1777,52 @@ impl Viewer {
                             self.analysis.completed = Some(completed);
                         }
                     }
-                } else {
-                    let cursor = ui.button(crate::i18n::text(
-                        ui.ctx(),
-                        "surfaces.viewer.analysis_cursor",
-                    ));
-                    if cursor.clicked() {
-                        cursor.request_focus();
-                    }
-                    if cursor.has_focus() {
-                        ui.memory_mut(|memory| {
-                            memory.set_focus_lock_filter(
-                                cursor.id,
-                                egui::EventFilter {
-                                    horizontal_arrows: true,
-                                    vertical_arrows: true,
-                                    ..Default::default()
-                                },
-                            );
-                        });
-                    }
-                    if cursor.has_focus()
-                        && !cursor.hovered()
-                        && response
-                            .hover_pos()
-                            .is_some_and(|p| super::worker::contains_half_open(image_rect, p))
-                        && ui.input(|i| i.pointer.delta() != Vec2::ZERO)
-                    {
-                        cursor.surrender_focus();
-                    }
-                    keyboard_cursor_focused = cursor.has_focus();
-                    if keyboard_cursor_focused {
-                        let point = self
-                            .analysis
-                            .cursor
-                            .get_or_insert([size[0] as u32 / 2, size[1] as u32 / 2]);
-                        let (dx, dy) = ui.input(|i| {
-                            (
-                                i.key_pressed(egui::Key::ArrowRight) as i64
-                                    - i.key_pressed(egui::Key::ArrowLeft) as i64,
-                                i.key_pressed(egui::Key::ArrowDown) as i64
-                                    - i.key_pressed(egui::Key::ArrowUp) as i64,
-                            )
-                        });
-                        point[0] = (point[0] as i64 + dx).clamp(0, size[0].saturating_sub(1) as i64)
-                            as u32;
-                        point[1] = (point[1] as i64 + dy).clamp(0, size[1].saturating_sub(1) as i64)
-                            as u32;
-                        let position = image_rect.min
-                            + image_rect.size()
-                                * Vec2::new(
-                                    (point[0] as f32 + 0.5) / size[0].max(1) as f32,
-                                    (point[1] as f32 + 0.5) / size[1].max(1) as f32,
-                                );
-                        ui.painter_at(rect.intersect(image_rect)).circle_stroke(
-                            position,
-                            5.0,
-                            theme::stroke(theme::FG),
-                        );
-                    }
                 }
             });
-            if !self.analysis.suspended {
+            if !self.analysis.armed
+                && !self.analysis.plot_inspecting
+                && let Some(id) = self.analysis.cursor_control
+            {
+                if ui.memory(|memory| memory.has_focus(id))
+                    && response
+                        .hover_pos()
+                        .is_some_and(|p| super::worker::contains_half_open(image_rect, p))
+                    && ui.input(|i| i.pointer.delta() != Vec2::ZERO)
+                {
+                    ui.memory_mut(|memory| memory.surrender_focus(id));
+                }
+                keyboard_cursor_focused = ui.memory(|memory| memory.has_focus(id));
+                if keyboard_cursor_focused {
+                    let point = self
+                        .analysis
+                        .cursor
+                        .get_or_insert([size[0] as u32 / 2, size[1] as u32 / 2]);
+                    let (dx, dy) = ui.input(|i| {
+                        (
+                            i.key_pressed(egui::Key::ArrowRight) as i64
+                                - i.key_pressed(egui::Key::ArrowLeft) as i64,
+                            i.key_pressed(egui::Key::ArrowDown) as i64
+                                - i.key_pressed(egui::Key::ArrowUp) as i64,
+                        )
+                    });
+                    point[0] =
+                        (point[0] as i64 + dx).clamp(0, size[0].saturating_sub(1) as i64) as u32;
+                    point[1] =
+                        (point[1] as i64 + dy).clamp(0, size[1].saturating_sub(1) as i64) as u32;
+                    let position = image_rect.min
+                        + image_rect.size()
+                            * Vec2::new(
+                                (point[0] as f32 + 0.5) / size[0].max(1) as f32,
+                                (point[1] as f32 + 0.5) / size[1].max(1) as f32,
+                            );
+                    ui.painter_at(rect.intersect(image_rect)).circle_stroke(
+                        position,
+                        5.0,
+                        theme::stroke(theme::FG),
+                    );
+                }
+            }
+            if !self.analysis.suspended && !self.analysis.plot_inspecting {
                 let pixel = if keyboard_cursor_focused {
                     self.analysis.cursor.map(|p| (p, true))
                 } else {

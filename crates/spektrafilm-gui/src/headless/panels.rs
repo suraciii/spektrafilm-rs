@@ -914,6 +914,48 @@ fn analysis_follows_accepted_output_without_changing_the_photograph() {
 }
 
 #[test]
+fn stale_analysis_keeps_earlier_identity_until_matching_result_publishes() {
+    let mut s = session();
+    let h = &mut s.harness;
+    preview(h);
+    settle_animation(h);
+    click(h, "Image analysis");
+    wait_until(h, analysis_output_ready);
+    let render_id = h.state().source_render.as_ref().unwrap().operation_id;
+    let identity = h.state().analysis.result.as_ref().unwrap().identity.clone();
+
+    h.state_mut().params.camera.exposure_compensation_ev = 0.5;
+    h.state_mut().mark_parameters_changed();
+    h.state_mut().dirty = false;
+    h.run_steps(3);
+    assert!(h.state().accepted_frame_is_stale());
+    assert_eq!(
+        h.state().analysis.result.as_ref().unwrap().identity,
+        identity
+    );
+    let earlier = crate::i18n::text(&h.ctx, "surfaces.analysis.earlier").into_owned();
+    assert!(h.query_by_label(earlier.as_str()).is_some());
+
+    h.state_mut().dirty = true;
+    wait_until(h, |app| {
+        !app.accepted_frame_is_stale() && analysis_output_ready(app)
+    });
+    assert!(h.query_by_label(earlier.as_str()).is_none());
+    let new_render = h.state().source_render.as_ref().unwrap().operation_id;
+    assert_ne!(new_render, render_id);
+    assert_eq!(
+        h.state()
+            .analysis
+            .result
+            .as_ref()
+            .unwrap()
+            .identity
+            .modified_generation,
+        Some(new_render)
+    );
+}
+
+#[test]
 fn keyboard_analysis_selects_and_inspects_without_photographic_edits() {
     let mut s = session();
     let h = &mut s.harness;
@@ -923,6 +965,10 @@ fn keyboard_analysis_selects_and_inspects_without_photographic_edits() {
     click(h, "Image analysis");
     wait_until(h, analysis_output_ready);
     click(h, "Select area");
+    assert!(
+        h.query_by_label("Pixel cursor").is_none(),
+        "pixel cursor must not stay active while area selection is armed"
+    );
     h.get_by_label("Move selection (arrow keys; Enter commits, Escape cancels)")
         .focus();
     h.run_steps(3);
@@ -976,14 +1022,22 @@ fn keyboard_analysis_selects_and_inspects_without_photographic_edits() {
         data.total,
         u64::from(output.width / 2 + 1) * u64::from(output.height / 2)
     );
+    assert!(h.query_by_label("Full image").is_some());
+    click(h, "Full image");
+    h.run_steps(3);
+    assert!(h.state().analysis.selection.is_none());
+    assert!(h.query_by_label("Full image").is_none());
     assert!(!h.state().viewer.analysis.armed);
 
-    h.get_by_label("Analysis pixel cursor (arrow keys to move)")
-        .focus();
+    h.get_by_label("Pixel cursor").focus();
     h.run_steps(3);
     h.press_key(egui::Key::ArrowRight);
     h.press_key(egui::Key::ArrowDown);
     h.run_steps(3);
+    assert!(
+        h.get_by_label("Pixel cursor").is_focused(),
+        "arrow keys must retain pixel-cursor focus"
+    );
     wait_until(h, |app| app.analysis.sample.is_some());
     let sample = h.state().viewer.analysis.sample.unwrap();
     assert!(sample.keyboard);
@@ -991,6 +1045,74 @@ fn keyboard_analysis_selects_and_inspects_without_photographic_edits() {
         [sample.x, sample.y],
         [output.width / 2 + 1, output.height / 2 + 1]
     );
+    let time = h.ctx.input(|input| input.time) + 1.0;
+    let image = composed(h, time).image_rect;
+    h.input_mut()
+        .events
+        .push(egui::Event::PointerMoved(image.center()));
+    wait_until(h, |app| {
+        app.viewer
+            .analysis
+            .sample
+            .is_some_and(|sample| !sample.keyboard)
+    });
+    assert!(!h.get_by_label("Pixel cursor").is_focused());
+
+    h.get_by_label("Pixel cursor").focus();
+    h.run_steps(3);
+    let sample = h.state().viewer.analysis.sample.unwrap();
+    assert!(sample.keyboard);
+    assert_eq!(
+        [sample.x, sample.y],
+        [output.width / 2 + 1, output.height / 2 + 1]
+    );
+    let plot = h
+        .get_by_label("Analysis plot (arrow keys to inspect)")
+        .raw_bounds()
+        .unwrap();
+    h.input_mut()
+        .events
+        .push(egui::Event::PointerMoved(egui::pos2(
+            ((plot.x0 + plot.x1) * 0.5) as f32,
+            ((plot.y0 + plot.y1) * 0.5) as f32,
+        )));
+    h.run_steps(3);
+    assert!(h.state().viewer.analysis.plot_inspecting);
+    assert!(h.state().viewer.analysis.sample.is_none());
+    assert!(!h.get_by_label("Pixel cursor").is_focused());
+
+    h.get_by_label("Pixel cursor").focus();
+    h.run_steps(3);
+    assert!(
+        h.get_by_label("Pixel cursor").is_focused(),
+        "keyboard focus must take ownership from a stationary plot hover"
+    );
+    assert!(!h.state().viewer.analysis.plot_inspecting);
+    let sample = h.state().viewer.analysis.sample.unwrap();
+    assert!(sample.keyboard);
+    let point = format!("({}, {})", sample.x, sample.y);
+    assert!(
+        h.query_by_label_contains(&point).is_some(),
+        "keyboard pixel readout must replace the plot inspection"
+    );
+
+    let image = composed(h, h.ctx.input(|input| input.time) + 1.0).image_rect;
+    h.input_mut()
+        .events
+        .push(egui::Event::PointerMoved(image.center()));
+    wait_until(h, |app| {
+        !app.viewer.analysis.plot_inspecting
+            && app
+                .viewer
+                .analysis
+                .sample
+                .is_some_and(|sample| !sample.keyboard)
+    });
+    click(h, "Close image analysis");
+    assert!(h.state().viewer.analysis.cursor_control.is_none());
+    click(h, "Image analysis");
+    wait_until(h, analysis_output_ready);
+    assert!(!h.get_by_label("Pixel cursor").is_focused());
     click(h, "Analysis mode");
     click(h, "Waveform");
     wait_until(h, analysis_output_ready);
@@ -1001,7 +1123,11 @@ fn keyboard_analysis_selects_and_inspects_without_photographic_edits() {
     h.press_key(egui::Key::ArrowRight);
     h.run_steps(3);
     let after = h.state().viewer.analysis.band.unwrap();
-    assert!((after[0] - before[0] - 1.0 / f64::from(output.width)).abs() < 1e-6);
+    assert!(
+        (after[0] - before[0] - 1.0 / f64::from(output.width)).abs() < 1e-6,
+        "before {before:?} after {after:?} width {}",
+        output.width
+    );
     assert_eq!([after[1], after[3]], [before[1], before[3]]);
     assert!(h.state().analysis.sample.is_none());
 
@@ -1087,7 +1213,7 @@ fn compact_analysis_toolbar_and_hover_fit_supported_sizes_and_languages() {
     ] {
         let ctx = h.ctx.clone();
         h.state_mut().select_language(&ctx, language).unwrap();
-        for size in [egui::vec2(1100.0, 760.0), egui::vec2(1460.0, 980.0)] {
+        for size in [egui::vec2(1100.0, 800.0), egui::vec2(1460.0, 980.0)] {
             h.set_size(size);
             for mode in [PlotMode::Histogram, PlotMode::Waveform] {
                 h.state_mut().analysis.preferences.mode = mode;
@@ -1108,6 +1234,7 @@ fn compact_analysis_toolbar_and_hover_fit_supported_sizes_and_languages() {
                     "analysis.green",
                     "analysis.blue",
                     "surfaces.analysis.select",
+                    "surfaces.analysis.cursor",
                     "surfaces.analysis.full",
                     "surfaces.analysis.close",
                 ] {
@@ -1446,6 +1573,50 @@ fn analysis_notice_does_not_capture_plot_pointer_or_keyboard_focus() {
             .is_focused(),
         "plot must receive clicks through its readout"
     );
+}
+
+#[test]
+fn hiding_all_rgb_channels_requests_a_channel_instead_of_no_valid_samples() {
+    let mut s = session();
+    let h = &mut s.harness;
+    preview(h);
+    settle_animation(h);
+    h.state_mut().analysis.visible = true;
+    wait_until(h, analysis_output_ready);
+    h.state_mut().analysis.preferences.histogram_rgb = true;
+    h.state_mut().analysis.preferences.channels = [false; 3];
+    h.run_steps(3);
+    let choose = crate::i18n::text(&h.ctx, "analysis.choose_channel").into_owned();
+    let no_valid = crate::i18n::text(&h.ctx, "analysis.no_valid").into_owned();
+    assert!(h.query_by_label(choose.as_str()).is_some());
+    assert!(h.query_by_label(no_valid.as_str()).is_none());
+    assert!(
+        h.query_by_label("Analysis plot (arrow keys to inspect)")
+            .is_some()
+    );
+}
+
+#[test]
+fn analysis_mode_menu_closes_after_activation() {
+    let mut s = session();
+    let h = &mut s.harness;
+    preview(h);
+    settle_animation(h);
+    h.state_mut().analysis.visible = true;
+    wait_until(h, analysis_output_ready);
+    h.get_by_label("Analysis mode").focus();
+    h.run_steps(3);
+    h.press_key(egui::Key::Space);
+    h.run_steps(3);
+    assert!(h.ctx.memory(|memory| memory.any_popup_open()));
+    h.get_by_role_and_label(egui::accesskit::Role::Button, "Waveform")
+        .click();
+    h.run_steps(3);
+    assert_eq!(
+        h.state().analysis.preferences.mode,
+        crate::analysis_plot::PlotMode::Waveform
+    );
+    assert!(!h.ctx.memory(|memory| memory.any_popup_open()));
 }
 
 /// Compare the published distributions against independently chosen native

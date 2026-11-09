@@ -238,6 +238,7 @@ The panel MUST use these labels under [image analysis](../gui-product-design/ima
 | Tone | 明暗 |
 | Full image / Selection | 全图 / 选区 |
 | Select area | 选择区域 |
+| Pixel cursor | 像素光标 |
 | Analyzing | 正在分析 |
 | Outside selection | 选区外 |
 | Pixel sample | 像素取样 |

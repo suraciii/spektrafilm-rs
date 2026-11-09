@@ -406,6 +406,18 @@ impl eframe::App for App {
                                 rect.center().y,
                                 theme::stroke(theme::FG_MUTED),
                             );
+                            let grip = if divider.hovered() || divider.has_focus() {
+                                theme::FG
+                            } else {
+                                theme::FG_MUTED.gamma_multiply(0.6)
+                            };
+                            for offset in [-4.0, 0.0, 4.0] {
+                                ui.painter().circle_filled(
+                                    rect.center() + egui::vec2(offset, 0.0),
+                                    1.0,
+                                    grip,
+                                );
+                            }
                             crate::controls::focus_feedback(ui, &divider);
                             if divider.clicked() || divider.drag_started() {
                                 divider.request_focus();
