@@ -1,14 +1,14 @@
 # Kodachrome 64 E-88 (experimental)
 # Schema-7 look preset for the shipped kodak_kodachrome_64 profile (E-88 curves).
 # Hanatos surface adaptation is off: its parameters predate the E-88 curve ship.
-# Grain is Dye 1.25 / scale 4.0; chemistry, halation and DIR are off.
+# Grain is Dye 1.25 / scale 4.0; halation is enabled at low class-level strength; chemistry and DIR are off.
 # Experimental: grain calibration is relative; no perceptual panel has been run.
 
 schema_version = 7
 
 name = "Kodachrome 64 E-88 (experimental)"
 author = "SpektraFilm"
-description = "Kodachrome 64 on the shipped E-88 density curves, with Dye grain calibrated against real K64 scans. Grain strength 1.25 and scale 4.0; chemistry, halation and DIR are off. Experimental: grain calibration is relative, not an absolute RMS 10 measurement, and no perceptual panel has been run. This is not a K-14 reconstruction or a calibrated scanner profile."
+description = "Kodachrome 64 on the shipped E-88 density curves, with Dye grain calibrated against real K64 scans. Grain strength 1.25 and scale 4.0; halation is enabled at low class-level strength; chemistry and DIR are off. Experimental: grain calibration is relative, not an absolute RMS 10 measurement, and no perceptual panel has been run. This is not a K-14 reconstruction or a calibrated scanner profile."
 
 [parameters.finishing]
 brightness = 0.0
@@ -117,7 +117,7 @@ micro_structure = [
 ]
 
 [parameters.film_render.halation]
-active = false
+active = true
 scatter_amount = 1.0
 scatter_spatial_scale = 1.0
 halation_amount = 1.0

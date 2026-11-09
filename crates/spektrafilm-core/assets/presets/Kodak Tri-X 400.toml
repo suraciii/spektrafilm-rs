@@ -2,7 +2,7 @@ schema_version = 7
 
 name = "Kodak Tri-X 400"
 author = "SpektraFilm"
-description = "400TX 35mm, T-MAX 6 min at 20 C, printed on unfiltered Polymax Fine-Art F. Manufacturer source-curve approximation with neutral finishing. Grain, halation, glare and sharpening are disabled because this process lacks matched calibration. Camera exposure is preserved; use the print route for the optical positive. Not a measured scanner or real-film match."
+description = "400TX 35mm, T-MAX 6 min at 20 C, printed on unfiltered Polymax Fine-Art F. Manufacturer source-curve approximation with neutral finishing. Spektra grain and restrained B&W-class halation are enabled as class-level priors, not matched-process calibration; print glare and sharpening remain off. Camera exposure is preserved; use the print route for the optical positive. Not a measured scanner or real-film match."
 
 [parameters.finishing]
 brightness = 0.0
@@ -69,7 +69,7 @@ gamma_factor_blue = 1.0
 developer_exhaustion = 0.0
 
 [parameters.film_render.grain]
-active = false
+active = true
 engine = "spektra"
 procedural_profile = "35mm250"
 procedural_film_type = "negative"
@@ -84,9 +84,9 @@ particle_scale_sublayers = [
 mult_usm_sigma = 0.7
 mult_usm_amount = 1.5
 rms_granularity = [
-    6.0,
-    6.0,
-    6.0,
+    17.0,
+    17.0,
+    17.0,
 ]
 density_min = [
     0.03,
@@ -106,10 +106,10 @@ micro_structure = [
 ]
 
 [parameters.film_render.halation]
-active = false
-scatter_amount = 1.0
+active = true
+scatter_amount = 0.15
 scatter_spatial_scale = 1.0
-halation_amount = 1.0
+halation_amount = 0.15
 halation_spatial_scale = 1.0
 scatter_core_um = [
     2.2,
@@ -130,8 +130,8 @@ boost_ev = 0.0
 boost_range = 0.30000001192092896
 protect_ev = 4.0
 halation_strength = [
-    0.08,
-    0.02,
+    0.05,
+    0.015,
     0.0,
 ]
 halation_first_sigma_um = [

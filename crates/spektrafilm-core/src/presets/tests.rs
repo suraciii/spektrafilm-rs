@@ -11,6 +11,27 @@ fn provenance() -> Provenance {
     }
 }
 
+/// Product rule: every built-in look must expose material grain and halation.
+/// Dye grain uses zero RMS as a reference-scale fallback, so `active` is authoritative.
+#[test]
+fn builtin_presets_enable_material_grain_and_halation() {
+    for preset in builtin_presets() {
+        let resolved = preset
+            .resolve(&data(), &RuntimeParams::default())
+            .unwrap_or_else(|error| panic!("{}: {error}", preset.name));
+        assert!(
+            resolved.params.film_render.grain.active,
+            "{} must enable grain",
+            preset.name
+        );
+        assert!(
+            resolved.params.film_render.halation.active,
+            "{} must enable halation",
+            preset.name
+        );
+    }
+}
+
 #[test]
 fn finishing_look_migration_and_sparse_sections_preserve_ownership() {
     let look = builtin_presets().remove(0);
@@ -1438,12 +1459,12 @@ fn trix400_builtin_is_one_source_print_look_and_preserves_photo_context() {
         assert!(!p.camera.auto_exposure);
         assert_eq!(p.camera.film_format_mm, 60.);
         assert_eq!(p.io.crop_size, current.io.crop_size);
-        assert!(
-            !p.film_render.grain.active
-                && !p.film_render.halation.active
-                && !p.film_render.dir_couplers.active
-                && !p.print_render.glare.active
-        );
+        assert!(p.film_render.grain.active && p.film_render.halation.active);
+        assert_eq!(p.film_render.grain.rms_granularity, [17.; 3]);
+        assert_eq!(p.film_render.halation.scatter_amount, 0.15);
+        assert_eq!(p.film_render.halation.halation_amount, 0.15);
+        assert_eq!(p.film_render.halation.halation_strength, [0.05, 0.015, 0.]);
+        assert!(!p.film_render.dir_couplers.active && !p.print_render.glare.active);
         assert_eq!(p.enlarger.illuminant, "T");
         assert_eq!(
             [

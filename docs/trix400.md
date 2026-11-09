@@ -65,11 +65,14 @@ per-photograph camera exposure and metering settings; adjust exposure for the in
 It uses [unfiltered Polymax Fine-Art F](polymax.md), the reference T enlarger lamp,
 unit film and print gamma, neutral finishing, and no added sharpening.
 
-Grain, halation, DIR inhibition, paper glare, and diffusion are disabled. Kodak's
-granularity 17 was measured after HC-110 B at net density 1.0 through a 48 µm
-aperture, not this T-MAX process. The MTF panel is D-76. Neither is silently used
-as matched-process calibration. Users can enable model effects, but doing so does
-not establish a measured Tri-X grain or sharpness match.
+Grain and halation are enabled as class-level priors, not matched-process
+calibration. The Spektra RMS `[17, 17, 17]` uses Kodak's published granularity 17
+as an appearance anchor, but that measurement was made after HC-110 B at net
+density 1.0 through a 48 µm aperture, not this T-MAX process. The halation values
+are the restrained B&W class-level values shared with HP5, T-MAX 100 and Acros,
+not a measured Tri-X PSF. DIR inhibition, paper glare, diffusion and sharpening
+remain disabled. Users can adjust the effects, but doing so does not establish a
+measured Tri-X grain, halation or sharpness match.
 
 Applying a look respects an already selected direct-film route. In that context,
 `direct_scan` retains negative polarity and the stored paper does not contribute.
