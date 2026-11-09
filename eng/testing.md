@@ -25,19 +25,23 @@ its targets once per precision. `benchmark-test` remains a standalone command.
 `parity-backend` uses the existing optimized test profile, retaining debug
 assertions, overflow checks, and the same numerical budgets.
 
-Main verification and packaging have separate concurrency groups. Packaging
-still requires successful verification of the same workflow commit, but an older
-package build does not hold the next verification job's concurrency slot.
+Main verification and packaging have separate concurrency groups and run in
+parallel. A failed verification leaves the workflow failed; package artifacts
+from a failed run are not accepted evidence. Nightly package runs are
+latest-only. Release attachment remains behind the release workflow, and the
+Linux package is attached only after its separate f64 acceptance passes.
 
-**Platform packages:** Linux executes the `spektrafilm-cli` f64 test package in
-its package job. That lane owns the f64-only CLI and instrument acceptance that
-the f32 workspace cannot execute; the full f64 workspace remains the local
-`just test-f64` gate. Windows and macOS do not build workspace test targets in
-their package jobs. Their CI runners expose no binary64 shader arithmetic,
-while Main CI's llvmpipe lane owns the executable GPU coverage. Test-only
-platform compilation is not a product contract; the package build links and
-smoke-tests the shipped binaries. All three package jobs still build the app
-and run the installed package smoke.
+**Platform packages:** Linux runs the `spektrafilm-cli` f64 test package in a
+dedicated `linux-f64-acceptance` job alongside the Linux package build. That
+job owns the f64-only CLI and instrument acceptance that the f32 workspace
+cannot execute; the full f64 workspace remains the local `just test-f64` gate.
+The Linux package build owns the release binaries, LUT acceptance, and installed
+package smoke. Windows and macOS do not build workspace test targets in their
+package jobs. Their CI runners expose no binary64 shader arithmetic, while Main
+CI's llvmpipe lane owns the executable GPU coverage. Test-only platform
+compilation is not a product contract; the package build links and smoke-tests
+the shipped binaries. All three package builds still build the app and run the
+installed package smoke.
 
 **Fixtures:** A case must reuse a prepared fixture that another case in the same binary already prepared when both need the same inputs. A case must not rebuild a population, bank, or calibration that already exists for its inputs.
 
