@@ -78,6 +78,11 @@ rms_granularity = [8.0, 8.0, 8.0]
 rms_granularity = [7.0, 7.0, 12.0]
 uniformity = [0.97, 0.95, 0.97]
 
+# Authored prior: no measured Spektra row existed for Verita 200D.
+# ISO 200 / "exceptionally low" granularity; placed near Portra 400, not measured.
+[kodak_verita_200d]
+rms_granularity = [4.5, 4.5, 4.5]
+
 [kodak_vision3_250d]
 rms_granularity = [10.0, 11.0, 18.0]
 uniformity = [0.97, 0.94, 0.97]
