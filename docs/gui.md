@@ -260,7 +260,7 @@ The two requested choices persist independently in `clipping_preferences.json`. 
 | Waveform | Picture position from left to right against Tone or RGB values. Choose RGB overlay or RGB parade to compare channels on matching scales. Density shows frequency. |
 | Vectorscope | Color frequency in the Oklab a,b plane. Neutral is central; fixed references identify hue directions, not a gamut boundary or a preferred result. |
 
-**Analysis mode** offers Histogram, Waveform, and Vectorscope directly. Histogram is the initial mode without a saved preference.
+**Analysis mode** offers Histogram, Waveform, and Vectorscope directly from the selector's chevron menu. Histogram is the initial mode without a saved preference.
 
 **Waveform display** offers **Tone**, **RGB overlay**, and **RGB parade**. Parade places Red, Green, and Blue in separate plots; it is a waveform display, not another analysis mode. Returning to Waveform restores the selected display.
 
@@ -268,19 +268,19 @@ Histogram offers **Tone** and **RGB**. Tone is display-encoded relative luminanc
 
 Histogram RGB and Waveform RGB overlay share channel visibility choices. RGB parade always shows all three channels without changing those choices. Histogram has no scale selector; logarithmic height ratios are not frequency ratios.
 
-The ordinary shelf contains one toolbar row and the plot. Mode help explains the question, sRGB interpretation, and Preview limitations. Active inspection readouts and meaningful exceptions appear inside the plot without changing its size; no empty information row or duplicate scope line remains.
+The ordinary shelf contains one toolbar row and the plot. Mode help explains the question, sRGB interpretation, and Preview limitations. Active inspection readouts and meaningful exceptions appear inside the plot without changing its size; no empty information row or duplicate scope line remains. A small marker at the value edge of the Histogram or Waveform/RGB parade indicates below- or above-range RGB observations; Vectorscope reports those counts on demand. Exact counts are available on demand or in the plot's accessible readout, rather than a permanent sentence.
 
 Vectorscope offers **1×**, **2×**, and **4×** chroma zoom and reports colors outside its window. All modes use the same sRGB analysis interpretation before monitor conversion. They do not predict a saving profile, bit depth, printer, or physical spectrum.
 
-**Select area** arms a temporary primary-drag tool. The committed rectangle changes the analysis population, not crop or photographic adjustments. Use the focusable move and resize handles with arrow keys and Enter for keyboard selection. Escape cancels an unfinished selection. **Full image** appears only while a selection exists and clears it. The selection follows its source area across rotation, crop, Preview, and Scan. If its complete area is absent in the other subject, analysis reports the mismatch instead of intersecting it with that frame.
+**Select area** arms a temporary primary-drag tool. The committed rectangle changes the analysis population, not crop or photographic adjustments. Use the focusable move and resize handles with arrow keys and Enter for keyboard selection. Escape cancels an unfinished selection. **Full image** appears only while a selection exists and clears it. The selection follows its source area across rotation, crop, Preview, and Scan. If its complete area is absent in the other subject, analysis reports the mismatch instead of intersecting it with that frame. While the selection tool is armed, **Pixel cursor** is hidden; finish or cancel the selection to inspect pixels.
 
-Hover over the photograph to show the native pixel coordinates, analysis values, and matching accent-colored plot markers. Focus **Analysis pixel cursor** and use arrow keys for keyboard inspection. A pixel outside the selected area retains a labeled numeric readout without a plot marker. Hover over or focus the plot to inspect bins with a subdued band and edge ticks; Waveform and RGB parade show the corresponding image band. Parade marks the same column in all three channel plots. Inspection never changes the distributions.
+Hover over the photograph to show the native pixel coordinates, analysis values, and matching accent-colored plot markers. Focus **Pixel cursor** in the analysis toolbar and use arrow keys for keyboard inspection. A pixel outside the selected area retains a labeled numeric readout without a plot marker. Hover over or focus the plot to inspect bins with a subdued band and edge ticks; Waveform and RGB parade show the corresponding image band. Parade marks the same column in all three channel plots. Inspection never changes the distributions.
 
 Readouts leave sample markers visible and do not intercept plot inspection. When a window limits the shelf height, Up preserves a larger requested height; Down shrinks from the displayed height. Divider drags include movement from the initial press.
 
 Active coordinates, values, and selection or off-scale indications stay visible without scrolling. If notices exceed their plot region, scroll that region to read them. With the plot focused, Page Up and Page Down scroll notices while arrow keys continue to inspect samples.
 
-Drag the photograph/analysis divider to change the total shelf height, including controls and plot. Focus the divider and use Up or Down to resize; Home or a double click restores the default. Sizes follow the [native layout baseline](../specs/gui-presentation/spec.md#native-layout-baseline).
+Drag the photograph/analysis divider, whose grip is visible at rest and emphasized on hover or focus, to change the total shelf height, including controls and plot. Focus the divider and use Up or Down to resize; Home or a double click restores the 152 default. Sizes follow the [native layout baseline](../specs/gui-presentation/spec.md#native-layout-baseline).
 
 When the photograph reserve and minimum shelf cannot both fit, analysis collapses without changing the requested expansion or height. The footer action explains the space limit and remains operable. Increasing the window restores requested analysis; turning the action off prevents reopening. A committed selection survives this space constraint, but unfinished selection and inspection stop.
 
@@ -290,7 +290,7 @@ Either close control cancels unfinished analysis and any armed area-selection to
 
 Requested expansion, total shelf height, mode, waveform display, signal choices, channel visibility, and chroma zoom persist as application preferences. Existing saved parade and waveform choices upgrade automatically. Legacy plot-only heights reset to the compact default unless a total shelf height is saved; legacy linear scale does not restore a linear branch. Selections and cursors do not enter photograph records, looks, or export metadata.
 
-Analysis reports below-range, above-range, and invalid samples separately. Endpoint accumulation is not proof of clipping. Preview retains its detail-effects caveat. Pending, stale, unavailable, or failed analysis does not replace the accepted photograph or block Save and Export. See the [image-analysis specification](../specs/gui-product-design/image-analysis/spec.md) for measurement and comparison rules.
+Analysis reports below-range, above-range, and invalid samples separately. Preview retains its detail-effects caveat. Pending, stale, unavailable, or failed analysis does not replace the accepted photograph or block Save and Export. See the [image-analysis specification](../specs/gui-product-design/image-analysis/spec.md) for measurement and comparison rules.
 
 ### Canvas and retained presentation
 

@@ -424,6 +424,8 @@ impl crate::App {
         self.viewer.analysis.selection = None;
         self.viewer.analysis.band = None;
         self.viewer.analysis.sample = None;
+        self.viewer.analysis.plot_inspecting = false;
+        self.viewer.analysis.cursor_control = None;
         self.viewer.analysis.completed = None;
         self.viewer.cancel_analysis_selection();
         self.analysis.clear();
@@ -433,6 +435,7 @@ impl crate::App {
         use crate::analysis_geometry::AnalysisGeometry;
         use crate::analysis_plot::{self, PlotSample};
         use crate::display::ViewLayer;
+        self.viewer.analysis.plot_inspecting = false;
         let layer = self.viewer.settings.layer;
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = crate::theme::SPACE_1;
@@ -449,6 +452,53 @@ impl crate::App {
                 {
                     self.analysis.visible = false;
                 }
+                let inspection_available = self.viewer.analysis_retained(layer).is_some()
+                    || (layer == ViewLayer::Input && self.oriented_input.is_some())
+                    || (layer == ViewLayer::Output && self.output_geometry.is_some());
+                let cursor_available = inspection_available && !self.viewer.analysis.armed;
+                if cursor_available {
+                    let selected = self
+                        .viewer
+                        .analysis
+                        .cursor_control
+                        .is_some_and(|id| ui.memory(|memory| memory.has_focus(id)));
+                    let label = crate::i18n::text(ui.ctx(), "surfaces.analysis.cursor");
+                    let help = crate::i18n::text(ui.ctx(), "surfaces.analysis.cursor_help");
+                    let cursor = ui
+                        .push_id("analysis-pixel-cursor", |ui| {
+                            ui.selectable_label(selected, label.as_ref())
+                        })
+                        .inner;
+                    self.viewer.analysis.cursor_control = Some(cursor.id);
+                    if cursor.clicked() {
+                        cursor.request_focus();
+                    }
+                    let focused = cursor.has_focus();
+                    if focused {
+                        ui.memory_mut(|memory| {
+                            memory.set_focus_lock_filter(
+                                cursor.id,
+                                egui::EventFilter {
+                                    horizontal_arrows: true,
+                                    vertical_arrows: true,
+                                    ..Default::default()
+                                },
+                            );
+                        });
+                    }
+                    ui.ctx().accesskit_node_builder(cursor.id, |node| {
+                        node.set_label(label.as_ref());
+                        node.set_description(help.as_ref());
+                        node.set_toggled(if focused {
+                            egui::accesskit::Toggled::True
+                        } else {
+                            egui::accesskit::Toggled::False
+                        });
+                    });
+                    cursor.on_hover_text(help);
+                } else if let Some(id) = self.viewer.analysis.cursor_control.take() {
+                    ui.memory_mut(|memory| memory.surrender_focus(id));
+                }
                 if self.analysis.selection.is_some()
                     && ui
                         .button(crate::i18n::text(ui.ctx(), "surfaces.analysis.full"))
@@ -458,9 +508,7 @@ impl crate::App {
                     self.viewer.cancel_analysis_selection();
                     self.analysis.clear_sample();
                 }
-                if (self.viewer.analysis_retained(layer).is_some()
-                    || (layer == ViewLayer::Input && self.oriented_input.is_some())
-                    || (layer == ViewLayer::Output && self.output_geometry.is_some()))
+                if inspection_available
                     && ui
                         .selectable_label(
                             self.viewer.analysis.armed,
@@ -711,6 +759,15 @@ impl crate::App {
                         && sample.y >= region[1]
                         && sample.y < region[3],
                 });
+            let cursor_focused = self
+                .viewer
+                .analysis
+                .cursor_control
+                .is_some_and(|id| ui.memory(|memory| memory.has_focus(id)));
+            // A stationary hover must not steal the cursor's keyboard focus;
+            // a fresh pointer move can hand inspection back to the plot.
+            let pointer_moved = ui.input(|input| input.pointer.delta() != egui::Vec2::ZERO);
+            let allow_pointer_inspection = !cursor_focused || pointer_moved;
             let plot_max_height = ui.available_height().max(0.0);
             let plot = analysis_plot::show_plot(
                 ui,
@@ -719,13 +776,23 @@ impl crate::App {
                 data,
                 counterpart,
                 sample,
+                allow_pointer_inspection,
                 plot_max_height,
                 status,
             );
             if plot.inspecting {
                 self.analysis.clear_sample();
+                self.viewer.analysis.sample = None;
+                self.viewer.analysis.plot_inspecting = true;
+                if let Some(id) = self.viewer.analysis.cursor_control {
+                    ui.memory_mut(|memory| memory.surrender_focus(id));
+                }
+            } else if cursor_focused {
+                self.viewer.analysis.band = None;
             }
-            if let Some((start, end)) = plot.band {
+            if plot.inspecting
+                && let Some((start, end)) = plot.band
+            {
                 self.viewer.analysis.band =
                     Some(image_band(region, geometry.image_size(), start, end));
             }
