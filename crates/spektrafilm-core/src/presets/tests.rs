@@ -1862,6 +1862,57 @@ fn vision3_50d_builtin_accepts_film_print_stock_and_preserves_context() {
 }
 
 #[test]
+fn verita_200d_builtin_accepts_film_print_stock_and_preserves_context() {
+    let library = builtin_presets();
+    let matches: Vec<_> = library
+        .iter()
+        .filter(|p| p.name == "Kodak Verita 200D")
+        .collect();
+    assert_eq!(matches.len(), 1);
+    let preset = matches[0];
+    let mut current = RuntimeParams::default();
+    current.camera.exposure_compensation_ev = 0.5;
+    current.camera.auto_exposure = false;
+    current.camera.film_format_mm = 65.;
+    current.io.crop = true;
+    current.io.crop_size = [0.65, 0.8];
+    for carrier in [
+        Preset::from_json_str(&preset.to_json().unwrap()).unwrap(),
+        Preset::from_toml_str(&preset.to_toml().unwrap()).unwrap(),
+    ] {
+        let resolved = carrier.resolve(&data(), &current).unwrap();
+        assert_eq!(resolved.film_name, "kodak_verita_200d");
+        assert_eq!(resolved.print_name, "kodak_2383");
+        let p = crate::params_builder::digest_params(
+            resolved.params,
+            &resolved.film,
+            &resolved.print,
+            None,
+            false,
+        );
+        assert_eq!(p.workflow.route, "input > film > print > scan");
+        assert_eq!(p.scanner.scan_output, "direct_scan");
+        assert_eq!(p.camera.exposure_compensation_ev, 0.5);
+        assert!(!p.camera.auto_exposure);
+        assert_eq!(p.camera.film_format_mm, 65.);
+        assert_eq!(p.io.crop_size, current.io.crop_size);
+        assert!(p.film_render.grain.active && p.film_render.halation.active);
+        assert_eq!(p.film_render.grain.rms_granularity, [4.5, 4.5, 4.5]);
+        assert_eq!(p.film_render.grain.uniformity, [0.97, 0.97, 0.97]);
+        assert_eq!(p.film_render.grain.density_min, [0.03, 0.03, 0.03]);
+        assert_eq!(p.finishing, crate::params::FinishingParams::default());
+    }
+    current.workflow.route = "input > film > scan".into();
+    let resolved = preset.resolve(&data(), &current).unwrap();
+    assert_eq!(
+        resolved.params.workflow.route,
+        "input > film > print > scan"
+    );
+    assert!(!resolved.params.io.scan_film);
+    assert_eq!(resolved.params.scanner.scan_output, "direct_scan");
+}
+
+#[test]
 fn astia100f_builtin_preserves_context_and_resolves_native_positive() {
     let library = builtin_presets();
     let matches: Vec<_> = library
