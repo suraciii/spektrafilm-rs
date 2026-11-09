@@ -3,6 +3,8 @@
 //! The private modules separate responsibilities while this facade preserves
 //! the public profile API.
 
+#[cfg(test)]
+mod fbclassic_tests;
 mod io;
 mod model;
 #[cfg(test)]
