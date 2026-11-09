@@ -679,18 +679,6 @@ fn append_nonruntime(entries: &mut Vec<ControlEntry>) {
             "film_render.halation.halation_strength",
         ],
     ));
-    entries.push(nonruntime(
-        SurfaceEntry {
-            path: "action.scan_for_print",
-            label: "scan for print",
-            owner: Owner(Stage::Scan),
-            section: "Scanner",
-            editor: Action,
-            validator: "App::toggle_scan_for_print",
-            conditions: &[],
-        },
-        &["print_render.glare.active"],
-    ));
     // Extras vectors are edited independently by the production tuple helper.
     for (path, label) in [
         ("extras.special.film_channel_swap", "film_channel_swap"),
@@ -1671,7 +1659,7 @@ const LABELS: &[(&str, &str)] = &[
         "gamma factor slow",
     ),
     ("print_render.development_time", "development time"),
-    ("print_render.glare.active", "Enable print glare"),
+    ("print_render.glare.active", "Simulate viewing glare"),
     ("print_render.glare.blur", "Blur (viewing glare)"),
     ("print_render.glare.percent", "percent"),
     ("print_render.glare.roughness", "roughness"),

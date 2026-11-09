@@ -412,7 +412,7 @@ fn print_chemistry_base_glare_and_diffusion_controls_accept_edits_and_persist() 
     assert_eq!(h.state().params.print_render.base.active, base_active);
 
     let glare_active = h.state().params.print_render.glare.active;
-    toggle_control(h, "print_render.glare.active", "Enable print glare");
+    toggle_control(h, "print_render.glare.active", "Simulate viewing glare");
     edit_control(h, "print_render.glare.percent", "percent", "0.25");
     edit_control(h, "print_render.glare.roughness", "roughness", "0.5");
     assert_eq!(h.state().params.print_render.glare.active, !glare_active);
@@ -460,6 +460,39 @@ fn print_chemistry_base_glare_and_diffusion_controls_accept_edits_and_persist() 
         edit_control(h, "print_render.base.scale", "scale", "0.5");
         assert_eq!(h.state().params.print_render.base.scale, 0.5);
     });
+}
+
+#[test]
+fn disabled_glare_is_not_an_inactive_module_banner() {
+    let mut s = session();
+    let h = &mut s.harness;
+    set_route(h, "input > film > print > scan");
+    reveal_control(h, "print_render.glare.active");
+    let reason = controls::localized(&h.ctx, "print readout scan operation required");
+    let banner = format!("Inactive controls · {reason} · stored values retained");
+    assert_eq!(
+        h.query_all_by_label(banner.as_str()).count(),
+        0,
+        "the applicable module must not start inactive"
+    );
+
+    if h.state().params.print_render.glare.active {
+        toggle_control(h, "print_render.glare.active", "Simulate viewing glare");
+    }
+    assert!(!h.state().params.print_render.glare.active);
+    assert_eq!(
+        h.query_all_by_label(banner.as_str()).count(),
+        0,
+        "a user-disabled effect is Off, not Inactive"
+    );
+
+    set_route(h, "input > film > scan");
+    reveal_control(h, "print_render.glare.active");
+    assert_eq!(
+        h.query_all_by_label(banner.as_str()).count(),
+        1,
+        "a route without print readout states the inapplicable reason"
+    );
 }
 
 #[test]

@@ -256,7 +256,7 @@ GUI_ACTIONS = [
     ("apply_film_profile_defaults", "film stock change re-applies stock specifics", DIVERGENT, 3),
     ("run_preview", "preview render through resize_for_preview (skimage order=1 anti-aliased)", DIVERGENT, 16),
     ("run_scan", "full-resolution simulation", ABSENT, 12),
-    ("scan_for_print", "force scanner corrections/glare and restore transient snapshot", ABSENT, 12),
+    ("scan_for_print", "force scanner corrections/glare and restore transient snapshot", RETIRED, None),
     ("request_auto_preview", "auto-preview request from a runtime editor", DIVERGENT, 11),
     ("report_display_transform_status", "napari display transform toggle", ABSENT, 12),
     ("set_gray_18_canvas", "18% gray canvas background", ABSENT, 12),
@@ -638,10 +638,11 @@ def gui_evidence(path):
 
 def gui_action_entry(action, desc, status, owner, evidence):
     entry = {"description": desc, **integration_entry(status, owner, "",
-        "crates/spektrafilm-gui/src/main.rs; state.rs; controls.rs; display.rs")}
+        "crates/spektrafilm-gui/src/main.rs; state.rs; controls.rs; display.rs",
+        audit_status=AUDIT_GUI_STATUSES.get(action))}
     rows = [row for row in evidence.get("records", [])
             if row.get("parity_action") == action]
-    if rows:
+    if rows and status != RETIRED:
         entry.update(rust_status="verified_exercised_path",
                      verification="Named native-window assertion; see measured_evidence.",
                      measured_evidence=rows, evidence_report_sha256=evidence["report_sha256"])

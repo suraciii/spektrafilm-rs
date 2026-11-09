@@ -215,6 +215,16 @@ Open state and scroll position MUST survive ordinary edits, render completion, a
 
 The [preset section table](../presets/design.md#sections) remains authoritative for serialized section payloads and their primary module anchors. A visual module is not a new serialized section. Moving Print viewing glare to Scan or splitting Preflash from Enlarger MUST NOT migrate their canonical leaves or expand a preset's scope.
 
+### Print viewing glare control
+
+`print_render.glare.active` MUST have exactly one GUI editor: the switch in Scan / Print viewing glare. The GUI MUST NOT retain the retired `Scan for print` mode, a transient override, or a snapshot.
+
+The module MUST expose the switch on every route with print readout, including when the effect is off or its amount is zero. A user-disabled effect MUST NOT be presented as inapplicable. Route inapplicability is limited to routes without print readout; global stochastic disablement is a status, not a second switch.
+
+A route without print readout MUST state that reason once and retain stored values.
+
+Scan MAY report the effective state and locate the switch, but MUST NOT expose a second editable copy. `print_render.glare.*` remains a normal document parameter across Undo/Redo, state save/load, presets, recipes, reports, and thumbnails. Transient GUI state MUST NOT override it.
+
 ### Tone and color access
 
 Scan organizes the [scan workflow](../../CONTEXT.md#language), not only optical capture. Tone & Color MUST remain a separate module from Scanner and its specialized negative-conversion correction. Output MUST NOT retain a second editor or an empty Finishing module.

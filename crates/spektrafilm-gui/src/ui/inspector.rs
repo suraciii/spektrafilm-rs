@@ -85,6 +85,20 @@ impl App {
                             node.set_description(reason.as_ref())
                         });
                         badge.on_hover_text(reason);
+                    } else if section == "Glare" {
+                        let glare = &self.params.print_render.glare;
+                        let (key, color) = if !glare.active {
+                            ("surfaces.section.glare_off", theme::FG_MUTED)
+                        } else if glare.percent <= 0.0 {
+                            ("surfaces.section.glare_no_effect", theme::WARNING)
+                        } else {
+                            ("surfaces.section.glare_on", theme::ACCENT)
+                        };
+                        ui.label(
+                            egui::RichText::new(crate::i18n::text(ui.ctx(), key))
+                                .small()
+                                .color(color),
+                        );
                     }
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         self.section_reset_controls_with_order(ui, section, true);
@@ -254,22 +268,67 @@ impl App {
                 }
             }
             "Scanner" => {
-                let mut scan_for_print = self.scan_for_print_snapshot.is_some();
-                let response = ui
-                    .checkbox(
-                        &mut scan_for_print,
-                        controls::localized(ui.ctx(), "scan for print"),
-                    )
-                    .on_hover_text(crate::i18n::text(ui.ctx(), "surfaces.scanner.print_help"));
-                controls::locate_row(ui, "action.scan_for_print", &response);
-                if response.changed() {
-                    self.label_adjustment("Toggle scan for print");
-                    self.toggle_scan_for_print();
-                }
+                Self::scanner_print_glare_status(
+                    ui,
+                    &self.params,
+                    &mut self.pending_scroll,
+                    &mut self.filter,
+                    &mut self.only_modified,
+                );
                 self.parameter_section_controls(ui, section);
             }
             _ => self.parameter_section_controls(ui, section),
         }
+    }
+
+    pub(crate) fn scanner_print_glare_status(
+        ui: &mut egui::Ui,
+        params: &RuntimeParams,
+        pending_scroll: &mut Option<String>,
+        filter: &mut String,
+        only_modified: &mut bool,
+    ) {
+        if controls::control_inactive_reason(ui.ctx(), "print_render.glare.active", params)
+            .is_some()
+        {
+            return;
+        }
+        let glare = &params.print_render.glare;
+        let text = if !glare.active {
+            crate::i18n::text(ui.ctx(), "surfaces.scanner.print_glare_off").to_string()
+        } else if glare.percent <= 0.0 {
+            crate::tr!(
+                ui.ctx(),
+                "surfaces.scanner.print_glare_no_effect",
+                amount = format!("{:.2}", glare.percent)
+            )
+            .to_string()
+        } else {
+            crate::tr!(
+                ui.ctx(),
+                "surfaces.scanner.print_glare_on",
+                amount = format!("{:.2}", glare.percent)
+            )
+            .to_string()
+        };
+        ui.horizontal_wrapped(|ui| {
+            ui.label(egui::RichText::new(text).small().color(theme::FG_MUTED));
+            let adjust = ui
+                .link(crate::i18n::text(
+                    ui.ctx(),
+                    "surfaces.scanner.adjust_print_glare",
+                ))
+                .on_hover_text(crate::i18n::text(
+                    ui.ctx(),
+                    "surfaces.scanner.adjust_print_glare_help",
+                ));
+            if adjust.clicked() {
+                filter.clear();
+                *only_modified = false;
+                controls::request_focus(ui.ctx(), "Glare", "print_render.glare.active");
+                *pending_scroll = Some("Glare".to_owned());
+            }
+        });
     }
 
     /// The `modified` chip and the reset action of one section header.
@@ -690,5 +749,51 @@ impl App {
             self.refresh_input_viewer();
             self.refresh_viewing_artifacts();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use egui_kittest::{Harness, kittest::Queryable};
+    use spektrafilm_backend::cpu_backend::CpuBackend;
+    use std::sync::Arc;
+
+    #[test]
+    fn scanner_adjust_locator_reveals_glare_under_filter() {
+        let directory = tempfile::tempdir().unwrap();
+        let state_path = directory.path().join("state.json");
+        crate::state::GuiState::factory().save(&state_path).unwrap();
+        let mut app = App::new_with_browser_path(
+            Arc::new(CpuBackend),
+            None,
+            Some(state_path),
+            None,
+            directory.path().join("browser.json"),
+            crate::headless::data_dir(),
+        );
+        app.params.workflow.route = "input > film > print > scan".into();
+        app.params.print_render.glare.active = false;
+        app.filter = "scanner".into();
+        app.only_modified = false;
+        let mut harness = Harness::new_ui_state(
+            |ui, app: &mut App| {
+                app.parameter_section(ui, "Scanner");
+                app.parameter_section(ui, "Glare");
+            },
+            app,
+        );
+        harness.run();
+        assert!(harness.query_by_label("Adjust").is_some());
+        harness.get_by_label("Adjust").simulate_click();
+        harness.run();
+        assert!(harness.state().filter.is_empty());
+        assert!(harness.query_by_label("Simulate viewing glare").is_some());
+        assert!(
+            harness
+                .get_by_label("Simulate viewing glare")
+                .node()
+                .is_focused()
+        );
     }
 }

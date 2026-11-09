@@ -4,6 +4,23 @@ use std::borrow::Cow;
 
 fn key(label: &str) -> Option<&'static str> {
     match label {
+        "Simulate viewing glare" => Some("controls.label.simulate_viewing_glare"),
+        "Off. Stored values are kept." => Some("surfaces.glare.off_status"),
+        "Glare amount is 0, so viewing glare is not applied. Increase the amount to enable it." => {
+            Some("surfaces.glare.no_effect_status")
+        }
+        "Debug settings disable stochastic effects, so viewing glare does not run." => {
+            Some("surfaces.glare.stochastic_disabled_status")
+        }
+        "Stray light as a fraction of readout light. 0 turns the effect off. Default 0.03 (3%)." => {
+            Some("controls.help.glare.percent")
+        }
+        "Random variation of the glare amount: 0 is even, 1 is strongly mottled." => {
+            Some("controls.help.glare.roughness")
+        }
+        "Spatial spread of the glare amount in pixels; 0 is per-pixel, larger values look like broad reflections." => {
+            Some("controls.help.glare.blur")
+        }
         "film-exposure route and executed span required" => {
             Some("controls.condition.film_exposure_operation")
         }
@@ -161,7 +178,7 @@ fn key(label: &str) -> Option<&'static str> {
             Some("controls.scanner.camera_exposure_help")
         }
         "Add grain to the negative" => Some("controls.grain.enable_help"),
-        "Add readout stray light after lens blur and before scanner correction. This does not change print exposure or developed density." => {
+        "Adds stray light from viewing or scanning a paper print: shadows lift and contrast drops. It does not change print exposure, chemistry, or developed density." => {
             Some("controls.help.glare.enable")
         }
         "Additive offset on the family's halo warmth axis. Positive = warm outer halo / cool inner halo. Energy-preserving per channel. 0 = use family default." => {
@@ -414,9 +431,6 @@ fn key(label: &str) -> Option<&'static str> {
         "Digital scan sharpening after interpretation and output gamut processing: [sigma in pixels, amount]." => {
             Some("controls.scanner.unsharp_mask_help")
         }
-        "Disable print viewing glare for a print scan; toggle again to restore its previous state." => {
-            Some("surfaces.scanner.print_help")
-        }
         "Discard these export settings. The retained output is unchanged." => {
             Some("surfaces.export.discard_help")
         }
@@ -489,7 +503,6 @@ fn key(label: &str) -> Option<&'static str> {
         "Enable print density-curve morphing." => {
             Some("controls.chemistry.enable_print_curves_help")
         }
-        "Enable print glare" => Some("controls.label.enable_print_glare"),
         "Enable the independent CMYK ink style processing stage; retains its strength while disabled." => {
             Some("controls.cmyk.enable_help")
         }
@@ -880,7 +893,6 @@ fn key(label: &str) -> Option<&'static str> {
         "Per-channel granularity G: Spektra derives statistical particle area from the film density curves using upstream granularity. It is not a certified optical RMS target. Distinct from Procedural Amount." => {
             Some("controls.grain.rms_granularity_help")
         }
-        "Percentage of the glare light (typically 0.1-0.25)" => Some("controls.help.glare.percent"),
         "Performance logs are recorded automatically." => Some("surfaces.diagnostics.automatic"),
         "Permutation of film density channels. Selecting a channel swaps its prior position so no record is duplicated or dropped." => {
             Some("controls.help.channels.permutation")
@@ -1031,7 +1043,6 @@ fn key(label: &str) -> Option<&'static str> {
             Some("surfaces.source.rotate_ccw_help")
         }
         "Rotated input %{degrees}°" => Some("surfaces.status.rotated"),
-        "Roughness of the glare light (0-1)" => Some("controls.help.glare.roughness"),
         "Route: %{route}" => Some("surfaces.header.route"),
         "Modified becomes available when automatic Preview or Scan completes." => {
             Some("surfaces.viewer.output_disabled")
@@ -1102,7 +1113,6 @@ fn key(label: &str) -> Option<&'static str> {
         "Sigma in um for the diffusion of the couplers, (5-20 um), controls sharpness and affects saturation." => {
             Some("controls.couplers.diffusion_size_help")
         }
-        "Sigma of gaussian blur in pixels for the glare" => Some("controls.help.glare.blur"),
         "Sigma of the first halation bounce per channel [R,G,B], in micrometers. Set by the base thickness (40-80 um for typical cine/still bases)." => {
             Some("controls.halation.first_sigma_help")
         }
@@ -1502,7 +1512,6 @@ fn key(label: &str) -> Option<&'static str> {
         "saving cctf encoding" => Some("controls.output.saving_cctf"),
         "saving color space" => Some("controls.output.saving_color_space"),
         "scale" => Some("controls.base.scale"),
-        "scan for print" => Some("controls.label.scan_for_print"),
         "scan illuminant" => Some("controls.convert.scan_illuminant"),
         "scan output" => Some("controls.scanner.scan_output"),
         "scanner selections retained; scanner controls inactive for this route; stored selections retained" => {

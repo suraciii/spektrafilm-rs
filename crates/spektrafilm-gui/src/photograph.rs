@@ -286,7 +286,6 @@ impl App {
         self.source_render = None;
         self.retained_kind = None;
         self.stale_save_confirmation = false;
-        self.scan_for_print_snapshot = None;
         self.operator_compare = false;
         self.finishing_compare = false;
         self.displayed_comparison = None;

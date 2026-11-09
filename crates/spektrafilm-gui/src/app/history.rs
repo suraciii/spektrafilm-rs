@@ -16,7 +16,6 @@ pub(super) struct AdjustmentState {
     pub(super) special: serde_json::Value,
     pub(super) raw_settings: serde_json::Value,
     applied: Option<presets::AppliedPreset>,
-    scan_for_print: Option<bool>,
     pub(super) rotation: i32,
 }
 
@@ -44,7 +43,6 @@ impl AdjustmentState {
             special: app.gui_state.sections["special"].clone(),
             raw_settings: app.gui_state.sections["load_raw"].clone(),
             applied: app.presets.state.applied.clone(),
-            scan_for_print: app.scan_for_print_snapshot,
             rotation: app.input_rotation,
         }
     }
@@ -60,7 +58,6 @@ impl AdjustmentState {
             && self.print_name == app.print_name
             && self.special == app.gui_state.sections["special"]
             && self.raw_settings == app.gui_state.sections["load_raw"]
-            && self.scan_for_print == app.scan_for_print_snapshot
             && self.rotation == app.input_rotation
     }
 
@@ -90,7 +87,6 @@ impl AdjustmentState {
         app.gui_state.sections["special"] = self.special.clone();
         app.gui_state.sections["load_raw"] = self.raw_settings.clone();
         app.presets.state.applied = self.applied.clone();
-        app.scan_for_print_snapshot = self.scan_for_print;
         if refresh_input && app.image.is_some() {
             app.input_epoch = app.input_epoch.wrapping_add(1);
             app.input_rotation = self.rotation;
@@ -148,7 +144,6 @@ impl AdjustmentHistory {
                 special: settings.special.clone(),
                 raw_settings: settings.raw.clone(),
                 applied: settings.applied.clone(),
-                scan_for_print: None,
                 rotation: settings.rotation,
             })),
             ..Default::default()
@@ -450,8 +445,6 @@ impl App {
             "Change workflow"
         } else if before.rotation != self.input_rotation {
             "Rotate source"
-        } else if before.scan_for_print != self.scan_for_print_snapshot {
-            "Scan for print"
         } else {
             "Adjust photograph"
         })
@@ -555,11 +548,9 @@ fn history_message(label: &str) -> crate::app::Message {
         "Apply look preset" => "operations.history.apply_look",
         "Change workflow" => "operations.history.change_workflow",
         "Rotate source" => "operations.history.rotate",
-        "Scan for print" => "operations.history.scan_for_print",
         "Adjust photograph" => "operations.history.adjust",
         "Rotate source counter-clockwise" => "operations.history.rotate_ccw",
         "Rotate source clockwise" => "operations.history.rotate_cw",
-        "Toggle scan for print" => "operations.history.toggle_scan_for_print",
         _ => return crate::app::Message::control(label),
     };
     crate::app::Message::new(key)
@@ -942,14 +933,15 @@ mod tests {
     }
 
     #[test]
-    fn history_restores_material_metadata_and_scan_for_print_without_preferences() {
+    fn history_restores_material_metadata_and_glare_without_preferences() {
         let (mut app, _directory, ctx) = app();
         app.params.print_render.glare.active = true;
         app.reset_adjustment_history();
         let film = app.film_name.clone();
         let times = app.film_dev_times.clone();
         app.begin_adjustment_frame(&ctx);
-        app.toggle_scan_for_print();
+        app.params.print_render.glare.active = false;
+        app.mark_parameters_changed();
         app.end_adjustment_frame(&ctx);
         app.begin_adjustment_frame(&ctx);
         app.select_film_profile("kodak_ektachrome_100".into());
@@ -959,13 +951,17 @@ mod tests {
         assert!(app.undo_adjustment());
         assert_eq!(app.film_name, film);
         assert_eq!(app.film_dev_times, times);
-        assert_eq!(app.scan_for_print_snapshot, Some(true));
         assert!(!app.params.print_render.glare.active);
         assert_eq!(app.params.settings.preview_max_size, 1024);
         assert_eq!(app.gui_state.display_profile(), Some("user-display.icc"));
         assert!(app.undo_adjustment());
-        assert_eq!(app.scan_for_print_snapshot, None);
         assert!(app.params.print_render.glare.active);
+        assert!(app.redo_adjustment());
+        assert!(!app.params.print_render.glare.active);
+        assert!(app.redo_adjustment());
+        assert!(!app.params.print_render.glare.active);
+        assert_eq!(app.params.settings.preview_max_size, 1024);
+        assert_eq!(app.gui_state.display_profile(), Some("user-display.icc"));
     }
 
     #[test]
@@ -980,12 +976,10 @@ mod tests {
         app.params.scanner.scan_output = "negative_to_positive".into();
         app.params.workflow.route = "input".into();
         app.film_name = "unaccepted".into();
-        app.scan_for_print_snapshot = Some(true);
         app.mark_parameters_changed_invalidating_calibration();
         app.end_adjustment_frame(&ctx);
         assert_eq!(app.params, accepted);
         assert_ne!(app.film_name, "unaccepted");
-        assert_eq!(app.scan_for_print_snapshot, None);
         assert_eq!(app.parameter_revision, revision);
         assert_eq!(app.calibration_epoch, calibration);
         assert_eq!(app.adjustment_history.undo.len(), entries);

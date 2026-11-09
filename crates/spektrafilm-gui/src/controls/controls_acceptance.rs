@@ -158,7 +158,7 @@ fn glare_selector_follows_print_readout_not_print_creation() {
     );
     assert!(
         harness
-            .get_by_label("Enable print glare")
+            .get_by_label("Simulate viewing glare")
             .node()
             .is_disabled()
     );
@@ -166,11 +166,123 @@ fn glare_selector_follows_print_readout_not_print_creation() {
     harness.run();
     assert!(
         !harness
-            .get_by_label("Enable print glare")
+            .get_by_label("Simulate viewing glare")
             .node()
             .is_disabled()
     );
     assert!(!harness.state().print_render.glare.active);
+
+    let factory = crate::state::GuiState::factory();
+    let data = crate::profiles::pick_data_dir();
+    let film = spektrafilm_core::profile::load_profile_by_name(&data, factory.film()).unwrap();
+    let print = spektrafilm_core::profile::load_profile_by_name(&data, factory.paper()).unwrap();
+    assert_eq!(
+        super::module_applicability("Glare", harness.state(), &film, Some(&print)),
+        None
+    );
+
+    harness.state_mut().print_render.glare.active = true;
+    harness.state_mut().print_render.glare.percent = 0.0;
+    harness.run();
+    assert!(
+        !harness
+            .get_by_label("Simulate viewing glare")
+            .node()
+            .is_disabled()
+    );
+    assert_eq!(
+        super::module_applicability("Glare", harness.state(), &film, Some(&print)),
+        None
+    );
+
+    harness.state_mut().debug.deactivate_stochastic_effects = true;
+    assert_eq!(
+        super::module_applicability("Glare", harness.state(), &film, Some(&print)),
+        None
+    );
+    harness.state_mut().workflow.route = "input > film > print".into();
+    harness.run();
+    assert!(
+        harness
+            .get_by_label("Simulate viewing glare")
+            .node()
+            .is_disabled()
+    );
+    assert_eq!(
+        super::module_applicability("Glare", harness.state(), &film, Some(&print)).as_deref(),
+        Some("print readout scan operation required"),
+    );
+}
+
+#[test]
+fn scanner_print_glare_status_and_adjust_locator_follow_readout() {
+    let mut params = scanner_params();
+    params.workflow.route = "print > scan".into();
+    params.print_render.glare.active = false;
+    let mut harness = Harness::new_ui_state(
+        |ui, state: &mut (RuntimeParams, Option<String>, String, bool)| {
+            crate::App::scanner_print_glare_status(
+                ui,
+                &state.0,
+                &mut state.1,
+                &mut state.2,
+                &mut state.3,
+            );
+        },
+        (params, None, "scanner".to_owned(), true),
+    );
+    assert!(
+        harness
+            .query_by_label("Print readout is a clean scan, without viewing glare.")
+            .is_some()
+    );
+
+    harness.state_mut().0.print_render.glare.active = true;
+    harness.state_mut().0.print_render.glare.percent = 0.03;
+    harness.run();
+    assert!(
+        harness
+            .query_by_label("Print readout includes viewing glare (0.03).")
+            .is_some()
+    );
+    assert!(
+        harness
+            .query_by_label("Print readout is a clean scan, without viewing glare.")
+            .is_none()
+    );
+
+    harness.state_mut().0.print_render.glare.percent = 0.0;
+    harness.run();
+    assert!(
+        harness
+            .query_by_label("Print readout includes viewing glare at 0.00, so it has no effect.")
+            .is_some()
+    );
+    assert!(
+        harness
+            .query_by_label("Print readout includes viewing glare (0.03).")
+            .is_none()
+    );
+    harness.get_by_label("Adjust").simulate_click();
+    harness.run();
+    assert_eq!(harness.state().1.as_deref(), Some("Glare"));
+    assert!(harness.state().2.is_empty());
+    assert!(!harness.state().3);
+    assert_eq!(
+        harness
+            .ctx
+            .data(|data| data.get_temp::<(String, String)>(egui::Id::new("control_focus_request"))),
+        Some(("Glare".to_owned(), "print_render.glare.active".to_owned())),
+    );
+
+    harness.state_mut().0.workflow.route = "input > film > print".into();
+    harness.run();
+    assert!(harness.query_by_label("Adjust").is_none());
+    assert!(
+        harness
+            .query_by_label("Print readout includes viewing glare at 0.00, so it has no effect.")
+            .is_none()
+    );
 }
 
 #[test]

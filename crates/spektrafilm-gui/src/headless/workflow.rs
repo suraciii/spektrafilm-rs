@@ -50,54 +50,43 @@ fn every_supported_route_preview_scan_state_roundtrip_and_save() {
     }
 }
 
-// gui_acceptance.py:1743–1788: forced correction, exact restoration, loaded toggle.
 #[test]
-fn scan_for_print_checkbox_restores_and_clears_transient_snapshot() {
+fn glare_off_is_saved_and_survives_route_and_state_reload() {
     let mut s = session();
     let h = &mut s.harness;
-    reveal_control(h, "workflow.route");
-    choose(h, "workflow", "input > film > print > scan");
-    let before = h.state().params.print_render.glare.active;
-    search_controls(h, "Scanner");
-    click(h, "scan for print");
-    assert!(h.state().scan_for_print_snapshot.is_some());
-    assert!(!h.state().params.print_render.glare.active);
-    reveal_control(h, "action.save_state");
-    let path = s.directory.path().join("correction.json");
-    script(h, chooser::ChooserResult::Scripted(path.clone()));
-    click(h, "Save current to file");
+    h.state_mut().params.workflow.route = "input > film > print > scan".into();
+    h.state_mut().finish_route_change();
+    h.state_mut().params.print_render.glare.active = true;
+    h.state_mut().mark_parameters_changed();
+    h.state_mut().params.print_render.glare.active = false;
+    h.state_mut().mark_parameters_changed();
+
+    let path = s.directory.path().join("glare.json");
+    h.state().current_state().unwrap().save(&path).unwrap();
     let saved: serde_json::Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
-    assert!(saved.get("scan_for_print").is_none());
-    assert!(saved["simulation"].get("scan_for_print").is_none());
-    assert!(saved["rust"].get("scan_for_print_snapshot").is_none());
-    assert!(saved["simulation"].get("workflow").is_none());
-    assert!(saved["rust"]["runtime"]["workflow"].get("route").is_none());
-    close_settings(h);
-    search_controls(h, "Scanner");
-    click(h, "scan for print");
-    assert!(h.state().scan_for_print_snapshot.is_none());
-    assert_eq!(h.state().params.print_render.glare.active, before);
-    // The document was written while glare was disabled, so the reload keeps it
-    // off and drops the transient snapshot rather than resurrecting the value
-    // that was live when the file was written.
-    click(h, "scan for print");
-    open_settings(h);
-    script(h, chooser::ChooserResult::Scripted(path));
-    click(h, "Load from file");
-    assert!(h.query_by_label("Discard changes").is_some());
-    assert!(h.state().scan_for_print_snapshot.is_some());
-    click(h, "Discard changes");
-    assert!(h.query_by_label("Discard changes").is_none());
-    assert!(h.state().scan_for_print_snapshot.is_none());
+    assert!(!saved.to_string().contains(concat!("scan_", "for_print")));
+    let restored = state::GuiState::load(&path).unwrap();
+    assert!(!restored.runtime_params().unwrap().print_render.glare.active);
+
+    h.state_mut().params.workflow.route = "input".into();
+    h.state_mut().finish_route_change();
     assert!(!h.state().params.print_render.glare.active);
-    close_settings(h);
-    search_controls(h, "Scanner");
-    click(h, "scan for print");
-    assert!(h.state().scan_for_print_snapshot.is_some());
+    h.state_mut().params.workflow.route = "input > film > print > scan".into();
+    h.state_mut().finish_route_change();
     assert!(!h.state().params.print_render.glare.active);
-    reveal_control(h, "workflow.route");
-    choose(h, "workflow", "input");
-    assert!(h.state().scan_for_print_snapshot.is_none());
+
+    h.state_mut().params.print_render.glare.active = true;
+    h.state_mut().mark_parameters_changed();
+    h.state_mut()
+        .apply_state_with_source(restored, |_| {})
+        .unwrap();
+    await_input(h);
+    assert_eq!(
+        h.state().params.workflow.route,
+        "input > film > print > scan"
+    );
+    assert!(!h.state().params.print_render.glare.active);
+    h.state_mut().finish_route_change();
     assert!(!h.state().params.print_render.glare.active);
 }
 
