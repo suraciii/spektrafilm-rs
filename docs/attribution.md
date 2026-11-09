@@ -101,6 +101,15 @@ characteristic curves, MTF and RMS 10. The [source notice](../data/license/AGFA_
 separates new extraction/reconstruction contributions from Agfa's original
 material. The clear-film spectrum is inferred, not measured.
 
+## Ilford MULTIGRADE FB CLASSIC Glossy
+
+The [MULTIGRADE FB CLASSIC Glossy grade-2 profile](fbclassic.md) reconstructs
+the October 2013 page-2 filter-2 vector characteristic curve. The
+[source notice](../data/license/ILFORD_MULTIGRADE_FB_CLASSIC.txt) separates
+new extraction/reconstruction contributions from Harman/ILFORD's original
+material. The profile is fixed at grade 2 and uses a flat spectral placeholder;
+it is not a complete variable-contrast model.
+
 ## Ilford XP2 Super 400
 
 The [XP2 Super 400 profile and built-in look](xp2super400.md) reconstruct the
