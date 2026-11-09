@@ -685,3 +685,6 @@ mod agfa100_tests;
 
 #[cfg(test)]
 mod xp2super400_tests;
+
+#[cfg(test)]
+mod rollei80s_tests;

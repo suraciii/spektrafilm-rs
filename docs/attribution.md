@@ -118,3 +118,13 @@ characteristic curve from embedded raster plots. The [source notice](../data/lic
 separates new extraction/reconstruction contributions from the manufacturer's
 original material. XP2 is a chromogenic dye B&W film; Harman publishes no RMS
 or MTF, so the built-in Dye grain is explicitly class-level.
+
+## Rollei Retro 80S 35 mm / Neofin Blau
+
+The [Rollei Retro 80S 35 mm profile and built-in look](rollei80s.md) use a
+third-party 10-zone APHOG densitometry set (Eginhard Teichmann, 2011,
+Wallner MC 505 relative logD) and the 2021 Rollei page-3 spectral vector
+plot. The [source notice](../data/license/ROLLEI_RETRO_80S.txt) separates the
+new transcription/reconstruction contributions from the Rollei/MACO technical
+material and the forum measurement. This is **not** a manufacturer curve,
+**not** a 120 measurement, and **not** an ID-11/D-76 curve.

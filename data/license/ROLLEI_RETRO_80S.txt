@@ -1,0 +1,28 @@
+Rollei Retro 80S 35 mm / Tetenal Neofin Blau profile
+
+New contributions in this repository — the coordinate transcription, the
+characteristic/source record, the generator, and the profile JSON — are
+Copyright (c) 2026 SpektraFilm contributors and are licensed under
+CC BY-SA 4.0: https://creativecommons.org/licenses/by-sa/4.0/
+
+The Rollei Retro 80S data sheet is a publication of Hans O. Mahn GmbH &
+Co. KG / MACO PHOTO PRODUCTS. The original technical material remains the
+property of its rights holder. It is used here as a factual reference for the
+spectral curve and product identification; no endorsement is claimed.
+
+The 10-zone density values come from a public APHOG forum post by Eginhard
+Teichmann (2011), “Rollei Retro 80s”, post #40–41:
+https://forum.aphog.com/index.php?thread/13483-rollei-retro-80s/&pageNo=3
+
+The measurement is a Wallner MC 505 relative logD reading on an enlarger
+baseboard, not a manufacturer datasheet and not an independently replicated
+densitometry study. The numeric values are used as factual measurements with
+attribution; the forum text itself is not redistributed. No endorsement by the
+author, APHOG, Rollei, MACO, or Tetenal is claimed.
+
+This profile is a third-party measured approximation for 35 mm Rollei Retro
+80S exposed at EI 80/20 and developed in Tetenal Neofin Blau, 6 min at 20 C.
+It is not a 120 profile and not an ID-11/D-76 profile. Physical fidelity,
+absolute ISO, base spectrum, current-batch equivalence, RMS/MTF, and halation
+PSF are not established by this source. See docs/rollei80s.md for the full
+limitations.

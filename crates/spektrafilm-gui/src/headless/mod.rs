@@ -16,6 +16,7 @@ mod panels;
 mod polymax;
 mod raw;
 mod result;
+mod rollei80s;
 mod trix400;
 mod viewer;
 mod workflow;

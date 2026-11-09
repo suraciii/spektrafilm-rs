@@ -1,0 +1,158 @@
+{
+  "stock": "rollei_retro_80s_35mm_neofin_blau",
+  "source_type": "third_party_measured_curve",
+  "product": "Rollei Retro 80S, 35 mm, exposed at EI 80/20",
+  "primary_url": "https://forum.aphog.com/index.php?thread/13483-rollei-retro-80s/&pageNo=3",
+  "primary_sha256": "8da29c06a10b430d4c70534550fb96a6ac242b3c8f90259e46f9e07fa68137c9",
+  "primary_revision": "APHOG forum thread \"Rollei Retro 80s\", post #40-41, 2011-06-05",
+  "spectral_url": "https://www.rolleianalog.com/wp-content/uploads/2021/02/RETRO80S_Datenblatt_EN_R012101.pdf",
+  "spectral_sha256": "f37754ce4548ceab6e6902143118cea712d5bf4f1dee32488bfa37dfb02e0f45",
+  "spectral_revision": "Rollei Retro 80S data sheet, 2021-01-15, 6 pp., page 3 spectral sensitivity",
+  "process": "Tetenal Neofin Blau, one 30 ml flask to 500 ml, 6 min at 20 C, first 30 s continuous then 2 inversions per minute; exposed at EI 80/20.",
+  "measurement": {
+    "format": "35 mm",
+    "camera": "Leica M2",
+    "target": "gray card on a photo wall",
+    "instrument": "Wallner MC 505 enlarging meter, relative logD on the enlarger baseboard",
+    "reference": "base+fog",
+    "exposure_index": "EI 80/20",
+    "zones": "I-X, one stop per zone",
+    "operator": "Eginhard Teichmann (APHOG)"
+  },
+  "zone_exposure_step_log10": 0.3,
+  "zones": {
+    "I": 0.05,
+    "II": 0.15,
+    "III": 0.28,
+    "IV": 0.36,
+    "V": 0.66,
+    "VI": 0.9,
+    "VII": 1.13,
+    "VIII": 1.24,
+    "IX": 1.38,
+    "X": 1.45
+  },
+  "characteristic": [
+    [
+      0.0,
+      0.05
+    ],
+    [
+      0.3,
+      0.15
+    ],
+    [
+      0.6,
+      0.28
+    ],
+    [
+      0.9,
+      0.36
+    ],
+    [
+      1.2,
+      0.66
+    ],
+    [
+      1.5,
+      0.9
+    ],
+    [
+      1.8,
+      1.13
+    ],
+    [
+      2.1,
+      1.24
+    ],
+    [
+      2.4,
+      1.38
+    ],
+    [
+      2.7,
+      1.45
+    ]
+  ],
+  "spectral_points": [
+    [
+      350.0,
+      -0.0
+    ],
+    [
+      374.06,
+      0.8254
+    ],
+    [
+      400.27,
+      1.1033
+    ],
+    [
+      427.12,
+      1.3022
+    ],
+    [
+      484.14,
+      1.3022
+    ],
+    [
+      507.31,
+      1.2163
+    ],
+    [
+      518.91,
+      1.2412
+    ],
+    [
+      549.11,
+      1.4424
+    ],
+    [
+      582.3,
+      1.4482
+    ],
+    [
+      618.32,
+      1.6307
+    ],
+    [
+      650.33,
+      1.3542
+    ],
+    [
+      665.5,
+      1.3542
+    ],
+    [
+      708.83,
+      1.5986
+    ],
+    [
+      753.98,
+      1.6872
+    ],
+    [
+      800.0,
+      -0.0
+    ]
+  ],
+  "spectral_axis": "Rollei page-3 ordinate 0.0-3.0, read as relative log sensitivity with an arbitrary zero; 15 plotted circle centres from 350 to 800 nm. Not absolute log sensitivity and not equal-energy corrected.",
+  "base_proxy": 0.05,
+  "limitations": [
+    "Third-party forum densitometry, not a manufacturer curve; Zone I-X only, one stop per zone.",
+    "35 mm measurement only; no 120-specific curve and no ID-11/D-76 curve were found.",
+    "The first measured zone (I, 0.05) is used as the base-density proxy, not a measured D-min.",
+    "No toe below Zone I or shoulder above Zone X was measured; extensions are model assumptions.",
+    "Zone IV (0.36) is lower than a smooth S-curve would suggest; it is kept as measured, not corrected.",
+    "The Wallner MC 505 is an enlarging meter reading relative logD, not a calibrated diffuse densitometer.",
+    "Data are from 2010-2011; current 2026 batch equivalence is unverified.",
+    "The spectral ordinate is a relative log-sensitivity reading; the absolute ISO anchor is model calibration, not a film measurement.",
+    "No measured base spectrum, halation PSF, RMS/MTF instrument, or scanner response is supplied."
+  ],
+  "extraction": {
+    "characteristic": "manual transcription of the ten Zone I-X logD values from APHOG post #40; one stop per zone",
+    "spectral": "pdftocairo page-3 SVG; 15 filled-circle centres; 350-800 nm linear axis; relative log-sensitivity ordinate",
+    "spectral_page": 3,
+    "spectral_circles": 15
+  }
+}
