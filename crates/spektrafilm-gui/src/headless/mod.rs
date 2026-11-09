@@ -1620,3 +1620,5 @@ mod vision3_500t;
 mod vision3_50d;
 
 mod verita_200d;
+
+mod vision3_200t;
