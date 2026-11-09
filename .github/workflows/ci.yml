@@ -74,10 +74,13 @@ jobs:
 
   packages:
     name: Build packages
-    needs: verify
+    # Package builds run alongside verification. The workflow result is the
+    # acceptance signal for nightly artifacts; Release attachment is gated by
+    # the release workflow. Nightly package runs are latest-only, so a newer
+    # main push cancels the previous package run.
     concurrency:
       group: main-packages-${{ github.ref }}
-      cancel-in-progress: false
+      cancel-in-progress: true
     permissions:
       contents: read
     uses: ./.github/workflows/build.yml

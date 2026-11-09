@@ -2,8 +2,8 @@ name: Build packages
 
 # Shared three-platform package build, called by two workflows:
 #
-# - Main CI (ci.yml) calls it after a verified push to main-0.3.4 and keeps
-#   the packages as nightly workflow artifacts.
+# - Main CI (ci.yml) calls it alongside verification of a push to main-0.3.4
+#   and keeps the packages as nightly workflow artifacts.
 # - Release (release.yml) calls it behind the release gate and attaches the
 #   same packages to the GitHub Release.
 #
@@ -207,20 +207,9 @@ jobs:
       - name: Build pinned LibRaw 0.22.0
         shell: bash
         run: |
-          set -euo pipefail
-          prefix="$RUNNER_TEMP/libraw-022"
-          curl -fsSL --retry 3 -o LibRaw-0.22.0.tar.gz \
-            https://www.libraw.org/data/LibRaw-0.22.0.tar.gz
-          echo "1071e6e8011593c366ffdadc3d3513f57c90202d526e133174945ec1dd53f2a1  LibRaw-0.22.0.tar.gz" | sha256sum -c -
-          tar -xzf LibRaw-0.22.0.tar.gz
-          cd LibRaw-0.22.0
-          ./configure --prefix="$prefix" --disable-static
-          make -j"$(nproc)"
-          make install
-          mkdir -p "$prefix/share/doc/libraw"
-          cp COPYRIGHT LICENSE.CDDL LICENSE.LGPL "$prefix/share/doc/libraw/"
+          bash scripts/build_linux_libraw.sh "$RUNNER_TEMP/libraw-022"
 
-      - name: Build release binaries and run f64 CLI acceptance
+      - name: Build release binaries
         id: build-release
         shell: bash
         run: |
@@ -228,12 +217,9 @@ jobs:
           export PKG_CONFIG_PATH="$RUNNER_TEMP/libraw-022/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
           cargo build --release -p spektrafilm-gui
           cargo build --release -p spektrafilm-cli --bin spektrafilm --bin decode_raw_gui
-          cargo build --release -p spektrafilm-cli --bin spektrafilm-f64 --features precision-f64
-          cargo build --release -p spektrafilm-cli --bin spektrafilm-lab --features precision-f64
-          # Main CI owns the full f32 suite and selected f64 tests. This lane
-          # keeps the f64-only CLI and instrument acceptance that the f32 suite
-          # cannot execute; the full f64 workspace remains `just test-f64`.
-          LD_LIBRARY_PATH="$RUNNER_TEMP/libraw-022/lib:${LD_LIBRARY_PATH:-}" cargo test -p spektrafilm-cli --features precision-f64 --no-fail-fast
+          cargo build --release -p spektrafilm-cli --bin spektrafilm-f64 --bin spektrafilm-lab --features precision-f64
+          # The f64-only CLI and instrument acceptance runs in the parallel
+          # linux-f64-acceptance job; release attachment waits for it.
 
       - name: Run LUT artifact acceptance
         if: ${{ !cancelled() && steps.build-release.outcome == 'success' && steps.reference-runtime.outcome == 'success' }}
@@ -278,9 +264,51 @@ jobs:
           name: spektrafilm-linux-x64
           path: dist/spektrafilm-linux-x64.tar.gz
 
-      - name: Attach to GitHub Release
-        if: inputs.attach_release && startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v2
+  linux-f64-acceptance:
+    name: Linux f64 acceptance
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install native build dependencies
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential pkg-config curl ca-certificates \
+            liblensfun-dev libexiv2-dev libglib2.0-dev \
+            libopenimageio-dev liblcms2-dev libjpeg-dev zlib1g-dev \
+            libopenblas-dev libvulkan1 mesa-vulkan-drivers
+
+      - name: Build pinned LibRaw 0.22.0
+        shell: bash
+        run: |
+          bash scripts/build_linux_libraw.sh "$RUNNER_TEMP/libraw-022"
+
+      - name: Run f64 CLI acceptance
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PKG_CONFIG_PATH="$RUNNER_TEMP/libraw-022/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
+          LD_LIBRARY_PATH="$RUNNER_TEMP/libraw-022/lib:${LD_LIBRARY_PATH:-}" \
+            cargo test -p spektrafilm-cli --features precision-f64 --no-fail-fast
+
+  linux-release-attach:
+    name: Attach Linux package
+    needs: [linux-x64, linux-f64-acceptance]
+    if: inputs.attach_release && startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: spektrafilm-linux-x64
+          path: dist
+      - uses: softprops/action-gh-release@v2
         with:
           files: dist/spektrafilm-linux-x64.tar.gz
 
