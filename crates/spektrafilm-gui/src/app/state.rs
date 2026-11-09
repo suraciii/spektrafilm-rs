@@ -40,9 +40,6 @@ pub(crate) struct App {
     /// Cached polarity of the selected scan profile, keyed by data directory and stock.
     pub(crate) scan_medium_polarity: Option<(PathBuf, String, bool)>,
     pub(crate) full_scan_requested: bool,
-    /// Original print-glare switch captured while Scan-for-print is active.
-    /// This transient workflow state is deliberately excluded from persistence.
-    pub(crate) scan_for_print_snapshot: Option<bool>,
     /// Temporary automatic-baseline display. Never enters saved parameters.
     pub(crate) operator_compare: bool,
     /// Temporary finishing-only baseline; mutually exclusive with operator comparison.
@@ -318,7 +315,6 @@ impl App {
             material_baseline: None,
             full_scan_requested: false,
             scan_medium_polarity: None,
-            scan_for_print_snapshot: None,
             operator_compare: false,
             finishing_compare: false,
             displayed_comparison: None,
@@ -654,7 +650,6 @@ impl App {
         );
         self.browser_state_changed_at = Some(Instant::now());
         self.gui_state = state;
-        self.scan_for_print_snapshot = None;
         self.dirty = true;
         self.dirty_since = Some(Instant::now());
 

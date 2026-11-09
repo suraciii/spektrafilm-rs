@@ -146,7 +146,6 @@ fn thumbnail_signature(app: &App, display: &DisplayIdentity) -> Option<u64> {
     app.parameter_revision.hash(&mut hasher);
     app.input_rotation.hash(&mut hasher);
     app.viewer.settings.use_display_transform.hash(&mut hasher);
-    app.scan_for_print_snapshot.hash(&mut hasher);
     app.presets.refresh_epoch.hash(&mut hasher);
     material_fingerprint(&app.data_dir, &app.presets.entries).hash(&mut hasher);
     let display_profile = effective_display_profile(app);
@@ -161,13 +160,9 @@ fn thumbnail_signature(app: &App, display: &DisplayIdentity) -> Option<u64> {
 }
 
 fn thumbnail_context(app: &App) -> ThumbnailContext {
-    let mut params = app.params.clone();
-    if let Some(glare) = app.scan_for_print_snapshot {
-        params.print_render.glare.active = glare;
-    }
     ThumbnailContext {
         source: app.image.clone().expect("signature requires a source"),
-        params,
+        params: app.params.clone(),
         data_dir: app.data_dir.clone(),
         special: app.gui_state.special().clone(),
         backend: app.backend.clone(),

@@ -351,8 +351,8 @@ class X11:
                      if word[1] >= self.action_left and word[2] >= self.action_top]
             buttons = []
             for word in words:
-                # Workflow buttons are uppercase; Scan for print is a separate
-                # control even when OCR merges their rows.
+                # Workflow buttons are uppercase; locate the exact token even
+                # when OCR merges their rows.
                 token = re.sub(r'[^A-Za-z0-9]', '', word[0])
                 if token != label.upper():
                     continue
@@ -1395,28 +1395,35 @@ def accept_gui(gui, exporter, source, raw, evidence, environment):
         require(read_image(float_export).shape == pixels.shape, 'Fotufilm export dimensions differ')
 
         scan_seed = json.loads(json.dumps(state))
+        scan_seed['simulation']['route'] = 'input > film > print > scan'
         scan_seed['glare']['active'] = True
-        scan_seed_path = root / 'scan-for-print-seed.json'
+        scan_seed['glare']['percent'] = 0.03
+        scan_seed_path = root / 'print-viewing-glare-seed.json'
         scan_seed_path.write_text(json.dumps(scan_seed))
         driver.state_action('Load from file', scan_seed_path)
-        driver.reveal('action.scan_for_print', 'Scan', 'Scanner')
-        driver.click('scan for print', right=True)
-        forced = driver.state_action('Save current to file', root / 'scan-for-print-on.json', save=True)
-        require(forced['glare']['active'] is False, 'Scan for print did not disable print glare')
-        driver.reveal('action.scan_for_print', 'Scan', 'Scanner')
-        driver.click('scan for print', right=True)
-        restored = driver.state_action('Save current to file', root / 'scan-for-print-off.json', save=True)
-        require(restored['glare']['active'] is True,
-                'Scan for print did not restore prior glare setting')
-        driver.state_action('Load from file', root / 'scan-for-print-on.json')
-        driver.reveal('action.scan_for_print', 'Scan', 'Scanner')
-        driver.click('scan for print', right=True)
-        loaded_toggle = driver.state_action('Save current to file', root / 'scan-for-print-loaded.json', save=True)
-        require(loaded_toggle['glare']['active'] is False,
-                'Loading state resurrected the transient scan-for-print snapshot')
+        driver.stage('Scan')
+        driver.wait_text(r'Print readout includes viewing glare', 'scanner-glare-status')
+        require(driver.locate('Adjust', right=True) is not None,
+                'Scanner print-glare status lacks the Adjust locator')
+        driver.click('Adjust', right=True)
+        driver.toggle('Simulate viewing glare')
+        off = driver.state_action('Save current to file', root / 'print-viewing-glare-off.json', save=True)
+        require(off['glare']['active'] is False,
+                'The canonical switch did not disable print viewing glare')
+        driver.close_settings()
+        driver.stage('Scan')
+        driver.click('Adjust', right=True)
+        driver.toggle('Simulate viewing glare')
+        on = driver.state_action('Save current to file', root / 'print-viewing-glare-on.json', save=True)
+        require(on['glare']['active'] is True,
+                'The canonical switch did not restore print viewing glare')
+        driver.state_action('Load from file', root / 'print-viewing-glare-off.json')
+        loaded = driver.state_action('Save current to file', root / 'print-viewing-glare-loaded.json', save=True)
+        require(loaded['glare']['active'] is False,
+                'Loading state did not retain the canonical print-glare value')
         driver.records.append({'parity_action': 'scan_for_print',
-                               'assertion': 'current print-glare override and restoration',
-                               'retired_assertion': 'removed white-and-black-correction control'})
+                               'assertion': 'retired mode absent; Scanner status and Adjust reach the single print viewing glare switch',
+                               'retired_assertion': 'transient print-glare override and snapshot'})
 
         # The viewer suite retains actual pixel/float/animation/cache/isolation
         # checks, using the same canonical driver as this installed gate.

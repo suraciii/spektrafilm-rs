@@ -3,20 +3,7 @@ use super::state::App;
 use crate::*;
 
 impl App {
-    pub(crate) fn toggle_scan_for_print(&mut self) {
-        if let Some(glare) = self.scan_for_print_snapshot.take() {
-            self.params.print_render.glare.active = glare;
-        } else {
-            self.scan_for_print_snapshot = Some(self.params.print_render.glare.active);
-            self.params.print_render.glare.active = false;
-        }
-        self.mark_parameters_changed();
-    }
-
     pub(crate) fn finish_route_change(&mut self) {
-        if let Some(glare) = self.scan_for_print_snapshot.take() {
-            self.params.print_render.glare.active = glare;
-        }
         let before = self.params.scanner.clone();
         self.params.io.scan_film = self.params.workflow.route == "input > film > scan";
         normalize_scanner_selections(&mut self.params, self.film_medium);
@@ -63,7 +50,6 @@ impl App {
     }
 
     pub(crate) fn invalidate_look_render(&mut self) {
-        self.scan_for_print_snapshot = None;
         self.mark_parameters_changed_invalidating_calibration();
     }
 

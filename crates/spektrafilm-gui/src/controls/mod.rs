@@ -839,6 +839,14 @@ pub(crate) fn module_applicability(
     film: &Profile,
     print: Option<&Profile>,
 ) -> Option<String> {
+    if section == "Glare" {
+        return spektrafilm_core::params::sources::inactive_reason_with_materials(
+            "print_render.glare.active",
+            params,
+            Some(film),
+            print,
+        );
+    }
     if section == "Finishing" {
         let scanned = match spektrafilm_core::finishing::scanned_material(params) {
             Some(spektrafilm_core::stage_artifact::MaterialKind::Film) => Some(film),

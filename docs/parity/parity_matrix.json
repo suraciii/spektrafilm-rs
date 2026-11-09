@@ -1363,10 +1363,10 @@
     },
     "scan_for_print": {
       "description": "force scanner corrections/glare and restore transient snapshot",
-      "rust_status": "implemented_unverified",
-      "owner_issue": 12,
-      "implementation_source": "crates/spektrafilm-gui/src/main.rs; state.rs; controls.rs; display.rs",
-      "verification": "Fresh consumer-visible evidence required; implementation status is not a parity pass.",
+      "rust_status": "intentionally_retired",
+      "owner_issue": null,
+      "implementation_source": "specs/gui-workflow/spec.md#print-viewing-glare-control",
+      "verification": "The upstream mode also enabled now-retired white/black scanner correction; the Rust GUI intentionally keeps only the single Print viewing glare switch.",
       "audit_baseline": {
         "rust_status": "absent_from_rust",
         "notes": ""

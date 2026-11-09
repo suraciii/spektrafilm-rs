@@ -193,6 +193,12 @@ Camera diffusion and Enlarger diffusion MUST retain their distinct optical owner
 
 Print viewing glare help MUST identify readout stray light, not preflash or a change in material density. Visible placement follows [stage and surface ownership](../gui-workflow/spec.md#stage-and-surface-ownership), not serialized section names.
 
+The switch MUST say `Simulate viewing glare` or its localized equivalent, not the retired `Scan for print` label. Help MUST describe readout stray light lifting shadows and reducing contrast, and MUST state that it does not change print exposure, chemistry, or developed density.
+
+Module status MUST distinguish On, Off, and No effect at zero amount. Off and zero amount MUST NOT be labeled Inactive; Inactive is reserved for a route without print readout. A global stochastic disablement is a status, not Inactive and not a second switch.
+
+Percent help MUST state that 0 disables the effect and the default is 0.03 (3%).
+
 ## Viewer language
 
 The viewer uses these presentation labels:

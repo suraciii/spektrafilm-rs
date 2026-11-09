@@ -38,8 +38,7 @@ fn a_failed_preset_preserves_the_entire_application_transaction() {
         group: PresetGroup::BuiltIn,
         name: "Remembered".into(),
     });
-    app.params.print_render.glare.active = true;
-    app.toggle_scan_for_print();
+    app.params.print_render.glare.active = false;
     app.dirty_since = Some(std::time::Instant::now());
     {
         let name = "Missing profile";
@@ -57,7 +56,6 @@ fn a_failed_preset_preserves_the_entire_application_transaction() {
         let print = app.print_name.clone();
         let film_times = app.film_dev_times.clone();
         let print_times = app.print_dev_times.clone();
-        let snapshot = app.scan_for_print_snapshot;
         let revision = app.parameter_revision;
         let epoch = app.calibration_epoch;
         let dirty = app.dirty;
@@ -75,7 +73,6 @@ fn a_failed_preset_preserves_the_entire_application_transaction() {
         assert_eq!(app.print_name, print);
         assert_eq!(app.film_dev_times, film_times);
         assert_eq!(app.print_dev_times, print_times);
-        assert_eq!(app.scan_for_print_snapshot, snapshot);
         assert_eq!(app.parameter_revision, revision);
         assert_eq!(app.calibration_epoch, epoch);
         assert_eq!(app.dirty, dirty);
@@ -135,7 +132,6 @@ fn ordinary_restart_restores_browser_only_and_explicit_state_wins() {
     );
     assert!(!restarted.dirty);
     assert_eq!(restarted.parameter_revision, 0);
-    assert!(restarted.scan_for_print_snapshot.is_none());
     assert_eq!(
         marker(
             remembered.applied.as_ref().unwrap(),
@@ -284,7 +280,6 @@ fn scanner_transitions_reset_the_scan_polarity() {
     app.params.workflow.route = "input > convert-film > scan".into();
     app.finish_route_change();
     app.params.scanner.scan_output = "negative_to_positive".into();
-    app.toggle_scan_for_print();
     app.select_film_profile("kodak_ektachrome_100".into());
     assert_eq!(app.film_medium, crate::controls::ScanMedium::Slide);
     assert_eq!(app.params.scanner.scan_output, "direct_scan");
