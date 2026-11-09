@@ -1891,3 +1891,59 @@ fn agfa100_builtin_preserves_context_and_resolves_native_positive() {
         }
     }
 }
+
+#[test]
+fn xp2_builtin_is_one_source_dye_look_and_preserves_photo_context() {
+    let library = builtin_presets();
+    let matches: Vec<_> = library
+        .iter()
+        .filter(|p| p.name == "Ilford XP2 Super 400")
+        .collect();
+    assert_eq!(matches.len(), 1);
+    let preset = matches[0];
+    let mut current = RuntimeParams::default();
+    current.camera.exposure_compensation_ev = -0.5;
+    current.camera.auto_exposure = false;
+    current.camera.film_format_mm = 60.;
+    current.io.crop = true;
+    current.io.crop_size = [0.75, 0.8];
+    for carrier in [
+        Preset::from_json_str(&preset.to_json().unwrap()).unwrap(),
+        Preset::from_toml_str(&preset.to_toml().unwrap()).unwrap(),
+    ] {
+        let resolved = carrier.resolve(&data(), &current).unwrap();
+        assert_eq!(resolved.film_name, "ilford_xp2_super_400");
+        assert_eq!(resolved.print_name, "kodak_polymax_fine_art");
+        let p = crate::params_builder::digest_params(
+            resolved.params,
+            &resolved.film,
+            &resolved.print,
+            None,
+            false,
+        );
+        assert_eq!(p.workflow.route, "input > film > print > scan");
+        assert_eq!(p.scanner.scan_output, "direct_scan");
+        assert_eq!(p.camera.exposure_compensation_ev, -0.5);
+        assert!(!p.camera.auto_exposure);
+        assert_eq!(p.camera.film_format_mm, 60.);
+        assert_eq!(p.io.crop_size, current.io.crop_size);
+        assert!(p.film_render.grain.active && p.film_render.halation.active);
+        assert_eq!(p.film_render.grain.engine, crate::params::GrainEngine::Dye);
+        assert_eq!(p.film_render.grain.rms_granularity, [0.; 3]);
+        assert_eq!(p.film_render.grain.dye_strength, 1.0);
+        assert_eq!(p.film_render.grain.dye_scale, 1.0);
+        assert_eq!(p.film_render.grain.density_min, [0.03; 3]);
+        assert_eq!(p.film_render.grain.uniformity, [0.97; 3]);
+        assert_eq!(p.film_render.halation.halation_first_sigma_um, [65.; 3]);
+        assert_eq!(p.film_render.halation.halation_n_bounces, 3);
+        assert_eq!(p.film_render.halation.scatter_amount, 0.10);
+        assert_eq!(p.film_render.halation.halation_amount, 0.10);
+        assert_eq!(p.film_render.halation.halation_strength, [0.03, 0.01, 0.]);
+        assert_eq!(p.scanner.unsharp_mask, [0., 0.]);
+        assert_eq!(p.scanner.lens_blur, 0.);
+        assert!(!p.film_render.dir_couplers.active);
+        assert_eq!(p.enlarger.illuminant, "T");
+        assert_eq!(p.finishing, crate::params::FinishingParams::default());
+        assert!(!p.settings.use_cat16);
+    }
+}

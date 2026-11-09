@@ -682,3 +682,6 @@ mod tmax100_tests;
 
 #[cfg(test)]
 mod agfa100_tests;
+
+#[cfg(test)]
+mod xp2super400_tests;
