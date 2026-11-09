@@ -100,3 +100,12 @@ independent Yellow/Magenta/Cyan spectral density plus visual grey, RGB
 characteristic curves, MTF and RMS 10. The [source notice](../data/license/AGFA_RSX_100.txt)
 separates new extraction/reconstruction contributions from Agfa's original
 material. The clear-film spectrum is inferred, not measured.
+
+## Ilford XP2 Super 400
+
+The [XP2 Super 400 profile and built-in look](xp2super400.md) reconstruct the
+November 2018 Harman/ILFORD page-2 wedge spectrogram and page-3 C-41
+characteristic curve from embedded raster plots. The [source notice](../data/license/XP2_SUPER_400.txt)
+separates new extraction/reconstruction contributions from the manufacturer's
+original material. XP2 is a chromogenic dye B&W film; Harman publishes no RMS
+or MTF, so the built-in Dye grain is explicitly class-level.

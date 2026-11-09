@@ -20,6 +20,7 @@ mod trix400;
 mod viewer;
 mod workflow;
 mod worklist;
+mod xp2;
 
 struct Session {
     harness: Harness<'static, App>,
