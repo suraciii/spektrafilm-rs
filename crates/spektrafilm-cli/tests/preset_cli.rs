@@ -405,6 +405,7 @@ fn preset_discovery_exports_both_carriers_and_reloads_same_parameters() {
         ),
         ("Kodak Vision3 250D", "kodak_vision3_250d", "kodak_2383"),
         ("Kodak Vision3 500T", "kodak_vision3_500t", "kodak_2383"),
+        ("Kodak Vision3 50D", "kodak_vision3_50d", "kodak_2383"),
     ] {
         let entry = listed
             .as_array()
