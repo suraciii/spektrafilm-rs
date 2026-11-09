@@ -1613,3 +1613,5 @@ mod doublex;
 mod hp5;
 
 mod vision3_250d;
+
+mod vision3_500t;
