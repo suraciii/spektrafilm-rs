@@ -1,0 +1,30 @@
+Fotufilm-derived film profiles
+==============================
+
+The following profiles in data/profiles/ are adapted from Fotufilm film
+profiles by MUAStudio Inc. (Fotufilm, https://fotufilm.com), source
+https://github.com/DhaliwalX/fotufilm-engine at commit
+96623ba0831a52dbddcda35727a206d4123a8b5f. They were converted to the
+spektrafilm/Negs profile format by the Negs project at
+https://github.com/noahhaasis/negs commit
+26c903be9064b4fbfd46a8396620ba7e1e9bc1df, and are adapted as noted below:
+
+  ilford_delta_3200
+  ilford_fp4_plus
+
+The conversions rebalance sensitivity to Negs' neutral-exposure convention,
+resample and fit the characteristic curves, and (for the two B&W profiles)
+gather development conditions into a time family. Each profile's metadata
+records these changes. 
+
+These profiles are licensed under Creative Commons Attribution-ShareAlike 4.0
+International (CC BY-SA 4.0):
+https://creativecommons.org/licenses/by-sa/4.0/
+
+They remain subject to attribution and ShareAlike. Film and manufacturer names
+identify simulated film types; they remain their owners' trademarks and do not
+imply endorsement.
+
+The unrelated `kodak_portra_800_push1` and `kodak_trix` profiles are
+SpektraFilm profiles by Andrea Volpato, also CC BY-SA 4.0; see
+SPEKTRAFILM_LICENSE.txt.

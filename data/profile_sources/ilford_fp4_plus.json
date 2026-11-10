@@ -1,0 +1,11 @@
+{
+  "stock": "ilford_fp4_plus",
+  "name": "Ilford FP4 Plus",
+  "primary_url": "https://github.com/noahhaasis/negs/blob/26c903be9064b4fbfd46a8396620ba7e1e9bc1df/data/profiles/ilford_fp4_plus.json",
+  "primary_sha256": "942e8ed067e381af98c202f86c4b5b6813e43c170cb8acd5016e7274d0df3903",
+  "primary_revision": "Negs origin/main 26c903b; adapted from Fotufilm profile commit 96623ba (CC BY-SA 4.0)",
+  "process": "Ilford FP4 Plus datasheet curve family; 6/8/9 min development family, default 8 min; converted to one-channel B&W profile.",
+  "adaptation": "Fotufilm profile imported from Negs; four-sublayer grain decomposition removed because Spektra supports at most three sublayers; composite silver curve retained. No pixel/effect calibration is implied.",
+  "license": "Fotufilm/MUAStudio Inc. profile adapted by Negs; CC BY-SA 4.0; see data/license/FOTUFILM_PROFILES.txt",
+  "adapted_sha256": "d7c49a2ffeb191dd8c4393713285f8cef784b4a6534a29ed53cb912e05bd1410"
+}

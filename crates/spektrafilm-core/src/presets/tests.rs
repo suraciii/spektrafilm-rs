@@ -32,6 +32,47 @@ fn builtin_presets_enable_material_grain_and_halation() {
     }
 }
 
+#[test]
+fn expansion_presets_resolve_expected_profiles_and_material() {
+    let expected = [
+        (
+            "Ilford Delta 3200",
+            "ilford_delta_3200",
+            "kodak_polymax_fine_art",
+        ),
+        (
+            "Ilford FP4 Plus",
+            "ilford_fp4_plus",
+            "kodak_polymax_fine_art",
+        ),
+        (
+            "Kodak Portra 800 Push +1",
+            "kodak_portra_800_push1",
+            "kodak_portra_endura",
+        ),
+        (
+            "Kodak Tri-X Reversal 7266",
+            "kodak_trix",
+            "kodak_polymax_fine_art",
+        ),
+    ];
+    let library = builtin_presets();
+    for (name, film, print) in expected {
+        let matches: Vec<_> = library
+            .iter()
+            .filter(|preset| preset.name == name)
+            .collect();
+        assert_eq!(matches.len(), 1, "{name} must have exactly one built-in");
+        let resolved = matches[0]
+            .resolve(&data(), &RuntimeParams::default())
+            .unwrap_or_else(|error| panic!("{name}: {error}"));
+        assert_eq!(resolved.film_name, film, "{name}");
+        assert_eq!(resolved.print_name, print, "{name}");
+        assert!(resolved.params.film_render.grain.active, "{name}");
+        assert!(resolved.params.film_render.halation.active, "{name}");
+    }
+}
+
 /// CineStill's single built-in keeps the grain/halation values fitted to
 /// public lab scans (commit f337148e), not the retired Night 280um look.
 #[test]
