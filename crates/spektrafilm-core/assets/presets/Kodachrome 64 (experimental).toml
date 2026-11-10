@@ -1,24 +1,31 @@
-# Kodachrome 64 E-88 (experimental)
-# Schema-7 look preset for the shipped kodak_kodachrome_64 profile (E-88 curves).
-# Hanatos surface adaptation is off: its parameters predate the E-88 curve ship.
-# Grain is Dye 1.25 / scale 4.0; halation is enabled at low class-level strength; chemistry and DIR are off.
-# Experimental: grain calibration is relative; no perceptual panel has been run.
+# Kodachrome 64 (experimental)
+# Single schema-7 K64 look for the shipped kodak_kodachrome_64 profile.
+# The profile uses the pre-E-88 upstream curves with a narrowed magenta dye and a
+# local M/Y curve re-anchor; this preset adds the rich black point and saturation.
+# Hanatos surface adaptation is off.
+# Grain is Dye 1.25 / scale 4.0; chemistry, halation and DIR are off.
+# Experimental: no perceptual panel has been run; not a calibrated K-14 reconstruction.
 
 schema_version = 7
 
-name = "Kodachrome 64 E-88 (experimental)"
+name = "Kodachrome 64 (experimental)"
 author = "SpektraFilm"
-description = "Kodachrome 64 on the shipped E-88 density curves, with Dye grain calibrated against real K64 scans. Grain strength 1.25 and scale 4.0; halation is enabled at low class-level strength; chemistry and DIR are off. Experimental: grain calibration is relative, not an absolute RMS 10 measurement, and no perceptual panel has been run. This is not a K-14 reconstruction or a calibrated scanner profile."
+description = "Single experimental Kodachrome 64 look: magenta-narrowed pre-E-88 curves with a local M/Y re-anchor, a deep black point (expand black 0.02 / white 1.02) and saturation 0.4 for a richer, denser palette. Grain strength 1.25 and scale 4.0; chemistry, halation and DIR are off. Experimental: no perceptual panel has been run; this is not a K-14 reconstruction or a calibrated scanner profile."
+
+[parameters.camera]
+auto_exposure = false
+auto_exposure_method = "center_weighted"
+exposure_compensation_ev = 0.40
 
 [parameters.finishing]
 brightness = 0.0
 contrast = 0.0
 warmth = 0.0
-saturation = 0.0
+saturation = 0.4
 [parameters.finishing.expand]
-enabled = false
-black = 0.0
-white = 1.0
+enabled = true
+black = 0.02
+white = 1.02
 [film_profile]
 stock = "kodak_kodachrome_64"
 version = "0.3.4"
