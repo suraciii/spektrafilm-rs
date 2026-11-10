@@ -12,6 +12,8 @@ A **parameter override** is a sparse set of explicit edits to runtime controls f
 
 A parameter override is not a preset, GUI state, or render recipe. The parameter contract owns the added command syntax. Preset document fields and carriers belong to the [preset specification](../presets/spec.md).
 
+LUT look mode MUST follow [LUT look](../lut-look/spec.md#ui-and-cli). Its canonical runtime leaves MUST be addressable through `--set` and `describe`; a LUT look is not a film look preset.
+
 Every leaf carried by a preset MUST remain addressable through canonical `--set` and exposed by `describe --field` or `describe --module`; the CLI description MUST report the same type, validator, units, and effect conditions used by the GUI. Field names, units, bounds, and conditional effect behavior belong to their parameter model and capability specifications.
 
 Help, data-directory selection, command status, and human feedback belong to the [workflow contract](#workflow-contract).
