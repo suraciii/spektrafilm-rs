@@ -3,7 +3,6 @@ use crate::WorkflowRoute;
 use crate::neutral_filters::NeutralFilters;
 use crate::params::sources::ParameterEdits;
 use crate::params::sources::lookup;
-use crate::params::validation::REMOVED_MAGAZINE_ROUTE;
 use crate::params::{GrainEngine, RuntimeParams};
 #[cfg(test)]
 use crate::params_builder::digest_params;
@@ -20,6 +19,8 @@ use serde_json::Value;
 use std::collections::BTreeMap;
 use std::path::Path;
 use std::path::PathBuf;
+
+const REMOVED_MAGAZINE_ROUTE: &str = WorkflowRoute::REMOVED_MAGAZINE_ROUTE;
 
 mod continuation;
 pub use continuation::{ResolvedContinuation, resolve_continuation};
@@ -76,8 +77,15 @@ pub struct EditFeedback {
     pub reason: Option<String>,
 }
 
+/// One film profile selection. Name and path are mutually exclusive by type.
+#[derive(Debug, Clone, Copy)]
+pub enum FilmSelection<'a> {
+    Name(&'a str),
+    Path(&'a Path),
+}
+
 pub struct ProcessParamsRequest<'a> {
-    pub film: Option<&'a str>,
+    pub film: Option<FilmSelection<'a>>,
     pub paper: Option<&'a str>,
     pub presets: &'a [presets::Preset],
     pub params_file: Option<&'a Path>,
@@ -295,7 +303,59 @@ fn resolve_with_preview_mode(
             ));
         }
     }
-    let (film, print, film_name, print_name) = if let Some(profiles) = resolved_profiles {
+    let (film, print, film_name, print_name) = if let Some(FilmSelection::Path(path)) = request.film
+    {
+        choose_workflow(&mut params, request.route, request.scan_film);
+        let film = profile::load_profile(path)
+            .map_err(|e| format!("loading film profile {}: {e}", path.display()))?;
+        if !film.is_film() || !film.is_filming() {
+            return Err(format!(
+                "film profile {}: incompatible support/stage; expected film/filming",
+                path.display()
+            ));
+        }
+        let film_name = film.info.stock.clone().unwrap_or_else(|| {
+            path.file_stem()
+                .and_then(|stem| stem.to_str())
+                .unwrap_or("profile")
+                .to_owned()
+        });
+        let route = params.workflow.route_enum();
+        let film_readout = route.scans_film()
+            || matches!(
+                route,
+                WorkflowRoute::ConvertFilmScan | WorkflowRoute::ConvertFilmScanMinusBase
+            )
+            || (!request.require_input_declaration && !added_sources && request.scan_film);
+        let film_only = route == WorkflowRoute::InputFilm;
+        let (print, print_name) = if film_only {
+            (film.clone(), String::new())
+        } else if film_readout {
+            (film.clone(), film_name.clone())
+        } else {
+            let print_name = request
+                .paper
+                .map(str::to_owned)
+                .or_else(|| film.info.target_print.clone())
+                .ok_or(
+                    "no paper specified and film has no target_print — use --paper or --scan-film",
+                )?;
+            let print = profile::load_profile_by_name(data_dir, &print_name)
+                .map_err(|e| format!("loading print profile {print_name:?}: {e}"))?;
+            if !print.is_print_stock() {
+                return Err(format!(
+                    "print profile {print_name:?}: incompatible support/stage; expected paper/printing or film/printing"
+                ));
+            }
+            (print, print_name)
+        };
+        if (added_sources || profile_sources)
+            && let Some(policy) = stock_policy
+        {
+            apply_film_specifics_with_policy(&mut params, &film, policy);
+        }
+        (film, print, film_name, print_name)
+    } else if let Some(profiles) = resolved_profiles {
         profiles
     } else {
         choose_workflow(&mut params, request.route, request.scan_film);
@@ -306,9 +366,17 @@ fn resolve_with_preview_mode(
         let film_only = selected_route == WorkflowRoute::InputFilm;
         let direct_scan = selected_route == WorkflowRoute::FilmScan
             || (!request.require_input_declaration && !added_sources && request.scan_film);
-        let name = request
-            .film
-            .ok_or("--film is required when the preset set supplies no film reference")?;
+        let name = match request.film {
+            Some(FilmSelection::Name(name)) => name,
+            Some(FilmSelection::Path(_)) => {
+                return Err("film profile path cannot be used in this resolution branch".into());
+            }
+            None => {
+                return Err(
+                    "--film is required when the preset set supplies no film reference".into(),
+                );
+            }
+        };
         let film = profile::load_profile_by_name(data_dir, name)
             .map_err(|e| format!("loading film profile {name:?}: {e}"))?;
         let print_name = if film_only {
@@ -445,7 +513,7 @@ fn resolve_with_preview_mode(
     if !added_sources && !profile_sources {
         // Keep the legacy decoder, route/scan relationship and digest ordering.
         choose_workflow(&mut params, request.route, request.scan_film);
-        params.io.scan_film = params.workflow.route_enum() == WorkflowRoute::FilmScan
+        params.io.scan_film = params.workflow.route_enum().scans_film()
             || (!request.require_input_declaration && request.scan_film);
         if let Some(mode) = request.scan_output {
             params.scanner.scan_output = mode.to_owned();
@@ -478,7 +546,7 @@ fn resolve_with_preview_mode(
             params.io.input_cctf_decoding = value;
         }
         choose_workflow(&mut params, request.route, request.scan_film);
-        params.io.scan_film = params.workflow.route_enum() == WorkflowRoute::FilmScan;
+        params.io.scan_film = params.workflow.route_enum().scans_film();
         if request.input_is_raw {
             force_raw_input(&mut params);
         }

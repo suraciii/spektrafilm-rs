@@ -118,7 +118,10 @@ fn execute(
         })
         .collect::<Result<Vec<_>>>()?;
     let request = process_params::ProcessParamsRequest {
-        film: args.film.as_deref(),
+        film: args
+            .film
+            .as_deref()
+            .map(process_params::FilmSelection::Name),
         paper: args.paper.as_deref(),
         presets: &presets,
         params_file: args.params.as_deref(),

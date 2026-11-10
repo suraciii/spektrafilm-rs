@@ -131,26 +131,7 @@ pub enum ValidationReason {
 
 use ValidationReason as Reason;
 
-pub(crate) const SUPPORTED_ROUTES: [&str; 12] = [
-    "input",
-    "input > film > scan",
-    "input > film > print > scan",
-    "input > convert-film > print > scan",
-    "input > convert-film > scan-minus-base",
-    "input > convert-film > scan",
-    "input > film",
-    "input > film > print",
-    "film > scan",
-    "film > print",
-    "film > print > scan",
-    "print > scan",
-];
-
-/// The removed dedicated magazine workflow. Saved configurations that still
-/// name it must be migrated to a base workflow plus `cmyk.active`; it is not
-/// a selectable route. The constant name keeps the historical spelling of
-/// the retired route.
-pub(crate) const REMOVED_MAGAZINE_ROUTE: &str = "input > film > scan > magazine";
+const REMOVED_MAGAZINE_ROUTE: &str = crate::WorkflowRoute::REMOVED_MAGAZINE_ROUTE;
 
 /// Registered RGB-to-raw implementations. Parsing and construction share this
 /// vocabulary so a method cannot validate successfully and fail at dispatch.
@@ -651,9 +632,10 @@ pub(crate) fn validate_enum_value_detailed(path: &str, value: &str) -> Result<()
             ));
         }
         if crate::WorkflowRoute::parse(value) == crate::WorkflowRoute::Custom {
+            let supported = crate::WorkflowRoute::ALL.map(|route| route.as_str());
             let suggestions = closest(
                 value,
-                SUPPORTED_ROUTES.iter().map(|route| (*route).to_owned()),
+                supported.iter().map(|route| (*route).to_owned()),
                 MAX_SUGGESTIONS,
             );
             let suffix = error_suffix(
@@ -666,7 +648,7 @@ pub(crate) fn validate_enum_value_detailed(path: &str, value: &str) -> Result<()
                 format!("workflow.route: unsupported route {value:?}; {suffix}"),
             )
             .arg("value", format!("{value:?}"))
-            .arg("supported", SUPPORTED_ROUTES.join(", "))
+            .arg("supported", supported.join(", "))
             .arg("suggestions", suggestions.join(", ")));
         }
         return Ok(());
@@ -1542,8 +1524,8 @@ mod tests {
             params.workflow.route = route.into();
             assert!(validate(&params).is_err(), "invalid finite route {route}");
         }
-        for route in SUPPORTED_ROUTES {
-            params.workflow.route = route.to_owned();
+        for route in crate::WorkflowRoute::ALL {
+            params.workflow.route = route.as_str().to_owned();
             validate(&params).unwrap();
         }
     }

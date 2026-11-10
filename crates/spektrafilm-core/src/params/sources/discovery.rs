@@ -62,9 +62,12 @@ pub fn describe_root_groups() -> Vec<String> {
     roots
 }
 
-/// Workflow routes accepted by parameter validation.
+/// Workflow routes accepted by parameter validation, derived from the route
+/// enum so discovery cannot drift from execution.
 pub fn supported_routes() -> &'static [&'static str] {
-    &crate::params::validation::SUPPORTED_ROUTES
+    static ROUTES: LazyLock<[&'static str; 12]> =
+        LazyLock::new(|| crate::WorkflowRoute::ALL.map(|route| route.as_str()));
+    &ROUTES[..]
 }
 
 pub fn suggest_parameter_paths(input: &str) -> Vec<String> {

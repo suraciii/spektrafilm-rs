@@ -43,7 +43,7 @@ fn normalize_legacy_runtime_cmyk(runtime: &mut Value) -> Result<()> {
         }
     }
     if carrier.pointer("/workflow/route").and_then(Value::as_str)
-        == Some("input > film > scan > magazine")
+        == Some(spektrafilm_core::WorkflowRoute::REMOVED_MAGAZINE_ROUTE)
         && carrier.get("cmyk").is_some_and(|cmyk| !cmyk.is_object())
     {
         validate_runtime_values(json!({"cmyk": carrier["cmyk"]}), "rust.runtime.cmyk")?;
@@ -96,7 +96,7 @@ pub(super) fn validate_state_parameters(value: &mut Value, version: Option<u64>)
     // reject both spellings.
     let legacy_cmyk = matches!(version, Some(1..=3));
     const LEGACY_GROUP: &str = "magazine_print_color";
-    const RETIRED_ROUTE: &str = "input > film > scan > magazine";
+    const RETIRED_ROUTE: &str = spektrafilm_core::WorkflowRoute::REMOVED_MAGAZINE_ROUTE;
     if value.get("output_mix").is_some() {
         bail!(crate::app::Message::new(
             "operations.state.output_mix_owner"

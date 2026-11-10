@@ -187,8 +187,17 @@ pub fn resolve_continuation(
             true,
         )?;
     }
-    if let Some(name) = request.film {
-        validate_frozen_profile(name, &header.film, data_dir, "film")?;
+    match request.film {
+        Some(FilmSelection::Name(name)) => {
+            validate_frozen_profile(name, &header.film, data_dir, "film")?;
+        }
+        Some(FilmSelection::Path(path)) => {
+            return Err(format!(
+                "profile path {} cannot resume completed material; select the film by name",
+                path.display()
+            ));
+        }
+        None => {}
     }
     if let Some(name) = request.paper {
         if header.state == MaterialKind::Print {

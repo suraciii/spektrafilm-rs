@@ -1077,8 +1077,8 @@ impl Preset {
         // positive. A direct-scan negative look otherwise uses the profile default
         // (print) instead of leaving the image as a negative.
         let caller_declared_film_scan = matches!(
-            current.workflow.route.as_str(),
-            "input > film > scan" | "input > convert-film > scan"
+            current.workflow.route_enum(),
+            crate::WorkflowRoute::FilmScan | crate::WorkflowRoute::ConvertFilmScan
         );
         let keeps_film_scan = caller_declared_film_scan
             && (film.is_positive() || params.scanner.scan_output == "negative_to_positive");
@@ -1090,8 +1090,8 @@ impl Preset {
         params.io.scan_film = params.workflow.route_enum().scans_film();
         if film.is_positive()
             || !matches!(
-                params.workflow.route.as_str(),
-                "input > film > scan" | "input > convert-film > scan"
+                params.workflow.route_enum(),
+                crate::WorkflowRoute::FilmScan | crate::WorkflowRoute::ConvertFilmScan
             )
         {
             params.scanner.scan_output = "direct_scan".into();
