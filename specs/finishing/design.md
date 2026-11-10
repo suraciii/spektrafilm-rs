@@ -7,10 +7,11 @@ The [product contract](spec.md) owns tone and color adjustment behavior, applica
 | Boundary | Owner |
 | --- | --- |
 | Typed values, neutral defaults, validation, and canonical metadata | Core runtime parameters |
-| Route, medium, and delivered-polarity applicability | Core film-chain resolution |
+| Route, medium, delivered-polarity, and LUT look applicability | Core film-chain resolution and LUT look |
 | Fixed response definition and prepared color transforms | Core finishing |
 | Image resources and device dispatch | The selected compute backend |
 | Look capture, section scope, and document migrations | Presets and each versioned carrier |
+| LUT look grade persistence | LUT look |
 | Control presentation, transient comparison, and edit transactions | GUI workflow |
 | Prepared-source composition | Output mix |
 | Delivery conversion and bounded output clipping | Photo export |
@@ -19,9 +20,9 @@ CLI, GUI, LUT baking, and diagnostic collection MUST consume the same effective 
 
 ## Color and order
 
-The finishing boundary MUST receive the completed positive after eligible print viewing glare. It MUST precede existing output gamut processing.
+The finishing boundary MUST receive the completed positive after eligible print viewing glare or after the declared LUT color transform. It MUST precede existing output gamut processing.
 
-The remaining tail MUST retain the [film-chain order](../film-chain/spec.md#contract). Finishing MUST NOT move a nonlinear response across scanner optics, readout glare, output gamut, or encoded-domain appearance processing.
+The remaining tail MUST retain the [film-chain order](../film-chain/spec.md#contract). In LUT mode, finishing MUST follow the LUT and precede output encoding and grain. Finishing MUST NOT move a nonlinear response across scanner optics, readout glare, output gamut, or encoded-domain appearance processing.
 
 An active finishing evaluation MUST follow this order:
 

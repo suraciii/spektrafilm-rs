@@ -5,7 +5,8 @@ The [GUI presentation specification](../gui-presentation/spec.md) owns visual hi
 
 ## Contract
 
-- The GUI exposes controls for input, film, print, scanner, output, advanced color, and configuration.
+- The GUI exposes controls for input, film, print, scanner, output, advanced color, configuration, and LUT look.
+- A Film / LUT mode selection and LUT look controls MUST follow [LUT look](../lut-look/spec.md#ui-and-cli). LUT mode retains stored film, print, and scanner controls without executing their stages.
 - Preview renders a bounded disposable image. Scan renders the original working resolution.
 - Both use the current runtime controls.
   `standard` negative-to-positive preview MUST prepare and finish the complete working frame before display reduction; its full-frame requirements follow the [scan preview contract](../film-chain/lab-scan/spec.md#exact-preview-and-prepared-baseline).
@@ -195,11 +196,14 @@ Each module has one editing owner. The inspector MUST contain these stages and m
 | Film | Film material selector and its development-time family; Chemistry; Film base; Halation; Couplers; Grain selector, shared material-grain parameters, and every engine-specific parameter group. |
 | Print | Print material selector and its development-time family; Enlarger exposure mode, exposure, exposure tracking, M/Y shifts, and illuminant; Preflash; Enlarger diffusion; print Chemistry and independent density-curve gamma; Print base. |
 | Scan | Fixed product readout illuminant information; eligible scan output and conversion-style controls; specialized negative-conversion correction, restore, copy/paste and held automatic comparison; lens blur, unsharp mask; Print viewing glare; Tone & Color and its collapsible Range group. |
+| LUT look | Film / LUT mode selection; LUT import and declaration; Diffusion; Halation; Grain. Film, Print, and Scanner modules remain stored but inactive. |
 | Output | Output color space and encoding where exposed by their contracts; output gamut processing; CMYK ink style; Simulation blend; retained Save color and encoding settings. |
 | Application settings | General: interface language, preview limits, and rendering preferences that are not photographic controls; State and startup: startup state save/load/default actions; Display: display transform, ICC selection, canvas, padding, and interpolation; Diagnostics: observation and report actions. Language preference ownership follows [GUI product language](../gui-language/spec.md#selection-and-persistence), not photographic state. |
 | Export dialog | Independent full-resolution export backend, format, depth, saving color and encoding, applicable codec/compression options, destination selection, and export submission. |
 | Viewer footer | Original/Modified/Paper back selection; zoom, fit, reveal, crossfade, and read-only zoom state; [black and white endpoint warnings](../gui-product-design/clipping-warnings/spec.md#controls); optional image-analysis visibility. |
 | Preset browser | Look selection, browser search, library refresh/reveal, and look-preset management. |
+
+Tone & Color remains one control group. Its editing surface is Scan in film mode and LUT look in LUT mode. It MUST NOT be duplicated.
 
 Rotation is a source operation and MUST NOT be offered as viewer-only pan or zoom. A read-only summary or action that locates its owner MAY appear elsewhere; a second editable copy MUST NOT.
 

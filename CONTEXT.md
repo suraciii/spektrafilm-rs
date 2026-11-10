@@ -79,6 +79,15 @@ _Avoid_: Chart group
 **Look preset**: A named, reusable choice of film and print materials with their look-owned adjustments. It is a starting point for a photograph, not a saved photograph or a complete application setup.
 _Avoid_: Photograph record, startup state, LUT
 
+**LUT look**: A non-spectral RGB color transform and its independent effect layers, applied without film or print material simulation. A LUT look is not a film look preset.
+_Avoid_: Film profile, look preset, LUT delivery
+
+**LUT mode**: The render mode that applies a LUT look. It is exclusive with the spectral film mode and carries no material or illuminant simulation.
+_Avoid_: Film workflow, spectral simulation
+
+**LUT stage**: The pointwise 3D color transform declared by a LUT look, with its input and output color spaces, domain, domain policy, shaper, and strength.
+_Avoid_: Film density, camera profile
+
 **Preset thumbnail**: A small rendering of the current photograph with a candidate look preset, used to compare looks without changing accepted adjustments. It is not a reference sample or the retained Preview result.
 _Avoid_: Reference thumbnail, saved preset image
 

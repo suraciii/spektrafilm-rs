@@ -6,7 +6,7 @@ This capability owns [tone and color adjustments](../../CONTEXT.md#language) aft
 
 ## Scope and applicability
 
-The capability MUST provide one shared adjustment module across the eligible positive readings below.
+The capability MUST provide one shared adjustment module across the eligible positive readings and LUT look results below.
 
 | Reading | Applicability |
 | --- | --- |
@@ -14,18 +14,19 @@ The capability MUST provide one shared adjustment module across the eligible pos
 | Negative converted to a positive image | Eligible |
 | Photographic-paper reflection positive | Eligible |
 | Imported-negative or saved-material continuation | Eligible only when its completed reading matches an eligible row |
+| [LUT look output](../lut-look/spec.md) | Eligible after the declared LUT color transform and before output grain |
 | Negative transmission with preserved polarity | Inactive |
 | Negative scan with base subtraction and preserved polarity | Inactive |
 | Material output without a completed positive reading | Inactive |
 | Film-free `input` workflow | Inactive |
 
-Applicability MUST follow the resolved route, scanned medium, and delivered polarity. Changing to an inactive route MUST preserve stored adjustment values and explain why they do not execute.
+Applicability MUST follow the resolved route, scanned medium, delivered polarity, or LUT look boundary. Changing to an inactive route MUST preserve stored adjustment values and explain why they do not execute.
 
 These adjustments MUST NOT change material formation or scanner interpretation. They MUST NOT add negative conversion or print development to a route that lacks that operation.
 
 The adjustments MUST use fixed, image-independent responses. They MUST NOT measure automatic exposure, white balance, histogram endpoints, or subject masks.
 
-The module operates on the RGB image supplied by [Image input](../image-input/spec.md). It MUST NOT change input-alpha handling or introduce alpha compositing. An RGB-only result MUST NOT be presented as proof of alpha preservation.
+The module operates on the RGB image supplied by [Image input](../image-input/spec.md) or by the [LUT look](../lut-look/spec.md) stage. It MUST NOT change input-alpha handling or introduce alpha compositing. An RGB-only result MUST NOT be presented as proof of alpha preservation.
 
 ## Controls
 
@@ -80,7 +81,7 @@ Comparison MUST NOT bypass negative interpretation, material effects, output gam
 
 ## Persistence and replay
 
-Tone and color adjustments MUST form one independently scoped, look-owned control group under [Presets](../presets/spec.md). Applying a complete look MUST replace these adjustment values; applying an unrelated section MUST preserve them.
+Tone and color adjustments MUST form one independently scoped, look-owned control group under [Presets](../presets/spec.md). In LUT mode, the same response is carried by the LUT look runtime group rather than a film look preset. Applying a complete look MUST replace these adjustment values; applying an unrelated section MUST preserve them.
 
 Film, paper, and route selection MUST preserve these adjustment values. They MUST NOT derive adjustments from stock defaults or silently neutralize inactive stored values.
 
