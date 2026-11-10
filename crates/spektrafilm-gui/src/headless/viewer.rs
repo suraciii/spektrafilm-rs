@@ -301,7 +301,7 @@ fn layers_and_interpolation_change_output_but_preserve_input_pixels() {
 
 #[test]
 fn exact_zoom_obeys_dpi_drag_pans_double_click_resets_and_hover_reads_float_source() {
-    for dpi in [1.0, 2.0] {
+    for dpi in [1.0, 1.25, 2.0] {
         let fixture = session();
         let state_path = fixture.directory.path().join("initial.json");
         let image_path = fixture.directory.path().join("asymmetric-ramp.png");
@@ -336,6 +336,15 @@ fn exact_zoom_obeys_dpi_drag_pans_double_click_resets_and_hover_reads_float_sour
             h.state_mut().viewer.pan = egui::vec2(
                 (-6.5 - image_min_x.fract()) / dpi,
                 (-4.5 - image_min_y.fract()) / dpi,
+            );
+            let observation = composed(h, time);
+            // Align the settled geometry just before device-pixel centers.
+            // An inverse fractional DPI is not exactly representable in f32;
+            // do not let its rounding move the fixture across the half-open edge.
+            let align = |point: f32| ((point * dpi - 0.5).round() + 0.5 - 0.001) / dpi - point;
+            h.state_mut().viewer.pan += egui::vec2(
+                align(observation.image_rect.min.x),
+                align(observation.image_rect.min.y),
             );
             let observation = composed(h, time);
             assert_eq!(h.state().viewer.zoom_percent, Some(percent));

@@ -234,6 +234,8 @@ The footer uses compact named icons for the layer controls and transitions when 
 
 The footer switches between **Original** (原图), the retained input, and **Modified** (修改图), the latest accepted Preview or Scan. Modified is disabled until output exists. The first accepted Preview or Scan selects Modified. Switching does not render or edit adjustments; both views share zoom and pan. **Paper back** remains a separate presentation. **Settings → Display → output interpolation** selects nearest, linear, cubic, spline16, spline36, Lanczos, or Blackman sampling for Modified. Original uses nearest interpolation. Paper back uses spline36. The viewport samples the retained full-resolution image for visible detail.
 
+At reduced zoom, non-nearest full-source viewing averages the source area covered by each display pixel. Capped display rasters also average source areas. Native-size and magnified full-source views keep the selected interpolation kernel. Explicit nearest sampling remains unfiltered.
+
 ### Black and white endpoint warnings
 
 The two icon switches immediately left of **Image analysis** control **Shadow clipping warning** (阴影剪裁警告) and **Highlight clipping warning** (高光剪裁警告). Both start off without saved warning preferences.

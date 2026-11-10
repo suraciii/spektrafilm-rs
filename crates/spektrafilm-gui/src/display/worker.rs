@@ -38,6 +38,8 @@ pub(super) struct DisplayRequest {
     pub(super) paper_rect: Rect,
     pub(super) image_rect: Rect,
     pub(super) texture_size: [usize; 2],
+    /// Source pixels covered by each composition texture texel.
+    pub(super) source_footprint: [f32; 2],
     pub(super) gray: Color32,
     pub(super) layer: ViewLayer,
     pub(super) clipping: spektrafilm_backend::ViewerClipping,
@@ -394,6 +396,7 @@ impl DisplaySource {
         image_rect: Rect,
         rect: Rect,
         texture_size: [usize; 2],
+        source_footprint: [f32; 2],
         interpolation: Interpolation,
         cache: &mut TransformCache,
     ) -> Option<(DisplayRaster, Option<crate::app::Message>)> {
@@ -404,6 +407,7 @@ impl DisplaySource {
             image_rect,
             rect,
             texture_size,
+            source_footprint,
             interpolation,
             cache,
         )
@@ -420,6 +424,7 @@ impl DisplaySource {
         image_rect: Rect,
         rect: Rect,
         texture_size: [usize; 2],
+        source_footprint: [f32; 2],
         interpolation: Interpolation,
         cache: &mut TransformCache,
     ) -> Option<(DisplayRaster, Option<crate::app::Message>)> {
@@ -461,6 +466,7 @@ impl DisplaySource {
                         rect_size: [rect.width(), rect.height()],
                         image_min: [image_rect.min.x, image_rect.min.y],
                         image_size: [image_rect.width(), image_rect.height()],
+                        source_footprint,
                         interpolation: interpolation.discriminant(),
                         transform: false,
                         src_cctf: 0,
@@ -559,6 +565,7 @@ impl DisplaySource {
             image_rect,
             rect,
             texture_size,
+            source_footprint,
             interpolation,
         );
         let raster = DisplayRaster::new(texture_size, rgb).ok()?;
@@ -618,6 +625,7 @@ fn compose_display_cancellable(
         paper_rect,
         image_rect,
         texture_size,
+        source_footprint,
         gray,
         layer,
         interpolation,
@@ -760,6 +768,7 @@ fn compose_display_cancellable(
                 image_rect,
                 rect,
                 texture_size,
+                source_footprint,
                 interpolation,
                 &mut cache.full,
             )
@@ -1150,6 +1159,7 @@ fn compose_display_device(
                         rect_size: [request.rect.width(), request.rect.height()],
                         image_min: [request.image_rect.min.x, request.image_rect.min.y],
                         image_size: [request.image_rect.width(), request.image_rect.height()],
+                        source_footprint: request.source_footprint,
                         interpolation: request.interpolation.discriminant(),
                         transform: false,
                         src_cctf: 0,
@@ -1347,6 +1357,7 @@ mod tests {
             paper_rect: rect,
             image_rect: rect,
             texture_size: [4, 1],
+            source_footprint: [1.0, 1.0],
             gray: Color32::BLACK,
             layer: ViewLayer::Output,
             interpolation: Interpolation::Nearest,
@@ -1972,15 +1983,9 @@ mod tests {
         drop(worker);
     }
 
-    /// The magnified full-source view must compose on the device exactly as
-    /// the host composition does: the same viewport geometry, the same
-    /// separable interpolation kernel, the same display transform. A device
-    /// port that changed any of the three would change what the magnified
-    /// viewer shows.
-    ///
-    /// The comparison is against the host reference over a chromatic source
-    /// and every interpolation mode, because the kernels differ in radius and
-    /// in weight and an error in either shows up only at the edges.
+    /// Compare reduction and magnification through the real device and host
+    /// display transforms. Reduction checks source-cell coverage; magnification
+    /// checks every interpolation kernel at fractional coordinates.
     #[test]
     fn device_full_source_matches_the_host_reference() {
         use spektrafilm_math::colorspace::resolve;
@@ -2018,12 +2023,15 @@ mod tests {
             Interpolation::Lanczos,
             Interpolation::Blackman,
         ];
-        for interpolation in modes {
-            // A viewport that fits the source with a fractional offset, so the
-            // kernel's taps land off the pixel centres.
-            let image_rect = Rect::from_min_size(Pos2::new(3.0, 2.0), Vec2::new(31.0, 17.0));
+        for (interpolation, extent) in modes.into_iter().flat_map(|mode| {
+            [Vec2::new(31.0, 17.0), Vec2::new(80.0, 60.0)]
+                .into_iter()
+                .map(move |extent| (mode, extent))
+        }) {
+            let image_rect = Rect::from_min_size(Pos2::new(3.0, 2.0), extent);
             let rect = Rect::from_min_size(Pos2::ZERO, Vec2::new(64.0, 48.0));
             let texture_size = [64usize, 48usize];
+            let footprint = [w as f32 / extent.x, h as f32 / extent.y];
             let device = metadata
                 .full_source_view_with(
                     backend.backend(),
@@ -2032,6 +2040,7 @@ mod tests {
                     image_rect,
                     rect,
                     texture_size,
+                    footprint,
                     interpolation,
                     &mut TransformCache::default(),
                 )
@@ -2043,6 +2052,7 @@ mod tests {
                     image_rect,
                     rect,
                     texture_size,
+                    footprint,
                     interpolation,
                     &mut TransformCache::default(),
                 )
@@ -2105,6 +2115,7 @@ mod tests {
                 image_rect,
                 rect,
                 [16, 8],
+                [1.0, 1.0],
                 Interpolation::Spline36,
                 &mut TransformCache::default(),
             )

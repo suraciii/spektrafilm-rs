@@ -398,6 +398,8 @@ Opening a source, changing a display profile, and interacting with the viewer MU
 
 Cache availability MUST NOT change supported profiles or displayed pixel values. Missing, invalid, stale, or unwritable caches MUST NOT prevent the viewer from preparing the correct transform.
 
+Capped display rasters and non-nearest full-source reductions MUST average the covered source-pixel areas. Full-source nearest sampling MUST retain its explicit nearest-neighbor behavior. Native-size and magnified full-source views MUST keep the selected interpolation kernel.
+
 The viewer MUST expose [image analysis](../gui-product-design/image-analysis/spec.md) as an optional workspace below the photograph. That capability owns analysis subjects, regions, display preferences, availability, and read-only measurement behavior.
 
 The viewer MUST expose [black and white endpoint warnings](../gui-product-design/clipping-warnings/spec.md) independently of the analysis workspace. That capability owns native endpoint interpretation, warning presentation, temporary inspection, and independent presentation preferences.

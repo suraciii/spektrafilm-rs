@@ -36,7 +36,10 @@ The [GUI language design](../gui-language/design.md) owns localized presentation
 - The profile selection module owns catalog discovery and stock and development-time pickers. The application owns selection state and render invalidation.
 - Viewer presentation uses disposable device or host display rasters under [GPU residency](../gpu-execution/design.md#device-residency). Save and Export consume retained floating output or invoke the export renderer and shared writer.
 - The private raster module owns interpolation kernels and pixel sampling. The viewer owns color transforms, caching, and presentation state.
-- Full-source sampling transforms each source tap before interpolation. Capped display rasters reduce the source before color conversion.
+- Full-source viewing MUST apply display and ICC transforms before filtering. Capped display rasters MUST reduce before color conversion.
+- Transform-cache and device source windows MUST cover the complete filter support. Binding or cache limits MUST NOT truncate an output pixel's source footprint.
+- The viewer MUST resolve source-pixel coverage before rounding screen rectangles. Sampling MUST include texture-size limits without deriving scale from the rectangle origin.
+- Large area reductions MUST preserve accumulation precision and bound each device submission's work. Off-image pixels MUST NOT trigger source-footprint tiling.
 - GPU viewing MUST satisfy [numerical alignment](../gpu-execution/design.md#numerical-alignment) without CPU image arithmetic.
 - Preview and viewport composition use separate persistent workers. Each worker retains one queued snapshot and replaces it when a newer request arrives.
 - The UI always schedules Preview after the frame validates and accepts adjustments. The final edit MUST arm its debounce wakeup before the event loop becomes idle.
