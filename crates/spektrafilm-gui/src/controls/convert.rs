@@ -20,8 +20,8 @@ pub(crate) fn sections(
             if filter_matches(filter, "scan illuminant") {
                 flags.runtime_changed |= scan_illuminant(ui, &mut params.film_render.convert.scan_illuminant);
             }
-            if filter_matches(filter, "exposure compensation ev") {
-                flags.runtime_changed |= param_numeric(ui, "exposure compensation ev", &mut params.film_render.convert.exposure_compensation_ev, "film_render.convert.exposure_compensation_ev", "Aligns the scan's overall brightness to the model (gain = 2^ev). Brighter input -> less recovered film density.");
+            if filter_matches(filter, "Conversion exposure compensation ev") {
+                flags.runtime_changed |= param_numeric(ui, "Conversion exposure compensation ev", &mut params.film_render.convert.exposure_compensation_ev, "film_render.convert.exposure_compensation_ev", "Aligns the scan's overall brightness to the model (gain = 2^ev). Brighter input -> less recovered film density.");
             }
             if filter_matches(filter, "base percentile") {
                 flags.runtime_changed |= param_numeric(ui, "base percentile", &mut params.film_render.convert.base_percentile, "film_render.convert.base_percentile", "Brightest-pixels percentile used by 'Detect base' to sample the clear / unexposed film (99 = brightest 1%). Detect base fits the film Base so that clear film maps to density 0 (unexposed -> neutral).");

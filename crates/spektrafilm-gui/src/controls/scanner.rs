@@ -5,6 +5,22 @@ use serde_json::Value;
 use spektrafilm_core::params::ScanOperatorParams;
 use std::path::Path;
 
+/// The tracking choice already implied by the print exposure mode.
+fn print_tracking_redundancy(
+    tracking: PrintExposureEvTracking,
+    mode: PrintExposureMode,
+) -> Option<&'static str> {
+    match (tracking, mode) {
+        (PrintExposureEvTracking::Always, PrintExposureMode::Auto) => Some(
+            "In auto mode, Always is equivalent to Follow exposure mode; this choice is disabled.",
+        ),
+        (PrintExposureEvTracking::FollowMode, PrintExposureMode::Manual) => Some(
+            "In manual mode, Follow exposure mode is equivalent to Never; this choice is disabled.",
+        ),
+        _ => None,
+    }
+}
+
 /// Session-only clipboard and held comparison; App owns all adjustment history.
 #[derive(Clone, Default)]
 struct OperatorEditor {
@@ -42,7 +58,7 @@ fn operator_controls(
             "finished exposure",
             "warmth",
             "green–magenta tint",
-            "contrast",
+            "Conversion contrast",
             "restore automatic",
             "copy operator correction",
             "paste operator correction",
@@ -76,8 +92,8 @@ fn operator_controls(
                 "scanner.operator.tint_ev",
                 "Mean red/blue minus green exposure difference in EV. Positive values add magenta; negative values add green.");
         }
-        if filter_matches(filter, "Contrast") {
-            param_numeric(ui, "Contrast", &mut operator.contrast,
+        if filter_matches(filter, "Conversion contrast") {
+            param_numeric(ui, "Conversion contrast", &mut operator.contrast,
                 "scanner.operator.contrast",
                 "Common exposure contrast around the fixed reference exposure. Above 1 is harder; below 1 is softer. Channel differences and automatic setup are unchanged.");
         }
@@ -269,7 +285,8 @@ pub(crate) fn sections(
                 flags.runtime_changed |= choice_tip_experimental(ui, "print illuminant", &mut params.enlarger.illuminant, &["TH-KG3", "TH-KG3-L", "K75P", "T", "D50", "D55", "D65", "A", "BB3200", "BB5000", "LED-B3", "LED-B5", "LED-RGB1", "LED-V2", "FL2"], "Print illuminant to simulate. Default is the bundled TH-KG3.");
             }
             if filter_matches(filter, "print exposure ev tracking") {
-                flags.runtime_changed |= enum_choice(
+                let mode = params.enlarger.print_exposure_mode;
+                flags.runtime_changed |= enum_choice_with_disabled(
                     ui,
                     "print exposure ev tracking",
                     &mut params.settings.print_exposure_ev_tracking,
@@ -278,8 +295,18 @@ pub(crate) fn sections(
                         (PrintExposureEvTracking::Never, "never"),
                         (PrintExposureEvTracking::Always, "always"),
                     ],
-                    "How the print exposure follows camera exposure compensation. follow_mode tracks it in auto mode and does not track it in manual; never disables tracking in auto; always applies the relative compensation factor in manual.",
+                    "How the print exposure follows camera exposure compensation. follow_mode tracks it in auto mode and does not track it in manual; never disables tracking in auto; always applies the relative compensation factor in manual. The choice equivalent to the current mode is disabled.",
+                    |tracking| print_tracking_redundancy(*tracking, mode),
                 );
+                if let Some(reason) =
+                    print_tracking_redundancy(params.settings.print_exposure_ev_tracking, mode)
+                {
+                    ui.label(
+                        egui::RichText::new(localized(ui.ctx(), reason))
+                            .small()
+                            .color(theme::FG_MUTED),
+                    );
+                }
             }
         });
     }
@@ -585,4 +612,32 @@ fn preflash_controls(
             flags.runtime_changed |= param_numeric(ui, "preflash m filter shift", &mut params.enlarger.preflash_m_filter_shift, "enlarger.preflash_m_filter_shift", "Independent preflash Magenta shift around the calibrated neutral filter pack, in Kodak CC units.");
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn print_tracking_redundancy_matches_mode_equivalence() {
+        assert!(
+            print_tracking_redundancy(PrintExposureEvTracking::Always, PrintExposureMode::Auto)
+                .is_some()
+        );
+        assert!(
+            print_tracking_redundancy(
+                PrintExposureEvTracking::FollowMode,
+                PrintExposureMode::Manual
+            )
+            .is_some()
+        );
+        for (tracking, mode) in [
+            (PrintExposureEvTracking::Never, PrintExposureMode::Auto),
+            (PrintExposureEvTracking::Never, PrintExposureMode::Manual),
+            (PrintExposureEvTracking::Always, PrintExposureMode::Manual),
+            (PrintExposureEvTracking::FollowMode, PrintExposureMode::Auto),
+        ] {
+            assert!(print_tracking_redundancy(tracking, mode).is_none());
+        }
+    }
 }

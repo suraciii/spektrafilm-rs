@@ -85,6 +85,8 @@ Inspector stages organize access to controls; they do not change pipeline execut
 
 Print MUST expose print exposure mode, print exposure, Magenta and Yellow shifts, and preflash exposure with its independent Magenta and Yellow filter shifts. Print exposure mode MUST follow [Print exposure mode](../film-chain/spec.md#print-exposure-mode). Calibrated cyan remains part of the neutral filter pack without a new Cyan shift control.
 
+The tracking choice already implied by the selected print exposure mode MUST be disabled and explained; the GUI MUST NOT expose a silently ineffective tracking choice.
+
 Preflash MUST retain its existing units, defaults, bounds, and preset ownership under [Preflash](../output-mix/spec.md#preflash). Zero preflash exposure MUST disable flash without clearing its filters. A route without print exposure and development MUST identify these controls as inactive and retain their values.
 
 Preflash help MUST explain that, on negative-to-photographic-paper printing, it can bring weak highlight exposure differences into a responsive part of the paper curve. It cannot recover detail absent from the negative. Excessive preflash can lower paper white, add fog, alter midtones, and change color.

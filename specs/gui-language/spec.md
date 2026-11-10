@@ -68,6 +68,7 @@ The Simplified Chinese presentation MUST use these core terms consistently. The 
 | Film / Print / Output | 胶片 / 印相 / 输出 |
 | Tone & Color / Range | 影调与色彩 / 范围 |
 | Brightness / Contrast | 明暗 / 反差 |
+| Conversion contrast / Conversion exposure compensation | 转换反差 / 转换曝光补偿 |
 | Warmth / Saturation | 冷暖 / 彩度 |
 | Film Format / Custom | 胶片规格 / 自定义 |
 | Capture setup | 拍摄设置 |
