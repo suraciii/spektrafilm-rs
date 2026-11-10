@@ -32,6 +32,53 @@ fn builtin_presets_enable_material_grain_and_halation() {
     }
 }
 
+/// CineStill's single built-in keeps the grain/halation values fitted to
+/// public lab scans (commit f337148e), not the retired Night 280um look.
+#[test]
+fn cinestill_800t_is_one_scan_fitted_look() {
+    let library = builtin_presets();
+    let matches: Vec<_> = library
+        .iter()
+        .filter(|preset| preset.name == "CineStill 800T")
+        .collect();
+    assert_eq!(matches.len(), 1);
+    assert!(
+        !library.iter().any(|preset| {
+            preset.name.contains("Night 280um") || preset.name.contains("Cs41 (experimental)")
+        }),
+        "the old CineStill selector names must not survive the merge"
+    );
+
+    let resolved = matches[0]
+        .resolve(&data(), &RuntimeParams::default())
+        .unwrap();
+    let params = crate::params_builder::digest_params(
+        resolved.params,
+        &resolved.film,
+        &resolved.print,
+        None,
+        false,
+    );
+    assert_eq!(resolved.film_name, "cinestill_800t_cs41_approx");
+    assert!(params.film_render.grain.active);
+    assert_eq!(params.film_render.grain.rms_granularity, [13.1, 19.2, 24.4]);
+    assert_eq!(
+        params.film_render.grain.particle_scale_sublayers,
+        [4.0, 0.15, 0.03]
+    );
+    assert!(params.film_render.halation.active);
+    assert_eq!(
+        params.film_render.halation.halation_first_sigma_um,
+        [160.; 3]
+    );
+    assert_eq!(params.film_render.halation.halation_n_bounces, 3);
+    assert_eq!(params.film_render.halation.halation_bounce_decay, 0.5);
+    assert_eq!(
+        params.film_render.halation.halation_strength,
+        [0.15, 0.045, 0.005]
+    );
+}
+
 #[test]
 fn finishing_look_migration_and_sparse_sections_preserve_ownership() {
     let look = builtin_presets().remove(0);
