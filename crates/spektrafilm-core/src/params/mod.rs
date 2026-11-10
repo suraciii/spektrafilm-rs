@@ -12,6 +12,7 @@ pub mod grain;
 mod grain_compat;
 pub use grain_compat::normalize_grain_control_names;
 pub mod halation;
+mod migrations;
 pub mod sources;
 
 pub(crate) mod validation;

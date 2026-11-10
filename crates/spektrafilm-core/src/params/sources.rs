@@ -12,7 +12,15 @@ pub use discovery::{
     suggest_parameter_paths, supported_routes,
 };
 
+pub use super::migrations::{
+    normalize_legacy_complete_params, normalize_legacy_complete_params_detailed,
+    normalize_legacy_conversion_paths, normalize_legacy_conversion_paths_detailed,
+    normalize_legacy_scan_readout, normalize_legacy_scan_readout_detailed,
+};
+
 use super::RuntimeParams;
+use super::grain_compat::canonical_grain_path;
+use super::validation::retired_lightness_error_detailed;
 use super::{ValidationError as Error, ValidationReason as Reason};
 use crate::suggest::error_suffix;
 use metadata::{nullable, rust_type};
@@ -25,313 +33,6 @@ pub fn non_settable_leaves() -> &'static [(&'static str, &'static str)] {
         "per-render stochastic seed is set by the recipe runner",
     )]
 }
-
-/// Normalize the runtime-parameter subtree of a versioned legacy complete document.
-/// Rejection leaves the supplied document unchanged. Current complete documents
-/// and sparse sources must use their strict boundary without normalization.
-///
-/// The migration is transactional: every conflict is detected before any
-/// mutation, so a rejected document stays byte-identical. It is idempotent:
-/// a migrated document carries only canonical `cmyk` fields and the canonical
-/// base route, and re-running the migration is a no-op.
-pub fn normalize_legacy_complete_params(value: &mut Value) -> Result<(), String> {
-    normalize_legacy_complete_params_detailed(value).map_err(|error| error.to_string())
-}
-
-pub fn normalize_legacy_complete_params_detailed(value: &mut Value) -> Result<(), Error> {
-    // Reject the retired leaf before renaming anything so a rejected
-    // document stays byte-identical.
-    let has_retired = match value.pointer("/io/output_gamut_compress/lightness_compression") {
-        Some(retired) if !retired.is_null() => return Err(retired_lightness_error_detailed()),
-        Some(_) => true,
-        None => false,
-    };
-    normalize_legacy_conversion_paths_detailed(value, true)?;
-    normalize_legacy_cmyk_detailed(value)?;
-    if has_retired {
-        value
-            .pointer_mut("/io/output_gamut_compress")
-            .and_then(Value::as_object_mut)
-            .expect("retired field belongs to an object")
-            .remove("lightness_compression");
-    }
-    Ok(())
-}
-
-/// Migrate the retired `magazine_print_color` group and the retired
-/// `input > film > scan > magazine` route of a versioned legacy complete
-/// document onto the canonical `cmyk` group and base route.
-///
-/// The mapping is transactional (all conflicts detected before mutation),
-/// idempotent, and preserves unrelated fields. A document supplying both a
-/// legacy field and its new counterpart is rejected. A document naming the
-/// retired route migrates to `input > film > scan` with `cmyk.active = true`.
-fn normalize_legacy_cmyk_detailed(value: &mut Value) -> Result<(), Error> {
-    const LEGACY_GROUP: &str = "magazine_print_color";
-    const NEW_GROUP: &str = "cmyk";
-    const RETIRED_ROUTE: &str = crate::WorkflowRoute::REMOVED_MAGAZINE_ROUTE;
-    const BASE_ROUTE: &str = "input > film > scan";
-
-    let Some(object) = value.as_object_mut() else {
-        return Ok(());
-    };
-
-    // Validate every conflict before mutating so a rejected document stays
-    // byte-identical.
-    if let Some(legacy) = object.get(LEGACY_GROUP) {
-        if !legacy.is_object() {
-            return Err(Error::new(
-                Reason::LegacyGroupObject,
-                LEGACY_GROUP,
-                format!("legacy complete params carry a non-object {LEGACY_GROUP} group"),
-            ));
-        }
-        if object.contains_key(NEW_GROUP) {
-            return Err(Error::new(Reason::LegacyConflict, LEGACY_GROUP, format!(
-                "legacy complete params carry both {LEGACY_GROUP} and {NEW_GROUP}; keep exactly one spelling"
-            )).arg("other", NEW_GROUP));
-        }
-        for leaf in ["active", "strength"] {
-            if legacy.as_object().unwrap().contains_key(leaf)
-                && object
-                    .get(NEW_GROUP)
-                    .and_then(Value::as_object)
-                    .is_some_and(|new| new.contains_key(leaf))
-            {
-                return Err(Error::new(Reason::LegacyConflict, format!("{LEGACY_GROUP}.{leaf}"), format!(
-                    "legacy complete params carry both {LEGACY_GROUP}.{leaf} and {NEW_GROUP}.{leaf}; keep exactly one spelling"
-                )).arg("other", format!("{NEW_GROUP}.{leaf}")));
-            }
-        }
-    }
-
-    let has_legacy_route = object
-        .get("workflow")
-        .and_then(Value::as_object)
-        .and_then(|w| w.get("route"))
-        .and_then(Value::as_str)
-        == Some(RETIRED_ROUTE);
-
-    // A legacy route and a legacy group together are a conflict: the route
-    // implies `cmyk.active = true`, which the group may contradict.
-    if has_legacy_route
-        && let Some(legacy) = object.get(LEGACY_GROUP).and_then(Value::as_object)
-        && legacy.contains_key("active")
-    {
-        return Err(Error::new(Reason::LegacyRouteConflict, format!("{LEGACY_GROUP}.active"), format!(
-            "legacy complete params carry both the retired route {RETIRED_ROUTE} and {LEGACY_GROUP}.active; keep exactly one spelling"
-        )).arg("route", RETIRED_ROUTE));
-    }
-
-    // Migrate the legacy group onto the canonical name.
-    if let Some(legacy) = object.remove(LEGACY_GROUP) {
-        object.insert(NEW_GROUP.to_owned(), legacy);
-    }
-
-    // Migrate the retired route onto the base route with cmyk active.
-    if has_legacy_route {
-        let workflow = object
-            .entry("workflow")
-            .or_insert_with(|| Value::Object(serde_json::Map::new()))
-            .as_object_mut()
-            .expect("workflow group is an object");
-        workflow.insert("route".to_owned(), BASE_ROUTE.into());
-        let cmyk = object
-            .entry(NEW_GROUP)
-            .or_insert_with(|| Value::Object(serde_json::Map::new()))
-            .as_object_mut()
-            .expect("cmyk group is an object");
-        cmyk.insert("active".to_owned(), Value::Bool(true));
-    }
-
-    Ok(())
-}
-
-/// Remove the old readout control only at a versioned legacy boundary.
-/// Complete captures retain its value in the independent convert acquisition
-/// light unless that document already declares one. Scanner-only presets
-/// discard the retired leaf instead of gaining a different section.
-pub fn normalize_legacy_scan_readout(
-    value: &mut Value,
-    preserve_capture: bool,
-) -> Result<(), String> {
-    normalize_legacy_scan_readout_detailed(value, preserve_capture)
-        .map_err(|error| error.to_string())
-}
-
-pub fn normalize_legacy_scan_readout_detailed(
-    value: &mut Value,
-    preserve_capture: bool,
-) -> Result<(), Error> {
-    let Some(lamp) = value.pointer("/scanner/lamp").cloned() else {
-        return Ok(());
-    };
-    let name = lamp
-        .as_str()
-        .filter(|name| crate::spectral_service::is_supported_illuminant(name))
-        .ok_or_else(|| {
-            Error::new(
-                Reason::LegacyLamp,
-                "scanner.lamp",
-                "legacy scanner.lamp must name a supported illuminant",
-            )
-        })?;
-    let mut candidate = value.clone();
-    candidate["scanner"]
-        .as_object_mut()
-        .expect("lamp belongs to scanner object")
-        .remove("lamp");
-    if preserve_capture
-        && candidate
-            .pointer("/film_render/convert/scan_illuminant")
-            .is_none()
-    {
-        let film = candidate
-            .as_object_mut()
-            .ok_or_else(|| {
-                Error::new(
-                    Reason::ObjectRequired,
-                    "",
-                    "legacy parameters must be an object",
-                )
-            })?
-            .entry("film_render")
-            .or_insert_with(|| serde_json::json!({}))
-            .as_object_mut()
-            .ok_or_else(|| {
-                Error::new(
-                    Reason::ObjectRequired,
-                    "film_render",
-                    "film_render must be an object",
-                )
-            })?;
-        let convert = film
-            .entry("convert")
-            .or_insert_with(|| serde_json::json!({}))
-            .as_object_mut()
-            .ok_or_else(|| {
-                Error::new(
-                    Reason::ObjectRequired,
-                    "film_render.convert",
-                    "film_render.convert must be an object",
-                )
-            })?;
-        convert.insert("scan_illuminant".into(), name.into());
-    }
-    *value = candidate;
-    Ok(())
-}
-
-/// Map the pre-v4 legacy `enlarger` print-exposure pair of a complete
-/// runtime document onto `enlarger.print_exposure_mode` with
-/// `settings.print_exposure_ev_tracking` for the two mixed states.
-/// `settings_allowed` must be false for single-section payloads, which cannot
-/// carry a `settings` group. Only versioned legacy documents may run this
-/// mapping; current documents must fail unknown-field validation instead.
-/// The mapping is idempotent and preserves rendered pixels.
-pub fn normalize_legacy_conversion_paths(
-    value: &mut Value,
-    settings_allowed: bool,
-) -> Result<(), String> {
-    normalize_legacy_conversion_paths_detailed(value, settings_allowed)
-        .map_err(|error| error.to_string())
-}
-
-pub fn normalize_legacy_conversion_paths_detailed(
-    value: &mut Value,
-    settings_allowed: bool,
-) -> Result<(), Error> {
-    let Some(object) = value.as_object_mut() else {
-        return Ok(());
-    };
-    let mut mixed_state = None;
-    if let Some(enlarger) = object.get("enlarger").and_then(Value::as_object) {
-        let has_legacy = enlarger.contains_key("normalize_print_exposure")
-            || enlarger.contains_key("print_exposure_compensation");
-        if has_legacy && enlarger.contains_key("print_exposure_mode") {
-            return Err(Error::new(
-                Reason::LegacyExposureConflict,
-                "enlarger.print_exposure_mode",
-                "legacy complete params carry both the print exposure pair and enlarger.print_exposure_mode; keep exactly one spelling",
-            ));
-        }
-        if has_legacy {
-            let leaf = |value: Option<&Value>| -> Result<bool, Error> {
-                match value {
-                    None => Ok(true),
-                    Some(Value::Bool(b)) => Ok(*b),
-                    Some(_) => Err(Error::new(
-                        Reason::LegacyExposureBoolean,
-                        "enlarger",
-                        "legacy enlarger print exposure leaves must be booleans",
-                    )),
-                }
-            };
-            let normalize = leaf(enlarger.get("normalize_print_exposure"))?;
-            let compensation = leaf(enlarger.get("print_exposure_compensation"))?;
-            mixed_state = Some(match (normalize, compensation) {
-                (true, true) => ("auto", None),
-                (false, false) => ("manual", None),
-                (true, false) => ("auto", Some("never")),
-                (false, true) => ("manual", Some("always")),
-            });
-        }
-    }
-    if let Some((_, tracking)) = mixed_state
-        && tracking.is_some()
-        && !settings_allowed
-    {
-        return Err(Error::new(
-            Reason::LegacyExposureMixed,
-            "enlarger.print_exposure_mode",
-            "the legacy enlarger print exposure pair mixes normalization and compensation; this document cannot carry settings.print_exposure_ev_tracking, so set enlarger.print_exposure_mode explicitly",
-        ));
-    }
-    // A mixed pair writes into `settings`; an existing non-object there
-    // cannot carry the leaf, and this must fail before any mutation.
-    if let Some((_, tracking)) = mixed_state
-        && tracking.is_some()
-        && matches!(object.get("settings"), Some(value) if !value.is_object())
-    {
-        return Err(Error::new(
-            Reason::LegacySettingsObject,
-            "settings",
-            "the legacy enlarger print exposure pair needs the settings.print_exposure_ev_tracking leaf, but settings is not an object",
-        ));
-    }
-    if let Some((mode, tracking)) = mixed_state {
-        let enlarger = object
-            .get_mut("enlarger")
-            .and_then(Value::as_object_mut)
-            .expect("legacy pair belongs to the enlarger object");
-        enlarger.remove("normalize_print_exposure");
-        enlarger.remove("print_exposure_compensation");
-        enlarger.insert("print_exposure_mode".into(), mode.into());
-        if let Some(tracking) = tracking {
-            object
-                .entry("settings")
-                .or_insert_with(|| Value::Object(serde_json::Map::new()))
-                .as_object_mut()
-                .expect("settings group is an object")
-                .insert("print_exposure_ev_tracking".into(), tracking.into());
-        }
-    }
-    Ok(())
-}
-
-pub(crate) fn retired_lightness_error() -> String {
-    "io.output_gamut_compress.lightness_compression was retired; no automatic replacement exists; explicitly remove this field from the document".into()
-}
-
-fn retired_lightness_error_detailed() -> Error {
-    Error::new(
-        Reason::RetiredLightness,
-        "io.output_gamut_compress.lightness_compression",
-        retired_lightness_error(),
-    )
-}
-
-use super::grain_compat::canonical_grain_path;
 
 /// Ordered sparse edits to runtime parameter leaves.
 #[derive(Debug, Clone, Default)]
@@ -657,9 +358,6 @@ mod inline_value_tests {
         .unwrap_err();
         assert_eq!(error.reason, Reason::FilmFormat);
         assert_eq!(error.path, "camera.film_format_mm");
-        let mut value = serde_json::json!({"enlarger": {"normalize_print_exposure": "yes"}});
-        let error = normalize_legacy_conversion_paths_detailed(&mut value, true).unwrap_err();
-        assert_eq!(error.reason, Reason::LegacyExposureBoolean);
     }
 
     #[test]
@@ -1256,7 +954,6 @@ mod fotufilm_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::params::PrintExposureMode;
 
     #[test]
     fn disabled_chemistry_has_the_same_sparse_and_runtime_domains() {
@@ -1868,73 +1565,6 @@ mod tests {
     }
 
     #[test]
-    fn legacy_conversion_paths_rename_and_preserve_the_four_states() {
-        for (pair, mode, tracking) in [
-            (
-                serde_json::json!({"normalize_print_exposure": true, "print_exposure_compensation": true}),
-                "auto",
-                "follow_mode",
-            ),
-            (
-                serde_json::json!({"normalize_print_exposure": false, "print_exposure_compensation": false}),
-                "manual",
-                "follow_mode",
-            ),
-            (
-                serde_json::json!({"normalize_print_exposure": true, "print_exposure_compensation": false}),
-                "auto",
-                "never",
-            ),
-            (
-                serde_json::json!({"normalize_print_exposure": false, "print_exposure_compensation": true}),
-                "manual",
-                "always",
-            ),
-            // Sparse legacy documents default each absent leaf to true.
-            (
-                serde_json::json!({"normalize_print_exposure": false}),
-                "manual",
-                "always",
-            ),
-            (
-                serde_json::json!({"print_exposure_compensation": false}),
-                "auto",
-                "never",
-            ),
-        ] {
-            let mut value = serde_json::json!({ "enlarger": pair });
-            normalize_legacy_complete_params(&mut value).unwrap();
-            let params: RuntimeParams = serde_json::from_value(value).unwrap();
-            assert_eq!(params.enlarger.print_exposure_mode.as_str(), mode);
-            assert_eq!(
-                params.settings.print_exposure_ev_tracking.as_str(),
-                tracking
-            );
-        }
-        // Idempotent on already-canonical documents.
-        let mut canonical = serde_json::to_value(RuntimeParams::default()).unwrap();
-        normalize_legacy_complete_params(&mut canonical).unwrap();
-        let round: RuntimeParams = serde_json::from_value(canonical).unwrap();
-        assert_eq!(round.enlarger.print_exposure_mode, PrintExposureMode::Auto);
-        // Both spellings together are a hard error, not a silent overwrite.
-        let mut both = serde_json::json!({
-            "enlarger": {
-                "normalize_print_exposure": true,
-                "print_exposure_compensation": false,
-                "print_exposure_mode": "auto",
-            }
-        });
-        assert!(normalize_legacy_complete_params(&mut both).is_err());
-        // Legacy scanner conversion leaves are retired with the scan
-        // surface: they stay untouched and fail unknown-field validation.
-        let mut retired = serde_json::json!({
-            "scanner": { "positive_interpretation": "coupled" }
-        });
-        assert!(normalize_legacy_complete_params(&mut retired).is_ok());
-        assert!(serde_json::from_value::<RuntimeParams>(retired).is_err());
-    }
-
-    #[test]
     fn retired_lightness_migration_is_explicit_and_atomic() {
         for algorithm in ["off", "aces_rgc", "oklch"] {
             for retired in [serde_json::json!([0.95, 1.0, 1.6]), Value::Null] {
@@ -1959,86 +1589,6 @@ mod tests {
         assert!(
             ParameterEdits::parse("io.output_gamut_compress.lightness_compression=null").is_err()
         );
-    }
-
-    #[test]
-    fn legacy_cmyk_migration_is_transactional_and_idempotent() {
-        // Legacy group migrates onto the canonical name.
-        let mut value = serde_json::json!({
-            "magazine_print_color": {"active": true, "strength": 0.75}
-        });
-        normalize_legacy_complete_params(&mut value).unwrap();
-        let params: RuntimeParams = serde_json::from_value(value.clone()).unwrap();
-        assert!(params.cmyk.active);
-        assert_eq!(params.cmyk.strength, 0.75);
-        assert!(value.get("magazine_print_color").is_none());
-        assert_eq!(value["cmyk"]["active"], true);
-        assert_eq!(value["cmyk"]["strength"], 0.75);
-
-        // Idempotent: re-running on the migrated document is a no-op.
-        let migrated = value.clone();
-        normalize_legacy_complete_params(&mut value).unwrap();
-        assert_eq!(value, migrated);
-
-        // Legacy route migrates onto the base route with cmyk active.
-        let mut value = serde_json::json!({
-            "workflow": {"route": "input > film > scan > magazine"}
-        });
-        normalize_legacy_complete_params(&mut value).unwrap();
-        let params: RuntimeParams = serde_json::from_value(value.clone()).unwrap();
-        assert_eq!(params.workflow.route, "input > film > scan");
-        assert!(params.cmyk.active);
-        assert_eq!(value["workflow"]["route"], "input > film > scan");
-        assert_eq!(value["cmyk"]["active"], true);
-
-        // Idempotent on the migrated route document.
-        let migrated = value.clone();
-        normalize_legacy_complete_params(&mut value).unwrap();
-        assert_eq!(value, migrated);
-
-        // Unrelated fields are preserved.
-        let mut value = serde_json::json!({
-            "magazine_print_color": {"active": true, "strength": 0.5},
-            "io": {"output_color_space": "ProPhoto RGB"},
-            "camera": {"film_format_mm": 120.0}
-        });
-        normalize_legacy_complete_params(&mut value).unwrap();
-        let params: RuntimeParams = serde_json::from_value(value).unwrap();
-        assert_eq!(params.io.output_color_space, "ProPhoto RGB");
-        assert_eq!(params.camera.film_format_mm, 120.0);
-        assert!(params.cmyk.active);
-        assert_eq!(params.cmyk.strength, 0.5);
-    }
-
-    #[test]
-    fn legacy_cmyk_conflicts_reject_atomically() {
-        // Both spellings together are a hard error.
-        let mut both = serde_json::json!({
-            "magazine_print_color": {"active": true, "strength": 0.75},
-            "cmyk": {"active": false, "strength": 1.0}
-        });
-        let original = both.clone();
-        let error = normalize_legacy_complete_params(&mut both).unwrap_err();
-        assert!(error.contains("magazine_print_color"), "{error}");
-        assert!(error.contains("cmyk"), "{error}");
-        assert_eq!(both, original);
-
-        // A legacy route and a legacy group with an explicit active leaf
-        // conflict: the route implies cmyk.active = true.
-        let mut conflict = serde_json::json!({
-            "workflow": {"route": "input > film > scan > magazine"},
-            "magazine_print_color": {"active": false}
-        });
-        let original = conflict.clone();
-        let error = normalize_legacy_complete_params(&mut conflict).unwrap_err();
-        assert!(error.contains("retired route"), "{error}");
-        assert_eq!(conflict, original);
-
-        // A non-object legacy group is rejected before mutation.
-        let mut bad = serde_json::json!({"magazine_print_color": 42});
-        let original = bad.clone();
-        assert!(normalize_legacy_complete_params(&mut bad).is_err());
-        assert_eq!(bad, original);
     }
 
     #[test]
@@ -2224,32 +1774,6 @@ mod tests {
         assert_eq!(params.film_render.grain.channel_correlation, 0.35);
         assert_eq!(params.film_render.grain.dye_event_area_um2, 2.25);
         assert_eq!(params.film_render.grain.dye_support_um, 4.5);
-    }
-
-    #[test]
-    fn legacy_conversion_rejections_leave_documents_unchanged() {
-        // A mixed print-exposure pair needs the settings group; a non-object
-        // there must fail before any mutation instead of panicking.
-        let mut value = serde_json::json!({
-            "enlarger": {"normalize_print_exposure": true, "print_exposure_compensation": false},
-            "settings": 42
-        });
-        let original = value.clone();
-        let error = normalize_legacy_conversion_paths(&mut value, true).unwrap_err();
-        assert!(error.contains("settings"), "{error}");
-        assert_eq!(value, original);
-
-        // Combining legacy conversion paths with a rejected retired lightness
-        // leaf must fail atomically, before any rename.
-        let mut both = serde_json::json!({
-            "scanner": {"positive_density_ev": 0.4},
-            "enlarger": {"normalize_print_exposure": true, "print_exposure_compensation": true},
-            "io": {"output_gamut_compress": {"lightness_compression": [0.95, 1.0, 1.6]}}
-        });
-        let original = both.clone();
-        let error = normalize_legacy_complete_params(&mut both).unwrap_err();
-        assert!(error.contains("lightness_compression"), "{error}");
-        assert_eq!(both, original);
     }
 
     #[test]

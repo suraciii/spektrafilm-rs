@@ -43,6 +43,16 @@ impl std::fmt::Display for ValidationError {
 }
 impl std::error::Error for ValidationError {}
 
+pub(crate) const RETIRED_LIGHTNESS_MESSAGE: &str = "io.output_gamut_compress.lightness_compression was retired; no automatic replacement exists; explicitly remove this field from the document";
+
+pub(crate) fn retired_lightness_error_detailed() -> ValidationError {
+    ValidationError::new(
+        ValidationReason::RetiredLightness,
+        "io.output_gamut_compress.lightness_compression",
+        RETIRED_LIGHTNESS_MESSAGE,
+    )
+}
+
 /// Reasons are emitted at the authoritative failing rule, never parsed from prose.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ValidationReason {
