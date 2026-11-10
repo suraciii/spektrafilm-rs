@@ -14,7 +14,8 @@ use rayon::prelude::*;
 use spektrafilm_math::image::ImageBuf;
 use spektrafilm_math::precision::to_f32;
 
-use super::raster::{Interpolation, sample_footprint_f32, source_coords};
+use super::geometry::{contains_half_open, source_coords};
+use super::raster::{Interpolation, sample_footprint_f32};
 
 /// Source pixels per cache tile edge.
 const TILE: usize = 256;
@@ -192,7 +193,7 @@ impl TransformCache {
         let (ty0, ty1) = (lo_y / TILE, hi_y / TILE);
         if (tx1 - tx0 + 1) * (ty1 - ty0 + 1) * TILE * TILE > self.budget_px {
             fill_rows(&mut out, texture_size, rect, &|p| {
-                if super::worker::contains_half_open(image_rect, p) {
+                if contains_half_open(image_rect, p) {
                     let (sx, sy) = source_coords(p, image_rect, identity.width, identity.height);
                     sample_footprint_f32(sx, sy, interpolation, footprint, |x, y| {
                         transform(
@@ -240,7 +241,7 @@ impl TransformCache {
             height: h,
         };
         fill_rows(&mut out, texture_size, rect, &|p| {
-            if super::worker::contains_half_open(image_rect, p) {
+            if contains_half_open(image_rect, p) {
                 let (sx, sy) = source_coords(p, image_rect, identity.width, identity.height);
                 sample_footprint_f32(sx, sy, interpolation, footprint, |x, y| grid.fetch(x, y))
             } else {

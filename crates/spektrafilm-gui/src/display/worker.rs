@@ -14,6 +14,7 @@ use super::ViewLayer;
 use super::colortransform::{input_display_raster_with, output_display_raster_with};
 use super::decorations::{PolaroidState, virtual_paper_back};
 use super::full_transform::{ProfileStamp, TransformCache, TransformIdentity};
+use super::geometry::contains_half_open;
 use super::raster::{DisplayRaster, Interpolation, sample_rect};
 #[derive(Clone)]
 pub(super) struct PreparedDisplay {
@@ -68,10 +69,6 @@ pub(super) struct DisplaySource {
     pub(super) encoded: bool,
     pub(super) transform: bool,
     pub(super) profile: Option<PathBuf>,
-}
-/// Matches device composition: the minimum edge belongs to the image, the maximum does not.
-pub(super) fn contains_half_open(rect: Rect, point: Pos2) -> bool {
-    rect.min.x <= point.x && point.x < rect.max.x && rect.min.y <= point.y && point.y < rect.max.y
 }
 
 struct FitCacheEntry {

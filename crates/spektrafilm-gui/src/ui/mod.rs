@@ -512,12 +512,17 @@ impl eframe::App for App {
 
                 self.viewer
                     .set_display_max_size(self.params.settings.preview_max_size);
+                let analysis_input = self.analysis.viewer_input(self.viewer.settings.layer);
                 let displayed_output = self.displayed_comparison.as_ref().map_or_else(
                     || self.output_image.clone(),
                     |comparison| comparison.image.host_image().cloned(),
                 );
-                self.viewer
-                    .show(ui, self.oriented_input.as_ref(), displayed_output.as_ref());
+                self.viewer.show(
+                    ui,
+                    self.oriented_input.as_ref(),
+                    displayed_output.as_ref(),
+                    analysis_input,
+                );
                 let mut status_ui = ui.new_child(
                     egui::UiBuilder::new()
                         .id_salt("viewer-status-content")
