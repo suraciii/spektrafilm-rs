@@ -20,6 +20,10 @@ fn trix400_optical_print_matches_scalar_density_oracle() {
     let preset = crate::presets::load_selector("built-in:Kodak Tri-X 400", &data).unwrap();
     let resolved = preset.resolve(&data, &RuntimeParams::default()).unwrap();
     let mut params = resolved.params;
+    // The oracle checks the scalar film/print response, not the now-enabled
+    // class-level spatial effects.
+    params.film_render.grain.active = false;
+    params.film_render.halation.active = false;
     params.camera.auto_exposure = false;
     params.io.output_cctf_encoding = false;
     params.io.output_gamut_compress.algorithm = "off".into();
@@ -91,6 +95,9 @@ fn trix400_runtime_exposure_matches_independent_d55_integrals() {
         let preset = crate::presets::load_selector("built-in:Kodak Tri-X 400", &data).unwrap();
         let resolved = preset.resolve(&data, &RuntimeParams::default()).unwrap();
         let mut params = resolved.params;
+        // The exposure oracle is independent of material grain and halation.
+        params.film_render.grain.active = false;
+        params.film_render.halation.active = false;
         params.camera.auto_exposure = false;
         params.camera.exposure_compensation_ev = 0.;
         params.io.input_color_space = "sRGB".into();

@@ -1,5 +1,5 @@
 author = "SpektraFilm"
-description = "Classic Neg. inspired consumer print look with X-Tra 400, Crystal Archive Type II, tone-dependent color separation, and original-strength Spektra grain. Independently authored, not an official Fujifilm match. Adjust print exposure for each photograph; lower values make the print lighter."
+description = "Classic Neg. inspired consumer print look with X-Tra 400, Crystal Archive Type II, tone-dependent color separation, original-strength Spektra grain, and restrained class-level halation. Independently authored, not an official Fujifilm match. Adjust print exposure for each photograph; lower values make the print lighter."
 name = "Classic Neg Inspired"
 schema_version = 7
 
@@ -191,7 +191,7 @@ sublayer_shares = [
 ]
 
 [parameters.film_render.halation]
-active = false
+active = true
 boost_ev = 0.0
 boost_range = 0.30000001192092896
 halation_amount = 1.0

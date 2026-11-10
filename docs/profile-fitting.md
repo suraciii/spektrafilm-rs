@@ -41,7 +41,7 @@ The shipped `kodak_portra_800` surface came from this command. The profile's `me
 ./target/release/spektrafilm-lab fit \
     --layout layout.json --scene scene.json --reference reference.json \
     --fit surface --surface-terms 9 --lambda 1.0 \
-    --preset "CineStill 800T Cs41 (experimental)" \
+    --preset "CineStill 800T" \
     --route "input > film > scan" --scan-output negative_to_positive \
     --input-color-space "ProPhoto RGB" --input-cctf-decoding false \
     --data-dir data \

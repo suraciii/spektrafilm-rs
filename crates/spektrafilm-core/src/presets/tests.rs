@@ -11,6 +11,74 @@ fn provenance() -> Provenance {
     }
 }
 
+/// Product rule: every built-in look must expose material grain and halation.
+/// Dye grain uses zero RMS as a reference-scale fallback, so `active` is authoritative.
+#[test]
+fn builtin_presets_enable_material_grain_and_halation() {
+    for preset in builtin_presets() {
+        let resolved = preset
+            .resolve(&data(), &RuntimeParams::default())
+            .unwrap_or_else(|error| panic!("{}: {error}", preset.name));
+        assert!(
+            resolved.params.film_render.grain.active,
+            "{} must enable grain",
+            preset.name
+        );
+        assert!(
+            resolved.params.film_render.halation.active,
+            "{} must enable halation",
+            preset.name
+        );
+    }
+}
+
+/// CineStill's single built-in keeps the grain/halation values fitted to
+/// public lab scans (commit f337148e), not the retired Night 280um look.
+#[test]
+fn cinestill_800t_is_one_scan_fitted_look() {
+    let library = builtin_presets();
+    let matches: Vec<_> = library
+        .iter()
+        .filter(|preset| preset.name == "CineStill 800T")
+        .collect();
+    assert_eq!(matches.len(), 1);
+    assert!(
+        !library.iter().any(|preset| {
+            preset.name.contains("Night 280um") || preset.name.contains("Cs41 (experimental)")
+        }),
+        "the old CineStill selector names must not survive the merge"
+    );
+
+    let resolved = matches[0]
+        .resolve(&data(), &RuntimeParams::default())
+        .unwrap();
+    let params = crate::params_builder::digest_params(
+        resolved.params,
+        &resolved.film,
+        &resolved.print,
+        None,
+        false,
+    );
+    assert_eq!(resolved.film_name, "cinestill_800t_cs41_approx");
+    assert!(params.film_render.grain.active);
+    assert_eq!(params.film_render.grain.rms_granularity, [13.1, 19.2, 24.4]);
+    assert_eq!(
+        params.film_render.grain.particle_scale_sublayers,
+        [4.0, 0.15, 0.03]
+    );
+    assert!(params.film_render.halation.active);
+    assert_eq!(
+        params.film_render.halation.halation_first_sigma_um,
+        [160.; 3]
+    );
+    assert_eq!(params.film_render.halation.halation_n_bounces, 3);
+    assert_eq!(params.film_render.halation.halation_bounce_decay, 0.5);
+    assert_eq!(
+        params.film_render.halation.halation_strength,
+        [0.15, 0.045, 0.005]
+    );
+}
+
 #[test]
 fn finishing_look_migration_and_sparse_sections_preserve_ownership() {
     let look = builtin_presets().remove(0);
@@ -1438,12 +1506,12 @@ fn trix400_builtin_is_one_source_print_look_and_preserves_photo_context() {
         assert!(!p.camera.auto_exposure);
         assert_eq!(p.camera.film_format_mm, 60.);
         assert_eq!(p.io.crop_size, current.io.crop_size);
-        assert!(
-            !p.film_render.grain.active
-                && !p.film_render.halation.active
-                && !p.film_render.dir_couplers.active
-                && !p.print_render.glare.active
-        );
+        assert!(p.film_render.grain.active && p.film_render.halation.active);
+        assert_eq!(p.film_render.grain.rms_granularity, [17.; 3]);
+        assert_eq!(p.film_render.halation.scatter_amount, 0.15);
+        assert_eq!(p.film_render.halation.halation_amount, 0.15);
+        assert_eq!(p.film_render.halation.halation_strength, [0.05, 0.015, 0.]);
+        assert!(!p.film_render.dir_couplers.active && !p.print_render.glare.active);
         assert_eq!(p.enlarger.illuminant, "T");
         assert_eq!(
             [

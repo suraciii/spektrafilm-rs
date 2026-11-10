@@ -76,7 +76,7 @@ def prepare(source_path, data_dir):
         'No real Tri-X photographs calibrate the RGB adaptation; CIE training and BabelColor holdout test only spectral reconstruction.',
         'Characteristic curve clamps outside plotted range; no inferred shoulder or extra latitude.',
         'One aggregate density record, not a measured layer decomposition.',
-        'No stock-specific grain, halation or MTF calibration; builtin preset disables uncalibrated effects.']
+        'No stock-specific grain, halation or MTF calibration; builtin preset uses class-level priors, not measured effects.']
     profile = {
         'metadata': {'version': '0.3.4', 'created': '2026-11-07',
             'copyright': 'Copyright (c) 2026 SpektraFilm contributors (coordinate extraction and reconstruction).',

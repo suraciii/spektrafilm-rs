@@ -1,6 +1,6 @@
 # Scanning and negative conversion
 
-This page explains scanner readout, scan output modes, negative conversion, and the broader Scan workflow. It also describes the experimental CineStill 800T Cs41 material and look.
+This page explains scanner readout, scan output modes, negative conversion, and the broader Scan workflow. It also describes the experimental CineStill 800T material and look.
 
 ## Neutral scan model
 
@@ -152,14 +152,15 @@ The resolved style appears in the effective configuration of the render report, 
 
 `cinestill_800t_cs41_approx` is an experimental fitted approximation of CineStill 800T in Cs41.
 
-The material profile computes developed dye amounts and spectral density before printing or scanning. It does not provide measured CineStill spectral sensitivity, dye spectra, grain, or halation. Keep grain disabled for material comparisons. Compare halation separately.
+The material profile computes developed dye amounts and spectral density before printing or scanning. It does not provide measured CineStill spectral sensitivity, dye spectra, grain, or halation. For material-only comparisons, disable the look's grain and halation; those are separate appearance controls.
 
 The model exposure origin does not establish absolute ISO. It does not prove that the manufacturer's reference is an 18% gray exposure. Metadata records the sources, approximations, and attribution. The derivative retains Andrea Volpato's CC BY-SA 4.0 asset license.
 
-## Experimental CineStill 800T Cs41 look
+## Experimental CineStill 800T look
 
-The built-in `CineStill 800T Cs41 (experimental)` look sets halation and Grain Dye controls.
-The look keeps grain off because its grain controls were fitted at the 36 mm reference frame; enable them with `film_render.grain.active=true`. Another positive `camera.film_format_mm` changes the physical sampling and does not establish calibration there.
+The built-in `CineStill 800T` look sets halation and Grain Dye controls. Both are fitted to public CineStill 800T lab scans: halation uses a 160 um first Gaussian sigma, three bounces and RGB strength `[0.15, 0.045, 0.005]`; Dye grain uses RMS `[13.1, 19.2, 24.4]` and particle scales `[4.0, 0.15, 0.03]`. These are appearance controls, not a measured PSF or granularity.
+
+The look enables grain by default, but its Dye controls were fitted at the 36 mm reference frame. Set `camera.film_format_mm=36` for exact physical-scale interpretation; another positive format changes the physical sampling and does not establish calibration there. The former `Night 280um` appearance is documented below as an optional override, not a separate built-in. The look name changed from `CineStill 800T Cs41 (experimental)`; the old selector string is not an alias.
 
 ### Reference illuminant and tungsten balance
 
@@ -174,8 +175,20 @@ The look's `negative_to_positive` tone assumes scene-linear input. Its tone valu
 ```bash
 ./target/release/spektrafilm-f64 process input.tif -o cinestill.png \
     --input-color-space 'ProPhoto RGB' --input-cctf-decoding false \
-    --preset 'CineStill 800T Cs41 (experimental)' --backend cpu --data-dir data \
+    --preset 'CineStill 800T' --backend cpu --data-dir data \
     --route 'input > film > scan' --scan-output negative_to_positive
+```
+
+### Former Night 280 um appearance
+
+The broad-halation night variant is no longer a separate built-in. Starting from `CineStill 800T`, these overrides reproduce its appearance experiment (not a second scan fit):
+
+```bash
+--set film_render.halation.halation_first_sigma_um=[280,280,280] \
+--set film_render.halation.halation_n_bounces=2 \
+--set film_render.halation.halation_bounce_decay=0.45 \
+--set film_render.halation.halation_strength=[0.15,0.045,0.0] \
+--set film_render.grain.rms_granularity=[4.5,7.0,9.0]
 ```
 
 ## See also

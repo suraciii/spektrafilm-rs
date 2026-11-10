@@ -16,7 +16,8 @@ fn trix400_builtin_preview_scan_state_and_save() {
     assert_eq!(h.state().film_name, "kodak_trix_400");
     assert_eq!(h.state().print_name, "kodak_polymax_fine_art");
     assert_eq!(h.state().film_dev_times, [6.]);
-    assert!(!h.state().params.film_render.grain.active);
+    assert!(h.state().params.film_render.grain.active);
+    assert!(h.state().params.film_render.halation.active);
     let pre = preview(h);
     assert_eq!((pre.width, pre.height), (128, 64));
     let scanned = scan(h);
