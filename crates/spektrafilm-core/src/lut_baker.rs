@@ -319,7 +319,7 @@ pub(crate) fn bake_params(
     params.io.output_color_space = output.primaries.into();
     params.io.input_cctf_decoding = false;
     params.io.output_cctf_encoding = false;
-    params.io.scan_film = params.workflow.route_enum() == WorkflowRoute::FilmScan;
+    params.io.scan_film = params.workflow.route_enum().scans_film();
     params.taps.inject = None;
     params.taps.collect = None;
     params.settings.preview_mode = false;

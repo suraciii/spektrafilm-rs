@@ -5,7 +5,7 @@ use crate::*;
 impl App {
     pub(crate) fn finish_route_change(&mut self) {
         let before = self.params.scanner.clone();
-        self.params.io.scan_film = self.params.workflow.route == "input > film > scan";
+        self.params.io.scan_film = self.params.workflow.route_enum().scans_film();
         normalize_scanner_selections(&mut self.params, self.film_medium);
         self.status = Self::normalization_status(
             &before,
@@ -116,7 +116,7 @@ impl App {
         self.film_medium = scan_medium(&film);
         let before = self.params.scanner.clone();
         self.params.workflow.route = workflow_default(&film);
-        self.params.io.scan_film = film.is_positive();
+        self.params.io.scan_film = self.params.workflow.route_enum().scans_film();
         self.params.scanner.scan_output = "direct_scan".into();
         normalize_scanner_selections(&mut self.params, self.film_medium);
         self.status = Self::normalization_status(

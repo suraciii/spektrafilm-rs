@@ -739,7 +739,7 @@ fn cmd_process(
         .collect::<Result<Vec<_>>>()?;
     let resolved = spektrafilm_core::process_params::resolve(
         spektrafilm_core::process_params::ProcessParamsRequest {
-            film: film_name,
+            film: film_name.map(spektrafilm_core::process_params::FilmSelection::Name),
             paper: paper_name,
             presets: &presets,
             params_file,

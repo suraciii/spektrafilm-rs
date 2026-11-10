@@ -69,7 +69,7 @@ pub fn normalize_legacy_complete_params_detailed(value: &mut Value) -> Result<()
 fn normalize_legacy_cmyk_detailed(value: &mut Value) -> Result<(), Error> {
     const LEGACY_GROUP: &str = "magazine_print_color";
     const NEW_GROUP: &str = "cmyk";
-    const RETIRED_ROUTE: &str = "input > film > scan > magazine";
+    const RETIRED_ROUTE: &str = crate::WorkflowRoute::REMOVED_MAGAZINE_ROUTE;
     const BASE_ROUTE: &str = "input > film > scan";
 
     let Some(object) = value.as_object_mut() else {
