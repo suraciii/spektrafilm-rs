@@ -767,7 +767,7 @@ fn load_baseline(path: Option<&Path>) -> Result<(RuntimeParams, bool), String> {
                 return Err(format!(
                     "params file {}: {}",
                     path.display(),
-                    crate::params::sources::retired_lightness_error()
+                    crate::params::validation::RETIRED_LIGHTNESS_MESSAGE
                 ));
             }
             let granularity_authored = value
