@@ -330,7 +330,7 @@ fn key(label: &str) -> Option<&'static str> {
             Some("controls.help.diffusion.strength")
         }
         "Common exposure contrast around the fixed reference exposure. Above 1 is harder; below 1 is softer. Channel differences and automatic setup are unchanged." => {
-            Some("controls.scanner.contrast_help")
+            Some("controls.scanner.conversion_contrast_help")
         }
         "Compress input chromaticities toward the visible spectral locus before spectral upsampling. Off passes input through unchanged." => {
             Some("controls.gamut.input_enable_help")
@@ -345,7 +345,8 @@ fn key(label: &str) -> Option<&'static str> {
         "Compression: ZIP — required by the EXR writer" => {
             Some("surfaces.export.compression_exr")
         }
-        "Contrast" => Some("controls.scanner.contrast"),
+        "Conversion contrast" => Some("controls.scanner.conversion_contrast"),
+        "Contrast" => Some("controls.finishing.contrast"),
         "Controls how quickly the highlight boost ramps in, from 0 to 1." => {
             Some("controls.halation.boost_range_help")
         }
@@ -656,8 +657,14 @@ fn key(label: &str) -> Option<&'static str> {
         "Hold the primary mouse button or focused Space to view this same frame with default operator values. Release to restore the corrected view. Saved and exported corrections are unchanged." => {
             Some("controls.scanner.hold_comparison_help")
         }
-        "How the print exposure follows camera exposure compensation. follow_mode tracks it in auto mode and does not track it in manual; never disables tracking in auto; always applies the relative compensation factor in manual." => {
+        "How the print exposure follows camera exposure compensation. follow_mode tracks it in auto mode and does not track it in manual; never disables tracking in auto; always applies the relative compensation factor in manual. The choice equivalent to the current mode is disabled." => {
             Some("controls.scanner.print_tracking_help")
+        }
+        "In auto mode, Always is equivalent to Follow exposure mode; this choice is disabled." => {
+            Some("controls.scanner.print_tracking_auto_redundant")
+        }
+        "In manual mode, Follow exposure mode is equivalent to Never; this choice is disabled." => {
+            Some("controls.scanner.print_tracking_manual_redundant")
         }
         "If enabled, divide by (1 + sum of bounce amplitudes) so mid-grey is preserved. If disabled, halation is purely additive and subtly lifts shadows as well as highlights." => {
             Some("controls.halation.renormalize_help")
@@ -1291,7 +1298,7 @@ fn key(label: &str) -> Option<&'static str> {
         "color component transfer function" => Some("controls.output.cctf_expansion"),
         "color filter" => Some("controls.scanner.color_filter"),
         "confirmation required" => Some("controls.condition.confirm"),
-        "contrast" => Some("controls.scanner.contrast"),
+        "contrast" => Some("controls.finishing.contrast"),
         "conversion style" => Some("controls.scanner.conversion_style"),
         "experimental frame setup" => Some("controls.scanner.experimental_setup"),
         "Measure the whole developed frame for exposure, cast and contrast placement before the fixed tone. Off by default: the algorithm is a declared heuristic with no validated photographic model behind it, it makes the scan frame-dependent, and it cannot be baked into a point-wise LUT. Turning it off keeps the readout a fixed, frame-independent transform." => {
@@ -1313,7 +1320,11 @@ fn key(label: &str) -> Option<&'static str> {
         "cw rotate" => Some("surfaces.source.rotate_cw"),
         "cyan" => Some("controls.base.cyan"),
         "daylight" => Some("controls.scanner.daylight"),
-        "density curve gamma" => Some("controls.chemistry.density_curve_gamma"),
+        "Profile gamma" => Some("controls.chemistry.density_curve_gamma"),
+        "Curve response" => Some("controls.chemistry.curve_response"),
+        "Profile gamma changes the profile density curve; Morph gamma shapes the density-curve sub-layer response. They compose." => {
+            Some("controls.chemistry.curve_response_help")
+        }
         "density min" => Some("controls.grain.density_min"),
         "detect base" => Some("controls.convert.detect_base"),
         "developer exhaustion" => Some("controls.chemistry.developer_exhaustion"),
@@ -1341,7 +1352,8 @@ fn key(label: &str) -> Option<&'static str> {
             Some("controls.condition.preflash")
         }
         "enum" => Some("controls.metadata.enum"),
-        "exposure compensation ev" => Some("controls.convert.exposure_compensation"),
+        "exposure compensation ev" => Some("controls.scanner.camera_exposure"),
+        "Conversion exposure compensation ev" => Some("controls.convert.exposure_compensation"),
         "exposure ×" => Some("controls.unit.exposure"),
         "film profile" => Some("controls.label.film_profile"),
         "film resolution" => Some("controls.grain.film_resolution"),
@@ -1377,12 +1389,12 @@ fn key(label: &str) -> Option<&'static str> {
         "follow_mode" => Some("controls.scanner.follow_mode"),
         "format-dependent" => Some("controls.condition.format"),
         "format-dependent color spaces" => Some("controls.condition.color_space"),
-        "gamma factor" => Some("controls.chemistry.gamma_factor"),
-        "gamma factor blue" => Some("controls.chemistry.gamma_factor_blue"),
-        "gamma factor fast" => Some("controls.chemistry.gamma_factor_fast"),
-        "gamma factor green" => Some("controls.chemistry.gamma_factor_green"),
-        "gamma factor red" => Some("controls.chemistry.gamma_factor_red"),
-        "gamma factor slow" => Some("controls.chemistry.gamma_factor_slow"),
+        "Morph gamma" => Some("controls.chemistry.gamma_factor"),
+        "Morph gamma blue" => Some("controls.chemistry.gamma_factor_blue"),
+        "Morph gamma fast" => Some("controls.chemistry.gamma_factor_fast"),
+        "Morph gamma green" => Some("controls.chemistry.gamma_factor_green"),
+        "Morph gamma red" => Some("controls.chemistry.gamma_factor_red"),
+        "Morph gamma slow" => Some("controls.chemistry.gamma_factor_slow"),
         "gamma interlayer b to rg" => Some("controls.couplers.gamma_blue_to_red_green"),
         "gamma interlayer g to rb" => Some("controls.couplers.gamma_green_to_red_blue"),
         "gamma interlayer r to gb" => Some("controls.couplers.gamma_red_to_green_blue"),
@@ -1645,10 +1657,22 @@ mod tests {
 
     #[test]
     fn exposure_and_metering_labels_use_product_language_without_changing_values() {
-        for (locale, exposure, center, multizone, highlight) in [
+        for (
+            locale,
+            exposure,
+            conversion,
+            contrast,
+            conversion_contrast,
+            center,
+            multizone,
+            highlight,
+        ) in [
             (
                 Locale::English,
                 "Exposure compensation",
+                "Conversion exposure compensation",
+                "Contrast",
+                "Conversion contrast",
                 "Center-weighted",
                 "Multi-zone",
                 "Highlight-weighted",
@@ -1656,12 +1680,24 @@ mod tests {
             (
                 Locale::SimplifiedChinese,
                 "曝光补偿",
+                "转换曝光补偿",
+                "反差",
+                "转换反差",
                 "中央重点",
                 "多区",
                 "亮部重点",
             ),
         ] {
             assert_eq!(localized_for(locale, "exposure compensation ev"), exposure);
+            assert_eq!(
+                localized_for(locale, "Conversion exposure compensation ev"),
+                conversion
+            );
+            assert_eq!(localized_for(locale, "Contrast"), contrast);
+            assert_eq!(
+                localized_for(locale, "Conversion contrast"),
+                conversion_contrast
+            );
             for (stored, display) in [
                 ("center_weighted", center),
                 ("multi_zone", multizone),
@@ -1669,6 +1705,28 @@ mod tests {
             ] {
                 assert_eq!(localized_for(locale, stored), display);
             }
+        }
+    }
+
+    #[test]
+    fn chemistry_gamma_labels_are_distinct_in_both_languages() {
+        for (locale, profile, morph, response) in [
+            (
+                Locale::English,
+                "Profile gamma",
+                "Morph gamma",
+                "Curve response",
+            ),
+            (
+                Locale::SimplifiedChinese,
+                "基曲线伽马",
+                "形变伽马",
+                "曲线响应",
+            ),
+        ] {
+            assert_eq!(localized_for(locale, "Profile gamma"), profile);
+            assert_eq!(localized_for(locale, "Morph gamma"), morph);
+            assert_eq!(localized_for(locale, "Curve response"), response);
         }
     }
 

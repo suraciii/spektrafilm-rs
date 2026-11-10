@@ -137,7 +137,7 @@ fn material_edits_refresh_automatic_preview_and_scan() {
     let mut previous = preview(h);
     for (path, label, value) in [
         ("film_render.base.scale", "scale", "1.7"),
-        ("film_render.chemistry.gamma_factor", "gamma factor", "1.5"),
+        ("film_render.chemistry.gamma_factor", "Morph gamma", "1.5"),
     ] {
         edit_control(h, path, label, value);
         let automatic = preview(h);
@@ -293,7 +293,7 @@ fn film_chemistry_material_and_capture_controls_accept_edits_and_persist() {
     edit_control(
         h,
         "film_render.chemistry.gamma_factor",
-        "gamma factor",
+        "Morph gamma",
         "1.25",
     );
     edit_control(
@@ -364,7 +364,7 @@ fn print_chemistry_base_glare_and_diffusion_controls_accept_edits_and_persist() 
     edit_control(
         h,
         "print_render.density_curves_morph.gamma_factor",
-        "gamma factor",
+        "Morph gamma",
         "1.5",
     );
     edit_control(

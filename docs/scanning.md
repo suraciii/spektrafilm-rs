@@ -76,7 +76,7 @@ Four controls adjust the positive image before the fixed tone. They are exposure
 | `tint_ev` | `0` | More magenta; mean(R,B)−G exposure difference in stops |
 | `contrast` | `1` | Values above one increase common-exposure contrast about the reference |
 
-Warmth and tint are differential EV, not Kelvin. These controls do not change negative density, camera exposure, Convert recovery, or the experimental setup. Contrast does not amplify channel differences before tone. The nonlinear tone can still change perceived hue and saturation. See the [equations and numerical contract](../specs/film-chain/lab-scan/spec.md#operator-correction).
+Warmth and tint are differential EV, not Kelvin. These controls do not change negative density, camera exposure, Convert recovery, or the experimental setup. Conversion contrast does not amplify channel differences before tone. The nonlinear tone can still change perceived hue and saturation. See the [equations and numerical contract](../specs/film-chain/lab-scan/spec.md#operator-correction).
 
 ```bash
 ./target/release/spektrafilm-f64 process input.tif -o corrected.tif \

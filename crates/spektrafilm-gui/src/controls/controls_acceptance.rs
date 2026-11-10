@@ -316,34 +316,98 @@ fn film_gamma_remains_editable_for_auto_print_reference_without_film_chemistry()
             .node()
             .is_disabled()
     );
+    assert!(harness.query_by_label("Curve response").is_some());
     assert!(
-        !harness
-            .get_by_label("density curve gamma")
-            .node()
-            .is_disabled()
+        harness
+            .query_by_label(
+                "Profile gamma changes the profile density curve; Morph gamma shapes the density-curve sub-layer response. They compose."
+            )
+            .is_some()
     );
+    assert!(!harness.get_by_label("Profile gamma").node().is_disabled());
 
     harness.state_mut().enlarger.print_exposure_mode =
         spektrafilm_core::params::PrintExposureMode::Manual;
     harness.run();
-    assert!(
-        harness
-            .get_by_label("density curve gamma")
-            .node()
-            .is_disabled()
-    );
+    assert!(harness.get_by_label("Profile gamma").node().is_disabled());
     assert_eq!(harness.state().film_render.density_curve_gamma, 1.25);
 
     harness.state_mut().enlarger.print_exposure_mode =
         spektrafilm_core::params::PrintExposureMode::Auto;
     harness.run();
-    assert!(
-        !harness
-            .get_by_label("density curve gamma")
-            .node()
-            .is_disabled()
-    );
+    assert!(!harness.get_by_label("Profile gamma").node().is_disabled());
     assert_eq!(harness.state().film_render.density_curve_gamma, 1.25);
+}
+
+#[test]
+fn redundant_print_tracking_choice_is_explained() {
+    use spektrafilm_core::params::{PrintExposureEvTracking, PrintExposureMode};
+
+    let mut params = RuntimeParams::default();
+    params.workflow.route = "input > film > print > scan".into();
+    params.enlarger.print_exposure_mode = PrintExposureMode::Auto;
+    params.settings.print_exposure_ev_tracking = PrintExposureEvTracking::Always;
+    let mut harness = Harness::new_ui_state(
+        |ui, params: &mut RuntimeParams| {
+            super::show(
+                ui,
+                params,
+                &mut serde_json::Value::Null,
+                "Enlarger",
+                super::ScanMedium::Negative,
+                false,
+                "",
+                &mut Default::default(),
+                "D65",
+                &crate::profiles::pick_data_dir(),
+            );
+        },
+        params,
+    );
+    harness.run();
+    assert!(
+        harness
+            .query_by_label(
+                "In auto mode, Always is equivalent to Follow exposure mode; this choice is disabled."
+            )
+            .is_some()
+    );
+
+    harness.state_mut().enlarger.print_exposure_mode = PrintExposureMode::Manual;
+    harness.state_mut().settings.print_exposure_ev_tracking = PrintExposureEvTracking::FollowMode;
+    harness.run();
+    assert!(
+        harness
+            .query_by_label(
+                "In manual mode, Follow exposure mode is equivalent to Never; this choice is disabled."
+            )
+            .is_some()
+    );
+}
+
+#[test]
+fn conversion_contrast_search_renders_its_operator_editor() {
+    let params = scanner_params();
+    let mut harness = Harness::new_ui_state(
+        |ui, params: &mut RuntimeParams| {
+            let mut cache = Default::default();
+            super::show(
+                ui,
+                params,
+                &mut serde_json::Value::Null,
+                "Scanner",
+                super::ScanMedium::Negative,
+                false,
+                "Conversion contrast",
+                &mut cache,
+                "D55",
+                &crate::profiles::pick_data_dir(),
+            );
+        },
+        params,
+    );
+    harness.run();
+    assert!(harness.query_by_label("Conversion contrast").is_some());
 }
 
 #[cfg(test)]
@@ -745,7 +809,7 @@ mod operator_interactions {
             ("Finished exposure", "1.25"),
             ("Warmth", "0.35"),
             ("Green–magenta tint", "-0.20"),
-            ("Contrast", "1.40"),
+            ("Conversion contrast", "1.40"),
         ] {
             edit(&mut h, label, value);
         }

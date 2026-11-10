@@ -192,6 +192,18 @@ pub(crate) fn enum_choice<T: Copy + PartialEq>(
     choices: &[(T, &str)],
     tooltip: &str,
 ) -> bool {
+    enum_choice_with_disabled(ui, label, value, choices, tooltip, |_| None)
+}
+
+/// Like [`enum_choice`], but a choice may be unavailable with a reason.
+pub(crate) fn enum_choice_with_disabled<T: Copy + PartialEq>(
+    ui: &mut Ui,
+    label: &str,
+    value: &mut T,
+    choices: &[(T, &str)],
+    tooltip: &str,
+    disabled: impl Fn(&T) -> Option<&'static str>,
+) -> bool {
     let selected = choices
         .iter()
         .find(|(option, _)| *option == *value)
@@ -221,8 +233,21 @@ pub(crate) fn enum_choice<T: Copy + PartialEq>(
             .wrap_mode(egui::TextWrapMode::Truncate)
             .selected_text(crate::controls::localized(ui.ctx(), selected))
             .show_ui(ui, |ui| {
-                for &(option, label) in choices {
-                    ui.selectable_value(value, option, crate::controls::localized(ui.ctx(), label));
+                for &(option, option_label) in choices {
+                    let reason = disabled(&option);
+                    let response = ui
+                        .add_enabled_ui(reason.is_none(), |ui| {
+                            ui.selectable_value(
+                                value,
+                                option,
+                                crate::controls::localized(ui.ctx(), option_label),
+                            )
+                        })
+                        .inner;
+                    if let Some(reason) = reason {
+                        response
+                            .on_disabled_hover_text(crate::controls::localized(ui.ctx(), reason));
+                    }
                 }
             })
             .response

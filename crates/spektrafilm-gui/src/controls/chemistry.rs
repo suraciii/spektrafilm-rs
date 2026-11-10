@@ -1,6 +1,32 @@
 use super::*;
 use egui::Ui;
 
+const CURVE_RESPONSE_LABELS: &[&str] = &[
+    "Profile gamma",
+    "Morph gamma",
+    "Morph gamma fast",
+    "Morph gamma slow",
+    "Morph gamma red",
+    "Morph gamma green",
+    "Morph gamma blue",
+];
+
+fn curve_response_heading(ui: &mut Ui, filter: &mut ControlFilter<'_>) {
+    if !filter_matches_any(filter, CURVE_RESPONSE_LABELS) {
+        return;
+    }
+    ui.add_space(theme::SPACE_2);
+    ui.label(egui::RichText::new(localized(ui.ctx(), "Curve response")).strong());
+    ui.label(
+        egui::RichText::new(localized(
+            ui.ctx(),
+            "Profile gamma changes the profile density curve; Morph gamma shapes the density-curve sub-layer response. They compose.",
+        ))
+        .small()
+        .color(theme::FG_MUTED),
+    );
+}
+
 /// One `show()` section group, split out of the dispatcher for readability.
 pub(crate) fn sections(
     ui: &mut Ui,
@@ -23,6 +49,7 @@ pub(crate) fn sections(
         if let Some(reason) = &inactive {
             ui.label(localized(ui.ctx(), reason));
         }
+        curve_response_heading(ui, filter);
         ui.add_enabled_ui(inactive.is_none(), |ui| {
             render_chemistry(
                 ui,
@@ -33,7 +60,7 @@ pub(crate) fn sections(
                 values_inactive.as_deref(),
             );
         });
-        if filter_matches(filter, "density curve gamma") {
+        if filter_matches(filter, "Profile gamma") {
             flags.runtime_changed |= applicable_control(
                 ui,
                 params,
@@ -41,7 +68,7 @@ pub(crate) fn sections(
                 |ui, params| {
                     param_numeric(
                         ui,
-                        "density curve gamma",
+                        "Profile gamma",
                         &mut params.film_render.density_curve_gamma,
                         "film_render.density_curve_gamma",
                         "Gamma applied to the film density curves during development or a calibrated film-curve reference; 1.0 keeps the profile curves unchanged.",
@@ -64,6 +91,7 @@ pub(crate) fn sections(
         if let Some(reason) = &inactive {
             ui.label(localized(ui.ctx(), reason));
         }
+        curve_response_heading(ui, filter);
         ui.add_enabled_ui(inactive.is_none(), |ui| {
         render_chemistry(
             ui,
@@ -73,10 +101,10 @@ pub(crate) fn sections(
             filter,
             values_inactive.as_deref(),
         );
-        if filter_matches(filter, "density curve gamma") {
+        if filter_matches(filter, "Profile gamma") {
             flags.runtime_changed |= param_numeric(
                 ui,
-                "density curve gamma",
+                "Profile gamma",
                 &mut params.print_render.density_curve_gamma,
                 "print_render.density_curve_gamma",
                 "Gamma applied to the paper density curves during print development; 1.0 keeps the profile curves unchanged. Requires an admitted print-development route.",
@@ -152,10 +180,10 @@ fn render_chemistry(
         ui.label(localized(ui.ctx(), reason));
     }
     ui.add_enabled_ui(values_inactive.is_none(), |ui| {
-    if filter_matches(filter, "gamma factor") {
+    if filter_matches(filter, "Morph gamma") {
         flags.runtime_changed |= param_numeric(
             ui,
-            "gamma factor",
+            "Morph gamma",
             &mut params.gamma_factor,
             paths.gamma_factor,
             if film {
@@ -165,46 +193,46 @@ fn render_chemistry(
             },
         );
     }
-    if filter_matches(filter, "gamma factor fast") {
+    if filter_matches(filter, "Morph gamma fast") {
         flags.runtime_changed |= param_numeric(
             ui,
-            "gamma factor fast",
+            "Morph gamma fast",
             &mut params.gamma_factor_fast,
             paths.gamma_factor_fast,
             "Gamma factor applied to the fast sub-layer.",
         );
     }
-    if filter_matches(filter, "gamma factor slow") {
+    if filter_matches(filter, "Morph gamma slow") {
         flags.runtime_changed |= param_numeric(
             ui,
-            "gamma factor slow",
+            "Morph gamma slow",
             &mut params.gamma_factor_slow,
             paths.gamma_factor_slow,
             "Gamma factor applied to the mid and slow sub-layers.",
         );
     }
-    if filter_matches(filter, "gamma factor red") {
+    if filter_matches(filter, "Morph gamma red") {
         flags.runtime_changed |= param_numeric(
             ui,
-            "gamma factor red",
+            "Morph gamma red",
             &mut params.gamma_factor_red,
             paths.gamma_factor_red,
             "Per-channel gamma factor applied to the red channel.",
         );
     }
-    if filter_matches(filter, "gamma factor green") {
+    if filter_matches(filter, "Morph gamma green") {
         flags.runtime_changed |= param_numeric(
             ui,
-            "gamma factor green",
+            "Morph gamma green",
             &mut params.gamma_factor_green,
             paths.gamma_factor_green,
             "Per-channel gamma factor applied to the green channel.",
         );
     }
-    if filter_matches(filter, "gamma factor blue") {
+    if filter_matches(filter, "Morph gamma blue") {
         flags.runtime_changed |= param_numeric(
             ui,
-            "gamma factor blue",
+            "Morph gamma blue",
             &mut params.gamma_factor_blue,
             paths.gamma_factor_blue,
             "Per-channel gamma factor applied to the blue channel.",

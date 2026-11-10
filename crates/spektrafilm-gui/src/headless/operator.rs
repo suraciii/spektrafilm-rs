@@ -306,7 +306,7 @@ fn operator_edits_copy_paste_and_restore_share_global_adjustment_history() {
         ("Finished exposure", "1.25"),
         ("Warmth", "0.35"),
         ("Green–magenta tint", "-0.20"),
-        ("Contrast", "1.40"),
+        ("Conversion contrast", "1.40"),
     ] {
         operator_edit(h, label, value);
         states.push(h.state().params.scanner.operator);
@@ -387,7 +387,7 @@ fn operator_restore_paste_and_text_edits_replace_global_redo_branches() {
         ("Finished exposure", "0.25"),
         ("Warmth", "0.35"),
         ("Green–magenta tint", "-0.20"),
-        ("Contrast", "1.40"),
+        ("Conversion contrast", "1.40"),
     ] {
         operator_edit(h, label, value);
     }
@@ -474,7 +474,7 @@ fn neighboring_module_reset_retains_inactive_operator_and_uses_global_history() 
         ("Finished exposure", "1.0"),
         ("Warmth", "0.25"),
         ("Green–magenta tint", "-0.20"),
-        ("Contrast", "1.40"),
+        ("Conversion contrast", "1.40"),
     ] {
         operator_edit(h, label, value);
     }

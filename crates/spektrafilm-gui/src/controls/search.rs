@@ -301,7 +301,11 @@ mod tests {
                 "Green–magenta tint",
                 EditorKind::Numeric,
             ),
-            ("scanner.operator.contrast", "Contrast", EditorKind::Numeric),
+            (
+                "scanner.operator.contrast",
+                "Conversion contrast",
+                EditorKind::Numeric,
+            ),
             (
                 "action.operator_restore_automatic",
                 "Restore automatic",
