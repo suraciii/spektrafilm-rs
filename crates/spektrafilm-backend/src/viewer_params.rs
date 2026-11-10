@@ -44,11 +44,9 @@ pub struct ViewerComposeGpuParams {
 /// One GUI viewer resample request: the long-edge cap the viewer applies to a
 /// full-resolution image before it composes viewport pixels.
 ///
-/// The resample is the viewer's only image-sized reduction, so a device route
-/// must not compute it on the host. The kernel is separable bilinear over the
-/// exact source rectangle each output pixel covers, matching the host
-/// `capped_raster`; the returned pixels are disposable viewer data, never a
-/// retained or saved sample.
+/// A device route averages the complete source-cell area covered by each
+/// output pixel on the device, matching the host `capped_raster`. Returned
+/// pixels are disposable viewer data, never retained or saved samples.
 ///
 /// The host owns the destination size: it derives the long-edge factor and the
 /// rounded destination dimensions in f64, so one authoritative rule decides
@@ -130,17 +128,13 @@ pub struct ViewerIccGpuParams<'a> {
     pub words: &'a [u32],
 }
 
-/// One GUI viewer magnified full-source composition request: the bounded
-/// viewport raster the magnified view produces from the full-resolution
-/// source.
+/// One full-source viewer composition request for a bounded viewport raster.
 ///
-/// The magnified view samples the source at every visible viewport pixel, so
-/// this is the viewer's per-pixel composition rather than a reduction. The
-/// request carries the viewport geometry the host already resolved, the
-/// interpolation mode, and the resolved display and ICC transforms, so the
-/// device evaluates the same per-pixel arithmetic the host composition does.
-/// A viewport pixel outside the image rectangle stays transparent, exactly as
-/// the host leaves it.
+/// Non-nearest reductions integrate source-cell areas after the display and
+/// ICC transforms. Native-size and magnified views use the selected
+/// interpolation kernel. Explicit nearest sampling remains unfiltered.
+/// The host resolves viewport geometry and the transforms. A viewport pixel
+/// outside the image rectangle stays transparent.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ViewerFullSourceGpuParams<'a> {
     /// Viewport texture size in pixels.
@@ -155,6 +149,10 @@ pub struct ViewerFullSourceGpuParams<'a> {
     pub image_min: [f32; 2],
     /// Image rectangle size, in points.
     pub image_size: [f32; 2],
+    /// Native source pixels covered by each composition texture texel.
+    /// Resolved from intended scale and presentation grid, independently of
+    /// rounding in the screen-space rectangle endpoints.
+    pub source_footprint: [f32; 2],
     /// Interpolation mode discriminant, matching the viewer's `Interpolation`
     /// order: nearest, linear, cubic, spline16, spline36, lanczos, blackman.
     pub interpolation: u32,

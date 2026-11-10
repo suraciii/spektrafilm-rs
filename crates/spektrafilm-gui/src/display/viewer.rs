@@ -30,7 +30,7 @@ pub fn fitted_world_size(size: [usize; 2], bounds: Vec2) -> Vec2 {
 }
 /// Places presentation samples at device-pixel centers inside the viewport.
 /// The returned rectangle maps those centers to bounded texture texels.
-fn presentation_grid(rect: Rect, dpi: f32, max_side: usize) -> (Rect, [usize; 2]) {
+fn presentation_grid(rect: Rect, dpi: f32, max_side: usize) -> (Rect, [usize; 2], [f64; 2]) {
     let axis = |min: f32, max: f32| {
         // Pixel indices k satisfy min*dpi <= k+0.5 < max*dpi.
         let start = (f64::from(min) * f64::from(dpi) - 0.5).ceil();
@@ -50,7 +50,11 @@ fn presentation_grid(rect: Rect, dpi: f32, max_side: usize) -> (Rect, [usize; 2]
             ((y + height) / f64::from(dpi)) as f32,
         ),
     );
-    (grid, size)
+    (
+        grid,
+        size,
+        [width / size[0] as f64, height / size[1] as f64],
+    )
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -236,6 +240,8 @@ pub struct Viewer {
     observed_geometry: Option<(Rect, Rect, Interpolation, Option<PixelInspection>)>,
     #[cfg(test)]
     observed_image: Option<egui::ColorImage>,
+    #[cfg(test)]
+    observed_source_footprint: Option<[f32; 2]>,
 }
 #[cfg(test)]
 pub(crate) struct ViewerObservation {
@@ -1271,6 +1277,10 @@ impl Viewer {
             image_rect,
             rect,
             size,
+            [
+                source.width as f32 * rect.width() / (image_rect.width() * size[0] as f32),
+                source.height as f32 * rect.height() / (image_rect.height() * size[1] as f32),
+            ],
             interpolation,
             &mut super::full_transform::TransformCache::default(),
         )
@@ -1499,7 +1509,22 @@ impl Viewer {
             }
         }
         let max_texture_side = ui.input(|i| i.max_texture_side).max(1) as usize;
-        let (sampling_rect, texture_size) = presentation_grid(rect, dpi, max_texture_side);
+        let (sampling_rect, texture_size, grid_factor) =
+            presentation_grid(rect, dpi, max_texture_side);
+        let source_footprint = std::array::from_fn(|axis| {
+            if let Some(percent) = self.zoom_percent {
+                (grid_factor[axis] * 100.0 / f64::from(percent)) as f32
+            } else {
+                let source = source_size.unwrap_or([1, 1])[axis] as f64;
+                let world = [image_world.x, image_world.y][axis];
+                (source * grid_factor[axis]
+                    / (f64::from(dpi) * f64::from(world) * f64::from(scale))) as f32
+            }
+        });
+        #[cfg(test)]
+        {
+            self.observed_source_footprint = Some(source_footprint);
+        }
         let native_available = match layer {
             ViewLayer::Input => input_source.is_some() || self.retained_input.is_some(),
             ViewLayer::Output => output_float.is_some() || self.retained_output.is_some(),
@@ -1576,6 +1601,7 @@ impl Viewer {
                 paper_rect,
                 image_rect,
                 texture_size,
+                source_footprint,
                 generation: self.generation,
                 gray: if self.settings.gray_18_canvas {
                     Color32::from_gray(118)
@@ -2241,6 +2267,161 @@ mod tests {
     }
 
     #[test]
+    fn viewer_exact_zoom_filters_by_intended_coverage() {
+        use super::super::raster::{sample_f32, source_coords};
+
+        let source = Arc::new(ImageBuf::from_data(
+            4,
+            4,
+            (0..16).flat_map(|i| [(i == 5) as u8 as _; 3]).collect(),
+        ));
+        let raster = output_display_raster_with(&CpuBackend, &source, "sRGB", true, false, None, 4)
+            .unwrap()
+            .0;
+        let below = f32::from_bits(100.0f32.to_bits() - 1);
+        let above = f32::from_bits(100.0f32.to_bits() + 1);
+        for (dpi, origin) in [(1.0, 0.0), (1.25, 100.0), (2.0, 2000.0)] {
+            let mut viewer = Viewer::new();
+            viewer.set_output(raster.clone(), [4, 4], 0.0, false);
+            viewer.set_output_display_source("sRGB", true, false, None);
+            viewer.pan = Vec2::splat(0.25 / dpi);
+            let viewport =
+                Rect::from_min_size(Pos2::new(origin + 0.25, origin + 0.25), Vec2::splat(16.0));
+            let ctx = egui::Context::default();
+            ctx.set_pixels_per_point(dpi);
+            let (tx, rx) = std::sync::mpsc::channel();
+            ctx.set_request_repaint_callback(move |_| {
+                let _ = tx.send(());
+            });
+            for mode in [
+                Interpolation::Cubic,
+                Interpolation::Spline16,
+                Interpolation::Spline36,
+                Interpolation::Lanczos,
+                Interpolation::Blackman,
+            ] {
+                viewer.settings.interpolation = mode;
+                for percent in [100.0, 99.9, below, above] {
+                    viewer.set_zoom_percent(percent);
+                    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+                    loop {
+                        let _ = ctx.run(
+                            egui::RawInput {
+                                screen_rect: Some(Rect::from_min_size(
+                                    Pos2::ZERO,
+                                    Vec2::splat(origin + 32.0),
+                                )),
+                                ..Default::default()
+                            },
+                            |ctx| {
+                                egui::CentralPanel::default().frame(egui::Frame::NONE).show(
+                                    ctx,
+                                    |ui| {
+                                        let mut child =
+                                            ui.new_child(egui::UiBuilder::new().max_rect(viewport));
+                                        child.set_clip_rect(viewport);
+                                        viewer.show(&mut child, None, Some(&source));
+                                    },
+                                );
+                            },
+                        );
+                        if viewer.generation != 0 && viewer.generation == viewer.accepted_generation
+                        {
+                            break;
+                        }
+                        rx.recv_timeout(
+                            deadline.saturating_duration_since(std::time::Instant::now()),
+                        )
+                        .expect("viewer repaint");
+                    }
+                    assert_eq!(ctx.pixels_per_point(), dpi);
+                    let footprint = viewer.observed_source_footprint.unwrap();
+                    let expected_footprint = (100.0f64 / f64::from(percent)) as f32;
+                    assert_eq!(footprint, [expected_footprint; 2]);
+                    assert_eq!(footprint[0] > 1.0, percent < 100.0);
+                    let observation = viewer.observation();
+                    let image = observation.pixels.unwrap();
+                    let (grid, size, _) = presentation_grid(viewport, dpi, 2048);
+                    assert_eq!(image.size, size);
+                    let fetch = |x: i32, y: i32| {
+                        let x = x.clamp(0, 3);
+                        let y = y.clamp(0, 3);
+                        [f32::from((x == 1 && y == 1) as u8); 3]
+                    };
+                    let mut discriminating = false;
+                    for y in 0..size[1] {
+                        for x in 0..size[0] {
+                            let p = Pos2::new(
+                                grid.min.x + (x as f32 + 0.5) * grid.width() / size[0] as f32,
+                                grid.min.y + (y as f32 + 0.5) * grid.height() / size[1] as f32,
+                            );
+                            if !super::super::worker::contains_half_open(observation.image_rect, p)
+                            {
+                                continue;
+                            }
+                            let (sx, sy) = source_coords(p, observation.image_rect, 4, 4);
+                            let kernel = sample_f32(sx, sy, mode, fetch)[0];
+                            // Independent cell-overlap integral, in f64, including edge extension.
+                            let width = f64::from(footprint[0].max(1.0));
+                            let height = f64::from(footprint[1].max(1.0));
+                            let left = f64::from(sx) + 0.5 - width / 2.0;
+                            let top = f64::from(sy) + 0.5 - height / 2.0;
+                            let mut area = 0.0;
+                            for yy in top.floor() as i32..(top + height).ceil() as i32 {
+                                let wy = ((top + height).min(f64::from(yy + 1))
+                                    - top.max(f64::from(yy)))
+                                    / height;
+                                for xx in left.floor() as i32..(left + width).ceil() as i32 {
+                                    let wx = ((left + width).min(f64::from(xx + 1))
+                                        - left.max(f64::from(xx)))
+                                        / width;
+                                    area += wx * wy * f64::from(fetch(xx, yy)[0]);
+                                }
+                            }
+                            let byte = |v: f32| (v.clamp(0.0, 1.0) * 255.0).round() as u8;
+                            discriminating |= byte(kernel).abs_diff(byte(area as f32)) > 1;
+                            let expected = if footprint[0] > 1.0 {
+                                area as f32
+                            } else {
+                                kernel
+                            };
+                            let actual = image.pixels[y * size[0] + x].r();
+                            assert!(
+                                actual.abs_diff(byte(expected)) <= 1,
+                                "dpi {dpi} origin {origin} {mode:?} {percent}%: {actual} != {}",
+                                byte(expected)
+                            );
+                        }
+                    }
+                    assert!(
+                        discriminating,
+                        "fixture must distinguish kernel and area: dpi {dpi} origin {origin} {mode:?} {percent}%"
+                    );
+                }
+            }
+            viewer.fit_view();
+            let _ = ctx.run(
+                egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::splat(origin + 32.0))),
+                    ..Default::default()
+                },
+                |ctx| {
+                    egui::CentralPanel::default()
+                        .frame(egui::Frame::NONE)
+                        .show(ctx, |ui| {
+                            let mut child = ui.new_child(egui::UiBuilder::new().max_rect(viewport));
+                            viewer.show(&mut child, None, Some(&source));
+                        });
+                },
+            );
+            let padded_side = 1.0 + 2.0 * viewer.settings.white_padding.max(0.0);
+            let scale = viewport.width() / padded_side;
+            let expected = (4.0 / (f64::from(dpi) * f64::from(scale))) as f32;
+            assert_eq!(viewer.observed_source_footprint.unwrap(), [expected; 2]);
+        }
+    }
+
+    #[test]
     fn capped_viewport_paints_the_sample_grid_on_cpu_and_gpu() {
         let device = spektrafilm_gpu::test_support::explicit_adapter();
         let gpu: Arc<dyn ComputeBackend> = Arc::new(device.derived_explicit());
@@ -2248,7 +2429,7 @@ mod tests {
             let source = Arc::new(ImageBuf::from_data(
                 4,
                 1,
-                [1.0 as _, 0.0 as _, 0.0 as _].repeat(4),
+                (0..4).flat_map(|x| [((x % 2) as f32) as _; 3]).collect(),
             ));
             let raster =
                 output_display_raster_with(backend.as_ref(), &source, "sRGB", true, false, None, 4)
@@ -2257,8 +2438,9 @@ mod tests {
             let mut viewer = Viewer::with_backend(backend);
             viewer.set_output(raster, [4, 1], 0.0, false);
             viewer.set_output_display_source("sRGB", true, false, None);
+            viewer.settings.interpolation = Interpolation::Cubic;
             viewer.set_zoom_percent(100.0);
-            viewer.pan = Vec2::new(1.25, 0.25);
+            viewer.pan = Vec2::new(1.5, 0.25);
             let viewport = Rect::from_min_max(Pos2::new(0.25, 0.25), Pos2::new(4097.25, 8.25));
             let at = Pos2::new(2048.5, 4.5);
             let ctx = egui::Context::default();
@@ -2301,7 +2483,11 @@ mod tests {
             };
             let observation = viewer.observation();
             assert_eq!(observation.viewport, viewport);
-            assert_eq!(observation.image_rect.min, Pos2::new(2048.0, 4.0));
+            assert_eq!(observation.image_rect.min, Pos2::new(2048.25, 4.0));
+            assert_eq!(
+                viewer.observed_source_footprint.unwrap(),
+                [4097.0 / 4096.0, 1.0]
+            );
             assert!(
                 observation.inspection.is_some(),
                 "hover lies inside the image"
@@ -2325,10 +2511,26 @@ mod tests {
             let uv = (at - painted.min) / painted.size();
             let x = (uv.x * pixels.size[0] as f32).floor() as usize;
             let y = (uv.y * pixels.size[1] as f32).floor() as usize;
-            assert_eq!(
-                pixels.pixels[y * pixels.size[0] + x],
-                Color32::RED,
-                "the pixel under an inside-image hover must not show the canvas"
+            let (grid, _, _) = presentation_grid(viewport, 1.0, 4096);
+            let p = grid.min.x + (x as f32 + 0.5) * grid.width() / pixels.size[0] as f32;
+            let sx =
+                (p - observation.image_rect.min.x) * 4.0 / observation.image_rect.width() - 0.5;
+            let width = 4097.0f64 / 4096.0;
+            let left = f64::from(sx) + 0.5 - width / 2.0;
+            // This texel overlaps only cells 0 and 1, whose values are 0 and 1.
+            let expected = (((left + width - 1.0).clamp(0.0, 1.0) / width) * 255.0).round() as u8;
+            let actual = pixels.pixels[y * pixels.size[0] + x].r();
+            assert!(
+                actual.abs_diff(expected) <= 1,
+                "capped area {actual} != {expected}"
+            );
+            let kernel =
+                super::super::raster::sample_f32(sx, 0.0, Interpolation::Cubic, |ix, _| {
+                    [(ix.clamp(0, 3) % 2) as f32; 3]
+                })[0];
+            assert!(
+                actual.abs_diff((kernel * 255.0).round() as u8) > 1,
+                "capped view must use area, not the native kernel"
             );
         }
     }

@@ -260,6 +260,61 @@ impl WgpuBackend {
         self.check_cancelled()?;
         Ok(buffer)
     }
+    // Partition logical taps, including repeated edge-clamped taps. Bound
+    // each submission even when the source fits in a binding.
+    #[allow(clippy::too_many_arguments)]
+    fn viewer_area_tiled(
+        &self,
+        image: &DeviceImage,
+        bounds: [i32; 4],
+        words: &[u32],
+        window_offset: usize,
+        limit: u64,
+        shader: &'static str,
+        label: &'static str,
+        extra_inputs: &[&wgpu::Buffer],
+    ) -> Result<wgpu::Buffer, String> {
+        let capacity = (limit / 12).min(262_144).min(i32::MAX as u64) as i32;
+        if capacity == 0 {
+            return Err(format!(
+                "{label}: minimum source window exceeds device limits"
+            ));
+        }
+        // The first three floats are the output sum; the next three preserve
+        // compensation across submissions. Only the final tile publishes it.
+        let out = self.viewer_buffer(24, label);
+        let mut y = bounds[1];
+        let mut accumulate = false;
+        let width = i64::from(bounds[2]) - i64::from(bounds[0]);
+        while y < bounds[3] {
+            let rows = area_tile_rows(width, capacity, i64::from(bounds[3]) - i64::from(y));
+            let mut x = bounds[0];
+            while x < bounds[2] {
+                self.check_cancelled()?;
+                let end = x.saturating_add(capacity).min(bounds[2]);
+                let window = bounds_window(
+                    [x, y, end, y.saturating_add(rows)],
+                    image.width(),
+                    image.height(),
+                );
+                let source = self.viewer_window(image, window)?;
+                let mut params = words.to_vec();
+                params[window_offset..window_offset + 3].copy_from_slice(&window[..3]);
+                let final_tile = end == bounds[2] && y.saturating_add(rows) >= bounds[3];
+                let flags = u32::from(accumulate) | (u32::from(final_tile) << 1);
+                params.extend([x as u32, end as u32, y as u32, rows as u32, flags]);
+                let mut inputs = Vec::with_capacity(1 + extra_inputs.len());
+                inputs.push(&source);
+                inputs.extend_from_slice(extra_inputs);
+                self.viewer_dispatch_into(shader, &params, &inputs, 1, &out, label)?;
+                accumulate = true;
+                x = end;
+            }
+            y += rows;
+        }
+        Ok(out)
+    }
+
     fn viewer_finish(&self, pages: Vec<ImagePage>, width: u32, height: u32) -> DeviceImage {
         self.retain_image_pages(
             pages,
@@ -279,41 +334,65 @@ impl WgpuBackend {
         display: Option<&DisplayTransformGpuParams>,
         icc: Option<&ViewerIccGpuParams<'_>>,
     ) -> Result<DeviceImage, String> {
+        self.viewer_fit_gpu_with_limit(image, width, height, display, icc, self.viewer_limit())
+    }
+
+    fn viewer_fit_gpu_with_limit(
+        &self,
+        image: &DeviceImage,
+        width: u32,
+        height: u32,
+        display: Option<&DisplayTransformGpuParams>,
+        icc: Option<&ViewerIccGpuParams<'_>>,
+        limit: u64,
+    ) -> Result<DeviceImage, String> {
+        let limit = limit.min(self.viewer_limit());
         self.check_cancelled()?;
         self.buffer_payload(image)?;
         let count = width
             .checked_mul(height)
             .filter(|n| *n > 0)
             .ok_or("invalid viewer fit dimensions")?;
+        let fx = (image.width() as f32 / width as f32).max(1.0);
+        let fy = (image.height() as f32 / height as f32).max(1.0);
+        let tile_work = area_exceeds_tile(fx, fy);
         let mut pages = Vec::new();
         let mut first = 0;
         while first < count {
             self.check_cancelled()?;
-            let mut n =
-                (count - first).min((self.viewer_limit() / 12).min(u64::from(u32::MAX)) as u32);
+            let mut n = (count - first).min((limit / 12).min(u64::from(u32::MAX)) as u32);
+            if n == 0 {
+                return Err("viewer fit working buffer exceeds device limits".into());
+            }
             let window = loop {
                 let (x0, x1, y0, y1) = output_extent(first, n, width);
-                let sample = |v: u32, src: u32, out: u32| {
-                    ((v as f32 + 0.5) * src as f32 / out as f32 - 0.5).clamp(0.0, (src - 1) as f32)
+                let w = if image.width() == width && image.height() == height {
+                    [x0, y0, x1 - x0 + 1, y1 - y0 + 1]
+                } else {
+                    let fx = (image.width() as f32 / width as f32).max(1.0);
+                    let fy = (image.height() as f32 / height as f32).max(1.0);
+                    let sample = |v: u32, src: u32, out: u32| {
+                        (v as f32 + 0.5) * src as f32 / out as f32 - 0.5
+                    };
+                    let bounds = area_bounds(
+                        sample(x0, image.width(), width),
+                        sample(x1, image.width(), width),
+                        sample(y0, image.height(), height),
+                        sample(y1, image.height(), height),
+                        fx,
+                        fy,
+                    );
+                    bounds_window(bounds, image.width(), image.height())
                 };
-                let x =
-                    (sample(x0, image.width(), width).floor().max(0.0) as u32).saturating_sub(1);
-                let y =
-                    (sample(y0, image.height(), height).floor().max(0.0) as u32).saturating_sub(1);
-                let right =
-                    (sample(x1, image.width(), width).floor() as u32 + 3).min(image.width());
-                let bottom =
-                    (sample(y1, image.height(), height).floor() as u32 + 3).min(image.height());
-                let w = [x, y, right - x, bottom - y];
-                if u64::from(w[2]) * u64::from(w[3]) * 12 <= self.viewer_limit() {
+                if (u64::from(w[2]) * u64::from(w[3]) * 12 <= limit
+                    && !tile_work
+                    && u64::from(w[2]) * u64::from(w[3]) <= 262_144)
+                    || n == 1
+                {
                     break w;
-                }
-                if n == 1 {
-                    return Err("viewer bilinear footprint exceeds device limits".into());
                 }
                 n = n.div_ceil(2);
             };
-            let source = self.viewer_window(image, window)?;
             let words = [
                 image.width(),
                 image.height(),
@@ -325,13 +404,38 @@ impl WgpuBackend {
                 first,
                 n,
             ];
-            let out = self.viewer_dispatch(
-                include_str!("../../../spektrafilm-shaders/wgsl/viewer_resample_retained.wgsl"),
-                &words,
-                &[&source],
-                n,
-                "viewer_fit",
-            )?;
+            let out = if u64::from(window[2]) * u64::from(window[3]) * 12 > limit
+                || tile_work
+                || (n == 1 && u64::from(window[2]) * u64::from(window[3]) > 262_144)
+            {
+                let x = first % width;
+                let y = first / width;
+                let fx = (image.width() as f32 / width as f32).max(1.0);
+                let fy = (image.height() as f32 / height as f32).max(1.0);
+                let sx = (x as f32 + 0.5) * image.width() as f32 / width as f32 - 0.5;
+                let sy = (y as f32 + 0.5) * image.height() as f32 / height as f32 - 0.5;
+                self.viewer_area_tiled(
+                    image,
+                    area_bounds(sx, sx, sy, sy, fx, fy),
+                    &words,
+                    4,
+                    limit,
+                    include_str!("../../../spektrafilm-shaders/wgsl/viewer_resample_retained.wgsl"),
+                    "viewer_fit",
+                    &[],
+                )?
+            } else {
+                let source = self.viewer_window(image, window)?;
+                let mut words = words.to_vec();
+                words.extend([0; 5]);
+                self.viewer_dispatch(
+                    include_str!("../../../spektrafilm-shaders/wgsl/viewer_resample_retained.wgsl"),
+                    &words,
+                    &[&source],
+                    n,
+                    "viewer_fit",
+                )?
+            };
             pages.push(ImagePage {
                 first_pixel: first,
                 n_pixels: n,
@@ -388,6 +492,16 @@ impl WgpuBackend {
         image: &DeviceImage,
         p: &ViewerFullSourceGpuParams<'_>,
     ) -> Result<DeviceImage, String> {
+        self.viewer_full_gpu_with_limit(image, p, self.viewer_limit())
+    }
+
+    fn viewer_full_gpu_with_limit(
+        &self,
+        image: &DeviceImage,
+        p: &ViewerFullSourceGpuParams<'_>,
+        limit: u64,
+    ) -> Result<DeviceImage, String> {
+        let limit = limit.min(self.viewer_limit());
         self.check_cancelled()?;
         self.buffer_payload(image)?;
         let count = p
@@ -399,43 +513,74 @@ impl WgpuBackend {
         let second_table: Vec<u32> = p.icc_second.iter().flatten().copied().collect();
         let first_table = self.viewer_table(bytemuck::cast_slice(&first_table));
         let second_table = self.viewer_table(bytemuck::cast_slice(&second_table));
+        let [fx, fy] = p.source_footprint.map(|f| f.max(1.0));
+        let area = p.interpolation != 0 && (fx > 1.0 || fy > 1.0);
+        let tile_work = area && area_exceeds_tile(fx, fy);
+        let visible = tile_work.then(|| full_visible_bounds(p));
         let mut pages = Vec::new();
         let mut first = 0;
         while first < count {
             self.check_cancelled()?;
-            let mut n =
-                (count - first).min((self.viewer_limit() / 12).min(u64::from(u32::MAX)) as u32);
-            let window = loop {
-                let w = source_window(
-                    first,
-                    n,
-                    p.tex_width,
-                    p.tex_height,
-                    [
-                        p.rect_min[0],
-                        p.rect_min[1],
-                        p.rect_min[0] + p.rect_size[0],
-                        p.rect_min[1] + p.rect_size[1],
-                    ],
-                    [
-                        p.image_min[0],
-                        p.image_min[1],
-                        p.image_min[0] + p.image_size[0],
-                        p.image_min[1] + p.image_size[1],
-                    ],
-                    image.width(),
-                    image.height(),
-                    p.interpolation,
-                );
-                if u64::from(w[2]) * u64::from(w[3]) * 12 <= self.viewer_limit() {
-                    break w;
-                }
-                if n == 1 {
-                    return Err("viewer interpolation footprint exceeds device limits".into());
-                }
-                n = n.div_ceil(2);
+            let mut n = (count - first).min((limit / 12).min(u64::from(u32::MAX)) as u32);
+            if n == 0 {
+                return Err("viewer viewport working buffer exceeds device limits".into());
+            }
+            let blank = if let Some(bounds) = visible {
+                let (blank, run) = full_visibility_run(first, count, p.tex_width, bounds);
+                n = n.min(run);
+                blank
+            } else {
+                false
             };
-            let source = self.viewer_window(image, window)?;
+            let window = if blank {
+                [0, 0, 1, 1]
+            } else {
+                loop {
+                    let w = if area {
+                        let bounds =
+                            full_area_bounds(first, n, image.width(), image.height(), p, fx, fy);
+                        bounds_window(bounds, image.width(), image.height())
+                    } else {
+                        source_window(
+                            first,
+                            n,
+                            p.tex_width,
+                            p.tex_height,
+                            [
+                                p.rect_min[0],
+                                p.rect_min[1],
+                                p.rect_min[0] + p.rect_size[0],
+                                p.rect_min[1] + p.rect_size[1],
+                            ],
+                            [
+                                p.image_min[0],
+                                p.image_min[1],
+                                p.image_min[0] + p.image_size[0],
+                                p.image_min[1] + p.image_size[1],
+                            ],
+                            image.width(),
+                            image.height(),
+                            p.interpolation,
+                        )
+                    };
+                    if (u64::from(w[2]) * u64::from(w[3]) * 12 <= limit
+                        && !tile_work
+                        && (!area || u64::from(w[2]) * u64::from(w[3]) <= 262_144))
+                        || (n == 1 && area)
+                    {
+                        break w;
+                    }
+                    if n == 1 {
+                        return Err("viewer interpolation footprint exceeds device limits".into());
+                    }
+                    n = n.div_ceil(2);
+                }
+            };
+            let oversized = !blank
+                && area
+                && (u64::from(window[2]) * u64::from(window[3]) * 12 > limit
+                    || tile_work
+                    || u64::from(window[2]) * u64::from(window[3]) > 262_144);
             let mut words = vec![p.tex_width, p.tex_height, image.width(), image.height()];
             words.extend(
                 p.rect_min
@@ -460,14 +605,35 @@ impl WgpuBackend {
             words.extend([u32::from(p.icc), u32::from(p.icc_matrix)]);
             words.extend(p.icc_matrix_fixed14.iter().flatten().map(|v| *v as u32));
             words.extend(p.icc_offset_fixed14.map(|v| v as u32));
+            words.extend(p.source_footprint.map(f32::to_bits));
             words.extend([window[0], window[1], window[2], first, n]);
-            let out = self.viewer_dispatch(
-                include_str!("../../../spektrafilm-shaders/wgsl/viewer_full_source_retained.wgsl"),
-                &words,
-                &[&source, &first_table, &second_table],
-                n,
-                "viewer_full_source",
-            )?;
+            let out = if oversized {
+                let bounds = full_area_bounds(first, 1, image.width(), image.height(), p, fx, fy);
+                self.viewer_area_tiled(
+                    image,
+                    bounds,
+                    &words,
+                    words.len() - 5,
+                    limit,
+                    include_str!(
+                        "../../../spektrafilm-shaders/wgsl/viewer_full_source_retained.wgsl"
+                    ),
+                    "viewer_full_source",
+                    &[&first_table, &second_table],
+                )?
+            } else {
+                let source = self.viewer_window(image, window)?;
+                words.extend([0; 5]);
+                self.viewer_dispatch(
+                    include_str!(
+                        "../../../spektrafilm-shaders/wgsl/viewer_full_source_retained.wgsl"
+                    ),
+                    &words,
+                    &[&source, &first_table, &second_table],
+                    n,
+                    "viewer_full_source",
+                )?
+            };
             pages.push(ImagePage {
                 first_pixel: first,
                 n_pixels: n,
@@ -785,6 +951,94 @@ impl WgpuBackend {
     }
 }
 
+fn area_tile_rows(width: i64, capacity: i32, remaining: i64) -> i32 {
+    if width <= i64::from(capacity) {
+        (i64::from(capacity) / width).min(remaining) as i32
+    } else {
+        1
+    }
+}
+
+// Include guard cells when deciding whether a logical footprint needs tiles.
+fn area_exceeds_tile(fx: f32, fy: f32) -> bool {
+    (f64::from(fx).ceil() + 4.0) * (f64::from(fy).ceil() + 4.0) > 262_144.0
+}
+
+// Binary-search the same viewport pixel centres and half-open image rectangle
+// used by the shader. The extra pixel on each side protects against rounding
+// differences between host and device calculations.
+fn full_visible_bounds(p: &ViewerFullSourceGpuParams<'_>) -> [u32; 4] {
+    let axis = |size: u32, rect_min: f32, rect_size: f32, image_min: f32, image_size: f32| {
+        if !rect_min.is_finite()
+            || !rect_size.is_finite()
+            || rect_size < 0.0
+            || !image_min.is_finite()
+            || !image_size.is_finite()
+            || image_size < 0.0
+        {
+            return (0, size);
+        }
+        let find = |edge: f32| {
+            let mut lo = 0u32;
+            let mut hi = size;
+            while lo < hi {
+                let mid = lo + (hi - lo) / 2;
+                let point = rect_min + (mid as f32 + 0.5) * rect_size / size as f32;
+                if point < edge {
+                    lo = mid + 1;
+                } else {
+                    hi = mid;
+                }
+            }
+            lo
+        };
+        (
+            find(image_min).saturating_sub(1),
+            find(image_min + image_size).saturating_add(1).min(size),
+        )
+    };
+    let (x0, x1) = axis(
+        p.tex_width,
+        p.rect_min[0],
+        p.rect_size[0],
+        p.image_min[0],
+        p.image_size[0],
+    );
+    let (y0, y1) = axis(
+        p.tex_height,
+        p.rect_min[1],
+        p.rect_size[1],
+        p.image_min[1],
+        p.image_size[1],
+    );
+    [x0, y0, x1, y1]
+}
+
+// Return the next row-major run known blank or potentially visible. Blank
+// runs can span rows; visible runs stop at the end of the visible row span.
+fn full_visibility_run(first: u32, count: u32, width: u32, bounds: [u32; 4]) -> (bool, u32) {
+    let [left, top, right, bottom] = bounds;
+    let x = first % width;
+    let y = first / width;
+    let index = |row: u32, col: u32| u64::from(row) * u64::from(width) + u64::from(col);
+    let end = if left >= right || top >= bottom || y >= bottom {
+        u64::from(count)
+    } else if y < top {
+        index(top, left)
+    } else if x < left {
+        index(y, left)
+    } else if x >= right {
+        if y + 1 < bottom {
+            index(y + 1, left)
+        } else {
+            u64::from(count)
+        }
+    } else {
+        return (false, right - x);
+    };
+    (true, (end.min(u64::from(count)) - u64::from(first)) as u32)
+}
+
 fn output_extent(first: u32, count: u32, width: u32) -> (u32, u32, u32, u32) {
     let last = first + count - 1;
     let y0 = first / width;
@@ -795,6 +1049,56 @@ fn output_extent(first: u32, count: u32, width: u32) -> (u32, u32, u32, u32) {
         (0, width - 1, y0, y1)
     }
 }
+
+// Bounds are logical source-cell indices, with a guard cell for host/device
+// floating point rounding differences. The shader clips to the exact footprint.
+fn area_bounds(x0: f32, x1: f32, y0: f32, y1: f32, fx: f32, fy: f32) -> [i32; 4] {
+    let axis = |a: f32, b: f32, f: f32| {
+        let lo = (a.min(b) + 0.5) - f / 2.0;
+        let hi = (a.max(b) + 0.5) - f / 2.0 + f;
+        (
+            (lo.floor() as i32).saturating_sub(1),
+            (hi.ceil() as i32).saturating_add(1),
+        )
+    };
+    let (left, right) = axis(x0, x1, fx);
+    let (top, bottom) = axis(y0, y1, fy);
+    [left, top, right, bottom]
+}
+
+fn bounds_window(bounds: [i32; 4], width: u32, height: u32) -> [u32; 4] {
+    let left = bounds[0].clamp(0, width as i32 - 1) as u32;
+    let top = bounds[1].clamp(0, height as i32 - 1) as u32;
+    let right = bounds[2].saturating_sub(1).clamp(0, width as i32 - 1) as u32 + 1;
+    let bottom = bounds[3].saturating_sub(1).clamp(0, height as i32 - 1) as u32 + 1;
+    [left, top, right - left, bottom - top]
+}
+
+#[allow(clippy::too_many_arguments)]
+fn full_area_bounds(
+    first: u32,
+    count: u32,
+    sw: u32,
+    sh: u32,
+    p: &ViewerFullSourceGpuParams<'_>,
+    fx: f32,
+    fy: f32,
+) -> [i32; 4] {
+    let (x0, x1, y0, y1) = output_extent(first, count, p.tex_width);
+    let coord = |v: u32, axis: usize, tex: u32, src: u32| {
+        let point = p.rect_min[axis] + (v as f32 + 0.5) * p.rect_size[axis] / tex as f32;
+        (point - p.image_min[axis]) / p.image_size[axis] * src as f32 - 0.5
+    };
+    area_bounds(
+        coord(x0, 0, p.tex_width, sw),
+        coord(x1, 0, p.tex_width, sw),
+        coord(y0, 1, p.tex_height, sh),
+        coord(y1, 1, p.tex_height, sh),
+        fx,
+        fy,
+    )
+}
+
 // Both callers provide independent output/source geometry and interpolation bounds.
 #[allow(clippy::too_many_arguments)]
 fn source_window(
@@ -844,6 +1148,482 @@ mod tests {
         Arc,
         atomic::{AtomicBool, AtomicUsize, Ordering},
     };
+
+    fn area_test_source(gpu: &WgpuBackend, width: u32, height: u32) -> (ImageBuf, DeviceImage) {
+        let values: Vec<f32> = (0..height)
+            .flat_map(|y| (0..width).flat_map(move |x| [(x % 2) as f32, (y % 2) as f32, 0.25]))
+            .collect();
+        let host = ImageBuf::from_data(width, height, f32_to_scalars(values.clone()));
+        // Page boundaries deliberately split rows and area footprints.
+        let pages = values
+            .chunks(9)
+            .enumerate()
+            .map(|(i, samples)| ImagePage {
+                first_pixel: i as u32 * 3,
+                n_pixels: samples.len() as u32 / 3,
+                buffer: gpu
+                    .device
+                    .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                        label: Some("viewer_area_test_source_page"),
+                        contents: bytemuck::cast_slice(samples),
+                        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+                    }),
+            })
+            .collect();
+        let source = gpu.retain_image_pages(
+            pages,
+            width,
+            height,
+            SampleDomain::Encoded,
+            spektrafilm_math::colorspace::resolve("sRGB").unwrap(),
+            None,
+        );
+        (host, source)
+    }
+
+    fn assert_area_pixels(actual: &[[f32; 3]], expected: &[[f32; 3]]) {
+        assert_eq!(actual.len(), expected.len());
+        for (i, (actual, expected)) in actual.iter().zip(expected).enumerate() {
+            for c in 0..3 {
+                assert!(
+                    (actual[c] - expected[c]).abs() < 0.00002,
+                    "pixel {i} channel {c}: expected {}, got {}",
+                    expected[c],
+                    actual[c]
+                );
+            }
+        }
+    }
+
+    fn retained_area_pixels(gpu: &WgpuBackend, image: &DeviceImage) -> Vec<[f32; 3]> {
+        let host = image.to_host(gpu).unwrap();
+        host.data
+            .as_chunks::<3>()
+            .0
+            .iter()
+            .map(|p| [p[0] as f32, p[1] as f32, p[2] as f32])
+            .collect()
+    }
+
+    #[test]
+    fn area_fit_averages_stripes_across_pages_and_preserves_source() {
+        use spektrafilm_backend::ViewerResampleGpuParams;
+        let gpu = crate::test_support::explicit_adapter();
+        let (host, source) = area_test_source(&gpu, 8, 4);
+        let original = host.data.clone();
+        let expected = vec![[0.5, 0.5, 0.25]; 4];
+        let params = ViewerResampleGpuParams {
+            width: 8,
+            height: 4,
+            out_width: 2,
+            out_height: 2,
+        };
+        assert_area_pixels(
+            &gpu.viewer_resample(&host, &params).unwrap().unwrap(),
+            &expected,
+        );
+        for limit in [24, gpu.viewer_limit()] {
+            let result = gpu
+                .viewer_fit_gpu_with_limit(&source, 2, 2, None, None, limit)
+                .unwrap();
+            assert_area_pixels(&retained_area_pixels(&gpu, &result), &expected);
+        }
+        let display = DisplayTransformGpuParams {
+            src_cctf: 0,
+            decode: false,
+            matrix: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+            clamp: true,
+        };
+        let transformed = gpu
+            .viewer_fit_gpu_with_limit(&source, 2, 2, Some(&display), None, 24)
+            .unwrap();
+        assert_area_pixels(
+            &retained_area_pixels(&gpu, &transformed),
+            &[[0.7353569, 0.7353569, 0.5370987]; 4],
+        );
+        let identity = ViewerResampleGpuParams {
+            out_width: 8,
+            out_height: 4,
+            ..params
+        };
+        let original_pixels: Vec<_> = original
+            .as_chunks::<3>()
+            .0
+            .iter()
+            .map(|p| [p[0] as f32, p[1] as f32, p[2] as f32])
+            .collect();
+        assert_area_pixels(
+            &gpu.viewer_resample(&host, &identity).unwrap().unwrap(),
+            &original_pixels,
+        );
+        let same = gpu
+            .viewer_fit_gpu_with_limit(&source, 8, 4, None, None, 24)
+            .unwrap();
+        assert_area_pixels(&retained_area_pixels(&gpu, &same), &original_pixels);
+        assert_eq!(source.to_host(gpu.backend()).unwrap().data, original);
+        assert_eq!(host.data, original);
+    }
+
+    #[test]
+    fn area_full_source_fractional_edges_and_nearest_across_pages() {
+        let gpu = crate::test_support::explicit_adapter();
+        let (host, source) = area_test_source(&gpu, 4, 2);
+        let original = host.data.clone();
+        let mut p = ViewerFullSourceGpuParams {
+            tex_width: 2,
+            tex_height: 1,
+            rect_min: [0.0, 0.0],
+            rect_size: [4.0, 2.0],
+            image_min: [0.25, 0.25],
+            image_size: [3.0, 1.5],
+            source_footprint: [8.0 / 3.0, 8.0 / 3.0],
+            interpolation: 1,
+            transform: false,
+            src_cctf: 0,
+            decode: false,
+            matrix: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+            icc: false,
+            icc_matrix: false,
+            icc_matrix_fixed14: [[0; 3]; 3],
+            icc_offset_fixed14: [0; 3],
+            icc_first: &[vec![0]],
+            icc_second: &[vec![0]],
+        };
+        // Each axis covers 8/3 source pixels, including clamped edge cells.
+        let expected = [[0.375, 0.5, 0.25], [0.75, 0.5, 0.25]];
+        for mode in 1..=6 {
+            p.interpolation = mode;
+            assert_area_pixels(
+                &gpu.viewer_full_source(&host, &p).unwrap().unwrap(),
+                &expected,
+            );
+            for limit in [24, gpu.viewer_limit()] {
+                let result = gpu.viewer_full_gpu_with_limit(&source, &p, limit).unwrap();
+                assert_area_pixels(&retained_area_pixels(&gpu, &result), &expected);
+            }
+        }
+        p.interpolation = 0;
+        let nearest = [[1.0, 1.0, 0.25]; 2];
+        assert_area_pixels(
+            &gpu.viewer_full_source(&host, &p).unwrap().unwrap(),
+            &nearest,
+        );
+        let result = gpu.viewer_full_gpu_with_limit(&source, &p, 96).unwrap();
+        assert_area_pixels(&retained_area_pixels(&gpu, &result), &nearest);
+
+        p.interpolation = 1;
+        p.transform = true;
+        let transformed = [[0.375, 0.5, 0.5370987], [0.75, 0.5, 0.5370987]];
+        assert_area_pixels(
+            &gpu.viewer_full_source(&host, &p).unwrap().unwrap(),
+            &transformed,
+        );
+        let result = gpu.viewer_full_gpu_with_limit(&source, &p, 24).unwrap();
+        assert_area_pixels(&retained_area_pixels(&gpu, &result), &transformed);
+
+        p.transform = false;
+        p.tex_width = 3;
+        p.tex_height = 2;
+        p.rect_min = [-1.0, -0.5];
+        p.rect_size = [6.0, 3.0];
+        p.image_min = [0.0, 0.0];
+        p.image_size = [4.0, 2.0];
+        p.source_footprint = [2.0, 1.5];
+        let boundary = [
+            [0.0, 0.0, 0.25],
+            [0.5, 0.0, 0.25],
+            [0.0; 3],
+            [0.0, 1.0, 0.25],
+            [0.5, 1.0, 0.25],
+            [0.0; 3],
+        ];
+        assert_area_pixels(
+            &gpu.viewer_full_source(&host, &p).unwrap().unwrap(),
+            &boundary,
+        );
+        let result = gpu.viewer_full_gpu_with_limit(&source, &p, 24).unwrap();
+        assert_area_pixels(&retained_area_pixels(&gpu, &result), &boundary);
+
+        // Magnification keeps the requested interpolation rather than using area.
+        p.tex_width = 8;
+        p.tex_height = 4;
+        p.rect_min = [0.0, 0.0];
+        p.rect_size = [4.0, 2.0];
+        p.source_footprint = [0.5, 0.5];
+        for (mode, pixel) in [(0, [0.0, 0.0, 0.25]), (1, [0.25, 0.25, 0.25])] {
+            p.interpolation = mode;
+            let legacy = gpu.viewer_full_source(&host, &p).unwrap().unwrap();
+            let retained = gpu.viewer_full_gpu_with_limit(&source, &p, 96).unwrap();
+            assert_area_pixels(&legacy[9..10], &[pixel]);
+            assert_area_pixels(&retained_area_pixels(&gpu, &retained), &legacy);
+        }
+        assert_eq!(source.to_host(gpu.backend()).unwrap().data, original);
+        assert_eq!(host.data, original);
+    }
+
+    #[test]
+    fn area_tiles_batch_rows_and_segment_wide_footprints() {
+        let rows = area_tile_rows(6002, 262_144, 6002);
+        assert_eq!(rows, 43);
+        assert_eq!((6002 + rows - 1) / rows, 140);
+        assert_eq!(area_tile_rows(300_000, 262_144, 10), 1);
+    }
+
+    #[test]
+    fn oversized_footprint_batches_blank_viewport_pixels() {
+        let gpu = crate::test_support::explicit_adapter();
+        let host = ImageBuf::from_data(1000, 1000, f32_to_scalars(vec![0.25; 3_000_000]));
+        let meta = RetainedImageMeta {
+            width: 1000,
+            height: 1000,
+            domain: SampleDomain::Encoded,
+            precision: Precision::host(),
+            space: spektrafilm_math::colorspace::resolve("sRGB").unwrap(),
+            pixel_pitch_um: None,
+        };
+        let source = gpu.retain_image(&host, &meta).unwrap();
+        let p = ViewerFullSourceGpuParams {
+            tex_width: 64,
+            tex_height: 64,
+            rect_min: [0.0, 0.0],
+            rect_size: [64.0, 64.0],
+            image_min: [31.0, 31.0],
+            image_size: [1.0, 1.0],
+            source_footprint: [1000.0, 1000.0],
+            interpolation: 1,
+            transform: false,
+            src_cctf: 0,
+            decode: false,
+            matrix: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+            icc: false,
+            icc_matrix: false,
+            icc_matrix_fixed14: [[0; 3]; 3],
+            icc_offset_fixed14: [0; 3],
+            icc_first: &[vec![0]],
+            icc_second: &[vec![0]],
+        };
+        let result = gpu
+            .viewer_full_gpu_with_limit(&source, &p, gpu.viewer_limit())
+            .unwrap();
+        assert!(gpu.buffer_payload(&result).unwrap().pages.len() <= 16);
+        let pixels = retained_area_pixels(&gpu, &result);
+        assert_eq!(pixels.len(), 64 * 64);
+        for (i, pixel) in pixels.iter().enumerate() {
+            let expected = if i == 31 * 64 + 31 { 0.25 } else { 0.0 };
+            for channel in pixel {
+                assert!((*channel - expected).abs() <= 1e-5, "pixel {i}: {pixel:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn million_tap_area_means_preserve_brightness_and_source() {
+        use spektrafilm_backend::ViewerResampleGpuParams;
+        let gpu = crate::test_support::explicit_adapter();
+        let meta = RetainedImageMeta {
+            width: 1000,
+            height: 1000,
+            domain: SampleDomain::Encoded,
+            precision: Precision::host(),
+            space: spektrafilm_math::colorspace::resolve("sRGB").unwrap(),
+            pixel_pitch_um: None,
+        };
+        let fit = ViewerResampleGpuParams {
+            width: 1000,
+            height: 1000,
+            out_width: 1,
+            out_height: 1,
+        };
+        let full = ViewerFullSourceGpuParams {
+            tex_width: 1,
+            tex_height: 1,
+            rect_min: [0.0, 0.0],
+            rect_size: [1000.0, 1000.0],
+            image_min: [0.0, 0.0],
+            image_size: [1000.0, 1000.0],
+            source_footprint: [1000.0, 1000.0],
+            interpolation: 1,
+            transform: false,
+            src_cctf: 0,
+            decode: false,
+            matrix: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+            icc: false,
+            icc_matrix: false,
+            icc_matrix_fixed14: [[0; 3]; 3],
+            icc_offset_fixed14: [0; 3],
+            icc_first: &[vec![0]],
+            icc_second: &[vec![0]],
+        };
+        for chromatic in [false, true] {
+            let values: Vec<f32> = (0..1_000_000)
+                .flat_map(|i| {
+                    if !chromatic {
+                        [0.17, 0.53, 0.91]
+                    } else if i % 2 == 0 {
+                        [0.2, 0.4, 0.9]
+                    } else {
+                        [0.8, 0.6, 0.1]
+                    }
+                })
+                .collect();
+            let expected = if chromatic {
+                [0.5, 0.5, 0.5]
+            } else {
+                [0.17, 0.53, 0.91]
+            };
+            let host = ImageBuf::from_data(1000, 1000, f32_to_scalars(values));
+            let original = host.data.clone();
+            let source = gpu.retain_image(&host, &meta).unwrap();
+            let assert_mean = |pixels: &[[f32; 3]]| {
+                assert_eq!(pixels.len(), 1);
+                for c in 0..3 {
+                    assert!(
+                        (pixels[0][c] - expected[c]).abs() <= 1e-5,
+                        "channel {c}: expected {}, got {}",
+                        expected[c],
+                        pixels[0][c]
+                    );
+                }
+            };
+            // Host-upload shaders exercise the untiled million-tap loop.
+            assert_mean(&gpu.viewer_resample(&host, &fit).unwrap().unwrap());
+            assert_mean(&gpu.viewer_full_source(&host, &full).unwrap().unwrap());
+            // These limits exercise both work-budget and binding-budget tiling.
+            for limit in [512 * 1024, gpu.viewer_limit()] {
+                let fitted = gpu
+                    .viewer_fit_gpu_with_limit(&source, 1, 1, None, None, limit)
+                    .unwrap();
+                assert_mean(&retained_area_pixels(&gpu, &fitted));
+                let viewed = gpu
+                    .viewer_full_gpu_with_limit(&source, &full, limit)
+                    .unwrap();
+                assert_mean(&retained_area_pixels(&gpu, &viewed));
+            }
+            assert_eq!(source.to_host(gpu.backend()).unwrap().data, original);
+            assert_eq!(host.data, original);
+        }
+    }
+
+    #[test]
+    fn fractional_native_hidpi_uses_selected_interpolation_kernel() {
+        let gpu = crate::test_support::explicit_adapter();
+        let (host, source) = area_test_source(&gpu, 4, 2);
+        let mut p = ViewerFullSourceGpuParams {
+            tex_width: 2,
+            tex_height: 2,
+            rect_min: [0.105, 0.2],
+            rect_size: [0.020000003, 0.02],
+            image_min: [0.1, 0.2],
+            image_size: [0.04, 0.02],
+            source_footprint: [1.0, 1.0],
+            interpolation: 1,
+            transform: false,
+            src_cctf: 0,
+            decode: false,
+            matrix: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+            icc: false,
+            icc_matrix: false,
+            icc_matrix_fixed14: [[0; 3]; 3],
+            icc_offset_fixed14: [0; 3],
+            icc_first: &[vec![0]],
+            icc_second: &[vec![0]],
+        };
+        assert!(4.0 * p.rect_size[0] / (p.image_size[0] * 2.0) > 1.0);
+        let linear = gpu.viewer_full_source(&host, &p).unwrap().unwrap();
+        let retained = gpu.viewer_full_gpu_with_limit(&source, &p, 96).unwrap();
+        assert_area_pixels(&retained_area_pixels(&gpu, &retained), &linear);
+        p.interpolation = 2;
+        let cubic = gpu.viewer_full_source(&host, &p).unwrap().unwrap();
+        let retained = gpu.viewer_full_gpu_with_limit(&source, &p, 96).unwrap();
+        assert_area_pixels(&retained_area_pixels(&gpu, &retained), &cubic);
+        assert!((linear[0][0] - cubic[0][0]).abs() > 0.01);
+        // Large point origins must not turn true slight reductions into native
+        // sampling, including the texture-cap 4097/4096 case.
+        p.rect_min = [2000.5, 0.2];
+        p.rect_size = [2.0, 0.02];
+        p.image_min = [2000.0, 0.2];
+        for footprint in [100.0 / 99.9, 4097.0 / 4096.0] {
+            p.image_size = [4.0 / footprint, 0.02];
+            p.source_footprint = [footprint, 1.0];
+            p.interpolation = 1;
+            let reduced = gpu.viewer_full_source(&host, &p).unwrap().unwrap();
+            assert!((reduced[0][0] - 0.5).abs() < 0.002);
+            let retained = gpu.viewer_full_gpu_with_limit(&source, &p, 96).unwrap();
+            assert_area_pixels(&retained_area_pixels(&gpu, &retained), &reduced);
+            p.interpolation = 2;
+            let cubic = gpu.viewer_full_source(&host, &p).unwrap().unwrap();
+            assert_area_pixels(&cubic, &reduced);
+            let retained = gpu.viewer_full_gpu_with_limit(&source, &p, 96).unwrap();
+            assert_area_pixels(&retained_area_pixels(&gpu, &retained), &reduced);
+            p.interpolation = 0;
+            let nearest = gpu.viewer_full_source(&host, &p).unwrap().unwrap();
+            assert!((nearest[0][0] - 1.0).abs() < 1e-6);
+            let retained = gpu.viewer_full_gpu_with_limit(&source, &p, 96).unwrap();
+            assert_area_pixels(&retained_area_pixels(&gpu, &retained), &nearest);
+        }
+    }
+
+    #[test]
+    fn area_accumulation_preserves_positive_infinity() {
+        use spektrafilm_backend::ViewerResampleGpuParams;
+        let gpu = crate::test_support::explicit_adapter();
+        let mut values = vec![0.5_f32; 4 * 2 * 3];
+        values[0] = f32::INFINITY;
+        let host = ImageBuf::from_data(4, 2, f32_to_scalars(values));
+        let meta = RetainedImageMeta {
+            width: 4,
+            height: 2,
+            domain: SampleDomain::Encoded,
+            precision: Precision::host(),
+            space: spektrafilm_math::colorspace::resolve("sRGB").unwrap(),
+            pixel_pitch_um: None,
+        };
+        let source = gpu.retain_image(&host, &meta).unwrap();
+        let fit = ViewerResampleGpuParams {
+            width: 4,
+            height: 2,
+            out_width: 1,
+            out_height: 1,
+        };
+        let full = ViewerFullSourceGpuParams {
+            tex_width: 1,
+            tex_height: 1,
+            rect_min: [0.0, 0.0],
+            rect_size: [4.0, 2.0],
+            image_min: [0.0, 0.0],
+            image_size: [4.0, 2.0],
+            source_footprint: [4.0, 2.0],
+            interpolation: 1,
+            transform: false,
+            src_cctf: 0,
+            decode: false,
+            matrix: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+            icc: false,
+            icc_matrix: false,
+            icc_matrix_fixed14: [[0; 3]; 3],
+            icc_offset_fixed14: [0; 3],
+            icc_first: &[vec![0]],
+            icc_second: &[vec![0]],
+        };
+        let check = |pixels: &[[f32; 3]]| {
+            assert_eq!(pixels.len(), 1);
+            assert_eq!(pixels[0][0], f32::INFINITY);
+            assert!((pixels[0][1] - 0.5).abs() < 1e-6);
+            assert!((pixels[0][2] - 0.5).abs() < 1e-6);
+        };
+        check(&gpu.viewer_resample(&host, &fit).unwrap().unwrap());
+        check(&gpu.viewer_full_source(&host, &full).unwrap().unwrap());
+        for limit in [24, gpu.viewer_limit()] {
+            let fitted = gpu
+                .viewer_fit_gpu_with_limit(&source, 1, 1, None, None, limit)
+                .unwrap();
+            check(&retained_area_pixels(&gpu, &fitted));
+            let viewed = gpu
+                .viewer_full_gpu_with_limit(&source, &full, limit)
+                .unwrap();
+            check(&retained_area_pixels(&gpu, &viewed));
+        }
+    }
 
     #[test]
     fn clipping_never_paints_fractional_photo_padding() {

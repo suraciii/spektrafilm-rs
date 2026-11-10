@@ -690,7 +690,9 @@ pub trait ComputeBackend: Send + Sync {
     }
 
     /// Prepare disposable fitted viewing samples without materializing the source.
-    /// `None` display means raw output-space viewing; ICC follows the display pass.
+    /// Reduction uses area averaging before the display and ICC passes; an
+    /// unchanged size preserves the source samples. `None` display means raw
+    /// output-space viewing.
     fn viewer_fit_retained(
         &self,
         _image: &DeviceImage,
@@ -701,7 +703,9 @@ pub trait ComputeBackend: Send + Sync {
     ) -> Result<DeviceImage, String> {
         Err("backend has no retained viewer preparation".into())
     }
-    /// Transform source taps before interpolation for a magnified view.
+    /// Prepare a full-source viewport, transforming source taps before sampling.
+    /// Non-nearest minification uses area averaging; other sampling keeps the
+    /// requested interpolation mode.
     fn viewer_full_source_retained(
         &self,
         _image: &DeviceImage,
@@ -783,7 +787,8 @@ pub trait ComputeBackend: Send + Sync {
         analysis::inspect_host(host, image.meta(), x, y)
     }
     /// Resample `image` to the viewer's capped size on the compute device,
-    /// returning the separable-bilinear display raster as flat `f32` RGB.
+    /// returning the area-averaged display raster as flat `f32` RGB. A
+    /// same-size request preserves the source samples.
     ///
     /// The viewer's image-sized reduction is host arithmetic, so a device
     /// route must not reduce it on the host. The returned pixels are
@@ -836,15 +841,15 @@ pub trait ComputeBackend: Send + Sync {
         Ok(None)
     }
 
-    /// Compose the viewer's magnified full-source view on the compute device,
+    /// Compose the viewer's full-source view on the compute device,
     /// returning the bounded viewport raster as flat `f32` RGB.
     ///
-    /// The magnified view samples the full-resolution source at every visible
-    /// viewport pixel, so reducing it on the host is image arithmetic on the
-    /// host: a device route must not download the source to resample it. The
-    /// request carries the viewport geometry, the interpolation mode, and the
-    /// resolved display and ICC transforms, so the device evaluates the same
-    /// per-pixel arithmetic the host composition does. The returned pixels are
+    /// The view samples the full-resolution source at every visible viewport
+    /// pixel, so a device route must not download it to resample on the host.
+    /// Non-nearest minification area-averages transformed source taps; otherwise
+    /// it uses the requested interpolation mode. The request carries viewport
+    /// geometry and resolved display and ICC transforms, so the device evaluates
+    /// the same per-pixel arithmetic as the host composition. The returned pixels are
     /// disposable viewer data and the source image is never modified.
     /// `Ok(None)` reports that this backend has no device composition, and
     /// the caller keeps the reference implementation.

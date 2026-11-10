@@ -1023,10 +1023,9 @@ impl ComputeBackend for WgpuBackend {
         self.viewer_polaroid_gpu(i, c)
     }
 
-    /// The viewer's capped raster on the device: one bilinear tap per output
-    /// pixel over the exact source rectangle the host maps it to, reading the
-    /// source image read-only. The host still owns the destination size, so a
-    /// backend cannot disagree with the viewer about how many pixels it keeps.
+    /// Area-average the source cells covered by each pixel of the viewer's
+    /// capped raster, reading the source image without modifying it. The host
+    /// owns the destination size, so the backend uses the same geometry.
     fn viewer_resample(
         &self,
         image: &ImageBuf,
@@ -1173,12 +1172,10 @@ impl ComputeBackend for WgpuBackend {
         self.viewer_icc_samples_gpu(rgb, params).map(Some)
     }
 
-    /// The viewer's magnified full-source composition on the device: one
-    /// separable interpolation tap set per visible viewport pixel over the
-    /// full-resolution source, then the display transform and the ICC
-    /// pipeline when the request carries them. The host supplies the geometry
-    /// and the resolved transforms, so the device evaluates the same
-    /// per-pixel arithmetic the host composition does.
+    /// Compose the full-resolution source on the device, transforming each
+    /// source tap before interpolation or area averaging. Non-nearest
+    /// minification uses the viewport pixel's complete source footprint;
+    /// native-size and magnified views use the selected interpolation kernel.
     fn viewer_full_source(
         &self,
         image: &ImageBuf,
@@ -1239,6 +1236,7 @@ impl ComputeBackend for WgpuBackend {
             icc_off0: i32,
             icc_off1: i32,
             icc_off2: i32,
+            source_footprint: [f32; 2],
         }
         let columns = pack_matrix_columns(&params.matrix);
         let icc_matrix = params.icc_matrix_fixed14;
@@ -1277,6 +1275,7 @@ impl ComputeBackend for WgpuBackend {
             icc_off0: icc_offset[0],
             icc_off1: icc_offset[1],
             icc_off2: icc_offset[2],
+            source_footprint: params.source_footprint,
         };
         let source_f32 = scalars_to_f32(&image.data);
         let icc_first: Vec<i32> = params
