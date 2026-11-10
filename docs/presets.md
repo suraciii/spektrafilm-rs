@@ -52,7 +52,18 @@ A saved look can be exported without an active workflow. Application validates t
 
 Library writes reject names already owned by another document. This includes concurrent writes with different letter case or carriers. Export into My Presets creates a new name. Saving the current look under an existing My Presets name offers an explicit **Replace "name"** action instead of overwriting silently.
 
-## See also
+## Material looks added in 2026-11
+
+| Preset | Film profile | Print | Notes |
+| --- | --- | --- | --- |
+| **Ilford Delta 3200** | `ilford_delta_3200` | `kodak_polymax_fine_art` | High-speed B&W; the Fotufilm/Negs curve family was reduced to a single silver grain record for the Spektra engine. Grain/halation are class-level priors, not a measured Delta 3200 calibration. |
+| **Ilford FP4 Plus** | `ilford_fp4_plus` | `kodak_polymax_fine_art` | Medium-speed B&W; same single-record adaptation and class-level effects caveat. |
+| **Kodak Portra 800 Push +1** | `kodak_portra_800_push1` | `kodak_portra_endura` | Uses the separate Push +1 curve already present in the profile library; not an exposure-slider imitation. Grain RMS is a push prior. |
+| **Kodak Tri-X Reversal 7266** | `kodak_trix` | `kodak_polymax_fine_art` | B&W reversal, direct positive; null sensitivity samples in the source profile are filled with an effective-zero sentinel. Treat as an experimental, uncalibrated reversal look. |
+
+These looks keep grain and halation active. The profiles and the profile-source
+records identify the source revision; `docs/attribution.md` carries the license
+and adaptation notes. ## See also
 
 - [CLI rendering](cli.md)
 - [GUI](gui.md)

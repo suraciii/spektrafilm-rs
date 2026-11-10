@@ -33,6 +33,17 @@ Andrea Volpato's spectral profiles and their LUT derivatives retain CC BY-SA 4.0
 
 The GUI embeds unmodified Noto Sans SC Regular (Version 2.004) from [Noto CJK](https://github.com/notofonts/noto-cjk). The font is © 2014–2021 Adobe and distributed under the SIL Open Font License 1.1. The [source notice](../crates/spektrafilm-gui/assets/NotoSansSC-NOTICE.txt) records its upstream blob; the [license](../crates/spektrafilm-gui/assets/NotoSansSC-OFL.txt) ships with native packages. It supplies offline Chinese and mixed-script text without requiring system font installation.
 
+## Fotufilm-derived film profiles
+
+The `ilford_delta_3200` and `ilford_fp4_plus` profiles are adapted from Fotufilm by MUAStudio Inc., via the
+Negs port at `26c903b`. They are CC BY-SA 4.0 and remain subject to attribution
+and ShareAlike; the [profile notice](../data/license/FOTUFILM_PROFILES.txt)
+records the source revision and the conversion changes. The separate `kodak_portra_800_push1` and `kodak_trix` profiles are
+SpektraFilm profiles by Andrea Volpato. The `kodak_trix` import fills null
+spectral-sensitivity samples with an effective-zero sentinel (`-10` decades)
+because the numeric pipeline requires a value; no measured sensitivity is
+invented. Its source record and metadata note the adaptation.
+
 ## Fotufilm Film grain engine
 
 The optional Fotufilm Film grain engine adapts the crystal-population and periodic-aperture mechanism of Fotufilm project-authored `Sources/FotufilmCore/FilmGrain.swift` under Apache-2.0.

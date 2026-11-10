@@ -5,7 +5,7 @@
         "created": "2026-07-07",
         "license": "spektrafilm profile by Andrea Volpato, licensed under CC BY-SA 4.0. Redistribution and derivatives must credit the author, link the project (https://github.com/andreavolpato/spektrafilm),preserve this license, and remain CC BY-SA 4.0.Modifications must be noted. Full text of the license and attribution requirements: https://github.com/andreavolpato/spektrafilm/blob/main/SPEKTRAFILM_LICENSE.txt.",
         "citation": "If you use this profile in your work, please cite the spektrafilm project: https://github.com/andreavolpato/spektrafilm, see CITATION.cff for details.",
-        "datasource": "This profile was created by processing raw measurement data from data-sheets and/or scientific papers. Original data are property of the respective holders.\n    Film/photo-paper: Kodak and Fujifilm data-sheets, scientific publications, and technical material.\n    Reflectance: Otsu (https://github.com/enneract/otsu2018), Munsell (https://zenodo.org/records/3269912), human skin (https://www.nist.gov/programs-projects/reflectance-measurements-human-skin), forest colors (https://zenodo.org/records/3269920), Japan colors (https://zenodo.org/records/5217752).\n    All data publicly available."
+        "datasource": "This profile was created by processing raw measurement data from data-sheets and/or scientific papers. Original data are property of the respective holders.\n    Film/photo-paper: Kodak and Fujifilm data-sheets, scientific publications, and technical material.\n    Reflectance: Otsu (https://github.com/enneract/otsu2018), Munsell (https://zenodo.org/records/3269912), human skin (https://www.nist.gov/programs-projects/reflectance-measurements-human-skin), forest colors (https://zenodo.org/records/3269920), Japan colors (https://zenodo.org/records/5217752).\n    All data publicly available. SpektraFilm adaptation: null spectral-sensitivity samples (outside the published B&W response range) are filled with -10 decades, an effective-zero sentinel required by the numeric spectral pipeline; no measured sensitivity is invented. The profile remains a source-curve approximation, not a measured reversal calibration."
     },
     "info": {
         "stock": "kodak_trix",
@@ -107,7 +107,7 @@
         ],
         "log_sensitivity": [
             [
-                null
+                -10.0
             ],
             [
                 -0.710882
@@ -263,91 +263,91 @@
                 -1.627555
             ],
             [
-                null
+                -10.0
             ],
             [
-                null
+                -10.0
             ],
             [
-                null
+                -10.0
             ],
             [
-                null
+                -10.0
             ],
             [
-                null
+                -10.0
             ],
             [
-                null
+                -10.0
             ],
             [
-                null
+                -10.0
             ],
             [
-                null
+                -10.0
             ],
             [
-                null
+                -10.0
             ],
             [
-                null
+                -10.0
             ],
             [
-                null
+                -10.0
             ],
             [
-                null
+                -10.0
             ],
             [
-                null
+                -10.0
             ],
             [
-                null
+                -10.0
             ],
             [
-                null
+                -10.0
             ],
             [
-                null
+                -10.0
             ],
             [
-                null
+                -10.0
             ],
             [
-                null
+                -10.0
             ],
             [
-                null
+                -10.0
             ],
             [
-                null
+                -10.0
             ],
             [
-                null
+                -10.0
             ],
             [
-                null
+                -10.0
             ],
             [
-                null
+                -10.0
             ],
             [
-                null
+                -10.0
             ],
             [
-                null
+                -10.0
             ],
             [
-                null
+                -10.0
             ],
             [
-                null
+                -10.0
             ],
             [
-                null
+                -10.0
             ],
             [
-                null
+                -10.0
             ]
         ],
         "channel_density": [
