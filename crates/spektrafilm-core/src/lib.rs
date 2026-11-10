@@ -11,6 +11,7 @@ pub mod input_gamut;
 pub mod lut_baker;
 pub mod lut_delivery;
 pub mod lut_formats;
+pub mod lut_look;
 pub mod lut_ocio;
 pub mod lut_qa;
 pub mod lut_transport;

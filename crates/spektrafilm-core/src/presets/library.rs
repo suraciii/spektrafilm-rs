@@ -470,8 +470,14 @@ impl PresetLibrary {
     }
     fn validate_write(preset: &Preset, data_dir: &Path) -> Result<(), LibraryError> {
         preset.validate_detailed()?;
-        if matches!(preset.parameters, PresetParameters::Look(_)) {
-            preset.resolve_detailed(data_dir, &RuntimeParams::default())?;
+        match preset.parameters.as_ref() {
+            Some(PresetParameters::Look(_)) => {
+                preset.resolve_detailed(data_dir, &RuntimeParams::default())?;
+            }
+            None => {
+                preset.resolve_lut_detailed(&RuntimeParams::default())?;
+            }
+            Some(PresetParameters::Section(_)) => {}
         }
         Ok(())
     }
@@ -603,7 +609,7 @@ impl PresetLibrary {
         let _lock = self.lock_mutations(false)?;
         let path = self.user_path(&preset.name)?;
         let existing = load_file_detailed(&path)?;
-        if existing.kind() != Ok(PresetKind::Look) {
+        if !matches!(existing.kind(), Ok(PresetKind::Look | PresetKind::Lut)) {
             let diagnostic = format!("{}: target is not a whole look", path.display());
             return Err(LibraryError::new(
                 LibraryErrorReason::ExpectedLook { path },

@@ -6,7 +6,8 @@ The [GUI presentation specification](../gui-presentation/spec.md) owns visual hi
 ## Contract
 
 - The GUI exposes controls for input, film, print, scanner, output, advanced color, configuration, and LUT look.
-- A Film / LUT mode selection and LUT look controls MUST follow [LUT look](../lut-look/spec.md#ui-and-cli). LUT mode retains stored film, print, and scanner controls without executing their stages.
+- A Film / LUT workflow selection and LUT look controls MUST follow the [LUT workflow](../lut-workflow/spec.md) and [LUT look](../lut-look/spec.md#ui-and-cli). LUT mode retains stored film, print, and scanner controls without executing their stages.
+- The preset browser MUST include film look presets and LUT presets. Applying either selects the workflow it describes.
 - Preview renders a bounded disposable image. Scan renders the original working resolution.
 - Both use the current runtime controls.
   `standard` negative-to-positive preview MUST prepare and finish the complete working frame before display reduction; its full-frame requirements follow the [scan preview contract](../film-chain/lab-scan/spec.md#exact-preview-and-prepared-baseline).
@@ -125,8 +126,8 @@ The window has three regions and one header.
 - The adjustment inspector MUST NOT contain image-analysis controls or plots.
 - Application settings and Export own their separate editors under [Stage and surface ownership](#stage-and-surface-ownership).
 - The preset browser occupies the left region and is collapsible. Its width and expanded state follow [the preset browser boundary](../presets/design.md#boundaries); browser interaction and state follow [Presets](../presets/spec.md#browser-interaction) and [browser state ownership](../presets/design.md#browser-state-ownership).
-- The window header spans the three regions. It owns Open image, Undo, Redo, application settings, and independent Export actions.
-- It shows the accepted source, current film profile, print profile, and physical workflow as read-only context. Status ownership follows [Labels and surfaces](#labels-and-surfaces).
+- The window header spans the three regions. It owns Open image, Undo, Redo, application settings, independent Export actions, and the film workflow's **Export LUT…** action.
+- It shows the accepted source, the active workflow, and either the current film and print profiles or the current LUT preset as read-only context. Status ownership follows [Labels and surfaces](#labels-and-surfaces).
 - Scan and Save remain reachable from a persistent action area without opening an inspector module.
 
 A region is a layout slot, not a mutually exclusive page. A control belongs to exactly one surface under [Labels and surfaces](#labels-and-surfaces). A dialog MAY edit only the values assigned to it.
@@ -192,16 +193,18 @@ Each module has one editing owner. The inspector MUST contain these stages and m
 
 | Owner | Modules and controls |
 | --- | --- |
-| Input and capture | Workflow selector; input color space and decoding; RAW white balance, temperature, tint, lens correction, and reprocess action; crop, upscale, and source rotation; Camera exposure, metering, film format, color filter, and capture illuminant; Camera diffusion; input gamut compression; spectral reconstruction and its applicable adaptation controls; Convert imported-capture scan illuminant, exposure, base estimation, calibration, channel swaps, and calibration actions. |
+| Input and capture | Film route selector (inactive in LUT workflow); input color space and decoding; RAW white balance, temperature, tint, lens correction, and reprocess action; crop, upscale, and source rotation; Camera exposure, metering, film format, color filter, and capture illuminant; Camera diffusion; input gamut compression; spectral reconstruction and its applicable adaptation controls; Convert imported-capture scan illuminant, exposure, base estimation, calibration, channel swaps, and calibration actions. Spectral camera, conversion, gamut, and reconstruction controls are inactive in LUT workflow. |
 | Film | Film material selector and its development-time family; Chemistry; Film base; Halation; Couplers; Grain selector, shared material-grain parameters, and every engine-specific parameter group. |
 | Print | Print material selector and its development-time family; Enlarger exposure mode, exposure, exposure tracking, M/Y shifts, and illuminant; Preflash; Enlarger diffusion; print Chemistry and independent density-curve gamma; Print base. |
 | Scan | Fixed product readout illuminant information; eligible scan output and conversion-style controls; specialized negative-conversion correction, restore, copy/paste and held automatic comparison; lens blur, unsharp mask; Print viewing glare; Tone & Color and its collapsible Range group. |
-| LUT look | Film / LUT mode selection; LUT import and declaration; Diffusion; Halation; Grain. Film, Print, and Scanner modules remain stored but inactive. |
-| Output | Output color space and encoding where exposed by their contracts; output gamut processing; CMYK ink style; Simulation blend; retained Save color and encoding settings. |
+| LUT look | Film / LUT workflow selection; LUT file import, replace, and reveal; LUT declaration and strength; Diffusion; Halation; Grade; Grain. Film, Print, and Scanner modules remain stored but inactive. |
+| Output | Output color space and encoding where exposed by their contracts; output gamut processing; CMYK ink style and Simulation blend, inactive in LUT workflow; retained Save color and encoding settings. |
 | Application settings | General: interface language, preview limits, and rendering preferences that are not photographic controls; State and startup: startup state save/load/default actions; Display: display transform, ICC selection, canvas, padding, and interpolation; Diagnostics: observation and report actions. Language preference ownership follows [GUI product language](../gui-language/spec.md#selection-and-persistence), not photographic state. |
 | Export dialog | Independent full-resolution export backend, format, depth, saving color and encoding, applicable codec/compression options, destination selection, and export submission. |
 | Viewer footer | Original/Modified/Paper back selection; zoom, fit, reveal, crossfade, and read-only zoom state; [black and white endpoint warnings](../gui-product-design/clipping-warnings/spec.md#controls); optional image-analysis visibility. |
-| Preset browser | Look selection, browser search, library refresh/reveal, and look-preset management. |
+| Preset browser | Film and LUT preset selection, browser search and type filter, library refresh/reveal, and preset management. |
+
+The film workflow MUST expose **Export LUT…** as a header action and the LUT workflow MUST expose **Import LUT…** in the LUT look stage under [LUT workflow](../lut-workflow/spec.md). Export MUST write a `.cube` file and MUST NOT import it, apply it, create a preset, or switch workflow. It MUST NOT execute spectral film stages inside LUT mode.
 
 Tone & Color remains one control group. Its editing surface is Scan in film mode and LUT look in LUT mode. It MUST NOT be duplicated.
 
@@ -280,7 +283,9 @@ Changing an admitted full route to `input` and back MUST retain valid inactive s
 
 An inactive optional subfeature MUST NOT mark its whole module inactive. A module-level notice appears only when every dependent control in that module is inactive; the module's own enable switch is not evidence of its inactivity.
 
-A route or material change MUST preserve inactive values except for normalizations explicitly required by the owning contract and [material defaults](../presets/spec.md#material-defaults). The header MUST report route and scanner normalizations.
+A route or material change MUST preserve inactive values except for normalizations explicitly required by the owning contract and [material defaults](../presets/spec.md#material-defaults). The header MUST report route and scanner normalizations in the film workflow.
+
+A workflow change MUST preserve both stored control sets. In the LUT workflow the header reports the LUT preset and LUT file identity instead of a film route summary.
 
 `settings.print_exposure_ev_tracking` belongs to Print → Enlarger because it controls exposure behavior. Its `settings` wire group MUST NOT move it to application preferences or remove its existing look ownership.
 
@@ -455,7 +460,7 @@ Only modified is an independent, reversible view filter against the reset baseli
 
 Turning it off MUST restore the ordinary inventory. A preset's modified marker MUST NOT be used as the filter predicate.
 
-Preset browser search is a separate operation owned by [Presets](../presets/spec.md). Neither query MAY alter the other surface's filter or selection.
+Preset browser search and its session-only All / Film / LUT type filter are separate operations owned by [Presets](../presets/spec.md). Neither query MAY alter the control-search filter or selection.
 
 ## Labels and surfaces
 

@@ -84,12 +84,12 @@ impl Browser {
             .iter()
             .enumerate()
             .filter_map(|(index, entry)| {
-                let is_look = entry.fault.is_none()
-                    && entry
-                        .preset
-                        .as_ref()
-                        .is_some_and(|preset| preset.kind() == Ok(PresetKind::Look));
-                if !is_look {
+                let kind = entry
+                    .fault
+                    .is_none()
+                    .then(|| entry.preset.as_ref().and_then(|preset| preset.kind().ok()))
+                    .flatten();
+                if !matches!(kind, Some(PresetKind::Look | PresetKind::Lut)) {
                     return None;
                 }
                 let stock_matches = |stock: &str, profiles: &[crate::profiles::ProfileEntry]| {
@@ -99,8 +99,20 @@ impl Browser {
                             .find(|profile| profile.stock == stock)
                             .is_some_and(|profile| profile.display.to_lowercase().contains(&query))
                 };
+                let lut_matches = entry
+                    .preset
+                    .as_ref()
+                    .and_then(|preset| preset.lut.as_ref())
+                    .is_some_and(|lut| {
+                        lut.path
+                            .file_name()
+                            .and_then(|name| name.to_str())
+                            .is_some_and(|name| name.to_lowercase().contains(&query))
+                            || lut.path.to_string_lossy().to_lowercase().contains(&query)
+                    });
                 (query.is_empty()
                     || entry.name.to_lowercase().contains(&query)
+                    || lut_matches
                     || entry
                         .film_profile
                         .as_ref()
@@ -174,9 +186,23 @@ impl App {
                             .strong(),
                     );
                     let save_name = crate::i18n::text(ui.ctx(), "surfaces.presets.save");
+                    let save_available = self.params.workflow.mode
+                        != spektrafilm_core::params::WorkflowMode::Lut
+                        || !self.params.lut_look.path.as_os_str().is_empty();
                     let save = ui
-                        .add(egui::Button::new(save_name.as_ref()).truncate())
+                        .add_enabled(
+                            save_available,
+                            egui::Button::new(save_name.as_ref()).truncate(),
+                        )
                         .on_hover_text(crate::i18n::text(ui.ctx(), "surfaces.presets.save_help"));
+                    let save = if save_available {
+                        save
+                    } else {
+                        save.on_disabled_hover_text(crate::i18n::text(
+                            ui.ctx(),
+                            "surfaces.presets.lut_save_unavailable",
+                        ))
+                    };
                     crate::controls::locate_row(ui, "presets.save", &save);
                     if save.clicked() {
                         self.save_preset_as();
@@ -444,10 +470,12 @@ impl App {
                         if indices.is_empty() {
                             let has_looks = self.presets.entries.iter().any(|entry| {
                                 entry.group == group
-                                    && entry
-                                        .preset
-                                        .as_ref()
-                                        .is_some_and(|preset| preset.kind() == Ok(PresetKind::Look))
+                                    && entry.preset.as_ref().is_some_and(|preset| {
+                                        matches!(
+                                            preset.kind(),
+                                            Ok(PresetKind::Look | PresetKind::Lut)
+                                        )
+                                    })
                             });
                             if has_looks {
                                 ui.weak(crate::i18n::text(
@@ -720,6 +748,22 @@ impl App {
                     Some(text)
                 }
             };
+            if let Some(preset) = &entry.preset {
+                let cue = if preset.lut.is_some() { "LUT" } else { "Film" };
+                let galley = ui.painter().layout_no_wrap(
+                    cue.to_owned(),
+                    egui::FontId::proportional(theme::SIZE_HINT),
+                    theme::FG,
+                );
+                let badge = egui::Rect::from_min_size(
+                    rect.left_top() + egui::vec2(4.0, 4.0),
+                    galley.size() + egui::vec2(8.0, 4.0),
+                );
+                ui.painter()
+                    .rect_filled(badge, egui::CornerRadius::same(2), theme::SURFACE2);
+                ui.painter()
+                    .galley(badge.min + egui::vec2(4.0, 2.0), galley, theme::FG);
+            }
             // Thumbnail and name row are one activation surface; the actions
             // control is drawn later and therefore stays on top.
             let hit_rect = egui::Rect::from_min_size(
@@ -819,11 +863,21 @@ impl App {
             // Materials stay in the card's accessible description and hover
             // text rather than a repeated paragraph on every card.
             let mut label = entry.name.clone();
+            if let Some(preset) = &entry.preset {
+                label.push_str(if preset.lut.is_some() {
+                    " • LUT"
+                } else {
+                    " • Film"
+                });
+            }
             if let Some(state) = state {
                 label.push_str(" • ");
                 label.push_str(&crate::controls::localized(ui.ctx(), state));
             }
             let mut description = String::new();
+            if let Some(lut) = entry.preset.as_ref().and_then(|preset| preset.lut.as_ref()) {
+                description.push_str(&format!("LUT: {}", lut.path.display()));
+            }
             for (role, reference, profiles) in [
                 ("Film", &entry.film_profile, &self.films),
                 ("Print", &entry.print_profile, &self.papers),
@@ -955,7 +1009,7 @@ impl App {
         let preset = entry.preset.as_ref()?;
         let mut action = None;
         if entry.group == PresetGroup::User
-            && preset.kind() == Ok(PresetKind::Look)
+            && matches!(preset.kind(), Ok(PresetKind::Look | PresetKind::Lut))
             && ui
                 .button(crate::i18n::text(ui.ctx(), "surfaces.presets.rename"))
                 .clicked()
@@ -1170,7 +1224,7 @@ impl App {
                         }
                         if matches!(
                             &dialog.action,
-                            NameAction::Save(preset) if preset.kind() == Ok(PresetKind::Look)
+                            NameAction::Save(preset) if matches!(preset.kind(), Ok(PresetKind::Look | PresetKind::Lut))
                         ) {
                             self.presets.state.applied = Some(AppliedPreset {
                                 group: PresetGroup::User,

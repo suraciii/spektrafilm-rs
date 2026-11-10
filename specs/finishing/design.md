@@ -11,7 +11,7 @@ The [product contract](spec.md) owns tone and color adjustment behavior, applica
 | Fixed response definition and prepared color transforms | Core finishing |
 | Image resources and device dispatch | The selected compute backend |
 | Look capture, section scope, and document migrations | Presets and each versioned carrier |
-| LUT look grade persistence | LUT look |
+| LUT look grade persistence | [LUT workflow](../lut-workflow/spec.md#lut-presets) |
 | Control presentation, transient comparison, and edit transactions | GUI workflow |
 | Prepared-source composition | Output mix |
 | Delivery conversion and bounded output clipping | Photo export |

@@ -3,16 +3,21 @@
 The [preset specification](spec.md) owns the approved browser behavior. This document owns the existing library model, isolated candidate rendering, state separation, and native cutover; it does not define a second parameter schema or renderer.
 
 - Vocabularies: a **preset** is a named parameter set — the user-facing one is a library document (`Built-in` compiled from the crate's `assets/presets`, `My Presets` read from `<config_dir>/presets`). `data/presets/` keeps the upstream scope, the per-stock grain and coupler tables the runtime compiles in.
-- A **look** is the content a preset owns: the look controls and their values. A **look preset** is the whole-look kind and a **section preset** the one-section kind; the terms *look document* and a `looks` directory MUST NOT appear.
+- A **look** is the content a film look preset owns: the look controls and their values. A **film look preset** is the whole-look film kind and a **section preset** the one-section film kind; the terms *look document* and a `looks` directory MUST NOT appear.
+- The LUT preset is the third whole-look kind. It uses preset schema 8, carries an external LUT file path and SHA-256 plus the LUT declaration, and carries no film or print profile references.
+- LUT preset library, browser, and thumbnail behavior follow the [LUT workflow](../lut-workflow/spec.md#lut-presets). It MUST NOT be resolved as a film look or a section.
 - The per-stock grain and coupler tables in `data/presets/` are **not** upstream data. Pinned Python 0.3.4 carries no such database; it applies hardcoded polarity overrides in `runtime/params_builder.py` (`is_negative` / `is_positive` branches).
 - The Rust tables replace those overrides with a stock → cine → defaults lookup and their own optimized values. Any parity claim that touches `film_render.dir_couplers` or `film_render.grain` therefore compares structure and magnitude, not sample equality; a numerical diff against pinned Python is expected and is not a defect.
 - *Calibration* stays reserved for the Convert device-correction matrix and its worker. Names that mirror the pinned upstream (`apply_grain_preset`, `HALATION_PRESETS`, `procedural_profile` and its values) keep their upstream spelling for parity traceability.
 - The preset document, strict validation, resolution, capture, the library directory policy, discovery, name conflict rejection, and atomic writes belong to `core`.
-- The Rust document type is `presets::Preset`, named after its module like `profile::Profile`; `LookParameters` remains the look payload. Its `settings` group (`LookSettingsParams`) carries only the look-relevant processing settings (hanatos2025 adaptation window/surface, spectral Gaussian blur, CAT16) — not the wavelength grid, LUT wiring, preview limits, or performance toggles.
+- The Rust document type is `presets::Preset`, named after its module like `profile::Profile`. `LookParameters` remains the film look payload; a LUT preset carries its own LUT declaration, effects, and grade payload.
+- A film look preset's `settings` group (`LookSettingsParams`) carries only the look-relevant processing settings (hanatos2025 adaptation window/surface, spectral Gaussian blur, CAT16). It does not carry the wavelength grid, LUT wiring, preview limits, or performance toggles.
 - Built-in preset documents are repository files in `crates/spektrafilm-core/assets/presets`. The build MUST compile them in, so built-in listing and name resolution MUST NOT require a data directory, and packaged data directories MUST NOT carry copies.
-- A document is a **look preset** (both profile references and every required look-owned group, with the optional camera group defined by the [preset file format rules](spec.md#file-formats)) or a **section preset** (exactly one section, no profile reference).
-- The kind is derived from the carried scope, never declared by a field, and a built-in document MAY be either kind. A document that carries neither a whole look nor exactly one section MUST be rejected.
-- A section preset MUST pass the same value validators as a look preset for the paths it carries. Its payload MUST follow the parameter-file leaf discipline: only supplied leaves are edited, unknown fields and duplicate keys fail, and omitted values MUST NOT be filled from defaults.
+- Built-in LUT presets are outside this contract; built-in documents remain film look or section presets.
+- A document is a **film look preset** with both profile references and every required look-owned group. Its optional camera group follows the [preset file format rules](spec.md#file-formats).
+- A document is also a **LUT preset** with an external LUT file path and hash, declaration, effects, and optional grade, or a **section preset** with exactly one film section. Neither carries profile references.
+- The kind is derived from the carried scope, never declared by a field, and a built-in document MAY be a film look or a section. A document that carries neither a whole film look, a whole LUT look, nor exactly one section MUST be rejected.
+- A section preset MUST pass the same value validators as a film look preset for the paths it carries. Its payload MUST follow the parameter-file leaf discipline: only supplied leaves are edited, unknown fields and duplicate keys fail, and omitted values MUST NOT be filled from defaults.
 - Applying it edits exactly its section and registers those values as explicit, so neither stock initialization nor database calibration rewrites them, and it MUST NOT clear explicit values outside its section.
 - GUI application MUST commit one transaction under [Edit history](../gui-workflow/spec.md#edit-history). The transaction MUST retain explicit-leaf provenance and dependent normalized values, not only the carried payload; Undo and Redo MUST NOT reverse library writes.
 - Writes, atomicity, rename, delete, duplicate, import, and export MUST treat both kinds through one code path. The resolver MUST reuse the parameter-file leaf-merge implementation for section presets instead of adding a second merge.
@@ -70,7 +75,7 @@ A section is a named set of look-owned parameter paths. This table is authoritat
 
 The `convert` section includes the imported-capture acquisition light in `film_render.convert.scan_illuminant`. The fixed product readout illuminant is not preset-owned. Retired scanner lamp keys and the input-only `neutral` style alias follow the [lab scan migration contract](../film-chain/lab-scan/spec.md#point-wise-consumers-and-migration).
 
-- The browser lists look presets only. A section preset MUST NOT appear in it, and the GUI MUST NOT offer a section menu, section capture, section management, or section import.
+- The browser lists film look and LUT presets only. A section preset MUST NOT appear in it, and the GUI MUST NOT offer a section menu, section capture, section management, or section import.
 - A section payload is captured and applied by `core`, the CLI, and scoped photograph copying under [Photograph work](../gui-product-design/photo-work/spec.md#copy-adjustments). Stored section documents keep their payloads and file locations.
 - The `enlarger` section includes the Print / Preflash controls; the `print` section includes print chemistry, print base, print density-curve controls, and Scan / Print viewing glare. Those placements MUST NOT split sections or change schemas or canonical payload scopes.
 - A section preset MUST NOT change a profile reference or the workflow.
@@ -95,7 +100,7 @@ The flows a user actually runs MUST be short; every one below is two or three st
 - A name MUST be unique inside a group. Two built-in documents MUST NOT share a name, and two library documents MUST NOT share a name; the same name in both groups is valid.
 - Name comparison MUST be case-insensitive, because some file systems resolve names without case.
 - Browser rows MUST sort by name, case-insensitively, with a deterministic tie-break. A file-system scan order MUST never reach the UI, and one library MUST present one order.
-- Browser search MUST implement the [browser search contract](spec.md#browser-search) as a transient presentation filter over discovered look presets. It MUST match a case-insensitive substring of the preset name or referenced film or print stock names or identifiers.
+- Browser search MUST implement the [browser search contract](spec.md#browser-search) as a transient presentation filter over discovered film look and LUT presets. It MUST match a case-insensitive substring of the preset name, a film look's referenced film or print stock names or identifiers, and a LUT preset's LUT file name, title, and path.
 - It MUST retain group/name identities, deterministic ordering, library faults, and applied/modified/missing context. It MUST NOT change exact name resolution or write to the library, GUI-state files, or preset documents.
 - A filtered browser with no matches MUST offer query clearing, not claim that the library is empty. An empty query MUST restore the unfiltered list and its existing order.
 - A name MUST be 1 to 64 characters. It MUST NOT contain `/`, `\`, `:`, `*`, `?`, `"`, `<`, `>`, `|`, or control characters.
@@ -132,8 +137,10 @@ GUI look replacement MUST load and validate the intended user target while holdi
 - At a window width of 1250 logical points or less, the browser MUST automatically collapse to a 48-point rail.
 - A manual reopen at that width MUST remain session-local and MUST NOT rewrite the serialized expanded or width preference.
 - Returning to a wider window MUST restore the stored expanded and width preferences.
-- Modified detection compares the active look controls and the film and print references with the applied document. It MUST use `LookParameters::matches` to respect an omitted legacy camera group under the [preset file format rules](spec.md#file-formats); it MUST NOT compare GUI state or a prepared runtime parameter tree.
-- Look capture MUST collect existing material controls through their existing sections and output mix through its own section; it MUST never collect an `IoParams` snapshot or output gamut settings. Schema migration MUST follow the [preset file-format contract](spec.md#file-formats): older whole looks gain full output mix, while older sections retain sparse omission.
+- Modified detection compares the active preset kind's payload with the applied document. A film look MUST use `LookParameters::matches` and its film and print references to respect an omitted legacy camera group under the [preset file format rules](spec.md#file-formats).
+- A LUT preset MUST compare its LUT file path and hash, LUT declaration, effects, and grade. Neither kind MAY compare GUI state or a prepared runtime parameter tree.
+- Film look capture MUST collect existing material controls through their existing sections and output mix through its own section; it MUST never collect an `IoParams` snapshot or output gamut settings.
+- LUT preset capture MUST collect the LUT declaration, effects, and grade and MUST NOT collect film or print controls. Schema migration MUST follow the [preset file-format contract](spec.md#file-formats): older whole looks gain full output mix, while older sections retain sparse omission.
 - Capture, apply, and migrated export MUST NOT expand `io` ownership; preparation MUST preserve existing material capability, scan-inverse, and calibration semantics under [Output mix and material controls](../output-mix/spec.md). Unshipped response groups and the Cyan-shift field are unknown fields, including in draft version 3 documents; neither capture nor migration MAY materialize them.
 - Built-in documents MUST stay read-only at run time. A user edit MUST produce a user document or no change.
 - The library menu owns resolved-directory display, reveal, refresh, and import under [library actions](spec.md#browser-state-and-library-actions). Discovery remains explicit; no directory watcher or second index is introduced.
@@ -147,9 +154,13 @@ GUI look replacement MUST load and validate the intended user target while holdi
 
 The GUI MUST prepare candidate requests from one immutable accepted photographic snapshot, not mutate `App` and undo the change afterward. It MUST share the source image through existing immutable ownership rather than copy the full photograph for every card.
 
-Candidate preparation MUST use core's production whole-look resolver and the same transient-state normalization as accepted look application. Explicit-leaf provenance and omitted-camera preservation MUST remain part of that preparation; a default-filled parameter tree is not an equivalent context.
+Candidate preparation MUST branch by preset kind. A film look candidate MUST use core's production whole-look resolver and the same transient-state normalization as accepted look application.
 
-Every candidate MUST start from the accepted source and input preparation, not the current Modified image. Its own metering, frame setup, material preparation, and look-owned values MUST follow the normal pipeline; one candidate's derived preparation MUST NOT seed another candidate.
+Explicit-leaf provenance and omitted-camera preservation MUST remain part of that preparation. A LUT preset candidate MUST use the LUT workflow resolver and LUT file identity and MUST NOT prepare spectral materials. A default-filled parameter tree is not an equivalent context for either kind.
+
+Every candidate MUST start from the accepted source and input preparation, not the current Modified image. A film look candidate's own metering, frame setup, material preparation, and look-owned values MUST follow the normal spectral pipeline.
+
+A LUT candidate MUST resolve its LUT file and declaration without spectral preparation. One candidate's derived preparation MUST NOT seed another candidate.
 
 Candidate requests MUST include the source's accepted interpretation and geometry, the chosen backend and native precision, and the unchanged stochastic seed. Candidate processing MUST NOT add exposure fitting, disable authored effects, or infer a missing look from display pixels.
 
@@ -200,9 +211,9 @@ Layout-only restoration MUST cover old browser carriers and the fallback to `gui
 
 Explicit state loading, photograph navigation, and Undo/Redo MUST retain their existing source/control restoration boundaries. A new source that deliberately inherits accepted adjustments MAY inherit their applied identity; it MUST NOT acquire one from unrelated global preferences.
 
-Modified detection MUST reuse `LookParameters::matches` with the applied group/name and film/print references. It MUST NOT infer explicit ownership, use prepared render trees, or depend on thumbnail availability.
+Modified detection MUST use the applied group/name and the payload matcher for the applied kind. A film look uses `LookParameters::matches` with film/print references; a LUT preset compares its LUT file path and hash, declaration, effects, and grade. It MUST NOT infer explicit ownership, use prepared render trees, or depend on thumbnail availability.
 
-Core MUST retain one capture, validator, resolver, library, and atomic-write authority. Whole-look optional camera and Tone & Color ownership, section-document support, and workflow/scanner normalization remain unchanged.
+Core MUST retain one capture, validator, resolver, library, and atomic-write authority. Film look optional camera and Tone & Color ownership, section-document support, and workflow/scanner normalization remain unchanged. LUT preset capture and LUT file resolution MUST use the same library authority without decoding the LUT into a film look.
 
 ## Implementation boundary
 

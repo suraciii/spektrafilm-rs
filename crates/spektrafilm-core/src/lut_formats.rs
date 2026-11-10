@@ -15,6 +15,9 @@ use anyhow::{Context, Result, bail, ensure};
 pub struct LutDocument {
     pub resolution: usize,
     pub table: Vec<[f64; 3]>,
+    /// Optional 1D shaper from a CUBE file with both LUT_1D_SIZE and
+    /// LUT_3D_SIZE. It maps the working input into the 3D domain.
+    pub shaper: Option<Vec<[f64; 3]>>,
     pub domain_min: [f64; 3],
     pub domain_max: [f64; 3],
     pub title: String,
@@ -24,6 +27,7 @@ pub struct LutDocument {
 pub struct LutDocumentRef<'a> {
     pub resolution: usize,
     pub table: &'a [[f64; 3]],
+    pub shaper: Option<&'a [[f64; 3]]>,
     pub domain_min: [f64; 3],
     pub domain_max: [f64; 3],
     pub title: &'a str,
@@ -34,6 +38,7 @@ impl LutDocument {
         LutDocumentRef {
             resolution: self.resolution,
             table: &self.table,
+            shaper: self.shaper.as_deref(),
             domain_min: self.domain_min,
             domain_max: self.domain_max,
             title: &self.title,
@@ -203,6 +208,7 @@ fn validate_document(document: &LutDocumentRef<'_>) -> Result<()> {
             .table
             .iter()
             .flatten()
+            .chain(document.shaper.into_iter().flatten().flatten())
             .chain(document.domain_min.iter())
             .chain(document.domain_max.iter())
             .all(|v| v.is_finite()),
@@ -236,6 +242,7 @@ fn document_from_file_order(n: usize, values: Vec<[f64; 3]>) -> Result<LutDocume
     Ok(LutDocument {
         resolution: n,
         table,
+        shaper: None,
         domain_min: [0.0; 3],
         domain_max: [1.0; 3],
         title: String::new(),
@@ -332,6 +339,7 @@ fn parse_triplet(text: &str) -> Result<[f64; 3]> {
 
 fn read_cube(path: &Path) -> Result<LutDocument> {
     let mut n = None;
+    let mut shaper_n = None;
     let mut title = String::new();
     let mut domain_min = [0.0; 3];
     let mut domain_max = [1.0; 3];
@@ -353,11 +361,48 @@ fn read_cube(path: &Path) -> Result<LutDocument> {
                 entry_count(size)?;
                 n = Some(size);
             }
-            "LUT_1D_SIZE" => bail!("1D CUBE LUTs are unsupported"),
+            "LUT_1D_SIZE" => {
+                ensure!(shaper_n.is_none(), "duplicate LUT_1D_SIZE header");
+                let size = rest.trim().parse::<usize>()?;
+                ensure!(size > 0, "LUT_1D_SIZE must be positive");
+                shaper_n = Some(size);
+            }
             _ => values.push(parse_triplet(line)?),
         }
     }
-    let mut document = document_from_file_order(n.context("missing LUT_3D_SIZE header")?, values)?;
+    let n = n.context("missing LUT_3D_SIZE header")?;
+    let needed = entry_count(n)?;
+    let (values, shaper) = match shaper_n {
+        Some(size) => {
+            ensure!(
+                values.len() == size + needed,
+                "body has {} entries, expected {} shaper entries and {} 3D entries",
+                values.len(),
+                size,
+                needed
+            );
+            let mut values = values;
+            let shaper: Vec<[f64; 3]> = values.drain(..size).collect();
+            (values, Some(shaper))
+        }
+        None => {
+            ensure!(
+                values.len() == needed,
+                "body has {} entries, expected {}",
+                values.len(),
+                needed
+            );
+            (values, None)
+        }
+    };
+    if let Some(shaper) = shaper.as_ref() {
+        ensure!(
+            shaper.iter().flatten().all(|value| value.is_finite()),
+            "shaper values must be finite"
+        );
+    }
+    let mut document = document_from_file_order(n, values)?;
+    document.shaper = shaper;
     document.title = title;
     document.domain_min = domain_min;
     document.domain_max = domain_max;
@@ -530,6 +575,7 @@ mod tests {
         LutDocument {
             resolution: n,
             table,
+            shaper: None,
             domain_min: [-1.0, -2.0, -3.0],
             domain_max: [2.0, 3.0, 4.0],
             title: "Boundary LUT".into(),
@@ -551,6 +597,23 @@ mod tests {
         let text = std::fs::read_to_string(&path.0).unwrap();
         assert!(text.ends_with("0 0 0\n1 0 0\n0 1 0\n1 1 0\n0 0 1\n1 0 1\n0 1 1\n1 1 1\n"));
         assert_eq!(read_lut(LutFormat::Cube, &path.0).unwrap(), document);
+    }
+
+    #[test]
+    fn cube_reads_the_optional_1d_shaper_before_the_3d_grid() {
+        let path = TempPath::new(".cube");
+        std::fs::write(
+            &path.0,
+            "TITLE \"shaper\"\nLUT_1D_SIZE 2\nLUT_3D_SIZE 2\nDOMAIN_MIN 0 0 0\nDOMAIN_MAX 1 1 1\n\
+             0 0 0\n0.5 0.5 0.5\n\
+             0 0 0\n0 0 1\n0 1 0\n0 1 1\n1 0 0\n1 0 1\n1 1 0\n1 1 1\n",
+        )
+        .unwrap();
+        let document = read_lut(LutFormat::Cube, &path.0).unwrap();
+        assert_eq!(document.resolution, 2);
+        assert_eq!(document.table.len(), 8);
+        let shaper = document.shaper.unwrap();
+        assert_eq!(shaper, vec![[0.0; 3], [0.5; 3]]);
     }
 
     #[test]

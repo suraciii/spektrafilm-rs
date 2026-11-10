@@ -1168,7 +1168,7 @@ mod tests {
         let groups = describe_groups();
         assert!(groups.windows(2).all(|pair| pair[0] < pair[1]));
         assert!(groups.iter().any(|group| group == "film_render.grain"));
-        assert!(!groups.iter().any(|group| group == "workflow"));
+        assert!(groups.iter().any(|group| group == "workflow"));
         for group in groups {
             assert!(
                 !describe_module(&group).unwrap()["fields"]
@@ -1441,7 +1441,17 @@ mod tests {
                     .as_array()
                     .is_some_and(|v| v.iter().any(|e| e == "BB<kelvin> (1667..=25000)"))
         }));
-        assert!(describe_module("workflow").is_err());
+        let workflow = describe_module("workflow").unwrap();
+        assert!(
+            workflow["fields"]
+                .as_array()
+                .is_some_and(|fields| fields.iter().any(|field| field["path"] == "workflow.mode"))
+        );
+        assert!(
+            !workflow["fields"]
+                .as_array()
+                .is_some_and(|fields| fields.iter().any(|field| field["path"] == "workflow.route"))
+        );
         assert!(describe_module("unknown").is_err());
     }
 

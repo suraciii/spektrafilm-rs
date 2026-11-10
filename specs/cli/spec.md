@@ -12,7 +12,7 @@ A **parameter override** is a sparse set of explicit edits to runtime controls f
 
 A parameter override is not a preset, GUI state, or render recipe. The parameter contract owns the added command syntax. Preset document fields and carriers belong to the [preset specification](../presets/spec.md).
 
-LUT look mode MUST follow [LUT look](../lut-look/spec.md#ui-and-cli). Its canonical runtime leaves MUST be addressable through `--set` and `describe`; a LUT look is not a film look preset.
+LUT look mode MUST follow the [LUT workflow](../lut-workflow/spec.md) and [LUT look](../lut-look/spec.md#ui-and-cli). Its canonical runtime leaves MUST be addressable through `--set` and `describe`. A LUT preset is a preset kind, but it is not a film look preset.
 
 Every leaf carried by a preset MUST remain addressable through canonical `--set` and exposed by `describe --field` or `describe --module`; the CLI description MUST report the same type, validator, units, and effect conditions used by the GUI. Field names, units, bounds, and conditional effect behavior belong to their parameter model and capability specifications.
 
@@ -63,9 +63,17 @@ A photographic print operation MUST obtain its print material from the applicabl
 
 Preset print references retain the paper-only restriction in the preset specification.
 
-`--preset` MAY be repeated; presets apply in appearance order, and supplied profile references and parameter controls count as explicit. For image input with a look preset, both profile references MUST come from that preset. `--scan-film` MUST request `input > film > scan` without replacing the preset's print reference.
+`--preset` MAY be repeated; presets apply in appearance order, and supplied profile references and parameter controls count as explicit. For image input with a film look preset, both profile references MUST come from that preset. `--scan-film` MUST request `input > film > scan` without replacing the preset's print reference.
 
-On image input, the preset's workflow default MUST apply unless `--route` or `--scan-film` supplies an explicit choice. A preset set that supplies no film reference MUST NOT select a profile-derived workflow default. Artifact input MUST supply `--route` explicitly.
+A LUT preset MUST select the LUT workflow and MUST NOT require film or print profile selectors. It MUST NOT be combined with a film look preset, a section preset, `--film`, `--paper`, `--route`, or `--scan-film` in one invocation.
+
+The command MUST fail rather than choose a workflow silently or apply presets in a cross-workflow sequence. A section preset MUST NOT be applied while the final workflow is LUT; the command MUST require an explicit film-workflow selection first.
+
+`lut build` MUST retain its existing export contract. It MUST NOT import its result, apply it, create a LUT preset, or switch workflow. The simple GUI export/import workflow remains governed by [LUT workflow](../lut-workflow/spec.md).
+
+On image input, a film look preset's workflow default MUST apply unless `--route` or `--scan-film` supplies an explicit choice. A preset set that supplies no film reference MUST NOT select a profile-derived workflow default.
+
+A LUT preset selects LUT mode and MUST NOT acquire a profile-derived route. Artifact input MUST supply `--route` explicitly.
 
 `--route` and `--scan-film` MUST conflict, including for equivalent routes. The final route MUST determine topology; `io.scan_film` MUST be true for `input > film > scan` and `film > scan`, and false for other supported routes. The shared workflow validator MUST enforce the finite route vocabulary, including the [stage routes](stage-artifacts.md#route-language).
 
@@ -305,7 +313,7 @@ For an invocation with added parameter sources, resolution MUST use this order:
 1. Select and validate the film and print profiles. Decode the baseline with `RuntimeParams::default()` or the unchanged legacy `--params` decoder.
 2. Apply stock-specific look initialization to this baseline with the same precedence as the legacy batch policy. Defer preview, debug, and database-calibration preparation until the final controls are available.
 3. Values supplied only by legacy `--params` MUST retain their legacy relationship to stock initialization and database calibration.
-4. Apply every selected preset in appearance order through the shared preset resolver. A look preset replaces the whole look; a section preset edits only the controls of its section, and those values count as explicit from this step on.
+4. Apply every selected preset in appearance order through the shared preset resolver. A film look preset replaces the whole film look; a LUT preset replaces the LUT look and selects LUT mode; a section preset edits only the controls of its section, and those values count as explicit from this step on.
 5. Retain excluded runtime context and derive the profile workflow default when the preset set supplies a film reference.
 6. Apply every `--set` source in appearance order. A file source and an inline assignment source have identical leaf-merge semantics.
 7. Apply explicit workflow, scan-output, and input choices. Enforce the [input declaration](#input-declaration) rules.
@@ -417,13 +425,17 @@ A leaf supplied to `--module` MUST fail with guidance to use `--field`. These se
 
 A record MUST show path, type, nullability, default and its source, unit when applicable, enum values or bounds, distinct array-component domains, and effect conditions. Missing units, bounds, and finite enum inventories MUST NOT be presented as invented values. `describe` MUST retain JSON as its default format.
 
-`preset list --format json` MUST list preset names, the kind and section of a section preset or the film and print references of a look preset, and the group of each entry. `preset list --source built-in|user|all` MUST select the listed groups and MUST default to `built-in`.
+`preset list --format json` MUST list each preset's name and group. It MUST also report the kind and section of a section preset, the film and print references of a film look preset, or the LUT file path and validation status of a LUT preset.
+
+`preset list --source built-in|user|all` MUST select the listed groups and MUST default to `built-in`.
 
 `preset list --format text` MUST show those same facts in one readable record per preset. Listing MUST report every unreadable or conflicting library document with its path and MUST NOT hide the remaining entries. Listing MUST NOT search directories other than the library directory.
 
 `preset show SELECTOR --format toml|json` MUST write the selected document to stdout. `--format` MUST default to TOML for `preset show` and JSON for `preset list`. Both commands MUST follow the [CLI data-directory selection policy](#data-directory-selection), and listing library entries MUST NOT require a data directory.
 
-`preset show` MUST validate the selected document and profile references using that data directory. These commands MUST NOT inspect a GUI state or render an image. Export MUST preserve the selected preset name and MUST NOT modify its source file.
+`preset show` MUST validate the selected document. A film look preset MUST validate its profile references; a LUT preset MUST validate its LUT file path, hash, and declaration. These commands MUST NOT inspect a GUI state, load LUT pixels into the document, or render an image.
+
+Export MUST preserve the selected preset name and MUST NOT modify its source file. Exporting a LUT preset MUST move only the preset document; the LUT file remains external and MUST NOT be included in a package.
 
 Export and update of an older whole-look preset MUST migrate its look-owned controls to version 3 with `output_mix.amount = 1`. Older section presets MUST retain sparse omission and MUST NOT gain output-mix or other leaves. User-library import MUST preserve the older carrier until explicit export or update writes version 3.
 
@@ -551,7 +563,9 @@ Both executables MUST discover a group and an individual field without loading p
 
 Invalid field/group selectors and their conflict MUST fail before image work. Existing selector-free JSON and module JSON output MUST preserve their shape and meaning.
 
-Text preset listing MUST contain the same names, groups, kinds, and profile references as JSON listing. File selectors and preset export validation MUST retain their existing behavior.
+Text preset listing MUST contain the same names, groups, kinds, profile references, and LUT file status as JSON listing. File selectors and preset export validation MUST retain their existing behavior.
+
+LUT preset acceptance MUST exercise `process --preset` without film or print selectors, rejection of a mixed film/LUT preset set, validation of a missing or changed LUT file, and document-only preset export/import. `lut build` MUST NOT create or publish a preset. Listing and `show` MUST report the LUT kind without reading LUT pixels.
 
 Material-control and output-mix discovery acceptance MUST compare text and selected-field/module JSON against their canonical typed defaults, bounds, units, and effect conditions. Dry run MUST retain inactive preflash and chemistry values and explain missing print development, missing Film development, disabled chemistry, and unsupported fitted models when applicable.
 

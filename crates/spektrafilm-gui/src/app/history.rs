@@ -16,6 +16,7 @@ pub(super) struct AdjustmentState {
     pub(super) special: serde_json::Value,
     pub(super) raw_settings: serde_json::Value,
     applied: Option<presets::AppliedPreset>,
+    film_route: Option<String>,
     pub(super) rotation: i32,
 }
 
@@ -43,6 +44,7 @@ impl AdjustmentState {
             special: app.gui_state.sections["special"].clone(),
             raw_settings: app.gui_state.sections["load_raw"].clone(),
             applied: app.presets.state.applied.clone(),
+            film_route: app.film_route.clone(),
             rotation: app.input_rotation,
         }
     }
@@ -58,6 +60,7 @@ impl AdjustmentState {
             && self.print_name == app.print_name
             && self.special == app.gui_state.sections["special"]
             && self.raw_settings == app.gui_state.sections["load_raw"]
+            && self.film_route == app.film_route
             && self.rotation == app.input_rotation
     }
 
@@ -87,6 +90,7 @@ impl AdjustmentState {
         app.gui_state.sections["special"] = self.special.clone();
         app.gui_state.sections["load_raw"] = self.raw_settings.clone();
         app.presets.state.applied = self.applied.clone();
+        app.film_route = self.film_route.clone();
         if refresh_input && app.image.is_some() {
             app.input_epoch = app.input_epoch.wrapping_add(1);
             app.input_rotation = self.rotation;
@@ -144,6 +148,7 @@ impl AdjustmentHistory {
                 special: settings.special.clone(),
                 raw_settings: settings.raw.clone(),
                 applied: settings.applied.clone(),
+                film_route: settings.film_route.clone(),
                 rotation: settings.rotation,
             })),
             ..Default::default()
@@ -227,6 +232,7 @@ impl App {
                 .unwrap_or(&accepted.raw_settings)
                 .clone(),
             rotation: accepted.rotation,
+            film_route: accepted.film_route.clone(),
             applied: accepted.applied.clone(),
         }
     }
@@ -243,6 +249,7 @@ impl App {
             || baseline.film != accepted.film_name
             || baseline.print != accepted.print_name
             || baseline.rotation != accepted.rotation
+            || baseline.film_route != accepted.film_route
             || baseline.special != accepted.special
             || baseline.applied != accepted.applied
             || baseline.raw
@@ -1175,6 +1182,7 @@ mod external_copy_tests {
             raw: factory.sections["load_raw"].clone(),
             special: factory.sections["special"].clone(),
             rotation: 1,
+            film_route: None,
             applied: None,
         };
         let mut history = AdjustmentHistory::from_photograph(&settings, &film, &print);

@@ -546,6 +546,8 @@ impl eframe::App for App {
         self.end_adjustment_frame(ctx);
         self.settings_dialog(ctx);
         self.factory_reset_confirmation(ctx);
+        self.lut_import_dialog(ctx);
+        self.lut_export_dialog(ctx);
         self.sync_display_controls();
         controls::end_control_frame();
         for (open, return_focus) in [

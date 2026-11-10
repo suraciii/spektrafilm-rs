@@ -26,6 +26,8 @@ pub(crate) struct PhotographSettings {
     pub(crate) special: serde_json::Value,
     pub(crate) raw: serde_json::Value,
     pub(crate) rotation: i32,
+    #[serde(default)]
+    pub(crate) film_route: Option<String>,
     #[serde(deserialize_with = "deserialize_applied")]
     pub(crate) applied: Option<crate::presets::AppliedPreset>,
 }
@@ -491,6 +493,17 @@ pub(crate) fn dependencies(
     data_dir: &Path,
 ) -> Result<Vec<Dependency>> {
     let result = (|| -> Result<Vec<Dependency>> {
+        if settings.params.workflow.mode == spektrafilm_core::params::WorkflowMode::Lut {
+            let mut params = settings.params.clone();
+            params.restore_render_preparation_state(&settings.preparation);
+            params.lut_look.load().map_err(anyhow::Error::msg)?;
+            let path = absolute(&params.lut_look.path)?;
+            let sha256 = digest(&path)?;
+            return Ok(vec![Dependency {
+                path,
+                sha256: Some(sha256),
+            }]);
+        }
         let mut paths = BTreeSet::new();
         for stock in [&settings.film, &settings.print] {
             ensure!(
@@ -683,6 +696,7 @@ mod tests {
             special: gui.sections["special"].clone(),
             raw: gui.sections["load_raw"].clone(),
             rotation: 1,
+            film_route: Some("input > film".into()),
             applied: None,
         };
         (dir, data, source, settings)

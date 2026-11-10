@@ -76,11 +76,20 @@ _Avoid_: Chart group
 
 **Patch window**: The declared rectangular area of one grid patch used for visual inspection. It may cover the patch or a smaller central area, but it does not include an inferred correspondence to another set.
 
-**Look preset**: A named, reusable choice of film and print materials with their look-owned adjustments. It is a starting point for a photograph, not a saved photograph or a complete application setup.
+**Look preset**: A named, reusable choice of film and print materials with their look-owned adjustments. It is a starting point for a photograph, not a saved photograph or a complete application setup. An unqualified look preset is a film look preset; a LUT preset is a separate kind.
 _Avoid_: Photograph record, startup state, LUT
 
-**LUT look**: A non-spectral RGB color transform and its independent effect layers, applied without film or print material simulation. A LUT look is not a film look preset.
+**LUT look**: A non-spectral RGB color transform and its independent effect layers, applied without film or print material simulation. A LUT look may be saved as a LUT preset, but it is not a film look preset.
 _Avoid_: Film profile, look preset, LUT delivery
+
+**LUT preset**: A named, user-owned LUT look with an external LUT file path and content hash, declaration, effects, and optional grade. It selects the LUT workflow and carries no film or print profile references.
+_Avoid_: Film look preset, film profile, embedded LUT
+
+**Exported LUT**: A `.cube` file produced from a spectral film look. It is a file, not an active look, imported LUT, or preset.
+_Avoid_: Film profile, film look preset, measured stock
+
+**LUT workflow**: The product workflow that exports a LUT file, imports a LUT file for use, saves and recalls LUT presets, and renders a LUT look. It is separate from the spectral film workflow.
+_Avoid_: Film workflow, spectral simulation
 
 **LUT mode**: The render mode that applies a LUT look. It is exclusive with the spectral film mode and carries no material or illuminant simulation.
 _Avoid_: Film workflow, spectral simulation
