@@ -243,14 +243,6 @@ pub(super) fn sample_rect(
     )
 }
 
-/// Source coordinates, in image pixels, of viewer position `p` mapped over
-/// `rect`. The shared mapping of full-source sampling; the `- 0.5` keeps a
-/// sampled position over the center of source pixel 0.
-pub(super) fn source_coords(p: Pos2, rect: Rect, width: u32, height: u32) -> (f32, f32) {
-    let uv = (p - rect.min) / rect.size();
-    (uv.x * width as f32 - 0.5, uv.y * height as f32 - 0.5)
-}
-
 #[cfg(test)]
 pub(super) fn capped_raster(image: &ImageBuf, max_edge: usize) -> Result<DisplayRaster, String> {
     capped_raster_with(&CpuBackend, image, max_edge)

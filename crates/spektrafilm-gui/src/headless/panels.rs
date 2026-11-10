@@ -881,7 +881,7 @@ fn analysis_follows_accepted_output_without_changing_the_photograph() {
     click(h, "Image analysis");
     assert!(!h.state().analysis.visible);
     assert!(h.state().analysis.result.is_none());
-    assert!(!h.state().viewer.analysis.enabled);
+    assert!(!h.state().analysis.expanded);
     assert_eq!(h.state().viewer.zoom_percent, viewer_zoom);
     assert_eq!(h.state().viewer.pan, viewer_pan);
     click(h, "Image analysis");
@@ -989,7 +989,7 @@ fn keyboard_analysis_selects_and_inspects_without_photographic_edits() {
     h.press_key(egui::Key::Escape);
     h.run_steps(3);
     assert_eq!(h.state().analysis.selection, Some(moved));
-    assert!(!h.state().viewer.analysis.armed);
+    assert!(!h.state().viewer.analysis_armed());
 
     click(h, "Select area");
     h.get_by_label("Resize selection (arrow keys; Enter commits, Escape cancels)")
@@ -1005,12 +1005,12 @@ fn keyboard_analysis_selects_and_inspects_without_photographic_edits() {
     h.press_key(egui::Key::Enter);
     h.run_steps(3);
     assert!(
-        !h.state().viewer.analysis.armed,
+        !h.state().viewer.analysis_armed(),
         "Enter must commit the selection"
     );
     wait_until(h, |app| {
         analysis_output_ready(app)
-            && !app.viewer.analysis.armed
+            && !app.viewer.analysis_armed()
             && app.analysis.selection != Some(moved)
     });
     let data = h.state().analysis.result.as_ref().unwrap().data[1]
@@ -1027,7 +1027,7 @@ fn keyboard_analysis_selects_and_inspects_without_photographic_edits() {
     h.run_steps(3);
     assert!(h.state().analysis.selection.is_none());
     assert!(h.query_by_label("Full image").is_none());
-    assert!(!h.state().viewer.analysis.armed);
+    assert!(!h.state().viewer.analysis_armed());
 
     h.get_by_label("Pixel cursor").focus();
     h.run_steps(3);
@@ -1039,7 +1039,7 @@ fn keyboard_analysis_selects_and_inspects_without_photographic_edits() {
         "arrow keys must retain pixel-cursor focus"
     );
     wait_until(h, |app| app.analysis.sample.is_some());
-    let sample = h.state().viewer.analysis.sample.unwrap();
+    let sample = h.state().viewer.analysis_sample().unwrap();
     assert!(sample.keyboard);
     assert_eq!(
         [sample.x, sample.y],
@@ -1052,15 +1052,14 @@ fn keyboard_analysis_selects_and_inspects_without_photographic_edits() {
         .push(egui::Event::PointerMoved(image.center()));
     wait_until(h, |app| {
         app.viewer
-            .analysis
-            .sample
+            .analysis_sample()
             .is_some_and(|sample| !sample.keyboard)
     });
     assert!(!h.get_by_label("Pixel cursor").is_focused());
 
     h.get_by_label("Pixel cursor").focus();
     h.run_steps(3);
-    let sample = h.state().viewer.analysis.sample.unwrap();
+    let sample = h.state().viewer.analysis_sample().unwrap();
     assert!(sample.keyboard);
     assert_eq!(
         [sample.x, sample.y],
@@ -1077,8 +1076,8 @@ fn keyboard_analysis_selects_and_inspects_without_photographic_edits() {
             ((plot.y0 + plot.y1) * 0.5) as f32,
         )));
     h.run_steps(3);
-    assert!(h.state().viewer.analysis.plot_inspecting);
-    assert!(h.state().viewer.analysis.sample.is_none());
+    assert!(h.state().analysis.plot_inspecting);
+    assert!(h.state().viewer.analysis_sample().is_none());
     assert!(!h.get_by_label("Pixel cursor").is_focused());
 
     h.get_by_label("Pixel cursor").focus();
@@ -1087,8 +1086,8 @@ fn keyboard_analysis_selects_and_inspects_without_photographic_edits() {
         h.get_by_label("Pixel cursor").is_focused(),
         "keyboard focus must take ownership from a stationary plot hover"
     );
-    assert!(!h.state().viewer.analysis.plot_inspecting);
-    let sample = h.state().viewer.analysis.sample.unwrap();
+    assert!(!h.state().analysis.plot_inspecting);
+    let sample = h.state().viewer.analysis_sample().unwrap();
     assert!(sample.keyboard);
     let point = format!("({}, {})", sample.x, sample.y);
     assert!(
@@ -1101,15 +1100,14 @@ fn keyboard_analysis_selects_and_inspects_without_photographic_edits() {
         .events
         .push(egui::Event::PointerMoved(image.center()));
     wait_until(h, |app| {
-        !app.viewer.analysis.plot_inspecting
+        !app.analysis.plot_inspecting
             && app
                 .viewer
-                .analysis
-                .sample
+                .analysis_sample()
                 .is_some_and(|sample| !sample.keyboard)
     });
     click(h, "Close image analysis");
-    assert!(h.state().viewer.analysis.cursor_control.is_none());
+    assert!(h.state().analysis.cursor_control.is_none());
     click(h, "Image analysis");
     wait_until(h, analysis_output_ready);
     assert!(!h.get_by_label("Pixel cursor").is_focused());
@@ -1119,10 +1117,10 @@ fn keyboard_analysis_selects_and_inspects_without_photographic_edits() {
     h.get_by_label("Analysis plot (arrow keys to inspect)")
         .focus();
     h.run_steps(3);
-    let before = h.state().viewer.analysis.band.unwrap();
+    let before = h.state().analysis.band.unwrap();
     h.press_key(egui::Key::ArrowRight);
     h.run_steps(3);
-    let after = h.state().viewer.analysis.band.unwrap();
+    let after = h.state().analysis.band.unwrap();
     assert!(
         (after[0] - before[0] - 1.0 / f64::from(output.width)).abs() < 1e-6,
         "before {before:?} after {after:?} width {}",
@@ -1137,7 +1135,7 @@ fn keyboard_analysis_selects_and_inspects_without_photographic_edits() {
         .events
         .push(egui::Event::PointerMoved(image.center()));
     wait_until(h, |app| app.analysis.sample.is_some());
-    assert!(h.state().viewer.analysis.band.is_none());
+    assert!(h.state().analysis.band.is_none());
     assert_eq!(h.state().params, params);
 }
 
@@ -1308,7 +1306,7 @@ fn analysis_shelf_respects_space_and_preserves_selection_and_focus() {
     h.get_by_label("Move selection (arrow keys; Enter commits, Escape cancels)")
         .focus();
     h.run_steps(3);
-    assert!(h.state().viewer.analysis.armed);
+    assert!(h.state().viewer.analysis_armed());
 
     let threshold =
         980.0 - base + crate::theme::HEIGHT_PHOTOGRAPH_MIN + crate::theme::HEIGHT_ANALYSIS_MIN;
@@ -1317,8 +1315,8 @@ fn analysis_shelf_respects_space_and_preserves_selection_and_focus() {
     assert!(h.state().analysis.visible);
     assert!(!h.state().analysis.expanded);
     assert_eq!(h.state().analysis.selection, Some(selection));
-    assert!(!h.state().viewer.analysis.armed);
-    assert!(!h.state().viewer.analysis.enabled);
+    assert!(!h.state().viewer.analysis_armed());
+    assert!(!h.state().analysis.expanded);
     assert!(h.state().analysis.result.is_none());
     assert_eq!(h.state().analysis.preferences.shelf_height, 250.0);
     assert!(h.get_by_label("Image analysis").is_focused());
