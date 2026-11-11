@@ -293,7 +293,8 @@ impl App {
 
     fn validate_adjustment(&self) -> Result<()> {
         self.current_state()?.runtime_params()?;
-        if self.params.scanner.scan_output == "negative_to_positive"
+        if self.params.workflow.mode == spektrafilm_core::params::WorkflowMode::Film
+            && self.params.scanner.scan_output == "negative_to_positive"
             && !self
                 .film_medium
                 .positive_output_eligible(&self.params.workflow.route)
@@ -554,6 +555,8 @@ fn history_message(label: &str) -> crate::app::Message {
         "Change print material" => "operations.history.change_print",
         "Apply look preset" => "operations.history.apply_look",
         "Change workflow" => "operations.history.change_workflow",
+        "Import LUT" => "operations.history.import_lut",
+        "Adjust LUT look" => "operations.history.adjust_lut",
         "Rotate source" => "operations.history.rotate",
         "Adjust photograph" => "operations.history.adjust",
         "Rotate source counter-clockwise" => "operations.history.rotate_ccw",

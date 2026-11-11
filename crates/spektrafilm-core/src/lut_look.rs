@@ -16,7 +16,7 @@ use spektrafilm_math::image::ImageBuf;
 use spektrafilm_math::precision::{from_f64, to_f64};
 
 use crate::gamut_compression::OutputGamutCompress;
-use crate::lut_formats::{LutDocument, LutFormat, read_lut};
+use crate::lut_formats::{LutDocument, read_cube_bytes};
 use crate::params::{
     DiffusionFilterParams, FinishingParams, HalationParams, OutputGamutCompressParams,
 };
@@ -134,6 +134,9 @@ fn default_grain_midtone() -> f64 {
 fn default_grain_highlight() -> f64 {
     0.5
 }
+fn default_true() -> bool {
+    true
+}
 
 /// Output-referred appearance grain for a LUT look. It is deliberately not a
 /// film grain engine: no density, RMS granularity, or film profile is read.
@@ -236,6 +239,8 @@ pub struct LutLookParams {
     #[serde(default)]
     pub sha256: String,
     #[serde(default)]
+    pub title: String,
+    #[serde(default)]
     pub input_space: LutSpace,
     #[serde(default)]
     pub output_space: LutSpace,
@@ -249,6 +254,8 @@ pub struct LutLookParams {
     pub shaper: LutShaper,
     #[serde(default)]
     pub strength: f64,
+    #[serde(default = "default_true")]
+    pub grade_active: bool,
     #[serde(default)]
     pub grade: FinishingParams,
     #[serde(
@@ -267,6 +274,7 @@ impl Default for LutLookParams {
         Self {
             path: PathBuf::new(),
             sha256: String::new(),
+            title: String::new(),
             input_space: LutSpace::Srgb,
             output_space: LutSpace::Srgb,
             domain_min: [0.0; 3],
@@ -274,6 +282,7 @@ impl Default for LutLookParams {
             domain_policy: LutDomainPolicy::Fail,
             shaper: LutShaper::None,
             strength: 1.0,
+            grade_active: true,
             grade: FinishingParams::default(),
             halation: inactive_halation(),
             diffusion: DiffusionFilterParams::default(),
@@ -293,6 +302,9 @@ impl LutLookParams {
         }
         if !is_sha256(&self.sha256) {
             return Err("lut_look.sha256 must contain 64 lowercase hexadecimal characters".into());
+        }
+        if self.title.contains(['\r', '\n']) {
+            return Err("lut_look.title must occupy one line".into());
         }
         if !self
             .path
@@ -344,6 +356,58 @@ impl LutLookParams {
         ] {
             if values.iter().any(|value| !value.is_finite()) {
                 return Err(format!("lut_look.halation.{name} must be finite"));
+            }
+        }
+        if !(0.0..=0.999999).contains(&halation.source_compression) {
+            return Err("lut_look.halation.source_compression must be in [0, 0.999999]".into());
+        }
+        if halation
+            .halation_strength
+            .iter()
+            .any(|value| !(0.0..=1.0).contains(value))
+        {
+            return Err("lut_look.halation.halation_strength must be between 0 and 1".into());
+        }
+        if halation
+            .scatter_tail_weight
+            .iter()
+            .any(|value| !(0.0..=1.0).contains(value))
+        {
+            return Err("lut_look.halation.scatter_tail_weight must be between 0 and 1".into());
+        }
+        if !(0.0..=1.0).contains(&halation.halation_bounce_decay) {
+            return Err("lut_look.halation.halation_bounce_decay must be between 0 and 1".into());
+        }
+        for (name, value) in [
+            ("scatter_amount", halation.scatter_amount),
+            ("scatter_spatial_scale", halation.scatter_spatial_scale),
+            ("halation_amount", halation.halation_amount),
+            ("halation_spatial_scale", halation.halation_spatial_scale),
+        ]
+        .into_iter()
+        .chain(
+            halation
+                .scatter_core_um
+                .iter()
+                .copied()
+                .map(|value| ("scatter_core_um", value)),
+        )
+        .chain(
+            halation
+                .scatter_tail_um
+                .iter()
+                .copied()
+                .map(|value| ("scatter_tail_um", value)),
+        )
+        .chain(
+            halation
+                .halation_first_sigma_um
+                .iter()
+                .copied()
+                .map(|value| ("halation_first_sigma_um", value)),
+        ) {
+            if value < 0.0 {
+                return Err(format!("lut_look.halation.{name} must not be negative"));
             }
         }
         if !spektrafilm_model::diffusion::VALID_FAMILIES
@@ -411,9 +475,16 @@ impl LutLookParams {
             [52, 52, 52],
         ];
         let mut image = ImageBuf::new((ramp_steps + checker.len()) as u32, 1);
+        let convert_preview = |rgb: [f64; 3]| {
+            if source.name == input.name && input_encoded {
+                rgb
+            } else {
+                convert_rgb(rgb, &source, true, &input, input_encoded, &matrix)
+            }
+        };
         for index in 0..ramp_steps {
             let value = index as f64 / (ramp_steps - 1) as f64;
-            let rgb = convert_rgb([value; 3], &source, true, &input, input_encoded, &matrix);
+            let rgb = convert_preview([value; 3]);
             image.set(index as u32, 0, rgb.map(from_f64));
         }
         for (offset, rgb) in checker.iter().enumerate() {
@@ -463,7 +534,7 @@ impl LutLookParams {
                 self.path.display()
             ));
         }
-        let document = read_lut(LutFormat::Cube, &self.path)
+        let document = read_cube_bytes(&bytes)
             .map_err(|error| format!("reading LUT {}: {error}", self.path.display()))?;
         if document.domain_min != self.domain_min || document.domain_max != self.domain_max {
             return Err(format!(
@@ -599,22 +670,36 @@ impl LutLook {
             }
             if self.params.halation.active {
                 let halation = &self.params.halation;
-                if halation.boost_ev != 0.0 {
-                    out = spektrafilm_model::optics::boost_highlights(
-                        &out,
-                        halation.boost_ev as f64,
-                        halation.boost_range as f64,
-                        halation.protect_ev as f64,
-                    );
-                }
-                out = spektrafilm_model::halation::apply_halation_um(
-                    &out,
+                // Halation is an additive highlight layer, not a rewrite of the
+                // base image. Build the highlight mask from linear luminance,
+                // apply the spatial response to that mask alone, and add only
+                // the difference back to the untouched LUT result.
+                let low = 0.18 * 2.0_f64.powf(f64::from(halation.boost_ev));
+                let high = 0.18 * 2.0_f64.powf(f64::from(halation.protect_ev));
+                let transition = (2.0_f64.powf(f64::from(halation.boost_range)) - 1.0) * low * 2.0;
+                let mut mask = out.clone();
+                mask.par_pixels_mut().for_each(|pixel| {
+                    let luma = 0.2126 * to_f64(pixel[0])
+                        + 0.7152 * to_f64(pixel[1])
+                        + 0.0722 * to_f64(pixel[2]);
+                    let rise = smoothstep(low, low + transition.max(f64::EPSILON), luma);
+                    let fall = 1.0
+                        - smoothstep(
+                            high + transition.max(f64::EPSILON),
+                            high + 2.0 * transition.max(f64::EPSILON),
+                            luma,
+                        );
+                    let value = from_f64(rise * fall);
+                    pixel.fill(value);
+                });
+                let halo = spektrafilm_model::halation::apply_halation_um(
+                    &mask,
                     pixel_size_um.max(1.0) as f32,
-                    halation.scatter_amount,
+                    0.0,
                     halation.scatter_spatial_scale,
-                    halation.scatter_core_um,
-                    halation.scatter_tail_um,
-                    halation.scatter_tail_weight,
+                    [0.0; 3],
+                    [0.0; 3],
+                    [0.0; 3],
                     halation.halation_amount,
                     halation.halation_spatial_scale,
                     halation.source_compression,
@@ -625,6 +710,15 @@ impl LutLook {
                     halation.halation_renormalize,
                     backend,
                 );
+                out.par_pixels_mut()
+                    .zip(halo.data.as_chunks::<3>().0)
+                    .zip(mask.data.as_chunks::<3>().0)
+                    .for_each(|((pixel, halo), mask)| {
+                        for channel in 0..3 {
+                            let addition = to_f64(halo[channel]) - to_f64(mask[channel]);
+                            pixel[channel] = from_f64(to_f64(pixel[channel]) + addition.max(0.0));
+                        }
+                    });
             }
             (linear_srgb, false)
         } else {
@@ -713,7 +807,9 @@ impl LutLook {
                 }
                 Ok(())
             })?;
-        crate::finishing::apply(&mut out, &self.params.grade, output_space);
+        if self.params.grade_active {
+            crate::finishing::apply(&mut out, &self.params.grade, output_space);
+        }
         if gamut.is_active() {
             out.par_pixels_mut().for_each(|pixel| {
                 let rgb = [to_f64(pixel[0]), to_f64(pixel[1]), to_f64(pixel[2])];
@@ -732,7 +828,7 @@ impl LutLook {
                 }
             });
         }
-        if self.params.grain.active {
+        if self.params.grain.active && self.params.grain.amount > 0.0 {
             let grain = &self.params.grain;
             let width = out.width as usize;
             out.par_pixels_mut().enumerate().for_each(|(index, pixel)| {
@@ -763,6 +859,14 @@ fn sample_1d(table: &[[f64; 3]], n: usize, x: f64, axis: usize) -> f64 {
     table[low][axis] * (1.0 - frac) + table[high][axis] * frac
 }
 
+fn smoothstep(edge0: f64, edge1: f64, value: f64) -> f64 {
+    if edge1 <= edge0 {
+        return f64::from(value >= edge1);
+    }
+    let t = ((value - edge0) / (edge1 - edge0)).clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
+}
+
 fn normalize_lut_input(input: [f64; 3], min: [f64; 3], span: [f64; 3]) -> [f64; 3] {
     std::array::from_fn(|axis| ((input[axis] - min[axis]) / span[axis]).clamp(0.0, 1.0))
 }
@@ -782,8 +886,7 @@ fn enforce_domain(
             return Err(format!("LUT input channel {axis} is not finite"));
         }
         let high = min[axis] + span[axis];
-        let tolerance = 1e-4 * (1.0 + high.abs().max(min[axis].abs()));
-        if *value < min[axis] - tolerance || *value > high + tolerance {
+        if *value < min[axis] || *value > high {
             if policy == LutDomainPolicy::Fail {
                 return Err(format!(
                     "LUT input channel {axis} value {value} is outside the declared domain [{}, {}]",
@@ -791,10 +894,6 @@ fn enforce_domain(
                 ));
             }
             clipped = true;
-            *value = value.clamp(min[axis], high);
-        } else {
-            // Kill round-trip error at a declared endpoint so an in-domain
-            // sample is not rejected by one ulp.
             *value = value.clamp(min[axis], high);
         }
     }
@@ -881,9 +980,9 @@ fn apply_lut_grain(rgb: [f64; 3], x: usize, y: usize, grain: &LutGrainParams) ->
     let chroma = value_noise(x, y, grain.seed ^ 0x51ed270b61a5f5d3) * grain.chroma;
     let amount = grain.amount * weight;
     [
-        (rgb[0] + amount * (mono + chroma * 0.5)).clamp(0.0, 1.0),
-        (rgb[1] + amount * mono).clamp(0.0, 1.0),
-        (rgb[2] + amount * (mono - chroma * 0.5)).clamp(0.0, 1.0),
+        rgb[0] + amount * (mono + chroma * 0.5),
+        rgb[1] + amount * mono,
+        rgb[2] + amount * (mono - chroma * 0.5),
     ]
 }
 
@@ -951,6 +1050,55 @@ mod tests {
         assert!((to_f64(rendered.data[0]) - 0.25).abs() < 1e-3);
         assert!((to_f64(rendered.data[1]) - 0.5).abs() < 1e-3);
         assert!((to_f64(rendered.data[2]) - 0.75).abs() < 1e-3);
+    }
+
+    #[test]
+    fn halation_is_an_additive_highlight_layer_and_never_rewrites_dark_pixels() {
+        let document = identity(2);
+        let mut params = LutLookParams {
+            halation: HalationParams {
+                active: true,
+                halation_amount: 1.0,
+                scatter_amount: 1.0,
+                ..HalationParams::default()
+            },
+            grade_active: false,
+            ..LutLookParams::default()
+        };
+        params.grain.active = false;
+        let look = LutLook {
+            document,
+            params,
+            input: LutSpace::Srgb.color_space(),
+            output: LutSpace::Srgb.color_space(),
+            clipped_pixels: AtomicU64::new(0),
+            evaluated_pixels: AtomicU64::new(0),
+        };
+        let dark = [from_f64(0.02), from_f64(0.02), from_f64(0.02)];
+        let image = ImageBuf::from_data(1, 1, vec![dark[0], dark[1], dark[2]]);
+        let gamut = crate::gamut_compression::OutputGamutCompress::build(
+            &crate::params::OutputGamutCompressParams {
+                algorithm: "off".into(),
+                ..Default::default()
+            },
+            "sRGB",
+        )
+        .unwrap();
+        let rendered = look
+            .render(
+                &image,
+                &LutSpace::Srgb.color_space(),
+                true,
+                &LutSpace::Srgb.color_space(),
+                true,
+                6.0,
+                &gamut,
+                &CpuBackend,
+            )
+            .unwrap();
+        for (channel, expected) in dark.iter().enumerate() {
+            assert!((rendered.data[channel] - expected).abs() < 1e-5);
+        }
     }
 
     #[test]

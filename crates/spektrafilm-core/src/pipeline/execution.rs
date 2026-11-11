@@ -219,17 +219,24 @@ impl Pipeline {
             if capture.is_some() {
                 return Err("stage evidence is unavailable in LUT mode".into());
             }
-            let (working, pixel_size_um) = crate::resizing::crop_and_rescale(
-                &image,
-                &self.params.io,
-                self.params.camera.film_format_mm,
-            )?;
+            // LUT effects are independent of inactive film controls. Use a
+            // fixed 35 mm reference for their micrometre scaling so changing
+            // the stored camera format cannot alter an active LUT look.
+            let (working, pixel_size_um) =
+                crate::resizing::crop_and_rescale(&image, &self.params.io, 35.0)?;
             let source = spektrafilm_math::colorspace::resolve(&self.params.io.input_color_space)?;
             let output = spektrafilm_math::colorspace::resolve(&self.params.io.output_color_space)?;
             let look = self
                 .lut_look
                 .as_deref()
                 .ok_or_else(|| "LUT mode has no resolved LUT look".to_owned())?;
+            let _lut_observation = backend.is_gpu().then(|| {
+                crate::stages::StageObservation::cpu(
+                    backend,
+                    "lut_look",
+                    spektrafilm_backend::telemetry::CpuReason::Unsupported,
+                )
+            });
             let result = look.render(
                 working.as_ref(),
                 source,

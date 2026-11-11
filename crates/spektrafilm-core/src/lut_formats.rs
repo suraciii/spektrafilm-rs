@@ -6,7 +6,7 @@
 //! formats clip to [0, 1] and use NumPy-compatible ties-to-even rounding.
 
 use std::fs::File;
-use std::io::{BufRead, BufReader, BufWriter, Write};
+use std::io::{BufRead, BufReader, BufWriter, Cursor, Write};
 use std::path::Path;
 
 use anyhow::{Context, Result, bail, ensure};
@@ -182,6 +182,12 @@ pub fn write_lut_ref(
     }
 }
 
+/// Parse one already-read CUBE carrier. Callers that validated a content hash
+/// must parse the same bytes rather than reopening the path.
+pub fn read_cube_bytes(bytes: &[u8]) -> Result<LutDocument> {
+    read_cube_reader(BufReader::new(Cursor::new(bytes))).context("reading LUT bytes")
+}
+
 pub fn read_lut(format: LutFormat, path: impl AsRef<Path>) -> Result<LutDocument> {
     let path = path.as_ref();
     match format {
@@ -338,13 +344,17 @@ fn parse_triplet(text: &str) -> Result<[f64; 3]> {
 }
 
 fn read_cube(path: &Path) -> Result<LutDocument> {
+    read_cube_reader(BufReader::new(File::open(path)?))
+}
+
+fn read_cube_reader(mut reader: impl BufRead) -> Result<LutDocument> {
     let mut n = None;
     let mut shaper_n = None;
     let mut title = String::new();
     let mut domain_min = [0.0; 3];
     let mut domain_max = [1.0; 3];
     let mut values = Vec::new();
-    for raw in BufReader::new(File::open(path)?).lines() {
+    for raw in reader.by_ref().lines() {
         let raw = raw?;
         let line = raw.trim();
         if line.is_empty() || line.starts_with('#') {

@@ -131,7 +131,14 @@ impl App {
         } else {
             crate::render::Comparison::None
         };
-        let backend = self.backend.clone();
+        let backend: std::sync::Arc<dyn spektrafilm_backend::ComputeBackend> =
+            if params.workflow.mode.is_lut() {
+                // LUT evaluation is host-only. Do not route it through a device
+                // backend that cannot execute the retained chain.
+                std::sync::Arc::new(spektrafilm_backend::cpu_backend::CpuBackend)
+            } else {
+                self.backend.clone()
+            };
         let snapshot = self
             .render_snapshot(params)
             .with_comparison(comparison)

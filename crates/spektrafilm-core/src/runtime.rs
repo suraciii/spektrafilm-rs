@@ -712,6 +712,20 @@ impl Runtime {
         max_size: u32,
         backend: &dyn ComputeBackend,
     ) -> Result<ImageBuf, String> {
+        if self.params().workflow.mode.is_lut() {
+            let output = self.process(image, backend)?;
+            return if self
+                .params()
+                .taps
+                .collect
+                .as_deref()
+                .is_none_or(|tap| tap == "rgb_out")
+            {
+                Ok(crate::params_builder::resize_for_preview(&output, max_size))
+            } else {
+                Ok(output)
+            };
+        }
         if backend.is_gpu() {
             let retained = self
                 .process_preview_retained(&image, max_size, backend)?

@@ -1,13 +1,14 @@
 //! LUT workflow switching, import/declaration, and the LUT look surface.
 use super::state::App;
 use crate::*;
-use spektrafilm_core::lut_formats::{LutFormat, read_lut};
-use spektrafilm_core::lut_look::{LutDomainPolicy, LutLookParams, LutShaper, LutSpace, hash_file};
+use spektrafilm_core::lut_formats::read_cube_bytes;
+use spektrafilm_core::lut_look::{LutDomainPolicy, LutLookParams, LutShaper, LutSpace, hash_bytes};
 use spektrafilm_core::params::WorkflowMode;
 
 pub(crate) struct LutImportDraft {
     path: PathBuf,
     sha256: String,
+    title: String,
     domain_min: [f64; 3],
     domain_max: [f64; 3],
     shaper: LutShaper,
@@ -26,6 +27,7 @@ impl LutImportDraft {
         LutLookParams {
             path: self.path.clone(),
             sha256: self.sha256.clone(),
+            title: self.title.clone(),
             input_space: self.input_space,
             output_space: self.output_space,
             domain_min: self.domain_min,
@@ -33,6 +35,7 @@ impl LutImportDraft {
             domain_policy: self.policy,
             shaper: self.shaper,
             strength: self.strength,
+            grade_active: false,
             grade: Default::default(),
             halation: spektrafilm_core::params::HalationParams {
                 active: false,
@@ -112,10 +115,12 @@ impl App {
         };
         self.remember_dialog("lut", &path);
         let result = (|| -> Result<LutImportDraft, String> {
-            let sha256 = hash_file(&path)?;
-            let document = read_lut(LutFormat::Cube, &path).map_err(|e| e.to_string())?;
+            let bytes = std::fs::read(&path).map_err(|error| error.to_string())?;
+            let sha256 = hash_bytes(&bytes);
+            let document = read_cube_bytes(&bytes).map_err(|e| e.to_string())?;
             Ok(LutImportDraft {
                 path,
+                title: document.title.clone(),
                 sha256,
                 domain_min: document.domain_min,
                 domain_max: document.domain_max,
@@ -158,6 +163,9 @@ impl App {
             .show(ctx, |ui| {
                 ui.label(crate::i18n::text(ctx, "surfaces.lut.non_spectral"));
                 ui.monospace(draft.path.display().to_string());
+                if !draft.title.is_empty() {
+                    ui.label(&draft.title);
+                }
                 ui.small(format!("sha256: {}", draft.sha256));
                 ui.horizontal(|ui| {
                     ui.label(crate::i18n::text(ctx, "surfaces.lut.input_space"));
@@ -426,15 +434,22 @@ impl App {
             .luts
             .first()
             .ok_or_else(|| "the LUT baker returned no LUT".to_owned())?;
-        let temporary = draft.path.with_extension("cube.tmp");
-        if let Err(error) = lut.write_cube(&temporary) {
-            let _ = std::fs::remove_file(&temporary);
-            return Err(error);
-        }
-        std::fs::rename(&temporary, &draft.path).map_err(|error| {
-            let _ = std::fs::remove_file(&temporary);
-            error.to_string()
-        })
+        let parent = draft
+            .path
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+            .unwrap_or_else(|| Path::new("."));
+        let temporary = tempfile::Builder::new()
+            .prefix(".lut-export-")
+            .suffix(".tmp")
+            .tempfile_in(parent)
+            .map_err(|error| error.to_string())?
+            .into_temp_path();
+        lut.write_cube(temporary.as_ref())?;
+        temporary
+            .persist(&draft.path)
+            .map_err(|error| error.to_string())?;
+        Ok(())
     }
 }
 

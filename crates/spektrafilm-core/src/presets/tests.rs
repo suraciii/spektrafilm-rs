@@ -2339,8 +2339,24 @@ fn lut_preset_roundtrips_and_resolves_without_film_profiles() {
     assert!(preset.parameters.is_none());
 
     let text = preset.to_toml().unwrap();
+    let root: Value = serde_json::from_str(&preset.to_json().unwrap()).unwrap();
+    assert!(root["lut"].get("effects").is_none());
+    assert!(root.get("effects").is_some());
+    assert!(root.get("grade").is_some());
     let reparsed = Preset::from_toml_str(&text).unwrap();
     assert_eq!(reparsed.lut, Some(lut.clone()));
+
+    let mut disabled = lut.clone();
+    disabled.grade_active = false;
+    disabled.grade.brightness = 0.3;
+    let disabled = Preset::capture_lut("Imported LUT", disabled, provenance());
+    let disabled_root: Value = serde_json::from_str(&disabled.to_json().unwrap()).unwrap();
+    assert_eq!(disabled_root["grade"]["active"], false);
+    assert_eq!(disabled_root["grade"]["brightness"], 0.3);
+    let disabled_reparsed = Preset::from_json_str(&disabled.to_json().unwrap()).unwrap();
+    let disabled_lut = disabled_reparsed.lut.unwrap();
+    assert!(!disabled_lut.grade_active);
+    assert_eq!(disabled_lut.grade.brightness, 0.3);
 
     let resolved = preset
         .resolve_lut_detailed(&RuntimeParams::default())
@@ -2352,6 +2368,44 @@ fn lut_preset_roundtrips_and_resolves_without_film_profiles() {
     assert_eq!(resolved.params.workflow.route, "input");
     assert!(!resolved.params.io.scan_film);
     assert_eq!(resolved.params.lut_look, lut);
+}
+
+#[test]
+fn root_lut_without_optional_groups_starts_effects_and_grade_disabled() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("identity.cube");
+    std::fs::write(
+        &path,
+        "LUT_3D_SIZE 2\nDOMAIN_MIN 0 0 0\nDOMAIN_MAX 1 1 1\n\
+         0 0 0\n0 0 1\n0 1 0\n0 1 1\n1 0 0\n1 0 1\n1 1 0\n1 1 1\n",
+    )
+    .unwrap();
+    let hash = crate::lut_look::hash_file(&path).unwrap();
+    let document = serde_json::json!({
+        "schema_version": LUT_PRESET_SCHEMA_VERSION,
+        "name": "Minimal LUT",
+        "provenance": {
+            "implementation_version": "0.1.2",
+            "model_version": "0.3.4"
+        },
+        "lut": {
+            "path": path.display().to_string(),
+            "sha256": hash,
+            "input_space": "sRGB",
+            "output_space": "sRGB",
+            "domain_min": [0.0, 0.0, 0.0],
+            "domain_max": [1.0, 1.0, 1.0],
+            "domain_policy": "fail",
+            "shaper": "none",
+            "strength": 1.0
+        }
+    });
+    let preset = Preset::from_json_str(&document.to_string()).unwrap();
+    let lut = preset.lut.unwrap();
+    assert!(!lut.grade_active);
+    assert!(!lut.halation.active);
+    assert!(!lut.diffusion.active);
+    assert!(!lut.grain.active);
 }
 
 #[test]

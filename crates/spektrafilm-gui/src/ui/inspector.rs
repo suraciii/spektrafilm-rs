@@ -246,6 +246,9 @@ impl App {
                     }
                 } else {
                     ui.weak(crate::i18n::text(ui.ctx(), "surfaces.lut.non_spectral"));
+                    if !self.params.lut_look.title.is_empty() {
+                        ui.label(&self.params.lut_look.title);
+                    }
                     ui.monospace(self.params.lut_look.path.display().to_string());
                     let mut changed = false;
                     changed |= ui
@@ -322,17 +325,29 @@ impl App {
                         self.params.lut_look.shaper.name(),
                     ));
                     changed |= ui
-                        .checkbox(&mut self.params.lut_look.diffusion.active, "Diffusion")
+                        .checkbox(
+                            &mut self.params.lut_look.diffusion.active,
+                            crate::i18n::text(ui.ctx(), "surfaces.lut.diffusion"),
+                        )
                         .changed();
                     changed |= ui
-                        .checkbox(&mut self.params.lut_look.halation.active, "Halation")
+                        .checkbox(
+                            &mut self.params.lut_look.halation.active,
+                            crate::i18n::text(ui.ctx(), "surfaces.lut.halation"),
+                        )
                         .changed();
                     changed |= ui
-                        .checkbox(&mut self.params.lut_look.grain.active, "Grain")
+                        .checkbox(
+                            &mut self.params.lut_look.grain.active,
+                            crate::i18n::text(ui.ctx(), "surfaces.lut.grain"),
+                        )
                         .changed();
                     if self.params.lut_look.diffusion.active {
                         ui.horizontal_wrapped(|ui| {
-                            ui.label("Diffusion response");
+                            ui.label(crate::i18n::text(
+                                ui.ctx(),
+                                "surfaces.lut.diffusion_response",
+                            ));
                             egui::ComboBox::from_id_salt("lut-diffusion-family")
                                 .selected_text(self.params.lut_look.diffusion.filter_family.clone())
                                 .show_ui(ui, |ui| {
@@ -353,7 +368,7 @@ impl App {
                                     &mut self.params.lut_look.diffusion.strength,
                                     0.0..=1.0,
                                 )
-                                .text("Diffusion strength"),
+                                .text(crate::i18n::text(ui.ctx(), "controls.label.strength")),
                             )
                             .changed();
                         changed |= ui
@@ -362,7 +377,7 @@ impl App {
                                     &mut self.params.lut_look.diffusion.spatial_scale,
                                     0.0..=4.0,
                                 )
-                                .text("Diffusion scale"),
+                                .text(crate::i18n::text(ui.ctx(), "surfaces.lut.diffusion_scale")),
                             )
                             .changed();
                     }
@@ -373,7 +388,7 @@ impl App {
                                     &mut self.params.lut_look.halation.halation_amount,
                                     0.0..=4.0,
                                 )
-                                .text("Halation intensity"),
+                                .text(crate::i18n::text(ui.ctx(), "surfaces.lut.halation_amount")),
                             )
                             .changed();
                         changed |= ui
@@ -382,7 +397,10 @@ impl App {
                                     &mut self.params.lut_look.halation.boost_ev,
                                     -4.0..=8.0,
                                 )
-                                .text("Halation luminance threshold (EV)"),
+                                .text(crate::i18n::text(
+                                    ui.ctx(),
+                                    "surfaces.lut.halation_threshold",
+                                )),
                             )
                             .changed();
                         changed |= ui
@@ -391,7 +409,7 @@ impl App {
                                     &mut self.params.lut_look.halation.boost_range,
                                     0.0..=1.0,
                                 )
-                                .text("Halation threshold transition"),
+                                .text(crate::i18n::text(ui.ctx(), "surfaces.lut.halation_range")),
                             )
                             .changed();
                         changed |= ui
@@ -400,7 +418,10 @@ impl App {
                                     &mut self.params.lut_look.halation.protect_ev,
                                     0.0..=8.0,
                                 )
-                                .text("Halation highlight protection (EV)"),
+                                .text(crate::i18n::text(
+                                    ui.ctx(),
+                                    "surfaces.lut.halation_protection",
+                                )),
                             )
                             .changed();
                         for (channel, label) in ["R", "G", "B"].into_iter().enumerate() {
@@ -411,7 +432,10 @@ impl App {
                                             [channel],
                                         0.0..=200.0,
                                     )
-                                    .text(format!("Halation radius {label} (µm)")),
+                                    .text(format!(
+                                        "{} {label} (µm)",
+                                        crate::i18n::text(ui.ctx(), "surfaces.lut.halation_radius")
+                                    )),
                                 )
                                 .changed();
                             changed |= ui
@@ -421,7 +445,10 @@ impl App {
                                             [channel],
                                         0.0..=1.0,
                                     )
-                                    .text(format!("Halation tint {label}")),
+                                    .text(format!(
+                                        "{} {label}",
+                                        crate::i18n::text(ui.ctx(), "surfaces.lut.halation_tint")
+                                    )),
                                 )
                                 .changed();
                         }
@@ -431,7 +458,10 @@ impl App {
                                     &mut self.params.lut_look.halation.halation_spatial_scale,
                                     0.0..=4.0,
                                 )
-                                .text("Halation radius scale"),
+                                .text(crate::i18n::text(
+                                    ui.ctx(),
+                                    "surfaces.lut.halation_radius_scale",
+                                )),
                             )
                             .changed();
                     }
@@ -442,7 +472,7 @@ impl App {
                                     &mut self.params.lut_look.grain.amount,
                                     0.0..=1.0,
                                 )
-                                .text("Grain amount"),
+                                .text(crate::i18n::text(ui.ctx(), "surfaces.lut.grain_amount")),
                             )
                             .changed();
                         changed |= ui
@@ -451,7 +481,7 @@ impl App {
                                     &mut self.params.lut_look.grain.size,
                                     0.25..=16.0,
                                 )
-                                .text("Grain size"),
+                                .text(crate::i18n::text(ui.ctx(), "surfaces.lut.grain_size")),
                             )
                             .changed();
                         changed |= ui
@@ -460,14 +490,20 @@ impl App {
                                     &mut self.params.lut_look.grain.chroma,
                                     0.0..=1.0,
                                 )
-                                .text("Grain chroma"),
+                                .text(crate::i18n::text(ui.ctx(), "surfaces.lut.grain_chroma")),
                             )
                             .changed();
                         for (label, field) in [
-                            ("Grain shadows", &mut self.params.lut_look.grain.shadows),
-                            ("Grain midtones", &mut self.params.lut_look.grain.midtones),
                             (
-                                "Grain highlights",
+                                crate::i18n::text(ui.ctx(), "surfaces.lut.grain_shadows"),
+                                &mut self.params.lut_look.grain.shadows,
+                            ),
+                            (
+                                crate::i18n::text(ui.ctx(), "surfaces.lut.grain_midtones"),
+                                &mut self.params.lut_look.grain.midtones,
+                            ),
+                            (
+                                crate::i18n::text(ui.ctx(), "surfaces.lut.grain_highlights"),
                                 &mut self.params.lut_look.grain.highlights,
                             ),
                         ] {
@@ -479,24 +515,35 @@ impl App {
                             .add(
                                 egui::DragValue::new(&mut self.params.lut_look.grain.seed)
                                     .speed(1.0)
-                                    .prefix("Grain seed "),
+                                    .prefix(format!(
+                                        "{} ",
+                                        crate::i18n::text(ui.ctx(), "surfaces.lut.grain_seed")
+                                    )),
                             )
                             .changed();
                     }
-                    egui::CollapsingHeader::new("Grade")
-                        .id_salt("lut-grade")
-                        .show(ui, |ui| {
-                            for (label, field) in [
-                                ("Brightness", &mut self.params.lut_look.grade.brightness),
-                                ("Contrast", &mut self.params.lut_look.grade.contrast),
-                                ("Warmth", &mut self.params.lut_look.grade.warmth),
-                                ("Saturation", &mut self.params.lut_look.grade.saturation),
-                            ] {
-                                changed |= ui
-                                    .add(egui::Slider::new(field, -1.0..=1.0).text(label))
-                                    .changed();
-                            }
-                        });
+                    changed |= ui
+                        .checkbox(
+                            &mut self.params.lut_look.grade_active,
+                            crate::i18n::text(ui.ctx(), "surfaces.lut.grade"),
+                        )
+                        .changed();
+                    if self.params.lut_look.grade_active {
+                        egui::CollapsingHeader::new("Grade")
+                            .id_salt("lut-grade")
+                            .show(ui, |ui| {
+                                for (label, field) in [
+                                    ("Brightness", &mut self.params.lut_look.grade.brightness),
+                                    ("Contrast", &mut self.params.lut_look.grade.contrast),
+                                    ("Warmth", &mut self.params.lut_look.grade.warmth),
+                                    ("Saturation", &mut self.params.lut_look.grade.saturation),
+                                ] {
+                                    changed |= ui
+                                        .add(egui::Slider::new(field, -1.0..=1.0).text(label))
+                                        .changed();
+                                }
+                            });
+                    }
                     if ui
                         .button(crate::i18n::text(ui.ctx(), "surfaces.lut.replace"))
                         .clicked()
