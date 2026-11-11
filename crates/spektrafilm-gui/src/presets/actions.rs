@@ -1,3 +1,4 @@
+use super::errors::library_error_message;
 use super::*;
 
 impl App {
@@ -45,7 +46,7 @@ impl App {
                 )
             }
             Err(e) => crate::app::Message::new("surfaces.status.preset_error")
-                .message_arg("error", super::render::library_error_message(&e)),
+                .message_arg("error", library_error_message(&e)),
         };
     }
     pub(crate) fn save_preset_as(&mut self) {
@@ -114,7 +115,7 @@ impl App {
                             Ok(path) => crate::app::Message::new("surfaces.status.preset_exported")
                                 .arg("path", path.display()),
                             Err(e) => crate::app::Message::new("surfaces.status.preset_error")
-                                .message_arg("error", super::render::library_error_message(&e)),
+                                .message_arg("error", library_error_message(&e)),
                         };
                 }
             }
@@ -170,7 +171,7 @@ impl App {
         name: Option<&str>,
     ) -> Result<PathBuf, crate::app::Message> {
         let mut preset = spektrafilm_core::presets::load_file_detailed(path)
-            .map_err(|error| super::render::library_error_message(&error))?;
+            .map_err(|error| library_error_message(&error))?;
         if preset.kind() != Ok(PresetKind::Look) {
             return Err(crate::app::Message::new("surfaces.presets.expected_look"));
         }
@@ -185,6 +186,6 @@ impl App {
                 path.extension()
                     .is_some_and(|extension| extension.eq_ignore_ascii_case("toml")),
             )
-            .map_err(|error| super::render::library_error_message(&error))
+            .map_err(|error| library_error_message(&error))
     }
 }

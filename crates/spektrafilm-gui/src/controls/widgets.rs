@@ -2,7 +2,7 @@
 use super::row_modified;
 use super::{ControlFilter, filter_matches};
 use crate::editor_ranges;
-use crate::numeric::{numeric, numeric_field, numeric_marked};
+use crate::numeric::{numeric_field, numeric_marked};
 use crate::theme;
 use egui::Ui;
 use serde_json::{Map, Value};
@@ -324,39 +324,6 @@ pub(crate) fn param_numeric<T: egui::emath::Numeric>(
     changed
 }
 
-/// `param_numeric` whose effective maximum is additionally capped at
-/// `max_cap`; the sublayer-share editor keeps the authored total at one.
-pub(crate) fn param_numeric_capped<T: egui::emath::Numeric>(
-    ui: &mut Ui,
-    label: &str,
-    value: &mut T,
-    path: &str,
-    max_cap: f64,
-    tooltip: &str,
-) -> bool {
-    if !super::row_path_matches(ui.ctx(), path) {
-        return false;
-    }
-    let _identity = super::row_identity(ui.ctx(), path);
-    let (min, max, step, decimals) = editor_range_for(path);
-    let changed = numeric(
-        ui,
-        label,
-        value,
-        min,
-        max.min(max_cap),
-        step,
-        decimals,
-        tooltip,
-        crate::numeric::unit_suffix(path),
-        false,
-    );
-    if changed {
-        super::record_edited_path(ui.ctx(), path);
-    }
-    changed
-}
-
 /// Per-component identifiers for a tuple row. Empty means the components are
 /// numbered by position, which is what the accessible names already carry.
 pub(crate) const POSITION_IDENTIFIERS: &[&str] = &[];
@@ -667,49 +634,6 @@ pub(crate) fn optional_numeric(
 /// accessible names the harness already queries.
 fn index_identifier(index: usize) -> &'static str {
     ["0", "1", "2", "3", "4", "5"][index]
-}
-
-pub(crate) fn fotufilm_sublayer_shares(
-    ui: &mut Ui,
-    shares: &mut [f64; 4],
-    filter: &mut ControlFilter<'_>,
-) -> bool {
-    if filter_matches(filter, "sublayer shares") {
-        ui.label(super::localized(ui.ctx(), "Sublayer shares")).on_hover_text(super::localized(ui.ctx(), "Edit the first three shares; the fourth is the remaining share so the authored total stays one. All four shares must be positive."));
-    }
-    let mut changed = false;
-    for index in 0..3 {
-        if !filter_matches(filter, ["sublayer 1", "sublayer 2", "sublayer 3"][index]) {
-            continue;
-        }
-        let other_sum: f64 = shares[..3]
-            .iter()
-            .enumerate()
-            .filter(|(i, _)| *i != index)
-            .map(|(_, share)| *share)
-            .sum();
-        let maximum = 1.0 - other_sum - 1e-9;
-        let edited = param_numeric_capped(
-            ui,
-            ["Sublayer 1", "Sublayer 2", "Sublayer 3"][index],
-            &mut shares[index],
-            "film_render.grain.fotufilm.sublayer_shares",
-            maximum,
-            "Authored share; transfers weight to or from sublayer 4.",
-        );
-        if edited {
-            shares[3] = 1.0 - shares[..3].iter().sum::<f64>();
-            changed = true;
-        }
-    }
-    if filter_matches(filter, "sublayer 4 (remainder)") {
-        ui.label(crate::tr!(
-            ui.ctx(),
-            "controls.grain.remainder_value",
-            value = format!("{:.6}", shares[3])
-        ));
-    }
-    changed
 }
 
 /// A boolean parameter row's editor: a switch.

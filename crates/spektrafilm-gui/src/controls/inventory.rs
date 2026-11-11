@@ -407,7 +407,7 @@ fn runtime_entry(path: &str, validation: Value) -> ControlEntry {
                 id,
                 label: component_label,
                 derived: (shares && index == 3).then_some(
-                    "1 - sum of the first three shares; widgets::fotufilm_sublayer_shares",
+                    "1 - sum of the first three shares; grain::fotufilm_sublayer_shares",
                 ),
             }
         })
