@@ -230,13 +230,15 @@ impl Pipeline {
                 .lut_look
                 .as_deref()
                 .ok_or_else(|| "LUT mode has no resolved LUT look".to_owned())?;
-            let _lut_observation = backend.is_gpu().then(|| {
+            let _lut_observation = if backend.is_gpu() {
+                crate::stages::StageObservation::new(backend, "lut_look")
+            } else {
                 crate::stages::StageObservation::cpu(
                     backend,
                     "lut_look",
-                    spektrafilm_backend::telemetry::CpuReason::Unsupported,
+                    spektrafilm_backend::telemetry::CpuReason::CpuSelected,
                 )
-            });
+            };
             let result = look.render(
                 working.as_ref(),
                 source,

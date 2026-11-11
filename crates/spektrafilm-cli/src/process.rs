@@ -1012,29 +1012,15 @@ fn cmd_process(
         IssueBoundary::BackendInit,
         &context,
         |backend_context| {
-            let backend: Box<dyn spektrafilm_backend::ComputeBackend> =
-                if params.workflow.mode.is_lut() {
-                    // The LUT evaluator is a host-side pointwise/spatial
-                    // transform. It must not enter the spectral resident path.
-                    if matches!(backend_choice, Some(Backend::Gpu)) {
-                        bail!("the LUT workflow has no GPU implementation; use --backend cpu");
-                    }
-                    Box::new(spektrafilm_backend::cpu_backend::CpuBackend)
-                } else {
-                    match backend_choice {
-                        Some(Backend::Cpu) => {
-                            Box::new(spektrafilm_backend::cpu_backend::CpuBackend)
-                        }
-                        Some(Backend::Gpu) => Box::new(
-                            spektrafilm_gpu::wgpu_backend::WgpuBackend::new_explicit().ok_or_else(
-                                || anyhow::anyhow!("GPU backend unavailable; use --backend cpu"),
-                            )?,
-                        ),
-                        None => {
-                            spektrafilm_gpu::select_backend().map_err(|e| anyhow::anyhow!("{e}"))?
-                        }
-                    }
-                };
+            let backend: Box<dyn spektrafilm_backend::ComputeBackend> = match backend_choice {
+                Some(Backend::Cpu) => Box::new(spektrafilm_backend::cpu_backend::CpuBackend),
+                Some(Backend::Gpu) => Box::new(
+                    spektrafilm_gpu::wgpu_backend::WgpuBackend::new_explicit().ok_or_else(
+                        || anyhow::anyhow!("GPU backend unavailable; use --backend cpu"),
+                    )?,
+                ),
+                None => spektrafilm_gpu::select_backend().map_err(|e| anyhow::anyhow!("{e}"))?,
+            };
             telemetry::observe_backend(backend.as_ref(), backend_context);
             Ok(backend)
         },

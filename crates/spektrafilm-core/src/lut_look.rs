@@ -642,6 +642,20 @@ impl LutLook {
         self.verify_source()?;
         self.clipped_pixels.store(0, Ordering::Relaxed);
         self.evaluated_pixels.store(0, Ordering::Relaxed);
+        // One declaration, one effect order. The device route evaluates the
+        // same parameters and fails by name when a stage is unavailable.
+        if backend.is_gpu() {
+            return self.render_gpu(
+                image,
+                source_space,
+                source_encoded,
+                output_space,
+                output_encoded,
+                pixel_size_um,
+                gamut,
+                backend,
+            );
+        }
         let linear_srgb = LutSpace::SrgbLinear.color_space();
         let effects = self.params.diffusion.active || self.params.halation.active;
         let mut out = image.clone();
@@ -845,6 +859,280 @@ impl LutLook {
     }
 }
 
+impl LutLook {
+    /// The selected-device twin of the host render. Every image stage stays on
+    /// the device; `None` from a device operation is an error, never a CPU
+    /// fallback. Host code still resolves the LUT file, domain policy, PSF,
+    /// effect order, and clamp accounting.
+    #[allow(clippy::too_many_arguments)]
+    fn render_gpu(
+        &self,
+        image: &ImageBuf,
+        source_space: &RgbColorSpace,
+        source_encoded: bool,
+        output_space: &RgbColorSpace,
+        output_encoded: bool,
+        pixel_size_um: f64,
+        gamut: &crate::gamut_compression::OutputGamutCompress,
+        backend: &dyn ComputeBackend,
+    ) -> Result<ImageBuf, String> {
+        let to_f32_matrix = |matrix: &[[f64; 3]; 3]| {
+            std::array::from_fn(|row| std::array::from_fn(|column| matrix[row][column] as f32))
+        };
+        let convert = |image: &ImageBuf,
+                       source: &RgbColorSpace,
+                       decode: bool,
+                       destination: &RgbColorSpace,
+                       encode: bool|
+         -> Result<ImageBuf, String> {
+            // The terminal encode is transfer-only in the reference; using a
+            // same-space matrix there would add a second rounding step.
+            let matrix = if encode && !decode && source.name == destination.name {
+                [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
+            } else {
+                colorspace::conversion_matrix(source, destination)
+            };
+            let params = spektrafilm_backend::ConvertColorspaceGpuParams {
+                src_cctf: spektrafilm_backend::cctf_kind(source.cctf),
+                dst_cctf: spektrafilm_backend::cctf_kind(destination.cctf),
+                decode,
+                encode,
+                matrix: to_f32_matrix(&matrix),
+            };
+            // The host conversion operation uploads one bounded image. Large
+            // LUT rasters are split at pixel boundaries; the transform is
+            // per-pixel, so the result and its order are unchanged.
+            let chunk_pixels = 1_048_576;
+            let count = image.pixel_count();
+            if count <= chunk_pixels {
+                return backend.convert_colorspace(image, &params)?.ok_or_else(|| {
+                    "convert_colorspace: selected GPU has no LUT colour conversion".to_owned()
+                });
+            }
+            let mut out = Vec::with_capacity(count * 3);
+            for first in (0..count).step_by(chunk_pixels) {
+                let chunk_pixels = chunk_pixels.min(count - first);
+                let start = first * 3;
+                let end = start + chunk_pixels * 3;
+                let chunk =
+                    ImageBuf::from_data(chunk_pixels as u32, 1, image.data[start..end].to_vec());
+                let converted = backend
+                    .convert_colorspace(&chunk, &params)?
+                    .ok_or_else(|| {
+                        "convert_colorspace: selected GPU has no LUT colour conversion".to_owned()
+                    })?;
+                out.extend(converted.data);
+            }
+            Ok(ImageBuf::from_data(image.width, image.height, out))
+        };
+        let linear_srgb = LutSpace::SrgbLinear.color_space();
+        let effects = self.params.diffusion.active || self.params.halation.active;
+        let (mut lookup, lookup_space, lookup_encoded) = if effects {
+            let mut out = convert(image, source_space, source_encoded, &linear_srgb, false)?;
+            if self.params.diffusion.active {
+                let filter = self.params.diffusion.to_model();
+                if let Ok((psf, radius, scatter_fraction)) =
+                    spektrafilm_model::diffusion::resolve_psf(
+                        &filter,
+                        pixel_size_um.max(f64::EPSILON),
+                        out.width as usize,
+                        out.height as usize,
+                    )
+                {
+                    let params = spektrafilm_backend::OpticalDiffusionGpuParams {
+                        psf: &psf,
+                        radius: radius as u32,
+                        scatter_fraction,
+                    };
+                    out = backend.optical_diffusion(&out, &params)?.ok_or_else(|| {
+                        "optical_diffusion: selected GPU has no LUT diffusion operation".to_owned()
+                    })?;
+                }
+            }
+            if self.params.halation.active {
+                let halation = &self.params.halation;
+                let low = 0.18 * 2.0_f64.powf(f64::from(halation.boost_ev));
+                let high = 0.18 * 2.0_f64.powf(f64::from(halation.protect_ev));
+                let transition = (2.0_f64.powf(f64::from(halation.boost_range)) - 1.0) * low * 2.0;
+                let pix_um = pixel_size_um.max(1.0);
+                let params = spektrafilm_backend::LutHalationGpuParams {
+                    mask_low: low as f32,
+                    mask_high: high as f32,
+                    mask_transition: transition as f32,
+                    halation: spektrafilm_backend::HalationGpuParams {
+                        scatter_amount: 0.0,
+                        scatter_core_px: [0.0; 3],
+                        scatter_tail_px: [0.0; 3],
+                        scatter_tail_weight: [0.0; 3],
+                        source_compression: halation.source_compression as f32,
+                        halation_a_tot: std::array::from_fn(|c| {
+                            (halation.halation_strength[c] * halation.halation_amount) as f32
+                        }),
+                        halation_first_sigma_px: std::array::from_fn(|c| {
+                            (halation.halation_first_sigma_um[c] * halation.halation_spatial_scale
+                                / pix_um) as f32
+                        }),
+                        halation_n_bounces: halation.halation_n_bounces,
+                        halation_bounce_decay: halation.halation_bounce_decay as f32,
+                        halation_renormalize: halation.halation_renormalize,
+                    },
+                };
+                out = backend.lut_halation(&out, &params)?.ok_or_else(|| {
+                    "lut_halation: selected GPU has no LUT halation operation".to_owned()
+                })?;
+            }
+            (out, linear_srgb, false)
+        } else {
+            (image.clone(), *source_space, source_encoded)
+        };
+
+        let same_lookup = lookup_space.name == self.input.name
+            && lookup_encoded == self.params.input_space.encoded();
+        if !same_lookup {
+            lookup = convert(
+                &lookup,
+                &lookup_space,
+                lookup_encoded,
+                &self.input,
+                self.params.input_space.encoded(),
+            )?;
+        }
+
+        let original = convert(
+            &lookup,
+            &self.input,
+            self.params.input_space.encoded(),
+            &self.output,
+            self.params.output_space.encoded(),
+        )?;
+
+        let strength = self.params.strength;
+        let mut out = if strength == 0.0 {
+            original
+        } else {
+            let domain_min = self.params.domain_min;
+            let span: [f64; 3] = std::array::from_fn(|axis| {
+                self.params.domain_max[axis] - self.params.domain_min[axis]
+            });
+            let n_pixels = lookup.pixel_count() as u64;
+            self.evaluated_pixels.store(n_pixels, Ordering::Relaxed);
+            let shaper_entries = self.document.shaper.as_deref().unwrap_or_default();
+            let mut clipped = 0u64;
+            for pixel in lookup.data.as_chunks::<3>().0 {
+                let mut pixel_clipped = false;
+                let mut value = [0.0; 3];
+                for axis in 0..3 {
+                    let sample = to_f64(pixel[axis]);
+                    if !sample.is_finite() {
+                        return Err(format!("LUT input channel {axis} is not finite"));
+                    }
+                    let high = domain_min[axis] + span[axis];
+                    value[axis] = sample;
+                    if sample < domain_min[axis] || sample > high {
+                        if self.params.domain_policy == LutDomainPolicy::Fail {
+                            return Err(format!(
+                                "LUT input channel {axis} value {sample} is outside the declared domain [{}, {}]",
+                                domain_min[axis], high
+                            ));
+                        }
+                        pixel_clipped = true;
+                        value[axis] = sample.clamp(domain_min[axis], high);
+                    }
+                }
+                if !shaper_entries.is_empty() {
+                    for axis in 0..3 {
+                        value[axis] =
+                            sample_1d(shaper_entries, shaper_entries.len(), value[axis], axis);
+                        let high = domain_min[axis] + span[axis];
+                        if value[axis] < domain_min[axis] || value[axis] > high {
+                            if self.params.domain_policy == LutDomainPolicy::Fail {
+                                return Err(format!(
+                                    "LUT shaper channel {axis} value {} is outside the declared domain [{}, {}]",
+                                    value[axis], domain_min[axis], high
+                                ));
+                            }
+                            pixel_clipped = true;
+                        }
+                    }
+                }
+                if pixel_clipped {
+                    clipped += 1;
+                }
+            }
+            self.clipped_pixels.store(clipped, Ordering::Relaxed);
+            let shaper: Vec<f32> = shaper_entries
+                .iter()
+                .flatten()
+                .map(|value| *value as f32)
+                .collect();
+            let table: Vec<f32> = self
+                .document
+                .table
+                .iter()
+                .flatten()
+                .map(|value| *value as f32)
+                .collect();
+            let params = spektrafilm_backend::Lut3dLookGpuParams {
+                size: self.document.resolution as u32,
+                table: &table,
+                shaper_size: self.document.shaper.as_ref().map_or(0, Vec::len) as u32,
+                shaper: &shaper,
+                domain_min: self.params.domain_min.map(|value| value as f32),
+                domain_span: span.map(|value| value as f32),
+                clamp_domain: self.params.domain_policy == LutDomainPolicy::Clamp,
+                strength: strength as f32,
+            };
+            backend
+                .lut3d_look(&lookup, &original, &params)?
+                .ok_or_else(|| "LUT look: selected GPU has no LUT table operation".to_owned())?
+        };
+
+        out = convert(
+            &out,
+            &self.output,
+            self.params.output_space.encoded(),
+            output_space,
+            false,
+        )?;
+        if self.params.grade_active
+            && let Some(params) = crate::finishing::gpu_params(&self.params.grade, output_space)
+        {
+            out = backend.finishing(&out, &params)?.ok_or_else(|| {
+                "finishing: selected GPU has no LUT finishing operation".to_owned()
+            })?;
+        }
+        if gamut.is_active() {
+            let params = gamut
+                .gpu_params()
+                .ok_or_else(|| "gamut: active compressor has no device parameters".to_owned())?;
+            out = backend
+                .output_gamut_compress(&out, &params)?
+                .ok_or_else(|| {
+                    "output_gamut_compress: selected GPU has no gamut operation".to_owned()
+                })?;
+        }
+        if output_encoded {
+            out = convert(&out, output_space, false, output_space, true)?;
+        }
+        if self.params.grain.active && self.params.grain.amount > 0.0 {
+            let grain = &self.params.grain;
+            let params = spektrafilm_backend::LutGrainGpuParams {
+                amount: grain.amount as f32,
+                size: grain.size as f32,
+                shadows: grain.shadows as f32,
+                midtones: grain.midtones as f32,
+                highlights: grain.highlights as f32,
+                chroma: grain.chroma as f32,
+                seed: grain.seed as u32 ^ (grain.seed >> 32) as u32,
+            };
+            out = backend
+                .lut_grain(&out, &params)?
+                .ok_or_else(|| "lut_grain: selected GPU has no LUT grain operation".to_owned())?;
+        }
+        Ok(out)
+    }
+}
+
 fn sample_1d(table: &[[f64; 3]], n: usize, x: f64, axis: usize) -> f64 {
     if n == 0 {
         return x;
@@ -937,26 +1225,26 @@ fn sample_tetrahedral(table: &[[f64; 3]], n: usize, p: [f64; 3]) -> [f64; 3] {
     out
 }
 
-fn hash_noise(mut value: u64) -> f64 {
-    value ^= value >> 33;
-    value = value.wrapping_mul(0xff51afd7ed558ccd);
-    value ^= value >> 33;
-    value = value.wrapping_mul(0xc4ceb9fe1a85ec53);
-    value ^= value >> 33;
-    (value >> 11) as f64 / ((1u64 << 53) as f64) * 2.0 - 1.0
+fn hash_noise(mut value: u32) -> f64 {
+    value ^= value >> 16;
+    value = value.wrapping_mul(0x7feb_352d);
+    value ^= value >> 15;
+    value = value.wrapping_mul(0x846c_a68b);
+    value ^= value >> 16;
+    f64::from(value) / f64::from(u32::MAX) * 2.0 - 1.0
 }
 
-fn value_noise(x: f64, y: f64, seed: u64) -> f64 {
-    let xi = x.floor();
-    let yi = y.floor();
-    let fx = x - xi;
-    let fy = y - yi;
+fn value_noise(x: f64, y: f64, seed: u32) -> f64 {
+    let xi = x.floor() as i32;
+    let yi = y.floor() as i32;
+    let fx = x - x.floor();
+    let fy = y - y.floor();
     let sx = fx * fx * (3.0 - 2.0 * fx);
     let sy = fy * fy * (3.0 - 2.0 * fy);
-    let hash = |dx: i64, dy: i64| {
+    let hash = |dx: i32, dy: i32| {
         hash_noise(
-            seed ^ (xi as i64 + dx) as u64
-                ^ ((yi as i64 + dy) as u64).wrapping_mul(0x9e3779b97f4a7c15),
+            seed ^ xi.wrapping_add(dx) as u32
+                ^ (yi.wrapping_add(dy) as u32).wrapping_mul(0x9e37_79b9),
         )
     };
     let n00 = hash(0, 0);
@@ -976,8 +1264,9 @@ fn apply_lut_grain(rgb: [f64; 3], x: usize, y: usize, grain: &LutGrainParams) ->
     let scale = grain.size.max(f64::MIN_POSITIVE);
     let x = x as f64 / scale;
     let y = y as f64 / scale;
-    let mono = value_noise(x, y, grain.seed);
-    let chroma = value_noise(x, y, grain.seed ^ 0x51ed270b61a5f5d3) * grain.chroma;
+    let seed = grain.seed as u32 ^ (grain.seed >> 32) as u32;
+    let mono = value_noise(x, y, seed);
+    let chroma = value_noise(x, y, seed ^ 0x61a5_f5d3) * grain.chroma;
     let amount = grain.amount * weight;
     [
         rgb[0] + amount * (mono + chroma * 0.5),
@@ -1099,6 +1388,138 @@ mod tests {
         for (channel, expected) in dark.iter().enumerate() {
             assert!((rendered.data[channel] - expected).abs() < 1e-5);
         }
+    }
+
+    #[test]
+    fn device_lut_look_matches_the_reference_table_and_grain() {
+        let gpu = spektrafilm_gpu::test_support::explicit_adapter();
+        let mut document = identity(2);
+        document.shaper = Some(vec![[0.0, 0.0, 0.0], [0.2, 0.35, 0.5], [1.0, 1.0, 1.0]]);
+        let mut params = LutLookParams {
+            strength: 0.7,
+            ..LutLookParams::default()
+        };
+        params.grain.active = true;
+        params.grain.amount = 0.2;
+        params.grain.size = 1.5;
+        params.grain.chroma = 0.4;
+        params.grain.seed = 0x1234_5678_9abc_def0;
+        let look = LutLook {
+            document,
+            params,
+            input: LutSpace::Srgb.color_space(),
+            output: LutSpace::Srgb.color_space(),
+            clipped_pixels: AtomicU64::new(0),
+            evaluated_pixels: AtomicU64::new(0),
+        };
+        let image = ImageBuf::from_data(
+            4,
+            2,
+            [
+                [0.02, 0.2, 0.8],
+                [0.7, 0.1, 0.4],
+                [0.33, 0.66, 0.99],
+                [0.5, 0.5, 0.5],
+                [0.9, 0.3, 0.1],
+                [0.15, 0.85, 0.45],
+                [0.25, 0.35, 0.45],
+                [1.0, 1.0, 1.0],
+            ]
+            .into_iter()
+            .flatten()
+            .map(from_f64)
+            .collect(),
+        );
+        let gamut = crate::gamut_compression::OutputGamutCompress::build(
+            &crate::params::OutputGamutCompressParams {
+                algorithm: "off".into(),
+                ..Default::default()
+            },
+            "sRGB",
+        )
+        .unwrap();
+        let run = |backend: &dyn ComputeBackend| {
+            look.render(
+                &image,
+                &LutSpace::Srgb.color_space(),
+                true,
+                &LutSpace::Srgb.color_space(),
+                true,
+                6.0,
+                &gamut,
+                backend,
+            )
+            .unwrap()
+        };
+        let expected = run(&CpuBackend);
+        let actual = run(gpu.backend());
+        for (index, (&actual, &expected)) in actual.data.iter().zip(&expected.data).enumerate() {
+            let difference = (to_f64(actual) - to_f64(expected)).abs();
+            if difference >= 2e-4 {
+                panic!("index {index}: {actual} != {expected} (difference {difference})");
+            }
+        }
+    }
+
+    #[test]
+    fn device_lut_effects_match_the_reference_highlight_layer() {
+        use spektrafilm_backend::ComputeBackend;
+        let gpu = spektrafilm_gpu::test_support::explicit_adapter();
+        let mut params = LutLookParams {
+            halation: HalationParams {
+                active: true,
+                ..HalationParams::default()
+            },
+            grade_active: false,
+            domain_max: [2.0; 3],
+            ..LutLookParams::default()
+        };
+        params.grain.active = false;
+        params.diffusion.active = true;
+        params.diffusion.strength = 0.35;
+        let look = LutLook {
+            document: identity(3),
+            params,
+            input: LutSpace::Srgb.color_space(),
+            output: LutSpace::Srgb.color_space(),
+            clipped_pixels: AtomicU64::new(0),
+            evaluated_pixels: AtomicU64::new(0),
+        };
+        let mut data = vec![from_f64(0.03); 9 * 7 * 3];
+        for index in [4 * 9 + 4, 3 * 9 + 2, 5 * 9 + 6] {
+            data[index * 3] = from_f64(1.7);
+            data[index * 3 + 1] = from_f64(1.2);
+            data[index * 3 + 2] = from_f64(0.4);
+        }
+        let image = ImageBuf::from_data(9, 7, data);
+        let gamut = crate::gamut_compression::OutputGamutCompress::build(
+            &crate::params::OutputGamutCompressParams {
+                algorithm: "off".into(),
+                ..Default::default()
+            },
+            "sRGB",
+        )
+        .unwrap();
+        let run = |backend: &dyn ComputeBackend| {
+            look.render(
+                &image,
+                &LutSpace::Srgb.color_space(),
+                false,
+                &LutSpace::Srgb.color_space(),
+                true,
+                6.0,
+                &gamut,
+                backend,
+            )
+            .unwrap()
+        };
+        let expected = run(&CpuBackend);
+        let actual = run(gpu.backend());
+        let mut maximum = 0.0f64;
+        for (&actual, &expected) in actual.data.iter().zip(&expected.data) {
+            maximum = maximum.max((to_f64(actual) - to_f64(expected)).abs());
+        }
+        assert!(maximum < 5e-4, "maximum difference {maximum}");
     }
 
     #[test]
