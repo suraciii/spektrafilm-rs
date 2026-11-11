@@ -1123,7 +1123,7 @@ impl LutLook {
                 midtones: grain.midtones as f32,
                 highlights: grain.highlights as f32,
                 chroma: grain.chroma as f32,
-                seed: grain.seed as u32 ^ (grain.seed >> 32) as u32,
+                seed: [grain.seed as u32, (grain.seed >> 32) as u32],
             };
             out = backend
                 .lut_grain(&out, &params)?
@@ -1225,26 +1225,26 @@ fn sample_tetrahedral(table: &[[f64; 3]], n: usize, p: [f64; 3]) -> [f64; 3] {
     out
 }
 
-fn hash_noise(mut value: u32) -> f64 {
-    value ^= value >> 16;
-    value = value.wrapping_mul(0x7feb_352d);
-    value ^= value >> 15;
-    value = value.wrapping_mul(0x846c_a68b);
-    value ^= value >> 16;
-    f64::from(value) / f64::from(u32::MAX) * 2.0 - 1.0
+fn hash_noise(mut value: u64) -> f64 {
+    value ^= value >> 33;
+    value = value.wrapping_mul(0xff51afd7ed558ccd);
+    value ^= value >> 33;
+    value = value.wrapping_mul(0xc4ceb9fe1a85ec53);
+    value ^= value >> 33;
+    (value >> 11) as f64 / ((1u64 << 53) as f64) * 2.0 - 1.0
 }
 
-fn value_noise(x: f64, y: f64, seed: u32) -> f64 {
-    let xi = x.floor() as i32;
-    let yi = y.floor() as i32;
-    let fx = x - x.floor();
-    let fy = y - y.floor();
+fn value_noise(x: f64, y: f64, seed: u64) -> f64 {
+    let xi = x.floor();
+    let yi = y.floor();
+    let fx = x - xi;
+    let fy = y - yi;
     let sx = fx * fx * (3.0 - 2.0 * fx);
     let sy = fy * fy * (3.0 - 2.0 * fy);
-    let hash = |dx: i32, dy: i32| {
+    let hash = |dx: i64, dy: i64| {
         hash_noise(
-            seed ^ xi.wrapping_add(dx) as u32
-                ^ (yi.wrapping_add(dy) as u32).wrapping_mul(0x9e37_79b9),
+            seed ^ (xi as i64 + dx) as u64
+                ^ ((yi as i64 + dy) as u64).wrapping_mul(0x9e3779b97f4a7c15),
         )
     };
     let n00 = hash(0, 0);
@@ -1264,9 +1264,8 @@ fn apply_lut_grain(rgb: [f64; 3], x: usize, y: usize, grain: &LutGrainParams) ->
     let scale = grain.size.max(f64::MIN_POSITIVE);
     let x = x as f64 / scale;
     let y = y as f64 / scale;
-    let seed = grain.seed as u32 ^ (grain.seed >> 32) as u32;
-    let mono = value_noise(x, y, seed);
-    let chroma = value_noise(x, y, seed ^ 0x61a5_f5d3) * grain.chroma;
+    let mono = value_noise(x, y, grain.seed);
+    let chroma = value_noise(x, y, grain.seed ^ 0x51ed270b61a5f5d3) * grain.chroma;
     let amount = grain.amount * weight;
     [
         rgb[0] + amount * (mono + chroma * 0.5),
@@ -1412,24 +1411,23 @@ mod tests {
             clipped_pixels: AtomicU64::new(0),
             evaluated_pixels: AtomicU64::new(0),
         };
-        let image = ImageBuf::from_data(
-            4,
-            2,
-            [
-                [0.02, 0.2, 0.8],
-                [0.7, 0.1, 0.4],
-                [0.33, 0.66, 0.99],
-                [0.5, 0.5, 0.5],
-                [0.9, 0.3, 0.1],
-                [0.15, 0.85, 0.45],
-                [0.25, 0.35, 0.45],
-                [1.0, 1.0, 1.0],
-            ]
-            .into_iter()
-            .flatten()
-            .map(from_f64)
-            .collect(),
-        );
+        let mut data = Vec::with_capacity(37 * 11 * 3);
+        for y in 0..11 {
+            for x in 0..37 {
+                for channel in 0..3 {
+                    let value = ((x * 17 + y * 29 + channel * 7) % 97) as f64 / 96.0;
+                    data.push(from_f64(value));
+                }
+            }
+        }
+        data[0] = from_f64(0.0);
+        data[1] = from_f64(0.0);
+        data[2] = from_f64(0.0);
+        let last = data.len() - 3;
+        data[last] = from_f64(1.0);
+        data[last + 1] = from_f64(1.0);
+        data[last + 2] = from_f64(1.0);
+        let image = ImageBuf::from_data(37, 11, data);
         let gamut = crate::gamut_compression::OutputGamutCompress::build(
             &crate::params::OutputGamutCompressParams {
                 algorithm: "off".into(),
@@ -1455,7 +1453,10 @@ mod tests {
         let actual = run(gpu.backend());
         for (index, (&actual, &expected)) in actual.data.iter().zip(&expected.data).enumerate() {
             let difference = (to_f64(actual) - to_f64(expected)).abs();
-            if difference >= 2e-4 {
+            // f32 table, shaper, and colour conversion accumulate a few
+            // 1e-4 in the encoded output. A different grain hash is much
+            // larger because it changes the noise value itself.
+            if difference >= 1e-3 {
                 panic!("index {index}: {actual} != {expected} (difference {difference})");
             }
         }

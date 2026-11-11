@@ -586,7 +586,8 @@ pub struct LutGrainGpuParams {
     pub midtones: f32,
     pub highlights: f32,
     pub chroma: f32,
-    pub seed: u32,
+    /// The reference 64-bit seed, split because WGSL has no required u64.
+    pub seed: [u32; 2],
 }
 
 /// One optical diffusion-filter request: a per-channel discrete PSF

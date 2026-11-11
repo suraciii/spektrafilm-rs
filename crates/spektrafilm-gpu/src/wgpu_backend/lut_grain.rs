@@ -7,7 +7,8 @@ struct Params {
     n: u32,
     width: u32,
     height: u32,
-    seed: u32,
+    seed_lo: u32,
+    seed_hi: u32,
     first_pixel: u32,
     amount: f32,
     size: f32,
@@ -17,6 +18,8 @@ struct Params {
     chroma: f32,
     _pad0: f32,
     _pad1: f32,
+    _pad2: f32,
+    _pad3: f32,
 }
 
 impl WgpuBackend {
@@ -44,7 +47,8 @@ impl WgpuBackend {
                 n: count as u32,
                 width: img.width,
                 height: img.height,
-                seed: params.seed,
+                seed_lo: params.seed[0],
+                seed_hi: params.seed[1],
                 first_pixel: first as u32,
                 amount: params.amount,
                 size: params.size,
@@ -54,6 +58,8 @@ impl WgpuBackend {
                 chroma: params.chroma,
                 _pad0: 0.0,
                 _pad1: 0.0,
+                _pad2: 0.0,
+                _pad3: 0.0,
             };
             let output_bytes = vec![0u8; count * 3 * 4];
             let result = self
