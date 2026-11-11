@@ -1424,7 +1424,7 @@ mod tests {
                     egui::CentralPanel::default().show(ctx, |ui| {
                         let mut cache = SectionLabelCache::default();
                         let mut filter = ControlFilter::new("", &mut cache);
-                        changed = fotufilm_sublayer_shares(ui, &mut shares, &mut filter);
+                        changed = grain::fotufilm_sublayer_shares(ui, &mut shares, &mut filter);
                     });
                 },
             );
