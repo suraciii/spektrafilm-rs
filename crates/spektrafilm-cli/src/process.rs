@@ -1121,6 +1121,7 @@ fn cmd_process(
 
     // Run the calibrated runtime — a missing spectral LUT is a hard error.
     let t = Instant::now();
+    let lut_mode = params.workflow.mode.is_lut();
     let runtime = invocation.phase(
         "runtime_prepare",
         IssueCategory::Configuration,
@@ -1135,13 +1136,12 @@ fn cmd_process(
                 backend.as_ref(),
                 prepare_context,
             )
-            .map_err(|e| {
-                anyhow::anyhow!(
-                    "spectral pipeline construction failed: {e} — the simplified no-LUT fallback \
-                     was removed; check that the profiles/data directory contains the spectral \
-                     LUTs (looked under {})",
-                    data_dir.display()
-                )
+            .map_err(|error| {
+                anyhow::anyhow!(runtime_prepare_error(
+                    &error.to_string(),
+                    data_dir,
+                    lut_mode
+                ))
             })
         },
     )?;
@@ -1487,6 +1487,45 @@ fn raw_options(workflow: &WorkflowOptions) -> spektrafilm_raw::RawOptions {
         temperature: workflow.raw_temperature,
         tint: workflow.raw_tint,
         lens_correction: workflow.lens_correction,
+    }
+}
+
+fn runtime_prepare_error(error: &str, data_dir: &Path, lut_mode: bool) -> String {
+    if lut_mode {
+        return format!("LUT workflow preparation failed: {error}");
+    }
+    format!(
+        "spectral pipeline construction failed: {error} — the simplified no-LUT fallback \
+         was removed; check that the profiles/data directory contains the spectral LUTs \
+         (looked under {})",
+        data_dir.display()
+    )
+}
+
+#[cfg(test)]
+mod runtime_prepare_error_tests {
+    use super::runtime_prepare_error;
+    use std::path::Path;
+
+    #[test]
+    fn lut_preparation_does_not_name_spectral_profile_fallbacks() {
+        let message = runtime_prepare_error(
+            "reading LUT /tmp/look.cube: No such file or directory",
+            Path::new("/data"),
+            true,
+        );
+        assert_eq!(
+            message,
+            "LUT workflow preparation failed: reading LUT /tmp/look.cube: No such file or directory"
+        );
+        assert!(!message.contains("spectral"));
+    }
+
+    #[test]
+    fn film_preparation_keeps_the_spectral_remedy() {
+        let message = runtime_prepare_error("missing profile", Path::new("/data"), false);
+        assert!(message.contains("spectral pipeline construction failed"));
+        assert!(message.contains("(looked under /data)"));
     }
 }
 
