@@ -123,6 +123,7 @@ pub const STAGE_NAMES: &[&str] = &[
     "negative_to_positive_tone",
     "standard_setup",
     "input_transfer",
+    "lut_look",
     "colorspace_convert",
     "output_transfer",
     "rgb_to_raw",
