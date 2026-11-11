@@ -131,7 +131,7 @@ impl App {
         } else {
             crate::render::Comparison::None
         };
-        let backend = self.backend.clone();
+        let backend: std::sync::Arc<dyn spektrafilm_backend::ComputeBackend> = self.backend.clone();
         let snapshot = self
             .render_snapshot(params)
             .with_comparison(comparison)

@@ -25,6 +25,12 @@ mod cache;
 #[cfg(feature = "wgpu-backend")]
 mod film_chain;
 #[cfg(feature = "wgpu-backend")]
+mod lut_grain;
+#[cfg(feature = "wgpu-backend")]
+mod lut_halation;
+#[cfg(feature = "wgpu-backend")]
+mod lut_look;
+#[cfg(feature = "wgpu-backend")]
 mod paged;
 #[cfg(feature = "wgpu-backend")]
 use cache::{CachedPipelineRef, PipelineCache};

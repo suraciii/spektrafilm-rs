@@ -317,6 +317,7 @@ fn render_candidate(
             .map_err(|error| document_error_message(&error))?;
         // Same post-resolve normalization as an accepted look application.
         resolved.params.film_render.grain.monochrome = resolved.film.is_bw();
+        resolved.params.workflow.mode = spektrafilm_core::params::WorkflowMode::Film;
         (resolved.params, resolved.film_name, resolved.print_name)
     };
     let snapshot = RenderSnapshot::new(

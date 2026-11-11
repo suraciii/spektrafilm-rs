@@ -458,23 +458,120 @@ pub enum PresetParameters {
     Look(LookParameters),
     Section(Value),
 }
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Preset {
     pub schema_version: u32,
     pub name: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub author: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub film_profile: Option<ProfileRef>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub print_profile: Option<ProfileRef>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub parameters: Option<PresetParameters>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lut: Option<LutLookParams>,
     pub provenance: Provenance,
+}
+
+#[derive(Serialize)]
+struct LutDeclarationWire<'a> {
+    path: &'a std::path::Path,
+    sha256: &'a str,
+    #[serde(skip_serializing_if = "str::is_empty")]
+    title: &'a str,
+    input_space: crate::lut_look::LutSpace,
+    output_space: crate::lut_look::LutSpace,
+    domain_min: [f64; 3],
+    domain_max: [f64; 3],
+    domain_policy: crate::lut_look::LutDomainPolicy,
+    shaper: crate::lut_look::LutShaper,
+    strength: f64,
+}
+#[derive(Serialize)]
+struct LutEffectsWire<'a> {
+    halation: &'a crate::params::HalationParams,
+    diffusion: &'a DiffusionFilterParams,
+    grain: &'a crate::lut_look::LutGrainParams,
+}
+#[derive(Serialize)]
+struct LutGradeWire<'a> {
+    active: bool,
+    #[serde(flatten)]
+    grade: &'a FinishingParams,
+}
+#[derive(Serialize)]
+struct LutPresetWire<'a> {
+    schema_version: u32,
+    name: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    author: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    description: Option<&'a str>,
+    lut: LutDeclarationWire<'a>,
+    effects: LutEffectsWire<'a>,
+    grade: LutGradeWire<'a>,
+    provenance: &'a Provenance,
+}
+#[derive(Serialize)]
+struct FilmPresetWire<'a> {
+    schema_version: u32,
+    name: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    author: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    description: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    film_profile: Option<&'a ProfileRef>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    print_profile: Option<&'a ProfileRef>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    parameters: Option<&'a PresetParameters>,
+    provenance: &'a Provenance,
+}
+impl Serialize for Preset {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        if let Some(lut) = &self.lut {
+            LutPresetWire {
+                schema_version: self.schema_version,
+                name: &self.name,
+                author: self.author.as_deref(),
+                description: self.description.as_deref(),
+                lut: LutDeclarationWire {
+                    path: &lut.path,
+                    sha256: &lut.sha256,
+                    title: &lut.title,
+                    input_space: lut.input_space,
+                    output_space: lut.output_space,
+                    domain_min: lut.domain_min,
+                    domain_max: lut.domain_max,
+                    domain_policy: lut.domain_policy,
+                    shaper: lut.shaper,
+                    strength: lut.strength,
+                },
+                effects: LutEffectsWire {
+                    halation: &lut.halation,
+                    diffusion: &lut.diffusion,
+                    grain: &lut.grain,
+                },
+                grade: LutGradeWire {
+                    active: lut.grade_active,
+                    grade: &lut.grade,
+                },
+                provenance: &self.provenance,
+            }
+            .serialize(serializer)
+        } else {
+            FilmPresetWire {
+                schema_version: self.schema_version,
+                name: &self.name,
+                author: self.author.as_deref(),
+                description: self.description.as_deref(),
+                film_profile: self.film_profile.as_ref(),
+                print_profile: self.print_profile.as_ref(),
+                parameters: self.parameters.as_ref(),
+                provenance: &self.provenance,
+            }
+            .serialize(serializer)
+        }
+    }
 }
 impl<'de> Deserialize<'de> for Preset {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
@@ -631,6 +728,8 @@ impl Preset {
             print_profile: Option<ProfileRef>,
             parameters: Option<Value>,
             lut: Option<Value>,
+            effects: Option<Value>,
+            grade: Option<Value>,
             provenance: Provenance,
         }
         if value["schema_version"].as_u64() == Some(5)
@@ -807,6 +906,12 @@ impl Preset {
                 format!("invalid preset: {e}"),
             )
         })?;
+        if wire.lut.is_none() && (wire.effects.is_some() || wire.grade.is_some()) {
+            return Err(PresetDocumentError::new(
+                PresetDocumentReason::Shape,
+                "LUT effects and grade require a LUT declaration",
+            ));
+        }
         let lut = match wire.lut {
             Some(value) => {
                 let Some(object) = value.as_object() else {
@@ -832,16 +937,80 @@ impl Preset {
                         ));
                     }
                 }
-                Some(
-                    serde_json::from_value::<LutLookParams>(value).map_err(|error| {
-                        PresetDocumentError::new(
-                            PresetDocumentReason::Parser {
-                                detail: error.to_string(),
-                            },
-                            format!("invalid lut preset group: {error}"),
-                        )
-                    })?,
-                )
+                let legacy_nested = wire.effects.is_none()
+                    && wire.grade.is_none()
+                    && ["grade", "halation", "diffusion", "grain", "grade_active"]
+                        .iter()
+                        .any(|field| object.contains_key(*field));
+                let mut lut = serde_json::from_value::<LutLookParams>(value).map_err(|error| {
+                    PresetDocumentError::new(
+                        PresetDocumentReason::Parser {
+                            detail: error.to_string(),
+                        },
+                        format!("invalid lut preset group: {error}"),
+                    )
+                })?;
+                if !legacy_nested {
+                    #[derive(Deserialize)]
+                    struct GradeWire {
+                        #[serde(default = "default_true")]
+                        active: bool,
+                        #[serde(flatten)]
+                        grade: FinishingParams,
+                    }
+                    #[derive(Deserialize)]
+                    #[serde(deny_unknown_fields)]
+                    struct EffectsWire {
+                        halation: Option<crate::params::HalationParams>,
+                        diffusion: Option<DiffusionFilterParams>,
+                        grain: Option<crate::lut_look::LutGrainParams>,
+                    }
+                    let effects = match wire.effects {
+                        Some(value) => {
+                            serde_json::from_value::<EffectsWire>(value).map_err(|error| {
+                                PresetDocumentError::new(
+                                    PresetDocumentReason::Parser {
+                                        detail: error.to_string(),
+                                    },
+                                    format!("invalid lut effects group: {error}"),
+                                )
+                            })?
+                        }
+                        None => EffectsWire {
+                            halation: None,
+                            diffusion: None,
+                            grain: None,
+                        },
+                    };
+                    lut.halation =
+                        effects
+                            .halation
+                            .unwrap_or_else(|| crate::params::HalationParams {
+                                active: false,
+                                ..crate::params::HalationParams::default()
+                            });
+                    lut.diffusion = effects.diffusion.unwrap_or_default();
+                    lut.grain = effects.grain.unwrap_or_default();
+                    let grade = wire
+                        .grade
+                        .as_ref()
+                        .map(|grade| {
+                            serde_json::from_value::<GradeWire>(grade.clone()).map_err(|error| {
+                                PresetDocumentError::new(
+                                    PresetDocumentReason::Parser {
+                                        detail: error.to_string(),
+                                    },
+                                    format!("invalid lut grade group: {error}"),
+                                )
+                            })
+                        })
+                        .transpose()?;
+                    lut.grade = grade
+                        .as_ref()
+                        .map_or_else(FinishingParams::default, |grade| grade.grade.clone());
+                    lut.grade_active = grade.is_some_and(|grade| grade.active);
+                }
+                Some(lut)
             }
             None => None,
         };

@@ -317,6 +317,7 @@ impl RenderWorker {
                             Ok(Some(
                                 if runtime_params.settings.preview_mode
                                     && !runtime_params.requires_full_frame()
+                                    && !runtime_params.workflow.mode.is_lut()
                                 {
                                     Arc::new(spektrafilm_core::params_builder::resize_for_preview(
                                         &source,

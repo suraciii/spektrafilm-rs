@@ -108,6 +108,7 @@ impl Browser {
                             .file_name()
                             .and_then(|name| name.to_str())
                             .is_some_and(|name| name.to_lowercase().contains(&query))
+                            || lut.title.to_lowercase().contains(&query)
                             || lut.path.to_string_lossy().to_lowercase().contains(&query)
                     });
                 (query.is_empty()
@@ -188,7 +189,8 @@ impl App {
                     let save_name = crate::i18n::text(ui.ctx(), "surfaces.presets.save");
                     let save_available = self.params.workflow.mode
                         != spektrafilm_core::params::WorkflowMode::Lut
-                        || !self.params.lut_look.path.as_os_str().is_empty();
+                        || (!self.params.lut_look.path.as_os_str().is_empty()
+                            && self.params.lut_look.path.is_file());
                     let save = ui
                         .add_enabled(
                             save_available,
@@ -876,7 +878,11 @@ impl App {
             }
             let mut description = String::new();
             if let Some(lut) = entry.preset.as_ref().and_then(|preset| preset.lut.as_ref()) {
-                description.push_str(&format!("LUT: {}", lut.path.display()));
+                if lut.title.is_empty() {
+                    description.push_str(&format!("LUT: {}", lut.path.display()));
+                } else {
+                    description.push_str(&format!("LUT: {} ({})", lut.title, lut.path.display()));
+                }
             }
             for (role, reference, profiles) in [
                 ("Film", &entry.film_profile, &self.films),

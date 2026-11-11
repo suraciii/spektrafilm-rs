@@ -247,12 +247,13 @@ impl Pipeline {
             params.workflow.route = "input".into();
             params.io.scan_film = false;
             params.validate()?;
-            let lut_look =
-                if let Some(old) = previous.filter(|old| old.params.lut_look == params.lut_look) {
-                    old.lut_look.clone()
-                } else {
-                    Some(Arc::new(params.lut_look.load()?))
-                };
+            let lut_look = match previous
+                .filter(|old| old.params.lut_look == params.lut_look)
+                .and_then(|old| old.lut_look.clone())
+            {
+                Some(look) => Some(look),
+                None => Some(Arc::new(params.lut_look.load()?)),
+            };
             let output_gamut = crate::gamut_compression::OutputGamutCompress::build(
                 &params.io.output_gamut_compress,
                 &params.io.output_color_space,
@@ -474,10 +475,12 @@ impl Pipeline {
             Arc::new(output_inputs.build(backend)?)
         };
         let lut_look = if params.workflow.mode.is_lut() {
-            if let Some(old) = previous.filter(|old| old.params.lut_look == params.lut_look) {
-                old.lut_look.clone()
-            } else {
-                Some(Arc::new(params.lut_look.load()?))
+            match previous
+                .filter(|old| old.params.lut_look == params.lut_look)
+                .and_then(|old| old.lut_look.clone())
+            {
+                Some(look) => Some(look),
+                None => Some(Arc::new(params.lut_look.load()?)),
             }
         } else {
             None

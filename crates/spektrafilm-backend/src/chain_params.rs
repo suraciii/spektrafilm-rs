@@ -547,6 +547,49 @@ pub struct HalationGpuParams {
     pub halation_renormalize: bool,
 }
 
+/// One LUT-look table evaluation: shaper, domain policy, tetrahedral 3D
+/// interpolation and LUT strength. The image is already in the LUT input
+/// space; `original` is the same input transformed to the LUT output space,
+/// so the shader can apply strength without another device pass.
+#[derive(Debug, Clone, Copy)]
+pub struct Lut3dLookGpuParams<'a> {
+    pub size: u32,
+    /// Internal blue-fast RGB lattice, `(r * size + g) * size + b`.
+    pub table: &'a [f32],
+    pub shaper_size: u32,
+    /// Shaper entries in file order; empty when no shaper is declared.
+    pub shaper: &'a [f32],
+    pub domain_min: [f32; 3],
+    pub domain_span: [f32; 3],
+    pub clamp_domain: bool,
+    pub strength: f32,
+}
+
+/// LUT halation appearance: a linear-light highlight mask followed by the
+/// declared multi-bounce response. `halation` carries the spatial response;
+/// scatter is disabled by the caller because LUT halation is an additive
+/// highlight layer, not a rewrite of the base image.
+#[derive(Debug, Clone, Copy)]
+pub struct LutHalationGpuParams {
+    pub mask_low: f32,
+    pub mask_high: f32,
+    pub mask_transition: f32,
+    pub halation: HalationGpuParams,
+}
+
+/// Output-referred appearance grain for a LUT look.
+#[derive(Debug, Clone, Copy)]
+pub struct LutGrainGpuParams {
+    pub amount: f32,
+    pub size: f32,
+    pub shadows: f32,
+    pub midtones: f32,
+    pub highlights: f32,
+    pub chroma: f32,
+    /// The reference 64-bit seed, split because WGSL has no required u64.
+    pub seed: [u32; 2],
+}
+
 /// One optical diffusion-filter request: a per-channel discrete PSF
 /// convolution with reflect boundary extension.
 ///

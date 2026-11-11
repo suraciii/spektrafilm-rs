@@ -651,6 +651,9 @@ impl App {
         self.film_dev_times = film.data.development_time;
         self.print_dev_times = print.data.development_time;
         self.viewer.settings = display::DisplaySettings::from_json(&state.sections["display"]);
+        self.film_route = state.sections["rust"]["film_route"]
+            .as_str()
+            .map(str::to_owned);
         self.params = params;
         self.export_options = ExportOptions::from_state(&state.sections);
         self.export_dialog = ExportDialog::default();

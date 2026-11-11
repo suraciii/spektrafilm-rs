@@ -842,6 +842,12 @@ fn cmd_process(
         !params.workflow.mode.is_lut() && spektrafilm_core::stages::grain_dye::active(&params);
     let grain_fotufilm = spektrafilm_core::stages::grain_fotufilm::configuration_report(&params);
     if dry_run {
+        if params.workflow.mode.is_lut() {
+            params
+                .lut_look
+                .load()
+                .map_err(|error| anyhow::anyhow!("LUT look validation failed: {error}"))?;
+        }
         let grain_dye = spektrafilm_core::stages::grain_dye::configuration_report(&film, &params);
         let backend_env = std::env::var("SPEKTRAFILM_BACKEND").ok();
         let output_format = plan.as_ref().map(|plan| plan.format.name());
@@ -1006,26 +1012,15 @@ fn cmd_process(
         IssueBoundary::BackendInit,
         &context,
         |backend_context| {
-            let backend: Box<dyn spektrafilm_backend::ComputeBackend> =
-                if params.workflow.mode.is_lut() {
-                    // The LUT evaluator is a host-side pointwise/spatial
-                    // transform. It must not enter the spectral resident path.
-                    Box::new(spektrafilm_backend::cpu_backend::CpuBackend)
-                } else {
-                    match backend_choice {
-                        Some(Backend::Cpu) => {
-                            Box::new(spektrafilm_backend::cpu_backend::CpuBackend)
-                        }
-                        Some(Backend::Gpu) => Box::new(
-                            spektrafilm_gpu::wgpu_backend::WgpuBackend::new_explicit().ok_or_else(
-                                || anyhow::anyhow!("GPU backend unavailable; use --backend cpu"),
-                            )?,
-                        ),
-                        None => {
-                            spektrafilm_gpu::select_backend().map_err(|e| anyhow::anyhow!("{e}"))?
-                        }
-                    }
-                };
+            let backend: Box<dyn spektrafilm_backend::ComputeBackend> = match backend_choice {
+                Some(Backend::Cpu) => Box::new(spektrafilm_backend::cpu_backend::CpuBackend),
+                Some(Backend::Gpu) => Box::new(
+                    spektrafilm_gpu::wgpu_backend::WgpuBackend::new_explicit().ok_or_else(
+                        || anyhow::anyhow!("GPU backend unavailable; use --backend cpu"),
+                    )?,
+                ),
+                None => spektrafilm_gpu::select_backend().map_err(|e| anyhow::anyhow!("{e}"))?,
+            };
             telemetry::observe_backend(backend.as_ref(), backend_context);
             Ok(backend)
         },
@@ -1238,7 +1233,10 @@ fn cmd_process(
                             );
                         }
                         let image = match preview_max_size {
-                            Some(max_size) if !runtime.params().scanner.requires_full_frame() => {
+                            Some(max_size)
+                                if !runtime.params().scanner.requires_full_frame()
+                                    && !runtime.params().workflow.mode.is_lut() =>
+                            {
                                 host_preview
                                     .get_or_insert_with(|| resize_for_preview(image, max_size))
                                     .clone()
@@ -1276,7 +1274,8 @@ fn cmd_process(
                                 )
                                 .map_err(|e| anyhow::anyhow!("pipeline taps: {e}"))?
                         };
-                        let host = if runtime.params().scanner.requires_full_frame()
+                        let host = if (runtime.params().scanner.requires_full_frame()
+                            || runtime.params().workflow.mode.is_lut())
                             && collect.is_none_or(|tap| tap == Tap::RgbOut)
                             && let Some(max_size) = preview_max_size
                         {
