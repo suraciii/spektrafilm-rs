@@ -123,9 +123,12 @@ pub fn resolve_continuation(
             }
         }
         let mut candidate = params.clone();
-        match &preset.parameters {
-            presets::PresetParameters::Look(look) => look.apply_to(&mut candidate),
-            presets::PresetParameters::Section(_) => candidate = preset.overlay_section(&params)?,
+        match preset.parameters.as_ref() {
+            Some(presets::PresetParameters::Look(look)) => look.apply_to(&mut candidate),
+            Some(presets::PresetParameters::Section(_)) => {
+                candidate = preset.overlay_section(&params)?
+            }
+            None => return Err("LUT presets cannot continue a stage artifact".into()),
         }
         // Presets own only their documented leaves. Use the shared overlay to
         // map preset-specific names and preserve derived runtime-only fields.
@@ -147,7 +150,10 @@ pub fn resolve_continuation(
             ParameterEdits::from_value(payload)?,
             origin,
             &mut params,
-            matches!(preset.parameters, presets::PresetParameters::Section(_)),
+            matches!(
+                preset.parameters.as_ref(),
+                Some(presets::PresetParameters::Section(_))
+            ),
         )?;
     }
     for selection in request.feature_profiles {

@@ -413,16 +413,45 @@ impl App {
                                         )
                                     ));
                                 }
-                                let context = format!(
-                                    "{} · {print} · {}",
-                                    profiles::selected_display(&self.films, &self.film_name),
-                                    controls::localized(
-                                        ctx,
-                                        routes::vocabulary::route_description(
-                                            &self.params.workflow.route
-                                        )
-                                    ),
-                                );
+                                let context = if self.params.workflow.mode
+                                    == spektrafilm_core::params::WorkflowMode::Lut
+                                {
+                                    let lut_name = self
+                                        .params
+                                        .lut_look
+                                        .path
+                                        .file_name()
+                                        .map(|name| name.to_string_lossy().into_owned())
+                                        .unwrap_or_else(|| {
+                                            crate::i18n::text(ctx, "surfaces.header.no_lut")
+                                                .into_owned()
+                                        });
+                                    format!(
+                                        "{} · {} · {}",
+                                        crate::i18n::text(ctx, "surfaces.workflow.lut"),
+                                        lut_name,
+                                        self.presets
+                                            .state
+                                            .applied
+                                            .as_ref()
+                                            .map(|applied| applied.name.clone())
+                                            .unwrap_or_else(|| {
+                                                crate::i18n::text(ctx, "surfaces.lut.non_spectral")
+                                                    .into_owned()
+                                            })
+                                    )
+                                } else {
+                                    format!(
+                                        "{} · {print} · {}",
+                                        profiles::selected_display(&self.films, &self.film_name),
+                                        controls::localized(
+                                            ctx,
+                                            routes::vocabulary::route_description(
+                                                &self.params.workflow.route
+                                            )
+                                        ),
+                                    )
+                                };
                                 let status = self.status.localized(ctx);
                                 let routine = status.is_empty()
                                     || matches!(

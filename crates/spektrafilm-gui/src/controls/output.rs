@@ -13,13 +13,16 @@ pub(crate) fn sections(
 ) {
     if section == "Output" {
         if filter_matches(filter, "simulation blend") {
-            flags.runtime_changed |= param_numeric(
-                ui,
-                "Simulation blend",
-                &mut params.output_mix.amount,
-                "output_mix.amount",
-                "Blend the complete result with the decoded, geometrically aligned prepared source in linear output RGB. 1 returns the complete result; 0 returns the prepared source before virtual camera exposure. For a captured negative, zero returns the prepared negative, not a positive interpretation. Input/Output viewing remains independent.",
-            );
+            let enabled = !params.workflow.mode.is_lut();
+            ui.add_enabled_ui(enabled, |ui| {
+                flags.runtime_changed |= param_numeric(
+                    ui,
+                    "Simulation blend",
+                    &mut params.output_mix.amount,
+                    "output_mix.amount",
+                    "Blend the complete result with the decoded, geometrically aligned prepared source in linear output RGB. 1 returns the complete result; 0 returns the prepared source before virtual camera exposure. For a captured negative, zero returns the prepared negative, not a positive interpretation. Input/Output viewing remains independent.",
+                );
+            });
         }
         ui.label(
             egui::RichText::new(localized(

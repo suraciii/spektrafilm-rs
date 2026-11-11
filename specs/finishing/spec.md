@@ -81,7 +81,9 @@ Comparison MUST NOT bypass negative interpretation, material effects, output gam
 
 ## Persistence and replay
 
-Tone and color adjustments MUST form one independently scoped, look-owned control group under [Presets](../presets/spec.md). In LUT mode, the same response is carried by the LUT look runtime group rather than a film look preset. Applying a complete look MUST replace these adjustment values; applying an unrelated section MUST preserve them.
+Tone and color adjustments MUST form one independently scoped, look-owned control group under [Presets](../presets/spec.md).
+
+In LUT mode, the same response is carried by the LUT look runtime group and MAY be captured by a [LUT preset](../lut-workflow/spec.md#lut-presets); it is not a film look preset section. Applying a complete film look or LUT preset MUST replace the corresponding grade values; applying an unrelated section MUST preserve them.
 
 Film, paper, and route selection MUST preserve these adjustment values. They MUST NOT derive adjustments from stock defaults or silently neutralize inactive stored values.
 

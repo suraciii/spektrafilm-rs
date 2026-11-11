@@ -832,9 +832,14 @@ fn cmd_process(
             .map_err(|e| anyhow::anyhow!("unsupported saving color space {saving_space:?}: {e}"))?;
     }
     // Validate configuration without creating a compute device for dry runs.
-    spektrafilm_core::stages::grain_dye::validate_supported(&film, &params)
-        .map_err(anyhow::Error::msg)?;
-    let grain_dye_active = spektrafilm_core::stages::grain_dye::active(&params);
+    // LUT mode never enters a spectral film or print stage, so the Dye
+    // condition is not applicable and its placeholder carrier must not gate it.
+    if !params.workflow.mode.is_lut() {
+        spektrafilm_core::stages::grain_dye::validate_supported(&film, &params)
+            .map_err(anyhow::Error::msg)?;
+    }
+    let grain_dye_active =
+        !params.workflow.mode.is_lut() && spektrafilm_core::stages::grain_dye::active(&params);
     let grain_fotufilm = spektrafilm_core::stages::grain_fotufilm::configuration_report(&params);
     if dry_run {
         let grain_dye = spektrafilm_core::stages::grain_dye::configuration_report(&film, &params);
@@ -1001,15 +1006,26 @@ fn cmd_process(
         IssueBoundary::BackendInit,
         &context,
         |backend_context| {
-            let backend: Box<dyn spektrafilm_backend::ComputeBackend> = match backend_choice {
-                Some(Backend::Cpu) => Box::new(spektrafilm_backend::cpu_backend::CpuBackend),
-                Some(Backend::Gpu) => Box::new(
-                    spektrafilm_gpu::wgpu_backend::WgpuBackend::new_explicit().ok_or_else(
-                        || anyhow::anyhow!("GPU backend unavailable; use --backend cpu"),
-                    )?,
-                ),
-                None => spektrafilm_gpu::select_backend().map_err(|e| anyhow::anyhow!("{e}"))?,
-            };
+            let backend: Box<dyn spektrafilm_backend::ComputeBackend> =
+                if params.workflow.mode.is_lut() {
+                    // The LUT evaluator is a host-side pointwise/spatial
+                    // transform. It must not enter the spectral resident path.
+                    Box::new(spektrafilm_backend::cpu_backend::CpuBackend)
+                } else {
+                    match backend_choice {
+                        Some(Backend::Cpu) => {
+                            Box::new(spektrafilm_backend::cpu_backend::CpuBackend)
+                        }
+                        Some(Backend::Gpu) => Box::new(
+                            spektrafilm_gpu::wgpu_backend::WgpuBackend::new_explicit().ok_or_else(
+                                || anyhow::anyhow!("GPU backend unavailable; use --backend cpu"),
+                            )?,
+                        ),
+                        None => {
+                            spektrafilm_gpu::select_backend().map_err(|e| anyhow::anyhow!("{e}"))?
+                        }
+                    }
+                };
             telemetry::observe_backend(backend.as_ref(), backend_context);
             Ok(backend)
         },
@@ -1095,7 +1111,7 @@ fn cmd_process(
         },
     )?;
     let (working_width, working_height) = match preview_max_size {
-        Some(max_size) if !params.scanner.requires_full_frame() => {
+        Some(max_size) if !params.requires_full_frame() => {
             spektrafilm_core::resizing::preview_dimensions(input_width, input_height, max_size)
         }
         _ => (input_width, input_height),
@@ -1305,6 +1321,14 @@ fn cmd_process(
         eprintln!("Pipeline simulation: {} ms", t.elapsed().as_millis());
         r
     };
+    if let Some(fraction) = runtime.lut_clipped_fraction()
+        && fraction > 0.0
+    {
+        eprintln!(
+            "LUT domain clamp: {:.6}% of evaluated pixels clipped",
+            fraction * 100.0
+        );
+    }
     let plan = plan.context("internal error: missing output plan for rendering")?;
     let output = output.context("internal error: missing output path for rendering")?;
     // `result` is the host materialization when the render produced one;

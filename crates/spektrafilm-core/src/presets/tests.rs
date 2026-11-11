@@ -2317,3 +2317,57 @@ fn rollei80s_builtin_is_one_source_spektra_look_and_preserves_photo_context() {
         assert!(!p.settings.use_cat16);
     }
 }
+
+#[test]
+fn lut_preset_roundtrips_and_resolves_without_film_profiles() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("identity.cube");
+    std::fs::write(
+        &path,
+        "TITLE \"identity\"\nLUT_3D_SIZE 2\nDOMAIN_MIN 0 0 0\nDOMAIN_MAX 1 1 1\n\
+         0 0 0\n0 0 1\n0 1 0\n0 1 1\n1 0 0\n1 0 1\n1 1 0\n1 1 1\n",
+    )
+    .unwrap();
+    let mut lut = crate::lut_look::LutLookParams::default();
+    lut.path = path;
+    lut.sha256 = crate::lut_look::hash_file(&lut.path).unwrap();
+    let preset = Preset::capture_lut("Imported LUT", lut.clone(), provenance());
+    assert_eq!(preset.kind(), Ok(PresetKind::Lut));
+    assert_eq!(preset.schema_version, LUT_PRESET_SCHEMA_VERSION);
+    assert!(preset.film_profile.is_none());
+    assert!(preset.print_profile.is_none());
+    assert!(preset.parameters.is_none());
+
+    let text = preset.to_toml().unwrap();
+    let reparsed = Preset::from_toml_str(&text).unwrap();
+    assert_eq!(reparsed.lut, Some(lut.clone()));
+
+    let resolved = preset
+        .resolve_lut_detailed(&RuntimeParams::default())
+        .unwrap();
+    assert_eq!(
+        resolved.params.workflow.mode,
+        crate::lut_look::WorkflowMode::Lut
+    );
+    assert_eq!(resolved.params.workflow.route, "input");
+    assert!(!resolved.params.io.scan_film);
+    assert_eq!(resolved.params.lut_look, lut);
+}
+
+#[test]
+fn lut_preset_missing_file_fails_before_application() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("gone.cube");
+    let lut = crate::lut_look::LutLookParams {
+        path,
+        sha256: "0".repeat(64),
+        ..crate::lut_look::LutLookParams::default()
+    };
+    let preset = Preset::capture_lut("Missing LUT", lut, provenance());
+    assert!(
+        preset
+            .resolve_lut_detailed(&RuntimeParams::default())
+            .is_err()
+    );
+    assert!(Preset::from_toml_str(&preset.to_toml().unwrap()).is_ok());
+}

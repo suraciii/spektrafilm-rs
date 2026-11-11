@@ -9,13 +9,14 @@ The [product contract](spec.md) owns observable LUT mode behavior. This document
 | Film, print, spectral exposure, development, scan | [Film chain](../film-chain/spec.md) |
 | Film-chain LUT export, bundle metadata, bake QA | [LUT delivery](../lut-delivery/spec.md) |
 | LUT import, external LUT declaration, LUT stage | This capability |
+| Exported-LUT handoff, LUT file references, LUT presets | [LUT workflow](../lut-workflow/spec.md) |
 | Halation, diffusion, and grain parameter models | This capability |
 | Grade response and Oklab evaluation | [Tone and color](../finishing/spec.md) |
 | Film grain engines | [Film grain](../film-grain/spec.md) |
 | CPU/GPU evaluation | [GPU execution](../gpu-execution/spec.md) |
 | GUI controls and mode presentation | [GUI workflow](../gui-workflow/spec.md) |
 | CLI syntax and parameter carriers | [CLI](../cli/spec.md) |
-| Film look presets | [Presets](../presets/spec.md) |
+| Film look and section presets | [Presets](../presets/spec.md) |
 
 LUT delivery exports a film-chain transform. LUT mode imports an external transform. They MUST share file parsing and interpolation primitives without sharing a runtime contract.
 
@@ -266,7 +267,7 @@ A LUT file is not embedded in a document. A document carries a reference and has
 
 Mode switching preserves inactive values. It MUST NOT reset film controls when entering LUT mode or reset LUT controls when entering film mode.
 
-This capability does not change the preset schema. Film look presets remain film-only. A future LUT look preset MUST define its own preset contract before it can enter the preset library.
+This capability's preset boundary is defined by the [LUT workflow](../lut-workflow/spec.md#lut-presets). LUT presets use their own schema version and carry an external LUT file path and hash; film look and section presets retain their existing schema. The LUT look renderer does not read a preset file directly; the preset resolver resolves its declaration into the runtime LUT look.
 
 ## Licensing and provenance
 

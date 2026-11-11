@@ -346,7 +346,10 @@ fn runtime_entry(path: &str, validation: Value) -> ControlEntry {
         .unwrap_or_else(|| path.rsplit('.').next().unwrap_or(path).replace('_', " "));
     let editor = if let Some(reason) = exclusion(path, &validation) {
         EditorKind::Excluded(reason)
-    } else if !LABELS.iter().any(|(candidate, _)| *candidate == path) {
+    } else if !LABELS.iter().any(|(candidate, _)| *candidate == path)
+        && !path.starts_with("lut_look.")
+        && path != "workflow.mode"
+    {
         EditorKind::Unconnected
     } else if path == "film_render.grain.procedural_profile" || path.ends_with("development_time") {
         EditorKind::Profile
@@ -489,7 +492,11 @@ fn exclusion(path: &str, description: &Value) -> Option<&'static str> {
 
 fn runtime_owner(path: &str) -> (ControlOwner, &'static str) {
     use ControlOwner::Stage as Owner;
-    if path.starts_with("film_render.grain.") {
+    if path == "workflow.mode" {
+        (Owner(Stage::Input), "Workflow")
+    } else if path.starts_with("lut_look.") {
+        (Owner(Stage::Input), "LUT look")
+    } else if path.starts_with("film_render.grain.") {
         (Owner(Stage::Film), "Grain")
     } else if path.starts_with("film_render.halation.") {
         (Owner(Stage::Film), "Halation")

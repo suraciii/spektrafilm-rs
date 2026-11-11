@@ -16,6 +16,9 @@ mod migrations;
 pub mod sources;
 
 pub(crate) mod validation;
+pub use crate::lut_look::{
+    LutDomainPolicy, LutGrainParams, LutLookParams, LutShaper, LutSpace, WorkflowMode,
+};
 use couplers::DirCouplersParams;
 pub use diffusion::DiffusionFilterParams;
 pub use finishing::{ExpandParams, FinishingParams};
@@ -401,12 +404,15 @@ impl Default for CmykParams {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct WorkflowParams {
+    #[serde(default)]
+    pub mode: WorkflowMode,
     #[serde(default = "default_route")]
     pub route: String,
 }
 impl Default for WorkflowParams {
     fn default() -> Self {
         Self {
+            mode: WorkflowMode::Film,
             route: default_route(),
         }
     }
@@ -814,6 +820,13 @@ impl RuntimeParams {
         validation::validate_detailed(self)
     }
 
+    /// Whether the active workflow needs a full-frame scanner pass. LUT mode
+    /// never consumes scanner setup, so retained film settings cannot select
+    /// the film scan cache while LUT mode is active.
+    pub fn requires_full_frame(&self) -> bool {
+        !self.workflow.mode.is_lut() && self.scanner.requires_full_frame()
+    }
+
     /// Validate canonical value domains without route or resource checks.
     pub fn validate_values(&self) -> Result<(), String> {
         self.validate_values_detailed()
@@ -950,6 +963,8 @@ pub struct RuntimeParams {
     pub output_mix: OutputMixParams,
     #[serde(default)]
     pub finishing: FinishingParams,
+    #[serde(default)]
+    pub lut_look: LutLookParams,
     #[serde(default)]
     pub settings: SettingsParams,
     #[serde(default)]
@@ -1107,6 +1122,16 @@ mod tests {
             Some([false, false, true])
         );
         assert!(params.explicit_paths_match(&expected));
+    }
+
+    #[test]
+    fn lut_mode_ignores_retained_full_frame_scanner_setup() {
+        let mut params = RuntimeParams::default();
+        params.scanner.scan_output = "negative_to_positive".into();
+        params.scanner.experimental_setup = true;
+        assert!(params.scanner.requires_full_frame());
+        params.workflow.mode = crate::lut_look::WorkflowMode::Lut;
+        assert!(!params.requires_full_frame());
     }
 
     #[test]

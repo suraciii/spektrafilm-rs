@@ -131,6 +131,7 @@ impl App {
         } else {
             crate::render::Comparison::None
         };
+        let backend = self.backend.clone();
         let snapshot = self
             .render_snapshot(params)
             .with_comparison(comparison)
@@ -148,7 +149,7 @@ impl App {
             },
             image,
             snapshot,
-            backend: self.backend.clone(),
+            backend,
             source_metadata: self.source_metadata.clone(),
             display_enabled: self.viewer.settings.use_display_transform,
             display_profile: self
@@ -295,6 +296,12 @@ impl App {
                             "megapixels",
                             format!("{:.1}", width as f64 * height as f64 / 1e6),
                         );
+                    if let Some(fraction) =
+                        r.lut_clipped_fraction.filter(|fraction| *fraction > 0.0)
+                    {
+                        self.status = crate::app::Message::new("operations.lut_domain_clipped")
+                            .arg("percent", format!("{:.2}", fraction * 100.0));
+                    }
                     let output = r.output.map(Arc::new);
                     if let Some(output) = output.as_ref() {
                         self.viewer.seed_prepared_output(

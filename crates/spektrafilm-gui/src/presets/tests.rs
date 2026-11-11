@@ -824,7 +824,7 @@ fn look_application_preserves_existing_explicit_ownership_and_legacy_camera_omis
         app.params.render_preparation_state().explicit_section_paths,
         ownership.explicit_section_paths
     );
-    if let spektrafilm_core::presets::PresetParameters::Look(look) = &mut preset.parameters {
+    if let Some(spektrafilm_core::presets::PresetParameters::Look(look)) = &mut preset.parameters {
         look.camera = None;
     }
     preset.name = "Legacy camera omission".into();
@@ -905,4 +905,55 @@ fn keyboard_order_crosses_preset_group_boundaries() {
         vec![0, 2, 1],
         "arrow navigation follows the rendered groups, not library scan order"
     );
+}
+
+#[test]
+fn lut_preset_switches_workflow_and_manual_switch_restores_film_route() {
+    let (mut app, directory) = test_app("lut-preset");
+    let lut_path = directory.join("identity.cube");
+    std::fs::write(
+        &lut_path,
+        "TITLE \"identity\"\nLUT_3D_SIZE 2\nDOMAIN_MIN 0 0 0\nDOMAIN_MAX 1 1 1\n\
+         0 0 0\n0 0 1\n0 1 0\n0 1 1\n1 0 0\n1 0 1\n1 1 0\n1 1 1\n",
+    )
+    .unwrap();
+    let mut lut = spektrafilm_core::lut_look::LutLookParams::default();
+    lut.path = lut_path;
+    lut.sha256 = spektrafilm_core::lut_look::hash_file(&lut.path).unwrap();
+    let preset = Preset::capture_lut("Identity LUT", lut.clone(), provenance());
+    app.presets
+        .library
+        .save_new(&preset, &app.data_dir)
+        .unwrap();
+    app.presets.refresh();
+    app.params.workflow.mode = spektrafilm_core::params::WorkflowMode::Film;
+    app.params.workflow.route = "input > film > scan".into();
+    app.params.io.scan_film = true;
+    app.load_preset(PresetGroup::User, "Identity LUT");
+    assert_eq!(
+        app.params.workflow.mode,
+        spektrafilm_core::params::WorkflowMode::Lut
+    );
+    assert_eq!(app.params.workflow.route, "input");
+    assert!(!app.params.io.scan_film);
+    assert_eq!(app.params.lut_look, lut);
+    assert_eq!(app.film_route.as_deref(), Some("input > film > scan"));
+    assert!(app.presets.state.applied.is_some());
+
+    app.switch_workflow(spektrafilm_core::params::WorkflowMode::Film);
+    assert_eq!(
+        app.params.workflow.mode,
+        spektrafilm_core::params::WorkflowMode::Film
+    );
+    assert_eq!(app.params.workflow.route, "input > film > scan");
+    assert_eq!(app.params.lut_look, lut);
+    assert!(app.presets.state.applied.is_none());
+
+    app.switch_workflow(spektrafilm_core::params::WorkflowMode::Lut);
+    app.save_preset_as();
+    let dialog = app.presets.name_dialog.as_ref().unwrap();
+    let NameAction::Save(preset) = &dialog.action else {
+        panic!("expected save action");
+    };
+    assert_eq!(preset.kind(), Ok(PresetKind::Lut));
 }

@@ -610,6 +610,7 @@ pub(crate) const STAGE_LAYOUT: &[(Stage, &[&str])] = &[
         Stage::Input,
         &[
             "Workflow",
+            "LUT look",
             "Camera",
             "Camera diffusion",
             "Input",

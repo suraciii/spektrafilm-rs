@@ -23,7 +23,7 @@ use spektrafilm_core::params::RuntimeParams;
 /// `camera.diffusion_filter` at projection time; the same holds for the two
 /// Enlarger entries and `enlarger.diffusion_filter`.
 const SECTION_PARAMETERS: &[(&str, &[&str], &[&str])] = &[
-    ("Workflow", &["workflow.route"], &[]),
+    ("Workflow", &["workflow.route", "workflow.mode"], &[]),
     ("Film material", &["film_render.development_time"], &[]),
     ("Print material", &["print_render.development_time"], &[]),
     (

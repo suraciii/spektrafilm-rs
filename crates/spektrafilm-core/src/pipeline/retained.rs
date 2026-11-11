@@ -81,6 +81,35 @@ impl Pipeline {
         inject: Option<Tap>,
         collect: Option<Tap>,
     ) -> Result<Option<DeviceImage>, String> {
+        if self.params.workflow.mode.is_lut() {
+            if !backend.is_gpu() {
+                return Ok(None);
+            }
+            if inject.is_some() || collect.is_some() {
+                return Err("LUT mode exposes only the rgb_in and rgb_out boundaries".into());
+            }
+            let mut host = image.clone();
+            if request.rotation_quarter_turns != 0 {
+                host = host.rotated_quarter_turns(request.rotation_quarter_turns as i32);
+            }
+            let mut out = self.process_full(host, backend, None, None)?;
+            if let Some(max_size) = request.preview_max_size {
+                out = crate::params_builder::resize_for_preview(&out, max_size);
+            }
+            let meta = spektrafilm_backend::RetainedImageMeta {
+                width: out.width,
+                height: out.height,
+                domain: if self.params.io.output_cctf_encoding {
+                    spektrafilm_backend::SampleDomain::Encoded
+                } else {
+                    spektrafilm_backend::SampleDomain::Linear
+                },
+                precision: spektrafilm_backend::Precision::host(),
+                space: spektrafilm_math::colorspace::resolve(&self.params.io.output_color_space)?,
+                pixel_pitch_um: None,
+            };
+            return backend.retain_image(&out, &meta).map(Some);
+        }
         if !backend.is_gpu() {
             return Ok(None);
         }
@@ -137,6 +166,32 @@ impl Pipeline {
         inject: Option<Tap>,
         collect: Option<Tap>,
     ) -> Result<DeviceImage, String> {
+        if self.params.workflow.mode.is_lut() {
+            if inject.is_some() || collect.is_some() {
+                return Err("LUT mode exposes only the rgb_in and rgb_out boundaries".into());
+            }
+            let mut host = image.to_host(backend)?;
+            if request.rotation_quarter_turns != 0 {
+                host = host.rotated_quarter_turns(request.rotation_quarter_turns as i32);
+            }
+            let mut out = self.process_full(host, backend, None, None)?;
+            if let Some(max_size) = request.preview_max_size {
+                out = crate::params_builder::resize_for_preview(&out, max_size);
+            }
+            let meta = spektrafilm_backend::RetainedImageMeta {
+                width: out.width,
+                height: out.height,
+                domain: if self.params.io.output_cctf_encoding {
+                    spektrafilm_backend::SampleDomain::Encoded
+                } else {
+                    spektrafilm_backend::SampleDomain::Linear
+                },
+                precision: spektrafilm_backend::Precision::host(),
+                space: spektrafilm_math::colorspace::resolve(&self.params.io.output_color_space)?,
+                pixel_pitch_um: image.pixel_pitch_um(),
+            };
+            return backend.retain_image(&out, &meta);
+        }
         if !backend.is_gpu() || !image.is_retained() {
             return self.fail("device input requires its selected GPU backend");
         }
@@ -232,7 +287,7 @@ impl Pipeline {
         inject: Tap,
         collect: Tap,
     ) -> Result<Option<DeviceImage>, String> {
-        let defer_preview = self.params.scanner.requires_full_frame();
+        let defer_preview = self.params.requires_full_frame();
         let working_preview = if defer_preview {
             None
         } else {
