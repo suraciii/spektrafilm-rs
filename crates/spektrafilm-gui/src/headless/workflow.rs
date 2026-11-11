@@ -156,3 +156,46 @@ fn legacy_disabled_preview_state_still_renders_accepted_numeric_edits_automatica
             .is_none()
     );
 }
+
+#[test]
+fn lut_import_previews_at_the_bounded_size_and_preserves_the_declaration() {
+    let mut s = session();
+    let h = &mut s.harness;
+    h.state_mut().diagnostics.mode = spektrafilm_core::telemetry::CollectionMode::Off;
+    let cube = s.directory.path().join("identity.cube");
+    std::fs::write(
+        &cube,
+        "TITLE \"identity\"\nLUT_3D_SIZE 2\nDOMAIN_MIN 0 0 0\nDOMAIN_MAX 1 1 1\n\
+         0 0 0\n1 0 0\n0 1 0\n1 1 0\n0 0 1\n1 0 1\n0 1 1\n1 1 1\n",
+    )
+    .unwrap();
+
+    script(h, chooser::ChooserResult::Scripted(cube.clone()));
+    h.state_mut()
+        .switch_workflow(spektrafilm_core::params::WorkflowMode::Lut);
+    h.run_steps(6);
+    click(h, "Import");
+    h.state_mut().params.lut_look.domain_policy =
+        spektrafilm_core::lut_look::LutDomainPolicy::Clamp;
+    h.state_mut().mark_parameters_changed();
+
+    let bounded = preview(h);
+    assert_eq!((bounded.width, bounded.height), (128, 64));
+    assert_eq!(h.state().image.as_ref().unwrap().width(), 160);
+    assert_eq!(h.state().params.lut_look.path, cube);
+
+    h.state_mut().params.lut_look.diffusion.active = true;
+    h.state_mut().mark_parameters_changed();
+    let with_diffusion = preview(h);
+    assert_eq!((with_diffusion.width, with_diffusion.height), (128, 64));
+
+    h.state_mut()
+        .switch_workflow(spektrafilm_core::params::WorkflowMode::Film);
+    h.state_mut()
+        .switch_workflow(spektrafilm_core::params::WorkflowMode::Lut);
+    assert_eq!(h.state().params.lut_look.path, cube);
+    assert_eq!(
+        h.state().params.workflow.mode,
+        spektrafilm_core::params::WorkflowMode::Lut
+    );
+}
