@@ -268,6 +268,7 @@ pub(crate) struct NameDialog {
 }
 
 mod actions;
+mod errors;
 mod render;
 mod thumbnail_worker;
 mod thumbnails;

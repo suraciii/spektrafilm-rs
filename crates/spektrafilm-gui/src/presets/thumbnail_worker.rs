@@ -3,8 +3,8 @@
 //! This owner never touches accepted controls, history, retained output, or the
 //! main render worker. One thread renders the visible demand set with the
 //! production resolver, runtime, and display transform.
+use super::errors::document_error_message;
 use super::*;
-use crate::presets::render::document_error_message;
 use crate::render::{InputImage, RenderSnapshot, RuntimeCache};
 use eframe::egui;
 use spektrafilm_backend::telemetry::{CollectionMode, ObservationContext};
