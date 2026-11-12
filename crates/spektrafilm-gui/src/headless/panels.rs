@@ -1114,6 +1114,24 @@ fn keyboard_analysis_selects_and_inspects_without_photographic_edits() {
     click(h, "Analysis mode");
     click(h, "Waveform");
     wait_until(h, analysis_output_ready);
+    // The inspection column is view state and survives mode changes and panel
+    // reopen. Seed it inside the plot so the keyboard step below cannot start
+    // on the last bin, where the clamp makes ArrowRight a no-op.
+    let plot = h
+        .get_by_label("Analysis plot (arrow keys to inspect)")
+        .raw_bounds()
+        .unwrap();
+    h.input_mut()
+        .events
+        .push(egui::Event::PointerMoved(egui::pos2(
+            (plot.x0 + (plot.x1 - plot.x0) * 0.25) as f32,
+            ((plot.y0 + plot.y1) * 0.5) as f32,
+        )));
+    h.run_steps(3);
+    assert!(
+        h.state().analysis.plot_inspecting,
+        "plot hover must seed the inspection column"
+    );
     h.get_by_label("Analysis plot (arrow keys to inspect)")
         .focus();
     h.run_steps(3);
