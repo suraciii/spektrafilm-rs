@@ -124,7 +124,7 @@ fn startup_default_and_factory_restore_stay_in_session_directory() {
     let mut s = session();
     let h = &mut s.harness;
     reveal_control(h, "workflow.route");
-    choose(h, "workflow", "input");
+    choose(h, "Film route", "input");
     let expected = h.state().params.clone();
     let image = h.state().image_path.clone();
     state_controls(h);
@@ -241,7 +241,7 @@ fn bad_state_and_bad_input_buttons_preserve_accepted_images_and_parameters() {
 fn replacing_input_rejects_the_previous_sources_real_worker_result() {
     let mut s = session();
     let h = &mut s.harness;
-    choose(h, "workflow", "input");
+    choose(h, "Film route", "input");
     preview(h);
     let previous = h.state().image.as_ref().unwrap().clone();
     let epoch = h.state().input_epoch;
@@ -423,7 +423,7 @@ fn rotation_save_and_export_preserve_pixel_positions_and_normalize_metadata() {
     assert!(source.metadata.is_some());
     let h = &mut s.harness;
     reveal_control(h, "workflow.route");
-    choose(h, "workflow", "input");
+    choose(h, "Film route", "input");
     script(h, chooser::ChooserResult::Scripted(path.clone()));
     import_file(h, false);
     assert!(h.query_by_label("Discard changes").is_some());

@@ -64,7 +64,7 @@ fn retained_raw_interpretation_matches_cpu_and_queued_exports_freeze_the_declara
     h.state_mut().params.io.input_cctf_decoding = false;
     h.state_mut().refresh_input_viewer();
     h.state_mut().reset_adjustment_history();
-    choose(&mut h, "workflow", "input");
+    choose(&mut h, "Film route", "input");
     h.state_mut().params.settings.preview_max_size = 256;
     let original = carrier.to_host(h.state().backend.as_ref()).unwrap();
     let mut submissions = Vec::new();
@@ -583,7 +583,7 @@ fn xtrans_import_demosaics_and_renders_on_selected_gpu() {
             )
         });
     click(&mut h, "Collapse or expand Presets");
-    choose(&mut h, "workflow", "input");
+    choose(&mut h, "Film route", "input");
     script(&mut h, chooser::Chooser::chooser_path(&fixture));
     import_file(&mut h, true);
     await_input(&mut h);

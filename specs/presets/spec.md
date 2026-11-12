@@ -18,13 +18,17 @@ A section preset carries exactly one section of the film look and no profile ref
 
 The kind is derived from the carried shape, never declared by a field. A document that carries neither a whole film look, a whole LUT look, nor exactly one film-look section MUST be rejected. LUT section presets are outside this contract.
 
+The derived kind is an internal dispatch fact. It selects the document schema, resolver, workflow, and thumbnail preparation for a preset. It MUST NOT become a separate browser category, library, or workflow-type filter.
+
 Built-in film look presets MUST enable the selected film profile's Hanatos2025 adaptation surface, except `Classic Neg Inspired`, which MUST disable it to preserve its authored color response. The surface coefficients belong to the film profile. The user MAY change the surface switch after applying a preset.
 
 A preset **name** is its identity: the document `name`, the document file stem, and the selector used by the GUI and the CLI. A name MUST be unique inside its group and MAY repeat across groups. The groups are `Built-in` and `My Presets`.
 
 The [preset design](design.md) owns the name rules, file locations, discovery, conflicts, and writes.
 
-The GUI MUST provide one collapsible Presets panel beside the photograph, with `Built-in` and `My Presets` groups. Cards MUST show a current-photograph thumbnail, the preset name, and a non-color applied-state cue.
+The GUI MUST provide one collapsible Presets panel beside the photograph, with `Built-in` and `My Presets` groups. It presents whole-look presets from both workflows in one list and MUST NOT separate them into Film and LUT categories or offer a workflow-type filter.
+
+Cards MUST show a current-photograph thumbnail, the preset name, and a non-color applied-state cue. They MUST identify the preset by its name and its carried material or LUT file context, not by a Film/LUT type badge.
 
 Film and print references MUST remain available in accessible card descriptions and the current-look inspector, without a repeated material paragraph on every card. A LUT preset's accessible description MUST expose its LUT file name and title; those names MUST NOT be presented as active material selections. The inspector MUST NOT repeat the preset list.
 
@@ -58,9 +62,9 @@ Applying a LUT preset MUST switch to the LUT workflow, replace the LUT look payl
 
 A manual workflow switch preserves both payloads but clears the active applied-preset identity.
 
-The browser presents film and LUT presets in the same groups. A card MUST carry a non-color Film / LUT type cue. Search MUST include the LUT file name, title, and path.
+The browser presents film look and LUT presets in one list under the same groups. It MUST NOT add a separate Film/LUT category or workflow-type filter. Search MUST include a LUT preset's file name, title, and path, and a film look preset's film or print identity.
 
-A session-only All / Film / LUT filter MAY narrow the browser without applying a preset or persisting into GUI state. A LUT preset thumbnail MUST render the production LUT workflow and MUST NOT prepare spectral materials.
+A LUT preset thumbnail MUST render the production LUT workflow and MUST NOT prepare spectral materials.
 
 In the LUT workflow, **Save preset…** captures a LUT preset. It requires a validated imported LUT and MUST NOT capture film or print profiles, inactive spectral controls, image data, or a render result. A LUT preset deletion or rename MUST NOT delete or modify its LUT file.
 
@@ -155,7 +159,7 @@ Only successful publication MAY associate the captured look with its saved name.
 
 ### Browser state and library actions
 
-The current-look summary MUST retain group and name independently of filtering. Its state MUST distinguish no applied preset, a matching applied preset, preset-owned adjustments, and a missing library document.
+The current-look summary MUST retain group and name independently of search. Its state MUST distinguish no applied preset, a matching applied preset, preset-owned adjustments, and a missing library document.
 
 An adjusted preset MUST mean differences against the applied document, not unsaved photograph work or differences against factory defaults. A film look uses the existing omitted-camera and look-ownership matching semantics; a LUT preset compares its LUT file path and hash, declaration, effects, and grade. Neither compares entire GUI states or prepared runtime trees.
 

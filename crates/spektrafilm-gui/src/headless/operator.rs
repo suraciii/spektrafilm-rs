@@ -6,7 +6,7 @@ fn operator_controls(h: &mut Harness<'_, App>) {
 
 fn standard_operator(h: &mut Harness<'_, App>) {
     reveal_control(h, "workflow.route");
-    choose(h, "workflow", "input > film > scan");
+    choose(h, "Film route", "input > film > scan");
     assert_eq!(h.state().film_medium, controls::ScanMedium::Negative);
     reveal_control(h, "scanner.scan_output");
     choose(h, "scan output", "Negative to positive");
@@ -502,7 +502,7 @@ fn neighboring_module_reset_retains_inactive_operator_and_uses_global_history() 
     assert_eq!(h.state().params, tone_edited);
     let stored = h.state().params.scanner.operator;
     reveal_control(h, "workflow.route");
-    choose(h, "workflow", "input");
+    choose(h, "Film route", "input");
     assert_eq!(h.state().params.workflow.route, "input");
     assert_eq!(h.state().params.scanner.operator, stored);
 

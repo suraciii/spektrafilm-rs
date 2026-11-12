@@ -218,7 +218,7 @@ pub(crate) fn inventory() -> &'static [ControlEntry] {
         entries.push(nonruntime(
             SurfaceEntry {
                 path: "workflow.route",
-                label: "workflow",
+                label: "Film route",
                 owner: ControlOwner::Stage(Stage::Input),
                 section: "Workflow",
                 editor: EditorKind::Choice,
@@ -492,10 +492,8 @@ fn exclusion(path: &str, description: &Value) -> Option<&'static str> {
 
 fn runtime_owner(path: &str) -> (ControlOwner, &'static str) {
     use ControlOwner::Stage as Owner;
-    if path == "workflow.mode" {
-        (Owner(Stage::Input), "Workflow")
-    } else if path.starts_with("lut_look.") {
-        (Owner(Stage::Input), "LUT look")
+    if path == "workflow.mode" || path.starts_with("lut_look.") {
+        (Owner(Stage::Look), "LUT look")
     } else if path.starts_with("film_render.grain.") {
         (Owner(Stage::Film), "Grain")
     } else if path.starts_with("film_render.halation.") {

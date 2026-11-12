@@ -555,6 +555,8 @@ fn key(label: &str) -> Option<&'static str> {
         }
         "Factory reset error: %{error}" => Some("surfaces.status.factory_error"),
         "Film" => Some("controls.label.film"),
+        "Film route" => Some("surfaces.route.label"),
+        "Look" => Some("controls.label.look"),
         "Film Format" => Some("controls.scanner.film_format"),
         "Film Resolution" => Some("controls.grain.film_resolution"),
         "Film Type" => Some("controls.grain.film_type"),
@@ -780,7 +782,7 @@ fn key(label: &str) -> Option<&'static str> {
             Some("surfaces.diagnostics.transfers_help")
         }
         "Logical transfers and work counters" => Some("surfaces.diagnostics.transfers"),
-        "Look, film or print stock" => Some("surfaces.presets.search_hint"),
+        "Look, film, print or LUT" => Some("surfaces.presets.search_hint"),
         "M filter shift of the color enlarger from a neutral position, in Kodak CC units" => {
             Some("controls.scanner.print_m_shift_help")
         }
@@ -1239,7 +1241,7 @@ fn key(label: &str) -> Option<&'static str> {
         "Which physical path the image takes through the pipeline: input color-manages RGB. input > film > scan exposes and scans film; negative film can retain its negative polarity or use Negative to positive, while slide film remains positive. input > film > print > scan exposes film, prints photographically, and scans positive paper. input > convert-film > print > scan converts the input to negative capture, prints photographically, and scans positive paper. input > convert-film > scan scans the negative capture with its film base; it can preserve negative polarity or convert Negative to positive. input > convert-film > scan-minus-base removes the film base and keeps negative polarity. CMYK ink style is independent in every workflow." => {
             Some("surfaces.route.help")
         }
-        "Workflow" => Some("controls.label.workflow"),
+        "Workflow" => Some("controls.section.workflow"),
         "Workflow route changed" => Some("surfaces.status.route_changed"),
         "Workflow: 1) Detect base → 2) Blind calibration (vibrant frame) → 3) Neutralize filters" => {
             Some("controls.convert.workflow")

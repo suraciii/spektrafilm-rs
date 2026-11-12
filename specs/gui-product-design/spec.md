@@ -49,7 +49,13 @@ Preview MUST update automatically under the [workflow contract](../gui-workflow/
 
 Delivery emphasis follows [Result identity and delivery guidance](../gui-workflow/spec.md#result-identity-and-delivery-guidance).
 
-The inspector MUST present Input and capture, Film, Print, Scan, and Output in that order. A stage jump strip MUST reveal and scroll to the corresponding heading in the same inspector. It MUST NOT switch between mutually exclusive pages.
+The inspector MUST present Input and capture, Film, Print, Scan, Look, and Output in that order. The Look stage is the single Film/LUT workflow surface; it is not a physical film-chain stage.
+
+A stage jump strip MUST reveal and scroll to the corresponding heading in the same inspector. It MUST NOT switch between mutually exclusive pages.
+
+The six stage headings MUST remain reachable in both workflows. An inactive stage MUST keep its heading visible with an explanation, MUST retain its stored values, and MUST present its body disabled and collapsed by default.
+
+In LUT mode, Film, Print, and Scan remain inspectable in the stored film chain. In Film mode, the Look stage remains reachable for the workflow selector while its LUT controls stay inactive.
 
 Several stages and modules MUST be able to remain open together.
 
@@ -131,6 +137,8 @@ With default disclosure, the Scan jump MUST reveal Tone & Color without requirin
 A parameter edit, preview completion, or route change MUST NOT collapse the user's open modules or reset the inspector scroll position.
 
 Halation MUST be a named Film module, not a hidden generic effect. It MUST retain the feature-profile action, scatter and back-reflection controls, source response, all editable RGB components, bounce controls, and normalization. A profile is a scoped starting configuration, not a substitute for these controls.
+
+Grain MUST be a named Film module beside Halation. It MUST keep the four engine choices in one editing location, distinguish material grain from Procedural's post-scan appearance, and MUST NOT be presented as a global effect or shared with the LUT workflow. LUT grain belongs to the LUT look and remains independent.
 
 Preflash MUST be a named Print module beside the main enlarger exposure controls. Exposure, Yellow shift, and Magenta shift MUST all be available. Zero exposure disables flash and retains the filter values.
 

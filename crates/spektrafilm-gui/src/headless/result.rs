@@ -5,7 +5,7 @@ use super::*;
 fn stale_save_cancel_and_continue_preserve_retained_pixels_and_adjustments() {
     let mut s = session();
     let h = &mut s.harness;
-    choose(h, "workflow", "input");
+    choose(h, "Film route", "input");
     let retained = preview(h);
     open_export(h);
     assert!(h.state_mut().undo_adjustment());
@@ -81,7 +81,7 @@ fn stale_save_cancel_and_continue_preserve_retained_pixels_and_adjustments() {
 fn escape_cancels_stale_save_without_opening_the_chooser() {
     let mut s = session();
     let h = &mut s.harness;
-    choose(h, "workflow", "input");
+    choose(h, "Film route", "input");
     let retained = scan(h);
     open_export(h);
     assert!(h.state_mut().undo_adjustment());
@@ -150,7 +150,7 @@ fn viewer_keeps_retained_preview_identity_and_caveat_while_scan_is_pending() {
 
     let active = h.state().render_worker.active.clone();
     let guard = active.lock();
-    choose(h, "workflow", "input");
+    choose(h, "Film route", "input");
     // Queue the Scan through the same scheduler as its button. A direct
     // dispatch would leave dirty set and schedule a superseding Preview.
     h.state_mut().full_scan_requested = true;
@@ -223,7 +223,7 @@ fn viewer_keeps_retained_preview_identity_and_caveat_while_scan_is_pending() {
 fn export_guidance_and_written_file_follow_crop_and_upscale() {
     let mut s = session();
     let h = &mut s.harness;
-    choose(h, "workflow", "input");
+    choose(h, "Film route", "input");
     for (path, label, value) in [
         ("io.crop_size", "crop size x", "0.5"),
         ("io.crop_size", "crop size y", "0.25"),

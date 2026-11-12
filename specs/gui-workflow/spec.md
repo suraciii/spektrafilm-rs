@@ -7,6 +7,10 @@ The [GUI presentation specification](../gui-presentation/spec.md) owns visual hi
 
 - The GUI exposes controls for input, film, print, scanner, output, advanced color, configuration, and LUT look.
 - A Film / LUT workflow selection and LUT look controls MUST follow the [LUT workflow](../lut-workflow/spec.md) and [LUT look](../lut-look/spec.md#ui-and-cli). LUT mode retains stored film, print, and scanner controls without executing their stages.
+- The Look stage owns the single Film/LUT workflow selector and the LUT look. It is not a physical film-chain stage.
+- The header's workflow summary is read-only and MAY locate the Look stage. It MUST NOT provide a second workflow editor.
+- The six stage headings remain reachable in both workflows. An inactive stage body and its module reset actions MUST be disabled and collapsed by default while its heading, stored values, and applicability reason remain readable.
+- The Look stage remains reachable in Film mode so the workflow selector is not hidden by its inactive LUT controls.
 - The preset browser MUST include film look presets and LUT presets. Applying either selects the workflow it describes.
 - Preview renders a bounded disposable image. Scan renders the original working resolution.
 - Both use the current runtime controls.
@@ -107,7 +111,7 @@ Serialized section payloads retain their core ownership under [Preset design](..
 
 Output MUST expose Simulation blend as the full-result/prepared-source blend under [Output mix](../output-mix/spec.md#output-mix). Existing output gamut algorithm and chroma-knee controls remain available without duplicate editable copies. Output MUST NOT expose standalone lightness compression, an Output response section or preset, or a separate output-processing switch for the `input` workflow.
 
-Scan MUST expose a Tone & Color module with the controls and collapsible Range group defined by [tone and color adjustments](../finishing/spec.md#controls). It MUST explain inactive conditions and retain stored values under [applicability](../finishing/spec.md#scope-and-applicability).
+Scan MUST expose a Tone & Color module with the controls and collapsible Range group defined by [tone and color adjustments](../finishing/spec.md#controls). It MUST explain inactive conditions, including LUT mode, and retain stored values under [applicability](../finishing/spec.md#scope-and-applicability).
 
 Tone & Color reset, transient module comparison, and editing behavior MUST follow [adjustment editing and comparison](../finishing/spec.md#editing-and-comparison). Comparison MUST NOT bypass unrelated stages or change retained output, parameters, or adjustment history.
 
@@ -204,11 +208,19 @@ Each module has one editing owner. The inspector MUST contain these stages and m
 | Application settings | General: interface language, preview limits, and rendering preferences that are not photographic controls; State and startup: startup state save/load/default actions; Display: display transform, ICC selection, canvas, padding, and interpolation; Diagnostics: observation and report actions. Language preference ownership follows [GUI product language](../gui-language/spec.md#selection-and-persistence), not photographic state. |
 | Export dialog | Independent full-resolution export backend, format, depth, saving color and encoding, applicable codec/compression options, destination selection, and export submission. |
 | Viewer footer | Original/Modified/Paper back selection; zoom, fit, reveal, crossfade, and read-only zoom state; [black and white endpoint warnings](../gui-product-design/clipping-warnings/spec.md#controls); optional image-analysis visibility. |
-| Preset browser | Film and LUT preset selection, browser search and type filter, library refresh/reveal, and preset management. |
+| Preset browser | Whole-look preset selection, browser search, library refresh/reveal, and preset management. |
+
+Film owns the Grain module. LUT look owns LUT grain as a separate control.
+
+The Grain module keeps the four-engine selector and all engine-specific controls in one location. It MUST label Spektra, Dye, and Fotufilm Film as material grain and Procedural as post-scan appearance.
+
+The Grain module MUST NOT be presented as a global effects module or shared with the LUT workflow.
+
+Halation, Camera diffusion, Enlarger diffusion, and Print viewing glare remain at their physical stage owners. They MUST NOT be combined into one Bloom or Glow module.
 
 The film workflow MUST expose **Export LUT…** as a header action and the LUT workflow MUST expose **Import LUT…** in the LUT look stage under [LUT workflow](../lut-workflow/spec.md). Export MUST write a `.cube` file and MUST NOT import it, apply it, create a preset, or switch workflow. It MUST NOT execute spectral film stages inside LUT mode.
 
-Tone & Color remains one control group. Its editing surface is Scan in film mode and LUT look in LUT mode. It MUST NOT be duplicated.
+The film Tone & Color group remains owned by Scan and becomes inactive in LUT mode with its stored values. The LUT look's Grade group is a separate LUT payload; neither is a second editable copy of the other.
 
 Rotation is a source operation and MUST NOT be offered as viewer-only pan or zoom. A read-only summary or action that locates its owner MAY appear elsewhere; a second editable copy MUST NOT.
 
@@ -298,6 +310,8 @@ Modules expose resets under [Section reset](#section-reset). Control coverage ac
 ## Section reset
 
 A visible module reset MUST restore exactly that module's editable canonical paths to their reset baseline. A module reset MUST NOT reset another module because modules can share one serialized preset section.
+
+While the film route is inactive in LUT mode, its selector MUST display the retained route and MUST disable the route reset. Resetting the live LUT route would normalize scanner controls outside the inactive route.
 
 Tone & Color reset MUST affect only its own controls, including Range. Individual tone and color adjustment reversal MUST use adjustment Undo; Tone & Color MUST NOT present row reset actions.
 
@@ -462,7 +476,7 @@ Only modified is an independent, reversible view filter against the reset baseli
 
 Turning it off MUST restore the ordinary inventory. A preset's modified marker MUST NOT be used as the filter predicate.
 
-Preset browser search and its session-only All / Film / LUT type filter are separate operations owned by [Presets](../presets/spec.md). Neither query MAY alter the control-search filter or selection.
+Preset browser search is a separate operation owned by [Presets](../presets/spec.md). It MUST NOT alter the control-search filter or selection.
 
 ## Labels and surfaces
 

@@ -782,7 +782,7 @@ fn scanner_ui_real_preview_scan_persistence_save_and_export() {
     let mut s = session();
     let h = &mut s.harness;
     reveal_control(h, "workflow.route");
-    choose(h, "workflow", "input > film > scan");
+    choose(h, "Film route", "input > film > scan");
     assert_eq!(h.state().params.workflow.route, "input > film > scan");
     reveal_control(h, "extras.simulation.film_stock");
     let profile = profile::load_profile_by_name(&data_dir(), "kodak_portra_400").unwrap();
@@ -792,7 +792,7 @@ fn scanner_ui_real_preview_scan_persistence_save_and_export() {
     // Selecting a stock intentionally resets its workflow; choose the eligible
     // scanner route after that production profile-selection behavior.
     reveal_control(h, "workflow.route");
-    choose(h, "workflow", "input > film > scan");
+    choose(h, "Film route", "input > film > scan");
     search_controls(h, "Scanner");
     choose(h, "scan output", "Preserve medium polarity");
     assert!(
@@ -1025,7 +1025,7 @@ fn scanner_ui_real_preview_scan_persistence_save_and_export() {
     assert_eq!(restored.film_name, "kodak_portra_400");
     eframe::App::on_exit(&mut restored, None);
     reveal_control(h, "workflow.route");
-    choose(h, "workflow", "input");
+    choose(h, "Film route", "input");
     assert_eq!(h.state().params.scanner.scan_output, "direct_scan");
 }
 
@@ -1035,14 +1035,14 @@ fn fotufilm_engine_selection_reaches_the_native_app_runtime() {
     let mut s = session();
     let h = &mut s.harness;
     reveal_control(h, "workflow.route");
-    choose(h, "workflow", "input > film > scan");
+    choose(h, "Film route", "input > film > scan");
     reveal_control(h, "extras.simulation.film_stock");
     let profile = profile::load_profile_by_name(&data_dir(), "kodak_portra_400").unwrap();
     let profile_label = profile.info.name.as_deref().unwrap_or("kodak_portra_400");
     choose(h, "film profile", profile_label);
     // Selecting a stock intentionally resets its workflow.
     reveal_control(h, "workflow.route");
-    choose(h, "workflow", "input > film > scan");
+    choose(h, "Film route", "input > film > scan");
     search_controls(h, "Grain");
     if !h.state().params.film_render.grain.active {
         click(h, "Enable grain");
@@ -1073,7 +1073,7 @@ fn fotufilm_engine_selection_reaches_the_native_app_runtime() {
 fn real_worker_accepts_only_latest_request_and_current_revision() {
     let mut s = session();
     let h = &mut s.harness;
-    choose(h, "workflow", "input");
+    choose(h, "Film route", "input");
     let baseline = preview(h);
     let ctx = h.ctx.clone();
     // Hold the worker's existing start marker while UI events change the
@@ -1082,7 +1082,7 @@ fn real_worker_accepts_only_latest_request_and_current_revision() {
     let start_guard = active.lock();
     h.state_mut().dispatch_render(&ctx);
     let stale_revision = h.state().render_job.as_ref().unwrap().parameter_revision;
-    choose(h, "workflow", "input > film > scan");
+    choose(h, "Film route", "input > film > scan");
     assert!(h.state().parameter_revision > stale_revision);
     drop(start_guard);
     preview(h);
@@ -1391,7 +1391,7 @@ fn conversion_style_combo_offers_installed_styles_and_renders_them() {
     let profile = profile::load_profile_by_name(&data_dir(), "kodak_portra_400").unwrap();
     choose(h, "film profile", profile.info.name.as_deref().unwrap());
     reveal_control(h, "workflow.route");
-    choose(h, "workflow", "input > film > scan");
+    choose(h, "Film route", "input > film > scan");
     search_controls(h, "Scanner");
     choose(h, "scan output", "Negative to positive");
     // The selector lists exactly what the data directory carries: the
@@ -1434,7 +1434,7 @@ fn scanner_state_rejection_uses_the_neutral_scan_model() {
     let profile = profile::load_profile_by_name(&data_dir(), "kodak_portra_400").unwrap();
     choose(h, "film profile", profile.info.name.as_deref().unwrap());
     reveal_control(h, "workflow.route");
-    choose(h, "workflow", "input > film > scan");
+    choose(h, "Film route", "input > film > scan");
     search_controls(h, "Scanner");
     // The readout light is a product constant; it is not a control on any
     // route. The retired-control checks run on the direct scan this route
@@ -1548,9 +1548,9 @@ fn scanner_state_rejection_uses_the_neutral_scan_model() {
     .unwrap();
     assert_png(&export_path, &expected);
     reveal_control(h, "workflow.route");
-    choose(h, "workflow", "input");
+    choose(h, "Film route", "input");
     assert_eq!(h.state().params.scanner.scan_output, "direct_scan");
-    choose(h, "workflow", "input > film > scan");
+    choose(h, "Film route", "input > film > scan");
     search_controls(h, "Scanner");
     choose(h, "scan output", "Negative to positive");
     reveal_control(h, "extras.simulation.film_stock");
@@ -1567,11 +1567,11 @@ fn american_reminiscence_browser_restores_virtual_exposure_and_render() {
     h.state_mut().params.camera.exposure_compensation_ev = -1.0;
     h.state_mut().params.camera.auto_exposure = true;
     click(h, "Collapse or expand Presets");
-    click(h, "American Reminiscence • Film");
+    click(h, "American Reminiscence");
     assert_eq!(h.state().params.camera.exposure_compensation_ev, 0.5);
     assert!(!h.state().params.camera.auto_exposure);
     assert!(
-        h.query_by_label("American Reminiscence • Film • applied")
+        h.query_by_label("American Reminiscence • applied")
             .is_some()
     );
     let initial = preview(h);
@@ -1579,7 +1579,7 @@ fn american_reminiscence_browser_restores_virtual_exposure_and_render() {
     reveal_control(h, "camera.exposure_compensation_ev");
     edit(h, "Exposure compensation", "-1.0");
     assert!(
-        h.query_by_label("American Reminiscence • Film • modified")
+        h.query_by_label("American Reminiscence • modified")
             .is_some()
     );
     let changed = preview(h);
@@ -1590,10 +1590,10 @@ fn american_reminiscence_browser_restores_virtual_exposure_and_render() {
             .zip(&changed.data)
             .any(|(a, b)| (*a as f64 - *b as f64).abs() > 0.001)
     );
-    click(h, "American Reminiscence • Film • modified");
+    click(h, "American Reminiscence • modified");
     let restored = preview(h);
     assert!(
-        h.query_by_label("American Reminiscence • Film • applied")
+        h.query_by_label("American Reminiscence • applied")
             .is_some()
     );
     for (a, b) in initial.data.iter().zip(&restored.data) {

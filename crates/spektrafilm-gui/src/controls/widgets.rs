@@ -1031,7 +1031,7 @@ pub(crate) fn choice_tip_options<'a>(
     });
     // A long selected value gets the full row instead of a truncated field;
     // the closed control must name its state without hover.
-    let stacked = label == "workflow" || selected_width > theme::WIDTH_COMBO_MAX - 36.0;
+    let stacked = label == "Film route" || selected_width > theme::WIDTH_COMBO_MAX - 36.0;
     let row = |ui: &mut Ui| {
         row_label(ui, label, experimental)
             .on_hover_text(crate::controls::localized(ui.ctx(), tooltip));

@@ -147,7 +147,7 @@ The [presentation design](design.md#factory-projection-and-modified-state) owns 
 
 ## Stage navigation and control locators
 
-The inspector MUST present Input and capture, Film, Print, Scan, and Output as stage headings in one continuous list. The stage jump strip MUST look like navigation to those headings, not a mutually exclusive page selector. The interface MUST NOT present MAIN, FILM, PRINT, ADVANCED, or CONFIG tabs.
+The inspector MUST present Input and capture, Film, Print, Scan, Look, and Output as stage headings in one continuous list. The stage jump strip MUST look like navigation to those headings, not a mutually exclusive page selector. The interface MUST NOT present MAIN, FILM, PRINT, ADVANCED, or CONFIG tabs.
 
 The search field MUST remain visible above the inspector list. Search behavior follows [control search](../gui-workflow/spec.md#control-search). A locator MUST show the control label, owning module, and destination stage or dialog.
 

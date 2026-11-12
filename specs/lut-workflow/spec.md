@@ -32,7 +32,11 @@ A LUT is a color transform, not a film simulation. The product MUST NOT present 
 
 ## Workflow selection
 
-A workflow selector MUST offer exactly two choices: **Film** and **LUT**. The film route selector remains a separate control inside the film workflow.
+A workflow selector MUST offer exactly two choices: **Film** and **LUT**. It has one owner: the Look stage.
+
+The header workflow summary is read-only and MAY locate the Look stage. It MUST NOT duplicate the editor.
+
+The film route selector remains a separate control inside the film workflow. In LUT mode it is disabled and displays the retained route; its reset MUST remain disabled while the route is inactive.
 
 - Selecting Film MUST make the spectral stages active and the LUT look controls inactive.
 - Selecting LUT MUST make the LUT look controls active. Film, Print, and Scanner controls remain stored but inactive.
@@ -151,12 +155,11 @@ A LUT preset document is exported or imported without its LUT file. The UI MUST 
 
 ### Browser
 
-The preset browser MUST present film look presets and LUT presets in the same `Built-in` and `My Presets` groups. A card MUST show a non-color **Film** or **LUT** type cue.
+The preset browser MUST present film look presets and LUT presets in one list under the same `Built-in` and `My Presets` groups. It MUST NOT introduce separate Film and LUT categories or a workflow-type filter; a card MUST identify its content by its name and its carried material or LUT file context, not by a workflow type badge.
 
 - Search MUST match a LUT preset's name, referenced LUT file name or title, and the LUT path.
-- A session-only All / Film / LUT filter MAY narrow the browser without applying a preset or persisting into GUI state.
 - Applying a LUT card MUST switch to the LUT workflow. Applying a film card MUST switch to the film workflow.
-- An applied LUT preset remains identifiable when search or filtering hides its row.
+- An applied LUT preset remains identifiable when search hides its row.
 - A missing or changed LUT file MUST appear as a library fault or card-unavailable state. It MUST NOT show a stale thumbnail as current.
 - A missing LUT file is not an empty library.
 
@@ -179,7 +182,11 @@ The LUT workflow surface MUST expose:
 
 The LUT stage MUST identify the look as non-spectral.
 
-Film, Print, and Scanner modules MUST remain visible but inactive in the LUT workflow, with an explanation and their retained values. Tone & Color MUST move into the LUT look surface in LUT mode; it MUST NOT be duplicated in Scan.
+Film, Print, and Scanner stages MUST remain reachable in the LUT workflow with their headings, stored values, an explanation, and disabled bodies collapsed by default. Expanding an inactive stage MUST NOT execute or enable it.
+
+The Look stage remains active for the workflow selector and LUT look, including its independent grade group. The retained film Tone & Color module remains in Scan and is inactive in LUT mode; it MUST NOT be duplicated into Look.
+
+LUT diffusion, halation, grade, and grain are independent from the film-chain controls of the same names. Sharing a module vocabulary MUST NOT imply shared values or a shared execution domain.
 
 Output color space, encoding, and gamut processing remain active. Output mix and CMYK ink style remain inactive film-chain operations and retain their stored values.
 

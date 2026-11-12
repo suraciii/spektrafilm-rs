@@ -210,8 +210,11 @@ impl eframe::App for App {
                 });
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = theme::SPACE_1;
-                    let stage_width = (ui.available_width() - 4.0 * theme::SPACE_1) / 5.0;
-                    for stage in controls::Stage::ALL {
+                    let stages = controls::Stage::ALL;
+                    let stage_width = (ui.available_width()
+                        - (stages.len().saturating_sub(1) as f32) * theme::SPACE_1)
+                        / stages.len() as f32;
+                    for stage in stages {
                         let label = if stage == controls::Stage::Input {
                             crate::i18n::text(ui.ctx(), "surfaces.search.input_jump")
                         } else {
