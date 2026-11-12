@@ -40,9 +40,9 @@ pub(super) fn build_glare_state(
     }
     let scratch = paged_transport(backend, img_bytes, "glare_noise")?;
     // The reference stream is sequential, so one workgroup owns the generator.
-    // Larger bounded dispatches amortize launch and bind-group setup; 262,144
-    // pixels stays far below a driver watchdog on a slow adapter.
-    const WINDOW_PIXELS: u32 = 262_144;
+    // A single invocation still walks this window; keep it small enough that a
+    // slow integrated GPU does not cross the driver watchdog.
+    const WINDOW_PIXELS: u32 = 8_192;
     let generator = transport(backend, STATE_BYTES, "glare_mt19937_state")?;
     let pipeline = backend.cached_pipeline(
         concat!(
