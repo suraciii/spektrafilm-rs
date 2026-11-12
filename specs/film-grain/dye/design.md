@@ -82,7 +82,11 @@ A scale whose octave sizes or coordinates are not finite and positive MUST fail 
 
 ## Field construction
 
-Three octaves use a base cell size of 7.3 µm at scale 1, halving for each finer octave. Each octave is smoothstep-interpolated value noise from a 32-bit coordinate hash; the octaves are summed with weights `1, 0.5, 0.25` and multiplied by one fixed scale that makes the sum unit variance. A cell size that would put every source pixel on one lattice phase is nudged by 1.37% before evaluation, so amplitude does not step when the scale slider lands on that aliasing case. There is no Gaussian filter, high-pass, or per-image standardization.
+Three octaves use a base cell size of 7.3 µm at scale 1, halving for each finer octave. Each octave is smoothstep-interpolated value noise from a 32-bit coordinate hash. The octaves are summed with weights `1, 0.5, 0.25` and multiplied by one fixed scale that makes the sum unit variance.
+
+A cell size that would put every source pixel on one lattice phase is nudged by 1.37% before evaluation, so amplitude does not step when the scale slider lands on that aliasing case.
+
+There is no Gaussian filter, high-pass, or per-image standardization.
 
 The noise is coordinate-addressed: a 32-bit hash of seed, stream, global source pixel and octave. The CPU reference and the device pass use the same hash, the same streams, the same octave sizes, and the same coordinates, so one seed yields one realization on both executors.
 
