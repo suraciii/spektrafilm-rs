@@ -419,7 +419,7 @@ mod tests {
         // Build every job before submission, just as the resident chain does.
         // The middle job models a scanner tail larger than its film source.
         let mut jobs = Vec::new();
-        for (width, height, sigma) in [(7, 3, 0.8), (17, 9, 3.5), (9, 5, 1.7)] {
+        for (width, height, sigma) in [(7, 3, 0.8), (17, 9, 12.0), (9, 5, 1.7)] {
             let buffers = scratch.buffers(&gpu, width, height).unwrap();
             for (view, capacity) in [
                 (&buffers.intermediate, &full.intermediate),

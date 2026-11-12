@@ -374,8 +374,8 @@ fn glare_runs_without_native_f64_features() {
             .unwrap();
         let mut scratch = GaussianScratch::new(37, 19);
         let state = build_glare_state(&backend.device, &gp, 37, 19, &image, &mut scratch, &backend);
-        // Every glare blur must run on an adapter without native f64; the
-        // device Gaussian uses the f32 kernels with their declared budgets.
+        // The declared f32 glare blurs must run on an adapter without native
+        // f64; larger Gaussian sigma fails explicitly rather than approximating.
         let state = state.unwrap_or_else(|error| {
             panic!("f32-only glare blur {blur} must run: {error}");
         });

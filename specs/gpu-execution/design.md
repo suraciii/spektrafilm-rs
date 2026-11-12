@@ -112,7 +112,9 @@ A full-source reduction MUST retain the specified source population before crop 
 
 Retained RGB images carry full dimensions and absolute pixel-indexed device pages. Upload and final materialization traverse those pages; intermediate extraction and output assembly copy page intersections on the device. `SPEKTRAFILM_GPU_BINDING_LIMIT_BYTES` MAY lower the physical binding limit to exercise the same paging route.
 
-Full-source exposure metering gathers reflected source support from those pages, streams bounded f32 vertical blocks one preview row at a time, and preserves vertical-then-horizontal tap order and the reference 256-pixel preview cap. The complete preview luminance grid feeds the existing global pattern reduction; only the final f32 EV returns to the host.
+Full-source exposure metering gathers reflected source support from those pages, streams bounded f32 vertical blocks one preview row at a time, and preserves vertical-then-horizontal tap order and the reference 256-pixel preview cap.
+
+The preview grid is converted to the film-raw field with the same prepared front-pass table and adaptation matrix as the render, then feeds the existing global pattern reduction; Mallett uses its raw-channel-mean row instead. Only the final f32 EV returns to the host.
 
 The preview grid and fixed reduction coefficients remain the metering minimum working set.
 
@@ -249,9 +251,7 @@ Partial resource retirement MUST NOT mark a complete image batch ready.
 
 Gaussian gathering and scattering MUST address target-channel samples on the device without changing sample bits. Copy-only or binding-incompatible storage MAY use bounded contiguous device copies for adaptation, but host commands MUST NOT be generated for individual pixels or filter taps.
 
-Gaussian transport MUST preserve the reference support, endpoint policy, and axis order. Recursive filter state MUST continue through forward and backward page boundaries without restarting. Above sigma 8, CPU and device both use the reflected unit-sum box cascade with the same width selection.
-
-Its frozen kernel error against the truncated Gaussian is 1.68e-3 at sigma 8, 3.33e-4 at 32, and 7.10e-5 at 147 of unit kernel mass. No smaller-sigma branch changes.
+Gaussian transport MUST preserve reference support, endpoint policy, and axis order; recursive state MUST cross forward and backward page boundaries without restarting. At and above sigma 3, native-f64 execution MUST use IIR; execution without binary64 MUST reject sigma >= 8 rather than substitute an approximation. FIR remains the below-3 path.
 
 Gaussian page planning SHOULD balance serial coordinate work against independent lines. A complete supported raster that fits binding, coordinate, and line-state limits SHOULD remain one page.
 

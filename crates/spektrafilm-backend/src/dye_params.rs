@@ -31,3 +31,44 @@ pub struct DyeGpuParams {
     /// Relative correlation length of the field (the mapped law value).
     pub length_scale: f64,
 }
+
+/// Delivered Dye law constants.
+///
+/// The host model and the device passes read the same values from here, so a
+/// delivered-look change cannot drift between executors. The value at `1.0`
+/// look strength is the engine constant; recipe strength and scale are applied
+/// by the caller.
+pub mod law {
+    /// Octave diameters in micrometres and relative weights.
+    pub const OCTAVES: [(f64, f64); 3] = [(4.5, 1.0), (9.0, 1.0), (18.0, 0.5)];
+    /// Band limit of the field, in micrometres.
+    pub const HIGHPASS_UM: f64 = 12.0;
+    /// Relative density amplitude at the taper peak.
+    pub const WHITE: f64 = 0.035;
+    /// Relative density amplitude per record.
+    pub const STRENGTH: [f64; 3] = [1.0, 1.0, 1.18];
+    /// Shared fraction of the field between records.
+    pub const RHO: f64 = 0.92;
+    /// Event area of one developed cluster, in square micrometres.
+    pub const EVENT_AREA_UM2: f64 = 0.0015;
+    /// Base (fog) density that keeps the event rate alive in the deep shadows.
+    pub const FOG: f64 = 0.15;
+    /// Record density at which the density scale saturates.
+    pub const DMAX: f64 = 1.2;
+    /// Development-probability uniformity.
+    pub const UNIFORMITY: f64 = 0.97;
+    /// Residual granularity fraction at full development.
+    pub const TAPER_FLOOR: f64 = 0.18;
+
+    /// Peak of the derived granularity shape over the record density.
+    pub fn taper_peak() -> f64 {
+        (1..=512)
+            .map(|i| {
+                let p = f64::from(i) / 512.0;
+                let sat = 1.0 - p * UNIFORMITY;
+                (sat * p * (1.0 - p)).max(0.0).sqrt()
+            })
+            .fold(0.0, f64::max)
+            .max(1e-6)
+    }
+}

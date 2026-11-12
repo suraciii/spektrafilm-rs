@@ -2,10 +2,12 @@
 ## Contract
 - Spektra MUST sample developed film density and return film density for the remaining print or scan stages.
 - The reference algorithm is `andreavolpato/spektrafilm` experimental commit `28bf883e1672e884307edc75852549376e13644e`.
+- The pinned experimental branch is distinct from the older `main` particle-area model. Their parameter documents, stock values, and rendered grain MUST NOT be treated as interchangeable.
 - Spektra MUST use the profile's available density-curve layers.
 - A profile without layer curves MUST use its total density curve as one active layer of the same sampler.
 - `rms_granularity` MUST size the particle population from the maximum of the profile's summed layer-variance curves at the reference 48 µm diameter aperture. It MUST NOT be treated as a direct particle area or a measured final-scan RMS guarantee.
 - Spektra MUST retain per-layer density floors, `particle_scale_sublayers`, uniformity, dye-cloud blur, micro-structure, and multiplicative unsharp masking.
+- Spatial Gaussian filtering MUST use reflected FIR below sigma 3 and the reference sample-replicating IIR at or above sigma 3. A large-sigma box approximation MUST NOT replace the reference law.
 - CLI source composition and complete looks MUST use `[6, 8, 10]` for omitted Spektra RMS before stock defaults apply.
 - Authored RMS values MUST retain precedence; the shared Dye default MUST NOT become Spektra's omitted-strength fallback.
 - Direct runtime callers that select Spektra MUST supply a positive RMS target; shared typed defaults remain Dye defaults.

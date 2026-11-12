@@ -53,8 +53,12 @@ Engine-specific contracts live in [Spektra](spektra/spec.md), [Procedural](proce
 ## Control naming
 
 Runtime control names MUST identify their engine.
+
 Procedural controls MUST use the `procedural_` prefix.
-Dye support and event-area controls MUST use `dye_support_um` and `dye_event_area_um2`.
+
+Dye look controls MUST use `dye_strength` and `dye_scale`.
+
+Retired Dye support and event-area keys remain readable but do not change the delivered law.
 
 Readers MUST preserve the values of historical numbered control keys.
 Writers and parameter discovery MUST emit only canonical control names.

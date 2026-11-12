@@ -1,7 +1,7 @@
 use rayon::prelude::*;
 use spektrafilm_math::colorspace;
 use spektrafilm_math::image::ImageBuf;
-use spektrafilm_math::precision::to_f64;
+use spektrafilm_math::precision::{from_f64, to_f64};
 
 use crate::params::RuntimeParams;
 
@@ -36,42 +36,58 @@ pub const MAX_SIZE: usize = 256;
 /// final two lines, so the constant lives here rather than in the shader.
 pub const MID_GREY: f64 = 0.184;
 
+/// The reference's ≤256 px metering preview, before any exposure scale.
+///
+/// Python's `small_preview` uses `skimage.transform.rescale(order=0)`.
+/// Scikit-image's default `anti_aliasing=True` fires for order 0 as well:
+/// a Gaussian (`sigma = max(0, (factor-1)/2)` per axis, mirror boundary) is
+/// applied to the float source *before* nearest sampling. The effective
+/// per-axis factor is `src_dim/out_dim`, which differs from the global
+/// scale on the short edge (e.g. 200/171 vs 300/256). A source whose long
+/// edge is already ≤ 256 is its own preview.
+pub fn metering_preview(image: &ImageBuf) -> ImageBuf {
+    let w = image.width as usize;
+    let h = image.height as usize;
+    if w.max(h) <= MAX_SIZE {
+        return image.clone();
+    }
+    let scale = MAX_SIZE as f64 / w.max(h) as f64;
+    let (data, sw, sh) = spektrafilm_math::resize::rescale_nearest0(image, scale)
+        .expect("small_preview scale is 256/max_dim with max_dim > 256");
+    ImageBuf::from_data(
+        sw as u32,
+        sh as u32,
+        data.into_iter().map(from_f64).collect(),
+    )
+}
+
+/// Meter the display-RGB preview and return the EV that lands the metered
+/// region on `0.184` linear luminance. This stays available for callers that
+/// explicitly require display-domain metering; the image pipeline uses
+/// [`measure_raw_autoexposure_ev`] instead.
 pub fn measure_autoexposure_ev(
     image: &ImageBuf,
     rgb_to_xyz: &[[f64; 3]; 3],
     cctf: Option<colorspace::Cctf>,
     method: &str,
 ) -> f64 {
-    let w = image.width as usize;
-    let h = image.height as usize;
-    let max_dim = w.max(h);
-    // Python `small_preview`: `rescale(order=0)` with scale
-    // MAX_SIZE/max_dim. Each output pixel takes the nearest antialiased
-    // source via `floor((o+0.5)·src/out)` (`ndi.zoom(grid_mode=True,
-    // order=0)`); skimage rounds each axis independently, so the effective
-    // per-axis factor is src_dim/out_dim — which differs from the global
-    // scale on the short edge (e.g. 200/171 vs 300/256). Long edge ≤ 256
-    // keeps the source itself as the preview.
-    let (preview, sw, sh) = if max_dim > MAX_SIZE {
-        let scale = MAX_SIZE as f64 / max_dim as f64;
-        spektrafilm_math::resize::rescale_nearest0(image, scale)
-            .expect("small_preview scale is 256/max_dim with max_dim > 256")
-    } else {
-        (
-            image.data.iter().map(|&v| to_f64(v)).collect::<Vec<f64>>(),
-            w,
-            h,
-        )
-    };
+    let preview = metering_preview(image);
+    let sw = preview.width as usize;
+    let sh = preview.height as usize;
 
     // Downsampled luminance grid (row-major, sw × sh): decode the sampled
     // pixels, then Y = rgb_to_xyz[1] · rgb, all f64.
     let decode = |v: f64| cctf.map_or(v, |c| colorspace::cctf_decode(v, c));
     let m = rgb_to_xyz[1];
     let lum: Vec<f64> = preview
+        .data
         .par_chunks_exact(3)
         .map(|px| {
-            let (r, g, b) = (decode(px[0]), decode(px[1]), decode(px[2]));
+            let (r, g, b) = (
+                decode(to_f64(px[0])),
+                decode(to_f64(px[1])),
+                decode(to_f64(px[2])),
+            );
             m[0] * r + m[1] * g + m[2] * b
         })
         .collect();
@@ -117,6 +133,68 @@ pub fn meter_autoexposure_ev(image: &ImageBuf, params: &RuntimeParams) -> f64 {
     )
 }
 
+/// Auto-exposure compensation on film raw, upstream experimental's
+/// `measure_raw_autoexposure_ev` (`utils/autoexposure.py`): the field is the
+/// mean of the raw channels, metered with `method`, and the EV brings it to
+/// `target` (1, where a mid-grey subject lands at reference exposure).
+/// Unknown methods, or a meter reading that is not positive and finite,
+/// yield 0 EV.
+pub fn measure_raw_autoexposure_ev(raw: &ImageBuf, method: &str, target: f64) -> f64 {
+    let field: Vec<f64> = raw
+        .data
+        .par_chunks_exact(3)
+        .map(|pixel| raw_field_value([to_f64(pixel[0]), to_f64(pixel[1]), to_f64(pixel[2])]))
+        .collect();
+    measure_field_autoexposure_ev(
+        &field,
+        raw.width as usize,
+        raw.height as usize,
+        method,
+        target,
+    )
+}
+
+/// The metering field value of one raw pixel: the channel mean, summed in
+/// numpy's order.
+pub fn raw_field_value(raw: [f64; 3]) -> f64 {
+    (raw[0] + raw[1] + raw[2]) / 3.0
+}
+
+/// [`measure_raw_autoexposure_ev`] on a ready `width` × `height` field
+/// (upstream `_exposure_compensation_ev(_metered_value(field, method))`).
+pub fn measure_field_autoexposure_ev(
+    field: &[f64],
+    width: usize,
+    height: usize,
+    method: &str,
+    target: f64,
+) -> f64 {
+    let Some(metered) = meter_field(field, width, height, method) else {
+        return 0.0;
+    };
+    let exposure = metered / target;
+    let ev = -exposure.log2();
+    tracing::info!(
+        target: "spektrafilm_core::stages::filming",
+        width,
+        height,
+        method,
+        metered,
+        target,
+        ev,
+        "autoexposure_raw"
+    );
+    if ev.is_infinite() {
+        tracing::warn!(
+            target: "spektrafilm_core::stages::filming",
+            "Autoexposure is Inf. Setting autoexposure compensation to 0 EV."
+        );
+        0.0
+    } else {
+        ev
+    }
+}
+
 /// Normalized pixel coordinate along an axis: `(i/dim - 0.5) * (dim/maxdim)`,
 /// so the long edge spans [-0.5, 0.5] (Python `_normalized_coords`).
 fn norm_coord(i: usize, dim: usize, max_dim: usize) -> f64 {
@@ -126,8 +204,14 @@ fn norm_coord(i: usize, dim: usize, max_dim: usize) -> f64 {
 /// Meter the downsampled luminance grid with the named pattern, returning the
 /// mean luminance the autoexposure should map to mid-grey (0.184).
 fn meter_luminance(lum: &[f64], sw: usize, sh: usize, method: &str) -> f64 {
+    meter_field(lum, sw, sh, method).unwrap_or(MID_GREY)
+}
+
+/// Meter a field with the named pattern (upstream `_metered_value`). `None`
+/// means the method is unknown and has no metered value.
+fn meter_field(lum: &[f64], sw: usize, sh: usize, method: &str) -> Option<f64> {
     let max_dim = sw.max(sh);
-    match method {
+    Some(match method {
         "average" => lum.iter().sum::<f64>() / lum.len() as f64,
 
         "median" => {
@@ -258,10 +342,10 @@ fn meter_luminance(lum: &[f64], sw: usize, sh: usize, method: &str) -> f64 {
             }
         }
 
-        // Python's `else` branch sets `exposure = 1.0` (already post-`/0.184`),
-        // i.e. 0 EV. Returning the mid-grey target makes that division cancel.
-        _ => MID_GREY,
-    }
+        // Python's raw meter has no value for an unknown method; display
+        // metering turns that into its mid-grey target above.
+        _ => return None,
+    })
 }
 
 #[cfg(test)]

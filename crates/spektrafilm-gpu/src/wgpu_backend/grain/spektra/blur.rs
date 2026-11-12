@@ -21,6 +21,8 @@ const IMAGE_LAYOUT: [wgpu::BufferBindingType; 3] = [
 ];
 const FIR_WORKGROUP_SIZE: u32 = 256;
 const IIR_WORKGROUP_SIZE: u32 = 64;
+/// Largest sigma whose recurrence remains stable in the f32-only shaders.
+const F32_IIR_MAX_SIGMA: f64 = 8.0;
 
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
@@ -85,7 +87,6 @@ struct CopyParams {
 enum Method {
     Fir,
     Iir,
-    Box,
     Copy,
 }
 
@@ -122,11 +123,9 @@ struct ChannelPasses {
 
 /// Reference Gaussian blur over resident, interleaved f32 RGB samples.
 ///
-/// `sigma[c] < 3` uses reflected FIR; `3 <= sigma[c] < 8` uses
-/// sample-replicating IIR; larger sigma uses three reflected box passes per axis.
-/// `sigma[c] <= 0` copies the channel
-/// unchanged, as the reference does. All three channels are filtered with
-/// their own sigma and pass order.
+/// `sigma[c] < 3` uses reflected FIR; `sigma[c] >= 3` uses sample-replicating
+/// IIR. `sigma[c] <= 0` copies the channel unchanged, as the reference does.
+/// All three channels are filtered with their own sigma and pass order.
 ///
 /// `source`, `destination`, and `scratch` MUST be distinct buffers. Small jobs
 /// bind aligned image regions; larger jobs gather/scatter raw target-channel
@@ -134,8 +133,8 @@ struct ChannelPasses {
 /// bounded bulk-copy adapters. Source requires COPY_SRC, destination requires
 /// COPY_SRC | COPY_DST. Offsets count float samples, without alignment rules.
 ///
-/// FIR and IIR use binary64 arithmetic when supported, binary32 otherwise.
-/// Box passes always use binary32 arithmetic.
+/// FIR and IIR use binary64 arithmetic when supported; the f32 fallback is
+/// limited to sigma < 8, where its recurrence remains within the stage budget.
 pub(in crate::wgpu_backend) struct GrainBlurState {
     execution: Execution,
 }
@@ -152,7 +151,6 @@ enum Execution {
 struct DirectBlurState {
     fir: CachedPipelineRef,
     iir: CachedPipelineRef,
-    boxes: CachedPipelineRef,
     copy: CachedPipelineRef,
     channels: [ChannelPasses; 3],
     _owned_scratch: Option<wgpu::Buffer>,
@@ -264,6 +262,7 @@ pub(in crate::wgpu_backend) fn build_grain_blur_with_scratch(
         .device
         .features()
         .contains(wgpu::Features::SHADER_F64);
+    require_f64_for_large_sigma(f64_supported, sigma)?;
     let max_groups = backend.device.limits().max_compute_workgroups_per_dimension;
     let fir = backend.cached_pipeline(
         if f64_supported {
@@ -281,7 +280,6 @@ pub(in crate::wgpu_backend) fn build_grain_blur_with_scratch(
         },
         &IMAGE_LAYOUT,
     );
-    let boxes = backend.cached_pipeline(include_str!("blur_direct_box.wgsl"), &IMAGE_LAYOUT);
     let copy = backend.cached_pipeline(include_str!("blur_copy.wgsl"), &IMAGE_LAYOUT);
     let channels = [
         build_channel(
@@ -295,7 +293,6 @@ pub(in crate::wgpu_backend) fn build_grain_blur_with_scratch(
             &fir,
             &iir,
             &copy,
-            &boxes,
             f64_supported,
             max_groups,
         )?,
@@ -310,7 +307,6 @@ pub(in crate::wgpu_backend) fn build_grain_blur_with_scratch(
             &fir,
             &iir,
             &copy,
-            &boxes,
             f64_supported,
             max_groups,
         )?,
@@ -325,7 +321,6 @@ pub(in crate::wgpu_backend) fn build_grain_blur_with_scratch(
             &fir,
             &iir,
             &copy,
-            &boxes,
             f64_supported,
             max_groups,
         )?,
@@ -334,7 +329,6 @@ pub(in crate::wgpu_backend) fn build_grain_blur_with_scratch(
         execution: Execution::Direct(DirectBlurState {
             fir,
             iir,
-            boxes,
             copy,
             channels,
             _owned_scratch: None,
@@ -426,6 +420,18 @@ pub(in crate::wgpu_backend) fn build_grain_blur_f64_paged(
             super::super::super::bounded::storage_binding_limit(backend)?,
         )?),
     })
+}
+
+/// Preserve the f64 recurrence's stability on devices without native binary64.
+/// The reference's large-sigma coefficients are too close to one for an f32
+/// recurrence; the former reflected box cascade was a different law.
+fn require_f64_for_large_sigma(f64_supported: bool, sigma: [f64; 3]) -> Result<(), String> {
+    if !f64_supported && sigma.iter().any(|&value| value >= F32_IIR_MAX_SIGMA) {
+        return Err(format!(
+            "Gaussian blur with sigma >= {F32_IIR_MAX_SIGMA} requires native shader f64 arithmetic"
+        ));
+    }
+    Ok(())
 }
 
 /// Bytes of one image-sized RGB sample region, validated against the shader's
@@ -615,7 +621,6 @@ fn build_channel(
     fir: &CachedPipelineRef,
     iir: &CachedPipelineRef,
     copy: &CachedPipelineRef,
-    boxes: &CachedPipelineRef,
     f64_supported: bool,
     max_groups: u32,
 ) -> Result<ChannelPasses, String> {
@@ -682,7 +687,7 @@ fn build_channel(
             passes: vec![vertical, horizontal],
             _kernel: Some(kernel),
         })
-    } else if sigma_f64 < 8.0 {
+    } else {
         let coefficients = iir_coefficients_f64(sigma_f64);
         if ![
             coefficients.0,
@@ -731,56 +736,6 @@ fn build_channel(
         );
         Ok(ChannelPasses {
             passes: vec![horizontal, vertical],
-            _kernel: None,
-        })
-    } else {
-        let width = spektrafilm_math::gaussian::gaussian_box_width(sigma_f64);
-        let radius =
-            u32::try_from(width / 2).map_err(|_| "Gaussian box radius is not representable")?;
-        if radius > i32::MAX as u32 / 2
-            || radius + region.width.max(region.height) > i32::MAX as u32
-        {
-            return Err("Gaussian box radius exceeds shader indexing range".into());
-        }
-        let mut passes = Vec::with_capacity(6);
-        for index in 0..6 {
-            let vertical = index >= 3;
-            let lines = if vertical {
-                region.width
-            } else {
-                region.height
-            };
-            let grid = bounded_grid(
-                u64::from(lines).div_ceil(u64::from(IIR_WORKGROUP_SIZE)),
-                max_groups,
-            )?;
-            let (input, input_range) = if index == 0 {
-                (source, &region.source)
-            } else if index % 2 == 1 {
-                (scratch, &region.scratch)
-            } else {
-                (destination, &region.destination)
-            };
-            let output = if index % 2 == 0 {
-                (scratch, &region.scratch)
-            } else {
-                (destination, &region.destination)
-            };
-            passes.push(make_box_pass(
-                backend,
-                boxes,
-                region,
-                radius,
-                channel,
-                vertical,
-                grid,
-                input,
-                input_range,
-                output,
-            ));
-        }
-        Ok(ChannelPasses {
-            passes,
             _kernel: None,
         })
     }
@@ -981,64 +936,6 @@ fn make_iir_pass(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-fn make_box_pass(
-    backend: &WgpuBackend,
-    pipeline: &CachedPipelineRef,
-    region: &Region,
-    radius: u32,
-    channel: u32,
-    vertical: bool,
-    grid: (u32, u32),
-    source: &wgpu::Buffer,
-    source_range: &BindingRange,
-    destination: (&wgpu::Buffer, &BindingRange),
-) -> Pass {
-    let (destination_buffer, destination_range) = destination;
-    let params = backend
-        .device
-        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("grain_gaussian_box_params"),
-            contents: bytemuck::bytes_of(&FirParams {
-                width: region.width,
-                height: region.height,
-                radius,
-                channel,
-                vertical: u32::from(vertical),
-                grid_width: grid.0,
-                source_base: source_range.base,
-                destination_base: destination_range.base,
-            }),
-            usage: wgpu::BufferUsages::UNIFORM,
-        });
-    let bind_group = backend
-        .device
-        .create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("grain_gaussian_box_bind_group"),
-            layout: &pipeline.layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: params.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: bind(source, source_range),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: bind(destination_buffer, destination_range),
-                },
-            ],
-        });
-    Pass {
-        _params: params,
-        bind_group,
-        method: Method::Box,
-        workgroups: grid,
-    }
-}
-
 fn make_copy_pass(
     backend: &WgpuBackend,
     pipeline: &CachedPipelineRef,
@@ -1119,7 +1016,6 @@ impl DirectBlurState {
         let (pipeline, label) = match pass.method {
             Method::Fir => (&self.fir, "grain_blur_fir"),
             Method::Iir => (&self.iir, "grain_blur_iir"),
-            Method::Box => (&self.boxes, "grain_blur_box"),
             Method::Copy => (&self.copy, "grain_blur_copy"),
         };
         let mut compute = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
@@ -1243,9 +1139,61 @@ mod tests {
     #[test]
     fn iir_matches_reference_from_dispatch_threshold() {
         let gpu = crate::test_support::adapter();
-        // Exercise both sides of the IIR-to-box boundary with original f64 sigma.
+        // Exercise the IIR path at and above the old large-sigma boundary.
         compare_with_reference(&gpu, 11, 7, [3.0, 8.0 - 1e-10, 8.0], 0, 3);
         compare_with_reference(&gpu, 11, 7, [8.0, 20.0, 0.0], 0, 3);
+        compare_with_reference(&gpu, 11, 7, [8.0, 20.0, 147.0], 0, 3);
+    }
+
+    #[test]
+    fn f32_only_device_rejects_large_sigma_iir() {
+        let gpu = crate::test_support::restricted_adapter();
+        // An f32 recurrence loses the IIR's DC gain at large sigma. The old
+        // box fallback was a different law, so this path must fail instead of
+        // returning an unqualified approximation.
+        let bytes = 3 * 4;
+        let source = gpu.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("f32_large_sigma_source"),
+            size: bytes,
+            usage: wgpu::BufferUsages::STORAGE
+                | wgpu::BufferUsages::COPY_SRC
+                | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let destination = gpu.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("f32_large_sigma_destination"),
+            size: bytes,
+            usage: wgpu::BufferUsages::STORAGE
+                | wgpu::BufferUsages::COPY_SRC
+                | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let error = build_grain_blur(&gpu, 1, 1, &source, &destination, [8.0, 0.0, 0.0], 0, 0)
+            .err()
+            .expect("large-sigma f32-only Gaussian must fail");
+        assert!(error.contains("sigma >= 8 requires native shader f64"));
+    }
+
+    #[test]
+    fn f32_only_bounded_path_rejects_large_sigma_iir() {
+        let gpu = crate::test_support::restricted_adapter();
+        let bytes = 3 * 4;
+        let source = gpu.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("f32_large_sigma_bounded_source"),
+            size: bytes,
+            usage: wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let destination = gpu.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("f32_large_sigma_bounded_destination"),
+            size: bytes,
+            usage: wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let error = build_grain_blur(&gpu, 1, 1, &source, &destination, [9.0, 0.0, 0.0], 0, 0)
+            .err()
+            .expect("bounded large-sigma f32-only Gaussian must fail");
+        assert!(error.contains("sigma >= 8 requires native shader f64"));
     }
 
     #[test]

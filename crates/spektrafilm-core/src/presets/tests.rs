@@ -11,6 +11,30 @@ fn provenance() -> Provenance {
     }
 }
 
+/// The Portra 400 look must keep the experimental-branch stock grain values,
+/// not the older main particle-area model. This is the parameter half of the
+/// reference pair in `stages::filming` (the prepared-population test).
+#[test]
+fn kodak_portra_400_spektra_matches_experimental_stock() {
+    let preset = builtin_presets()
+        .into_iter()
+        .find(|preset| preset.name == "Kodak Portra 400")
+        .expect("Kodak Portra 400 built-in required");
+    let resolved = preset
+        .resolve(&data(), &RuntimeParams::default())
+        .expect("Kodak Portra 400 must resolve");
+    let grain = &resolved.params.film_render.grain;
+    assert_eq!(grain.engine, crate::params::GrainEngine::Spektra);
+    assert_eq!(grain.rms_granularity, [4.5, 4.5, 4.5]);
+    assert_eq!(grain.particle_scale_sublayers, [1.0, 0.4, 0.25]);
+    assert_eq!(grain.density_min, [0.03, 0.03, 0.03]);
+    assert_eq!(grain.uniformity, [0.97, 0.97, 0.97]);
+    assert_eq!(grain.blur, 0.89);
+    assert_eq!(grain.mult_usm_sigma, 0.7);
+    assert_eq!(grain.mult_usm_amount, 1.5);
+    assert_eq!(grain.blur_dye_clouds_um, 2.0);
+}
+
 /// Product rule: every built-in look must expose material grain and halation.
 /// Dye grain uses zero RMS as a reference-scale fallback, so `active` is authoritative.
 #[test]

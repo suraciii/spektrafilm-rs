@@ -234,14 +234,27 @@ pub struct InputDecodeGpuParams {
     pub cctf_kind: u32,
 }
 
+/// Film-raw conversion data for device metering: the preview RGB is converted
+/// through the same TC table and adaptation matrix as the render's front pass.
+#[derive(Debug, Clone)]
+pub struct MeterRawTcLut {
+    /// Device-prepared TC table used by the same front pass as the render.
+    pub table: PreparedTable,
+    /// Edge length of the table (the shader indexes `size × size × 3`).
+    pub lut_size: u32,
+    /// Source RGB → CAT-adapted XYZ matrix used by the front pass.
+    pub rgb_to_xyz_adapted: [[f64; 3]; 3],
+}
+
 /// One auto-exposure metering request.
 ///
 /// Mirrors `spektrafilm_core::stages::filming::measure_autoexposure_ev`: the
 /// device meter must reproduce the reference preview rule (nearest resample
-/// with per-axis antialiasing), the luminance row of the input space's
-/// RGB→XYZ matrix, the optional CCTF decode applied to the sampled preview,
-/// the named metering pattern, and the mid-grey target.
-#[derive(Debug, Clone, PartialEq)]
+/// with per-axis antialiasing), the optional CCTF decode applied to the
+/// sampled preview, the named metering pattern, and the target. A `Some`
+/// raw TC table selects film-raw metering; otherwise `y_row` selects display
+/// luminance.
+#[derive(Debug, Clone)]
 pub struct MeterAutoexposureParams {
     /// Input width in pixels.
     pub width: u32,
@@ -259,8 +272,11 @@ pub struct MeterAutoexposureParams {
     /// which meters the mid-grey target (0 EV) exactly like the reference
     /// does.
     pub method: String,
-    /// Mean luminance the meter maps to mid-grey.
+    /// Meter target. Raw metering uses `1.0`; display metering uses the
+    /// mid-grey luminance.
     pub mid_grey: f64,
+    /// Film-raw conversion data; `None` meters display luminance.
+    pub raw_tc_lut: Option<MeterRawTcLut>,
 }
 
 /// One final output-mix request.

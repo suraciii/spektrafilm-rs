@@ -27,7 +27,7 @@
 - CPU and GPU execute one photographic stage contract under [GPU execution](../gpu-execution/design.md#ownership). A resident chain is an execution strategy, not a second model or permission for CPU image-stage fallback.
 - Runtime owns complete-operation capability validation, preparation, stage order, and output finalization. Known GPU limitations MUST be checked before dispatch; an explicit GPU request MUST fail rather than use a hidden CPU stage.
 - The WGPU backend owns device-resident stage execution and resource lifetimes. Multiple submissions or bounded tiles MUST preserve the same domains and do not require a second public pipeline.
-- Filming metering owns the downsample, decode, luminance measurement, and exposure calculation. The pipeline meters the full input before crop and resize.
+- Filming metering owns the downsample, decode, film-raw reconstruction, raw-field measurement, and exposure calculation. The pipeline meters the full input before crop and resize; the resulting scalar is applied to film raw after the RGB→raw conversion.
 - Private Jzazbz and CAM16 modules own their appearance-model formulas and viewing adaptation. Output compression retains destination policy and the shared table cache.
 - The WGPU blur module owns standalone Gaussian blur execution and shared blur limits remain backend policy. Resident stage-specific blur dispatch remains with its owning stage.
 - Scanner preparation MUST place the optical kernel at the linear readout boundary before any inverse. Constant linear sensor matrices MAY commute with the shared achromatic blur only with equivalent boundary handling and measured precision.

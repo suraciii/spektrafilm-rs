@@ -24,6 +24,7 @@ fn metering_matches_reference_patterns_and_black_boundary() {
         cctf_kind: None,
         method: String::new(),
         mid_grey: 0.184,
+        raw_tc_lut: None,
     };
     // Frozen CPU f64 fixture. The former device-f64 budget was 1e-5 EV.
     // On llvmpipe the device-f32 maximum was 7.627e-5 EV (highlight-weighted);
@@ -123,6 +124,7 @@ fn paged_metering_preserves_full_source_and_reflected_support() {
         cctf_kind: None,
         method: String::new(),
         mid_grey: 0.184,
+        raw_tc_lut: None,
     };
     for method in [
         "average",
@@ -191,6 +193,7 @@ fn paged_metering_keeps_frozen_full_source_preview_budget() {
         cctf_kind: None,
         method: "average".into(),
         mid_grey: 0.184,
+        raw_tc_lut: None,
     };
     // Source (720000 bytes) and old vertical scratch exceed this limit;
     // the unchanged full preview luminance grid still fits it.
@@ -225,6 +228,7 @@ fn metering_cancellation_is_operation_scoped_and_survives_derivation() {
         cctf_kind: None,
         method: "average".into(),
         mid_grey: 0.184,
+        raw_tc_lut: None,
     };
     assert!(
         backend

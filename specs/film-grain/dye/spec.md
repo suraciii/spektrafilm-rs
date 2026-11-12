@@ -8,7 +8,7 @@ Dye MUST form convincing color-film grain by conditioning a stochastic dye field
 
 For monochrome profiles, Dye supplies a single-record BW effective model. Its availability MUST NOT be presented as calibrated silver-material fidelity.
 
-Subject shape, tone, color, and fine detail MUST pass through the same field formation and readout as the grain realization. A larger canvas, a softer source, post-encoded noise, or a separate clean-detail path does not establish success.
+Subject shape, tone, color, and fine detail MUST pass through the same field realization and readout as the grain realization. A larger canvas, a softer source, post-encoded noise, or a separate clean-detail path does not establish success.
 
 ## Image-forming contract
 
@@ -72,7 +72,7 @@ These candidates MUST remain internal or unexposed until a separate contract and
 - **Distribution width or roughness:** an internal spectrum-shape parameter. It is not `uniformity` and not an event-contribution width.
 - **Tone-zone weights:** record-density zones are not final-image shadows and highlights. A creative control would need its own definition.
 - **Fog grain:** a model or stock parameter, not a public knob.
-- **Event area, support, numerical grid, octave details, high-pass, Dmax, uniformity, and sublayer scales:** internal law, calibration, or numerical values, not ordinary appearance controls.
+- **Event area, correlation lengths, band limit, octave details, Dmax, uniformity, fog baseline, and the per-record ratio:** internal law, calibration, or numerical values, not ordinary appearance controls.
 - **Film format, scanner blur, and sharpening:** owned by their modules; they do not replace texture scale.
 
 The expectation diagnostic replaces every draw by its conditional mean and MUST remain a diagnostic. It MUST NOT change the user's recipe or become a production bypass.
