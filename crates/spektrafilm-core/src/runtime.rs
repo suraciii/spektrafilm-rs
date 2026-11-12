@@ -22,10 +22,12 @@ use std::time::Instant;
 /// addressed by cell coordinate and ordinal, so grain pixels changed again.
 /// Revision five makes the Procedural engine's composite tone-neutral on both
 /// executors, which moves every Procedural grain pixel.
-/// Revision six applies the reflected box cascade above sigma 8 instead of a
-/// truncated FIR support, so wide halation and DIR tails changed pixels; the
-/// f32 kernels run on devices without binary64 within their frozen stage
-/// budgets and do not change the model.
+/// Revision six applied the reflected box cascade above sigma 8 instead of a
+/// truncated FIR support. Revision seven removes that approximation and uses
+/// the reference recursive IIR for every sigma >= 3, so wide halation, DIR
+/// and grain blurs changed pixels again. Devices without native binary64
+/// retain the f32 recurrence below sigma 8 and reject larger sigma rather
+/// than substituting a box approximation.
 /// Common finishing v1 adds the shared positive-image adjustment before
 /// output gamut processing; neutral controls leave existing results unchanged.
 pub const MODEL_VERSION: &str = "common_finishing_v1";
@@ -1373,7 +1375,7 @@ mod tests {
         params.settings.rgb_to_raw_method = "mallett2019".into();
         params.io.output_gamut_compress.algorithm = "off".into();
         params.taps.inject = Some("rgb_in".into());
-        params.taps.collect = Some("rgb_pre".into());
+        params.taps.collect = Some("log_e_film".into());
         let film = profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();
         let print = profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap();
         let runtime = Runtime::new(film, print, params, &dir).unwrap();
@@ -1383,7 +1385,7 @@ mod tests {
                 image.clone(),
                 &CpuBackend,
                 Some(Tap::RgbIn),
-                Some(Tap::RgbPre),
+                Some(Tap::LogEFilm),
             )
             .unwrap();
         let params = runtime.params().clone();
@@ -1396,19 +1398,11 @@ mod tests {
                 image.clone(),
                 gpu.backend(),
                 Some(Tap::RgbIn),
-                Some(Tap::RgbPre),
+                Some(Tap::LogEFilm),
                 &context,
             )
             .unwrap();
         assert_eq!((actual.width, actual.height), (image.width, image.height));
-        assert!(
-            expected
-                .data
-                .iter()
-                .zip(&image.data)
-                .any(|(exposed, source)| (*exposed as f64 - *source as f64).abs() > 1e-4),
-            "fixture must exercise a nonidentity auto-exposure scale"
-        );
         for (actual, expected) in actual.data.iter().zip(&expected.data) {
             assert!(
                 (*actual as f64 - *expected as f64).abs() < 2e-5,

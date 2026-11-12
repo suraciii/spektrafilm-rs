@@ -1,8 +1,8 @@
 // Per-pixel constant multiply for a retained image buffer.
 //
-// The reference applies the metered exposure scale to the uploaded samples
-// (`apply_autoexposure`), so this pass multiplies every sample by one
-// image-independent scalar and nothing else.
+// Diagnostic/test primitive: multiply every retained sample by one
+// image-independent scalar. Production camera exposure is folded into the
+// film-raw front pass instead.
 
 struct Params {
     n_pixels: u32,

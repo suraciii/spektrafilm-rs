@@ -1502,33 +1502,6 @@ fn runtime_prepare_error(error: &str, data_dir: &Path, lut_mode: bool) -> String
     )
 }
 
-#[cfg(test)]
-mod runtime_prepare_error_tests {
-    use super::runtime_prepare_error;
-    use std::path::Path;
-
-    #[test]
-    fn lut_preparation_does_not_name_spectral_profile_fallbacks() {
-        let message = runtime_prepare_error(
-            "reading LUT /tmp/look.cube: No such file or directory",
-            Path::new("/data"),
-            true,
-        );
-        assert_eq!(
-            message,
-            "LUT workflow preparation failed: reading LUT /tmp/look.cube: No such file or directory"
-        );
-        assert!(!message.contains("spectral"));
-    }
-
-    #[test]
-    fn film_preparation_keeps_the_spectral_remedy() {
-        let message = runtime_prepare_error("missing profile", Path::new("/data"), false);
-        assert!(message.contains("spectral pipeline construction failed"));
-        assert!(message.contains("(looked under /data)"));
-    }
-}
-
 fn validate_raw_options(options: &spektrafilm_raw::RawOptions) -> Result<()> {
     options.validate().map_err(anyhow::Error::from)
 }
@@ -1554,4 +1527,31 @@ fn apply_channel_swap(profile: &mut profile::Profile, selection: &str) -> Result
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod runtime_prepare_error_tests {
+    use super::runtime_prepare_error;
+    use std::path::Path;
+
+    #[test]
+    fn lut_preparation_does_not_name_spectral_profile_fallbacks() {
+        let message = runtime_prepare_error(
+            "reading LUT /tmp/look.cube: No such file or directory",
+            Path::new("/data"),
+            true,
+        );
+        assert_eq!(
+            message,
+            "LUT workflow preparation failed: reading LUT /tmp/look.cube: No such file or directory"
+        );
+        assert!(!message.contains("spectral"));
+    }
+
+    #[test]
+    fn film_preparation_keeps_the_spectral_remedy() {
+        let message = runtime_prepare_error("missing profile", Path::new("/data"), false);
+        assert!(message.contains("spectral pipeline construction failed"));
+        assert!(message.contains("(looked under /data)"));
+    }
 }

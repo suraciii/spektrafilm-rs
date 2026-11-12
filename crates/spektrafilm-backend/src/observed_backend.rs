@@ -302,25 +302,6 @@ impl ComputeBackend for ObservedBackend<'_> {
     ) -> Option<Result<ImageBuf, String>> {
         self.backend.dye_field(i, p)
     }
-    fn dye_field_with_response(
-        &self,
-        image: &ImageBuf,
-        params: &crate::DyeGpuParams,
-        response: &crate::DyeResponseGpuParams<'_>,
-    ) -> Option<Result<ImageBuf, String>> {
-        self.backend
-            .dye_field_with_response(image, params, response)
-    }
-    fn dye_aperture_collapse(
-        &self,
-        image: &ImageBuf,
-        factor: u32,
-    ) -> Option<Result<ImageBuf, String>> {
-        self.backend.dye_aperture_collapse(image, factor)
-    }
-    fn dye_log10(&self, image: &ImageBuf) -> Option<Result<ImageBuf, String>> {
-        self.backend.dye_log10(image)
-    }
     fn dye_crop(&self, image: &ImageBuf, rect: [u32; 4]) -> Option<Result<ImageBuf, String>> {
         self.backend.dye_crop(image, rect)
     }

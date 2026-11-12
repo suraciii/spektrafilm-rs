@@ -173,9 +173,11 @@ Both size components are fractions of the source's long edge.
 Bounds and rounding follow the upstream NumPy slice convention, including negative-index slicing when a crop exceeds the short edge.
 Empty crops and nonpositive/nonfinite resize factors return errors before output is written.
 
-Auto-exposure meters an antialiased nearest-neighbor preview of the complete source before crop and resize.
-Encoded preview samples are decoded for f64 luminance measurement.
-The resulting exposure scales source samples before geometry and filming decode, matching Python's order.
+Auto-exposure reconstructs film raw from an antialiased nearest-neighbor preview of the complete source before crop and resize.
+Encoded preview samples are decoded as part of the same sensitivity path used by the real exposure.
+The metering pattern brings the preview's mean raw channel value to the reference exposure target.
+The resulting scalar is applied to film raw after the RGB→raw conversion, before camera optics; encoded input samples are not pre-scaled.
+Cropping and resizing therefore cannot shift the metered exposure.
 Cropping preserves the source film pixel pitch.
 Resizing divides it by the requested factor.
 Lens blur, halation, and DIR consume that retained pitch on CPU and supported resident GPU paths.

@@ -526,6 +526,45 @@ fn input_preparation_and_route_changes_preserve_pixels_and_material_calibration(
 }
 
 #[test]
+fn cpu_autoexposure_meters_film_raw_not_display_luminance() {
+    let mut pipeline = build();
+    pipeline.params.camera.auto_exposure = true;
+    pipeline.params.camera.auto_exposure_method = "center_weighted".into();
+    let image = ImageBuf::from_data(
+        64,
+        48,
+        (0..64 * 48)
+            .flat_map(|i| {
+                let x = (i % 64) as f64 / 63.0;
+                let y = (i / 64) as f64 / 47.0;
+                [
+                    from_f64(0.04 + 0.8 * x),
+                    from_f64(0.08 + 0.6 * y),
+                    from_f64(0.12 + 0.5 * (x + y) * 0.5),
+                ]
+            })
+            .collect(),
+    );
+    let cpu = spektrafilm_backend::cpu_backend::CpuBackend;
+    let measured = pipeline.meter_autoexposure(&image, &cpu).unwrap();
+    let expected = crate::stages::filming::meter_raw_autoexposure_ev(
+        &image,
+        &pipeline.params,
+        &cpu,
+        pipeline.host_tc_lut().unwrap(),
+        pipeline.mallett_core(),
+        &select_illuminant(pipeline.front_illuminant()),
+    )
+    .unwrap();
+    assert!((measured - expected).abs() < 1e-12);
+    let display = crate::stages::filming::meter_autoexposure_ev(&image, &pipeline.params);
+    assert!(
+        (measured - display).abs() > 1e-3,
+        "fixture must distinguish film-raw from display metering: raw {measured}, display {display}"
+    );
+}
+
+#[test]
 fn input_route_preserves_requested_crop_pixels_without_exposure() {
     let mut pipeline = build();
     pipeline.params.workflow.route = "input".into();

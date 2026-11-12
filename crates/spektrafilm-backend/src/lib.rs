@@ -461,24 +461,6 @@ pub trait ComputeBackend: Send + Sync {
         None
     }
 
-    fn dye_field_with_response(
-        &self,
-        _image: &ImageBuf,
-        _params: &DyeGpuParams,
-        _response: &DyeResponseGpuParams<'_>,
-    ) -> Option<Result<ImageBuf, String>> {
-        None
-    }
-    fn dye_aperture_collapse(
-        &self,
-        _image: &ImageBuf,
-        _factor: u32,
-    ) -> Option<Result<ImageBuf, String>> {
-        None
-    }
-    fn dye_log10(&self, _image: &ImageBuf) -> Option<Result<ImageBuf, String>> {
-        None
-    }
     fn dye_crop(&self, _image: &ImageBuf, _rect: [u32; 4]) -> Option<Result<ImageBuf, String>> {
         None
     }
@@ -559,10 +541,11 @@ pub trait ComputeBackend: Send + Sync {
         Ok(None)
     }
 
-    /// Scale every retained sample by an image-independent exposure factor on
-    /// its owning device. This is the device equivalent of the input exposure
-    /// multiply performed by `apply_autoexposure`; it preserves the sample
-    /// domain and metadata and never materializes the image.
+    /// Scale every retained sample by an image-independent factor on its
+    /// owning device. Production camera exposure folds its scale into the
+    /// film-raw front pass; this primitive only serves callers that explicitly
+    /// need a constant sample multiply. It preserves the sample domain and
+    /// metadata and never materializes the image.
     fn scale_retained(
         &self,
         _image: &DeviceImage,

@@ -26,26 +26,6 @@ pub struct ProceduralGrainGpuParams {
     pub clustered: bool,
 }
 
-/// Optical response averaged over the realized Dye field cells.
-pub enum DyeResponseGpuParams<'a> {
-    Print {
-        channel_density: &'a [[f64; 3]],
-        base_density: &'a [f64],
-        illuminant: &'a [f64],
-        sensitivity: &'a [[f64; 3]],
-        normalization_factor: f64,
-        exposure_scale: f64,
-        preflash: [f64; 3],
-    },
-    Scan {
-        channel_density: &'a [[f64; 3]],
-        base_density: &'a [f64],
-        illuminant: &'a [f64],
-        normalization: f64,
-        xyz_to_rgb: &'a [[f64; 3]; 3],
-    },
-}
-
 /// Device Spektra grain on the film density CMY buffer, in the
 /// density-fence position (after the film density curve and DIR, before
 /// printing).

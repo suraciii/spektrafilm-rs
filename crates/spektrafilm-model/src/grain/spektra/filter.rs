@@ -31,13 +31,13 @@ pub(super) fn blur<T: Sample>(data: &[T], w: usize, h: usize, sigma: f64) -> Vec
         return data.to_vec();
     }
     // Dispatch in f64, before any working-buffer narrowing. In particular,
-    // 2.99999999 is FIR even when the image is f32.
+    // 2.99999999 is FIR even when the image is f32. The pinned upstream
+    // reference uses its recursive IIR filter for every sigma >= 3; the old
+    // large-sigma box approximation was not the reference law.
     if sigma < 3.0 {
         fir(data, w, h, sigma)
-    } else if sigma < 8.0 {
-        iir(data, w, h, sigma)
     } else {
-        boxes(data, w, h, sigma)
+        iir(data, w, h, sigma)
     }
 }
 
@@ -90,37 +90,6 @@ fn fir<T: Sample>(data: &[T], w: usize, h: usize, sigma: f64) -> Vec<T> {
     out
 }
 
-fn boxes<T: Sample>(data: &[T], w: usize, h: usize, sigma: f64) -> Vec<T> {
-    let width = spektrafilm_math::gaussian::gaussian_box_width(sigma);
-    let radius = (width / 2) as isize;
-    let mut current = data.to_vec();
-    let mut next = vec![T::store(0.0); data.len()];
-    for horizontal in [true, false] {
-        let (lines, length, stride) = if horizontal { (h, w, 1) } else { (w, h, w) };
-        for _ in 0..3 {
-            for line in 0..lines {
-                let start = if horizontal { line * w } else { line };
-                let mut sum = 0.0;
-                for offset in -radius..=radius {
-                    sum += current[start + reflect(offset, length) * stride].load();
-                }
-                for index in 0..length {
-                    next[start + index * stride] = T::store(sum / width as f64);
-                    if index + 1 < length {
-                        sum -= current[start + reflect(index as isize - radius, length) * stride]
-                            .load();
-                        sum += current
-                            [start + reflect(index as isize + radius + 1, length) * stride]
-                            .load();
-                    }
-                }
-            }
-            std::mem::swap(&mut current, &mut next);
-        }
-    }
-    current
-}
-
 fn iir<T: Sample>(data: &[T], w: usize, h: usize, sigma: f64) -> Vec<T> {
     let q = if sigma >= 2.5 {
         0.98711 * sigma - 0.96330
@@ -167,5 +136,60 @@ fn filter_line<T: Sample>(
         let value = a * dst[offset].load() + b1 * state[0] + b2 * state[1] + b3 * state[2];
         dst[offset] = T::store(value);
         state = [value, state[0], state[1]];
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn large_sigma_matches_upstream_iir_not_boxes() {
+        // Frozen f32 output from `fast_gaussian_filter` at experimental
+        // 28bf883 for a 7x5 ramp. The old local box approximation produced
+        // visibly different values here; every sigma >= 3 must use IIR.
+        let data: Vec<f32> = (0..35)
+            .map(|index| (((index * 37 + 11) % 97) as f64 / 97.0) as f32)
+            .collect();
+        for (sigma, expected) in [
+            (
+                8.0,
+                [
+                    0.21965311467647552,
+                    0.22280146181583405,
+                    0.22518789768218994,
+                    0.2268066257238388,
+                    0.22774997353553772,
+                    0.22818094491958618,
+                    0.2283034771680832,
+                    0.22065573930740356,
+                    0.22379407286643982,
+                    0.22617292404174805,
+                ],
+            ),
+            (
+                20.0,
+                [
+                    0.12586252391338348,
+                    0.12590548396110535,
+                    0.1259356588125229,
+                    0.12595488131046295,
+                    0.12596552073955536,
+                    0.12597021460533142,
+                    0.12597151100635529,
+                    0.12587271630764008,
+                    0.12591567635536194,
+                    0.1259458363056183,
+                ],
+            ),
+        ] {
+            let actual = blur(&data, 7, 5, sigma);
+            for (index, (&got, &want)) in actual.iter().zip(&expected).enumerate() {
+                assert!(
+                    (f64::from(got) - want).abs() < 1e-6,
+                    "sigma {sigma} sample {index}: {got} != {want}"
+                );
+            }
+        }
     }
 }

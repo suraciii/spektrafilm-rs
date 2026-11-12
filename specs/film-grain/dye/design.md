@@ -2,7 +2,7 @@
 
 ## Decision
 
-Dye realizes developed film record density as a band-limited correlated field whose amplitude follows a granularity curve derived from development statistics. Every draw keeps the target mean exactly, so the field carries grain and never tone.
+Dye realizes developed film record density as a band-limited correlated field whose amplitude follows a granularity curve derived from development statistics. Every draw preserves the target mean in expectation, so the field carries grain and never tone.
 
 The field lives on the film lattice. The readout resamples it: finer grids interpolate a cell centre, coarser grids integrate the lattice cells the output cell covers. A crop, a preview scale, or a stage split therefore samples one film, not a second realization.
 
@@ -119,7 +119,7 @@ At fixed target, geometry, seed, precision, and output footprints, full-frame, c
 
 ## Optical measurement and calibration
 
-The formation algorithm MUST NOT read statistics from the current image or normalize a realization to its measured RMS. Measurement is an external operation over fixed stimuli, fixed geometry, fixed receiver and aperture, fixed density interpretation, and a declared seed population.
+The field realization MUST NOT read statistics from the current image or normalize a realization to its measured RMS. Measurement is an external operation over fixed stimuli, fixed geometry, fixed receiver and aperture, fixed density interpretation, and a declared seed population.
 
 The optical measurement record MUST identify:
 

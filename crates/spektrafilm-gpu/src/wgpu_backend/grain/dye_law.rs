@@ -19,6 +19,7 @@
 
 use super::*;
 use crate::gpu_helpers::{f32_to_scalars, scalars_to_f32};
+use spektrafilm_backend::dye_params::law;
 use spektrafilm_math::precision::{ZERO, from_f64, to_f64};
 
 const BLUR_WGSL: &str = include_str!("dye_law_blur.wgsl");
@@ -27,29 +28,14 @@ const SUBTRACT_WGSL: &str = include_str!("dye_law_subtract.wgsl");
 const APPLY_WGSL: &str = include_str!("dye_law_apply.wgsl");
 pub(super) const READOUT_WGSL: &str = include_str!("dye_law_readout.wgsl");
 
-/// Octave diameters in micrometres and their relative weights.
-const OCTAVES: [(f64, f64); 3] = [(4.5, 1.0), (9.0, 1.0), (18.0, 0.5)];
-/// Band limit of the field, in micrometres.
-const HIGHPASS_UM: f64 = 12.0;
-
-/// Relative density amplitude per record.
-pub(super) const STRENGTH: [f64; 3] = [1.0, 1.0, 1.18];
-/// Shared fraction of the field between records.
-pub(super) const RHO: f64 = 0.92;
-/// Dark-end event baseline, in density units. Uncalibrated relative setting.
-pub(super) const FOG: f64 = 0.15;
-pub(super) const DMAX: f64 = 1.2;
-pub(super) const UNIFORMITY: f64 = 0.97;
-pub(super) const TAPER_FLOOR: f64 = 0.18;
-
 /// Halo radius in micrometres that a band needs on each side at the
 /// request's correlation-length scale.
 pub(super) fn halo_um(length_scale: f64) -> f64 {
-    let widest = OCTAVES
+    let widest = law::OCTAVES
         .iter()
         .map(|(diameter, _)| diameter / 2.0)
         .fold(0.0f64, f64::max);
-    length_scale * (3.0 * widest + 3.0 * HIGHPASS_UM)
+    length_scale * (3.0 * widest + 3.0 * law::HIGHPASS_UM)
 }
 
 /// Bytes one band of `pixels` pixels needs: density and output in RGB plus ten
@@ -168,12 +154,12 @@ pub(super) struct LawNorm {
 
 fn law_norm(taps: [&[f32]; 3], hp: &[f32]) -> LawNorm {
     const N: usize = 128;
-    let norm = OCTAVES.iter().map(|(_, w)| w * w).sum::<f64>().sqrt();
+    let norm = law::OCTAVES.iter().map(|(_, w)| w * w).sum::<f64>().sqrt();
     let mut state = 0x5eed_1234_9abc_def0u64;
     // One independent draw per octave, because that is what the shader has: reusing one
     // draw would leave the octaves correlated and misprice the combined amplitude.
-    let mut noise: Vec<Vec<f32>> = Vec::with_capacity(OCTAVES.len());
-    for _ in 0..OCTAVES.len() {
+    let mut noise: Vec<Vec<f32>> = Vec::with_capacity(law::OCTAVES.len());
+    for _ in 0..law::OCTAVES.len() {
         let mut v: Vec<f32> = Vec::with_capacity(N * N);
         for _ in 0..(N * N) {
             state = state
@@ -244,7 +230,7 @@ fn law_norm(taps: [&[f32]; 3], hp: &[f32]) -> LawNorm {
     // gain each octave needs is measured here rather than assumed.
     let mut gains = [1.0f64; 3];
     let mut field = vec![0.0f32; N * N];
-    for (i, (_, weight)) in OCTAVES.iter().enumerate() {
+    for (i, (_, weight)) in law::OCTAVES.iter().enumerate() {
         let v = blur(&noise[i], taps[i]);
         gains[i] = 1.0 / sd(&v);
         let k = ((weight / norm) * gains[i]) as f32;
@@ -336,18 +322,6 @@ fn resample_readout(
         width: grid.width,
         height: grid.height,
     }
-}
-
-/// Taper peak of the derived granularity shape, as the host model normalises by.
-fn taper_peak() -> f64 {
-    (0..=512)
-        .map(|i| {
-            let p = i as f64 / 512.0;
-            let sat = 1.0 - p * UNIFORMITY;
-            (sat * p * (1.0 - p)).max(0.0).sqrt()
-        })
-        .fold(0.0f64, f64::max)
-        .max(1e-6)
 }
 
 pub(super) struct LawPipelines {
@@ -506,10 +480,10 @@ pub(super) struct LawTaps {
 pub(super) fn law_taps(pitch_um: f64, length_scale: f64) -> Result<LawTaps, String> {
     let mut octaves: [(Vec<f32>, u32); 3] = std::array::from_fn(|_| (Vec::new(), 0));
     for (i, taps) in octaves.iter_mut().enumerate() {
-        let sigma_px = OCTAVES[i].0 * length_scale / 2.0 / pitch_um;
+        let sigma_px = law::OCTAVES[i].0 * length_scale / 2.0 / pitch_um;
         *taps = taps_for(sigma_px)?;
     }
-    let highpass = taps_for(HIGHPASS_UM * length_scale / pitch_um)?;
+    let highpass = taps_for(law::HIGHPASS_UM * length_scale / pitch_um)?;
     let norm = law_norm([&octaves[0].0, &octaves[1].0, &octaves[2].0], &highpass.0);
     Ok(LawTaps {
         octaves,
@@ -631,7 +605,7 @@ impl WgpuBackend {
     ) {
         let (w, h) = (band.cols, band.rows);
         let groups = (w.div_ceil(64), h, 1);
-        let norm = OCTAVES.iter().map(|(_, w)| w * w).sum::<f64>().sqrt();
+        let norm = law::OCTAVES.iter().map(|(_, w)| w * w).sum::<f64>().sqrt();
         for field in 0..4u64 {
             for (i, (taps, radius)) in taps.octaves.iter().enumerate() {
                 for axis in 0..2u32 {
@@ -693,9 +667,9 @@ impl WgpuBackend {
                 h,
                 pad0: 0,
                 pad1: 0,
-                w0: ((OCTAVES[0].1 / norm) * taps.norm.gains[0]) as f32,
-                w1: ((OCTAVES[1].1 / norm) * taps.norm.gains[1]) as f32,
-                w2: ((OCTAVES[2].1 / norm) * taps.norm.gains[2]) as f32,
+                w0: ((law::OCTAVES[0].1 / norm) * taps.norm.gains[0]) as f32,
+                w1: ((law::OCTAVES[1].1 / norm) * taps.norm.gains[1]) as f32,
+                w2: ((law::OCTAVES[2].1 / norm) * taps.norm.gains[2]) as f32,
                 pad2: 0.0,
             };
             let u = self.uniform("dye_law_combine", bytemuck::bytes_of(&params));
@@ -843,21 +817,21 @@ impl WgpuBackend {
             seed: geom.seed as u32,
             expectation: u32::from(geom.expectation),
             white: geom.white as f32,
-            rho: RHO as f32,
-            taper_peak: taper_peak() as f32,
-            taper_floor: TAPER_FLOOR as f32,
-            dmax: DMAX as f32,
-            uniformity: UNIFORMITY as f32,
+            rho: law::RHO as f32,
+            taper_peak: law::taper_peak() as f32,
+            taper_floor: law::TAPER_FLOOR as f32,
+            dmax: law::DMAX as f32,
+            uniformity: law::UNIFORMITY as f32,
             q: geom.event_area_um2 as f32,
             area: (geom.pitch_um * geom.pitch_um) as f32,
-            fog: FOG as f32,
+            fog: law::FOG as f32,
             ox: geom.origin_x,
             oy: geom.origin_y,
             monochrome: u32::from(geom.monochrome),
             strength: [
-                STRENGTH[0] as f32,
-                STRENGTH[1] as f32,
-                STRENGTH[2] as f32,
+                law::STRENGTH[0] as f32,
+                law::STRENGTH[1] as f32,
+                law::STRENGTH[2] as f32,
                 0.0,
             ],
         };
