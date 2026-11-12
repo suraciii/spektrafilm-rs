@@ -100,15 +100,15 @@ Grain Dye is selected with `film_render.grain.engine: "dye"`.
 Dye's grain law is part of the engine. Two relative recipe controls tune it:
 
 - **Grain strength** (`dye_strength`, 0..4) scales the correlated field amplitude and the event count together. `1` keeps the delivered look. `0` returns the target density with no random grain, including residual count noise. The density response and the per-record ratio do not change. It is not a certified optical RMS target.
-- **Grain scale** (`dye_scale`, 0.5..4) scales the texture's correlation lengths and band limit in film coordinates. `1` keeps the delivered look. It is not a crystal diameter, scanner blur, or output-pixel size.
+- **Grain scale** (`dye_scale`, 0.5..4) scales the value-noise cell size in film coordinates. `1` keeps the delivered look. It is not a crystal diameter, scanner blur, or output-pixel size.
 
 Omitting either key resolves to `1.0`, so recipes authored before these controls existed keep the delivered look.
 
-The remaining law values — per-record relative amplitude, record coupling, octave weights, fog baseline, saturation density, and development taper — are engine constants. Recipes that carry `dye_support_um`, `dye_event_area_um2`, `rms_granularity`, `density_min`, `uniformity`, `particle_scale_sublayers`, or `channel_correlation` load and save unchanged; those values do not change the delivered Dye field.
+The remaining law values — per-record relative amplitude, record coupling, value-noise octave weights, fog baseline, saturation density, and development taper — are engine constants. Recipes that carry `dye_support_um`, `dye_event_area_um2`, `rms_granularity`, `density_min`, `uniformity`, `particle_scale_sublayers`, or `channel_correlation` load and save unchanged; those values do not change the delivered Dye field.
 
 The seed selects the realization. `random_seed`, `dye_strength`, and `dye_scale` are the grain inputs that change the image, and the same seed, inputs, geometry, and executor reproduce the same field.
 
-Dye realizes a band-limited correlated field on the film lattice and reads it out through the requested grid. A finer grid interpolates a lattice cell centre; a coarser grid integrates the cells it covers. Cropping, preview scaling, and stage splitting therefore sample one film rather than starting a second realization.
+Dye realizes a coordinate-addressed value-noise field on the film lattice and reads it out through the requested grid. A finer grid interpolates a lattice cell centre; a coarser grid integrates the cells it covers. Cropping, preview scaling, and stage splitting therefore sample one film rather than starting a second realization.
 
 Expectation mode (`SPEKTRAFILM_GRAIN_DYE_EXPECTATION=1`) replaces every draw by its conditional mean and returns the target density. It is a diagnostic; it does not change the recipe and is not a production grain law.
 
@@ -126,7 +126,7 @@ Full-frame and cropped CMY reads use one global field and are compared under the
 
 Dye supports still and cine color filming profiles and representable monochrome filming profiles, with negative or positive polarity. It uses the global `camera.film_format_mm` exposed-image long edge. This value must be finite and strictly positive. Its existing default is `35.0`. It is not a roll-width designation.
 
-Format changes alter physical footprints and workload. Crop/resize determine output dimensions. Correlation lengths and event area remain in film units. Device resource limits fail by name before allocation; the host realization covers the full developed source.
+Format changes alter physical footprints and workload. Crop/resize determine output dimensions. Value-noise cell sizes and event area remain in film units. Device resource limits fail by name before allocation; the host realization covers the full developed source.
 
 The diagnostic film-scan route `input > film > scan` with `io.scan_film = true` runs with `direct_scan` for both negative and positive film, and with `negative_to_positive` for negative film. Positive film retains its native polarity; Dye uses the profile's positive density-curve direction rather than selecting a separate grain model. Another chemistry or an unsupported route fails with an actionable unsupported-condition error.
 

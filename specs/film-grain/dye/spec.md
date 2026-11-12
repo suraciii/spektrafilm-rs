@@ -14,7 +14,7 @@ Subject shape, tone, color, and fine detail MUST pass through the same field rea
 
 Dye MUST consume the developed record-density target `t` at the film-density boundary and produce a realized density `D` with `E[D] = t` exactly.
 
-The realization MUST be a band-limited correlated field whose relative amplitude follows a granularity curve derived from development statistics. The amplitude MUST vanish at clear base and at saturation of the record.
+The realization MUST be a coordinate-addressed value-noise field whose relative amplitude follows a granularity curve derived from development statistics. The amplitude MUST vanish at clear base and at saturation of the record.
 
 The field MUST be realized on the film lattice and read out through the requested output geometry. Cropping, preview scaling, tiling, and stage splitting MUST NOT change the realization of a film coordinate.
 
@@ -37,7 +37,7 @@ Changing film geometry MUST preserve requested output raster dimensions while ch
 | Control | Key | Range | Default | Meaning |
 |---|---|---|---|---|
 | Grain strength | `film_render.grain.dye_strength` | `[0, 4]` | `1.0` | Relative amplitude of the stochastic field and count deviation |
-| Grain scale | `film_render.grain.dye_scale` | `[0.5, 4]` | `1.0` | Relative correlation length and band limit in film coordinates |
+| Grain scale | `film_render.grain.dye_scale` | `[0.5, 4]` | `1.0` | Relative value-noise cell size in film coordinates |
 
 `film_render.grain.active` owns the enable switch. No other Dye value is a public control.
 
@@ -45,7 +45,7 @@ Grain strength MUST scale the correlated field's standard deviation and the even
 
 Grain strength `0` MUST return the target density at the Dye boundary with no random field and no residual count noise. `1` MUST leave the delivered law unchanged. Values outside the declared range MUST fail before rendering.
 
-Grain scale MUST multiply the field's correlation lengths and band limit in film coordinates. It MUST NOT change the target density, event area, per-record ratio, or readout geometry.
+Grain scale MUST multiply the value-noise octave sizes in film coordinates. It MUST NOT change the target density, event area, per-record ratio, or readout geometry.
 
 It is not a crystal diameter, scanner blur, output-pixel size, or magnification. `1` MUST leave the delivered field unchanged. Values outside the declared range MUST fail before rendering.
 
@@ -53,7 +53,7 @@ An omitted strength or scale key MUST resolve to `1.0`.
 
 ### Resolved law inputs
 
-Dye's remaining law parameters are engine-derived constants: the per-record relative ratio, record coupling, the delivered correlation lengths, the delivered band limit, the delivered event area, the fog baseline, saturation density, and development uniformity.
+Dye's remaining law parameters are engine-derived constants: the per-record relative ratio, record coupling, the delivered value-noise octave sizes, the delivered event area, the fog baseline, saturation density, and development uniformity.
 
 The per-record ratio and record coupling are advanced candidates, not public controls. They MUST NOT be exposed until each has a validated direction, range, and interaction with grain strength. Their current delivered values remain engine constants.
 
@@ -72,7 +72,7 @@ These candidates MUST remain internal or unexposed until a separate contract and
 - **Distribution width or roughness:** an internal spectrum-shape parameter. It is not `uniformity` and not an event-contribution width.
 - **Tone-zone weights:** record-density zones are not final-image shadows and highlights. A creative control would need its own definition.
 - **Fog grain:** a model or stock parameter, not a public knob.
-- **Event area, correlation lengths, band limit, octave details, Dmax, uniformity, fog baseline, and the per-record ratio:** internal law, calibration, or numerical values, not ordinary appearance controls.
+- **Event area, value-noise octave sizes, octave details, Dmax, uniformity, fog baseline, and the per-record ratio:** internal law, calibration, or numerical values, not ordinary appearance controls.
 - **Film format, scanner blur, and sharpening:** owned by their modules; they do not replace texture scale.
 
 The expectation diagnostic replaces every draw by its conditional mean and MUST remain a diagnostic. It MUST NOT change the user's recipe or become a production bypass.
@@ -112,10 +112,10 @@ Acceptance is gated. A later gate MUST NOT compensate for an earlier gate that f
 - **Zero strength:** Strength `0` MUST return the target density at the Dye boundary. A final encoded comparison MUST state its downstream route and settings.
 - **Amplitude:** At fixed seed, geometry, and output footprints, strengths `0.5`, `1`, and `2` MUST produce monotonically increasing realized standard deviation while the mean stays at the target within the declared tolerance.
 - **Scale:** At fixed seed, geometry, and output footprints, scales `0.5`, `1`, and `2` MUST produce monotonically coarser texture under a declared spectral or adjacent-sample statistic.
-- **Handoff:** The CPU and device MUST receive the same mapped field amplitude, event area, and correlation scale. A scale and pitch whose Gaussian exceeds the supported device tap radius MUST fail before allocation; the kernel MUST NOT be truncated.
+- **Handoff:** The CPU and device MUST receive the same mapped field amplitude, event area, and correlation scale. A scale that cannot form finite positive octave sizes MUST fail before allocation.
 - **Validity:** Every output MUST be finite. The acceptance record MUST report the tested stock, route, executor, target mean, channel bias, and spatial statistic.
 
-Scale acceptance MUST state that correlation length is in film coordinates and that the statistic is not a crystal-size estimate.
+Scale acceptance MUST state that value-noise cell size is in film coordinates and that the statistic is not a crystal-size estimate.
 
 Numerical proof and photographic proof are separate. A local synthetic probe, one seed, one crop, one stock, a software adapter, or a visually similar output MUST NOT be presented as universal algorithm or stock acceptance.
 

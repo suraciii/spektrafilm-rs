@@ -1,18 +1,15 @@
 //! Bands of the Dye grain law transported through pages.
 //!
-//! The law lives on the film lattice, so a band is a window of the *source* raster
-//! with the halo its filter needs; the readout grid is applied afterwards, when the
-//! developed density is written out. That ordering is what makes a crop, a preview
-//! scale, or a render split into stages agree with a single full-frame pass.
-//!
-//! The noise is keyed on global source coordinates, so overlapping halos reproduce
-//! the same field and the bands join without a seam.
+//! The value-noise field is pointwise in global source coordinates, so a band
+//! needs no blur halo. Its source window still includes one source cell around
+//! the readout footprint for bilinear resampling. The readout grid is applied
+//! after the developed density is written, so a crop, preview scale, or stage
+//! split samples one film.
 
-use super::dye_law::{
-    LawBand, LawGeom, LawPipelines, LawTaps, READOUT_WGSL, band_bytes, halo_um, law_taps,
-};
+use super::dye_law::{LawBand, LawGeom, LawPipelines, READOUT_WGSL, band_bytes};
 use super::*;
 use crate::wgpu_backend::film_chain::device_image::{BufferPayload, ImagePage};
+use spektrafilm_backend::dye_params::law;
 
 /// Band working set the plan is allowed to hold at once.
 const BAND_BUDGET_BYTES: u64 = 256 << 20;
@@ -20,7 +17,6 @@ const BAND_BUDGET_BYTES: u64 = 256 << 20;
 struct LawPiece {
     /// Source window, in film-lattice pixels.
     window: [u32; 4],
-    /// Grid rows this piece publishes.
     grid_x: u32,
     grid_y: u32,
     grid_cols: u32,
@@ -34,7 +30,6 @@ pub(in crate::wgpu_backend) struct DyeLawState {
     source: std::sync::Arc<BufferPayload>,
     pieces: Vec<LawPiece>,
     pipes: LawPipelines,
-    taps: LawTaps,
     readout_pipe: CachedPipelineRef,
     grid: [u32; 4],
     grid_origin: [f64; 2],
@@ -66,13 +61,7 @@ impl DyeLawState {
                 piece.window[3],
                 piece.band.buffer(),
             )?;
-            backend.encode_law_band(
-                &mut encoder,
-                &piece.band,
-                &piece.geometry,
-                &self.pipes,
-                &self.taps,
-            );
+            backend.encode_law_band(&mut encoder, &piece.band, &piece.geometry, &self.pipes);
             backend.encode_law_readout(
                 &mut encoder,
                 &self.readout_pipe,
@@ -104,46 +93,52 @@ impl DyeLawState {
     }
 }
 
-/// Rows of window one band may hold at this width, and the halo it needs.
+/// Rows of window one band may hold at this width.
 pub(in crate::wgpu_backend) fn law_band_shape(
     backend: &WgpuBackend,
-    width: u32,
-    pitch_um: f64,
-    length_scale: f64,
-) -> Result<(u32, u32), String> {
+    source_width: u32,
+    grid_width: u32,
+) -> Result<u32, String> {
     let binding = crate::wgpu_backend::bounded::storage_binding_limit(backend)?;
     let budget = BAND_BUDGET_BYTES.min(binding);
-    let pixels = (budget / 68).max(64);
-    let rows = (pixels / u64::from(width.max(1))).max(1);
-    let halo = (halo_um(length_scale) / pitch_um).ceil().max(1.0);
-    if halo > 4096.0 {
-        return Err(format!(
-            "Dye grain law: a {pitch_um} um pitch needs a {halo} px halo"
-        ));
-    }
-    Ok((rows.min(u64::from(u32::MAX)) as u32, halo as u32))
+    let source_width = u64::from(source_width.max(1));
+    let grid_width = u64::from(grid_width.max(1));
+    let per_row = band_bytes(source_width)
+        .checked_add(
+            source_width
+                .checked_mul(12)
+                .ok_or("Dye grain law: band overflow")?,
+        )
+        .and_then(|v| v.checked_add(grid_width.checked_mul(12)?))
+        .ok_or("Dye grain law: band overflow")?;
+    Ok((budget / per_row).max(1).min(u64::from(u32::MAX)) as u32)
 }
 
-/// Working set of the law: one band window plus the published pages.
+/// Working set of the law: one band window, published pages, and every piece's
+/// readout buffer. Readout buffers are retained until submission, so their
+/// total is the full output-grid size rather than one band.
 pub(in crate::wgpu_backend) fn law_workspace_bytes(
     backend: &WgpuBackend,
-    width: u32,
-    height: u32,
-    pitch_um: f64,
-    length_scale: f64,
+    source_width: u32,
+    source_height: u32,
+    grid_width: u32,
+    grid_height: u32,
 ) -> Result<u64, String> {
-    law_taps(pitch_um, length_scale)?;
-    let (rows, halo) = law_band_shape(backend, width, pitch_um, length_scale)?;
-    let window_rows = u64::from(rows) + 2 * u64::from(halo);
-    let window = u64::from(width)
-        .checked_mul(window_rows)
+    let rows = law_band_shape(backend, source_width, grid_width)?.min(source_height.max(1));
+    let window = u64::from(source_width.max(1))
+        .checked_mul(u64::from(rows))
         .ok_or("Dye grain law: band window overflow")?;
-    let pages = u64::from(width)
-        .checked_mul(u64::from(height))
+    let pages = u64::from(grid_width)
+        .checked_mul(u64::from(grid_height))
         .and_then(|v| v.checked_mul(12))
         .ok_or("Dye grain law: output pages overflow")?;
     band_bytes(window)
-        .checked_add(window * 12)
+        .checked_add(
+            window
+                .checked_mul(12)
+                .ok_or("Dye grain law: band overflow")?,
+        )
+        .and_then(|v| v.checked_add(pages))
         .and_then(|v| v.checked_add(pages))
         .ok_or_else(|| "Dye grain law: workspace overflow".to_owned())
 }
@@ -156,6 +151,21 @@ impl WgpuBackend {
         input: &BufferPayload,
         params: &DyeGpuParams,
     ) -> Result<DyeLawState, String> {
+        let rows_per_band = law_band_shape(self, width, params.grid.width)?;
+        self.prepare_dye_law_with_rows(width, height, input, params, rows_per_band)
+    }
+
+    /// Build a field state with an explicit band height. The public entry point
+    /// derives this from the device binding limit; tests use it to prove that
+    /// band partitioning does not change the realization.
+    fn prepare_dye_law_with_rows(
+        &self,
+        width: u32,
+        height: u32,
+        input: &BufferPayload,
+        params: &DyeGpuParams,
+        rows_per_band: u32,
+    ) -> Result<DyeLawState, String> {
         if input.width != width || input.height != height {
             return Err(
                 "Dye grain law: the source raster does not match the declared geometry".into(),
@@ -165,9 +175,11 @@ impl WgpuBackend {
         if !(source_pitch.is_finite() && source_pitch > 0.0) {
             return Err("Dye grain law: the source pitch must be positive".into());
         }
+        if !(params.length_scale.is_finite() && params.length_scale > 0.0) {
+            return Err("Dye grain law: the correlation-length scale must be positive".into());
+        }
         let grid = &params.grid;
-        let (rows_per_band, halo) = law_band_shape(self, width, source_pitch, params.length_scale)?;
-        let taps = law_taps(source_pitch, params.length_scale)?;
+        let base_px = law::base_cell_px(params.length_scale, source_pitch);
         let output_pages = self.allocate_image_pages(grid.width, grid.height, "dye_law_output")?;
         let pipes = self.dye_law_pipelines();
         let readout_pipe = self.cached_pipeline_at(
@@ -184,16 +196,27 @@ impl WgpuBackend {
         while y < grid.height {
             self.check_cancelled()?;
             let grid_rows = rows_per_band.min(grid.height - y);
-            // Source rows this grid band needs, plus the filter halo.
             let top_film = grid.origin_um[1] + y as f64 * grid.pitch_um[1];
             let bottom_film = grid.origin_um[1] + (y + grid_rows) as f64 * grid.pitch_um[1];
             let left_film = grid.origin_um[0];
             let right_film = grid.origin_um[0] + grid.width as f64 * grid.pitch_um[0];
             let to_px = |um: f64| um / source_pitch;
-            let window_y = (to_px(top_film).floor().max(0.0) as u32).saturating_sub(halo);
-            let window_bottom = ((to_px(bottom_film).ceil() as u32) + halo).min(height);
-            let window_x = (to_px(left_film).floor().max(0.0) as u32).saturating_sub(halo);
-            let window_right = ((to_px(right_film).ceil() as u32) + halo).min(width);
+            // A readout window entirely past a source edge still clamps to the
+            // last source sample, exactly as the readout shader does. The extra
+            // source cell on each side is the bilinear readout support, not a
+            // field blur.
+            let window_y = (to_px(top_film).floor().max(0.0) as u32)
+                .saturating_sub(1)
+                .min(height.saturating_sub(1));
+            let window_bottom = (to_px(bottom_film).ceil() as u32)
+                .saturating_add(1)
+                .min(height);
+            let window_x = (to_px(left_film).floor().max(0.0) as u32)
+                .saturating_sub(1)
+                .min(width.saturating_sub(1));
+            let window_right = (to_px(right_film).ceil() as u32)
+                .saturating_add(1)
+                .min(width);
             let window_w = window_right.saturating_sub(window_x).max(1);
             let window_h = window_bottom.saturating_sub(window_y).max(1);
             let band = LawBand::new(self, window_w, window_h, "dye_law_band", None);
@@ -215,12 +238,13 @@ impl WgpuBackend {
                 geometry: LawGeom {
                     origin_x: window_x,
                     origin_y: window_y,
-                    pitch_um: source_pitch,
                     seed: params.seed,
                     expectation: params.expectation,
                     monochrome: params.monochrome,
                     white: params.white,
                     event_area_um2: params.event_area_um2,
+                    pitch_um: source_pitch,
+                    base_px,
                 },
                 readout,
             });
@@ -244,7 +268,6 @@ impl WgpuBackend {
             )),
             pieces,
             pipes,
-            taps,
             readout_pipe,
             grid: [grid.width, grid.height, grid.width, grid.height],
             grid_origin: grid.origin_um,
@@ -253,5 +276,221 @@ impl WgpuBackend {
             output_pages,
             status,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::gpu_helpers::scalars_to_f32;
+    use spektrafilm_math::image::ImageBuf;
+    use spektrafilm_math::precision::from_f64;
+
+    fn upload(backend: &WgpuBackend, image: &ImageBuf) -> BufferPayload {
+        let pages = backend
+            .allocate_image_pages(image.width, image.height, "dye_band_probe")
+            .unwrap();
+        let values = scalars_to_f32(&image.data);
+        for page in &pages {
+            let first = page.first_pixel as usize * 3;
+            let end = first + page.n_pixels as usize * 3;
+            backend
+                .queue
+                .write_buffer(&page.buffer, 0, bytemuck::cast_slice(&values[first..end]));
+        }
+        BufferPayload::from_pages(backend.backend_id(), pages, image.width, image.height)
+    }
+
+    fn materialize(
+        backend: &WgpuBackend,
+        pages: &[ImagePage],
+        width: u32,
+        height: u32,
+    ) -> ImageBuf {
+        let mut values = vec![0.0f32; width as usize * height as usize * 3];
+        for page in pages {
+            let readback: Vec<f32> = backend
+                .pipe
+                .readback_buffer_cancellable(&page.buffer, u64::from(page.n_pixels) * 12)
+                .unwrap();
+            let first = page.first_pixel as usize * 3;
+            values[first..first + readback.len()].copy_from_slice(&readback);
+        }
+        ImageBuf::from_data(width, height, values)
+    }
+
+    fn run(backend: &WgpuBackend, image: &ImageBuf, params: &DyeGpuParams, rows: u32) -> ImageBuf {
+        let source = upload(backend, image);
+        let state = backend
+            .prepare_dye_law_with_rows(image.width, image.height, &source, params, rows)
+            .unwrap();
+        state.submit(backend).unwrap();
+        materialize(
+            backend,
+            &state.output_pages(),
+            params.grid.width,
+            params.grid.height,
+        )
+    }
+
+    fn params() -> DyeGpuParams {
+        DyeGpuParams {
+            source_pitch_um: 5.0,
+            grid: spektrafilm_backend::dye_params::DyeReadoutGrid {
+                origin_um: [0.0, 0.0],
+                pitch_um: [5.0, 5.0],
+                width: 64,
+                height: 64,
+            },
+            seed: 7,
+            expectation: false,
+            monochrome: false,
+            white: law::WHITE,
+            event_area_um2: law::EVENT_AREA_UM2,
+            length_scale: 1.0,
+        }
+    }
+
+    #[test]
+    fn coarse_readout_with_a_nonzero_window_origin_uses_global_source_cells() {
+        let gpu = crate::test_support::adapter();
+        let source = ImageBuf::from_data(
+            64,
+            64,
+            (0..64 * 64 * 3)
+                .map(|i| from_f64(0.3 + (i % 7) as f64 * 0.02))
+                .collect(),
+        );
+        let mut p = params();
+        p.grid = spektrafilm_backend::dye_params::DyeReadoutGrid {
+            origin_um: [10.0, 10.0],
+            pitch_um: [10.0, 10.0],
+            width: 8,
+            height: 8,
+        };
+        p.expectation = true;
+        let out = run(&gpu, &source, &p, 3);
+        let source_pitch = p.source_pitch_um;
+        let origin = p.grid.origin_um;
+        let pitch = p.grid.pitch_um;
+        let mut worst = 0.0f32;
+        for y in 0..p.grid.height {
+            for x in 0..p.grid.width {
+                let first_x = (origin[0] + x as f64 * pitch[0]) / source_pitch;
+                let first_y = (origin[1] + y as f64 * pitch[1]) / source_pitch;
+                let mut acc = [0.0f64; 3];
+                for sy in 0..2 {
+                    for sx in 0..2 {
+                        let ix = (first_x.floor() as u32 + sx).min(63);
+                        let iy = (first_y.floor() as u32 + sy).min(63);
+                        for c in 0..3 {
+                            acc[c] += spektrafilm_math::precision::to_f64(
+                                source.data[(iy as usize * 64 + ix as usize) * 3 + c],
+                            );
+                        }
+                    }
+                }
+                for c in 0..3 {
+                    let expected = (acc[c] / 4.0) as f32;
+                    let got = out.data[((y * p.grid.width + x) * 3) as usize + c];
+                    worst = worst.max((expected - got).abs());
+                }
+            }
+        }
+        assert!(
+            worst < 1e-5,
+            "readout disagrees with global source cells: {worst}"
+        );
+    }
+
+    #[test]
+    fn sub_lattice_readout_with_a_nonzero_window_origin_uses_global_source_cells() {
+        let gpu = crate::test_support::adapter();
+        let source = ImageBuf::from_data(
+            64,
+            64,
+            (0..64 * 64 * 3)
+                .map(|i| from_f64(0.3 + (i % 7) as f64 * 0.02))
+                .collect(),
+        );
+        let mut p = params();
+        p.grid = spektrafilm_backend::dye_params::DyeReadoutGrid {
+            origin_um: [10.0, 10.0],
+            pitch_um: [2.5, 2.5],
+            width: 8,
+            height: 8,
+        };
+        p.expectation = true;
+        let out = run(&gpu, &source, &p, 3);
+        let source_pitch = p.source_pitch_um;
+        let origin = p.grid.origin_um;
+        let pitch = p.grid.pitch_um;
+        let mut worst = 0.0f32;
+        for y in 0..p.grid.height {
+            for x in 0..p.grid.width {
+                let first_x = (origin[0] + x as f64 * pitch[0]) / source_pitch;
+                let last_x = first_x + pitch[0] / source_pitch;
+                let first_y = (origin[1] + y as f64 * pitch[1]) / source_pitch;
+                let last_y = first_y + pitch[1] / source_pitch;
+                let sx = ((first_x + last_x) * 0.5 - 0.5).clamp(0.0, 63.0);
+                let sy = ((first_y + last_y) * 0.5 - 0.5).clamp(0.0, 63.0);
+                let x0 = sx.floor() as u32;
+                let y0 = sy.floor() as u32;
+                let x1 = (x0 + 1).min(63);
+                let y1 = (y0 + 1).min(63);
+                let wx = sx - x0 as f64;
+                let wy = sy - y0 as f64;
+                for c in 0..3 {
+                    let p00 = spektrafilm_math::precision::to_f64(
+                        source.data[((y0 * 64 + x0) * 3) as usize + c],
+                    );
+                    let p10 = spektrafilm_math::precision::to_f64(
+                        source.data[((y0 * 64 + x1) * 3) as usize + c],
+                    );
+                    let p01 = spektrafilm_math::precision::to_f64(
+                        source.data[((y1 * 64 + x0) * 3) as usize + c],
+                    );
+                    let p11 = spektrafilm_math::precision::to_f64(
+                        source.data[((y1 * 64 + x1) * 3) as usize + c],
+                    );
+                    let expected = (p00
+                        + (p10 - p00) * wx
+                        + ((p01 + (p11 - p01) * wx) - (p00 + (p10 - p00) * wx)) * wy)
+                        as f32;
+                    let got = out.data[((y * p.grid.width + x) * 3) as usize + c];
+                    worst = worst.max((expected - got).abs());
+                }
+            }
+        }
+        assert!(
+            worst < 1e-5,
+            "readout disagrees with global source cells: {worst}"
+        );
+    }
+
+    #[test]
+    fn band_split_preserves_the_device_field_and_count() {
+        let gpu = crate::test_support::adapter();
+        let image = ImageBuf::from_data(
+            64,
+            64,
+            (0..64 * 64 * 3)
+                .map(|i| from_f64(0.3 + (i % 7) as f64 * 0.02))
+                .collect(),
+        );
+        let p = params();
+        let whole = run(&gpu, &image, &p, 64);
+        let split = run(&gpu, &image, &p, 7);
+        let mut worst = 0.0f32;
+        let mut at = 0;
+        for (i, (a, b)) in whole.data.iter().zip(split.data.iter()).enumerate() {
+            let d = (a - b).abs();
+            if d > worst {
+                worst = d;
+                at = i;
+            }
+        }
+        eprintln!("band split worst {worst:.3e} at sample {at}");
+        assert!(worst <= 1e-5, "band split changed the field: {worst:.3e}");
     }
 }

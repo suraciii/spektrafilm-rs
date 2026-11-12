@@ -1,91 +1,43 @@
-//! The delivered Dye grain law on the device.
+//! The Dye grain field on the device.
 //!
-//! The law is a band-limited correlated field whose amplitude follows the record
-//! density, plus an event count:
-//!
-//! ```text
-//! D = t * (1 + sigma(t)/t * u) + count noise,      E[D] = t
-//! u = normalise( sum_i w_i * G_sigma_i * white - G_hp * sum_i w_i * G_sigma_i * white )
-//! ```
-//!
-//! Every pass is a separable Gaussian over white noise generated from the pixel
-//! coordinates, so no noise buffer is stored. The normalisation is analytical:
-//! the effective kernel is separable, so its L2 norm is computed on the host from
-//! the one-dimensional taps and the device only applies a scalar.
-//!
-//! A band is a window of the image plus the halo the filter needs. The noise is
-//! keyed on **global** coordinates, so overlapping halos reproduce the same field
-//! and bands join without seams.
+//! The field is the same three-octave value-noise process as the host
+//! reference: global-coordinate hashing, smoothstep interpolation and a fixed
+//! unit-variance scale. The device writes the shared and record fields, then
+//! the existing apply pass mixes them and draws the conditional count. No
+//! Gaussian taps, halo, or device-side reduction are needed.
 
 use super::*;
 use crate::gpu_helpers::{f32_to_scalars, scalars_to_f32};
 use spektrafilm_backend::dye_params::law;
 use spektrafilm_math::precision::{ZERO, from_f64, to_f64};
 
-const BLUR_WGSL: &str = include_str!("dye_law_blur.wgsl");
-const COMBINE_WGSL: &str = include_str!("dye_law_combine.wgsl");
-const SUBTRACT_WGSL: &str = include_str!("dye_law_subtract.wgsl");
+const VALUE_WGSL: &str = include_str!("dye_value.wgsl");
 const APPLY_WGSL: &str = include_str!("dye_law_apply.wgsl");
 pub(super) const READOUT_WGSL: &str = include_str!("dye_law_readout.wgsl");
 
-/// Halo radius in micrometres that a band needs on each side at the
-/// request's correlation-length scale.
-pub(super) fn halo_um(length_scale: f64) -> f64 {
-    let widest = law::OCTAVES
-        .iter()
-        .map(|(diameter, _)| diameter / 2.0)
-        .fold(0.0f64, f64::max);
-    length_scale * (3.0 * widest + 3.0 * law::HIGHPASS_UM)
-}
-
-/// Bytes one band of `pixels` pixels needs: density and output in RGB plus ten
-/// single-channel fields.
+/// Bytes one band needs: density and output RGB plus four single-channel
+/// fields.
 pub(super) fn band_bytes(pixels: u64) -> u64 {
-    // Two interleaved windows and eleven single-channel planes.
-    pixels * 68
+    pixels * 40
 }
 
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
-struct BlurParams {
+struct ValueParams {
     w: u32,
     h: u32,
-    radius: u32,
-    axis: u32,
-    stream: u32,
     seed: u32,
-    use_noise: u32,
-    pad: u32,
     ox: u32,
     oy: u32,
-    pad2: u32,
-    pad3: u32,
-}
-
-#[repr(C)]
-#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
-struct CombineParams {
-    w: u32,
-    h: u32,
+    monochrome: u32,
     pad0: u32,
     pad1: u32,
-    w0: f32,
-    w1: f32,
-    w2: f32,
-    pad2: f32,
-}
-
-#[repr(C)]
-#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
-struct SubtractParams {
-    w: u32,
-    h: u32,
-    pad0: u32,
-    pad1: u32,
-    scale: f32,
-    pad2: f32,
-    pad3: f32,
-    pad4: f32,
+    base_px: f32,
+    field_scale: f32,
+    wa: f32,
+    wb: f32,
+    wc: f32,
+    norm: f32,
 }
 
 #[repr(C)]
@@ -110,149 +62,6 @@ struct ApplyParams {
     strength: [f32; 4],
 }
 
-/// Largest supported Gaussian radius in pixels. A request that needs more
-/// taps is rejected before allocation instead of silently truncating the
-/// kernel and realizing a different correlation length.
-const MAX_TAP_RADIUS: u32 = 48;
-
-/// Normalised Gaussian taps and their radius.
-fn taps_for(sigma_px: f64) -> Result<(Vec<f32>, u32), String> {
-    let sigma = sigma_px.max(0.05);
-    let radius = (3.0 * sigma).ceil();
-    if radius > f64::from(MAX_TAP_RADIUS) {
-        return Err(format!(
-            "Dye grain law: a {sigma_px:.3} px Gaussian needs a {radius:.0} px kernel above the {MAX_TAP_RADIUS} px tap bound"
-        ));
-    }
-    let radius = radius.max(1.0) as u32;
-    let mut taps = Vec::with_capacity((2 * radius + 1) as usize);
-    let mut sum = 0.0;
-    for t in 0..=(2 * radius) {
-        let x = t as f64 - radius as f64;
-        let v = (-(x * x) / (2.0 * sigma * sigma)).exp();
-        taps.push(v);
-        sum += v;
-    }
-    for v in taps.iter_mut() {
-        *v /= sum;
-    }
-    Ok((taps.into_iter().map(|v| v as f32).collect(), radius))
-}
-
-/// Per-octave gains and the band-limited scale.
-///
-/// The host law standardises every octave and then the band-limited field, so the
-/// device must land on the same amplitude mix. A Gaussian discretised below one pixel
-/// passes only a fraction of the variance, and that fraction differs per octave, so a
-/// single scale cannot reproduce the host spectrum. Filtering a white-noise patch here
-/// with the very taps the shader uses — same clamping, same discretisation — measures
-/// each fraction and the final scale without any device-side reduction.
-pub(super) struct LawNorm {
-    pub(super) gains: [f64; 3],
-    pub(super) scale: f64,
-}
-
-fn law_norm(taps: [&[f32]; 3], hp: &[f32]) -> LawNorm {
-    const N: usize = 128;
-    let norm = law::OCTAVES.iter().map(|(_, w)| w * w).sum::<f64>().sqrt();
-    let mut state = 0x5eed_1234_9abc_def0u64;
-    // One independent draw per octave, because that is what the shader has: reusing one
-    // draw would leave the octaves correlated and misprice the combined amplitude.
-    let mut noise: Vec<Vec<f32>> = Vec::with_capacity(law::OCTAVES.len());
-    for _ in 0..law::OCTAVES.len() {
-        let mut v: Vec<f32> = Vec::with_capacity(N * N);
-        for _ in 0..(N * N) {
-            state = state
-                .wrapping_mul(6364136223846793005)
-                .wrapping_add(1442695040888963407);
-            let u1 = ((state >> 11) as f64 + 0.5) / 9007199254740992.0;
-            state = state
-                .wrapping_mul(6364136223846793005)
-                .wrapping_add(1442695040888963407);
-            let u2 = ((state >> 11) as f64) / 9007199254740992.0;
-            v.push(((-2.0 * u1.ln()).sqrt() * (std::f64::consts::TAU * u2).cos()) as f32);
-        }
-        noise.push(v);
-    }
-    // Periodic filtering: the quantity being measured is the interior amplitude of a
-    // stationary field, and a clamped border would let the border dominate exactly when
-    // the filter is narrow enough that the interior answer is a small residual.
-    let blur = |field: &[f32], taps: &[f32]| -> Vec<f32> {
-        let radius = (taps.len() / 2) as i64;
-        let wrap = |i: i64| i.rem_euclid(N as i64) as usize;
-        let mut tmp = vec![0.0f32; N * N];
-        for y in 0..N {
-            for x in 0..N {
-                let mut acc = 0.0f32;
-                for (t, &k) in taps.iter().enumerate() {
-                    let sx = wrap(x as i64 + t as i64 - radius);
-                    acc += k * field[y * N + sx];
-                }
-                tmp[y * N + x] = acc;
-            }
-        }
-        let mut out = vec![0.0f32; N * N];
-        for y in 0..N {
-            for x in 0..N {
-                let mut acc = 0.0f32;
-                for (t, &k) in taps.iter().enumerate() {
-                    let sy = wrap(y as i64 + t as i64 - radius);
-                    acc += k * tmp[sy * N + x];
-                }
-                out[y * N + x] = acc;
-            }
-        }
-        out
-    };
-    // Interior only: the clamp at the patch border leaves the field weaker there, so
-    // averaging the border in would understate the amplitude a large render actually
-    // gets and would make the scale depend on the patch size.
-    let margin = 8usize;
-    let sd = |v: &[f32]| {
-        let mut sum = 0.0f64;
-        let mut count = 0.0f64;
-        for y in margin..(N - margin) {
-            for x in margin..(N - margin) {
-                sum += v[y * N + x] as f64;
-                count += 1.0;
-            }
-        }
-        let mean = sum / count;
-        let mut var = 0.0f64;
-        for y in margin..(N - margin) {
-            for x in margin..(N - margin) {
-                var += (v[y * N + x] as f64 - mean).powi(2);
-            }
-        }
-        (var / count).sqrt().max(1e-9)
-    };
-    // The shader blurs raw noise and never standardises an octave on the way, so the
-    // gain each octave needs is measured here rather than assumed.
-    let mut gains = [1.0f64; 3];
-    let mut field = vec![0.0f32; N * N];
-    for (i, (_, weight)) in law::OCTAVES.iter().enumerate() {
-        let v = blur(&noise[i], taps[i]);
-        gains[i] = 1.0 / sd(&v);
-        let k = ((weight / norm) * gains[i]) as f32;
-        for (a, b) in field.iter_mut().zip(v.iter()) {
-            *a += k * b;
-        }
-    }
-    let big = blur(&field, hp);
-    for (a, b) in field.iter_mut().zip(big.iter()) {
-        *a -= *b;
-    }
-    LawNorm {
-        gains,
-        scale: 1.0 / sd(&field),
-    }
-}
-
-/// Readout of the developed density at the grid's film-coordinate windows.
-///
-/// This is the same readout the host model uses: a cell finer than the lattice
-/// interpolates its centre, a coarser one integrates the lattice cells it covers, so
-/// a window and a full-frame read agree where they overlap.
 fn resample_readout(
     film: &ImageBuf,
     source_pitch_um: f64,
@@ -323,44 +132,21 @@ fn resample_readout(
         height: grid.height,
     }
 }
-
 pub(super) struct LawPipelines {
-    pub(super) blur: CachedPipelineRef,
-    combine: CachedPipelineRef,
-    subtract: CachedPipelineRef,
+    value: CachedPipelineRef,
     apply: CachedPipelineRef,
 }
 
 impl WgpuBackend {
     pub(super) fn dye_law_pipelines(&self) -> LawPipelines {
         LawPipelines {
-            blur: self.cached_pipeline_at(
-                BLUR_WGSL,
+            value: self.cached_pipeline_at(
+                VALUE_WGSL,
                 &[
                     wgpu::BufferBindingType::Uniform,
-                    wgpu::BufferBindingType::Storage { read_only: true },
-                    wgpu::BufferBindingType::Storage { read_only: true },
                     wgpu::BufferBindingType::Storage { read_only: false },
-                ],
-                "main",
-            ),
-            combine: self.cached_pipeline_at(
-                COMBINE_WGSL,
-                &[
-                    wgpu::BufferBindingType::Uniform,
-                    wgpu::BufferBindingType::Storage { read_only: true },
-                    wgpu::BufferBindingType::Storage { read_only: true },
-                    wgpu::BufferBindingType::Storage { read_only: true },
                     wgpu::BufferBindingType::Storage { read_only: false },
-                ],
-                "main",
-            ),
-            subtract: self.cached_pipeline_at(
-                SUBTRACT_WGSL,
-                &[
-                    wgpu::BufferBindingType::Uniform,
-                    wgpu::BufferBindingType::Storage { read_only: true },
-                    wgpu::BufferBindingType::Storage { read_only: true },
+                    wgpu::BufferBindingType::Storage { read_only: false },
                     wgpu::BufferBindingType::Storage { read_only: false },
                 ],
                 "main",
@@ -382,9 +168,9 @@ impl WgpuBackend {
     }
 }
 
-/// One window of the field: interleaved density and output, four field planes and
-/// six scratch planes. Each plane is its own buffer, because one dispatch binds
-/// some planes read-only and others read-write and a single buffer may not be both.
+/// One window of the field: interleaved density and output, plus the shared
+/// field and three record fields. Each plane has its own buffer because one
+/// dispatch binds some planes read-only and others read-write.
 pub(super) struct LawBand {
     buffers: Vec<wgpu::Buffer>,
     cols: u32,
@@ -403,8 +189,8 @@ impl LawBand {
         let usage = wgpu::BufferUsages::STORAGE
             | wgpu::BufferUsages::COPY_SRC
             | wgpu::BufferUsages::COPY_DST;
-        let mut buffers = Vec::with_capacity(13);
-        for index in 0..13u64 {
+        let mut buffers = Vec::with_capacity(6);
+        for index in 0..6u64 {
             let size = if index < 2 { pixels * 12 } else { pixels * 4 };
             if index == 0
                 && let Some(data) = contents
@@ -459,37 +245,17 @@ impl LawBand {
     }
 }
 
-/// Where a band sits in the image, and the sampling pitch of its field.
+/// Where a band sits in the image, and the value-noise sampling pitch.
 pub(super) struct LawGeom {
     pub origin_x: u32,
     pub origin_y: u32,
-    pub pitch_um: f64,
     pub seed: u64,
     pub expectation: bool,
     pub monochrome: bool,
     pub white: f64,
     pub event_area_um2: f64,
-}
-
-pub(super) struct LawTaps {
-    pub(super) octaves: [(Vec<f32>, u32); 3],
-    pub(super) highpass: (Vec<f32>, u32),
-    pub(super) norm: LawNorm,
-}
-
-pub(super) fn law_taps(pitch_um: f64, length_scale: f64) -> Result<LawTaps, String> {
-    let mut octaves: [(Vec<f32>, u32); 3] = std::array::from_fn(|_| (Vec::new(), 0));
-    for (i, taps) in octaves.iter_mut().enumerate() {
-        let sigma_px = law::OCTAVES[i].0 * length_scale / 2.0 / pitch_um;
-        *taps = taps_for(sigma_px)?;
-    }
-    let highpass = taps_for(law::HIGHPASS_UM * length_scale / pitch_um)?;
-    let norm = law_norm([&octaves[0].0, &octaves[1].0, &octaves[2].0], &highpass.0);
-    Ok(LawTaps {
-        octaves,
-        highpass,
-        norm,
-    })
+    pub pitch_um: f64,
+    pub base_px: f64,
 }
 
 impl WgpuBackend {
@@ -499,15 +265,6 @@ impl WgpuBackend {
                 label: Some(label),
                 contents: bytes,
                 usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            })
-    }
-
-    fn tap_buffer(&self, taps: &[f32]) -> wgpu::Buffer {
-        self.device
-            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("dye_law_taps"),
-                contents: bytemuck::cast_slice(taps),
-                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             })
     }
 
@@ -594,223 +351,69 @@ impl WgpuBackend {
         pass.dispatch_workgroups(band[0].div_ceil(64), band[1], 1);
     }
 
-    /// Encode the whole law for one band.
+    /// Encode the value-noise field and the density law for one band.
     pub(super) fn encode_law_band(
         &self,
         encoder: &mut ObservedEncoder,
         band: &LawBand,
         geom: &LawGeom,
         pipes: &LawPipelines,
-        taps: &LawTaps,
     ) {
         let (w, h) = (band.cols, band.rows);
         let groups = (w.div_ceil(64), h, 1);
-        let norm = law::OCTAVES.iter().map(|(_, w)| w * w).sum::<f64>().sqrt();
-        for field in 0..4u64 {
-            for (i, (taps, radius)) in taps.octaves.iter().enumerate() {
-                for axis in 0..2u32 {
-                    let params = BlurParams {
-                        w,
-                        h,
-                        radius: *radius,
-                        axis,
-                        stream: field as u32 * 8 + i as u32,
-                        seed: geom.seed as u32,
-                        use_noise: u32::from(axis == 0),
-                        pad: 0,
-                        ox: geom.origin_x,
-                        oy: geom.origin_y,
-                        pad2: 0,
-                        pad3: 0,
-                    };
-                    let u = self.uniform("dye_law_blur", bytemuck::bytes_of(&params));
-                    let t = self.tap_buffer(taps);
-                    // Octave planes 0..2 and the horizontal target, plane 3.
-                    let (source, target) = if axis == 0 {
-                        (band.plane(0), band.plane(3))
-                    } else {
-                        (band.plane(3), band.plane(i as u64))
-                    };
-                    let bind = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                        label: Some("dye_law_blur"),
-                        layout: &pipes.blur.layout,
-                        entries: &[
-                            wgpu::BindGroupEntry {
-                                binding: 0,
-                                resource: u.as_entire_binding(),
-                            },
-                            wgpu::BindGroupEntry {
-                                binding: 1,
-                                resource: t.as_entire_binding(),
-                            },
-                            wgpu::BindGroupEntry {
-                                binding: 2,
-                                resource: source,
-                            },
-                            wgpu::BindGroupEntry {
-                                binding: 3,
-                                resource: target,
-                            },
-                        ],
-                    });
-                    let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                        label: Some("dye_law_blur"),
-                        timestamp_writes: None,
-                    });
-                    pass.set_pipeline(&pipes.blur.pipeline);
-                    pass.set_bind_group(0, &bind, &[]);
-                    pass.dispatch_workgroups(groups.0, groups.1, 1);
-                }
-            }
-            let params = CombineParams {
-                w,
-                h,
-                pad0: 0,
-                pad1: 0,
-                w0: ((law::OCTAVES[0].1 / norm) * taps.norm.gains[0]) as f32,
-                w1: ((law::OCTAVES[1].1 / norm) * taps.norm.gains[1]) as f32,
-                w2: ((law::OCTAVES[2].1 / norm) * taps.norm.gains[2]) as f32,
-                pad2: 0.0,
-            };
-            let u = self.uniform("dye_law_combine", bytemuck::bytes_of(&params));
-            let bind = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("dye_law_combine"),
-                layout: &pipes.combine.layout,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: u.as_entire_binding(),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: band.plane(0),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 2,
-                        resource: band.plane(1),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 3,
-                        resource: band.plane(2),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 4,
-                        resource: band.plane(9),
-                    },
-                ],
+        let params = ValueParams {
+            w,
+            h,
+            seed: geom.seed as u32,
+            ox: geom.origin_x,
+            oy: geom.origin_y,
+            monochrome: u32::from(geom.monochrome),
+            pad0: 0,
+            pad1: 0,
+            base_px: geom.base_px as f32,
+            field_scale: law::VALUE_FIELD_SCALE as f32,
+            wa: law::VALUE_WEIGHTS[0] as f32,
+            wb: law::VALUE_WEIGHTS[1] as f32,
+            wc: law::VALUE_WEIGHTS[2] as f32,
+            norm: law::VALUE_WEIGHTS.iter().map(|w| w * w).sum::<f64>().sqrt() as f32,
+        };
+        let u = self.uniform("dye_value", bytemuck::bytes_of(&params));
+        let bind = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("dye_value"),
+            layout: &pipes.value.layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: u.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: band.plane(0),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: band.plane(1),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: band.plane(2),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: band.plane(3),
+                },
+            ],
+        });
+        {
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("dye_value"),
+                timestamp_writes: None,
             });
-            {
-                let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                    label: Some("dye_law_combine"),
-                    timestamp_writes: None,
-                });
-                pass.set_pipeline(&pipes.combine.pipeline);
-                pass.set_bind_group(0, &bind, &[]);
-                pass.dispatch_workgroups(groups.0, groups.1, 1);
-            }
-            // Band limit: blur the combined field, plane 9, then subtract.
-            let hp_taps = self.tap_buffer(&taps.highpass.0);
-            for axis in 0..2u32 {
-                let params = BlurParams {
-                    w,
-                    h,
-                    radius: taps.highpass.1,
-                    axis,
-                    stream: 0,
-                    seed: geom.seed as u32,
-                    use_noise: 0,
-                    pad: 0,
-                    ox: geom.origin_x,
-                    oy: geom.origin_y,
-                    pad2: 0,
-                    pad3: 0,
-                };
-                let u = self.uniform("dye_law_highpass", bytemuck::bytes_of(&params));
-                // The vertical pass must read the horizontal result, plane 3, or the
-                // band limit would only be one-dimensional.
-                let target = if axis == 0 {
-                    band.plane(3)
-                } else {
-                    band.plane(10)
-                };
-                let source = if axis == 0 {
-                    band.plane(9)
-                } else {
-                    band.plane(3)
-                };
-                let bind = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                    label: Some("dye_law_highpass"),
-                    layout: &pipes.blur.layout,
-                    entries: &[
-                        wgpu::BindGroupEntry {
-                            binding: 0,
-                            resource: u.as_entire_binding(),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 1,
-                            resource: hp_taps.as_entire_binding(),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 2,
-                            resource: source,
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 3,
-                            resource: target,
-                        },
-                    ],
-                });
-                let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                    label: Some("dye_law_highpass"),
-                    timestamp_writes: None,
-                });
-                pass.set_pipeline(&pipes.blur.pipeline);
-                pass.set_bind_group(0, &bind, &[]);
-                pass.dispatch_workgroups(groups.0, groups.1, 1);
-            }
-            let params = SubtractParams {
-                w,
-                h,
-                pad0: 0,
-                pad1: 0,
-                scale: taps.norm.scale as f32,
-                pad2: 0.0,
-                pad3: 0.0,
-                pad4: 0.0,
-            };
-            let u = self.uniform("dye_law_subtract", bytemuck::bytes_of(&params));
-            let bind = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("dye_law_subtract"),
-                layout: &pipes.subtract.layout,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: u.as_entire_binding(),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: band.plane(9),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 2,
-                        resource: band.plane(10),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 3,
-                        resource: band.plane(4 + field),
-                    },
-                ],
-            });
-            {
-                let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                    label: Some("dye_law_subtract"),
-                    timestamp_writes: None,
-                });
-                pass.set_pipeline(&pipes.subtract.pipeline);
-                pass.set_bind_group(0, &bind, &[]);
-                pass.dispatch_workgroups(groups.0, groups.1, 1);
-            }
+            pass.set_pipeline(&pipes.value.pipeline);
+            pass.set_bind_group(0, &bind, &[]);
+            pass.dispatch_workgroups(groups.0, groups.1, 1);
         }
+
         let params = ApplyParams {
             w,
             h,
@@ -850,19 +453,19 @@ impl WgpuBackend {
                 },
                 wgpu::BindGroupEntry {
                     binding: 2,
-                    resource: band.plane(4),
+                    resource: band.plane(0),
                 },
                 wgpu::BindGroupEntry {
                     binding: 3,
-                    resource: band.plane(5),
+                    resource: band.plane(1),
                 },
                 wgpu::BindGroupEntry {
                     binding: 4,
-                    resource: band.plane(6),
+                    resource: band.plane(2),
                 },
                 wgpu::BindGroupEntry {
                     binding: 5,
-                    resource: band.plane(7),
+                    resource: band.plane(3),
                 },
                 wgpu::BindGroupEntry {
                     binding: 6,
@@ -882,10 +485,6 @@ impl WgpuBackend {
     }
 
     /// The whole law as one band, for the standalone `dye_field` entry point.
-    ///
-    /// The law is evaluated on the film lattice, exactly as the host model does, and
-    /// the readout resamples the developed density afterwards. Realizing the field on
-    /// the readout grid would make the draw depend on the crop or the preview scale.
     pub(in crate::wgpu_backend) fn dye_law_field(
         &self,
         image: &ImageBuf,
@@ -904,22 +503,23 @@ impl WgpuBackend {
             return Err("Dye grain law: the correlation-length scale must be positive".into());
         }
         let grid = &params.grid;
-        let taps = law_taps(pitch_um, params.length_scale)?;
+        let base_px = law::base_cell_px(params.length_scale, pitch_um);
         let upload = scalars_to_f32(&image.data);
         let band = LawBand::new(self, width, height, "dye_law_field", Some(&upload));
         let geom = LawGeom {
             origin_x: 0,
             origin_y: 0,
-            pitch_um,
             seed: params.seed,
             expectation: params.expectation,
             monochrome: params.monochrome,
             white: params.white,
             event_area_um2: params.event_area_um2,
+            pitch_um,
+            base_px,
         };
         let pipes = self.dye_law_pipelines();
         let mut encoder = self.device.create_command_encoder(&Default::default());
-        self.encode_law_band(&mut encoder, &band, &geom, &pipes, &taps);
+        self.encode_law_band(&mut encoder, &band, &geom, &pipes);
         self.queue.submit(Some(encoder.finish()));
         let bytes = pixels * 12;
         let staging = self.device.create_buffer(&wgpu::BufferDescriptor {
@@ -944,22 +544,5 @@ impl WgpuBackend {
             return Ok(film);
         }
         Ok(resample_readout(&film, pitch_um, grid))
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn taps_reject_a_kernel_above_the_supported_radius() {
-        assert!(law_taps(3.5, 1.0).is_ok());
-        assert!(law_taps(0.75, 1.0).is_ok());
-        // At a 0.25 µm pitch the scale-4 band limit needs a 576 px radius.
-        let error = match law_taps(0.25, 4.0) {
-            Ok(_) => panic!("an unrepresentable kernel must fail"),
-            Err(error) => error,
-        };
-        assert!(error.contains("tap bound"), "{error}");
     }
 }

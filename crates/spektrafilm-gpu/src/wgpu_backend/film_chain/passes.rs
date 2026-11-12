@@ -249,6 +249,8 @@ impl WgpuBackend {
             }
             let stage = match step {
                 ChainStep::Dye => self.dye_workspace_bytes(
+                    geometry.source.0,
+                    geometry.source.1,
                     extent.0,
                     extent.1,
                     p.grain_dye.as_ref().ok_or("Dye parameters missing")?,
