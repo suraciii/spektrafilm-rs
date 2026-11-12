@@ -18,8 +18,10 @@ struct P {
     pad1: u32,
     base_px: f32,
     field_scale: f32,
-    pad2: f32,
-    pad3: f32,
+    wa: f32,
+    wb: f32,
+    wc: f32,
+    norm: f32,
 };
 @group(0) @binding(0) var<uniform> p: P;
 @group(0) @binding(1) var<storage, read_write> shared_field: array<f32>;
@@ -65,15 +67,15 @@ fn value_noise(x: f32, y: f32, seed: u32, octave: u32) -> f32 {
 
 fn field(x: f32, y: f32, stream: u32) -> f32 {
     let seed = p.seed ^ (stream * 0x9e3779b9u);
-    let norm = 1.1456439; // sqrt(1^2 + 0.5^2 + 0.25^2)
+    let weights = array<f32, 3>(p.wa, p.wb, p.wc);
     var sum = 0.0;
     for (var octave = 0u; octave < 3u; octave++) {
-        let weight = array<f32, 3>(1.0, 0.5, 0.25)[octave];
+        let weight = weights[octave];
         let size = p.base_px / f32(1u << octave);
         let offset = f32(octave) * 37.0;
         sum += weight * value_noise(x / size + offset, y / size + offset, seed, octave);
     }
-    return sum / norm * p.field_scale;
+    return sum / p.norm * p.field_scale;
 }
 
 @compute @workgroup_size(64)

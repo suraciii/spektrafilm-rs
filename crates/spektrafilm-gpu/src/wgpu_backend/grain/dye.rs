@@ -29,18 +29,32 @@ impl WgpuBackend {
         if !(params.length_scale.is_finite() && params.length_scale > 0.0) {
             return Err("film grain Dye: the correlation-length scale must be positive".into());
         }
-        crate::wgpu_backend::grain::dye_law_paged::law_workspace_bytes(self, width, height)
-            .map(|_| ())
+        crate::wgpu_backend::grain::dye_law_paged::law_workspace_bytes(
+            self,
+            width,
+            height,
+            params.grid.width,
+            params.grid.height,
+        )
+        .map(|_| ())
     }
 
-    /// Band window plus published pages, the only memory the law adds.
+    /// Band window, published pages, and retained per-piece readout buffers.
     pub(in crate::wgpu_backend) fn dye_workspace_bytes(
         &self,
-        width: u32,
-        height: u32,
+        source_width: u32,
+        source_height: u32,
+        grid_width: u32,
+        grid_height: u32,
         _params: &DyeGpuParams,
     ) -> Result<u64, String> {
-        crate::wgpu_backend::grain::dye_law_paged::law_workspace_bytes(self, width, height)
+        crate::wgpu_backend::grain::dye_law_paged::law_workspace_bytes(
+            self,
+            source_width,
+            source_height,
+            grid_width,
+            grid_height,
+        )
     }
 
     /// Copy a rectangle of a published field into its own pages.

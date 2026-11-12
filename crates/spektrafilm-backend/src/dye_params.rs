@@ -39,7 +39,7 @@ pub struct DyeGpuParams {
 /// look strength is the engine constant; recipe strength and scale are applied
 /// by the caller.
 pub mod law {
-    /// Base cell size of the value-noise field in micrometres, before
+    /// Nominal base cell size of the value-noise field in micrometres, before
     /// `dye_scale`. Smaller octaves halve this size; there is no high-pass.
     pub const VALUE_BASE_UM: f64 = 7.3;
     /// Relative weights of the three value-noise octaves.
@@ -63,6 +63,31 @@ pub mod law {
     pub const UNIFORMITY: f64 = 0.97;
     /// Residual granularity fraction at full development.
     pub const TAPER_FLOOR: f64 = 0.18;
+
+    /// Source-lattice cell size for `base_cell_px`.
+    ///
+    /// A cell size whose reciprocal is an integer puts every source pixel on
+    /// the same value-noise lattice phase, which inflates or deflates the
+    /// realized amplitude. Nudge only those commensurate sizes by 1.37%; the
+    /// field is a stochastic texture, so this invisible change is preferable
+    /// to a visible amplitude step. CPU and device both call this function.
+    pub fn base_cell_px(scale: f64, pitch_um: f64) -> f64 {
+        let mut base = VALUE_BASE_UM * scale / pitch_um;
+        if !(base.is_finite() && base > 0.0) {
+            return base;
+        }
+        for _ in 0..8 {
+            let commensurate = (0..VALUE_WEIGHTS.len()).any(|octave| {
+                let cells_per_pixel = (1u32 << octave) as f64 / base;
+                (cells_per_pixel - cells_per_pixel.round()).abs() < 2e-3
+            });
+            if !commensurate {
+                break;
+            }
+            base *= 1.0137;
+        }
+        base
+    }
 
     /// Peak of the derived granularity shape over the record density.
     pub fn taper_peak() -> f64 {

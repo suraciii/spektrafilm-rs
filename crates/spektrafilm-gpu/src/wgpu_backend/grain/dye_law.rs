@@ -34,8 +34,10 @@ struct ValueParams {
     pad1: u32,
     base_px: f32,
     field_scale: f32,
-    pad2: f32,
-    pad3: f32,
+    wa: f32,
+    wb: f32,
+    wc: f32,
+    norm: f32,
 }
 
 #[repr(C)]
@@ -370,8 +372,10 @@ impl WgpuBackend {
             pad1: 0,
             base_px: geom.base_px as f32,
             field_scale: law::VALUE_FIELD_SCALE as f32,
-            pad2: 0.0,
-            pad3: 0.0,
+            wa: law::VALUE_WEIGHTS[0] as f32,
+            wb: law::VALUE_WEIGHTS[1] as f32,
+            wc: law::VALUE_WEIGHTS[2] as f32,
+            norm: law::VALUE_WEIGHTS.iter().map(|w| w * w).sum::<f64>().sqrt() as f32,
         };
         let u = self.uniform("dye_value", bytemuck::bytes_of(&params));
         let bind = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -499,7 +503,7 @@ impl WgpuBackend {
             return Err("Dye grain law: the correlation-length scale must be positive".into());
         }
         let grid = &params.grid;
-        let base_px = law::VALUE_BASE_UM * params.length_scale / pitch_um;
+        let base_px = law::base_cell_px(params.length_scale, pitch_um);
         let upload = scalars_to_f32(&image.data);
         let band = LawBand::new(self, width, height, "dye_law_field", Some(&upload));
         let geom = LawGeom {

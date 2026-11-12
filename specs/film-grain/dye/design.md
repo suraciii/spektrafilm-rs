@@ -82,7 +82,7 @@ A scale whose octave sizes or coordinates are not finite and positive MUST fail 
 
 ## Field construction
 
-Three octaves use a base cell size of 7.3 µm at scale 1, halving for each finer octave. Each octave is smoothstep-interpolated value noise from a 32-bit coordinate hash; the octaves are summed with weights `1, 0.5, 0.25` and multiplied by one fixed scale that makes the sum unit variance. There is no Gaussian filter, high-pass, or per-image standardization.
+Three octaves use a base cell size of 7.3 µm at scale 1, halving for each finer octave. Each octave is smoothstep-interpolated value noise from a 32-bit coordinate hash; the octaves are summed with weights `1, 0.5, 0.25` and multiplied by one fixed scale that makes the sum unit variance. A cell size that would put every source pixel on one lattice phase is nudged by 1.37% before evaluation, so amplitude does not step when the scale slider lands on that aliasing case. There is no Gaussian filter, high-pass, or per-image standardization.
 
 The noise is coordinate-addressed: a 32-bit hash of seed, stream, global source pixel and octave. The CPU reference and the device pass use the same hash, the same streams, the same octave sizes, and the same coordinates, so one seed yields one realization on both executors.
 
@@ -90,7 +90,7 @@ Stream numbering is fixed: the shared field uses stream `0`, and record `c` uses
 
 ## Device execution
 
-The device evaluates the same law in two passes: one dispatch writes the shared and per-record value-noise fields, then the density law per record mixes them and draws the count. The field pass is pointwise, so a band needs no filter halo.
+The device evaluates the same law in two passes: one dispatch writes the shared and per-record value-noise fields, then the density law per record mixes them and draws the count. The field pass is pointwise, so a band needs no filter halo; its transport window still includes one source cell of bilinear readout support.
 
 The count is drawn by the same method on both executors: inversion below thirty events, PTRS above, up to the exact-rate threshold of `10^9` events per cell. Above that threshold both executors draw the same coordinate-addressed normal deviation.
 
@@ -98,7 +98,7 @@ A normal approximation below the threshold would match the mean and the variance
 
 The unit-variance scale is a fixed constant of the smoothstep value-noise process, shared by both executors. The shader MUST NOT standardize a band or read image/field statistics.
 
-Bands key their noise on global source coordinates. Because the field is pointwise, bands join without a halo or seam. The pass MUST NOT require a device-side reduction or a synchronization point.
+Bands key their noise on global source coordinates. Because the field is pointwise, bands join without a field halo or seam; the source window's one-cell readout support is not a field halo. The pass MUST NOT require a device-side reduction or a synchronization point.
 
 ## Deterministic comparison
 

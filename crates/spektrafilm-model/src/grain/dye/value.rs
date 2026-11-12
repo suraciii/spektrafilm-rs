@@ -67,7 +67,7 @@ pub(crate) fn field(
     stream: u32,
 ) -> Vec<Scalar> {
     let seed = (seed as u32) ^ stream.wrapping_mul(0x9e37_79b9);
-    let base_px = law::VALUE_BASE_UM * scale / pitch_um;
+    let base_px = law::base_cell_px(scale, pitch_um);
     let norm = law::VALUE_WEIGHTS.iter().map(|w| w * w).sum::<f64>().sqrt();
     let gain = law::VALUE_FIELD_SCALE / norm;
     let mut out = vec![ZERO; w * h];
@@ -103,6 +103,36 @@ mod tests {
         let var = v.iter().map(|&x| (to_f64(x) - mean).powi(2)).sum::<f64>() / v.len() as f64;
         assert!((mean).abs() < 0.02, "mean {mean}");
         assert!((var.sqrt() - 1.0).abs() < 0.03, "sd {}", var.sqrt());
+    }
+
+    fn variance_at(pitch_um: f64, scale: f64) -> (f64, f64) {
+        let v = field(256, 256, pitch_um, scale, 7, 0);
+        let mean = v.iter().map(|&x| to_f64(x)).sum::<f64>() / v.len() as f64;
+        let var = v.iter().map(|&x| (to_f64(x) - mean).powi(2)).sum::<f64>() / v.len() as f64;
+        (mean, var.sqrt())
+    }
+
+    #[test]
+    fn commensurate_cell_sizes_keep_unit_variance() {
+        for (pitch_um, scale) in [
+            (7.3, 1.0),
+            (7.3 / 0.4, 1.0),
+            (7.3, 2.0),
+            (7.3, 4.0),
+            (14.6, 1.0),
+            (3.65, 1.0),
+            (7.3 / 2.001, 1.0),
+        ] {
+            let (mean, sd) = variance_at(pitch_um, scale);
+            assert!(
+                (mean).abs() < 0.03,
+                "pitch {pitch_um} scale {scale} mean {mean}"
+            );
+            assert!(
+                (sd - 1.0).abs() < 0.08,
+                "pitch {pitch_um} scale {scale} sd {sd}"
+            );
+        }
     }
 
     #[test]

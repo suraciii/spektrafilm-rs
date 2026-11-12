@@ -67,8 +67,16 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         }
         out = acc / max(weight, 1e-6);
     } else {
-        let sx = clamp((fx0 + fx1) * 0.5 - 0.5, 0.0, f32(p.window_w) - 1.0);
-        let sy = clamp((fy0 + fy1) * 0.5 - 0.5, 0.0, f32(p.window_h) - 1.0);
+        let sx = clamp(
+            (fx0 + fx1) * 0.5 - 0.5 - f32(p.window_x),
+            0.0,
+            f32(p.window_w) - 1.0,
+        );
+        let sy = clamp(
+            (fy0 + fy1) * 0.5 - 0.5 - f32(p.window_y),
+            0.0,
+            f32(p.window_h) - 1.0,
+        );
         let x0 = u32(floor(sx));
         let y0 = u32(floor(sy));
         let x1 = min(x0 + 1u, p.window_w - 1u);
