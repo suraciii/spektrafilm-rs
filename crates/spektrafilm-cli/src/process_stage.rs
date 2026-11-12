@@ -711,8 +711,9 @@ fn dry_report(
     } else {
         "preset"
     };
-    Ok(
-        json!({"data":{"path":data.path,"source":data.source},"film_profile":film_name,"print_profile":print_name,
+    Ok(json!({"data":{"path":data.path,"source":data.source},
+        "workflow":{"mode":params.workflow.mode.name(),"route":route.as_str(),"film_stages":if params.workflow.mode.is_lut(){"inactive"}else{"active"}},
+        "film_profile":film_name,"print_profile":print_name,
         "parameters":params,"scanner_provenance":ScannerProvenance::from_params(params),"feature_profiles":features,
         "film_grain_dye":spektrafilm_core::stages::grain_dye::configuration_report(film, params),
         "film_grain_fotufilm":spektrafilm_core::stages::grain_fotufilm::configuration_report(params),
@@ -720,8 +721,7 @@ fn dry_report(
         "readout_illuminant":{"effective":readout.readout_illuminant(),"rule":readout.readout_rule()},
         "input":input,"output":output,"execution":{"input_state":header.map_or("input",|h|kind_name(h.state)),"completed_operations":completed(header),"planned_operations":planned(route)},
         "seed":params.random_seed,"seed_source":seed_source,"edits":edits,"unchecked":unchecked,
-        "backend":{"requested":args.backend.map(|b|match b{Backend::Cpu=>"cpu",Backend::Gpu=>"gpu"}),"policy":args.backend.map_or("auto",|b|match b{Backend::Cpu=>"cpu",Backend::Gpu=>"gpu"}),"environment":std::env::var("SPEKTRAFILM_BACKEND").ok()}}),
-    )
+        "backend":{"requested":args.backend.map(|b|match b{Backend::Cpu=>"cpu",Backend::Gpu=>"gpu"}),"policy":args.backend.map_or("auto",|b|match b{Backend::Cpu=>"cpu",Backend::Gpu=>"gpu"}),"environment":std::env::var("SPEKTRAFILM_BACKEND").ok()}}))
 }
 
 fn validate_read_only_input(args: &ProcessArgs) -> Result<()> {

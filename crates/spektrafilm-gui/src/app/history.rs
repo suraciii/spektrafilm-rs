@@ -556,6 +556,7 @@ fn history_message(label: &str) -> crate::app::Message {
         "Apply look preset" => "operations.history.apply_look",
         "Change workflow" => "operations.history.change_workflow",
         "Import LUT" => "operations.history.import_lut",
+        "Replace LUT" => "operations.history.replace_lut",
         "Adjust LUT look" => "operations.history.adjust_lut",
         "Rotate source" => "operations.history.rotate",
         "Adjust photograph" => "operations.history.adjust",

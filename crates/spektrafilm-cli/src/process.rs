@@ -6,8 +6,10 @@ use clap::{ArgMatches, ValueEnum};
 use serde_json::json;
 use spektrafilm_core::ScannerProvenance;
 use spektrafilm_core::image_io::{self, BitDepth, Compression, JpegSubsampling, SaveOptions};
+use spektrafilm_core::lut_look::{LutDomainPolicy, LutLookParams, LutSpace};
 use spektrafilm_core::params::Tap;
 use spektrafilm_core::params_builder::resize_for_preview;
+use spektrafilm_core::presets::{Preset, Provenance};
 use spektrafilm_core::profile;
 use spektrafilm_core::runtime::{DigestMode, Runtime};
 use spektrafilm_math::image::ImageBuf;
@@ -68,6 +70,15 @@ pub struct ProcessArgs {
     /// Exact preset name or .toml/.json file; repeat to compose looks and sections.
     #[arg(long, action = clap::ArgAction::Append, help_heading = "Look and workflow")]
     pub(crate) preset: Vec<String>,
+    /// Use one .cube as the LUT look; reads its title, domain, shaper, and hash.
+    /// Declared input/output spaces default to sRGB and the domain policy to clamp.
+    #[arg(
+        long,
+        value_name = "CUBE",
+        conflicts_with_all = ["preset", "film", "paper", "route", "scan_film", "feature_profiles"],
+        help_heading = "Look and workflow"
+    )]
+    pub(crate) lut: Option<PathBuf>,
     /// Scan film directly, skipping printing; conflicts with --route.
     #[arg(long, conflicts_with = "route", help_heading = "Look and workflow")]
     pub(crate) scan_film: bool,
@@ -166,6 +177,7 @@ impl Default for ProcessArgs {
             film: None,
             paper: None,
             preset: Vec::new(),
+            lut: None,
             scan_film: false,
             timings: false,
             diagnostics: None,
@@ -588,6 +600,7 @@ fn run_with_capture(
             .filter(|selector| selector.ends_with(".toml") || selector.ends_with(".json"))
             .map(Path::new),
     );
+    protected.extend(args.lut.as_deref());
     protected.extend(
         args.sources
             .iter()
@@ -733,10 +746,24 @@ fn cmd_process(
     }
     invocation.boundary(IssueCategory::Configuration, IssueBoundary::RuntimePrepare);
     let library = spektrafilm_core::presets::PresetLibrary::default();
-    let presets = selectors
+    let mut presets = selectors
         .iter()
         .map(|selector| preset::select(&library, selector).map(|selected| selected.preset))
         .collect::<Result<Vec<_>>>()?;
+    if let Some(path) = args.lut.as_deref() {
+        let look =
+            LutLookParams::from_cube(path, LutSpace::Srgb, LutSpace::Srgb, LutDomainPolicy::Clamp)
+                .map_err(anyhow::Error::msg)?;
+        presets.push(Preset::capture_lut(
+            "--lut",
+            look,
+            Provenance {
+                implementation_version: env!("CARGO_PKG_VERSION").into(),
+                model_version: "spektrafilm".into(),
+                scanner: None,
+            },
+        ));
+    }
     let resolved = spektrafilm_core::process_params::resolve(
         spektrafilm_core::process_params::ProcessParamsRequest {
             film: film_name.map(spektrafilm_core::process_params::FilmSelection::Name),
@@ -831,24 +858,39 @@ fn cmd_process(
         spektrafilm_math::colorspace::resolve(saving_space)
             .map_err(|e| anyhow::anyhow!("unsupported saving color space {saving_space:?}: {e}"))?;
     }
+    let lut_mode = params.workflow.mode.is_lut();
     // Validate configuration without creating a compute device for dry runs.
     // LUT mode never enters a spectral film or print stage, so the Dye
     // condition is not applicable and its placeholder carrier must not gate it.
-    if !params.workflow.mode.is_lut() {
+    if !lut_mode {
         spektrafilm_core::stages::grain_dye::validate_supported(&film, &params)
             .map_err(anyhow::Error::msg)?;
     }
-    let grain_dye_active =
-        !params.workflow.mode.is_lut() && spektrafilm_core::stages::grain_dye::active(&params);
-    let grain_fotufilm = spektrafilm_core::stages::grain_fotufilm::configuration_report(&params);
+    let grain_dye_active = !lut_mode && spektrafilm_core::stages::grain_dye::active(&params);
+    let mut grain_fotufilm =
+        spektrafilm_core::stages::grain_fotufilm::configuration_report(&params);
+    if lut_mode {
+        grain_fotufilm["active"] = json!(false);
+        grain_fotufilm["note"] = json!("LUT mode does not execute film grain");
+        grain_fotufilm["prepared"] = json!(false);
+    }
     if dry_run {
-        if params.workflow.mode.is_lut() {
+        if lut_mode {
             params
                 .lut_look
                 .load()
                 .map_err(|error| anyhow::anyhow!("LUT look validation failed: {error}"))?;
         }
-        let grain_dye = spektrafilm_core::stages::grain_dye::configuration_report(&film, &params);
+        let mut grain_dye =
+            spektrafilm_core::stages::grain_dye::configuration_report(&film, &params);
+        if lut_mode {
+            grain_dye["active"] = json!(false);
+            grain_dye["note"] = json!("LUT mode does not execute film grain");
+            grain_dye["channel_correlation"]["effective"] = json!(null);
+            grain_dye["channel_correlation"]["status"] = json!("inactive");
+            grain_dye["channel_correlation"]["reason"] =
+                json!("LUT mode does not execute film grain");
+        }
         let backend_env = std::env::var("SPEKTRAFILM_BACKEND").ok();
         let output_format = plan.as_ref().map(|plan| plan.format.name());
         let output_bit_depth = plan
@@ -922,16 +964,22 @@ fn cmd_process(
             "rule": scan_profile.readout_rule(),
         });
         let feature_profile_report = serde_json::to_value(&resolved.feature_profiles)?;
+        let workflow_report = json!({
+            "mode": params.workflow.mode.name(),
+            "route": &params.workflow.route,
+            "film_stages": if lut_mode { "inactive" } else { "active" },
+        });
         let report = json!({
             "feature_profiles": feature_profile_report,
             "data": {
                 "path": data.path,
                 "source": data.source,
             },
-            "film_profile": resolved.film_name,
-            "print_profile": resolved.print_name,
-            "capture_illuminant": capture_illuminant,
-            "readout_illuminant": readout_illuminant,
+            "workflow": workflow_report,
+            "film_profile": (!lut_mode).then_some(resolved.film_name),
+            "print_profile": (!lut_mode).then_some(resolved.print_name),
+            "capture_illuminant": (!lut_mode).then_some(capture_illuminant),
+            "readout_illuminant": (!lut_mode).then_some(readout_illuminant),
             "parameters": params,
             "scanner_provenance": ScannerProvenance::from_params(&params),
             "film_grain_dye": grain_dye,

@@ -130,7 +130,7 @@ spektrafilm process input.png -o output.tif --backend cpu \
 The four daily controls are normalized to `-1..=1`, with zero neutral. Expand defaults to disabled and retains its fixed-sRGB encoded input references when disabled. Each reference must be in `-0.25..=1.25`, and white must exceed black by at least `1/1024`, even when Expand is disabled. Enabling Expand hard-clips at its references, including the default `0` and `1`; clipped differences are lost for that render and later controls cannot recover them. Sparse edits change only named leaves. Complete preset looks use schema 7 and replace tone and color adjustments; legacy complete looks restore neutral values, while legacy sections preserve omission. Complete recipes use `spektrafilm-rs-params-7` and carry the complete `finishing` group; older recipes migrate to neutral finis…
 
 
-`--dry-run` prints effective runtime controls, writer options, profile names, and the requested backend policy.
+`--dry-run` prints effective runtime controls, writer options, and the requested backend policy. It also prints profile names and film-stage controls in Film mode, or the LUT declaration and inactive film stages in LUT mode.
 Omit `--output` when checking parameters without choosing a destination. The report keeps `output.path` as `null`; `output.format` is also `null` unless `--format` is supplied. A normal process invocation still requires a destination.
 Without a format, container-specific defaults such as bit depth and compression remain `null`. Supply `--format` to validate codec-specific options such as JPEG quality or compression.
 
@@ -144,6 +144,12 @@ Without a format, container-specific defaults such as bit depth and compression 
 It checks the input path and supported file kind.
 Image decoding and compute-adapter availability remain unchecked.
 Saving color flags control writer conversion independently of scanner `io.output_color_space` and `io.output_cctf_encoding`.
+
+Use `--lut` to run one external `.cube` as the LUT workflow. The command reads the cube title, domain, shaper, and hash; input and output spaces default to display-encoded sRGB, and the domain policy defaults to clamp. A `.cube` file carries no color-space metadata, so confirm those spaces when the source declares something else. `--set lut_look.input_space=...`, `--set lut_look.output_space=...`, and `--set lut_look.domain_policy=fail` remain available. `--lut` conflicts with preset selection, `--film`, `--paper`, route selection, `--scan-film`, and feature profiles. An explicit `workflow.mode=film` edit with `--lut` fails instead of selecting a workflow silently.
+
+```bash
+./target/release/spektrafilm process input.png -o out.tif     --lut look.cube --input-color-space sRGB --input-cctf-decoding true     --dry-run --dry-run-format text --data-dir data
+```
 
 Canonical values use the same validation rules in complete parameters, sparse edits, presets, GUI state, recipes, LUT requests, and direct runtime updates. Disabled features still require valid stored values. For example, disabled chemistry accepts `developer_exhaustion=0.5` but rejects `2.0`; a later override cannot conceal the invalid source. Rejection does not rewrite the source or replace an existing output.
 

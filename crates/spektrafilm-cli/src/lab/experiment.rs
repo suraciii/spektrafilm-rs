@@ -184,6 +184,7 @@ fn run(args: &ExperimentRunArgs) -> Result<()> {
             presets.extend(args.chain.preset.iter().cloned());
             presets
         },
+        lut: None,
         feature_profiles: Vec::new(),
         scan_film: false,
         timings: false,
