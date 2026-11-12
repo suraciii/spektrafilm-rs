@@ -858,6 +858,32 @@ mod tests {
         }
     }
 
+    #[test]
+    fn readout_light_white_reference_matches_upstream_experimental_scan() {
+        let data = data_dir();
+        let paper = crate::profile::load_profile_by_name(&data, "kodak_portra_endura").unwrap();
+        let mut params = params();
+        params.scanner.white_reference =
+            crate::params::SCAN_WHITE_REFERENCE_READOUT_ILLUMINANT.into();
+        params.io.output_cctf_encoding = true;
+        let encoded = scan(
+            &[0.14570, 0.09163, 0.05642],
+            &paper,
+            &style::STANDARD,
+            &params,
+        );
+        // Upstream 28bf883 scanner output for the same flat print density.
+        // The remaining sub-2e-5 difference is its output gamut compression,
+        // which this direct scanner probe leaves identity.
+        let upstream = [0.77649408, 0.81077026, 0.84082886];
+        for (actual, expected) in encoded.iter().zip(upstream) {
+            assert!(
+                (actual - expected).abs() < 5e-5,
+                "upstream scan mismatch: {encoded:?} vs {upstream:?}"
+            );
+        }
+    }
+
     /// The readout light is a product constant selected by the material
     /// category, not a runtime knob.
     #[test]

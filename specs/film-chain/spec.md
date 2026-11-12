@@ -103,6 +103,8 @@ Scanner terms follow the [Film simulation language](../../CONTEXT.md). A reversa
 
 - The scan is one colorimetric capture made through the readout illuminant. The readout illuminant is a product constant selected by the material category; it is not a control.
 - It MUST NOT be derived from the capture illuminant, the enlarger illuminant, or image content. A document that carries `scanner.lamp` fails validation at the current schema version.
+- `scanner.white_reference` accepts `clear_film_base` (default) and `readout_illuminant`. `readout_illuminant` explicitly opts out of clear-base white calibration by dividing by the readout-light Y and adapting from the readout-light white.
+- `readout_illuminant` reproduces upstream experimental `28bf883` scanner normalization and MUST be identified in scan provenance. It MUST NOT be described as clear-base calibration.
 - The scan output value `negative_to_positive` selects negative conversion. Negative conversion has one interpretation: it reads each dye record's density through the selected film's response and applies a positive tone response from one curve family, whose constants a declared conversion style selects.
 - The built-in `standard` style is the frozen tone. The experimental full-frame setup is a separate off-by-default control and has no scanner finish.
 
@@ -112,7 +114,9 @@ Image correction and digital output MUST NOT select a different scanned medium o
 - Readers MUST NOT alias it or silently reset it. Omitted scan output retains the `direct_scan` default.
 - The [lab scan cutover](lab-scan/spec.md#point-wise-consumers-and-migration) owns document-version migration.
 
-The white reference of a scan is the clear film base of the scanned medium. A clear area of that base reads as the output color space's white; the chromatically adapted scan of any other area is expressed against that white.
+By default, the white reference of a scan is the clear film base of the scanned medium. A clear area of that base reads as the output color space's white; the chromatically adapted scan of any other area is expressed against that white.
+
+With `scanner.white_reference = readout_illuminant`, the readout-light white is the reference instead. That mode exists for upstream experimental alignment and does not claim clear-base calibration.
 
 ## Scan output naming acceptance
 
@@ -127,13 +131,13 @@ The white reference of a scan is the clear film base of the scanned medium. A cl
 - The selected route determines the scanned medium. A film-scan route scans the film; a print route scans the photographic paper.
 - The scanned medium determines the scanner controls that apply.
 - A photographic-paper scan and a slide film scan read a positive image. A negative film scan reads the negative image on the film; `negative_to_positive` produces the positive image by negative conversion.
-- Every scan exposes scanner lens blur, scanner unsharp mask, and the scan output mode.
+- Every scan exposes scanner white reference, scanner lens blur, scanner unsharp mask, and the scan output mode.
 - A negative film scan with `negative_to_positive` additionally exposes `scanner.conversion_style`, the declared stylization point of the conversion tone.
 - The scanner owns no white/black correction, no white/black levels, and no film-scan black or white points. Those controls are removed from the runtime model, discovery, presets, recipes, GUI state, and CLI options; their canonical names MUST fail unknown-field validation at the current schema version.
 - Negative conversion belongs to `negative_to_positive`. A photographic-paper scan and a slide film scan MUST NOT expose it; see [Direct negative-film scan output](#direct-negative-film-scan-output).
 - Existing exposure and development controls belong to their material stage. Independent [Tone & Color](../finishing/spec.md#scope-and-applicability) applies only to eligible positive scans; it does not restore scanner finishing.
 - Scanner calibration, inverse curves, and correction references retain their existing dependencies on profile and development settings. Material controls MUST NOT add a second reference model or alter the real captured-negative recovery solve.
-- Scan provenance records one colorimetric sensor and the clear-film white reference. It MUST publish the resolved readout illuminant, the output space white, and the identity matrix of the scan transform.
+- Scan provenance records one colorimetric sensor and the selected white-reference mode. It MUST publish the resolved readout illuminant, the selected white reference, the output space white, and the identity matrix of the scan transform.
 
 ## Scan optics and print viewing glare
 
@@ -171,9 +175,10 @@ The [Print exposure composition](../output-mix/design.md#print-exposure-composit
 
 - The scanner has one colorimetric sensor modeled on the CIE 1931 color-matching functions. No narrow-band, approximate, or measured-device receiver profile exists; the sensor is not selectable.
 - Scan acquisition is one spectral integration of the scanned medium under the readout illuminant. The illuminant is resolved from the material category through the shared illuminant service, so one service owns every light-source name.
-- The white reference of a scan is the clear film base of the scanned medium. The scan chromatically adapts from that clear-film white to the output color space's white and emits output-space linear RGB.
+- By default, the white reference of a scan is the clear film base of the scanned medium. The scan chromatically adapts from that clear-film white to the output color space's white and emits output-space linear RGB.
+- With `scanner.white_reference = readout_illuminant`, the scan instead normalizes by the readout-light Y and adapts from the readout-light white. This is the declared upstream experimental alignment mode; it does not claim clear-base calibration.
 - The scan matrix is the identity; no receiver calibration matrix is applied.
-- The clear film base MUST read as the output color space's white on every admitted route, for every material category, and for both scan output values.
+- Under the default mode, the clear film base MUST read as the output color space's white on every admitted route, for every material category, and for both scan output values. Under `readout_illuminant`, the readout-light white MUST read as that white instead.
 - The readout illuminant belongs to positive transmission and paper capture. Negative-to-positive readout instead uses the fixed synthetic tone response and output conversion defined by the [lab scan contract](lab-scan/spec.md#output-primaries).
 - Neither path MAY change reconstructed record exposure through readout-light selection.
 - The readout illuminant MUST NOT change film exposure, development, film-domain effects, print exposure, or the input camera exposure. It MUST NOT be derived from the capture illuminant or the enlarger illuminant, and it MUST NOT be inferred from image content.
@@ -182,7 +187,7 @@ The [Print exposure composition](../output-mix/design.md#print-exposure-composit
 - No selectable negative conversion method exists. The removed names `separable`, `coupled`, and `digital_reference`, and the leaf `scanner.negative_conversion_method`, MUST fail unknown-field validation in runtime parameters, sparse sources, inline assignments, current-schema presets, and imported recipes.
 - The scanner exposes no finish and no control that restores the retired `scanner.auto_setup`; the off-by-default experimental frame setup is a separate leaf owned by the [lab scan contract](lab-scan/spec.md). The removed leaves `scanner.auto_setup`, `scanner.finish`, `scanner.finish_strength`, `scanner.white_correction`, `scanner.black_correction`, `scanner.white_level`, `scanner.black_level`, `scanner.black_point`, `scanner.white_point`, `scanner.reference_exposure_ev`, and `scanner.reference_balance_ev` MUST fail unknown-field validation at the current schema version.
 - The positive tone constants are not exposed as scalar knobs. The [lab scan contract](lab-scan/spec.md) owns operator correction, style names, automatic setup, constants, and point-wise consumer behavior.
-- Scan provenance MUST identify the readout model, the colorimetric sensor, the clear-film white reference, the output space white, and the identity scan matrix.
+- Scan provenance MUST identify the readout model, the colorimetric sensor, the selected white reference (`clear_film_base` or `readout_illuminant`), the output space white, and the identity scan matrix.
 
 ## Direct negative-film scan output
 
@@ -214,8 +219,8 @@ The [Print exposure composition](../output-mix/design.md#print-exposure-composit
 
 ## Conversion control naming acceptance
 
-1. Discovery, CLI help, effective parameter reports, saved presets, recipes, and GUI state MUST emit the canonical paths `scanner.scan_output`, `scanner.lens_blur`, `scanner.unsharp_mask`, and `enlarger.print_exposure_mode`.
-2. GUI display names MUST use the real operation words: scan output, lens blur, unsharp mask, and print exposure mode.
+1. Discovery, CLI help, effective parameter reports, saved presets, recipes, and GUI state MUST emit the canonical paths `scanner.scan_output`, `scanner.white_reference`, `scanner.lens_blur`, `scanner.unsharp_mask`, and `enlarger.print_exposure_mode`.
+2. GUI display names MUST use the real operation words: scan output, white reference, lens blur, unsharp mask, and print exposure mode.
 3. Replacing a legacy path with its canonical path MUST preserve pixels, defaults, route eligibility, correction precedence, and execution backend for identical inputs and controls.
 4. The legacy paths and leaves below MUST fail unknown-field validation in runtime parameters, sparse sources, inline assignments, current-schema presets, and imported recipes. Only the versioned preset migration and the versioned complete GUI state migration MAY map them.
 
@@ -244,8 +249,9 @@ The [Print exposure composition](../output-mix/design.md#print-exposure-composit
 
 ## Scanner acceptance
 
-- The clear film base of the scanned medium MUST read as the output color space's white on every admitted route, for every material category, and for both scan output values.
-- The readout illuminant MUST follow the material category; no runtime control MAY override it. A clear-film area MUST remain the output white on every admitted route.
+- Under the default clear-film-base mode, the clear film base of the scanned medium MUST read as the output color space's white on every admitted route, for every material category, and for both scan output values. Under `readout_illuminant`, the readout-light white MUST read as that white instead.
+- The readout illuminant MUST follow the material category; no runtime control MAY override it. The white-reference selector changes the normalization and adaptation reference, not the readout illuminant.
+- `readout_illuminant` MUST reproduce the upstream experimental `28bf883` scanner normalization and adaptation when the same profile, density, output space, and downstream settings are used.
 - The readout illuminant MUST NOT change film density, film-domain grain, halation, print exposure, or camera exposure. It MAY change only the readout colour transform.
 - `direct_scan` MUST preserve the native polarity of the selected medium.
 - Negative reconstruction MUST read each record independently and acquire no receiver capture. Frame setup MAY depend on all records and pixels.
@@ -256,7 +262,7 @@ The [Print exposure composition](../output-mix/design.md#print-exposure-composit
 - A `direct_scan` MUST produce identical pixels for the built-in style and any fixed style, because the style slot is inert on a direct scan.
 - An unknown fixed style, an invalid style name, an unreadable style file, and a style file with a non-finite or non-positive value MUST fail before output publication and MUST list the available styles where the renderer can enumerate them.
 - The product readout illuminant MUST NOT change film exposure, development, grain, halation, print exposure, or camera exposure.
-- Scan provenance MUST identify the readout model, the material-category readout illuminant, the clear-film white reference, the output space white, and the identity scan matrix. An approximate or measured-device receiver label MUST NOT appear in GUI, CLI diagnostics, or serialized provenance.
+- Scan provenance MUST identify the readout model, the material-category readout illuminant, the selected white reference (`clear_film_base` or `readout_illuminant`), the output space white, and the identity scan matrix. An approximate or measured-device receiver label MUST NOT appear in GUI, CLI diagnostics, or serialized provenance.
 - Scanner parameter combinations that the selected route or medium cannot support MUST fail before output publication and MUST produce the same validation result for GUI, CLI dry run, and rendering.
 - A nonuniform bright-edge capture and an active nonlinear downstream transform MUST distinguish blur-before-interpretation from blur-after-interpretation. Cover native negative, slide, print scan, and the negative conversion path.
 - Zero blur MUST preserve the corresponding no-blur result; uniform fields MUST remain uniform with blur active.

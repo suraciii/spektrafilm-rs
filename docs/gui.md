@@ -128,6 +128,7 @@ The left browser owns whole-look presets. Modules do not have section-preset men
 
 **Scan → Scanner** keeps its controls readable across routes and identifies whether the scanned medium is Paper, Slide, Negative, or Inactive:
 
+- **White reference** selects **Clear film base** (default calibrated readout) or **Readout illuminant** (the explicit upstream experimental `28bf883` alignment). The readout illuminant itself remains a fixed product value; this selector changes the normalization and chromatic-adaptation reference.
 - The scan-output selector offers **Preserve medium polarity** and **Negative to positive**. It is editable only for eligible negative-scanning routes; other routes retain the visible, inactive selector.
 - Conversion style is editable only while the eligible **Negative to positive** conversion is selected. Otherwise its stored value remains readable with an inactive explanation. `standard` is the built-in frozen tone; other names are declared fixed styles in `data/scan-styles/`. The experimental frame setup is a separate off-by-default switch.
 - The readout illuminant is a fixed product value selected by the material category, not an editable scanner lamp.

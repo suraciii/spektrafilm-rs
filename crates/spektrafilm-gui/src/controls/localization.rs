@@ -304,9 +304,14 @@ fn key(label: &str) -> Option<&'static str> {
         }
         "Chroma" => Some("controls.grain.chroma"),
         "Chromatic grain amount." => Some("controls.grain.chroma_help"),
+        "Clear film base" => Some("controls.scanner.clear_film_base"),
         "Clear preset search" => Some("surfaces.presets.clear_search"),
         "Clear search and restore ordinary inspector disclosure." => {
             Some("surfaces.search.clear_help")
+        }
+        "Readout illuminant" => Some("controls.scanner.readout_illuminant"),
+        "Select the reference the scanner divides by and adapts from. Clear film base is the default calibrated readout: a clear area of the scanned medium reads as output white. Readout illuminant opts out to the fixed readout light and reproduces upstream experimental 28bf883 scanner normalization." => {
+            Some("controls.scanner.white_reference_help")
         }
         "Close settings" => Some("surfaces.settings.close"),
         "Cloud radius (µm)" => Some("controls.grain.cloud_radius"),
@@ -1075,7 +1080,7 @@ fn key(label: &str) -> Option<&'static str> {
         "Scanner inactive on this route; stored values are retained." => {
             Some("controls.scanner.scanner_inactive")
         }
-        "Scanner sequence: scan output polarity, then readout optics and digital sharpening." => {
+        "Scanner sequence: white reference, scan output polarity, then readout optics and digital sharpening." => {
             Some("controls.scanner.sequence")
         }
         "Search controls" => Some("surfaces.search.label"),
@@ -1526,6 +1531,7 @@ fn key(label: &str) -> Option<&'static str> {
         "scale" => Some("controls.base.scale"),
         "scan illuminant" => Some("controls.convert.scan_illuminant"),
         "scan output" => Some("controls.scanner.scan_output"),
+        "white reference" => Some("controls.scanner.white_reference"),
         "scanner selections retained; scanner controls inactive for this route; stored selections retained" => {
             Some("surfaces.status.scanner_inactive")
         }

@@ -127,7 +127,7 @@ The GUI MUST use these terms with the meanings defined by [`CONTEXT.md`](../../C
 - `scan sensor` means the colorimetric spectral response used to acquire transmitted or reflected light from a scanned medium.
 - `scan capture` means RGB readings acquired by the scan sensor.
 - `scanned density` means density derived from one channel of a scan capture relative to that channel's clear reference.
-- `clear film base` means the unexposed base of the scanned medium, which reads as the output white reference of a scan.
+- `clear film base` means the unexposed base of the scanned medium, which is the default output white reference of a scan. The explicit readout-illuminant white-reference mode opts out of that calibration.
 - `negative conversion` means interpretation of a developed negative as a positive image.
 - `exposure reconstruction` means negative conversion that estimates relative exposure through the selected film response.
 - `digital output` means the color space, transfer encoding, geometry, and file representation used to deliver an image.
@@ -151,11 +151,13 @@ The GUI MUST display:
 |---|---|
 | `scanner.scan_output = direct_scan` | `Preserve medium polarity` |
 | `scanner.scan_output = negative_to_positive` | `Negative to positive` |
+| `scanner.white_reference = clear_film_base` | `Clear film base` |
+| `scanner.white_reference = readout_illuminant` | `Readout illuminant` |
 | `scanner.lens_blur` | `Lens blur (readout optics)` |
 | `scanner.unsharp_mask` | `Unsharp mask (digital sharpening)` |
 | `film_render.convert.scan_illuminant` | `Scan illuminant` in Input and capture → Convert |
 
-The GUI MUST NOT offer a scanner light control. The readout illuminant is a product constant selected by the material category.
+The GUI MUST NOT offer a scanner light control. The readout illuminant is a product constant selected by the material category. The white-reference selector chooses the normalization and chromatic-adaptation reference; it MUST NOT be presented as a readout-light selector.
 
 The Convert scan-illuminant help MUST identify the light used to acquire an imported RGB negative. It MUST distinguish that declaration from the fixed product readout illuminant and the Camera capture illuminant. Conversion-style choices MUST follow the [lab scan style-name contract](../film-chain/lab-scan/spec.md#tone-and-style-names).
 
