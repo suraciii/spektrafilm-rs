@@ -1567,11 +1567,11 @@ fn american_reminiscence_browser_restores_virtual_exposure_and_render() {
     h.state_mut().params.camera.exposure_compensation_ev = -1.0;
     h.state_mut().params.camera.auto_exposure = true;
     click(h, "Collapse or expand Presets");
-    click(h, "American Reminiscence");
+    click(h, "American Reminiscence • Film");
     assert_eq!(h.state().params.camera.exposure_compensation_ev, 0.5);
     assert!(!h.state().params.camera.auto_exposure);
     assert!(
-        h.query_by_label("American Reminiscence • applied")
+        h.query_by_label("American Reminiscence • Film • applied")
             .is_some()
     );
     let initial = preview(h);
@@ -1579,7 +1579,7 @@ fn american_reminiscence_browser_restores_virtual_exposure_and_render() {
     reveal_control(h, "camera.exposure_compensation_ev");
     edit(h, "Exposure compensation", "-1.0");
     assert!(
-        h.query_by_label("American Reminiscence • modified")
+        h.query_by_label("American Reminiscence • Film • modified")
             .is_some()
     );
     let changed = preview(h);
@@ -1590,10 +1590,10 @@ fn american_reminiscence_browser_restores_virtual_exposure_and_render() {
             .zip(&changed.data)
             .any(|(a, b)| (*a as f64 - *b as f64).abs() > 0.001)
     );
-    click(h, "American Reminiscence • modified");
+    click(h, "American Reminiscence • Film • modified");
     let restored = preview(h);
     assert!(
-        h.query_by_label("American Reminiscence • applied")
+        h.query_by_label("American Reminiscence • Film • applied")
             .is_some()
     );
     for (a, b) in initial.data.iter().zip(&restored.data) {

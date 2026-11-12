@@ -1642,7 +1642,7 @@ fn applied_look_materials_follow_factory_filtering_and_undo() {
         click(h, "Collapse or expand Presets");
     }
     edit(h, "Search presets", "Kodak Portra 400");
-    h.get_by_role_and_label(egui::accesskit::Role::Button, "Kodak Portra 400")
+    h.get_by_role_and_label(egui::accesskit::Role::Button, "Kodak Portra 400 • Film")
         .click();
     h.run_steps(3);
     assert_eq!(h.state().film_name, "kodak_portra_400");
