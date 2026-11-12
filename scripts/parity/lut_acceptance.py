@@ -2,8 +2,9 @@
 """Strict artifact acceptance against the editable, pinned experimental checkout.
 
 Run with the reference Python interpreter (or set SPEKTRAFILM_PY). The CLI
-must have been built with precision-f64; its release/deps directory is used
-by rustc for the public format API probe, since 3DL/Hald have no CLI flags.
+must have been built with precision-f64; its release artifact directories are
+searched by rustc for the public format API probe, since 3DL/Hald have no CLI
+flags.
 """
 from __future__ import annotations
 
@@ -248,14 +249,33 @@ def compare_ocio(root, spec, delivered, reference_path):
 def format_acceptance(cli, root, report):
     import numpy as np
     from spektrafilm_lut_creator.formats import Lut, get_format
-    deps = cli.parent / "deps"
-    libraries = sorted(deps.glob("libspektrafilm_core-*.rlib"), key=lambda p: p.stat().st_mtime, reverse=True)
-    require(bool(libraries), f"format API acceptance requires existing release/deps core rlib in {deps}")
+    release = cli.parent
+    # Cargo 1.100 moved intermediate artifacts from `deps/` into
+    # `build/<crate>/<unit>/out/`; search both layouts and pass every artifact
+    # directory so the probe can resolve transitive crates. The directory
+    # layout is not a stable interface, but it is the only source the package
+    # jobs expose without a second Cargo invocation.
+    deps = release / "deps"
+    library_dirs = [deps] if deps.is_dir() else []
+    artifacts = ("*.rlib", "*.so", "*.dylib", "*.dll")
+    library_dirs += sorted({
+        path.parent
+        for pattern in artifacts
+        for path in release.glob(f"build/*/*/out/{pattern}")
+    })
+    libraries = sorted(
+        (path for directory in library_dirs for path in directory.glob("libspektrafilm_core-*.rlib")),
+        key=lambda path: path.stat().st_mtime,
+        reverse=True,
+    )
+    require(bool(libraries), f"format API acceptance requires a core rlib under {release}")
     source = root / "format_probe.rs"
     binary = root / "format_probe"
     source.write_text(FORMAT_PROBE)
-    argv = ["rustc", "--edition=2024", source, "--extern", f"spektrafilm_core={libraries[0]}",
-            "-L", f"dependency={deps}", "-o", binary]
+    argv = ["rustc", "--edition=2024", source, "--extern", f"spektrafilm_core={libraries[0]}"]
+    for directory in library_dirs:
+        argv.extend(["-L", f"dependency={directory}"])
+    argv.extend(["-o", binary])
     for native in os.environ.get("LD_LIBRARY_PATH", "").split(os.pathsep):
         if native:
             argv.extend(["-L", f"native={native}"])
