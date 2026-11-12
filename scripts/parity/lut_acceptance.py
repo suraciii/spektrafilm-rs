@@ -47,7 +47,7 @@ fn main()->Result<(),Box<dyn std::error::Error>> {
  }}}
  table[0]=[0.5/255.0,1.5/255.0,2.5/255.0];
  table[1]=[0.5/1023.0,1.5/1023.0,2.5/1023.0];
- let document=LutDocument{resolution:4,table,domain_min:[-0.25,0.1,0.0],domain_max:[1.25,1.1,2.0],title:"Axis-tagged nonlinear LUT".into()};
+ let document=LutDocument{resolution:4,table,shaper:None,domain_min:[-0.25,0.1,0.0],domain_max:[1.25,1.1,2.0],title:"Axis-tagged nonlinear LUT".into()};
  for format in [LutFormat::Cube,LutFormat::Lumix,LutFormat::ThreeDl,LutFormat::HaldPng] {
   let path=root.join(format!("synthetic_{}{}",format.name(),format.extension()));
   write_lut(format,&document,&path,&["Independent format acceptance".into()],Some("VLOG"))?;
