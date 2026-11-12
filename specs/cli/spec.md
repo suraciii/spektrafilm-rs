@@ -35,6 +35,7 @@ spektrafilm process ARTIFACT --route ROUTE --output OUTPUT [OPTIONS]
 
 OPTIONS may include:
   --preset SELECTOR     repeatable; presets apply in appearance order
+  --lut CUBE            use one .cube as the LUT look; conflicts with film, preset, route, and feature-profile selectors
   --set SOURCE          repeatable file or comma-separated assignments
   --dry-run             resolve and validate; print effective parameters without rendering; --output may be omitted
   --dry-run-format json|text  dry-run presentation; default: json
@@ -56,6 +57,16 @@ A name MUST resolve with the group order of the [preset design](../presets/desig
 A bare name that also exists in another group MUST resolve in the user library, and the command MUST report the resolved group and the shadowed name. An unknown name MUST NOT trigger a filesystem search or a name-similarity match.
 
 `--preset` MUST conflict with `--film`, `--paper`, and `--params` when the resolved preset set supplies the matching profile reference; a preset set that supplies none MUST take required profiles from the existing selectors. For image input without a preset, `--film` remains required. A route ending at film MUST NOT require a print profile.
+
+### LUT selector
+
+`process --lut CUBE` MUST construct one LUT workflow source from the selected `.cube`. It MUST read the file title, per-axis domain, shaper declaration, and SHA-256 content hash.
+
+It MUST use display-encoded sRGB for the input and output encodings and clamp for the domain policy unless a later `--set` source overrides them. It MUST NOT save or modify a preset.
+
+`--lut` MUST conflict with `--preset`, `--film`, `--paper`, `--route`, `--scan-film`, and `--feature-profile`. It MUST NOT require a film or print profile.
+
+`--set workflow.mode=lut` and the canonical `lut_look` leaves MUST remain an alternative for parameter-only invocations. An explicit `--set workflow.mode=film` with `--lut` MUST fail rather than choose a workflow silently.
 
 Artifact input obtains its frozen material from the artifact under the [stage profile rules](stage-artifacts.md#input-declarations-and-profile-requirements). The `input` workflow MUST ignore the resolved film and paper profiles. Without a preset, an image direct-film scan MUST select the film as the runtime print profile.
 
@@ -449,7 +460,9 @@ Writer options independent of the format MUST use their normal defaults or expli
 
 It MUST check input existence, readability, and supported file kind without decoding input pixels. It MUST NOT initialize a compute device, render, or create or truncate any output, including `--raw-out`. `--dry-run-format json|text` MUST require `--dry-run` and default to `json`.
 
-Terminal detection MUST NOT change the format. JSON MUST contain one object on stdout with the existing `film_profile`, `print_profile`, `parameters`, `output`, and `backend` keys. `parameters` MUST contain effective runtime controls after constraints.
+Terminal detection MUST NOT change the format. JSON MUST contain one object on stdout with `workflow`, `film_profile`, `print_profile`, `parameters`, `output`, and `backend` keys. `parameters` MUST contain effective runtime controls after constraints.
+
+`workflow` MUST contain `mode`, `route`, and `film_stages`. `mode` MUST be `film` or `lut`; `film_stages` MUST be `active` or `inactive`. In LUT mode, `film_profile`, `print_profile`, capture illuminant, and readout illuminant MUST be null, and film-grain reports MUST report inactive.
 
 `output` MUST retain `path`, `format`, `bit_depth`, `color_space`, `cctf_encoding`, `compression`, `jpeg_quality`, and `jpeg_subsampling`; inapplicable options MUST be `null`. `backend` MUST report the requested `cpu` or `gpu` policy, or `auto` when selection remains deferred. Diagnostics MUST go to stderr.
 
@@ -483,17 +496,25 @@ Classification precedence MUST be `overridden`, then `constrained`, then `inacti
 
 A full per-field provenance history MUST NOT be added. Active status MUST NOT claim a measured pixel change.
 
-Text dry run MUST show the same resolved input declaration and sources, profile identities, route, scan-output mode, seed, requested backend, writer options, and edit feedback as JSON. It MUST show data selection and RAW loading choices. Effective exposure, film format, grain engine, and grain controls MUST use their canonical units and conditions.
+Text dry run MUST show the same resolved input declaration and sources, workflow mode, seed, requested backend, writer options, and edit feedback as JSON. It MUST show data selection and RAW loading choices.
+
+In the film workflow it MUST show profile identities, route, scan-output mode, effective exposure, film format, grain engine, and grain controls in their canonical units and conditions.
+
+In the LUT workflow it MUST show the cube path, title when present, input and output spaces, per-axis domain, domain policy, shaper, and strength, and MUST NOT print film grain or spectral stage controls as active.
 
 Text layout MUST NOT be a machine contract.
 
-Both dry-run formats MUST report the capture illuminant separately from every other light source, in a `capture_illuminant` object. The report MUST carry the selected film profile's `reference_illuminant`, the requested `camera.capture_illuminant` value, the effective value in force for the render, and the source that supplied it, where source is one of `unset`, `set`, or `preset`.
+In the film workflow, both dry-run formats MUST report the capture illuminant separately from every other light source, in a `capture_illuminant` object.
+
+The report MUST carry the selected film profile's `reference_illuminant`, the requested `camera.capture_illuminant` value, the effective value in force for the render, and the source that supplied it, where source is one of `unset`, `set`, or `preset`.
+
+In the LUT workflow, `capture_illuminant` MUST be null.
 
 An unset requested value MUST report the inherited profile reference as the effective value with source `unset`. An explicit value on a route that computes no film exposure from scene RGB MUST be reported inactive with its reason, and its effective value MUST be the profile reference illuminant.
 
 The report MUST NOT present RAW white balance, the readout illuminant, `enlarger.illuminant`, or the output white point as the capture illuminant.
 
-Both dry-run formats MUST report the resolved readout illuminant separately from the capture and enlarger illuminants, together with the material-category rule that selected it.
+In the film workflow, both dry-run formats MUST report the resolved readout illuminant separately from the capture and enlarger illuminants, together with the material-category rule that selected it. In the LUT workflow, `readout_illuminant` MUST be null.
 
 Both formats MUST state that pixel decoding, compute-device availability, metered exposure, and final pixel geometry remain unchecked. JSON MUST add `unchecked` with the stable values `pixel_decode`, `compute_device`, `metered_exposure`, and `output_geometry`. Dry run MUST NOT claim these outcomes.
 
@@ -566,6 +587,8 @@ Invalid field/group selectors and their conflict MUST fail before image work. Ex
 Text preset listing MUST contain the same names, groups, kinds, profile references, and LUT file status as JSON listing. File selectors and preset export validation MUST retain their existing behavior.
 
 LUT preset acceptance MUST exercise `process --preset` without film or print selectors, rejection of a mixed film/LUT preset set, validation of a missing or changed LUT file, and document-only preset export/import. `lut build` MUST NOT create or publish a preset. Listing and `show` MUST report the LUT kind without reading LUT pixels.
+
+`process --lut` acceptance MUST exercise declaration discovery from a cube, the clamp default, `--set` overrides, the selector conflicts, and LUT-aware JSON and text dry runs. It MUST exercise one real render through the image writer.
 
 Material-control and output-mix discovery acceptance MUST compare text and selected-field/module JSON against their canonical typed defaults, bounds, units, and effect conditions. Dry run MUST retain inactive preflash and chemistry values and explain missing print development, missing Film development, disabled chemistry, and unsupported fitted models when applicable.
 
@@ -664,7 +687,7 @@ Every public command and option MUST have a help description. Descriptions MUST 
 
 Options with finite choices MUST show the choices from their authoritative definition. A field with an open vocabulary MUST explain how to discover or supply its values.
 
-`process` help MUST group options by input and RAW loading, look and workflow, output, and execution and diagnostics. LUT build help MUST distinguish bundle configuration, delivery, and quality assessment. Long help MUST include a basic preset process command, a parameter override command, and the relevant discovery commands.
+`process` help MUST group options by input and RAW loading, look and workflow, output, and execution and diagnostics. LUT build help MUST distinguish bundle configuration, delivery, and quality assessment. Long help MUST include a basic preset process command, a LUT process command, a parameter override command, and the relevant discovery commands.
 
 It MUST distinguish scanner color controls from saving color conversion. The preset list help MUST state the default source selection, the preset library directory, and the group order that resolves a bare preset name.
 

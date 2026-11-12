@@ -79,6 +79,7 @@ impl App {
                 app.image_path = Some(path);
                 app.output_image = None;
                 app.output_retained = None;
+                app.lut_clipped_fraction = None;
                 app.output_geometry = None;
                 app.analysis.selection = None;
                 app.analysis.clear();
@@ -138,6 +139,7 @@ impl App {
                 app.full_scan_requested = false;
                 app.output_image = None;
                 app.output_retained = None;
+                app.lut_clipped_fraction = None;
                 app.output_geometry = None;
                 app.output_metadata = None;
                 app.source_render = None;

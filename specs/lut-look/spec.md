@@ -50,7 +50,7 @@ The LUT declaration MUST include:
 
 The supported input and output encodings are linear sRGB, display-encoded sRGB, and display-encoded Display P3. Camera-RGB LUTs are not admitted in this contract.
 
-The domain policy is either fail on out-of-domain input or an explicit clamp. The import UI MUST preselect fail, and the declaration MUST carry the selected policy.
+The domain policy is either fail on out-of-domain input or an explicit clamp. The import UI MUST preselect clamp, and the declaration MUST carry the selected policy. The import UI MUST expose fail as a strict option and explain both policies at the decision point.
 
 A missing, ambiguous, or unsupported color-space declaration MUST fail before output. The product MUST NOT infer a color space from a filename, a film profile, or image content.
 
@@ -130,7 +130,9 @@ The product MUST expose an explicit Film / LUT mode selection. Switching mode MU
 
 LUT mode MUST expose LUT import, the declared input and output spaces, the domain, the domain policy, the shaper, LUT strength, and independent halation, diffusion, grade, and grain controls.
 
-A newly imported LUT MUST default to strength one with every effect disabled.
+The LUT inspector MUST show all three domain axes. When a clamp render reports clipped pixels, the LUT inspector MUST show a persistent warning with the clipped percentage. The warning MUST NOT depend on hovering a truncated header status.
+
+A new LUT look MUST default to strength one with every effect disabled. A replacement cube preserves the existing strength and finishing values under the [LUT workflow](../lut-workflow/spec.md#import-lut).
 
 The UI MUST label the feature as a non-spectral LUT look. It MUST NOT present a LUT as a film profile or a measured stock.
 
@@ -174,3 +176,4 @@ A failed LUT import or render MUST preserve the preceding accepted image and par
 1. LUT mode applies a declared external LUT without loading film or print profiles; film mode remains unchanged and mode switching preserves inactive values.
 2. Diffusion, halation, grade, and grain remain independently toggleable in the fixed order; LUT strength zero bypasses the LUT color transform and no spatial effect is encoded in the LUT.
 3. Missing or ambiguous color-space, domain, domain policy, shaper, file, or hash declarations fail before output without silent substitution, clipping, or fallback.
+4. A clamp render outside the declared domain clips only at the domain edge and reports the clipped fraction; fail stops the render instead. The LUT inspector shows the full clipped warning and every domain axis.

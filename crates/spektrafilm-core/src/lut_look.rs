@@ -292,6 +292,59 @@ impl Default for LutLookParams {
 }
 
 impl LutLookParams {
+    /// Build a new look declaration from one external `.cube` carrier.
+    ///
+    /// The cube supplies its title, domain, and shaper declaration. The caller
+    /// supplies the color-space and domain-policy declarations, which the cube
+    /// format does not carry. New imports start at strength one with effects
+    /// and grade disabled.
+    pub fn from_cube(
+        path: impl Into<PathBuf>,
+        input_space: LutSpace,
+        output_space: LutSpace,
+        domain_policy: LutDomainPolicy,
+    ) -> Result<Self, String> {
+        let path = path.into();
+        let bytes = std::fs::read(&path)
+            .map_err(|error| format!("reading LUT {}: {error}", path.display()))?;
+        Self::from_cube_bytes(path, &bytes, input_space, output_space, domain_policy)
+    }
+
+    /// Build a declaration from bytes already read for import or hashing.
+    pub fn from_cube_bytes(
+        path: PathBuf,
+        bytes: &[u8],
+        input_space: LutSpace,
+        output_space: LutSpace,
+        domain_policy: LutDomainPolicy,
+    ) -> Result<Self, String> {
+        let document = read_cube_bytes(bytes)
+            .map_err(|error| format!("reading LUT {}: {error}", path.display()))?;
+        let look = Self {
+            path,
+            sha256: hash_bytes(bytes),
+            title: document.title,
+            input_space,
+            output_space,
+            domain_min: document.domain_min,
+            domain_max: document.domain_max,
+            domain_policy,
+            shaper: if document.shaper.is_some() {
+                LutShaper::Cube1d
+            } else {
+                LutShaper::None
+            },
+            strength: 1.0,
+            grade_active: false,
+            grade: FinishingParams::default(),
+            halation: inactive_halation(),
+            diffusion: DiffusionFilterParams::default(),
+            grain: LutGrainParams::default(),
+        };
+        look.validate(true)?;
+        Ok(look)
+    }
+
     /// Validate the declaration without reading the LUT file.
     pub fn validate(&self, required: bool) -> Result<(), String> {
         if !required {

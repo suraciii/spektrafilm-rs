@@ -46,6 +46,13 @@ Render a film stock onto a print paper:
     --backend cpu --film kodak_gold_200 --paper kodak_portra_endura --data-dir data
 ```
 
+Apply one external LUT as the LUT workflow:
+
+```bash
+./target/release/spektrafilm process input.png -o out.tif --lut look.cube \
+    --input-color-space sRGB --input-cctf-decoding true --data-dir data
+```
+
 Start the desktop GUI, optionally on an image:
 
 ```bash

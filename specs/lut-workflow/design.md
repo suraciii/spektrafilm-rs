@@ -93,6 +93,14 @@ The importer MUST use the existing `.cube` reader. It MUST NOT infer a color spa
 
 A newly imported LUT starts at strength one with all LUT-specific effects and grade disabled. Importing does not save a preset. The neutral gray ramp and color checker use the production LUT graph and display path.
 
+The import surface separates primary photographic decisions from declaration evidence. Input/output spaces, domain policy, and strength remain visible.
+
+The hash, per-axis domain values, and shaper declaration MAY be grouped as advanced evidence. The form states that the cube carries no color-space metadata and that sRGB is an assumption.
+
+The domain policy defaults to clamp for a new import and for a replacement. Fail remains an explicit strict choice. The form explains that clamp reports its clipped fraction and that fail stops the render.
+
+**Replace cube** changes only the external cube declaration. It retains strength, grade enablement, grade values, and effect settings. Starting a new LUT look is a separate action that resets those values.
+
 The importer validates the file and declaration before replacing the active LUT look. A missing file, malformed carrier, unsupported encoding, invalid domain, or out-of-range strength fails before the LUT workflow becomes active.
 
 ## LUT preset
@@ -172,6 +180,9 @@ The CLI reuses the same preset resolver and LUT file references.
 - `lut build` retains its existing export contract. It does not create or save a preset.
 - `preset list` reports the kind and LUT file status; `preset show` validates the path and hash and prints the declaration, not LUT pixels.
 - LUT preset export and import move only the preset document; the LUT file remains external.
+- `process --lut PATH` builds one temporary LUT preset from the cube declaration in the same resolver path, reading the path, title, domain, shaper declaration, and content hash from the file. It uses display-encoded sRGB input and output and clamp by default; `--set` MAY override those declarations and effects.
+- `--lut` conflicts with preset selection and with the film and spectral route selectors so one invocation cannot mix workflows.
+- Dry-run reports the resolved mode. In LUT mode, film-stage and film-grain reports are inactive or omitted from text.
 - `--set workflow.mode=lut` and the LUT canonical leaves remain available for parameter-only invocations.
 
 ## Validation and failure

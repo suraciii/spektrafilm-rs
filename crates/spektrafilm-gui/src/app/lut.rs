@@ -1,21 +1,14 @@
 //! LUT workflow switching, import/declaration, and the LUT look surface.
 use super::state::App;
 use crate::*;
-use spektrafilm_core::lut_formats::read_cube_bytes;
-use spektrafilm_core::lut_look::{LutDomainPolicy, LutLookParams, LutShaper, LutSpace, hash_bytes};
+use spektrafilm_core::lut_look::{LutDomainPolicy, LutLookParams, LutShaper, LutSpace};
 use spektrafilm_core::params::WorkflowMode;
 
 pub(crate) struct LutImportDraft {
-    path: PathBuf,
-    sha256: String,
-    title: String,
-    domain_min: [f64; 3],
-    domain_max: [f64; 3],
-    shaper: LutShaper,
-    input_space: LutSpace,
-    output_space: LutSpace,
-    policy: LutDomainPolicy,
-    strength: f64,
+    look: LutLookParams,
+    /// Existing finishing values retained by **Replace cube**. A new import
+    /// starts with grade and every effect disabled.
+    preserved: Option<LutLookParams>,
     error: Option<String>,
     preview: Option<Vec<[u8; 3]>>,
     preview_error: Option<String>,
@@ -24,35 +17,24 @@ pub(crate) struct LutImportDraft {
 
 impl LutImportDraft {
     fn params(&self) -> LutLookParams {
-        LutLookParams {
-            path: self.path.clone(),
-            sha256: self.sha256.clone(),
-            title: self.title.clone(),
-            input_space: self.input_space,
-            output_space: self.output_space,
-            domain_min: self.domain_min,
-            domain_max: self.domain_max,
-            domain_policy: self.policy,
-            shaper: self.shaper,
-            strength: self.strength,
-            grade_active: false,
-            grade: Default::default(),
-            halation: spektrafilm_core::params::HalationParams {
-                active: false,
-                ..Default::default()
-            },
-            diffusion: Default::default(),
-            grain: Default::default(),
+        let mut look = self.look.clone();
+        if let Some(previous) = &self.preserved {
+            look.grade_active = previous.grade_active;
+            look.grade = previous.grade.clone();
+            look.halation = previous.halation.clone();
+            look.diffusion = previous.diffusion.clone();
+            look.grain = previous.grain.clone();
         }
+        look
     }
 
     fn preview_key(&self) -> (LutSpace, LutSpace, LutDomainPolicy, LutShaper, u64) {
         (
-            self.input_space,
-            self.output_space,
-            self.policy,
-            self.shaper,
-            self.strength.to_bits(),
+            self.look.input_space,
+            self.look.output_space,
+            self.look.domain_policy,
+            self.look.shaper,
+            self.look.strength.to_bits(),
         )
     }
 
@@ -84,7 +66,7 @@ impl App {
         }
         if mode == WorkflowMode::Lut && self.params.lut_look.load().is_err() {
             self.status = crate::app::Message::new("surfaces.status.lut_import_required");
-            self.begin_import_lut();
+            self.begin_import_lut(false);
             return;
         }
         if mode == WorkflowMode::Lut {
@@ -107,7 +89,13 @@ impl App {
         });
     }
 
-    pub(crate) fn begin_import_lut(&mut self) {
+    /// Open the LUT import dialog. `preserve` keeps the current grade and
+    /// effects for **Replace cube**; a new look starts with them disabled.
+    pub(crate) fn begin_import_lut(&mut self, preserve: bool) {
+        let preserved = (preserve
+            && self.params.workflow.mode == WorkflowMode::Lut
+            && !self.params.lut_look.path.as_os_str().is_empty())
+        .then(|| self.params.lut_look.clone());
         let Some(path) = self.chooser.pick_file(
             self.file_dialog("lut")
                 .set_file_name("look.cube")
@@ -117,24 +105,27 @@ impl App {
         };
         self.remember_dialog("lut", &path);
         let result = (|| -> Result<LutImportDraft, String> {
-            let bytes = std::fs::read(&path).map_err(|error| error.to_string())?;
-            let sha256 = hash_bytes(&bytes);
-            let document = read_cube_bytes(&bytes).map_err(|e| e.to_string())?;
-            Ok(LutImportDraft {
+            let bytes = std::fs::read(&path)
+                .map_err(|error| format!("reading LUT {}: {error}", path.display()))?;
+            let input_space = preserved
+                .as_ref()
+                .map_or(LutSpace::Srgb, |look| look.input_space);
+            let output_space = preserved
+                .as_ref()
+                .map_or(LutSpace::Srgb, |look| look.output_space);
+            let mut look = LutLookParams::from_cube_bytes(
                 path,
-                title: document.title.clone(),
-                sha256,
-                domain_min: document.domain_min,
-                domain_max: document.domain_max,
-                shaper: if document.shaper.is_some() {
-                    LutShaper::Cube1d
-                } else {
-                    LutShaper::None
-                },
-                input_space: LutSpace::Srgb,
-                output_space: LutSpace::Srgb,
-                policy: LutDomainPolicy::Fail,
-                strength: 1.0,
+                &bytes,
+                input_space,
+                output_space,
+                LutDomainPolicy::Clamp,
+            )?;
+            if let Some(previous) = &preserved {
+                look.strength = previous.strength;
+            }
+            Ok(LutImportDraft {
+                look,
+                preserved,
                 error: None,
                 preview: None,
                 preview_error: None,
@@ -164,57 +155,62 @@ impl App {
             .open(&mut open)
             .show(ctx, |ui| {
                 ui.label(crate::i18n::text(ctx, "surfaces.lut.non_spectral"));
-                ui.monospace(draft.path.display().to_string());
-                if !draft.title.is_empty() {
-                    ui.label(&draft.title);
+                ui.monospace(draft.look.path.display().to_string());
+                if !draft.look.title.is_empty() {
+                    ui.label(&draft.look.title);
                 }
-                ui.small(format!("sha256: {}", draft.sha256));
+                ui.small(crate::i18n::text(ctx, "surfaces.lut.space_note"));
                 ui.horizontal(|ui| {
                     ui.label(crate::i18n::text(ctx, "surfaces.lut.input_space"));
                     egui::ComboBox::from_id_salt("lut-import-input")
-                        .selected_text(draft.input_space.name())
+                        .selected_text(draft.look.input_space.name())
                         .show_ui(ui, |ui| {
                             for space in [LutSpace::SrgbLinear, LutSpace::Srgb, LutSpace::DisplayP3]
                             {
-                                ui.selectable_value(&mut draft.input_space, space, space.name());
+                                ui.selectable_value(
+                                    &mut draft.look.input_space,
+                                    space,
+                                    space.name(),
+                                );
                             }
                         });
                 });
                 ui.horizontal(|ui| {
                     ui.label(crate::i18n::text(ctx, "surfaces.lut.output_space"));
                     egui::ComboBox::from_id_salt("lut-import-output")
-                        .selected_text(draft.output_space.name())
+                        .selected_text(draft.look.output_space.name())
                         .show_ui(ui, |ui| {
                             for space in [LutSpace::SrgbLinear, LutSpace::Srgb, LutSpace::DisplayP3]
                             {
-                                ui.selectable_value(&mut draft.output_space, space, space.name());
+                                ui.selectable_value(
+                                    &mut draft.look.output_space,
+                                    space,
+                                    space.name(),
+                                );
                             }
                         });
                 });
-                ui.horizontal(|ui| {
+                ui.horizontal_wrapped(|ui| {
                     ui.label(crate::i18n::text(ctx, "surfaces.lut.domain_policy"));
-                    ui.selectable_value(&mut draft.policy, LutDomainPolicy::Fail, "fail");
-                    ui.selectable_value(&mut draft.policy, LutDomainPolicy::Clamp, "clamp");
+                    ui.radio_value(
+                        &mut draft.look.domain_policy,
+                        LutDomainPolicy::Clamp,
+                        crate::i18n::text(ctx, "surfaces.lut.policy_clamp"),
+                    );
+                    ui.radio_value(
+                        &mut draft.look.domain_policy,
+                        LutDomainPolicy::Fail,
+                        crate::i18n::text(ctx, "surfaces.lut.policy_fail"),
+                    );
                 });
+                ui.small(crate::i18n::text(ctx, "surfaces.lut.policy_help"));
                 ui.add(
-                    egui::Slider::new(&mut draft.strength, 0.0..=1.0)
+                    egui::Slider::new(&mut draft.look.strength, 0.0..=1.0)
                         .text(crate::i18n::text(ctx, "surfaces.lut.strength")),
                 );
-                ui.small(format!(
-                    "{}: [{:.6}, {:.6}, {:.6}] .. [{:.6}, {:.6}, {:.6}]",
-                    crate::i18n::text(ctx, "surfaces.lut.domain"),
-                    draft.domain_min[0],
-                    draft.domain_min[1],
-                    draft.domain_min[2],
-                    draft.domain_max[0],
-                    draft.domain_max[1],
-                    draft.domain_max[2]
-                ));
-                ui.small(format!(
-                    "{}: {}",
-                    crate::i18n::text(ctx, "surfaces.lut.shaper"),
-                    draft.shaper.name()
-                ));
+                if draft.preserved.is_some() {
+                    ui.small(crate::i18n::text(ctx, "surfaces.lut.preserve_note"));
+                }
                 ui.label(crate::i18n::text(ctx, "surfaces.lut.preview"));
                 if let Some(preview) = &draft.preview {
                     let width = ui.available_width().clamp(80.0, 420.0);
@@ -249,6 +245,28 @@ impl App {
                         left += checker_width;
                     }
                 }
+                ui.small(crate::i18n::text(ctx, "surfaces.lut.preview_note"));
+                egui::CollapsingHeader::new(crate::i18n::text(ctx, "surfaces.lut.advanced"))
+                    .id_salt("lut-import-advanced")
+                    .default_open(true)
+                    .show(ui, |ui| {
+                        ui.small(format!("sha256: {}", draft.look.sha256));
+                        ui.small(format!(
+                            "{}: R [{:.6}, {:.6}], G [{:.6}, {:.6}], B [{:.6}, {:.6}]",
+                            crate::i18n::text(ctx, "surfaces.lut.domain"),
+                            draft.look.domain_min[0],
+                            draft.look.domain_max[0],
+                            draft.look.domain_min[1],
+                            draft.look.domain_max[1],
+                            draft.look.domain_min[2],
+                            draft.look.domain_max[2],
+                        ));
+                        ui.small(format!(
+                            "{}: {}",
+                            crate::i18n::text(ctx, "surfaces.lut.shaper"),
+                            draft.look.shaper.name()
+                        ));
+                    });
                 if let Some(error) = &draft.preview_error {
                     ui.colored_label(theme::ERROR, error);
                 }
@@ -271,6 +289,7 @@ impl App {
                 });
             });
         if accept {
+            let replacing = draft.preserved.is_some();
             let params = draft.params();
             match params.load() {
                 Ok(_) => {
@@ -282,10 +301,18 @@ impl App {
                     self.params.workflow.route = "input".into();
                     self.params.io.scan_film = false;
                     self.presets.state.applied = None;
-                    self.label_adjustment("Import LUT");
+                    self.label_adjustment(if replacing {
+                        "Replace LUT"
+                    } else {
+                        "Import LUT"
+                    });
                     self.invalidate_look_render();
-                    self.status = crate::app::Message::new("surfaces.status.lut_imported")
-                        .arg("path", draft.path.display());
+                    self.status = crate::app::Message::new(if replacing {
+                        "surfaces.status.lut_replaced"
+                    } else {
+                        "surfaces.status.lut_imported"
+                    })
+                    .arg("path", draft.look.path.display());
                 }
                 Err(error) => {
                     draft.error = Some(error);
@@ -574,5 +601,62 @@ mod tests {
         assert_eq!(app.params.workflow.mode, WorkflowMode::Film);
         let text = std::fs::read_to_string(path).unwrap();
         assert!(text.contains("LUT_3D_SIZE 2"));
+    }
+
+    const IDENTITY_CUBE: &[u8] =
+        b"TITLE \"identity\"\nLUT_3D_SIZE 2\nDOMAIN_MIN 0 0 0\nDOMAIN_MAX 1 1 1\n\
+        0 0 0\n1 0 0\n0 1 0\n1 1 0\n0 0 1\n1 0 1\n0 1 1\n1 1 1\n";
+
+    fn draft(preserved: Option<LutLookParams>) -> LutImportDraft {
+        let look = LutLookParams::from_cube_bytes(
+            PathBuf::from("/tmp/look.cube"),
+            IDENTITY_CUBE,
+            LutSpace::Srgb,
+            LutSpace::Srgb,
+            LutDomainPolicy::Clamp,
+        )
+        .unwrap();
+        LutImportDraft {
+            look,
+            preserved,
+            error: None,
+            preview: None,
+            preview_error: None,
+            preview_key: None,
+        }
+    }
+
+    #[test]
+    fn a_new_import_disables_effects_and_uses_clamp() {
+        let params = draft(None).params();
+        assert_eq!(params.domain_policy, LutDomainPolicy::Clamp);
+        assert_eq!(params.strength, 1.0);
+        assert!(!params.grade_active);
+        assert!(!params.diffusion.active);
+        assert!(!params.halation.active);
+        assert!(!params.grain.active);
+    }
+
+    #[test]
+    fn replacing_a_cube_preserves_the_finishing_look() {
+        let mut previous = draft(None).params();
+        previous.strength = 0.4;
+        previous.grade_active = true;
+        previous.grade.contrast = 0.3;
+        previous.diffusion.active = true;
+        previous.halation.active = true;
+        previous.grain.active = true;
+        previous.grain.amount = 0.2;
+
+        let mut replacement = draft(Some(previous.clone()));
+        replacement.look.strength = previous.strength;
+        let params = replacement.params();
+        assert_eq!(params.strength, previous.strength);
+        assert_eq!(params.grade_active, previous.grade_active);
+        assert_eq!(params.grade.contrast, previous.grade.contrast);
+        assert_eq!(params.diffusion.active, previous.diffusion.active);
+        assert_eq!(params.halation.active, previous.halation.active);
+        assert_eq!(params.grain.active, previous.grain.active);
+        assert_eq!(params.grain.amount, previous.grain.amount);
     }
 }
