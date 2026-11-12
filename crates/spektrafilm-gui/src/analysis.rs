@@ -163,6 +163,13 @@ pub(crate) struct Analysis {
     pub preferences: crate::analysis_plot::PlotPreferences,
     pub plot: crate::analysis_plot::PlotState,
     pub selection: Option<[f64; 4]>,
+    /// Normalized selection currently presented by the viewer. This may be
+    /// absent while the shelf is collapsed even though `selection` remains
+    /// committed for the next expansion.
+    pub viewer_selection: Option<[f64; 4]>,
+    pub band: Option<[f64; 4]>,
+    pub plot_inspecting: bool,
+    pub cursor_control: Option<egui::Id>,
     pub original_generation: u64,
     pub original_space: String,
     pub original_encoded: bool,
@@ -186,6 +193,10 @@ impl Default for Analysis {
             preferences: Default::default(),
             plot: Default::default(),
             selection: None,
+            viewer_selection: None,
+            band: None,
+            plot_inspecting: false,
+            cursor_control: None,
             original_generation: 0,
             original_space: "sRGB".into(),
             original_encoded: false,
@@ -331,6 +342,33 @@ impl Analysis {
         }
         false
     }
+    pub(crate) fn viewer_input(
+        &self,
+        layer: crate::display::ViewLayer,
+    ) -> crate::display::ViewerAnalysisInput {
+        crate::display::ViewerAnalysisInput {
+            enabled: self.expanded && layer != crate::display::ViewLayer::PaperBack,
+            selection: self.viewer_selection,
+            band: self.band,
+            plot_inspecting: self.plot_inspecting,
+            cursor_control: self.cursor_control,
+        }
+    }
+
+    /// Drop source-mapped overlay data after a new input replaces the
+    /// presentation. Focused controls and plot inspection belong to the next
+    /// visible frame and must survive this reset.
+    pub(crate) fn clear_viewer_selection(&mut self) {
+        self.viewer_selection = None;
+        self.band = None;
+    }
+
+    pub(crate) fn clear_viewer_presentation(&mut self) {
+        self.clear_viewer_selection();
+        self.plot_inspecting = false;
+        self.cursor_control = None;
+    }
+
     pub fn clear(&mut self) {
         self.distributions.clear();
         self.samples.clear();
@@ -420,14 +458,9 @@ fn image_band(region: [u32; 4], size: [u32; 2], start: f32, end: f32) -> [f64; 4
 
 impl crate::App {
     pub(crate) fn suspend_image_analysis(&mut self) {
-        self.viewer.analysis.enabled = false;
-        self.viewer.analysis.selection = None;
-        self.viewer.analysis.band = None;
-        self.viewer.analysis.sample = None;
-        self.viewer.analysis.plot_inspecting = false;
-        self.viewer.analysis.cursor_control = None;
-        self.viewer.analysis.completed = None;
         self.viewer.cancel_analysis_selection();
+        self.viewer.clear_analysis_sample();
+        self.analysis.clear_viewer_presentation();
         self.analysis.clear();
     }
 
@@ -435,7 +468,7 @@ impl crate::App {
         use crate::analysis_geometry::AnalysisGeometry;
         use crate::analysis_plot::{self, PlotSample};
         use crate::display::ViewLayer;
-        self.viewer.analysis.plot_inspecting = false;
+        self.analysis.plot_inspecting = false;
         let layer = self.viewer.settings.layer;
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = crate::theme::SPACE_1;
@@ -455,10 +488,9 @@ impl crate::App {
                 let inspection_available = self.viewer.analysis_retained(layer).is_some()
                     || (layer == ViewLayer::Input && self.oriented_input.is_some())
                     || (layer == ViewLayer::Output && self.output_geometry.is_some());
-                let cursor_available = inspection_available && !self.viewer.analysis.armed;
+                let cursor_available = inspection_available && !self.viewer.analysis_armed();
                 if cursor_available {
                     let selected = self
-                        .viewer
                         .analysis
                         .cursor_control
                         .is_some_and(|id| ui.memory(|memory| memory.has_focus(id)));
@@ -469,7 +501,7 @@ impl crate::App {
                             ui.selectable_label(selected, label.as_ref())
                         })
                         .inner;
-                    self.viewer.analysis.cursor_control = Some(cursor.id);
+                    self.analysis.cursor_control = Some(cursor.id);
                     if cursor.clicked() {
                         cursor.request_focus();
                     }
@@ -496,7 +528,7 @@ impl crate::App {
                         });
                     });
                     cursor.on_hover_text(help);
-                } else if let Some(id) = self.viewer.analysis.cursor_control.take() {
+                } else if let Some(id) = self.analysis.cursor_control.take() {
                     ui.memory_mut(|memory| memory.surrender_focus(id));
                 }
                 if self.analysis.selection.is_some()
@@ -511,15 +543,16 @@ impl crate::App {
                 if inspection_available
                     && ui
                         .selectable_label(
-                            self.viewer.analysis.armed,
+                            self.viewer.analysis_armed(),
                             crate::i18n::text(ui.ctx(), "surfaces.analysis.select"),
                         )
                         .clicked()
                 {
-                    if self.viewer.analysis.armed {
+                    if self.viewer.analysis_armed() {
                         self.viewer.cancel_analysis_selection();
                     } else {
-                        self.viewer.arm_analysis_selection();
+                        self.viewer
+                            .arm_analysis_selection(self.analysis.viewer_selection);
                     }
                     self.analysis.clear_sample();
                 }
@@ -547,11 +580,11 @@ impl crate::App {
             let subject = (layer, generation);
             if self.analysis.active_subject != Some(subject) {
                 self.viewer.cancel_analysis_selection();
-                self.viewer.analysis.sample = None;
+                self.viewer.clear_analysis_sample();
                 self.analysis.clear_sample();
                 self.analysis.active_subject = Some(subject);
             }
-            if let Some(rect) = self.viewer.analysis.completed.take()
+            if let Some(rect) = self.viewer.take_analysis_completed()
                 && let Some(geometry) = geometries[index]
             {
                 let source = geometry.source_rect_from_image(rect);
@@ -559,12 +592,11 @@ impl crate::App {
                     self.analysis.selection = Some(source);
                 }
             }
-            self.viewer.analysis.enabled = layer != ViewLayer::PaperBack;
-            self.viewer.analysis.selection = self
+            self.analysis.viewer_selection = self
                 .analysis
                 .selection
                 .and_then(|s| geometries[index].and_then(|g| g.image_rect_from_source(s)));
-            self.viewer.analysis.band = None;
+            self.analysis.band = None;
             if layer == ViewLayer::PaperBack {
                 self.analysis.clear();
                 ui.label(crate::i18n::text(ui.ctx(), "surfaces.analysis.paper"));
@@ -688,14 +720,13 @@ impl crate::App {
             {
                 status.push(crate::i18n::text(ui.ctx(), "surfaces.analysis.framing").into_owned());
             }
-            let suspended = self.viewer.analysis.suspended
+            let suspended = self.viewer.analysis_suspended()
                 || self.operator_compare
                 || self.finishing_compare
                 || self.displayed_comparison.is_some();
             let target = self
                 .viewer
-                .analysis
-                .sample
+                .analysis_sample()
                 .filter(|sample| sample.layer == layer && !suspended);
             if suspended {
                 self.analysis.clear_sample();
@@ -760,7 +791,6 @@ impl crate::App {
                         && sample.y < region[3],
                 });
             let cursor_focused = self
-                .viewer
                 .analysis
                 .cursor_control
                 .is_some_and(|id| ui.memory(|memory| memory.has_focus(id)));
@@ -782,19 +812,18 @@ impl crate::App {
             );
             if plot.inspecting {
                 self.analysis.clear_sample();
-                self.viewer.analysis.sample = None;
-                self.viewer.analysis.plot_inspecting = true;
-                if let Some(id) = self.viewer.analysis.cursor_control {
+                self.viewer.clear_analysis_sample();
+                self.analysis.plot_inspecting = true;
+                if let Some(id) = self.analysis.cursor_control {
                     ui.memory_mut(|memory| memory.surrender_focus(id));
                 }
             } else if cursor_focused {
-                self.viewer.analysis.band = None;
+                self.analysis.band = None;
             }
             if plot.inspecting
                 && let Some((start, end)) = plot.band
             {
-                self.viewer.analysis.band =
-                    Some(image_band(region, geometry.image_size(), start, end));
+                self.analysis.band = Some(image_band(region, geometry.image_size(), start, end));
             }
         }
     }
@@ -837,7 +866,7 @@ mod tests {
             harness.step();
             let cancellation = started_rx.recv_timeout(Duration::from_secs(10)).unwrap();
             assert!(harness.state().analysis.result.is_none());
-            harness.state_mut().viewer.arm_analysis_selection();
+            harness.state_mut().viewer.arm_analysis_selection(None);
             harness.step();
             let label = crate::i18n::text(&harness.ctx, close_key);
             harness.get_by_label(label.as_ref()).simulate_click();
@@ -851,8 +880,8 @@ mod tests {
             );
             assert!(harness.state().analysis.identity.is_none());
             assert!(harness.state().analysis.result.is_none());
-            assert!(!harness.state().viewer.analysis.enabled);
-            assert!(!harness.state().viewer.analysis.armed);
+            assert!(!harness.state().analysis.expanded);
+            assert!(!harness.state().viewer.analysis_armed());
         }
         eframe::App::on_exit(harness.state_mut(), None);
     }

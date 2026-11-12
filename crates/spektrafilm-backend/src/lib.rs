@@ -166,6 +166,45 @@ pub trait ComputeBackend: Send + Sync {
     ) -> Result<ImageBuf, String>;
     fn lut3d_interp(&self, img: &ImageBuf, lut: &Lut3D) -> Result<ImageBuf, String>;
 
+    /// Evaluate one LUT-look declaration on the selected device. `None` means
+    /// this backend has no device LUT-look operation; a selected GPU must
+    /// surface that as an error rather than run the host reference.
+    fn lut3d_look(
+        &self,
+        _img: &ImageBuf,
+        _original: &ImageBuf,
+        _params: &Lut3dLookGpuParams<'_>,
+    ) -> Result<Option<ImageBuf>, String> {
+        Ok(None)
+    }
+
+    /// Apply the LUT workflow's additive highlight halation layer on device.
+    fn lut_halation(
+        &self,
+        _img: &ImageBuf,
+        _params: &LutHalationGpuParams,
+    ) -> Result<Option<ImageBuf>, String> {
+        Ok(None)
+    }
+
+    /// Apply output-referred LUT appearance grain after output encoding.
+    fn lut_grain(
+        &self,
+        _img: &ImageBuf,
+        _params: &LutGrainGpuParams,
+    ) -> Result<Option<ImageBuf>, String> {
+        Ok(None)
+    }
+
+    /// Compress an output-space linear image into the destination gamut.
+    fn output_gamut_compress(
+        &self,
+        _img: &ImageBuf,
+        _params: &GamutGpuParams<'_>,
+    ) -> Result<Option<ImageBuf>, String> {
+        Ok(None)
+    }
+
     /// Spectral scanning: density CMY → RGB via spectral integration.
     /// GPU backends override this with a compute shader.
     ///

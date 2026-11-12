@@ -98,10 +98,23 @@ pub fn marker(
         .iter()
         .find(|e| e.group == applied.group && e.name == applied.name)
         .and_then(|e| e.preset.as_ref())
-        .filter(|p| p.kind() == Ok(PresetKind::Look))
+        .filter(|p| matches!(p.kind(), Ok(PresetKind::Look | PresetKind::Lut)))
     else {
         return Marker::Missing;
     };
+    if preset.kind() == Ok(PresetKind::Lut) {
+        return if params.workflow.mode == spektrafilm_core::params::WorkflowMode::Lut
+            && preset.lut.as_ref() == Some(&params.lut_look)
+        {
+            if preset.lut.as_ref().is_some_and(|lut| lut.load().is_ok()) {
+                Marker::Applied
+            } else {
+                Marker::Missing
+            }
+        } else {
+            Marker::Modified
+        };
+    }
     if preset
         .film_profile
         .as_ref()
@@ -268,6 +281,7 @@ pub(crate) struct NameDialog {
 }
 
 mod actions;
+mod errors;
 mod render;
 mod thumbnail_worker;
 mod thumbnails;

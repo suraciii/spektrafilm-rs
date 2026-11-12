@@ -3,8 +3,8 @@
 //! This owner never touches accepted controls, history, retained output, or the
 //! main render worker. One thread renders the visible demand set with the
 //! production resolver, runtime, and display transform.
+use super::errors::document_error_message;
 use super::*;
-use crate::presets::render::document_error_message;
 use crate::render::{InputImage, RenderSnapshot, RuntimeCache};
 use eframe::egui;
 use spektrafilm_backend::telemetry::{CollectionMode, ObservationContext};
@@ -33,6 +33,8 @@ impl ThumbnailKey {
 pub(crate) struct ThumbnailContext {
     pub(crate) source: InputImage,
     pub(crate) params: RuntimeParams,
+    pub(crate) film_name: String,
+    pub(crate) print_name: String,
     pub(crate) data_dir: PathBuf,
     pub(crate) special: serde_json::Value,
     pub(crate) backend: Arc<dyn spektrafilm_backend::ComputeBackend>,
@@ -297,22 +299,37 @@ fn render_candidate(
     candidate: &Candidate,
     cancel: &Arc<AtomicBool>,
 ) -> Result<egui::ColorImage, crate::app::Message> {
-    let mut resolved = candidate
-        .preset
-        .resolve_detailed(&context.data_dir, &context.params)
-        .map_err(|error| document_error_message(&error))?;
-    // Same post-resolve normalization as an accepted look application.
-    resolved.params.film_render.grain.monochrome = resolved.film.is_bw();
+    let lut_candidate = candidate.preset.lut.is_some();
+    let (params, film_name, print_name) = if lut_candidate {
+        let resolved = candidate
+            .preset
+            .resolve_lut_detailed(&context.params)
+            .map_err(|error| document_error_message(&error))?;
+        (
+            resolved.params,
+            context.film_name.clone(),
+            context.print_name.clone(),
+        )
+    } else {
+        let mut resolved = candidate
+            .preset
+            .resolve_detailed(&context.data_dir, &context.params)
+            .map_err(|error| document_error_message(&error))?;
+        // Same post-resolve normalization as an accepted look application.
+        resolved.params.film_render.grain.monochrome = resolved.film.is_bw();
+        resolved.params.workflow.mode = spektrafilm_core::params::WorkflowMode::Film;
+        (resolved.params, resolved.film_name, resolved.print_name)
+    };
     let snapshot = RenderSnapshot::new(
-        resolved.params,
-        resolved.film_name,
-        resolved.print_name,
+        params,
+        film_name,
+        print_name,
         context.data_dir.clone(),
         context.special.clone(),
     )
     .with_cancellation(Some(cancel.clone()));
     let observation = ObservationContext::new(CollectionMode::Off);
-    let backend = context.backend.as_ref();
+    let backend: &dyn spektrafilm_backend::ComputeBackend = context.backend.as_ref();
     let runtime = cache.prepare_observed_with_backend(&snapshot, true, &observation, backend)?;
     runtime.set_cancellation(Some(cancel.clone()));
     let params = runtime.params().clone();
@@ -348,7 +365,7 @@ fn render_candidate(
             } else {
                 image.rotated_quarter_turns(context.rotation_quarter_turns as i32)
             };
-            if runtime.params().scanner.requires_full_frame() {
+            if runtime.params().requires_full_frame() {
                 let full = runtime
                     .process(oriented, backend)
                     .map_err(simulation_error)?;

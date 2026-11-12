@@ -332,6 +332,14 @@ fn canonical_colorspace_stage_passes_privacy_validation_without_opening_stage_na
 }
 
 #[test]
+fn lut_look_stage_passes_privacy_validation() {
+    let mut report = collected_report();
+    report.stages[0].name = "lut_look".into();
+    report.coverage.stage_totals[0].name = "lut_look".into();
+    report.validate().unwrap();
+}
+
+#[test]
 fn high_level_omissions_distinguish_complete_unknown_and_invalid_coverage() {
     let mut report = collected_report();
     assert_eq!(report.coverage.omitted_high_level_observations, Some(0));

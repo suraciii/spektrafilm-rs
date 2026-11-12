@@ -562,6 +562,43 @@ impl ComputeBackend for WgpuBackend {
         )
     }
 
+    fn lut3d_look(
+        &self,
+        img: &ImageBuf,
+        original: &ImageBuf,
+        params: &spektrafilm_backend::Lut3dLookGpuParams<'_>,
+    ) -> Result<Option<ImageBuf>, String> {
+        let (backend, _batch) = self.observed_batch("lut3d_look");
+        backend.lut3d_look_gpu(img, original, params).map(Some)
+    }
+
+    fn lut_halation(
+        &self,
+        img: &ImageBuf,
+        params: &spektrafilm_backend::LutHalationGpuParams,
+    ) -> Result<Option<ImageBuf>, String> {
+        let (backend, _batch) = self.observed_batch("lut_halation");
+        backend.lut_halation_gpu(img, params).map(Some)
+    }
+
+    fn lut_grain(
+        &self,
+        img: &ImageBuf,
+        params: &spektrafilm_backend::LutGrainGpuParams,
+    ) -> Result<Option<ImageBuf>, String> {
+        let (backend, _batch) = self.observed_batch("lut_grain");
+        backend.lut_grain_gpu(img, params).map(Some)
+    }
+
+    fn output_gamut_compress(
+        &self,
+        img: &ImageBuf,
+        params: &spektrafilm_backend::GamutGpuParams<'_>,
+    ) -> Result<Option<ImageBuf>, String> {
+        let (backend, _batch) = self.observed_batch("output_gamut_compress");
+        backend.gamut_compress_gpu(img, params).map(Some)
+    }
+
     fn optical_diffusion(
         &self,
         img: &ImageBuf,

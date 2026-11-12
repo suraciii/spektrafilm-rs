@@ -5,6 +5,7 @@ mod export;
 pub(crate) mod export_queue;
 pub(crate) mod history;
 mod input;
+mod lut;
 mod material;
 mod message;
 mod render;

@@ -9,13 +9,15 @@
 | [LUT delivery](../lut-delivery/spec.md) | Exporting the film chain |
 | [Tone and color](../finishing/spec.md) | Grading |
 | [Film grain](../film-grain/spec.md) | Film grain engines |
-| [Presets](../presets/spec.md) | Film look presets; this contract does not add a LUT look preset |
+| [Presets](../presets/spec.md) | Film look presets; LUT preset library behavior is owned by the [LUT workflow](../lut-workflow/spec.md#lut-presets) |
 
 ## Scope
 
-A **LUT look** is an external 3D color transform plus independent effect layers. It is non-spectral and operates on RGB. It does not model film sensitivity, record density, development, printing, scanning, or illumination.
+A LUT look uses an external 3D color transform plus independent effect layers. It is non-spectral and operates on RGB. It does not model film sensitivity, record density, development, printing, scanning, or illumination.
 
 A **LUT mode** renders a LUT look. A **film mode** renders the existing spectral film chain. Mode selection is explicit and exclusive.
+
+The product-level LUT export/import handoff and LUT preset lifecycle are owned by the [LUT workflow](../lut-workflow/spec.md).
 
 | Property | Film mode | LUT mode |
 | --- | --- | --- |
@@ -56,7 +58,7 @@ A LUT whose domain does not cover the input MUST use a declared shaper, select a
 
 LUT strength is a finite value from zero to one. Zero MUST bypass the LUT color transform exactly; it MUST NOT bypass active effects. One MUST apply the declared transform without mixing.
 
-The LUT file is an external asset. The product MUST NOT silently substitute another file when the declared file is missing or its hash differs.
+The LUT file is external to the product. The product MUST NOT silently substitute another file when the declared file is missing or its hash differs.
 
 ## Color order
 
@@ -124,7 +126,7 @@ The product MUST provide a neutral gray ramp and a color-checker preview for an 
 
 ## UI and CLI
 
-The product MUST expose an explicit Film / LUT mode selection. Switching mode MUST preserve stored values in the inactive mode without executing them.
+The product MUST expose an explicit Film / LUT mode selection. Switching mode MUST preserve stored values in the inactive mode without executing them. Applying a LUT preset MAY switch to LUT mode as one transaction under the [LUT workflow](../lut-workflow/spec.md#lut-presets).
 
 LUT mode MUST expose LUT import, the declared input and output spaces, the domain, the domain policy, the shaper, LUT strength, and independent halation, diffusion, grade, and grain controls.
 
@@ -138,9 +140,9 @@ The CLI MUST expose the same mode, LUT declaration, and effect controls through 
 
 LUT look settings are runtime parameters. Complete parameter documents, GUI state, and render recipes MUST retain the LUT reference, content hash, color spaces, domain, domain policy, shaper, strength, effects, and grade.
 
-A LUT look is not a film look preset. Preset-library support for LUT looks is outside this contract.
+A LUT look is not a film look preset. It MAY be captured as a LUT preset under the [LUT workflow](../lut-workflow/spec.md#lut-presets); film look presets remain film-only.
 
-A saved LUT reference MUST fail validation while LUT mode is active when the file is missing or its content hash differs. The product MUST NOT replace the reference with another LUT or fall back to film mode.
+A saved LUT reference MUST fail validation while LUT mode is active when the file is missing or its content hash differs. The product MUST NOT replace the reference with another LUT or fall back to film mode. A LUT preset references an external LUT file by path and hash; the preset document does not embed the LUT.
 
 Switching to film mode MUST preserve the stored LUT look. Switching back MUST restore it without reinterpreting the film controls.
 

@@ -76,8 +76,14 @@ impl Pipeline {
                     .into(),
             );
         }
-        if crate::stages::grain_dye::active(&self.params) {
+        if !self.params.workflow.mode.is_lut() && crate::stages::grain_dye::active(&self.params) {
             crate::stages::grain_dye::validate_supported(&self.film, &self.params)?;
+        }
+        if self.params.workflow.mode.is_lut() {
+            if inject != Tap::RgbIn || collect != Tap::RgbOut {
+                return Err("LUT mode exposes only the rgb_in and rgb_out boundaries".into());
+            }
+            return self.process_full(image, backend, timings, capture);
         }
         if backend.is_gpu() {
             // Diagnostic endpoints are not permission to enter the CPU
@@ -208,12 +214,49 @@ impl Pipeline {
         mut timings: Option<&mut BTreeMap<String, f64>>,
         mut capture: Option<&mut crate::stage_evidence::StageCapture>,
     ) -> Result<ImageBuf, String> {
+        self.check_cancelled()?;
+        if self.params.workflow.mode.is_lut() {
+            if capture.is_some() {
+                return Err("stage evidence is unavailable in LUT mode".into());
+            }
+            // LUT effects are independent of inactive film controls. Use a
+            // fixed 35 mm reference for their micrometre scaling so changing
+            // the stored camera format cannot alter an active LUT look.
+            let (working, pixel_size_um) =
+                crate::resizing::crop_and_rescale(&image, &self.params.io, 35.0)?;
+            let source = spektrafilm_math::colorspace::resolve(&self.params.io.input_color_space)?;
+            let output = spektrafilm_math::colorspace::resolve(&self.params.io.output_color_space)?;
+            let look = self
+                .lut_look
+                .as_deref()
+                .ok_or_else(|| "LUT mode has no resolved LUT look".to_owned())?;
+            let _lut_observation = if backend.is_gpu() {
+                crate::stages::StageObservation::new(backend, "lut_look")
+            } else {
+                crate::stages::StageObservation::cpu(
+                    backend,
+                    "lut_look",
+                    spektrafilm_backend::telemetry::CpuReason::CpuSelected,
+                )
+            };
+            let result = look.render(
+                working.as_ref(),
+                source,
+                self.params.io.input_cctf_decoding,
+                output,
+                self.params.io.output_cctf_encoding,
+                pixel_size_um,
+                &self.output_gamut,
+                backend,
+            )?;
+            self.check_cancelled()?;
+            return Ok(result);
+        }
         // Active Dye outside its supported condition fails here, before any
         // route work — including the passthrough and convert routes, which
         // never reach a grain stage.
         crate::stages::grain_dye::validate_supported(&self.film, &self.params)?;
         crate::stages::grain_fotufilm::validate_supported(&self.film, &self.params)?;
-        self.check_cancelled()?;
         if self.params.workflow.route_enum() == WorkflowRoute::Input {
             if let Some(capture) = capture.as_deref_mut() {
                 use crate::stage_evidence::StageId;

@@ -35,6 +35,8 @@ pub(crate) struct App {
     pub(crate) film_dev_times: Vec<f64>,
     pub(crate) print_dev_times: Vec<f64>,
     pub(crate) params: RuntimeParams,
+    /// Film route retained while the LUT workflow owns the visible route.
+    pub(crate) film_route: Option<String>,
     pub(crate) gui_state: state::GuiState,
     pub(crate) material_baseline: Option<(PathBuf, String, Option<Arc<serde_json::Value>>)>,
     /// Cached polarity of the selected scan profile, keyed by data directory and stock.
@@ -63,6 +65,8 @@ pub(crate) struct App {
     pub(crate) source_metadata: Option<ImageMetadata>,
     pub(crate) export_options: ExportOptions,
     pub(crate) export_dialog: ExportDialog,
+    pub(crate) lut_import: Option<super::lut::LutImportDraft>,
+    pub(crate) lut_export: Option<super::lut::LutExportDraft>,
     pub(crate) input_epoch: u64,
     /// Latest accepted floating output, shared with background viewing workers.
     pub(crate) output_image: Option<Arc<ImageBuf>>,
@@ -231,6 +235,9 @@ impl App {
             .as_ref()
             .map(scan_medium)
             .unwrap_or(controls::ScanMedium::None);
+        let film_route = gui_state.sections["rust"]["film_route"]
+            .as_str()
+            .map(str::to_owned);
         let mut params = gui_state
             .runtime_params()
             .expect("validated GUI factory state");
@@ -311,6 +318,7 @@ impl App {
             film_dev_times,
             print_dev_times,
             params,
+            film_route,
             gui_state,
             material_baseline: None,
             full_scan_requested: false,
@@ -332,6 +340,8 @@ impl App {
             source_metadata: None,
             export_options,
             export_dialog: ExportDialog::default(),
+            lut_import: None,
+            lut_export: None,
             input_epoch: 0,
             output_image: None,
             output_retained: None,
@@ -492,6 +502,11 @@ impl App {
             extras["rust"] = serde_json::json!({"version": state::CURRENT_STATE_VERSION});
         }
         extras["rust"]["viewer"] = self.viewer.persistent_state();
+        if let Some(route) = &self.film_route {
+            extras["rust"]["film_route"] = serde_json::json!(route);
+        } else if let Some(rust) = extras["rust"].as_object_mut() {
+            rust.remove("film_route");
+        }
         if let Some(rust) = extras["rust"].as_object_mut() {
             rust.remove("histogram");
             rust.remove("analysis");
@@ -636,9 +651,14 @@ impl App {
         self.film_dev_times = film.data.development_time;
         self.print_dev_times = print.data.development_time;
         self.viewer.settings = display::DisplaySettings::from_json(&state.sections["display"]);
+        self.film_route = state.sections["rust"]["film_route"]
+            .as_str()
+            .map(str::to_owned);
         self.params = params;
         self.export_options = ExportOptions::from_state(&state.sections);
         self.export_dialog = ExportDialog::default();
+        self.lut_import = None;
+        self.lut_export = None;
         self.presets = presets::Browser::new(
             &state.sections,
             spektrafilm_core::presets::PresetLibrary::new(

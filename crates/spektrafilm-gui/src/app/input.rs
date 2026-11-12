@@ -198,6 +198,7 @@ impl App {
     ) {
         self.viewer
             .set_input(raster, [image.width() as usize, image.height() as usize]);
+        self.analysis.clear_viewer_selection();
         self.seed_input_viewer(image);
     }
 

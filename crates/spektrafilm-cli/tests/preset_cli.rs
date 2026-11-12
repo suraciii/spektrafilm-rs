@@ -2062,3 +2062,93 @@ fn describe_text_lists_non_settable_runtime_leaves_and_set_rejects_them() {
     );
     assert!(error.contains("recipe runner"), "{error}");
 }
+
+#[test]
+fn lut_preset_runs_without_film_or_print_selectors_and_rejects_mixing() {
+    let f = Fixture::new();
+    let lut_path = f.root.join("identity.cube");
+    std::fs::write(
+        &lut_path,
+        "TITLE \"identity\"\nLUT_3D_SIZE 2\nDOMAIN_MIN 0 0 0\nDOMAIN_MAX 1 1 1\n\
+         0 0 0\n0 0 1\n0 1 0\n0 1 1\n1 0 0\n1 0 1\n1 1 0\n1 1 1\n",
+    )
+    .unwrap();
+    let mut lut = spektrafilm_core::lut_look::LutLookParams::default();
+    let lut_path_arg = format!("lut_look.path={}", lut_path.display());
+    lut.path = lut_path;
+    lut.sha256 = spektrafilm_core::lut_look::hash_file(&lut.path).unwrap();
+    let lut_sha = lut.sha256.clone();
+    let preset = spektrafilm_core::presets::Preset::capture_lut(
+        "CLI LUT",
+        lut,
+        spektrafilm_core::presets::Provenance {
+            implementation_version: "test".into(),
+            model_version: "test".into(),
+            scanner: None,
+        },
+    );
+    let library = spektrafilm_core::presets::PresetLibrary::new(f.root.join("config/presets"));
+    library.save_new(&preset, &f.data).unwrap();
+
+    let report = f.report(&["--preset", "CLI LUT", "--dry-run"]);
+    assert_eq!(report["parameters"]["workflow"]["mode"], "lut");
+    assert_eq!(report["parameters"]["workflow"]["route"], "input");
+    assert!(!report["parameters"]["io"]["scan_film"].as_bool().unwrap());
+
+    let edited = f.report(&[
+        "--preset",
+        "CLI LUT",
+        "--set",
+        "lut_look.strength=0.5",
+        "--dry-run",
+    ]);
+    assert_eq!(edited["parameters"]["lut_look"]["strength"], 0.5);
+
+    let listing = f.run(&["preset", "list", "--source", "user", "--format", "json"]);
+    assert!(listing.status.success());
+    let listing: Value = serde_json::from_slice(&listing.stdout).unwrap();
+    assert_eq!(listing[0]["kind"], "lut");
+    assert_eq!(listing[0]["lut_file_exists"], true);
+
+    let rendered = f.process(&[
+        "--preset",
+        "CLI LUT",
+        "--set",
+        "lut_look.domain_policy=clamp",
+    ]);
+    assert!(
+        rendered.status.success(),
+        "{}",
+        String::from_utf8_lossy(&rendered.stderr)
+    );
+    assert!(f.root.join("output.tif").is_file());
+
+    let conflict = f.process(&[
+        "--preset",
+        "CLI LUT",
+        "--film",
+        "kodak_portra_400",
+        "--dry-run",
+    ]);
+    assert!(!conflict.status.success());
+    assert!(String::from_utf8_lossy(&conflict.stderr).contains("LUT preset conflicts"));
+
+    let path_arg = lut_path_arg;
+    let sha_arg = format!("lut_look.sha256={lut_sha}");
+    let declared = f.process(&[
+        "--set",
+        "workflow.mode=lut",
+        "--set",
+        &path_arg,
+        "--set",
+        &sha_arg,
+        "--set",
+        "lut_look.domain_policy=clamp",
+    ]);
+    assert!(
+        declared.status.success(),
+        "{}",
+        String::from_utf8_lossy(&declared.stderr)
+    );
+    assert!(f.root.join("output.tif").is_file());
+}

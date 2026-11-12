@@ -132,7 +132,7 @@ pub(super) fn schema_value() -> &'static Value {
     static SCHEMA: LazyLock<Value> = LazyLock::new(|| {
         let mut value =
             serde_json::to_value(RuntimeParams::default()).expect("RuntimeParams serializes");
-        value.as_object_mut().unwrap().remove("workflow");
+        value["workflow"].as_object_mut().unwrap().remove("route");
         value["io"].as_object_mut().unwrap().remove("scan_film");
         value["film_render"]["grain"]
             .as_object_mut()

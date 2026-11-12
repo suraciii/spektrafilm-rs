@@ -1,6 +1,7 @@
 //! Portable look and section documents. Library operations are shared by both frontends.
 mod library;
 mod sections;
+use crate::lut_look::LutLookParams;
 use crate::params::sources::{ParameterEdits, parse_carrier_detailed};
 use crate::params::{
     CmykParams, DiffusionFilterParams, EnlargerParams, FilmRenderingParams, FinishingParams,
@@ -16,6 +17,7 @@ use sha2::{Digest, Sha256};
 use std::path::Path;
 
 pub const PRESET_SCHEMA_VERSION: u32 = 7;
+pub const LUT_PRESET_SCHEMA_VERSION: u32 = 8;
 /// Preset-owned validation identity; English diagnostics remain the CLI contract.
 #[derive(Debug, Clone)]
 pub enum PresetDocumentReason {
@@ -456,20 +458,120 @@ pub enum PresetParameters {
     Look(LookParameters),
     Section(Value),
 }
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Preset {
     pub schema_version: u32,
     pub name: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub author: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub film_profile: Option<ProfileRef>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub print_profile: Option<ProfileRef>,
-    pub parameters: PresetParameters,
+    pub parameters: Option<PresetParameters>,
+    pub lut: Option<LutLookParams>,
     pub provenance: Provenance,
+}
+
+#[derive(Serialize)]
+struct LutDeclarationWire<'a> {
+    path: &'a std::path::Path,
+    sha256: &'a str,
+    #[serde(skip_serializing_if = "str::is_empty")]
+    title: &'a str,
+    input_space: crate::lut_look::LutSpace,
+    output_space: crate::lut_look::LutSpace,
+    domain_min: [f64; 3],
+    domain_max: [f64; 3],
+    domain_policy: crate::lut_look::LutDomainPolicy,
+    shaper: crate::lut_look::LutShaper,
+    strength: f64,
+}
+#[derive(Serialize)]
+struct LutEffectsWire<'a> {
+    halation: &'a crate::params::HalationParams,
+    diffusion: &'a DiffusionFilterParams,
+    grain: &'a crate::lut_look::LutGrainParams,
+}
+#[derive(Serialize)]
+struct LutGradeWire<'a> {
+    active: bool,
+    #[serde(flatten)]
+    grade: &'a FinishingParams,
+}
+#[derive(Serialize)]
+struct LutPresetWire<'a> {
+    schema_version: u32,
+    name: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    author: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    description: Option<&'a str>,
+    lut: LutDeclarationWire<'a>,
+    effects: LutEffectsWire<'a>,
+    grade: LutGradeWire<'a>,
+    provenance: &'a Provenance,
+}
+#[derive(Serialize)]
+struct FilmPresetWire<'a> {
+    schema_version: u32,
+    name: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    author: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    description: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    film_profile: Option<&'a ProfileRef>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    print_profile: Option<&'a ProfileRef>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    parameters: Option<&'a PresetParameters>,
+    provenance: &'a Provenance,
+}
+impl Serialize for Preset {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        if let Some(lut) = &self.lut {
+            LutPresetWire {
+                schema_version: self.schema_version,
+                name: &self.name,
+                author: self.author.as_deref(),
+                description: self.description.as_deref(),
+                lut: LutDeclarationWire {
+                    path: &lut.path,
+                    sha256: &lut.sha256,
+                    title: &lut.title,
+                    input_space: lut.input_space,
+                    output_space: lut.output_space,
+                    domain_min: lut.domain_min,
+                    domain_max: lut.domain_max,
+                    domain_policy: lut.domain_policy,
+                    shaper: lut.shaper,
+                    strength: lut.strength,
+                },
+                effects: LutEffectsWire {
+                    halation: &lut.halation,
+                    diffusion: &lut.diffusion,
+                    grain: &lut.grain,
+                },
+                grade: LutGradeWire {
+                    active: lut.grade_active,
+                    grade: &lut.grade,
+                },
+                provenance: &self.provenance,
+            }
+            .serialize(serializer)
+        } else {
+            FilmPresetWire {
+                schema_version: self.schema_version,
+                name: &self.name,
+                author: self.author.as_deref(),
+                description: self.description.as_deref(),
+                film_profile: self.film_profile.as_ref(),
+                print_profile: self.print_profile.as_ref(),
+                parameters: self.parameters.as_ref(),
+                provenance: &self.provenance,
+            }
+            .serialize(serializer)
+        }
+    }
 }
 impl<'de> Deserialize<'de> for Preset {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
@@ -484,6 +586,11 @@ pub struct ResolvedPreset {
     pub params: RuntimeParams,
     pub film: Profile,
     pub print: Profile,
+}
+#[derive(Debug, Clone)]
+pub struct ResolvedLutPreset {
+    pub params: RuntimeParams,
+    pub lut: LutLookParams,
 }
 impl LookParameters {
     pub fn capture(params: &RuntimeParams) -> Self {
@@ -577,18 +684,19 @@ impl LookSettingsParams {
 }
 impl Preset {
     pub fn look_parameters(&self) -> Option<&LookParameters> {
-        if let PresetParameters::Look(look) = &self.parameters {
-            Some(look)
-        } else {
-            None
+        match self.parameters.as_ref() {
+            Some(PresetParameters::Look(look)) => Some(look),
+            _ => None,
         }
     }
     pub fn look_parameters_mut(&mut self) -> Option<&mut LookParameters> {
-        if let PresetParameters::Look(look) = &mut self.parameters {
-            Some(look)
-        } else {
-            None
+        match self.parameters.as_mut() {
+            Some(PresetParameters::Look(look)) => Some(look),
+            _ => None,
         }
+    }
+    pub fn lut_parameters(&self) -> Option<&LutLookParams> {
+        self.lut.as_ref()
     }
     pub fn from_json_str(text: &str) -> Result<Self, String> {
         Self::from_json_str_detailed(text).map_err(|error| error.to_string())
@@ -618,7 +726,10 @@ impl Preset {
             description: Option<String>,
             film_profile: Option<ProfileRef>,
             print_profile: Option<ProfileRef>,
-            parameters: Value,
+            parameters: Option<Value>,
+            lut: Option<Value>,
+            effects: Option<Value>,
+            grade: Option<Value>,
             provenance: Provenance,
         }
         if value["schema_version"].as_u64() == Some(5)
@@ -795,15 +906,144 @@ impl Preset {
                 format!("invalid preset: {e}"),
             )
         })?;
-        let parameters = if wire.film_profile.is_some() || wire.print_profile.is_some() {
-            PresetParameters::Look(
-                LookParameters::from_value_detailed(wire.parameters).map_err(|mut error| {
-                    error.diagnostic = format!("invalid look: {}", error.diagnostic);
-                    error
-                })?,
-            )
+        if wire.lut.is_none() && (wire.effects.is_some() || wire.grade.is_some()) {
+            return Err(PresetDocumentError::new(
+                PresetDocumentReason::Shape,
+                "LUT effects and grade require a LUT declaration",
+            ));
+        }
+        let lut = match wire.lut {
+            Some(value) => {
+                let Some(object) = value.as_object() else {
+                    return Err(PresetDocumentError::new(
+                        PresetDocumentReason::Shape,
+                        "a LUT preset lut group must be an object",
+                    ));
+                };
+                for field in [
+                    "path",
+                    "sha256",
+                    "input_space",
+                    "output_space",
+                    "domain_min",
+                    "domain_max",
+                    "domain_policy",
+                    "strength",
+                ] {
+                    if !object.contains_key(field) {
+                        return Err(PresetDocumentError::new(
+                            PresetDocumentReason::Shape,
+                            format!("a LUT preset declaration is missing {field}"),
+                        ));
+                    }
+                }
+                let legacy_nested = wire.effects.is_none()
+                    && wire.grade.is_none()
+                    && ["grade", "halation", "diffusion", "grain", "grade_active"]
+                        .iter()
+                        .any(|field| object.contains_key(*field));
+                let mut lut = serde_json::from_value::<LutLookParams>(value).map_err(|error| {
+                    PresetDocumentError::new(
+                        PresetDocumentReason::Parser {
+                            detail: error.to_string(),
+                        },
+                        format!("invalid lut preset group: {error}"),
+                    )
+                })?;
+                if !legacy_nested {
+                    #[derive(Deserialize)]
+                    struct GradeWire {
+                        #[serde(default = "default_true")]
+                        active: bool,
+                        #[serde(flatten)]
+                        grade: FinishingParams,
+                    }
+                    #[derive(Deserialize)]
+                    #[serde(deny_unknown_fields)]
+                    struct EffectsWire {
+                        halation: Option<crate::params::HalationParams>,
+                        diffusion: Option<DiffusionFilterParams>,
+                        grain: Option<crate::lut_look::LutGrainParams>,
+                    }
+                    let effects = match wire.effects {
+                        Some(value) => {
+                            serde_json::from_value::<EffectsWire>(value).map_err(|error| {
+                                PresetDocumentError::new(
+                                    PresetDocumentReason::Parser {
+                                        detail: error.to_string(),
+                                    },
+                                    format!("invalid lut effects group: {error}"),
+                                )
+                            })?
+                        }
+                        None => EffectsWire {
+                            halation: None,
+                            diffusion: None,
+                            grain: None,
+                        },
+                    };
+                    lut.halation =
+                        effects
+                            .halation
+                            .unwrap_or_else(|| crate::params::HalationParams {
+                                active: false,
+                                ..crate::params::HalationParams::default()
+                            });
+                    lut.diffusion = effects.diffusion.unwrap_or_default();
+                    lut.grain = effects.grain.unwrap_or_default();
+                    let grade = wire
+                        .grade
+                        .as_ref()
+                        .map(|grade| {
+                            serde_json::from_value::<GradeWire>(grade.clone()).map_err(|error| {
+                                PresetDocumentError::new(
+                                    PresetDocumentReason::Parser {
+                                        detail: error.to_string(),
+                                    },
+                                    format!("invalid lut grade group: {error}"),
+                                )
+                            })
+                        })
+                        .transpose()?;
+                    lut.grade = grade
+                        .as_ref()
+                        .map_or_else(FinishingParams::default, |grade| grade.grade.clone());
+                    lut.grade_active = grade.is_some_and(|grade| grade.active);
+                }
+                Some(lut)
+            }
+            None => None,
+        };
+        let parameters = if lut.is_some() {
+            if wire.parameters.is_some()
+                || wire.film_profile.is_some()
+                || wire.print_profile.is_some()
+            {
+                return Err(PresetDocumentError::new(
+                    PresetDocumentReason::Shape,
+                    "a LUT preset must carry only the lut group and provenance",
+                ));
+            }
+            None
         } else {
-            PresetParameters::Section(wire.parameters)
+            let parameters = wire.parameters.ok_or_else(|| {
+                PresetDocumentError::new(
+                    PresetDocumentReason::ParametersObject,
+                    "preset parameters must be an object",
+                )
+            })?;
+            Some(
+                if wire.film_profile.is_some() || wire.print_profile.is_some() {
+                    PresetParameters::Look(
+                        LookParameters::from_value_detailed(parameters).map_err(|mut error| {
+                            error.diagnostic = format!("invalid look: {}", error.diagnostic);
+                            error
+                        })?,
+                    )
+                } else {
+                    PresetParameters::Section(parameters)
+                },
+            )
         };
         let preset = Self {
             schema_version: wire.schema_version,
@@ -813,6 +1053,7 @@ impl Preset {
             film_profile: wire.film_profile,
             print_profile: wire.print_profile,
             parameters,
+            lut,
             provenance: wire.provenance,
         };
         preset.validate_detailed()?;
@@ -822,13 +1063,26 @@ impl Preset {
         self.kind_detailed().map_err(|error| error.to_string())
     }
     pub fn kind_detailed(&self) -> Result<PresetKind, PresetDocumentError> {
-        match &self.parameters {
-            PresetParameters::Look(_)
+        if let Some(lut) = &self.lut {
+            if self.film_profile.is_none()
+                && self.print_profile.is_none()
+                && self.parameters.is_none()
+                && lut.validate(true).is_ok()
+            {
+                return Ok(PresetKind::Lut);
+            }
+            return Err(PresetDocumentError::new(
+                PresetDocumentReason::Shape,
+                "a LUT preset must carry one valid lut group without profiles or parameters",
+            ));
+        }
+        match self.parameters.as_ref() {
+            Some(PresetParameters::Look(_))
                 if self.film_profile.is_some() && self.print_profile.is_some() =>
             {
                 Ok(PresetKind::Look)
             }
-            PresetParameters::Section(payload)
+            Some(PresetParameters::Section(payload))
                 if self.film_profile.is_none() && self.print_profile.is_none() =>
             {
                 Ok(PresetKind::Section(section_from_payload_detailed(payload)?))
@@ -843,7 +1097,12 @@ impl Preset {
         self.validate_detailed().map_err(|error| error.to_string())
     }
     pub fn validate_detailed(&self) -> Result<(), PresetDocumentError> {
-        if self.schema_version != PRESET_SCHEMA_VERSION {
+        let expected = if self.lut.is_some() {
+            LUT_PRESET_SCHEMA_VERSION
+        } else {
+            PRESET_SCHEMA_VERSION
+        };
+        if self.schema_version != expected {
             return Err(PresetDocumentError::new(
                 PresetDocumentReason::Schema {
                     version: self.schema_version,
@@ -868,6 +1127,11 @@ impl Preset {
             ));
         }
         self.kind_detailed()?;
+        if let Some(lut) = &self.lut {
+            lut.validate(true)
+                .map_err(|detail| PresetDocumentError::new(PresetDocumentReason::Shape, detail))?;
+            return Ok(());
+        }
         for (kind, reference) in [("film", &self.film_profile), ("print", &self.print_profile)] {
             if let Some(reference) = reference {
                 validate_stock_id(kind, &reference.stock).map_err(|detail| {
@@ -895,7 +1159,11 @@ impl Preset {
         let mut params = RuntimeParams::default();
         params.workflow.route = "input > film > scan".into();
         params.io.scan_film = true;
-        match &self.parameters {
+        match self
+            .parameters
+            .as_ref()
+            .expect("non-LUT preset validated with parameters")
+        {
             PresetParameters::Look(look) => look.apply_to(&mut params),
             PresetParameters::Section(payload) => {
                 // An omitted endpoint belongs to the destination, not this
@@ -962,9 +1230,9 @@ impl Preset {
                 e.to_string(),
             )
         })?;
-        if matches!(self.parameters, PresetParameters::Look(_)) {
+        if matches!(self.parameters, Some(PresetParameters::Look(_))) {
             remove_null_values(&mut value);
-        } else if let PresetParameters::Section(payload) = &self.parameters {
+        } else if let Some(PresetParameters::Section(payload)) = &self.parameters {
             fn null_paths(prefix: &str, value: &Value, out: &mut Vec<String>) {
                 if let Some(map) = value.as_object() {
                     for (key, value) in map {
@@ -1024,9 +1292,11 @@ impl Preset {
         current: &RuntimeParams,
     ) -> Result<ResolvedPreset, PresetDocumentError> {
         self.validate_detailed()?;
-        let (Some(film_ref), Some(print_ref), PresetParameters::Look(look)) =
-            (&self.film_profile, &self.print_profile, &self.parameters)
-        else {
+        let (Some(film_ref), Some(print_ref), Some(PresetParameters::Look(look))) = (
+            &self.film_profile,
+            &self.print_profile,
+            self.parameters.as_ref(),
+        ) else {
             return Err(PresetDocumentError::new(
                 PresetDocumentReason::ExpectedLook,
                 "section presets use apply_section, not look resolution",
@@ -1107,6 +1377,27 @@ impl Preset {
             print,
         })
     }
+    pub fn resolve_lut_detailed(
+        &self,
+        current: &RuntimeParams,
+    ) -> Result<ResolvedLutPreset, PresetDocumentError> {
+        self.validate_detailed()?;
+        let lut = self.lut.as_ref().ok_or_else(|| {
+            PresetDocumentError::new(PresetDocumentReason::ExpectedLook, "not a LUT preset")
+        })?;
+        lut.load()
+            .map_err(|detail| PresetDocumentError::new(PresetDocumentReason::Shape, detail))?;
+        let mut params = current.clone();
+        params.workflow.mode = crate::lut_look::WorkflowMode::Lut;
+        params.workflow.route = "input".into();
+        params.io.scan_film = false;
+        params.lut_look = lut.clone();
+        params.validate_detailed()?;
+        Ok(ResolvedLutPreset {
+            params,
+            lut: lut.clone(),
+        })
+    }
     pub fn capture(
         name: impl Into<String>,
         film: impl Into<String>,
@@ -1133,7 +1424,26 @@ impl Preset {
                 version: None,
                 content_identity: None,
             }),
-            parameters: PresetParameters::Look(LookParameters::capture(params)),
+            parameters: Some(PresetParameters::Look(LookParameters::capture(params))),
+            lut: None,
+            provenance,
+        }
+    }
+    pub fn capture_lut(
+        name: impl Into<String>,
+        lut: LutLookParams,
+        mut provenance: Provenance,
+    ) -> Self {
+        provenance.scanner = None;
+        Self {
+            schema_version: LUT_PRESET_SCHEMA_VERSION,
+            name: name.into(),
+            author: None,
+            description: None,
+            film_profile: None,
+            print_profile: None,
+            parameters: None,
+            lut: Some(lut),
             provenance,
         }
     }
@@ -1174,7 +1484,8 @@ impl Preset {
             description: None,
             film_profile: None,
             print_profile: None,
-            parameters: PresetParameters::Section(payload),
+            parameters: Some(PresetParameters::Section(payload)),
+            lut: None,
             provenance,
         };
         preset.validate_detailed()?;
@@ -1218,7 +1529,7 @@ impl Preset {
         current: &RuntimeParams,
     ) -> Result<RuntimeParams, PresetDocumentError> {
         self.validate_detailed()?;
-        let PresetParameters::Section(payload) = &self.parameters else {
+        let Some(PresetParameters::Section(payload)) = self.parameters.as_ref() else {
             return Err(PresetDocumentError::new(
                 PresetDocumentReason::ExpectedSection,
                 "expected a section preset",

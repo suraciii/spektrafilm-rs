@@ -137,6 +137,7 @@ pub enum ValidationReason {
     TomlDatetime,
     ScanNegativeProfile,
     ScanFiniteDensity,
+    LutLook,
 }
 
 use ValidationReason as Reason;
@@ -529,6 +530,13 @@ pub(crate) fn validate_procedural_timer_detailed(value: f64) -> Result<(), Valid
 /// validated but not enumerable (for example `BB<kelvin>` blackbody sources).
 pub(crate) fn enum_values(path: &str) -> Option<Vec<String>> {
     let values: Vec<String> = match path {
+        "workflow.mode" => ["film", "lut"].iter().map(|v| (*v).into()).collect(),
+        "lut_look.input_space" | "lut_look.output_space" => ["sRGB Linear", "sRGB", "Display P3"]
+            .iter()
+            .map(|v| (*v).into())
+            .collect(),
+        "lut_look.domain_policy" => ["fail", "clamp"].iter().map(|v| (*v).into()).collect(),
+        "lut_look.shaper" => ["none", "cube_1d"].iter().map(|v| (*v).into()).collect(),
         "scanner.scan_output" => ["direct_scan", "negative_to_positive"]
             .iter()
             .map(|v| (*v).into())
@@ -567,7 +575,9 @@ pub(crate) fn enum_values(path: &str) -> Option<Vec<String>> {
             .map(|v| (*v).to_owned())
             .chain(std::iter::once("BB<kelvin> (1667..=25000)".into()))
             .collect(),
-        "camera.diffusion_filter.filter_family" | "enlarger.diffusion_filter.filter_family" => {
+        "camera.diffusion_filter.filter_family"
+        | "enlarger.diffusion_filter.filter_family"
+        | "lut_look.diffusion.filter_family" => {
             ["glimmerglass", "black_pro_mist", "pro_mist", "cinebloom"]
                 .iter()
                 .map(|v| (*v).into())
@@ -1197,6 +1207,10 @@ pub(super) fn validate_values_detailed(params: &RuntimeParams) -> Result<(), Val
     params.output_mix.validate_detailed()?;
     params.finishing.validate_detailed()?;
     validate_enum_value_detailed("workflow.route", &params.workflow.route)?;
+    params
+        .lut_look
+        .validate(params.workflow.mode.is_lut())
+        .map_err(|detail| ValidationError::new(Reason::LutLook, "lut_look", detail))?;
     for (path, value) in [
         ("io.input_color_space", &params.io.input_color_space),
         ("io.output_color_space", &params.io.output_color_space),
@@ -1358,6 +1372,9 @@ fn validate_context_detailed(params: &RuntimeParams) -> Result<(), ValidationErr
         )).arg("expected", format!("{expected:?}")).arg("value", format!("{bounds:?}")));
     }
     params.validate_color_detailed()?;
+    if params.workflow.mode.is_lut() {
+        return Ok(());
+    }
     if !params.scanner.operator.is_default() {
         if !params.scanner.operator_eligible() {
             return Err(ValidationError::new(

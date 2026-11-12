@@ -88,6 +88,11 @@ fn content_fingerprint(preset: &Preset) -> u64 {
 fn material_fingerprint(data_dir: &Path, entries: &[LibraryEntry]) -> u64 {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     for entry in entries {
+        if let Some(lut) = entry.preset.as_ref().and_then(|preset| preset.lut.as_ref()) {
+            lut.path.hash(&mut hasher);
+            lut.sha256.hash(&mut hasher);
+            file_fingerprint(&lut.path).hash(&mut hasher);
+        }
         for reference in [&entry.film_profile, &entry.print_profile]
             .into_iter()
             .flatten()
@@ -163,6 +168,8 @@ fn thumbnail_context(app: &App) -> ThumbnailContext {
     ThumbnailContext {
         source: app.image.clone().expect("signature requires a source"),
         params: app.params.clone(),
+        film_name: app.film_name.clone(),
+        print_name: app.print_name.clone(),
         data_dir: app.data_dir.clone(),
         special: app.gui_state.special().clone(),
         backend: app.backend.clone(),
@@ -256,7 +263,7 @@ impl Thumbnails {
         self.content.clear();
         for entry in entries {
             if let Some(preset) = &entry.preset
-                && preset.kind() == Ok(PresetKind::Look)
+                && matches!(preset.kind(), Ok(PresetKind::Look | PresetKind::Lut))
             {
                 self.content.insert(
                     (entry.group, entry.name.clone()),
@@ -464,6 +471,8 @@ mod tests {
                 spektrafilm_math::image::ImageBuf::from_data(1, 1, vec![0.0, 0.0, 0.0]),
             )),
             params: spektrafilm_core::params::RuntimeParams::default(),
+            film_name: "kodak_portra_400".into(),
+            print_name: "kodak_portra_endura".into(),
             data_dir: PathBuf::from("."),
             special: serde_json::json!({}),
             backend: Arc::new(CpuBackend),

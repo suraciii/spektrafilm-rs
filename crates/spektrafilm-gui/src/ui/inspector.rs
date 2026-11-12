@@ -17,7 +17,13 @@ impl App {
             let disclosure_id = ui.make_persistent_id("open");
             let default_open = matches!(
                 section,
-                "Workflow" | "Camera" | "Film material" | "Print material" | "Output" | "Finishing"
+                "Workflow"
+                    | "LUT look"
+                    | "Camera"
+                    | "Film material"
+                    | "Print material"
+                    | "Output"
+                    | "Finishing"
             );
             let normal_open = ui.ctx().data_mut(|data| {
                 *data.get_persisted_mut_or_insert_with(disclosure_id, || default_open)
@@ -116,7 +122,38 @@ impl App {
                     }
                 }
                 if open {
-                    ui.push_id("body", |ui| self.module_body(ui, section));
+                    let inactive_in_lut = matches!(
+                        section,
+                        "Camera"
+                            | "Camera diffusion"
+                            | "Film material"
+                            | "Film chemistry"
+                            | "Film base"
+                            | "Halation"
+                            | "Couplers"
+                            | "Grain"
+                            | "Print material"
+                            | "Enlarger"
+                            | "Preflash"
+                            | "Enlarger diffusion"
+                            | "Print chemistry"
+                            | "Print base"
+                            | "Scanner"
+                            | "Glare"
+                            | "Finishing"
+                            | "Convert"
+                            | "Spectral upsampling"
+                    ) && self.params.workflow.mode
+                        == spektrafilm_core::params::WorkflowMode::Lut;
+                    ui.push_id("body", |ui| {
+                        ui.add_enabled_ui(!inactive_in_lut, |ui| self.module_body(ui, section));
+                    });
+                    if inactive_in_lut {
+                        ui.weak(crate::i18n::text(
+                            ui.ctx(),
+                            "surfaces.section.inactive_in_lut",
+                        ));
+                    }
                 }
                 if open && let Some(reason) = &inactive {
                     ui.label(
@@ -147,16 +184,377 @@ impl App {
         );
         match section {
             "Workflow" => {
-                if controls::choice_tip_entries(
-                    ui,
-                    "workflow",
-                    &mut self.params.workflow.route,
-                    routes::entries(),
-                    crate::i18n::text(ui.ctx(), "surfaces.route.help").as_ref(),
-                ) {
-                    controls::record_edited_path(ui.ctx(), "workflow.route");
-                    self.label_adjustment("Change workflow");
-                    self.finish_route_change();
+                let mut selected = self.params.workflow.mode;
+                ui.horizontal_wrapped(|ui| {
+                    ui.label(crate::i18n::text(ui.ctx(), "surfaces.workflow.mode"));
+                    for (mode, key) in [
+                        (
+                            spektrafilm_core::params::WorkflowMode::Film,
+                            "surfaces.workflow.film",
+                        ),
+                        (
+                            spektrafilm_core::params::WorkflowMode::Lut,
+                            "surfaces.workflow.lut",
+                        ),
+                    ] {
+                        ui.selectable_value(&mut selected, mode, crate::i18n::text(ui.ctx(), key));
+                    }
+                });
+                if selected != self.params.workflow.mode {
+                    controls::record_edited_path(ui.ctx(), "workflow.mode");
+                    self.switch_workflow(selected);
+                }
+                let film_mode =
+                    self.params.workflow.mode == spektrafilm_core::params::WorkflowMode::Film;
+                if film_mode
+                    && ui
+                        .button(crate::i18n::text(ui.ctx(), "surfaces.lut.export"))
+                        .clicked()
+                {
+                    self.begin_export_lut();
+                }
+                ui.add_enabled_ui(film_mode, |ui| {
+                    if controls::choice_tip_entries(
+                        ui,
+                        "workflow",
+                        &mut self.params.workflow.route,
+                        routes::entries(),
+                        crate::i18n::text(ui.ctx(), "surfaces.route.help").as_ref(),
+                    ) {
+                        controls::record_edited_path(ui.ctx(), "workflow.route");
+                        self.label_adjustment("Change workflow");
+                        self.finish_route_change();
+                    }
+                });
+            }
+            "LUT look" => {
+                if self.params.workflow.mode != spektrafilm_core::params::WorkflowMode::Lut {
+                    ui.weak(crate::i18n::text(ui.ctx(), "surfaces.lut.inactive"));
+                    if ui
+                        .button(crate::i18n::text(ui.ctx(), "surfaces.lut.import"))
+                        .clicked()
+                    {
+                        self.begin_import_lut();
+                    }
+                } else if self.params.lut_look.path.as_os_str().is_empty() {
+                    ui.weak(crate::i18n::text(ui.ctx(), "surfaces.lut.empty"));
+                    if ui
+                        .button(crate::i18n::text(ui.ctx(), "surfaces.lut.import"))
+                        .clicked()
+                    {
+                        self.begin_import_lut();
+                    }
+                } else {
+                    ui.weak(crate::i18n::text(ui.ctx(), "surfaces.lut.non_spectral"));
+                    if !self.params.lut_look.title.is_empty() {
+                        ui.label(&self.params.lut_look.title);
+                    }
+                    ui.monospace(self.params.lut_look.path.display().to_string());
+                    let mut changed = false;
+                    changed |= ui
+                        .add(
+                            egui::Slider::new(&mut self.params.lut_look.strength, 0.0..=1.0)
+                                .text(crate::i18n::text(ui.ctx(), "surfaces.lut.strength")),
+                        )
+                        .changed();
+                    ui.horizontal_wrapped(|ui| {
+                        ui.label(crate::i18n::text(ui.ctx(), "surfaces.lut.input_space"));
+                        let mut input_space = self.params.lut_look.input_space;
+                        egui::ComboBox::from_id_salt("lut-input-space")
+                            .selected_text(input_space.name())
+                            .show_ui(ui, |ui| {
+                                for candidate in [
+                                    spektrafilm_core::lut_look::LutSpace::SrgbLinear,
+                                    spektrafilm_core::lut_look::LutSpace::Srgb,
+                                    spektrafilm_core::lut_look::LutSpace::DisplayP3,
+                                ] {
+                                    ui.selectable_value(
+                                        &mut input_space,
+                                        candidate,
+                                        candidate.name(),
+                                    );
+                                }
+                            });
+                        if input_space != self.params.lut_look.input_space {
+                            self.params.lut_look.input_space = input_space;
+                            changed = true;
+                        }
+                        ui.label(crate::i18n::text(ui.ctx(), "surfaces.lut.output_space"));
+                        let mut space = self.params.lut_look.output_space;
+                        egui::ComboBox::from_id_salt("lut-output-space")
+                            .selected_text(space.name())
+                            .show_ui(ui, |ui| {
+                                for candidate in [
+                                    spektrafilm_core::lut_look::LutSpace::SrgbLinear,
+                                    spektrafilm_core::lut_look::LutSpace::Srgb,
+                                    spektrafilm_core::lut_look::LutSpace::DisplayP3,
+                                ] {
+                                    changed |= ui
+                                        .selectable_value(&mut space, candidate, candidate.name())
+                                        .changed();
+                                }
+                            });
+                        if space != self.params.lut_look.output_space {
+                            self.params.lut_look.output_space = space;
+                            changed = true;
+                        }
+                    });
+                    ui.horizontal_wrapped(|ui| {
+                        ui.label(crate::i18n::text(ui.ctx(), "surfaces.lut.domain_policy"));
+                        changed |= ui
+                            .selectable_value(
+                                &mut self.params.lut_look.domain_policy,
+                                spektrafilm_core::lut_look::LutDomainPolicy::Fail,
+                                "fail",
+                            )
+                            .changed();
+                        changed |= ui
+                            .selectable_value(
+                                &mut self.params.lut_look.domain_policy,
+                                spektrafilm_core::lut_look::LutDomainPolicy::Clamp,
+                                "clamp",
+                            )
+                            .changed();
+                    });
+                    ui.small(format!(
+                        "{}: {:.6} .. {:.6} | {}: {}",
+                        crate::i18n::text(ui.ctx(), "surfaces.lut.domain"),
+                        self.params.lut_look.domain_min[0],
+                        self.params.lut_look.domain_max[0],
+                        crate::i18n::text(ui.ctx(), "surfaces.lut.shaper"),
+                        self.params.lut_look.shaper.name(),
+                    ));
+                    changed |= ui
+                        .checkbox(
+                            &mut self.params.lut_look.diffusion.active,
+                            crate::i18n::text(ui.ctx(), "surfaces.lut.diffusion"),
+                        )
+                        .changed();
+                    changed |= ui
+                        .checkbox(
+                            &mut self.params.lut_look.halation.active,
+                            crate::i18n::text(ui.ctx(), "surfaces.lut.halation"),
+                        )
+                        .changed();
+                    changed |= ui
+                        .checkbox(
+                            &mut self.params.lut_look.grain.active,
+                            crate::i18n::text(ui.ctx(), "surfaces.lut.grain"),
+                        )
+                        .changed();
+                    if self.params.lut_look.diffusion.active {
+                        ui.horizontal_wrapped(|ui| {
+                            ui.label(crate::i18n::text(
+                                ui.ctx(),
+                                "surfaces.lut.diffusion_response",
+                            ));
+                            egui::ComboBox::from_id_salt("lut-diffusion-family")
+                                .selected_text(self.params.lut_look.diffusion.filter_family.clone())
+                                .show_ui(ui, |ui| {
+                                    for family in spektrafilm_model::diffusion::VALID_FAMILIES {
+                                        changed |= ui
+                                            .selectable_value(
+                                                &mut self.params.lut_look.diffusion.filter_family,
+                                                family.to_owned(),
+                                                family,
+                                            )
+                                            .changed();
+                                    }
+                                });
+                        });
+                        changed |= ui
+                            .add(
+                                egui::Slider::new(
+                                    &mut self.params.lut_look.diffusion.strength,
+                                    0.0..=1.0,
+                                )
+                                .text(crate::i18n::text(ui.ctx(), "controls.label.strength")),
+                            )
+                            .changed();
+                        changed |= ui
+                            .add(
+                                egui::Slider::new(
+                                    &mut self.params.lut_look.diffusion.spatial_scale,
+                                    0.0..=4.0,
+                                )
+                                .text(crate::i18n::text(ui.ctx(), "surfaces.lut.diffusion_scale")),
+                            )
+                            .changed();
+                    }
+                    if self.params.lut_look.halation.active {
+                        changed |= ui
+                            .add(
+                                egui::Slider::new(
+                                    &mut self.params.lut_look.halation.halation_amount,
+                                    0.0..=4.0,
+                                )
+                                .text(crate::i18n::text(ui.ctx(), "surfaces.lut.halation_amount")),
+                            )
+                            .changed();
+                        changed |= ui
+                            .add(
+                                egui::Slider::new(
+                                    &mut self.params.lut_look.halation.boost_ev,
+                                    -4.0..=8.0,
+                                )
+                                .text(crate::i18n::text(
+                                    ui.ctx(),
+                                    "surfaces.lut.halation_threshold",
+                                )),
+                            )
+                            .changed();
+                        changed |= ui
+                            .add(
+                                egui::Slider::new(
+                                    &mut self.params.lut_look.halation.boost_range,
+                                    0.0..=1.0,
+                                )
+                                .text(crate::i18n::text(ui.ctx(), "surfaces.lut.halation_range")),
+                            )
+                            .changed();
+                        changed |= ui
+                            .add(
+                                egui::Slider::new(
+                                    &mut self.params.lut_look.halation.protect_ev,
+                                    0.0..=8.0,
+                                )
+                                .text(crate::i18n::text(
+                                    ui.ctx(),
+                                    "surfaces.lut.halation_protection",
+                                )),
+                            )
+                            .changed();
+                        for (channel, label) in ["R", "G", "B"].into_iter().enumerate() {
+                            changed |= ui
+                                .add(
+                                    egui::Slider::new(
+                                        &mut self.params.lut_look.halation.halation_first_sigma_um
+                                            [channel],
+                                        0.0..=200.0,
+                                    )
+                                    .text(format!(
+                                        "{} {label} (µm)",
+                                        crate::i18n::text(ui.ctx(), "surfaces.lut.halation_radius")
+                                    )),
+                                )
+                                .changed();
+                            changed |= ui
+                                .add(
+                                    egui::Slider::new(
+                                        &mut self.params.lut_look.halation.halation_strength
+                                            [channel],
+                                        0.0..=1.0,
+                                    )
+                                    .text(format!(
+                                        "{} {label}",
+                                        crate::i18n::text(ui.ctx(), "surfaces.lut.halation_tint")
+                                    )),
+                                )
+                                .changed();
+                        }
+                        changed |= ui
+                            .add(
+                                egui::Slider::new(
+                                    &mut self.params.lut_look.halation.halation_spatial_scale,
+                                    0.0..=4.0,
+                                )
+                                .text(crate::i18n::text(
+                                    ui.ctx(),
+                                    "surfaces.lut.halation_radius_scale",
+                                )),
+                            )
+                            .changed();
+                    }
+                    if self.params.lut_look.grain.active {
+                        changed |= ui
+                            .add(
+                                egui::Slider::new(
+                                    &mut self.params.lut_look.grain.amount,
+                                    0.0..=1.0,
+                                )
+                                .text(crate::i18n::text(ui.ctx(), "surfaces.lut.grain_amount")),
+                            )
+                            .changed();
+                        changed |= ui
+                            .add(
+                                egui::Slider::new(
+                                    &mut self.params.lut_look.grain.size,
+                                    0.25..=16.0,
+                                )
+                                .text(crate::i18n::text(ui.ctx(), "surfaces.lut.grain_size")),
+                            )
+                            .changed();
+                        changed |= ui
+                            .add(
+                                egui::Slider::new(
+                                    &mut self.params.lut_look.grain.chroma,
+                                    0.0..=1.0,
+                                )
+                                .text(crate::i18n::text(ui.ctx(), "surfaces.lut.grain_chroma")),
+                            )
+                            .changed();
+                        for (label, field) in [
+                            (
+                                crate::i18n::text(ui.ctx(), "surfaces.lut.grain_shadows"),
+                                &mut self.params.lut_look.grain.shadows,
+                            ),
+                            (
+                                crate::i18n::text(ui.ctx(), "surfaces.lut.grain_midtones"),
+                                &mut self.params.lut_look.grain.midtones,
+                            ),
+                            (
+                                crate::i18n::text(ui.ctx(), "surfaces.lut.grain_highlights"),
+                                &mut self.params.lut_look.grain.highlights,
+                            ),
+                        ] {
+                            changed |= ui
+                                .add(egui::Slider::new(field, 0.0..=1.0).text(label))
+                                .changed();
+                        }
+                        changed |= ui
+                            .add(
+                                egui::DragValue::new(&mut self.params.lut_look.grain.seed)
+                                    .speed(1.0)
+                                    .prefix(format!(
+                                        "{} ",
+                                        crate::i18n::text(ui.ctx(), "surfaces.lut.grain_seed")
+                                    )),
+                            )
+                            .changed();
+                    }
+                    changed |= ui
+                        .checkbox(
+                            &mut self.params.lut_look.grade_active,
+                            crate::i18n::text(ui.ctx(), "surfaces.lut.grade"),
+                        )
+                        .changed();
+                    if self.params.lut_look.grade_active {
+                        egui::CollapsingHeader::new("Grade")
+                            .id_salt("lut-grade")
+                            .show(ui, |ui| {
+                                for (label, field) in [
+                                    ("Brightness", &mut self.params.lut_look.grade.brightness),
+                                    ("Contrast", &mut self.params.lut_look.grade.contrast),
+                                    ("Warmth", &mut self.params.lut_look.grade.warmth),
+                                    ("Saturation", &mut self.params.lut_look.grade.saturation),
+                                ] {
+                                    changed |= ui
+                                        .add(egui::Slider::new(field, -1.0..=1.0).text(label))
+                                        .changed();
+                                }
+                            });
+                    }
+                    if ui
+                        .button(crate::i18n::text(ui.ctx(), "surfaces.lut.replace"))
+                        .clicked()
+                    {
+                        self.begin_import_lut();
+                    }
+                    if changed {
+                        controls::record_edited_path(ui.ctx(), "lut_look");
+                        self.label_adjustment("Adjust LUT look");
+                        self.invalidate_look_render();
+                    }
                 }
             }
             "Film material" | "Print material" => {

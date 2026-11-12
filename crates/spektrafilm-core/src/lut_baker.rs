@@ -775,6 +775,10 @@ mod tests {
             lut_transport::resolve("rec2100pq").unwrap().output_gain(),
             100.0 / 0.18
         );
+        let mut linear = spec("sRGB Linear", "sRGB Linear");
+        linear.normalize().unwrap();
+        assert_eq!(linear.input_color_space, "sRGB Linear");
+        assert_eq!(linear.output_color_space, "sRGB Linear");
         let mut sdr = spec("srgb", "srgb");
         sdr.normalize().unwrap();
         assert_eq!(sdr.exposure_ev, 0.0);

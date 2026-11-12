@@ -832,11 +832,22 @@ fn cmd_process(
             .map_err(|e| anyhow::anyhow!("unsupported saving color space {saving_space:?}: {e}"))?;
     }
     // Validate configuration without creating a compute device for dry runs.
-    spektrafilm_core::stages::grain_dye::validate_supported(&film, &params)
-        .map_err(anyhow::Error::msg)?;
-    let grain_dye_active = spektrafilm_core::stages::grain_dye::active(&params);
+    // LUT mode never enters a spectral film or print stage, so the Dye
+    // condition is not applicable and its placeholder carrier must not gate it.
+    if !params.workflow.mode.is_lut() {
+        spektrafilm_core::stages::grain_dye::validate_supported(&film, &params)
+            .map_err(anyhow::Error::msg)?;
+    }
+    let grain_dye_active =
+        !params.workflow.mode.is_lut() && spektrafilm_core::stages::grain_dye::active(&params);
     let grain_fotufilm = spektrafilm_core::stages::grain_fotufilm::configuration_report(&params);
     if dry_run {
+        if params.workflow.mode.is_lut() {
+            params
+                .lut_look
+                .load()
+                .map_err(|error| anyhow::anyhow!("LUT look validation failed: {error}"))?;
+        }
         let grain_dye = spektrafilm_core::stages::grain_dye::configuration_report(&film, &params);
         let backend_env = std::env::var("SPEKTRAFILM_BACKEND").ok();
         let output_format = plan.as_ref().map(|plan| plan.format.name());
@@ -1095,7 +1106,7 @@ fn cmd_process(
         },
     )?;
     let (working_width, working_height) = match preview_max_size {
-        Some(max_size) if !params.scanner.requires_full_frame() => {
+        Some(max_size) if !params.requires_full_frame() => {
             spektrafilm_core::resizing::preview_dimensions(input_width, input_height, max_size)
         }
         _ => (input_width, input_height),
@@ -1110,6 +1121,7 @@ fn cmd_process(
 
     // Run the calibrated runtime — a missing spectral LUT is a hard error.
     let t = Instant::now();
+    let lut_mode = params.workflow.mode.is_lut();
     let runtime = invocation.phase(
         "runtime_prepare",
         IssueCategory::Configuration,
@@ -1124,13 +1136,12 @@ fn cmd_process(
                 backend.as_ref(),
                 prepare_context,
             )
-            .map_err(|e| {
-                anyhow::anyhow!(
-                    "spectral pipeline construction failed: {e} — the simplified no-LUT fallback \
-                     was removed; check that the profiles/data directory contains the spectral \
-                     LUTs (looked under {})",
-                    data_dir.display()
-                )
+            .map_err(|error| {
+                anyhow::anyhow!(runtime_prepare_error(
+                    &error.to_string(),
+                    data_dir,
+                    lut_mode
+                ))
             })
         },
     )?;
@@ -1222,7 +1233,10 @@ fn cmd_process(
                             );
                         }
                         let image = match preview_max_size {
-                            Some(max_size) if !runtime.params().scanner.requires_full_frame() => {
+                            Some(max_size)
+                                if !runtime.params().scanner.requires_full_frame()
+                                    && !runtime.params().workflow.mode.is_lut() =>
+                            {
                                 host_preview
                                     .get_or_insert_with(|| resize_for_preview(image, max_size))
                                     .clone()
@@ -1260,7 +1274,8 @@ fn cmd_process(
                                 )
                                 .map_err(|e| anyhow::anyhow!("pipeline taps: {e}"))?
                         };
-                        let host = if runtime.params().scanner.requires_full_frame()
+                        let host = if (runtime.params().scanner.requires_full_frame()
+                            || runtime.params().workflow.mode.is_lut())
                             && collect.is_none_or(|tap| tap == Tap::RgbOut)
                             && let Some(max_size) = preview_max_size
                         {
@@ -1305,6 +1320,14 @@ fn cmd_process(
         eprintln!("Pipeline simulation: {} ms", t.elapsed().as_millis());
         r
     };
+    if let Some(fraction) = runtime.lut_clipped_fraction()
+        && fraction > 0.0
+    {
+        eprintln!(
+            "LUT domain clamp: {:.6}% of evaluated pixels clipped",
+            fraction * 100.0
+        );
+    }
     let plan = plan.context("internal error: missing output plan for rendering")?;
     let output = output.context("internal error: missing output path for rendering")?;
     // `result` is the host materialization when the render produced one;
@@ -1464,6 +1487,45 @@ fn raw_options(workflow: &WorkflowOptions) -> spektrafilm_raw::RawOptions {
         temperature: workflow.raw_temperature,
         tint: workflow.raw_tint,
         lens_correction: workflow.lens_correction,
+    }
+}
+
+fn runtime_prepare_error(error: &str, data_dir: &Path, lut_mode: bool) -> String {
+    if lut_mode {
+        return format!("LUT workflow preparation failed: {error}");
+    }
+    format!(
+        "spectral pipeline construction failed: {error} — the simplified no-LUT fallback \
+         was removed; check that the profiles/data directory contains the spectral LUTs \
+         (looked under {})",
+        data_dir.display()
+    )
+}
+
+#[cfg(test)]
+mod runtime_prepare_error_tests {
+    use super::runtime_prepare_error;
+    use std::path::Path;
+
+    #[test]
+    fn lut_preparation_does_not_name_spectral_profile_fallbacks() {
+        let message = runtime_prepare_error(
+            "reading LUT /tmp/look.cube: No such file or directory",
+            Path::new("/data"),
+            true,
+        );
+        assert_eq!(
+            message,
+            "LUT workflow preparation failed: reading LUT /tmp/look.cube: No such file or directory"
+        );
+        assert!(!message.contains("spectral"));
+    }
+
+    #[test]
+    fn film_preparation_keeps_the_spectral_remedy() {
+        let message = runtime_prepare_error("missing profile", Path::new("/data"), false);
+        assert!(message.contains("spectral pipeline construction failed"));
+        assert!(message.contains("(looked under /data)"));
     }
 }
 

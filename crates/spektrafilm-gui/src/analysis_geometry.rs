@@ -42,7 +42,7 @@ impl AnalysisGeometry {
         }
         let mut geometry = Self::original(source_size, rotation);
         let mut working = geometry.image_size;
-        if params.settings.preview_mode && !params.scanner.requires_full_frame() {
+        if params.settings.preview_mode && !params.requires_full_frame() {
             let (w, h) = spektrafilm_core::resizing::preview_dimensions(
                 working[0],
                 working[1],

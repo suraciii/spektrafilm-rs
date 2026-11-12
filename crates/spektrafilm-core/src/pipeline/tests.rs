@@ -3183,3 +3183,55 @@ fn highlight_boost_requires_enabled_halation() {
         "highlight boost must change the render while halation is enabled"
     );
 }
+
+#[test]
+fn leaving_lut_mode_rebuilds_prepared_film_materials() {
+    let directory = tempfile::tempdir().unwrap();
+    let lut_path = directory.path().join("identity.cube");
+    crate::lut_formats::write_lut(
+        crate::lut_formats::LutFormat::Cube,
+        &crate::lut_formats::LutDocument {
+            resolution: 2,
+            table: vec![
+                [0.0, 0.0, 0.0],
+                [0.0, 0.0, 1.0],
+                [0.0, 1.0, 0.0],
+                [0.0, 1.0, 1.0],
+                [1.0, 0.0, 0.0],
+                [1.0, 0.0, 1.0],
+                [1.0, 1.0, 0.0],
+                [1.0, 1.0, 1.0],
+            ],
+            shaper: None,
+            domain_min: [0.0; 3],
+            domain_max: [1.0; 3],
+            title: "identity".into(),
+        },
+        &lut_path,
+        &[],
+        None,
+    )
+    .unwrap();
+    let data_dir = data_dir();
+    let film = crate::profile::load_profile_by_name(&data_dir, "kodak_portra_400").unwrap();
+    let print = crate::profile::load_profile_by_name(&data_dir, "kodak_portra_endura").unwrap();
+    let params = RuntimeParams::default();
+    let pipeline = Pipeline::new_with_spectral(film, print, params.clone(), &data_dir).unwrap();
+    let mut lut_params = params.clone();
+    lut_params.workflow.mode = crate::lut_look::WorkflowMode::Lut;
+    lut_params.lut_look = crate::lut_look::LutLookParams {
+        path: lut_path.clone(),
+        sha256: crate::lut_look::hash_file(&lut_path).unwrap(),
+        ..Default::default()
+    };
+    let pipeline = pipeline
+        .with_params_with_backend(lut_params, &spektrafilm_backend::cpu_backend::CpuBackend)
+        .unwrap();
+    assert!(pipeline.lut_look.is_some());
+    assert!(Arc::ptr_eq(&pipeline.film, &pipeline.original_film));
+    let pipeline = pipeline
+        .with_params_with_backend(params, &spektrafilm_backend::cpu_backend::CpuBackend)
+        .unwrap();
+    assert!(pipeline.lut_look.is_none());
+    assert!(!Arc::ptr_eq(&pipeline.film, &pipeline.original_film));
+}

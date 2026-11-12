@@ -150,6 +150,42 @@ impl ComputeBackend for ObservedBackend<'_> {
         self.cpu();
         self.backend.cctf_decode_srgb(i)
     }
+    fn convert_colorspace(
+        &self,
+        image: &ImageBuf,
+        params: &ConvertColorspaceGpuParams,
+    ) -> Result<Option<ImageBuf>, String> {
+        self.backend.convert_colorspace(image, params)
+    }
+    fn lut3d_look(
+        &self,
+        image: &ImageBuf,
+        original: &ImageBuf,
+        params: &Lut3dLookGpuParams<'_>,
+    ) -> Result<Option<ImageBuf>, String> {
+        self.backend.lut3d_look(image, original, params)
+    }
+    fn lut_halation(
+        &self,
+        image: &ImageBuf,
+        params: &LutHalationGpuParams,
+    ) -> Result<Option<ImageBuf>, String> {
+        self.backend.lut_halation(image, params)
+    }
+    fn lut_grain(
+        &self,
+        image: &ImageBuf,
+        params: &LutGrainGpuParams,
+    ) -> Result<Option<ImageBuf>, String> {
+        self.backend.lut_grain(image, params)
+    }
+    fn output_gamut_compress(
+        &self,
+        image: &ImageBuf,
+        params: &GamutGpuParams<'_>,
+    ) -> Result<Option<ImageBuf>, String> {
+        self.backend.output_gamut_compress(image, params)
+    }
     fn finishing(
         &self,
         image: &ImageBuf,

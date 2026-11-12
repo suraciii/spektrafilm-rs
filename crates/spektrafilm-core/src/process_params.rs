@@ -155,11 +155,199 @@ pub fn resolve(
     resolve_with_preview_mode(request, data_dir, None)
 }
 
+/// LUT mode never consumes a film or print profile. The pipeline still
+/// carries profile-shaped carriers, so an empty unvalidated carrier keeps the
+/// LUT preset runnable without a data-directory profile lookup.
+pub(crate) fn lut_placeholder_profile() -> Result<Profile, String> {
+    serde_json::from_value(serde_json::json!({
+        "metadata": {},
+        "info": {"stock": null, "name": null, "target_print": null},
+        "data": {}
+    }))
+    .map_err(|error| format!("constructing the LUT placeholder carrier: {error}"))
+}
+
+/// A parameter document or `--set` leaves may select LUT mode without a
+/// preset. Detect that before profile resolution so the CLI does not demand
+/// film and print selectors that LUT mode never consumes.
+fn declares_lut_mode(request: &ProcessParamsRequest<'_>) -> Result<bool, String> {
+    let (mut params, _) = load_baseline(request.params_file)?;
+    for source in request.sources {
+        ParameterEdits::parse(source)
+            .map_err(|error| format!("--set {source:?}: {error}"))?
+            .apply(&mut params)?;
+    }
+    Ok(params.workflow.mode.is_lut())
+}
+
+fn resolve_lut(
+    request: ProcessParamsRequest<'_>,
+    _data_dir: &Path,
+    preview_mode: Option<bool>,
+) -> Result<ResolvedProcessParams, String> {
+    let preset = match request.presets {
+        [preset] if preset.lut.is_some() => Some(preset),
+        [] => None,
+        _ => {
+            return Err(
+                "a LUT preset must be the only --preset and cannot be mixed with a film look or section preset"
+                    .into(),
+            );
+        }
+    };
+    if let Some(_preset) = preset
+        && (request.film.is_some()
+            || request.paper.is_some()
+            || request.route.is_some()
+            || request.scan_film
+            || !request.feature_profiles.is_empty())
+    {
+        return Err(
+            "a LUT preset conflicts with --film, --paper, --route, --scan-film, and --feature-profile"
+                .into(),
+        );
+    }
+    let (mut params, _) = load_baseline(request.params_file)?;
+    if let Some(preset) = preset {
+        let resolved = preset
+            .resolve_lut_detailed(&params)
+            .map_err(|error| error.to_string())?;
+        params = resolved.params;
+    }
+    let parsed_sources: Vec<ParameterEdits> = request
+        .sources
+        .iter()
+        .map(|source| ParameterEdits::parse(source).map_err(|e| format!("--set {source:?}: {e}")))
+        .collect::<Result<_, _>>()?;
+    let mut declarations = baseline_declarations(request.params_file)?;
+    for (source, edits) in request.sources.iter().zip(&parsed_sources) {
+        if request.input_is_raw {
+            edits
+                .validate_raw_input()
+                .map_err(|e| format!("--set {source:?}: {e}"))?;
+        }
+        for path in edits.paths() {
+            if matches!(path, "io.input_color_space" | "io.input_cctf_decoding") {
+                declarations.insert(
+                    path.to_owned(),
+                    DeclarationSource {
+                        kind: "set".into(),
+                        option: Some("--set".into()),
+                        index: None,
+                        path: ParameterEdits::file_path(source)
+                            .map(absolute_path)
+                            .transpose()?,
+                    },
+                );
+            }
+        }
+        edits.apply(&mut params)?;
+    }
+    for (path, value, option) in [
+        (
+            "io.input_color_space",
+            request
+                .input_color_space
+                .map(|value| Value::String(value.into())),
+            "--input-color-space",
+        ),
+        (
+            "io.input_cctf_decoding",
+            request.input_cctf_decoding.map(Value::Bool),
+            "--input-cctf-decoding",
+        ),
+    ] {
+        if let Some(value) = value {
+            let edits = ParameterEdits::single(path, value)
+                .map_err(|error| format!("{option}: {error}"))?;
+            if request.input_is_raw {
+                edits
+                    .validate_raw_input()
+                    .map_err(|e| format!("{option}: {e}"))?;
+            }
+            edits.apply(&mut params)?;
+            declarations.insert(
+                path.into(),
+                DeclarationSource {
+                    kind: "argument".into(),
+                    option: Some(option.into()),
+                    index: None,
+                    path: None,
+                },
+            );
+        }
+    }
+    if request.require_input_declaration
+        && !request.input_is_raw
+        && (!declarations.contains_key("io.input_color_space")
+            || !declarations.contains_key("io.input_cctf_decoding"))
+    {
+        return Err("raster input requires both io.input_color_space and io.input_cctf_decoding; declare both with --input-color-space and --input-cctf-decoding, supplied --params leaves, or --set".into());
+    }
+    if request.input_is_raw {
+        force_raw_input(&mut params);
+    }
+    // The selected LUT preset owns the workflow; canonical leaf edits may
+    // change its declaration and effects, not turn the invocation into a film
+    // render with placeholder carriers.
+    params.workflow.mode = crate::lut_look::WorkflowMode::Lut;
+    params.workflow.route = "input".into();
+    params.io.scan_film = false;
+    if let Some(mode) = request.scan_output {
+        params.scanner.scan_output = mode.to_owned();
+    }
+    if let Some(mode) = preview_mode {
+        params.settings.preview_mode = mode;
+    }
+    params.validate()?;
+    params.validate_color()?;
+    let film = lut_placeholder_profile()?;
+    let film_name = String::new();
+    let print = film.clone();
+    let implicit_source = DeclarationSource {
+        kind: "implicit".into(),
+        option: None,
+        index: None,
+        path: None,
+    };
+    let declaration_source = |path: &str| {
+        if request.input_is_raw {
+            implicit_source.clone()
+        } else {
+            declarations
+                .get(path)
+                .cloned()
+                .unwrap_or_else(|| implicit_source.clone())
+        }
+    };
+    let input_declaration = InputDeclaration {
+        color_space: params.io.input_color_space.clone(),
+        cctf_decoding: params.io.input_cctf_decoding,
+        sources: InputDeclarationSources {
+            color_space: declaration_source("io.input_color_space"),
+            cctf_decoding: declaration_source("io.input_cctf_decoding"),
+        },
+    };
+    Ok(ResolvedProcessParams {
+        film,
+        print,
+        film_name,
+        print_name: String::new(),
+        params,
+        input_declaration,
+        edits: Vec::new(),
+        feature_profiles: Vec::new(),
+    })
+}
+
 fn resolve_with_preview_mode(
     request: ProcessParamsRequest<'_>,
     data_dir: &Path,
     preview_mode: Option<bool>,
 ) -> Result<ResolvedProcessParams, String> {
+    if request.presets.iter().any(|preset| preset.lut.is_some()) || declares_lut_mode(&request)? {
+        return resolve_lut(request, data_dir, preview_mode);
+    }
     let supplies_film = request
         .presets
         .iter()
@@ -199,13 +387,16 @@ fn resolve_with_preview_mode(
     let mut grain_engine = params.film_render.grain.engine;
     for preset in request.presets {
         preset.validate()?;
-        match &preset.parameters {
-            presets::PresetParameters::Look(look) => grain_engine = look.film_render.grain.engine,
-            presets::PresetParameters::Section(payload) => {
+        match preset.parameters.as_ref() {
+            Some(presets::PresetParameters::Look(look)) => {
+                grain_engine = look.film_render.grain.engine
+            }
+            Some(presets::PresetParameters::Section(payload)) => {
                 if let Some(value) = lookup(payload, "film_render.grain.engine") {
                     grain_engine = GrainEngine::deserialize(value).map_err(|e| e.to_string())?;
                 }
             }
+            None => return Err("LUT presets do not define film grain".into()),
         }
     }
     for edits in &parsed_sources {
@@ -256,7 +447,7 @@ fn resolve_with_preview_mode(
     if supplies_film && image_stage_route {
         for preset in request.presets {
             preset.validate()?;
-            if let presets::PresetParameters::Look(look) = &preset.parameters {
+            if let Some(presets::PresetParameters::Look(look)) = preset.parameters.as_ref() {
                 let film_ref = preset.film_profile.as_ref().expect("validated look");
                 let film = load_referenced_profile(film_ref, data_dir)?;
                 if !film.is_film() || !film.is_filming() {

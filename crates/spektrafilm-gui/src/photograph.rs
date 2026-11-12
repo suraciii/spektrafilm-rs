@@ -247,6 +247,7 @@ impl App {
         settings.params.debug = self.params.debug.clone();
         settings.params.taps = self.params.taps.clone();
         self.params = settings.params;
+        self.film_route = settings.film_route;
         self.params
             .restore_render_preparation_state(&settings.preparation);
         self.film_name = settings.film;
