@@ -66,6 +66,8 @@ The Simplified Chinese presentation MUST use these core terms consistently. The 
 | Only modified | 仅显示已修改 |
 | Input and capture | 输入与拍摄 |
 | Film / Print / Output | 胶片 / 印相 / 输出 |
+| Film route | 胶片路线 |
+| Look | 观感 |
 | Tone & Color / Range | 影调与色彩 / 范围 |
 | Brightness / Contrast | 明暗 / 反差 |
 | Conversion contrast / Conversion exposure compensation | 转换反差 / 转换曝光补偿 |
@@ -302,7 +304,7 @@ Reset-baseline comparison follows [presentation design](../gui-presentation/desi
 
 A module reset MUST name its module and the reset baseline in its action label, accessible help, and history description under the core-term table. A grouped settings reset MUST name its settings section instead of a photographic module.
 
-The inspector stage names MUST be `Input and capture`, `Film`, `Print`, `Scan`, and `Output`. A stage jump MUST identify the heading it reaches, not a page it replaces. `Settings` and `Export` MUST name dialogs rather than additional stages.
+The inspector stage names MUST be `Input and capture`, `Film`, `Print`, `Scan`, `Look`, and `Output`. A stage jump MUST identify the heading it reaches, not a page it replaces. `Settings` and `Export` MUST name dialogs rather than additional stages.
 
 The interface MUST NOT use MAIN, FILM, PRINT, ADVANCED, or CONFIG as page labels.
 

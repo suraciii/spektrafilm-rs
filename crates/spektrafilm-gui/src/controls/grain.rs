@@ -297,6 +297,7 @@ pub(crate) fn sections(
         "Minimum grain density for Spektra; also sets bounds for executing film-scanner and enlarger LUTs."
     );
     if !params.film_render.grain.active && !filter.active() {
+        notice(ui, engine_description(params.film_render.grain.engine));
         notice(ui, "controls.grain.off");
         return;
     }
@@ -314,15 +315,7 @@ pub(crate) fn sections(
         flags.runtime_changed |= shared_controls(ui, params, filter);
     } else {
         let engine = params.film_render.grain.engine;
-        notice(
-            ui,
-            match engine {
-                GrainEngine::Dye => "controls.grain.dye_description",
-                GrainEngine::Spektra => "controls.grain.spektra_description",
-                GrainEngine::Procedural => "controls.grain.procedural_description",
-                GrainEngine::Fotufilm => "controls.grain.fotufilm_description",
-            },
-        );
+        notice(ui, engine_description(engine));
         ui.push_id(("grain", engine_label(engine)), |ui| {
             flags.runtime_changed |= engine_controls(ui, params, filter, engine);
         });
@@ -338,6 +331,15 @@ pub(crate) fn sections(
                 notice(ui, "controls.grain.noise_notice");
             }
         }
+    }
+}
+
+fn engine_description(engine: GrainEngine) -> &'static str {
+    match engine {
+        GrainEngine::Dye => "controls.grain.dye_description",
+        GrainEngine::Spektra => "controls.grain.spektra_description",
+        GrainEngine::Procedural => "controls.grain.procedural_description",
+        GrainEngine::Fotufilm => "controls.grain.fotufilm_description",
     }
 }
 

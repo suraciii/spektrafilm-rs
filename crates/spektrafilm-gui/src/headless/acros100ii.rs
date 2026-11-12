@@ -5,7 +5,7 @@ fn acros100ii_builtin_preview_scan_state_and_save() {
     let mut s = session();
     let h = &mut s.harness;
     reveal_control(h, "workflow.route");
-    choose(h, "workflow", "input > film > print > scan");
+    choose(h, "Film route", "input > film > print > scan");
     // Use the same application transaction as card activation, then the real
     // Preview/Scan/Save controls and worker path.
     h.state_mut().load_preset(

@@ -71,7 +71,7 @@ fn switching_language_preserves_photographic_identity_and_bilingual_search() {
     );
 
     reveal_control(h, "workflow.route");
-    choose(h, "workflow", "input > film > print > scan");
+    choose(h, "Film route", "input > film > print > scan");
     reveal_control(h, "finishing.brightness");
     edit(h, "Brightness", "0.35");
     assert_eq!(h.state().params.finishing.brightness, 0.35);
@@ -79,7 +79,7 @@ fn switching_language_preserves_photographic_identity_and_bilingual_search() {
     edit(h, "Warmth", "0.2");
     assert_eq!(h.state().params.finishing.warmth, 0.2);
     reveal_control(h, "workflow.route");
-    choose(h, "workflow", "input");
+    choose(h, "Film route", "input");
     let inactive = h.state().params.clone();
     let sections = h.state().gui_state.sections.clone();
     let revision = h.state().parameter_revision;

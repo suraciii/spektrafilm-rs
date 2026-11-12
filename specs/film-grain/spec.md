@@ -10,6 +10,14 @@
 - Selecting one route does not imply an upgrade, migration, or behavioral equivalence to another route.
 - CLI and serialized `film_render.grain.engine` values are exactly `spektra`, `procedural`, `dye`, and `fotufilm`; legacy numeric selectors `v1`, `v2`, and `v3` are invalid.
 
+## GUI placement
+
+The Grain module has one GUI owner: the Film stage. It is not a global effects module and MUST NOT be shared with the LUT workflow. The module keeps the four-engine selector and every engine-specific control in one editing location.
+
+The module heading is Grain, not Film grain. Spektra, Dye, and Fotufilm Film MUST be identified as material grain; Procedural MUST be identified as post-scan appearance.
+
+The selected engine's domain MUST remain readable without hover. The LUT workflow carries its own grain control and MUST NOT read or edit the Film Grain module.
+
 ## Defaults and compatibility
 
 New runtime parameters, GUI factory state, and Grain module resets MUST select Dye.

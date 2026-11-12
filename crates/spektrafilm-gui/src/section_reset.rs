@@ -23,7 +23,7 @@ use spektrafilm_core::params::RuntimeParams;
 /// `camera.diffusion_filter` at projection time; the same holds for the two
 /// Enlarger entries and `enlarger.diffusion_filter`.
 const SECTION_PARAMETERS: &[(&str, &[&str], &[&str])] = &[
-    ("Workflow", &["workflow.route", "workflow.mode"], &[]),
+    ("Workflow", &["workflow.route"], &[]),
     ("Film material", &["film_render.development_time"], &[]),
     ("Print material", &["print_render.development_time"], &[]),
     (
@@ -241,6 +241,10 @@ pub(crate) fn path_modified(
         (None, Some(factory)) => !factory.is_null(),
         _ => false,
     }
+}
+
+pub(crate) fn route_modified(route: &str, baseline: &Value) -> bool {
+    value_at(baseline, "workflow.route").is_none_or(|factory| factory.as_str() != Some(route))
 }
 
 /// The GUI sections whose parameters a reset restores.

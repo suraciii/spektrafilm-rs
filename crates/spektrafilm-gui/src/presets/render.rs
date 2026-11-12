@@ -750,22 +750,6 @@ impl App {
                     Some(text)
                 }
             };
-            if let Some(preset) = &entry.preset {
-                let cue = if preset.lut.is_some() { "LUT" } else { "Film" };
-                let galley = ui.painter().layout_no_wrap(
-                    cue.to_owned(),
-                    egui::FontId::proportional(theme::SIZE_HINT),
-                    theme::FG,
-                );
-                let badge = egui::Rect::from_min_size(
-                    rect.left_top() + egui::vec2(4.0, 4.0),
-                    galley.size() + egui::vec2(8.0, 4.0),
-                );
-                ui.painter()
-                    .rect_filled(badge, egui::CornerRadius::same(2), theme::SURFACE2);
-                ui.painter()
-                    .galley(badge.min + egui::vec2(4.0, 2.0), galley, theme::FG);
-            }
             // Thumbnail and name row are one activation surface; the actions
             // control is drawn later and therefore stays on top.
             let hit_rect = egui::Rect::from_min_size(
@@ -865,13 +849,6 @@ impl App {
             // Materials stay in the card's accessible description and hover
             // text rather than a repeated paragraph on every card.
             let mut label = entry.name.clone();
-            if let Some(preset) = &entry.preset {
-                label.push_str(if preset.lut.is_some() {
-                    " • LUT"
-                } else {
-                    " • Film"
-                });
-            }
             if let Some(state) = state {
                 label.push_str(" • ");
                 label.push_str(&crate::controls::localized(ui.ctx(), state));

@@ -77,6 +77,8 @@ impl LutImportDraft {
 
 impl App {
     pub(crate) fn switch_workflow(&mut self, mode: WorkflowMode) {
+        self.pending_stage = None;
+        self.pending_scroll = None;
         if self.params.workflow.mode == mode {
             return;
         }

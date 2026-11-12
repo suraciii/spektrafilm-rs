@@ -153,6 +153,14 @@ impl App {
     }
 
     pub(crate) fn reset_parameter_section(&mut self, section: &str) -> bool {
+        if section == "Workflow"
+            && self.params.workflow.mode != spektrafilm_core::params::WorkflowMode::Film
+        {
+            return false;
+        }
+        if controls::inactive_in_lut(section, self.params.workflow.mode) {
+            return false;
+        }
         if !matches!(section, "Session" | "Display") {
             self.label_adjustment_message(
                 crate::app::Message::new("operations.history.reset_section")

@@ -40,7 +40,7 @@ fn toggle_control(h: &mut Harness<'_, App>, path: &str, label: &str) {
 }
 
 fn set_route(h: &mut Harness<'_, App>, route: &str) {
-    choose_control(h, "workflow.route", "workflow", route);
+    choose_control(h, "workflow.route", "Film route", route);
     assert_eq!(h.state().params.workflow.route, route);
 }
 
@@ -926,6 +926,11 @@ fn ordinary_grain_controls_follow_engine_and_enable_without_losing_values() {
     assert!(h.query_by_label("Grain strength").is_none());
     assert!(h.query_by_label("Grain scale").is_none());
     assert!(
+        h.query_by_label("Film-coordinate dye grain field · Default engine · Experimental")
+            .is_some(),
+        "the selected engine domain must remain readable while grain is off"
+    );
+    assert!(
         h.query_by_role_and_label(egui::accesskit::Role::ComboBox, "Engine")
             .is_some()
     );
@@ -1663,7 +1668,7 @@ fn applied_look_materials_follow_factory_filtering_and_undo() {
         click(h, "Collapse or expand Presets");
     }
     edit(h, "Search presets", "Kodak Portra 400");
-    h.get_by_role_and_label(egui::accesskit::Role::Button, "Kodak Portra 400 • Film")
+    h.get_by_role_and_label(egui::accesskit::Role::Button, "Kodak Portra 400")
         .click();
     h.run_steps(3);
     assert_eq!(h.state().film_name, "kodak_portra_400");

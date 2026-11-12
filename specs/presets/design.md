@@ -75,7 +75,7 @@ A section is a named set of look-owned parameter paths. This table is authoritat
 
 The `convert` section includes the imported-capture acquisition light in `film_render.convert.scan_illuminant`. The fixed product readout illuminant is not preset-owned. Retired scanner lamp keys and the input-only `neutral` style alias follow the [lab scan migration contract](../film-chain/lab-scan/spec.md#point-wise-consumers-and-migration).
 
-- The browser lists film look and LUT presets only. A section preset MUST NOT appear in it, and the GUI MUST NOT offer a section menu, section capture, section management, or section import.
+- The browser lists film look and LUT presets only, in one list, and MUST NOT separate them by workflow or offer a workflow-type filter. A section preset MUST NOT appear in it, and the GUI MUST NOT offer a section menu, section capture, section management, or section import.
 - A section payload is captured and applied by `core`, the CLI, and scoped photograph copying under [Photograph work](../gui-product-design/photo-work/spec.md#copy-adjustments). Stored section documents keep their payloads and file locations.
 - The `enlarger` section includes the Print / Preflash controls; the `print` section includes print chemistry, print base, print density-curve controls, and Scan / Print viewing glare. Those placements MUST NOT split sections or change schemas or canonical payload scopes.
 - A section preset MUST NOT change a profile reference or the workflow.

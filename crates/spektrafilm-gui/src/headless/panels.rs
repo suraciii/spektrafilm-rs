@@ -1668,7 +1668,7 @@ fn selection_tracks_the_same_source_pixels_across_rotated_cropped_preview_and_sc
     let h = &mut s.harness;
     preview(h);
     reveal_control(h, "workflow.route");
-    choose(h, "workflow", "input");
+    choose(h, "Film route", "input");
     reveal_control(h, "action.rotate_cw");
     click(h, "cw rotate");
     assert_eq!(h.state().input_rotation, 3);

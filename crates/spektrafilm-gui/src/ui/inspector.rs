@@ -122,29 +122,8 @@ impl App {
                     }
                 }
                 if open {
-                    let inactive_in_lut = matches!(
-                        section,
-                        "Camera"
-                            | "Camera diffusion"
-                            | "Film material"
-                            | "Film chemistry"
-                            | "Film base"
-                            | "Halation"
-                            | "Couplers"
-                            | "Grain"
-                            | "Print material"
-                            | "Enlarger"
-                            | "Preflash"
-                            | "Enlarger diffusion"
-                            | "Print chemistry"
-                            | "Print base"
-                            | "Scanner"
-                            | "Glare"
-                            | "Finishing"
-                            | "Convert"
-                            | "Spectral upsampling"
-                    ) && self.params.workflow.mode
-                        == spektrafilm_core::params::WorkflowMode::Lut;
+                    let inactive_in_lut =
+                        controls::inactive_in_lut(section, self.params.workflow.mode);
                     ui.push_id("body", |ui| {
                         ui.add_enabled_ui(!inactive_in_lut, |ui| self.module_body(ui, section));
                     });
@@ -184,6 +163,49 @@ impl App {
         );
         match section {
             "Workflow" => {
+                let film_mode =
+                    self.params.workflow.mode == spektrafilm_core::params::WorkflowMode::Film;
+                if film_mode
+                    && ui
+                        .button(crate::i18n::text(ui.ctx(), "surfaces.lut.export"))
+                        .clicked()
+                {
+                    self.begin_export_lut();
+                }
+                // In LUT mode the live route is the inactive `input` default;
+                // show the retained film route that switching back restores.
+                let mut route = if film_mode {
+                    self.params.workflow.route.clone()
+                } else {
+                    self.film_route
+                        .clone()
+                        .unwrap_or_else(|| self.params.workflow.route.clone())
+                };
+                let changed = ui
+                    .add_enabled_ui(film_mode, |ui| {
+                        controls::choice_tip_entries(
+                            ui,
+                            "Film route",
+                            &mut route,
+                            routes::entries(),
+                            crate::i18n::text(ui.ctx(), "surfaces.route.help").as_ref(),
+                        )
+                    })
+                    .inner;
+                if changed && film_mode && route != self.params.workflow.route {
+                    self.params.workflow.route = route;
+                    controls::record_edited_path(ui.ctx(), "workflow.route");
+                    self.label_adjustment("Change workflow");
+                    self.finish_route_change();
+                }
+                if !film_mode {
+                    ui.weak(crate::i18n::text(
+                        ui.ctx(),
+                        "surfaces.workflow.route_stored",
+                    ));
+                }
+            }
+            "LUT look" => {
                 let mut selected = self.params.workflow.mode;
                 ui.horizontal_wrapped(|ui| {
                     ui.label(crate::i18n::text(ui.ctx(), "surfaces.workflow.mode"));
@@ -204,30 +226,6 @@ impl App {
                     controls::record_edited_path(ui.ctx(), "workflow.mode");
                     self.switch_workflow(selected);
                 }
-                let film_mode =
-                    self.params.workflow.mode == spektrafilm_core::params::WorkflowMode::Film;
-                if film_mode
-                    && ui
-                        .button(crate::i18n::text(ui.ctx(), "surfaces.lut.export"))
-                        .clicked()
-                {
-                    self.begin_export_lut();
-                }
-                ui.add_enabled_ui(film_mode, |ui| {
-                    if controls::choice_tip_entries(
-                        ui,
-                        "workflow",
-                        &mut self.params.workflow.route,
-                        routes::entries(),
-                        crate::i18n::text(ui.ctx(), "surfaces.route.help").as_ref(),
-                    ) {
-                        controls::record_edited_path(ui.ctx(), "workflow.route");
-                        self.label_adjustment("Change workflow");
-                        self.finish_route_change();
-                    }
-                });
-            }
-            "LUT look" => {
                 if self.params.workflow.mode != spektrafilm_core::params::WorkflowMode::Lut {
                     ui.weak(crate::i18n::text(ui.ctx(), "surfaces.lut.inactive"));
                     if ui
@@ -257,32 +255,42 @@ impl App {
                                 .text(crate::i18n::text(ui.ctx(), "surfaces.lut.strength")),
                         )
                         .changed();
-                    ui.horizontal_wrapped(|ui| {
+                    ui.horizontal(|ui| {
                         ui.label(crate::i18n::text(ui.ctx(), "surfaces.lut.input_space"));
+                        let width =
+                            (ui.available_width() - theme::SPACE_2).max(theme::WIDTH_COMBO_MIN);
                         let mut input_space = self.params.lut_look.input_space;
                         egui::ComboBox::from_id_salt("lut-input-space")
                             .selected_text(input_space.name())
+                            .width(width)
                             .show_ui(ui, |ui| {
                                 for candidate in [
                                     spektrafilm_core::lut_look::LutSpace::SrgbLinear,
                                     spektrafilm_core::lut_look::LutSpace::Srgb,
                                     spektrafilm_core::lut_look::LutSpace::DisplayP3,
                                 ] {
-                                    ui.selectable_value(
-                                        &mut input_space,
-                                        candidate,
-                                        candidate.name(),
-                                    );
+                                    changed |= ui
+                                        .selectable_value(
+                                            &mut input_space,
+                                            candidate,
+                                            candidate.name(),
+                                        )
+                                        .changed();
                                 }
                             });
                         if input_space != self.params.lut_look.input_space {
                             self.params.lut_look.input_space = input_space;
                             changed = true;
                         }
+                    });
+                    ui.horizontal(|ui| {
                         ui.label(crate::i18n::text(ui.ctx(), "surfaces.lut.output_space"));
+                        let width =
+                            (ui.available_width() - theme::SPACE_2).max(theme::WIDTH_COMBO_MIN);
                         let mut space = self.params.lut_look.output_space;
                         egui::ComboBox::from_id_salt("lut-output-space")
                             .selected_text(space.name())
+                            .width(width)
                             .show_ui(ui, |ui| {
                                 for candidate in [
                                     spektrafilm_core::lut_look::LutSpace::SrgbLinear,
@@ -761,16 +769,31 @@ impl App {
             .current_material_baseline()
             .unwrap_or_else(|| Arc::new(section_reset::unavailable_material_baseline().clone()));
         let modified = material_modified
-            || section_reset::is_modified(
-                section,
-                &self.params,
-                &self.gui_state.sections,
-                &baseline,
-            );
+            || if section == "Workflow"
+                && self.params.workflow.mode == spektrafilm_core::params::WorkflowMode::Lut
+            {
+                let route = self
+                    .film_route
+                    .as_deref()
+                    .unwrap_or(self.params.workflow.route.as_str());
+                section_reset::route_modified(route, &baseline)
+            } else {
+                section_reset::is_modified(
+                    section,
+                    &self.params,
+                    &self.gui_state.sections,
+                    &baseline,
+                )
+            };
         let resettable = section_reset::sections().any(|name| name == section);
+        let reset_allowed = !controls::inactive_in_lut(section, self.params.workflow.mode)
+            && (section != "Workflow"
+                || self.params.workflow.mode == spektrafilm_core::params::WorkflowMode::Film);
         let mut changed = false;
         if trailing && resettable {
-            changed |= self.section_reset_action(ui, section);
+            changed |= ui
+                .add_enabled_ui(reset_allowed, |ui| self.section_reset_action(ui, section))
+                .inner;
         }
         if modified {
             ui.label(
@@ -780,7 +803,9 @@ impl App {
             );
         }
         if !trailing && resettable {
-            changed |= self.section_reset_action(ui, section);
+            changed |= ui
+                .add_enabled_ui(reset_allowed, |ui| self.section_reset_action(ui, section))
+                .inner;
         }
         changed
     }
@@ -1066,6 +1091,7 @@ impl App {
                 );
             }
         }
+        let workflow_mode = self.params.workflow.mode;
         for &(stage, sections) in controls::STAGE_LAYOUT {
             let reveal_stage = self.pending_stage == Some(stage);
             let has_locator = sections
@@ -1083,30 +1109,51 @@ impl App {
             if !visible && !reveal_stage && !has_locator {
                 continue;
             }
-            ui.push_id(("stage", stage.label()), |ui| {
+            let stage_index = controls::Stage::ALL
+                .iter()
+                .position(|candidate| *candidate == stage);
+            let stage_active = stage.active_in(workflow_mode);
+            // Inactive stages get a per-mode disclosure identity so they start
+            // collapsed when the workflow changes. Stages active in both modes
+            // keep one identity, so toggling a module is not lost on a switch.
+            let disclosure_mode = if stage.active_in(spektrafilm_core::params::WorkflowMode::Film)
+                && stage.active_in(spektrafilm_core::params::WorkflowMode::Lut)
+            {
+                None
+            } else {
+                Some(workflow_mode.name())
+            };
+            ui.push_id(("stage", stage.label(), disclosure_mode), |ui| {
                 ui.add_space(theme::SPACE_2);
                 let open_id = ui.make_persistent_id("open");
-                let normal_open = ui
-                    .ctx()
-                    .data_mut(|data| *data.get_persisted_mut_or_insert_with(open_id, || true));
+                let normal_open = ui.ctx().data_mut(|data| {
+                    *data.get_persisted_mut_or_insert_with(open_id, || stage_active)
+                });
                 let filtered = !self.filter.is_empty() || self.only_modified;
                 let open = normal_open || filtered || reveal_stage || has_locator;
                 let response = ui
                     .horizontal(|ui| {
-                        let number = match stage {
-                            controls::Stage::Input => "01",
-                            controls::Stage::Film => "02",
-                            controls::Stage::Print => "03",
-                            controls::Stage::Scan => "04",
-                            controls::Stage::Output => "05",
-                        };
-                        ui.label(
-                            egui::RichText::new(number)
-                                .monospace()
+                        if let Some(index) = stage_index {
+                            let number = format!("{:02}", index + 1);
+                            ui.label(
+                                egui::RichText::new(number)
+                                    .monospace()
+                                    .small()
+                                    .color(theme::ACCENT_DIM),
+                            );
+                        }
+                        let response = controls::stage_disclosure(ui, stage.label(), open);
+                        if !stage_active {
+                            ui.label(
+                                egui::RichText::new(crate::i18n::text(
+                                    ui.ctx(),
+                                    "surfaces.section.inactive_compact",
+                                ))
                                 .small()
-                                .color(theme::ACCENT_DIM),
-                        );
-                        controls::stage_disclosure(ui, stage.label(), open)
+                                .color(theme::FG_MUTED),
+                            );
+                        }
+                        response
                     })
                     .inner;
                 let accessible_name = crate::tr!(
@@ -1117,6 +1164,16 @@ impl App {
                 ui.ctx()
                     .accesskit_node_builder(response.id, |node| node.set_label(accessible_name));
                 controls::focus_feedback(ui, &response);
+                if !stage_active {
+                    ui.label(
+                        egui::RichText::new(crate::i18n::text(
+                            ui.ctx(),
+                            "surfaces.section.inactive_in_lut",
+                        ))
+                        .small()
+                        .color(theme::FG_MUTED),
+                    );
+                }
                 if response.clicked() && !filtered {
                     ui.ctx()
                         .data_mut(|data| data.insert_persisted(open_id, !normal_open));

@@ -5,7 +5,7 @@ fn polymax_paper_selection_preview_scan_save_and_disabled_color_solver() {
     let mut s = session();
     let h = &mut s.harness;
     reveal_control(h, "workflow.route");
-    choose(h, "workflow", "input > film > print > scan");
+    choose(h, "Film route", "input > film > print > scan");
     reveal_control(h, "extras.simulation.film_stock");
     choose(h, "film profile", "Kodak Double-X Negative Film 5222");
     reveal_control(h, "extras.simulation.print_paper");
@@ -26,7 +26,7 @@ fn polymax_paper_selection_preview_scan_save_and_disabled_color_solver() {
     }
     for route in ["input > film > scan", "input > film > print > scan"] {
         reveal_control(h, "workflow.route");
-        choose(h, "workflow", route);
+        choose(h, "Film route", route);
         // A material change invalidates the inspector cache even without printing.
         h.state_mut()
             .select_print_profile("kodak_portra_endura".into());

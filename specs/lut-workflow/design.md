@@ -150,7 +150,7 @@ Deleting or renaming a LUT preset MUST NOT delete or modify the LUT file.
 
 ## Browser and thumbnails
 
-The browser remains one library and two groups. It adds a kind cue and an optional session-only All/Film/LUT filter. Search includes the LUT file name, title, and path.
+The browser remains one library and two groups. It presents film look and LUT documents in one list without a workflow-type category, cue, or filter. Search includes the LUT file name, title, and path; the derived kind remains a resolver fact.
 
 Candidate preparation branches before material resolution:
 

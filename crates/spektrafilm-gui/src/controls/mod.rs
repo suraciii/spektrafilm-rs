@@ -14,6 +14,7 @@ use serde_json::Value;
 use spektrafilm_core::feature_profiles::{self, FeatureProfileFamily, FeatureProfileSelection};
 use spektrafilm_core::params::{
     PrintCurvesMorphParams, PrintExposureEvTracking, PrintExposureMode, RuntimeParams,
+    WorkflowMode,
     grain::{FotufilmMaterial, GrainEngine, ProceduralGrainFilmType, ProceduralGrainMode},
 };
 use spektrafilm_core::profile::Profile;
@@ -582,26 +583,68 @@ pub(crate) enum Stage {
     Film,
     Print,
     Scan,
+    Look,
     Output,
 }
 
 impl Stage {
-    pub(crate) const ALL: [Self; 5] = [
+    pub(crate) const ALL: [Self; 6] = [
         Self::Input,
         Self::Film,
         Self::Print,
         Self::Scan,
+        Self::Look,
         Self::Output,
     ];
+
+    /// Stages whose controls run in the selected workflow. Inactive stages
+    /// remain visible with their stored values; only their bodies are disabled.
+    pub(crate) fn active_in(self, mode: WorkflowMode) -> bool {
+        match mode {
+            // Look keeps the workflow-mode switch reachable in film mode;
+            // only its LUT controls are inactive.
+            WorkflowMode::Film => true,
+            WorkflowMode::Lut => !matches!(self, Self::Film | Self::Print | Self::Scan),
+        }
+    }
+
     pub(crate) fn label(self) -> &'static str {
         match self {
             Self::Input => "Input and capture",
             Self::Film => "Film",
             Self::Print => "Print",
             Self::Scan => "Scan",
+            Self::Look => "Look",
             Self::Output => "Output",
         }
     }
+}
+
+/// Modules whose editors belong to the film chain and are inactive in LUT mode.
+pub(crate) fn inactive_in_lut(section: &str, mode: WorkflowMode) -> bool {
+    mode == WorkflowMode::Lut
+        && matches!(
+            section,
+            "Camera"
+                | "Camera diffusion"
+                | "Film material"
+                | "Film chemistry"
+                | "Film base"
+                | "Halation"
+                | "Couplers"
+                | "Grain"
+                | "Print material"
+                | "Enlarger"
+                | "Preflash"
+                | "Enlarger diffusion"
+                | "Print chemistry"
+                | "Print base"
+                | "Scanner"
+                | "Glare"
+                | "Finishing"
+                | "Convert"
+                | "Spectral upsampling"
+        )
 }
 
 /// Each module has one visual owner; this is not serialized preset scope.
@@ -610,7 +653,6 @@ pub(crate) const STAGE_LAYOUT: &[(Stage, &[&str])] = &[
         Stage::Input,
         &[
             "Workflow",
-            "LUT look",
             "Camera",
             "Camera diffusion",
             "Input",
@@ -645,6 +687,7 @@ pub(crate) const STAGE_LAYOUT: &[(Stage, &[&str])] = &[
         ],
     ),
     (Stage::Scan, &["Scanner", "Glare", "Finishing"]),
+    (Stage::Look, &["LUT look"]),
     (
         Stage::Output,
         &["Output", "Output gamut compress", "CMYK ink style"],

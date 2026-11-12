@@ -7,7 +7,7 @@ fn every_supported_route_preview_scan_state_roundtrip_and_save() {
     let h = &mut s.harness;
     for (index, (route, label)) in routes::entries().enumerate() {
         reveal_control(h, "workflow.route");
-        choose(h, "workflow", label);
+        choose(h, "Film route", label);
         assert_eq!(h.state().params.workflow.route, route);
         let preview = preview(h);
         assert_eq!((preview.width, preview.height), (128, 64), "{route}");
@@ -95,14 +95,14 @@ fn loaded_state_reports_scanner_normalization_in_header_status() {
     let mut s = session();
     let h = &mut s.harness;
     reveal_control(h, "workflow.route");
-    choose(h, "workflow", "input > film > scan");
+    choose(h, "Film route", "input > film > scan");
     reveal_control(h, "scanner.scan_output");
     choose(h, "scan output", "Negative to positive");
     assert_eq!(h.state().params.scanner.scan_output, "negative_to_positive");
     // A route that cannot carry the negative polarity resets it, and the
     // header status names the control that was normalized.
     reveal_control(h, "workflow.route");
-    choose(h, "workflow", "input > film > print > scan");
+    choose(h, "Film route", "input > film > print > scan");
     assert_eq!(h.state().params.scanner.scan_output, "direct_scan");
     assert!(
         h.state()
@@ -155,6 +155,100 @@ fn legacy_disabled_preview_state_still_renders_accepted_numeric_edits_automatica
             .get("auto_preview")
             .is_none()
     );
+}
+
+#[test]
+fn workflow_modes_keep_stage_navigation_visible_and_mark_inactive_stages() {
+    let mut s = session();
+    let h = &mut s.harness;
+    navigate_stage(h, controls::Stage::Film);
+    assert!(h.query_by_label("Film material").is_some());
+    // The Look stage stays reachable in film mode because it owns the mode
+    // switch; its controls explain that they are inactive.
+    navigate_stage(h, controls::Stage::Look);
+    assert!(h.query_by_label("Look").is_some());
+    assert!(
+        h.query_all_by_label("Inactive in the film workflow. Stored values are retained.")
+            .next()
+            .is_some()
+    );
+
+    // Give the active LUT a valid external file so the production workflow
+    // switch does not open a chooser; import itself has separate coverage.
+    let cube = s.directory.path().join("layout.cube");
+    std::fs::write(
+        &cube,
+        "TITLE \"layout\"\nLUT_3D_SIZE 2\nDOMAIN_MIN 0 0 0\nDOMAIN_MAX 1 1 1\n\
+         0 0 0\n1 0 0\n0 1 0\n1 1 0\n0 0 1\n1 0 1\n0 1 1\n1 1 1\n",
+    )
+    .unwrap();
+    h.state_mut().params.lut_look.path = cube;
+    h.state_mut().params.lut_look.sha256 =
+        spektrafilm_core::lut_look::hash_file(&h.state().params.lut_look.path).unwrap();
+    let retained_route = h.state().params.workflow.route.clone();
+    // A module in a stage that remains active in both workflows keeps its
+    // disclosure state across the real workflow selector.
+    navigate_stage(h, controls::Stage::Input);
+    if h.query_by_role_and_label(egui::accesskit::Role::ComboBox, "input color space")
+        .is_none()
+    {
+        click(h, "Input");
+    }
+    assert!(
+        h.query_by_role_and_label(egui::accesskit::Role::ComboBox, "input color space")
+            .is_some()
+    );
+    navigate_stage(h, controls::Stage::Look);
+    h.get_by_role_and_label(egui::accesskit::Role::Button, "LUT")
+        .simulate_click();
+    h.run_steps(6);
+    await_input(h);
+    assert_eq!(
+        h.state().params.workflow.mode,
+        spektrafilm_core::params::WorkflowMode::Lut
+    );
+    assert_eq!(
+        h.state().film_route.as_deref(),
+        Some(retained_route.as_str())
+    );
+    assert!(h.query_by_label("Print").is_some());
+    navigate_stage(h, controls::Stage::Input);
+    assert!(
+        h.query_by_role_and_label(egui::accesskit::Role::ComboBox, "input color space")
+            .is_some(),
+        "an always-active module must keep its disclosure state across a workflow switch"
+    );
+    // Inactive film modules keep their headings and values readable but cannot
+    // reset the inactive film chain from LUT mode.
+    navigate_stage(h, controls::Stage::Film);
+    assert!(h.get_by_label("reset Film material").node().is_disabled());
+    // The retained route is visible at its owner, but neither its selector nor
+    // its reset may edit or normalize the inactive film chain from LUT mode.
+    navigate_stage(h, controls::Stage::Input);
+    let route = h.get_by_role_and_label(egui::accesskit::Role::ComboBox, "Film route");
+    assert!(route.node().is_disabled());
+    assert!(h.get_by_label("reset Workflow").node().is_disabled());
+    // The product label is also the search and accessibility label.
+    search_controls(h, "Film route");
+    assert!(
+        h.query_all_by_role(egui::accesskit::Role::Button)
+            .any(|node| node
+                .label()
+                .is_some_and(|label| label.contains("Film route")))
+    );
+    search_controls(h, "");
+    // Inactive film controls remain present at their owner with their stored
+    // values and explain the LUT workflow's boundary.
+    search_controls(h, "Film material");
+    assert!(h.query_by_label("Film material").is_some());
+    assert!(
+        h.query_all_by_label("Inactive in the LUT workflow. Stored values are retained.")
+            .next()
+            .is_some()
+    );
+    search_controls(h, "");
+    h.run_steps(3);
+    assert!(h.query_by_label("Look").is_some());
 }
 
 #[test]
