@@ -2,7 +2,7 @@
 
 ## Decision
 
-Dye realizes developed film record density as a band-limited correlated field whose amplitude follows a granularity curve derived from development statistics. Every draw preserves the target mean in expectation, so the field carries grain and never tone.
+Dye realizes developed film record density as a coordinate-addressed value-noise field whose amplitude follows a granularity curve derived from development statistics. Every draw preserves the target mean in expectation, so the field carries grain and never tone.
 
 The field lives on the film lattice. The readout resamples it: finer grids interpolate a cell centre, coarser grids integrate the lattice cells the output cell covers. A crop, a preview scale, or a stage split therefore samples one film, not a second realization.
 
@@ -10,7 +10,7 @@ The field lives on the film lattice. The readout resamples it: finer grids inter
 
 **Film lattice**: the source raster's film-coordinate lattice. It is the only place the field is realized. The output grid is a sampling of it.
 
-**Correlated field**: unit-variance noise filtered by the declared octave Gaussians and band-limited at 12 µm. It carries the aggregate texture.
+**Value-noise field**: unit-variance noise formed by three smoothstep-interpolated octaves and normalized to unit variance. It carries the aggregate texture.
 
 **Granularity taper**: the relative amplitude `sqrt(sat · p · (1 − p))`, normalized by its own peak and floored. It vanishes at clear base and at record saturation.
 
@@ -67,39 +67,38 @@ Let `s` be grain strength and `k` be grain scale. The delivered constants map as
 white_eff    = white * s
 base_eff     = base * s
 q_eff        = q * s^2
-octave_i_eff = octave_i * k
-highpass_eff = highpass * k
+cell_base_eff = cell_base * k
 ```
 
 `Var(D) = q_eff (t + f) e / A`, so the count term's standard deviation scales with `sqrt(q_eff)` while the envelope's standard deviation scales with `white_eff`; both scale linearly with `s`. The taper and the per-record ratio are unchanged.
 
 `s = 0` is the deterministic limit: every draw is replaced by its conditional mean, so the law returns the target density with no random field or residual count noise. `s = 1` and `k = 1` leave the delivered constants unchanged.
 
-`k` reaches both executors through the same octave and band-limit taps. A requested scale MUST scale the device band halo and workspace bound with it.
+`k` reaches both executors through the same octave sizes. A requested scale MUST scale the value-noise base cell size and the device work bound with it.
 
 A mapped event area below the f32 normal minimum resolves to the deterministic limit on both executors. Above the exact count-rate threshold the count deviation is normal and evaluated directly, so a small event area cannot overflow the rate or lose the mean.
 
-A scale and pitch whose Gaussian needs more taps than the device supports MUST fail before allocation. The kernel MUST NOT be truncated.
+A scale whose octave sizes or coordinates are not finite and positive MUST fail before allocation.
 
 ## Field construction
 
-Each octave is white noise filtered by a Gaussian of `diameter / 2` in micrometres, standardized to unit variance, then summed with normalized weights. The sum is band-limited by subtracting its own 12 µm Gaussian and standardized once more.
+Three octaves use a base cell size of 7.3 µm at scale 1, halving for each finer octave. Each octave is smoothstep-interpolated value noise from a 32-bit coordinate hash; the octaves are summed with weights `1, 0.5, 0.25` and multiplied by one fixed scale that makes the sum unit variance. There is no Gaussian filter, high-pass, or per-image standardization.
 
-The noise is coordinate-addressed: a 32-bit hash of seed, stream, and global film coordinates, Box-Muller to a normal. The CPU reference and the device pass use the same hash, the same streams, and the same coordinates, so one seed yields one realization on both executors.
+The noise is coordinate-addressed: a 32-bit hash of seed, stream, global source pixel and octave. The CPU reference and the device pass use the same hash, the same streams, the same octave sizes, and the same coordinates, so one seed yields one realization on both executors.
 
-Stream numbering is fixed: the shared field uses streams `0 * 8 + octave`, and record `c` uses `(c + 1) * 8 + octave`.
+Stream numbering is fixed: the shared field uses stream `0`, and record `c` uses stream `c + 1`.
 
 ## Device execution
 
-The device evaluates the same law in passes: one Gaussian per octave axis, a weighted combine, a band-limit subtract, then the density law per record.
+The device evaluates the same law in two passes: one dispatch writes the shared and per-record value-noise fields, then the density law per record mixes them and draws the count. The field pass is pointwise, so a band needs no filter halo.
 
 The count is drawn by the same method on both executors: inversion below thirty events, PTRS above, up to the exact-rate threshold of `10^9` events per cell. Above that threshold both executors draw the same coordinate-addressed normal deviation.
 
 A normal approximation below the threshold would match the mean and the variance but not the distribution, and the difference shows once the rate is small.
 
-The normalize scale is measured on the host by filtering white noise with the very taps the shader uses. It measures each octave's gain and the band-limited scale together, because a Gaussian discretized below one pixel passes only part of the variance.
+The unit-variance scale is a fixed constant of the smoothstep value-noise process, shared by both executors. The shader MUST NOT standardize a band or read image/field statistics.
 
-Bands carry a filter halo and key their noise on global coordinates, so halo overlap reproduces the field and bands join without a seam. The pass MUST NOT require a device-side reduction or a synchronization point.
+Bands key their noise on global source coordinates. Because the field is pointwise, bands join without a halo or seam. The pass MUST NOT require a device-side reduction or a synchronization point.
 
 ## Deterministic comparison
 
@@ -158,7 +157,7 @@ Older unprefixed records MUST deserialize without relabeling or recomputing stat
 The implementation MUST keep these boundaries explicit:
 
 1. **Target preparation:** full-film geometry, source reconstruction, film-stage density target, and profile resolution.
-2. **Field realization:** lattice geometry, octave filtering, band limit, and record coupling.
+2. **Field realization:** lattice geometry, value-noise octaves, and record coupling.
 3. **Count realization:** event area, fog baseline, and the conditional count.
 4. **Readout:** film-coordinate resampling to the requested grid.
 5. **Optical measurement:** independent transmission, aperture, density, and calibration records.
@@ -173,7 +172,7 @@ No module MAY duplicate another module's film chemistry, optical measurement, pa
 Implementation MUST proceed in gates:
 
 1. Prove the density law and its mean on deterministic targets, including clear base, mid densities, and saturation.
-2. Prove the field construction: per-octave variance, band-limit behaviour, and coordinate-addressed streams on both executors.
+2. Prove the field construction: octave mixture variance and coordinate-addressed streams on both executors.
 3. Prove readout: fractional overlap, constant preservation, and impulse and edge response against an independent oracle.
 4. Prove crop, tile, band, and stage-split invariance and resource rejection without allocating an oversized request.
 5. Prove the optical measurement oracle on synthetic constant and varying fields, including transmission positivity, kernel normalization, density ordering, wavelength integration, and receiver/aperture changes.

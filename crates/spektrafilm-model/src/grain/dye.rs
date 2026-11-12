@@ -7,6 +7,7 @@
 pub mod texture;
 
 mod diagnostic_env;
+mod value;
 pub use diagnostic_env::diagnostic_env;
 
 /// Rectangular readout footprints in global film coordinates. Cropping

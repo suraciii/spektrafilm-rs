@@ -723,6 +723,23 @@ mod tests {
         }
     }
 
+    fn correlation(a: &[f64], b: &[f64]) -> f64 {
+        let n = a.len().min(b.len()) as f64;
+        let ma = a.iter().sum::<f64>() / n;
+        let mb = b.iter().sum::<f64>() / n;
+        let mut cov = 0.0;
+        let mut va = 0.0;
+        let mut vb = 0.0;
+        for (x, y) in a.iter().zip(b) {
+            let dx = x - ma;
+            let dy = y - mb;
+            cov += dx * dy;
+            va += dx * dx;
+            vb += dy * dy;
+        }
+        cov / (va * vb).sqrt().max(1e-12)
+    }
+
     fn max_abs_diff(a: &ImageBuf, b: &ImageBuf) -> f64 {
         assert_eq!(a.data.len(), b.data.len());
         a.data
@@ -842,6 +859,13 @@ mod tests {
             assert!(
                 (ratio - 1.0).abs() <= 0.15,
                 "amplitude at lambda {label}: device is {ratio:.3} of the host"
+            );
+            let gpu_values: Vec<f64> = gpu.data.chunks(3).map(|p| p[1] as f64).collect();
+            let cpu_values: Vec<f64> = cpu.data.chunks(3).map(|p| p[1] as f64).collect();
+            let corr = correlation(&gpu_values, &cpu_values);
+            assert!(
+                corr > 0.98,
+                "the device and host must draw the same field at lambda {label}: correlation {corr:.4}"
             );
         }
     }

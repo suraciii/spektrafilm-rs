@@ -1,8 +1,8 @@
 //! Delivered film-coordinate Dye grain law.
 //!
-//! The law is a band-limited correlated field whose relative amplitude
-//! follows the developed record density, plus a conditional Poisson event
-//! count. For record `c`:
+//! The law is a coordinate-addressed value-noise field whose relative
+//! amplitude follows the developed record density, plus a conditional
+//! Poisson event count. For record `c`:
 //!
 //! ```text
 //! u_c      = sqrt(rho) * u_shared + sqrt(1 - rho) * u_own,c
@@ -21,9 +21,8 @@
 
 use rayon::prelude::*;
 use spektrafilm_backend::dye_params::law;
-use spektrafilm_math::gaussian;
 use spektrafilm_math::image::ImageBuf;
-use spektrafilm_math::precision::{Scalar, ZERO, from_f32, from_f64, to_f64};
+use spektrafilm_math::precision::{Scalar, ZERO, from_f64, to_f64};
 use spektrafilm_math::stats::{normal01_coordinate, poisson_exact_coordinate};
 
 /// Above this conditional count rate both executors draw the same normal
@@ -119,99 +118,17 @@ impl DyeLawParams {
     }
 }
 
-/// Build a zero-mean, unit-variance multi-octave field. Octave diameter is in
-/// micrometres; weights are normalized here.
+/// One zero-mean, unit-variance value-noise field on the source lattice.
+/// `stream` is the shared field (`0`) or one record's own field.
 fn correlated_field(
     w: usize,
     h: usize,
     pitch_um: f64,
     seed: u64,
-    field: u32,
+    stream: u32,
     length_scale: f64,
 ) -> Vec<Scalar> {
-    let norm = law::OCTAVES.iter().map(|(_, v)| v * v).sum::<f64>().sqrt();
-    let mut combined = vec![ZERO; w * h];
-    for (o, (diameter_um, weight)) in law::OCTAVES.iter().enumerate() {
-        let v0 = noise_field(w, h, seed, field * 8 + o as u32);
-        // A real Gaussian, because the box approximation cannot resolve sigma < 1 px
-        // and that is exactly the range the aggregate texture lives in.
-        let mut v = gaussian::gaussian_blur_channel(
-            &v0,
-            w as u32,
-            h as u32,
-            (diameter_um * length_scale / pitch_um / 2.0) as f32,
-        );
-        standardize(&mut v);
-        let k = from_f64(weight / norm);
-        combined
-            .par_iter_mut()
-            .zip(v.par_iter())
-            .for_each(|(a, b)| *a += k * b);
-    }
-    // Band-limit: subtract the field's own large-scale component. Aggregate grain
-    // should not move the local level over tens of microns, because that reads as a
-    // dark blotch rather than grain.
-    let big = gaussian::gaussian_blur_channel(
-        &combined,
-        w as u32,
-        h as u32,
-        (law::HIGHPASS_UM * length_scale / pitch_um) as f32,
-    );
-    combined
-        .par_iter_mut()
-        .zip(big.par_iter())
-        .for_each(|(a, b)| *a -= *b);
-    standardize(&mut combined);
-    combined
-}
-
-/// Zero-mean unit-variance field addressed by global pixel coordinates.
-/// The device's coordinate hash, replicated here so both executors draw the
-/// same realization from the same seed and stream. A CPU and a GPU render of
-/// one recipe must differ in sampling, never in the noise they start from.
-fn hash_u32(mut v: u32) -> u32 {
-    v = v.wrapping_mul(747_796_405).wrapping_add(2_891_336_453);
-    v = ((v >> ((v >> 28) + 4)) ^ v).wrapping_mul(277_803_737);
-    (v >> 22) ^ v
-}
-
-fn uniform01(seed: u32, stream: u32, x: u32, y: u32) -> f32 {
-    let h = hash_u32(x ^ hash_u32(y ^ hash_u32(seed ^ hash_u32(stream))));
-    (h >> 8) as f32 * (1.0 / 16_777_216.0)
-}
-
-fn normal01(seed: u32, stream: u32, x: u32, y: u32) -> f32 {
-    let u1 = uniform01(seed, stream, x, y).max(1e-6);
-    let u2 = uniform01(seed, stream ^ 0x9e37_79b9, y, x);
-    (-2.0 * u1.ln()).sqrt() * (std::f32::consts::TAU * u2).cos()
-}
-
-/// One field of coordinate-addressed noise. `stream` matches the device pass,
-/// so the same seed and stream produce the same field on both executors.
-fn noise_field(w: usize, h: usize, seed: u64, stream: u32) -> Vec<Scalar> {
-    let mut v = vec![ZERO; w * h];
-    let seed = seed as u32;
-    v.par_chunks_mut(w).enumerate().for_each(|(y, row)| {
-        for (x, cell) in row.iter_mut().enumerate() {
-            *cell = from_f32(normal01(seed, stream, x as u32, y as u32));
-        }
-    });
-    v
-}
-
-fn standardize(v: &mut [Scalar]) {
-    let mean = v.par_iter().map(|&x| to_f64(x)).sum::<f64>() / v.len() as f64;
-    let var = v
-        .par_iter()
-        .map(|&x| {
-            let d = to_f64(x) - mean;
-            d * d
-        })
-        .sum::<f64>()
-        / v.len() as f64;
-    let sd = var.sqrt().max(1e-12);
-    let (scale, shift) = (from_f64(1.0 / sd), from_f64(mean));
-    v.par_iter_mut().for_each(|x| *x = (*x - shift) * scale);
+    super::value::field(w, h, pitch_um, length_scale, seed, stream)
 }
 
 /// Realize one channel of the delivered law on a 1:1 field.

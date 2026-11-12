@@ -39,16 +39,20 @@ pub struct DyeGpuParams {
 /// look strength is the engine constant; recipe strength and scale are applied
 /// by the caller.
 pub mod law {
-    /// Octave diameters in micrometres and relative weights.
-    pub const OCTAVES: [(f64, f64); 3] = [(4.5, 1.0), (9.0, 1.0), (18.0, 0.5)];
-    /// Band limit of the field, in micrometres.
-    pub const HIGHPASS_UM: f64 = 12.0;
+    /// Base cell size of the value-noise field in micrometres, before
+    /// `dye_scale`. Smaller octaves halve this size; there is no high-pass.
+    pub const VALUE_BASE_UM: f64 = 7.3;
+    /// Relative weights of the three value-noise octaves.
+    pub const VALUE_WEIGHTS: [f64; 3] = [1.0, 0.5, 0.25];
+    /// Converts the weighted value-noise sum to unit variance. Measured from
+    /// the same smoothstep value-noise process the CPU and device evaluate.
+    pub const VALUE_FIELD_SCALE: f64 = 2.3325;
     /// Relative density amplitude at the taper peak.
-    pub const WHITE: f64 = 0.035;
+    pub const WHITE: f64 = 0.0385;
     /// Relative density amplitude per record.
     pub const STRENGTH: [f64; 3] = [1.0, 1.0, 1.18];
     /// Shared fraction of the field between records.
-    pub const RHO: f64 = 0.92;
+    pub const RHO: f64 = 0.8;
     /// Event area of one developed cluster, in square micrometres.
     pub const EVENT_AREA_UM2: f64 = 0.0015;
     /// Base (fog) density that keeps the event rate alive in the deep shadows.

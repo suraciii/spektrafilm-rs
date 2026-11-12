@@ -1,18 +1,14 @@
 //! Bands of the Dye grain law transported through pages.
 //!
-//! The law lives on the film lattice, so a band is a window of the *source* raster
-//! with the halo its filter needs; the readout grid is applied afterwards, when the
-//! developed density is written out. That ordering is what makes a crop, a preview
-//! scale, or a render split into stages agree with a single full-frame pass.
-//!
-//! The noise is keyed on global source coordinates, so overlapping halos reproduce
-//! the same field and the bands join without a seam.
+//! The value-noise field is pointwise in global source coordinates, so a band
+//! needs no filter halo: its source window is exactly the region its readout
+//! rows cover. The readout grid is applied after the developed density is
+//! written, so a crop, preview scale, or stage split samples one film.
 
-use super::dye_law::{
-    LawBand, LawGeom, LawPipelines, LawTaps, READOUT_WGSL, band_bytes, halo_um, law_taps,
-};
+use super::dye_law::{LawBand, LawGeom, LawPipelines, READOUT_WGSL, band_bytes};
 use super::*;
 use crate::wgpu_backend::film_chain::device_image::{BufferPayload, ImagePage};
+use spektrafilm_backend::dye_params::law;
 
 /// Band working set the plan is allowed to hold at once.
 const BAND_BUDGET_BYTES: u64 = 256 << 20;
@@ -20,7 +16,6 @@ const BAND_BUDGET_BYTES: u64 = 256 << 20;
 struct LawPiece {
     /// Source window, in film-lattice pixels.
     window: [u32; 4],
-    /// Grid rows this piece publishes.
     grid_x: u32,
     grid_y: u32,
     grid_cols: u32,
@@ -34,7 +29,6 @@ pub(in crate::wgpu_backend) struct DyeLawState {
     source: std::sync::Arc<BufferPayload>,
     pieces: Vec<LawPiece>,
     pipes: LawPipelines,
-    taps: LawTaps,
     readout_pipe: CachedPipelineRef,
     grid: [u32; 4],
     grid_origin: [f64; 2],
@@ -66,13 +60,7 @@ impl DyeLawState {
                 piece.window[3],
                 piece.band.buffer(),
             )?;
-            backend.encode_law_band(
-                &mut encoder,
-                &piece.band,
-                &piece.geometry,
-                &self.pipes,
-                &self.taps,
-            );
+            backend.encode_law_band(&mut encoder, &piece.band, &piece.geometry, &self.pipes);
             backend.encode_law_readout(
                 &mut encoder,
                 &self.readout_pipe,
@@ -104,24 +92,17 @@ impl DyeLawState {
     }
 }
 
-/// Rows of window one band may hold at this width, and the halo it needs.
+/// Rows of window one band may hold at this width.
 pub(in crate::wgpu_backend) fn law_band_shape(
     backend: &WgpuBackend,
     width: u32,
-    pitch_um: f64,
-    length_scale: f64,
-) -> Result<(u32, u32), String> {
+) -> Result<u32, String> {
     let binding = crate::wgpu_backend::bounded::storage_binding_limit(backend)?;
     let budget = BAND_BUDGET_BYTES.min(binding);
-    let pixels = (budget / 68).max(64);
-    let rows = (pixels / u64::from(width.max(1))).max(1);
-    let halo = (halo_um(length_scale) / pitch_um).ceil().max(1.0);
-    if halo > 4096.0 {
-        return Err(format!(
-            "Dye grain law: a {pitch_um} um pitch needs a {halo} px halo"
-        ));
-    }
-    Ok((rows.min(u64::from(u32::MAX)) as u32, halo as u32))
+    let pixels = (budget / band_bytes(1)).max(64);
+    Ok((pixels / u64::from(width.max(1)))
+        .max(1)
+        .min(u64::from(u32::MAX)) as u32)
 }
 
 /// Working set of the law: one band window plus the published pages.
@@ -129,14 +110,10 @@ pub(in crate::wgpu_backend) fn law_workspace_bytes(
     backend: &WgpuBackend,
     width: u32,
     height: u32,
-    pitch_um: f64,
-    length_scale: f64,
 ) -> Result<u64, String> {
-    law_taps(pitch_um, length_scale)?;
-    let (rows, halo) = law_band_shape(backend, width, pitch_um, length_scale)?;
-    let window_rows = u64::from(rows) + 2 * u64::from(halo);
+    let rows = law_band_shape(backend, width)?;
     let window = u64::from(width)
-        .checked_mul(window_rows)
+        .checked_mul(u64::from(rows))
         .ok_or("Dye grain law: band window overflow")?;
     let pages = u64::from(width)
         .checked_mul(u64::from(height))
@@ -165,9 +142,12 @@ impl WgpuBackend {
         if !(source_pitch.is_finite() && source_pitch > 0.0) {
             return Err("Dye grain law: the source pitch must be positive".into());
         }
+        if !(params.length_scale.is_finite() && params.length_scale > 0.0) {
+            return Err("Dye grain law: the correlation-length scale must be positive".into());
+        }
         let grid = &params.grid;
-        let (rows_per_band, halo) = law_band_shape(self, width, source_pitch, params.length_scale)?;
-        let taps = law_taps(source_pitch, params.length_scale)?;
+        let rows_per_band = law_band_shape(self, width)?;
+        let base_px = law::VALUE_BASE_UM * params.length_scale / source_pitch;
         let output_pages = self.allocate_image_pages(grid.width, grid.height, "dye_law_output")?;
         let pipes = self.dye_law_pipelines();
         let readout_pipe = self.cached_pipeline_at(
@@ -184,16 +164,15 @@ impl WgpuBackend {
         while y < grid.height {
             self.check_cancelled()?;
             let grid_rows = rows_per_band.min(grid.height - y);
-            // Source rows this grid band needs, plus the filter halo.
             let top_film = grid.origin_um[1] + y as f64 * grid.pitch_um[1];
             let bottom_film = grid.origin_um[1] + (y + grid_rows) as f64 * grid.pitch_um[1];
             let left_film = grid.origin_um[0];
             let right_film = grid.origin_um[0] + grid.width as f64 * grid.pitch_um[0];
             let to_px = |um: f64| um / source_pitch;
-            let window_y = (to_px(top_film).floor().max(0.0) as u32).saturating_sub(halo);
-            let window_bottom = ((to_px(bottom_film).ceil() as u32) + halo).min(height);
-            let window_x = (to_px(left_film).floor().max(0.0) as u32).saturating_sub(halo);
-            let window_right = ((to_px(right_film).ceil() as u32) + halo).min(width);
+            let window_y = (to_px(top_film).floor().max(0.0) as u32).min(height);
+            let window_bottom = (to_px(bottom_film).ceil() as u32).min(height);
+            let window_x = (to_px(left_film).floor().max(0.0) as u32).min(width);
+            let window_right = (to_px(right_film).ceil() as u32).min(width);
             let window_w = window_right.saturating_sub(window_x).max(1);
             let window_h = window_bottom.saturating_sub(window_y).max(1);
             let band = LawBand::new(self, window_w, window_h, "dye_law_band", None);
@@ -215,12 +194,13 @@ impl WgpuBackend {
                 geometry: LawGeom {
                     origin_x: window_x,
                     origin_y: window_y,
-                    pitch_um: source_pitch,
                     seed: params.seed,
                     expectation: params.expectation,
                     monochrome: params.monochrome,
                     white: params.white,
                     event_area_um2: params.event_area_um2,
+                    pitch_um: source_pitch,
+                    base_px,
                 },
                 readout,
             });
@@ -244,7 +224,6 @@ impl WgpuBackend {
             )),
             pieces,
             pipes,
-            taps,
             readout_pipe,
             grid: [grid.width, grid.height, grid.width, grid.height],
             grid_origin: grid.origin_um,

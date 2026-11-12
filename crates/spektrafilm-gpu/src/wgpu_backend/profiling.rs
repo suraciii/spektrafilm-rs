@@ -33,12 +33,8 @@ pub(super) fn classify_pass(hint: GpuStage, label: Option<&str>) -> (GpuStage, G
             (S::FotufilmReadout, K::Readout)
         }
         "dye_law_readout" | "dye_readout" | "dye_response_readout" => (S::DyeReadout, K::Readout),
-        "dye_law_blur" | "dye_law_highpass" | "dye_form_h" | "dye_form_v" => {
-            (S::DyeFormation, K::Filter)
-        }
-        "dye_law_combine" | "dye_law_subtract" | "dye_law_apply" | "dye_remap" => {
-            (S::DyeFormation, K::Pointwise)
-        }
+        "dye_value" => (S::DyeFormation, K::Pointwise),
+        "dye_law_apply" | "dye_remap" => (S::DyeFormation, K::Pointwise),
         "spectral_prepare_reference" | "spectral_prepare_contract" => {
             (S::SpectralPrepare, K::Spectral)
         }
@@ -154,8 +150,8 @@ mod tests {
                 (GpuStage::FotufilmReadout, GpuPassKind::Readout),
             ),
             (
-                "dye_law_blur",
-                (GpuStage::DyeFormation, GpuPassKind::Filter),
+                "dye_value",
+                (GpuStage::DyeFormation, GpuPassKind::Pointwise),
             ),
             (
                 "dye_law_readout",

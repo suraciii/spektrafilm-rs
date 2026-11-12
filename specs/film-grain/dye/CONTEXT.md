@@ -8,7 +8,7 @@ This context defines the domain language for the film-coordinate Dye grain model
 
 **Single-record BW field**: One stochastic material-density realization for a monochrome profile. It describes record layout, not identified silver chemistry or stock calibration.
 
-**Dye correlation length**: The octave and band-limit scale of the correlated field in film coordinates. It is independent of the output grid and event area.
+**Dye correlation length**: The value-noise octave scale of the field in film coordinates. It is independent of the output grid and event area.
 
 **Dye event area**: The mass represented by one stochastic dye event. It controls count variance through the conditional count law; it is not a microscopic crystal area.
 
