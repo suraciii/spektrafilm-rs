@@ -314,7 +314,11 @@ jobs:
 
   macos:
     name: macOS
-    runs-on: macos-latest
+    # `macos-latest` currently resolves to the macos-26-arm64 pool, which is
+    # capacity-starved: jobs queue for 15 minutes and are cancelled before a
+    # runner is acquired. Pin the supported macOS 15 arm64 image until that
+    # pool recovers. See actions/runner-images image labels.
+    runs-on: macos-15
 
     steps:
       - name: Checkout
