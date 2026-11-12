@@ -282,9 +282,9 @@ impl WgpuBackend {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::gpu_helpers::scalars_to_f32;
+    use crate::gpu_helpers::{f32_to_scalars, scalars_to_f32};
     use spektrafilm_math::image::ImageBuf;
-    use spektrafilm_math::precision::from_f64;
+    use spektrafilm_math::precision::{ZERO, from_f64, to_f64};
 
     fn upload(backend: &WgpuBackend, image: &ImageBuf) -> BufferPayload {
         let pages = backend
@@ -307,12 +307,13 @@ mod tests {
         width: u32,
         height: u32,
     ) -> ImageBuf {
-        let mut values = vec![0.0f32; width as usize * height as usize * 3];
+        let mut values = vec![ZERO; width as usize * height as usize * 3];
         for page in pages {
             let readback: Vec<f32> = backend
                 .pipe
                 .readback_buffer_cancellable(&page.buffer, u64::from(page.n_pixels) * 12)
                 .unwrap();
+            let readback = f32_to_scalars(readback);
             let first = page.first_pixel as usize * 3;
             values[first..first + readback.len()].copy_from_slice(&readback);
         }
@@ -373,7 +374,7 @@ mod tests {
         let source_pitch = p.source_pitch_um;
         let origin = p.grid.origin_um;
         let pitch = p.grid.pitch_um;
-        let mut worst = 0.0f32;
+        let mut worst = 0.0f64;
         for y in 0..p.grid.height {
             for x in 0..p.grid.width {
                 let first_x = (origin[0] + x as f64 * pitch[0]) / source_pitch;
@@ -383,16 +384,16 @@ mod tests {
                     for sx in 0..2 {
                         let ix = (first_x.floor() as u32 + sx).min(63);
                         let iy = (first_y.floor() as u32 + sy).min(63);
-                        for c in 0..3 {
-                            acc[c] += spektrafilm_math::precision::to_f64(
+                        for (c, acc_c) in acc.iter_mut().enumerate() {
+                            *acc_c += spektrafilm_math::precision::to_f64(
                                 source.data[(iy as usize * 64 + ix as usize) * 3 + c],
                             );
                         }
                     }
                 }
-                for c in 0..3 {
-                    let expected = (acc[c] / 4.0) as f32;
-                    let got = out.data[((y * p.grid.width + x) * 3) as usize + c];
+                for (c, acc_c) in acc.iter().enumerate() {
+                    let expected = *acc_c / 4.0;
+                    let got = to_f64(out.data[((y * p.grid.width + x) * 3) as usize + c]);
                     worst = worst.max((expected - got).abs());
                 }
             }
@@ -425,7 +426,7 @@ mod tests {
         let source_pitch = p.source_pitch_um;
         let origin = p.grid.origin_um;
         let pitch = p.grid.pitch_um;
-        let mut worst = 0.0f32;
+        let mut worst = 0.0f64;
         for y in 0..p.grid.height {
             for x in 0..p.grid.width {
                 let first_x = (origin[0] + x as f64 * pitch[0]) / source_pitch;
@@ -453,11 +454,10 @@ mod tests {
                     let p11 = spektrafilm_math::precision::to_f64(
                         source.data[((y1 * 64 + x1) * 3) as usize + c],
                     );
-                    let expected = (p00
+                    let expected = p00
                         + (p10 - p00) * wx
-                        + ((p01 + (p11 - p01) * wx) - (p00 + (p10 - p00) * wx)) * wy)
-                        as f32;
-                    let got = out.data[((y * p.grid.width + x) * 3) as usize + c];
+                        + ((p01 + (p11 - p01) * wx) - (p00 + (p10 - p00) * wx)) * wy;
+                    let got = to_f64(out.data[((y * p.grid.width + x) * 3) as usize + c]);
                     worst = worst.max((expected - got).abs());
                 }
             }
@@ -481,10 +481,10 @@ mod tests {
         let p = params();
         let whole = run(&gpu, &image, &p, 64);
         let split = run(&gpu, &image, &p, 7);
-        let mut worst = 0.0f32;
+        let mut worst = 0.0f64;
         let mut at = 0;
         for (i, (a, b)) in whole.data.iter().zip(split.data.iter()).enumerate() {
-            let d = (a - b).abs();
+            let d = (to_f64(*a) - to_f64(*b)).abs();
             if d > worst {
                 worst = d;
                 at = i;
