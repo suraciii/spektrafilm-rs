@@ -111,7 +111,9 @@ The declaration is authoritative. The implementation MUST NOT infer a color spac
 
 ### Domain and shaper
 
-A 3D LUT maps a normalized domain to output values. The domain MUST be finite and strictly ordered on every axis. The domain policy MUST be declared; `Error` is the import default, not an implicit omitted value.
+A 3D LUT maps a normalized domain to output values. The domain MUST be finite and strictly ordered on every axis. The domain policy MUST be declared.
+
+`Clamp` is the import default and `Error` is the explicit strict choice. The import surfaces MUST explain both choices before the user accepts the declaration.
 
 If the input exceeds the domain, the LUT look MUST either apply a declared 1D shaper or select an explicit clamp. Silent clipping is a contract violation. An explicit clamp MUST report its clipped fraction through execution reporting.
 

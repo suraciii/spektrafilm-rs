@@ -21,8 +21,8 @@ Export and import are separate operations:
 
 ```text
 spectral film look
-  -> Export LUT… -> .cube file
-  -> Import LUT… -> LUT workflow
+  -> Export film look as .cube… -> .cube file
+  -> Import cube as look… -> LUT workflow
   -> optional Save preset
 ```
 
@@ -49,7 +49,7 @@ The header MUST identify the active workflow and the active film pair or LUT pre
 
 ## Export LUT
 
-The film workflow MUST expose **Export LUT…**. The action writes a LUT file; it MUST NOT offer an "use now", "open in LUT workflow", or "save as preset" option.
+The film workflow MUST expose **Export film look as .cube…**. The action writes a LUT file; it MUST NOT offer an "use now", "open in LUT workflow", or "save as preset" option.
 
 The export form MUST expose:
 
@@ -81,7 +81,7 @@ A failed export MUST preserve the current film image, active controls, workflow,
 
 ## Import LUT
 
-The LUT workflow MUST expose **Import LUT…**. It MUST load one 3D `.cube` file and require an explicit declaration of:
+The LUT workflow MUST expose **Import cube as look…**, **New look from cube…**, and **Replace cube…**. Each MUST load one 3D `.cube` file and require an explicit declaration of:
 
 - the LUT file path and content hash;
 - the input and output encodings;
@@ -90,9 +90,17 @@ The LUT workflow MUST expose **Import LUT…**. It MUST load one 3D `.cube` file
 - the optional shaper declaration;
 - LUT strength.
 
-A newly imported LUT starts at strength one with diffusion, halation, grade, and grain disabled. Importing MUST NOT save a preset.
+The import form MUST keep the input and output encodings, domain policy, and strength visible. It MAY place the content hash, domain values, and shaper declaration under one advanced disclosure.
 
-The import preview MUST provide the neutral gray ramp and color checker required by [LUT look](../lut-look/spec.md#comparison-and-preview). It MUST NOT auto-fit exposure, white balance, or contrast.
+The form MUST state that `.cube` files do not carry color-space metadata. The default sRGB spaces MUST be presented as an assumption, not as a file fact.
+
+The domain policy MUST default to clamp for a new import or a replacement. The form MUST expose fail as a strict option and explain both policies inline.
+
+A new look starts at strength one with diffusion, halation, grade, and grain disabled. Importing MUST NOT save a preset.
+
+**Replace cube…** MUST preserve the current LUT strength, grade enablement, grade values, and effect enablement and values. The replacement cube supplies its path, content hash, title, domain, and shaper declaration. A separate new-look action MUST reset strength and finishing values.
+
+The import preview MUST provide the neutral gray ramp and color checker required by [LUT look](../lut-look/spec.md#comparison-and-preview). It MUST NOT auto-fit exposure, white balance, or contrast. The form MUST state that this preview checks the cube declaration, not the current photograph.
 
 A missing file, malformed carrier, unsupported encoding, or invalid domain MUST fail before the LUT look becomes active. A failed import MUST preserve the current workflow and retained image.
 
@@ -175,12 +183,14 @@ A version 8 document without a valid LUT declaration MUST be rejected. A version
 
 The LUT workflow surface MUST expose:
 
-- LUT import and replace;
+- LUT import, new look, and replace;
 - the declared input and output encodings, domain, policy, shaper, and strength;
 - independent diffusion, halation, grade, and grain controls;
-- a clear empty state with **Import LUT…**.
+- a clear empty state with **Import cube as look…**.
 
-The LUT stage MUST identify the look as non-spectral.
+The LUT stage MUST identify the look as non-spectral. Action labels MUST describe their outcome: import a cube as a look, replace the cube, or export the film look as a `.cube`.
+
+The LUT look surface MUST show all three domain axes. It MUST show a persistent warning with the clipped percentage when the latest accepted clamp render clips pixels. The warning MUST appear next to the LUT controls and MUST NOT rely on a truncated header or hover text.
 
 Film, Print, and Scanner stages MUST remain reachable in the LUT workflow with their headings, stored values, an explanation, and disabled bodies collapsed by default. Expanding an inactive stage MUST NOT execute or enable it.
 
@@ -190,14 +200,17 @@ LUT diffusion, halation, grade, and grain are independent from the film-chain co
 
 Output color space, encoding, and gamut processing remain active. Output mix and CMYK ink style remain inactive film-chain operations and retain their stored values.
 
-**Export LUT…** belongs to the film workflow. It MUST NOT be presented as an editable LUT control or as a way to run film stages inside LUT mode.
+**Export film look as .cube…** belongs to the film workflow. It MUST NOT be presented as an editable LUT control or as a way to run film stages inside LUT mode.
 
 ## CLI
 
 The canonical parameter language MUST expose the workflow mode, LUT declaration, effects, grade, and LUT preset selection.
 
 - `process --preset SELECTOR` MUST resolve a LUT preset and render the LUT workflow. It MUST NOT require film or print profile selectors for that preset.
+- `process --lut PATH` MUST import one `.cube` as the LUT look in one invocation, reading the title, domain, shaper declaration, and content hash from the file. Its input and output encodings MUST default to display-encoded sRGB, its domain policy MUST default to clamp, and `--set` MUST remain available for declaration and effect edits.
+- `--lut` MUST conflict with `--preset`, `--film`, `--paper`, `--route`, `--scan-film`, and `--feature-profile`. An explicit non-lut `workflow.mode` edit MUST fail with `--lut`.
 - A LUT preset MUST NOT be combined with a film look preset, a section preset, `--film`, `--paper`, `--route`, or `--scan-film` in one invocation.
+- Dry-run JSON and text MUST report the resolved workflow mode and LUT declaration. In LUT mode they MUST NOT report film grain or other spectral stage controls as active.
 - LUT canonical leaves MUST remain addressable through `--set` and discoverable through `describe`.
 - `lut build` retains its existing LUT publication contract. It MUST NOT create or save a preset.
 - `preset list` MUST distinguish film look, LUT preset, and section kinds. `preset show` MUST validate the LUT file path and hash without reading LUT pixels into the document.
@@ -223,3 +236,7 @@ A film look preset is not made invalid by a missing LUT file. A LUT preset is no
 6. Confirm that LUT thumbnails do not prepare spectral materials and film thumbnails do not load a LUT.
 7. Confirm that a LUT preset and a film preset cannot be mixed in one CLI invocation, while `process --preset` can run a LUT preset without film or print selectors.
 8. Confirm that manual workflow switching preserves both control sets and clears only the active applied-preset identity.
+9. Import a cube and confirm that clamp is preselected, the color-space assumption and policy choices are explained, and the hash, domain, and shaper are available under the advanced disclosure.
+10. Replace a cube after enabling grade and effects and confirm that the strength and finishing values survive; confirm that a new import resets them.
+11. Render a clamp look outside its domain and confirm that the LUT controls show the full clipped warning with its percentage.
+12. Run `process --lut look.cube --dry-run` in JSON and text and confirm that LUT mode, the declaration, and inactive film stages are reported without active film grain.

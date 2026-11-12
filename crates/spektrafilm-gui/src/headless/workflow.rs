@@ -269,9 +269,10 @@ fn lut_import_previews_at_the_bounded_size_and_preserves_the_declaration() {
         .switch_workflow(spektrafilm_core::params::WorkflowMode::Lut);
     h.run_steps(6);
     click(h, "Import");
-    h.state_mut().params.lut_look.domain_policy =
-        spektrafilm_core::lut_look::LutDomainPolicy::Clamp;
-    h.state_mut().mark_parameters_changed();
+    assert_eq!(
+        h.state().params.lut_look.domain_policy,
+        spektrafilm_core::lut_look::LutDomainPolicy::Clamp
+    );
 
     let bounded = preview(h);
     assert_eq!((bounded.width, bounded.height), (128, 64));
@@ -291,5 +292,100 @@ fn lut_import_previews_at_the_bounded_size_and_preserves_the_declaration() {
     assert_eq!(
         h.state().params.workflow.mode,
         spektrafilm_core::params::WorkflowMode::Lut
+    );
+}
+
+#[test]
+fn lut_import_dialog_explains_clamp_spaces_and_advanced_declaration() {
+    let mut s = session();
+    let h = &mut s.harness;
+    let cube = s.directory.path().join("dialog.cube");
+    std::fs::write(
+        &cube,
+        "TITLE \"dialog\"\nLUT_3D_SIZE 2\nDOMAIN_MIN 0 0 0\nDOMAIN_MAX 1 1 1\n\
+         0 0 0\n1 0 0\n0 1 0\n1 1 0\n0 0 1\n1 0 1\n0 1 1\n1 1 1\n",
+    )
+    .unwrap();
+    script(h, chooser::ChooserResult::Scripted(cube));
+    h.state_mut()
+        .switch_workflow(spektrafilm_core::params::WorkflowMode::Lut);
+    h.run_steps(8);
+    assert!(h.query_by_label("Clamp and report").is_some());
+    assert!(h.query_by_label("Fail before output").is_some());
+    assert!(h.query_by_label("Advanced declaration").is_some());
+    assert!(
+        h.query_all_by_label_contains("does not carry color-space metadata")
+            .next()
+            .is_some()
+    );
+    assert!(h.query_by_label("Cancel").is_some());
+}
+
+#[test]
+fn replacing_a_cube_preserves_finishing_and_reports_clipping_in_the_lut_section() {
+    let mut s = session();
+    let h = &mut s.harness;
+    h.state_mut().diagnostics.mode = spektrafilm_core::telemetry::CollectionMode::Off;
+    let cube = |name: &str, minimum: f64, maximum: f64| {
+        let path = s.directory.path().join(name);
+        std::fs::write(
+            &path,
+            format!(
+                "TITLE \"{name}\"\nLUT_3D_SIZE 2\nDOMAIN_MIN {minimum} {minimum} {minimum}\nDOMAIN_MAX {maximum} {maximum} {maximum}\n\
+                 0 0 0\n1 0 0\n0 1 0\n1 1 0\n0 0 1\n1 0 1\n0 1 1\n1 1 1\n"
+            ),
+        )
+        .unwrap();
+        path
+    };
+    let first = cube("first.cube", 0.0, 1.0);
+    h.state_mut().params.lut_look = spektrafilm_core::lut_look::LutLookParams::from_cube(
+        &first,
+        spektrafilm_core::lut_look::LutSpace::Srgb,
+        spektrafilm_core::lut_look::LutSpace::Srgb,
+        spektrafilm_core::lut_look::LutDomainPolicy::Clamp,
+    )
+    .unwrap();
+    h.state_mut()
+        .switch_workflow(spektrafilm_core::params::WorkflowMode::Lut);
+    h.run_steps(3);
+    await_input(h);
+
+    h.state_mut().params.lut_look.strength = 0.4;
+    h.state_mut().params.lut_look.grade_active = true;
+    h.state_mut().params.lut_look.grade.contrast = 0.3;
+    h.state_mut().params.lut_look.diffusion.active = true;
+    h.state_mut().mark_parameters_changed();
+
+    let second = cube("second.cube", 0.1, 0.9);
+    script(h, chooser::ChooserResult::Scripted(second.clone()));
+    h.state_mut().begin_import_lut(true);
+    h.run_steps(6);
+    click(h, "Import");
+
+    let params = &h.state().params.lut_look;
+    assert_eq!(params.path, second);
+    assert_eq!(params.strength, 0.4);
+    assert!(params.grade_active);
+    assert_eq!(params.grade.contrast, 0.3);
+    assert!(params.diffusion.active);
+    assert_eq!(
+        params.domain_policy,
+        spektrafilm_core::lut_look::LutDomainPolicy::Clamp
+    );
+
+    let _ = preview(h);
+    assert!(h.state().lut_clipped_fraction.is_some());
+    navigate_stage(h, controls::Stage::Look);
+    h.run_steps(3);
+    assert!(
+        h.query_all_by_label_contains("LUT input clamped")
+            .next()
+            .is_some()
+    );
+    h.state_mut().mark_parameters_changed();
+    assert!(
+        h.state().lut_clipped_fraction.is_none(),
+        "a changed parameter invalidates the accepted clipping report"
     );
 }

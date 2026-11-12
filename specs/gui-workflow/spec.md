@@ -132,7 +132,7 @@ The window has three regions and one header.
 - The adjustment inspector MUST NOT contain image-analysis controls or plots.
 - Application settings and Export own their separate editors under [Stage and surface ownership](#stage-and-surface-ownership).
 - The preset browser occupies the left region and is collapsible. Its width and expanded state follow [the preset browser boundary](../presets/design.md#boundaries); browser interaction and state follow [Presets](../presets/spec.md#browser-interaction) and [browser state ownership](../presets/design.md#browser-state-ownership).
-- The window header spans the three regions. It owns Open image, Undo, Redo, application settings, independent Export actions, and the film workflow's **Export LUT…** action.
+- The window header spans the three regions and owns Open image, Undo, Redo, application settings, and independent image-export actions. The film workflow's **Export film look as .cube…** action belongs to the Look stage.
 - It shows the accepted source, the active workflow, and either the current film and print profiles or the current LUT preset as read-only context. Status ownership follows [Labels and surfaces](#labels-and-surfaces).
 - Scan and Save remain reachable from a persistent action area without opening an inspector module.
 
@@ -218,7 +218,9 @@ The Grain module MUST NOT be presented as a global effects module or shared with
 
 Halation, Camera diffusion, Enlarger diffusion, and Print viewing glare remain at their physical stage owners. They MUST NOT be combined into one Bloom or Glow module.
 
-The film workflow MUST expose **Export LUT…** as a header action and the LUT workflow MUST expose **Import LUT…** in the LUT look stage under [LUT workflow](../lut-workflow/spec.md). Export MUST write a `.cube` file and MUST NOT import it, apply it, create a preset, or switch workflow. It MUST NOT execute spectral film stages inside LUT mode.
+The film workflow MUST expose **Export film look as .cube…** in the Look stage. The LUT workflow MUST expose **Import cube as look…**, **New look from cube…**, and **Replace cube…** in the LUT look stage under [LUT workflow](../lut-workflow/spec.md).
+
+Export MUST write a `.cube` file and MUST NOT import it, apply it, create a preset, or switch workflow. It MUST NOT execute spectral film stages inside LUT mode.
 
 The film Tone & Color group remains owned by Scan and becomes inactive in LUT mode with its stored values. The LUT look's Grade group is a separate LUT payload; neither is a second editable copy of the other.
 

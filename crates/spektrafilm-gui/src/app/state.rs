@@ -67,6 +67,9 @@ pub(crate) struct App {
     pub(crate) export_dialog: ExportDialog,
     pub(crate) lut_import: Option<super::lut::LutImportDraft>,
     pub(crate) lut_export: Option<super::lut::LutExportDraft>,
+    /// Clipped fraction from the latest accepted LUT-mode render. Transient;
+    /// cleared when parameters or input change.
+    pub(crate) lut_clipped_fraction: Option<f64>,
     pub(crate) input_epoch: u64,
     /// Latest accepted floating output, shared with background viewing workers.
     pub(crate) output_image: Option<Arc<ImageBuf>>,
@@ -342,6 +345,7 @@ impl App {
             export_dialog: ExportDialog::default(),
             lut_import: None,
             lut_export: None,
+            lut_clipped_fraction: None,
             input_epoch: 0,
             output_image: None,
             output_retained: None,
@@ -517,6 +521,7 @@ impl App {
     }
 
     pub(crate) fn mark_parameters_changed(&mut self) {
+        self.lut_clipped_fraction = None;
         self.parameter_revision = self.parameter_revision.wrapping_add(1);
         self.dirty = true;
     }
@@ -659,6 +664,7 @@ impl App {
         self.export_dialog = ExportDialog::default();
         self.lut_import = None;
         self.lut_export = None;
+        self.lut_clipped_fraction = None;
         self.presets = presets::Browser::new(
             &state.sections,
             spektrafilm_core::presets::PresetLibrary::new(

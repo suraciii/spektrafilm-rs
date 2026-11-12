@@ -220,26 +220,26 @@ fn resolve_lut(
         .map(|source| ParameterEdits::parse(source).map_err(|e| format!("--set {source:?}: {e}")))
         .collect::<Result<_, _>>()?;
     let mut declarations = baseline_declarations(request.params_file)?;
-    for (source, edits) in request.sources.iter().zip(&parsed_sources) {
+    let mut winning = BTreeMap::new();
+    for (index, (source, edits)) in request.sources.iter().zip(&parsed_sources).enumerate() {
         if request.input_is_raw {
             edits
                 .validate_raw_input()
                 .map_err(|e| format!("--set {source:?}: {e}"))?;
         }
-        for path in edits.paths() {
+        let origin = DeclarationSource {
+            kind: "set".into(),
+            option: Some("--set".into()),
+            index: Some(index + 1),
+            path: ParameterEdits::file_path(source)
+                .map(absolute_path)
+                .transpose()?,
+        };
+        for (path, value) in edits.values() {
             if matches!(path, "io.input_color_space" | "io.input_cctf_decoding") {
-                declarations.insert(
-                    path.to_owned(),
-                    DeclarationSource {
-                        kind: "set".into(),
-                        option: Some("--set".into()),
-                        index: None,
-                        path: ParameterEdits::file_path(source)
-                            .map(absolute_path)
-                            .transpose()?,
-                    },
-                );
+                declarations.insert(path.to_owned(), origin.clone());
             }
+            winning.insert(path.to_owned(), (value.clone(), origin.clone()));
         }
         edits.apply(&mut params)?;
     }
@@ -290,6 +290,15 @@ fn resolve_lut(
     // The selected LUT preset owns the workflow; canonical leaf edits may
     // change its declaration and effects, not turn the invocation into a film
     // render with placeholder carriers.
+    if preset.is_some()
+        && winning
+            .get("workflow.mode")
+            .is_some_and(|(requested, _)| requested.as_str() != Some("lut"))
+    {
+        return Err(
+            "a LUT preset or --lut conflicts with an explicit non-lut workflow.mode edit".into(),
+        );
+    }
     params.workflow.mode = crate::lut_look::WorkflowMode::Lut;
     params.workflow.route = "input".into();
     params.io.scan_film = false;
@@ -328,6 +337,42 @@ fn resolve_lut(
             cctf_decoding: declaration_source("io.input_cctf_decoding"),
         },
     };
+    let effective_params = serde_json::to_value(&params).map_err(|e| e.to_string())?;
+    let edits = winning
+        .into_iter()
+        .map(|(path, (requested, source))| {
+            let effective = lookup(&effective_params, &path)
+                .cloned()
+                .unwrap_or(Value::Null);
+            let override_option = match path.as_str() {
+                "io.input_color_space" if request.input_color_space.is_some() => {
+                    Some("--input-color-space")
+                }
+                "io.input_cctf_decoding" if request.input_cctf_decoding.is_some() => {
+                    Some("--input-cctf-decoding")
+                }
+                "scanner.scan_output" if request.scan_output.is_some() => Some("--scan-output"),
+                _ => None,
+            };
+            let (status, reason) = classify_edit(
+                &path,
+                &requested,
+                &effective,
+                override_option,
+                &params,
+                None,
+                None,
+            );
+            EditFeedback {
+                path,
+                requested,
+                effective,
+                source,
+                status,
+                reason,
+            }
+        })
+        .collect();
     Ok(ResolvedProcessParams {
         film,
         print,
@@ -335,7 +380,7 @@ fn resolve_lut(
         print_name: String::new(),
         params,
         input_declaration,
-        edits: Vec::new(),
+        edits,
         feature_profiles: Vec::new(),
     })
 }

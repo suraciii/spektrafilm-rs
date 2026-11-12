@@ -548,6 +548,46 @@ fn description(path: &str) -> Option<&'static str> {
         "film_render.grain.rms_granularity" => Some(
             "RMS granularity is distinct from Procedural Amount: Spektra derives statistical particle area from the film density curves; Dye uses relative strength G to scale per-channel event area, not a certified optical RMS target.",
         ),
+        "workflow.mode" => Some(
+            "Exclusive render workflow: film runs the spectral chain; lut runs one imported external cube and does not load film or print materials.",
+        ),
+        "lut_look.path" => Some(
+            "External .cube file used by the LUT workflow; the file is not embedded in presets or GUI state.",
+        ),
+        "lut_look.sha256" => Some(
+            "Lowercase SHA-256 of the external LUT file; a changed or missing file fails validation.",
+        ),
+        "lut_look.title" => Some("Optional title carried by the .cube metadata."),
+        "lut_look.input_space" | "lut_look.output_space" => Some(
+            "Declared LUT transport primaries and transfer; never inferred from the file name or image.",
+        ),
+        "lut_look.domain_min" | "lut_look.domain_max" => Some(
+            "Declared per-channel input domain from the .cube header; domains must be finite and strictly ordered.",
+        ),
+        "lut_look.domain_policy" => Some(
+            "fail stops the render outside the declared domain; clamp limits each channel to the domain edge and reports the clipped fraction. Imports default to clamp.",
+        ),
+        "lut_look.shaper" => Some(
+            "Declared optional 1D shaper before the 3D lookup; cube_1d requires a matching LUT_1D_SIZE entry.",
+        ),
+        "lut_look.strength" => Some(
+            "LUT color-transform blend from zero (exact bypass) to one (full declared transform); active effects remain independent.",
+        ),
+        "lut_look.grade_active" => {
+            Some("Enables the optional post-LUT grade; stored grade values remain when disabled.")
+        }
+        path if path.starts_with("lut_look.grade.") => {
+            Some("Post-LUT Tone & Color response; independent from film-chain finishing.")
+        }
+        path if path.starts_with("lut_look.halation.") => Some(
+            "LUT-mode halation in linear light before the lookup; it does not read film density or a film profile.",
+        ),
+        path if path.starts_with("lut_look.diffusion.") => Some(
+            "LUT-mode diffusion in linear light before the lookup; it does not run camera or enlarger stages.",
+        ),
+        path if path.starts_with("lut_look.grain.") => {
+            Some("LUT-mode output-encoded appearance grain; it does not use film grain engines.")
+        }
         _ => None,
     }
 }

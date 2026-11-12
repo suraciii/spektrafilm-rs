@@ -232,7 +232,7 @@ impl App {
                         .button(crate::i18n::text(ui.ctx(), "surfaces.lut.import"))
                         .clicked()
                     {
-                        self.begin_import_lut();
+                        self.begin_import_lut(false);
                     }
                 } else if self.params.lut_look.path.as_os_str().is_empty() {
                     ui.weak(crate::i18n::text(ui.ctx(), "surfaces.lut.empty"));
@@ -240,7 +240,7 @@ impl App {
                         .button(crate::i18n::text(ui.ctx(), "surfaces.lut.import"))
                         .clicked()
                     {
-                        self.begin_import_lut();
+                        self.begin_import_lut(false);
                     }
                 } else {
                     ui.weak(crate::i18n::text(ui.ctx(), "surfaces.lut.non_spectral"));
@@ -248,6 +248,17 @@ impl App {
                         ui.label(&self.params.lut_look.title);
                     }
                     ui.monospace(self.params.lut_look.path.display().to_string());
+                    if let Some(fraction) = self.lut_clipped_fraction {
+                        ui.colored_label(
+                            theme::WARNING,
+                            crate::tr!(
+                                ui.ctx(),
+                                "surfaces.lut.domain_clipped",
+                                percent = format!("{:.2}", fraction * 100.0)
+                            ),
+                        );
+                    }
+                    ui.small(crate::i18n::text(ui.ctx(), "surfaces.lut.space_note"));
                     let mut changed = false;
                     changed |= ui
                         .add(
@@ -310,25 +321,30 @@ impl App {
                     ui.horizontal_wrapped(|ui| {
                         ui.label(crate::i18n::text(ui.ctx(), "surfaces.lut.domain_policy"));
                         changed |= ui
-                            .selectable_value(
+                            .radio_value(
                                 &mut self.params.lut_look.domain_policy,
-                                spektrafilm_core::lut_look::LutDomainPolicy::Fail,
-                                "fail",
+                                spektrafilm_core::lut_look::LutDomainPolicy::Clamp,
+                                crate::i18n::text(ui.ctx(), "surfaces.lut.policy_clamp"),
                             )
                             .changed();
                         changed |= ui
-                            .selectable_value(
+                            .radio_value(
                                 &mut self.params.lut_look.domain_policy,
-                                spektrafilm_core::lut_look::LutDomainPolicy::Clamp,
-                                "clamp",
+                                spektrafilm_core::lut_look::LutDomainPolicy::Fail,
+                                crate::i18n::text(ui.ctx(), "surfaces.lut.policy_fail"),
                             )
                             .changed();
                     });
+                    ui.small(crate::i18n::text(ui.ctx(), "surfaces.lut.policy_help"));
                     ui.small(format!(
-                        "{}: {:.6} .. {:.6} | {}: {}",
+                        "{}: R [{:.6}, {:.6}], G [{:.6}, {:.6}], B [{:.6}, {:.6}] | {}: {}",
                         crate::i18n::text(ui.ctx(), "surfaces.lut.domain"),
                         self.params.lut_look.domain_min[0],
                         self.params.lut_look.domain_max[0],
+                        self.params.lut_look.domain_min[1],
+                        self.params.lut_look.domain_max[1],
+                        self.params.lut_look.domain_min[2],
+                        self.params.lut_look.domain_max[2],
                         crate::i18n::text(ui.ctx(), "surfaces.lut.shaper"),
                         self.params.lut_look.shaper.name(),
                     ));
@@ -530,34 +546,57 @@ impl App {
                             )
                             .changed();
                     }
-                    changed |= ui
-                        .checkbox(
-                            &mut self.params.lut_look.grade_active,
-                            crate::i18n::text(ui.ctx(), "surfaces.lut.grade"),
-                        )
-                        .changed();
-                    if self.params.lut_look.grade_active {
-                        egui::CollapsingHeader::new("Grade")
-                            .id_salt("lut-grade")
-                            .show(ui, |ui| {
+                    egui::CollapsingHeader::new(crate::i18n::text(ui.ctx(), "surfaces.lut.grade"))
+                        .id_salt("lut-grade")
+                        .show(ui, |ui| {
+                            changed |= ui
+                                .checkbox(
+                                    &mut self.params.lut_look.grade_active,
+                                    crate::i18n::text(ui.ctx(), "surfaces.lut.grade_enable"),
+                                )
+                                .changed();
+                            if self.params.lut_look.grade_active {
                                 for (label, field) in [
-                                    ("Brightness", &mut self.params.lut_look.grade.brightness),
-                                    ("Contrast", &mut self.params.lut_look.grade.contrast),
-                                    ("Warmth", &mut self.params.lut_look.grade.warmth),
-                                    ("Saturation", &mut self.params.lut_look.grade.saturation),
+                                    (
+                                        "controls.finishing.brightness",
+                                        &mut self.params.lut_look.grade.brightness,
+                                    ),
+                                    (
+                                        "controls.finishing.contrast",
+                                        &mut self.params.lut_look.grade.contrast,
+                                    ),
+                                    (
+                                        "controls.finishing.warmth",
+                                        &mut self.params.lut_look.grade.warmth,
+                                    ),
+                                    (
+                                        "controls.finishing.saturation",
+                                        &mut self.params.lut_look.grade.saturation,
+                                    ),
                                 ] {
                                     changed |= ui
-                                        .add(egui::Slider::new(field, -1.0..=1.0).text(label))
+                                        .add(
+                                            egui::Slider::new(field, -1.0..=1.0)
+                                                .text(crate::i18n::text(ui.ctx(), label)),
+                                        )
                                         .changed();
                                 }
-                            });
-                    }
-                    if ui
-                        .button(crate::i18n::text(ui.ctx(), "surfaces.lut.replace"))
-                        .clicked()
-                    {
-                        self.begin_import_lut();
-                    }
+                            }
+                        });
+                    ui.horizontal(|ui| {
+                        if ui
+                            .button(crate::i18n::text(ui.ctx(), "surfaces.lut.import_new"))
+                            .clicked()
+                        {
+                            self.begin_import_lut(false);
+                        }
+                        if ui
+                            .button(crate::i18n::text(ui.ctx(), "surfaces.lut.replace"))
+                            .clicked()
+                        {
+                            self.begin_import_lut(true);
+                        }
+                    });
                     if changed {
                         controls::record_edited_path(ui.ctx(), "lut_look");
                         self.label_adjustment("Adjust LUT look");

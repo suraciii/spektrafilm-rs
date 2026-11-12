@@ -296,9 +296,9 @@ impl App {
                             "megapixels",
                             format!("{:.1}", width as f64 * height as f64 / 1e6),
                         );
-                    if let Some(fraction) =
-                        r.lut_clipped_fraction.filter(|fraction| *fraction > 0.0)
-                    {
+                    self.lut_clipped_fraction =
+                        r.lut_clipped_fraction.filter(|fraction| *fraction > 0.0);
+                    if let Some(fraction) = self.lut_clipped_fraction {
                         self.status = crate::app::Message::new("operations.lut_domain_clipped")
                             .arg("percent", format!("{:.2}", fraction * 100.0));
                     }
