@@ -42,6 +42,21 @@ fn camera(ui: &mut egui::Ui, params: &mut RuntimeParams) {
     );
 }
 
+fn print_base(ui: &mut egui::Ui, params: &mut RuntimeParams) {
+    super::show(
+        ui,
+        params,
+        &mut serde_json::Value::Null,
+        "Print base",
+        super::ScanMedium::Negative,
+        false,
+        "",
+        &mut Default::default(),
+        "D65",
+        &crate::profiles::pick_data_dir(),
+    );
+}
+
 fn preflash(ui: &mut egui::Ui, params: &mut RuntimeParams) {
     super::show(
         ui,
@@ -64,6 +79,9 @@ fn camera_rows_follow_route_without_losing_values() {
     params.camera.exposure_compensation_ev = 0.75;
     params.camera.film_format_mm = 50.0;
     let mut harness = Harness::new_ui_state(camera, params);
+    assert!(harness.query_by_label("Frame Long Edge").is_none());
+    harness.get_by_label("Capture setup").simulate_click();
+    harness.run();
     assert!(
         harness
             .get_by_label("Exposure compensation")
@@ -81,6 +99,39 @@ fn camera_rows_follow_route_without_losing_values() {
     );
     assert_eq!(harness.state().camera.exposure_compensation_ev, 0.75);
     assert_eq!(harness.state().camera.film_format_mm, 50.0);
+}
+
+#[test]
+fn print_base_rows_follow_print_interpretation_and_retain_values() {
+    let mut params = RuntimeParams::default();
+    params.workflow.route = "input > film > scan".into();
+    params.io.scan_film = true;
+    params.print_render.base.scale = 1.6;
+    let mut harness = Harness::new_ui_state(print_base, params);
+    harness.get_by_label("Base").simulate_click();
+    harness.run();
+    assert!(
+        harness.get_by_label("scale").node().is_disabled(),
+        "print base has no effect without a print interpretation"
+    );
+    assert_eq!(harness.state().print_render.base.scale, 1.6);
+
+    harness.state_mut().workflow.route = "input > film > print > scan".into();
+    harness.state_mut().io.scan_film = false;
+    harness.run();
+    assert!(!harness.get_by_label("scale").node().is_disabled());
+    assert_eq!(harness.state().print_render.base.scale, 1.6);
+
+    harness.state_mut().print_render.base.active = false;
+    harness.run();
+    assert!(harness.get_by_label("scale").node().is_disabled());
+    assert!(
+        !harness
+            .get_by_label("Enable print base")
+            .node()
+            .is_disabled(),
+        "the enable switch stays reachable so values can be restored"
+    );
 }
 
 #[test]
@@ -107,7 +158,7 @@ fn glare_selector_follows_print_readout_not_print_creation() {
     );
     assert!(
         harness
-            .get_by_label("Enable print glare")
+            .get_by_label("Simulate viewing glare")
             .node()
             .is_disabled()
     );
@@ -115,11 +166,123 @@ fn glare_selector_follows_print_readout_not_print_creation() {
     harness.run();
     assert!(
         !harness
-            .get_by_label("Enable print glare")
+            .get_by_label("Simulate viewing glare")
             .node()
             .is_disabled()
     );
     assert!(!harness.state().print_render.glare.active);
+
+    let factory = crate::state::GuiState::factory();
+    let data = crate::profiles::pick_data_dir();
+    let film = spektrafilm_core::profile::load_profile_by_name(&data, factory.film()).unwrap();
+    let print = spektrafilm_core::profile::load_profile_by_name(&data, factory.paper()).unwrap();
+    assert_eq!(
+        super::module_applicability("Glare", harness.state(), &film, Some(&print)),
+        None
+    );
+
+    harness.state_mut().print_render.glare.active = true;
+    harness.state_mut().print_render.glare.percent = 0.0;
+    harness.run();
+    assert!(
+        !harness
+            .get_by_label("Simulate viewing glare")
+            .node()
+            .is_disabled()
+    );
+    assert_eq!(
+        super::module_applicability("Glare", harness.state(), &film, Some(&print)),
+        None
+    );
+
+    harness.state_mut().debug.deactivate_stochastic_effects = true;
+    assert_eq!(
+        super::module_applicability("Glare", harness.state(), &film, Some(&print)),
+        None
+    );
+    harness.state_mut().workflow.route = "input > film > print".into();
+    harness.run();
+    assert!(
+        harness
+            .get_by_label("Simulate viewing glare")
+            .node()
+            .is_disabled()
+    );
+    assert_eq!(
+        super::module_applicability("Glare", harness.state(), &film, Some(&print)).as_deref(),
+        Some("print readout scan operation required"),
+    );
+}
+
+#[test]
+fn scanner_print_glare_status_and_adjust_locator_follow_readout() {
+    let mut params = scanner_params();
+    params.workflow.route = "print > scan".into();
+    params.print_render.glare.active = false;
+    let mut harness = Harness::new_ui_state(
+        |ui, state: &mut (RuntimeParams, Option<String>, String, bool)| {
+            crate::App::scanner_print_glare_status(
+                ui,
+                &state.0,
+                &mut state.1,
+                &mut state.2,
+                &mut state.3,
+            );
+        },
+        (params, None, "scanner".to_owned(), true),
+    );
+    assert!(
+        harness
+            .query_by_label("Print readout is a clean scan, without viewing glare.")
+            .is_some()
+    );
+
+    harness.state_mut().0.print_render.glare.active = true;
+    harness.state_mut().0.print_render.glare.percent = 0.03;
+    harness.run();
+    assert!(
+        harness
+            .query_by_label("Print readout includes viewing glare (0.03).")
+            .is_some()
+    );
+    assert!(
+        harness
+            .query_by_label("Print readout is a clean scan, without viewing glare.")
+            .is_none()
+    );
+
+    harness.state_mut().0.print_render.glare.percent = 0.0;
+    harness.run();
+    assert!(
+        harness
+            .query_by_label("Print readout includes viewing glare at 0.00, so it has no effect.")
+            .is_some()
+    );
+    assert!(
+        harness
+            .query_by_label("Print readout includes viewing glare (0.03).")
+            .is_none()
+    );
+    harness.get_by_label("Adjust").simulate_click();
+    harness.run();
+    assert_eq!(harness.state().1.as_deref(), Some("Glare"));
+    assert!(harness.state().2.is_empty());
+    assert!(!harness.state().3);
+    assert_eq!(
+        harness
+            .ctx
+            .data(|data| data.get_temp::<(String, String)>(egui::Id::new("control_focus_request"))),
+        Some(("Glare".to_owned(), "print_render.glare.active".to_owned())),
+    );
+
+    harness.state_mut().0.workflow.route = "input > film > print".into();
+    harness.run();
+    assert!(harness.query_by_label("Adjust").is_none());
+    assert!(
+        harness
+            .query_by_label("Print readout includes viewing glare at 0.00, so it has no effect.")
+            .is_none()
+    );
 }
 
 #[test]
@@ -153,34 +316,98 @@ fn film_gamma_remains_editable_for_auto_print_reference_without_film_chemistry()
             .node()
             .is_disabled()
     );
+    assert!(harness.query_by_label("Curve response").is_some());
     assert!(
-        !harness
-            .get_by_label("density curve gamma")
-            .node()
-            .is_disabled()
+        harness
+            .query_by_label(
+                "Profile gamma changes the profile density curve; Morph gamma shapes the density-curve sub-layer response. They compose."
+            )
+            .is_some()
     );
+    assert!(!harness.get_by_label("Profile gamma").node().is_disabled());
 
     harness.state_mut().enlarger.print_exposure_mode =
         spektrafilm_core::params::PrintExposureMode::Manual;
     harness.run();
-    assert!(
-        harness
-            .get_by_label("density curve gamma")
-            .node()
-            .is_disabled()
-    );
+    assert!(harness.get_by_label("Profile gamma").node().is_disabled());
     assert_eq!(harness.state().film_render.density_curve_gamma, 1.25);
 
     harness.state_mut().enlarger.print_exposure_mode =
         spektrafilm_core::params::PrintExposureMode::Auto;
     harness.run();
-    assert!(
-        !harness
-            .get_by_label("density curve gamma")
-            .node()
-            .is_disabled()
-    );
+    assert!(!harness.get_by_label("Profile gamma").node().is_disabled());
     assert_eq!(harness.state().film_render.density_curve_gamma, 1.25);
+}
+
+#[test]
+fn redundant_print_tracking_choice_is_explained() {
+    use spektrafilm_core::params::{PrintExposureEvTracking, PrintExposureMode};
+
+    let mut params = RuntimeParams::default();
+    params.workflow.route = "input > film > print > scan".into();
+    params.enlarger.print_exposure_mode = PrintExposureMode::Auto;
+    params.settings.print_exposure_ev_tracking = PrintExposureEvTracking::Always;
+    let mut harness = Harness::new_ui_state(
+        |ui, params: &mut RuntimeParams| {
+            super::show(
+                ui,
+                params,
+                &mut serde_json::Value::Null,
+                "Enlarger",
+                super::ScanMedium::Negative,
+                false,
+                "",
+                &mut Default::default(),
+                "D65",
+                &crate::profiles::pick_data_dir(),
+            );
+        },
+        params,
+    );
+    harness.run();
+    assert!(
+        harness
+            .query_by_label(
+                "In auto mode, Always is equivalent to Follow exposure mode; this choice is disabled."
+            )
+            .is_some()
+    );
+
+    harness.state_mut().enlarger.print_exposure_mode = PrintExposureMode::Manual;
+    harness.state_mut().settings.print_exposure_ev_tracking = PrintExposureEvTracking::FollowMode;
+    harness.run();
+    assert!(
+        harness
+            .query_by_label(
+                "In manual mode, Follow exposure mode is equivalent to Never; this choice is disabled."
+            )
+            .is_some()
+    );
+}
+
+#[test]
+fn conversion_contrast_search_renders_its_operator_editor() {
+    let params = scanner_params();
+    let mut harness = Harness::new_ui_state(
+        |ui, params: &mut RuntimeParams| {
+            let mut cache = Default::default();
+            super::show(
+                ui,
+                params,
+                &mut serde_json::Value::Null,
+                "Scanner",
+                super::ScanMedium::Negative,
+                false,
+                "Conversion contrast",
+                &mut cache,
+                "D55",
+                &crate::profiles::pick_data_dir(),
+            );
+        },
+        params,
+    );
+    harness.run();
+    assert!(harness.query_by_label("Conversion contrast").is_some());
 }
 
 #[cfg(test)]
@@ -471,17 +698,18 @@ mod row_layout {
     use super::*;
     use egui_kittest::kittest::Queryable;
 
-    /// A parameter row presents its label before its value, on one line, and
-    /// every row on a page aligns to one label column.
+    /// Labels precede their editors, including within nested capture setup.
+    /// Editors retain the same right-aligned value column across the group.
     #[test]
     fn a_row_presents_its_label_before_its_value_on_one_line() {
         let params = scanner_params();
-        let harness = Harness::new_ui_state(camera, params);
+        let mut harness = Harness::new_ui_state(camera, params);
+        harness.get_by_label("Capture setup").simulate_click();
+        harness.run();
         // The label sits left of its editor and shares its vertical band, so
         // the pair reads as one row rather than a stacked pair.
         let rows = ["Frame Long Edge", "Exposure compensation"];
-        let mut left_edges: Vec<f64> = Vec::new();
-        let mut value_lefts: Vec<f64> = Vec::new();
+        let mut value_rights: Vec<f64> = Vec::new();
         for label in rows {
             let node = harness.get_by_label(label);
             let rect = node.raw_bounds().expect("row editor has no bounds");
@@ -496,23 +724,12 @@ mod row_layout {
             );
             let shared = label_rect.y0 < rect.y1 && rect.y0 < label_rect.y1;
             assert!(shared, "{label}: label and value must share one line");
-            left_edges.push(label_rect.x0);
-            value_lefts.push(rect.x0);
+            value_rights.push(rect.x1);
         }
-        // One label column per page: the labels share a left edge and the values
-        // share a left edge, so rows align rather than float independently.
-        let label_left = left_edges[0];
-        let value_left = value_lefts[0];
-        for (i, (l, v)) in left_edges.iter().zip(value_lefts.iter()).enumerate() {
-            assert!(
-                (l - label_left).abs() < 1.0,
-                "row {i} label column drifted: {l} vs {label_left}"
-            );
-            assert!(
-                (v - value_left).abs() < 1.0,
-                "row {i} value column drifted: {v} vs {value_left}"
-            );
-        }
+        assert!(
+            (value_rights[0] - value_rights[1]).abs() < 1.0,
+            "value columns must align"
+        );
     }
 
     /// The preflash exposure row carries the longest unit in the vocabulary, so
@@ -592,7 +809,7 @@ mod operator_interactions {
             ("Finished exposure", "1.25"),
             ("Warmth", "0.35"),
             ("Green–magenta tint", "-0.20"),
-            ("Contrast", "1.40"),
+            ("Conversion contrast", "1.40"),
         ] {
             edit(&mut h, label, value);
         }
@@ -787,7 +1004,7 @@ mod finishing_interactions {
     use super::*;
 
     #[test]
-    fn row_resets_are_scoped_and_expand_is_collapsed() {
+    fn finishing_rows_have_no_reset_and_range_starts_closed() {
         let mut params = RuntimeParams::default();
         params.finishing.brightness = 0.4;
         params.finishing.contrast = 0.3;
@@ -811,18 +1028,14 @@ mod finishing_interactions {
             params,
         );
         assert!(h.query_by_label("Black reference").is_none());
-        h.get_by_label("Reset Brightness").simulate_click();
+        assert!(h.query_by_label("Reset Brightness").is_none());
+        h.get_by_label("Range").simulate_click();
         h.run();
-        assert_eq!(h.state().finishing.brightness, 0.0);
+        assert!(h.query_by_label("Black reference").is_some());
+        assert!(h.query_by_label("Reset Black reference").is_none());
+        assert_eq!(h.state().finishing.brightness, 0.4);
         assert_eq!(h.state().finishing.contrast, 0.3);
         assert!(h.state().finishing.expand.enabled);
-        h.get_by_label("Expand").simulate_click();
-        h.run();
-        h.get_by_label("Reset Black reference").simulate_click();
-        h.run();
-        assert_eq!(h.state().finishing.expand.black, 0.0);
-        assert!(h.state().finishing.expand.enabled);
-        assert_eq!(h.state().finishing.contrast, 0.3);
     }
 
     #[test]
@@ -844,7 +1057,7 @@ mod finishing_interactions {
             },
             RuntimeParams::default(),
         );
-        h.get_by_label("Expand").simulate_click();
+        h.get_by_label("Range").simulate_click();
         h.run();
         super::super::take_edited_paths(&h.ctx);
         h.get_by_label("Enable Expand").simulate_click();
@@ -854,37 +1067,6 @@ mod finishing_interactions {
             super::super::take_edited_paths(&h.ctx),
             ["finishing.expand.enabled"]
         );
-    }
-
-    #[test]
-    fn reference_reset_cannot_create_an_invalid_span() {
-        let mut params = RuntimeParams::default();
-        params.finishing.expand.black = 1.1;
-        params.finishing.expand.white = 1.2;
-        let mut h = Harness::new_ui_state(
-            |ui, params| {
-                super::super::show(
-                    ui,
-                    params,
-                    &mut serde_json::Value::Null,
-                    "Finishing",
-                    super::super::ScanMedium::Paper,
-                    true,
-                    "",
-                    &mut Default::default(),
-                    "D55",
-                    &crate::profiles::pick_data_dir(),
-                );
-            },
-            params,
-        );
-        h.get_by_label("Expand").simulate_click();
-        h.run();
-        assert!(h.get_by_label("Reset White reference").node().is_disabled());
-        assert_eq!(h.state().finishing.expand.white, 1.2);
-        h.get_by_label("Reset Black reference").simulate_click();
-        h.run();
-        assert!(!h.get_by_label("Reset White reference").node().is_disabled());
     }
 
     #[test]
@@ -921,7 +1103,7 @@ mod finishing_interactions {
                 },
                 (params, Vec::new()),
             );
-        h.get_by_label("Hold finishing comparison").focus();
+        h.get_by_label("Hold Tone & Color comparison").focus();
         h.run();
         for pressed in [true, false] {
             h.input_mut().events.push(egui::Event::Key {

@@ -1,0 +1,61 @@
+name: Verification environment
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/ci/Dockerfile'
+      - '.github/workflows/verification-image.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: verification-environment-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Validate and publish environment
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    permissions:
+      contents: read
+      packages: write
+    env:
+      IMAGE: ghcr.io/suraciii/spektrafilm-verification
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build candidate
+        run: docker build --tag verification-candidate .github/ci
+      - name: Verify software GPU
+        run: |
+          mkdir -p "$RUNNER_TEMP/environment"
+          docker run --rm verification-candidate bash -c 'vulkaninfo --summary && cat /opt/verification/tools.txt' > "$RUNNER_TEMP/environment/environment.txt" 2>&1
+          cat "$RUNNER_TEMP/environment/environment.txt"
+          grep -q 'PHYSICAL_DEVICE_TYPE_CPU' "$RUNNER_TEMP/environment/environment.txt"
+      - name: Run complete gate with a cold Cargo cache
+        run: |
+          docker run --rm \
+            --mount "type=bind,src=$GITHUB_WORKSPACE,dst=/workspace" \
+            --mount "type=bind,src=$RUNNER_TEMP/environment,dst=/evidence" \
+            --workdir /workspace \
+            verification-candidate bash -c 'git config --global --add safe.directory /workspace; just verify /evidence/verification'
+      - name: Publish validated image
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          printf '%s' "$GH_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+          trap 'docker logout ghcr.io' EXIT
+          tag="$IMAGE:run-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          docker tag verification-candidate "$tag"
+          docker push "$tag"
+          docker inspect "$tag" --format '{{index .RepoDigests 0}}' > "$RUNNER_TEMP/environment/image.txt"
+          cat "$RUNNER_TEMP/environment/image.txt" >> "$GITHUB_STEP_SUMMARY"
+      - name: Preserve environment evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: verification-environment
+          path: ${{ runner.temp }}/environment
+          if-no-files-found: warn

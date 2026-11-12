@@ -330,7 +330,7 @@ fn enlarger_diffusion_print_fence_matches_cpu() {
 /// This inherited whole-pipeline budget includes upstream film conditioning;
 /// sampler draw order and f32 storage boundaries have separate device checks.
 #[test]
-fn spektra_grain_resident_matches_cpu() {
+fn spektra_grain_resident_statistically_matches_cpu() {
     use spektrafilm_math::precision::from_f64;
 
     let gpu = spektrafilm_gpu::test_support::adapter();
@@ -1102,9 +1102,9 @@ fn explicit_gpu_request_runs_the_dye_field_on_the_device() {
 }
 
 /// Both the profile's three-sublayer model and the single-curve model must
-/// execute on the selected device with the sequential NumPy draw order.
+/// execute on the selected device with the PCG32 realization.
 #[test]
-fn spektra_mt19937_grain_runs_on_the_device() {
+fn spektra_pcg_grain_runs_on_the_device() {
     use spektrafilm_math::precision::from_f64;
 
     let gpu = spektrafilm_gpu::test_support::adapter();
@@ -1124,7 +1124,6 @@ fn spektra_mt19937_grain_runs_on_the_device() {
         params.io.output_cctf_encoding = false;
         params.io.output_gamut_compress.algorithm = "off".into();
         params.camera.auto_exposure = false;
-        params.settings.use_fast_stats = false;
         params.film_render.grain.active = true;
         params.film_render.grain.engine = crate::params::grain::GrainEngine::Spektra;
         params.film_render.grain.rms_granularity = [6.0, 8.0, 10.0];
@@ -1142,7 +1141,7 @@ fn spektra_mt19937_grain_runs_on_the_device() {
                 .observations
                 .iter()
                 .any(|stage| stage.executor == Some(spektrafilm_backend::telemetry::Executor::Cpu)),
-            "the MT19937 regime executed CPU image arithmetic (single_curve={single_curve}): {:?}",
+            "the PCG GPU path executed CPU image arithmetic (single_curve={single_curve}): {:?}",
             snapshot.observations
         );
 
@@ -1165,11 +1164,11 @@ fn spektra_mt19937_grain_runs_on_the_device() {
         let mean = sum / out_cpu.data.len() as f64;
         assert!(
             mean < 5e-2,
-            "MT19937 grain mean divergence (single_curve={single_curve}): {mean}"
+            "CPU MT vs GPU PCG mean divergence (single_curve={single_curve}): {mean}"
         );
         assert!(
             max_diff < 5e-1,
-            "MT19937 grain max divergence (single_curve={single_curve}): {max_diff}"
+            "CPU MT vs GPU PCG max divergence (single_curve={single_curve}): {max_diff}"
         );
     }
 }
@@ -1196,21 +1195,20 @@ fn deferred_crop_dye_with_downstream_optics_keeps_the_resident_route() {
     );
 }
 
-/// The experimental mass-law selector has no device count law. Both explicit
-/// and automatically selected GPU requests reject it before host arithmetic;
-/// CPU remains the supported executor. The selector is process-global, so
-/// this case runs in a child process.
+/// The retired mass-law selector must fail loudly instead of silently
+/// changing the field. The selector is process-global, so this case runs in
+/// a child process.
 #[test]
-fn experimental_mass_law_keeps_the_host_field() {
+fn retired_mass_law_selector_fails_loudly() {
     let output = std::process::Command::new(std::env::current_exe().unwrap())
         .args([
             "--exact",
-            "pipeline::resident::tests::experimental_mass_law_child",
+            "pipeline::resident::tests::retired_mass_law_child",
             "--nocapture",
         ])
         .env("SPEKTRAFILM_GRAIN_DYE_MASS_LAW", "two_class")
         .output()
-        .expect("run the mass-law child case");
+        .expect("run the retired mass-law child case");
     assert!(
         output.status.success(),
         "mass-law child case failed:\nstdout:\n{}\nstderr:\n{}",
@@ -1219,59 +1217,23 @@ fn experimental_mass_law_keeps_the_host_field() {
     );
 }
 
-/// Child of `experimental_mass_law_keeps_the_host_field`; skipped unless
-/// the selector is set (the suite runs it directly as well).
+/// Child of `retired_mass_law_selector_fails_loudly`; skipped unless the
+/// selector is set (the suite runs it directly as well).
 #[test]
-fn experimental_mass_law_child() {
+fn retired_mass_law_child() {
     if std::env::var("SPEKTRAFILM_GRAIN_DYE_MASS_LAW").as_deref() != Ok("two_class") {
         eprintln!("skipped: run through the parent case with the mass-law selector set");
         return;
     }
     let dir = data_dir();
     let film = crate::profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();
-    let print = crate::profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap();
     let params = dye_fence_params();
-    // The capability output names the host field and its reason.
-    assert_eq!(
-        crate::stages::grain_dye::effective_field_backend(&params, true),
-        "cpu"
-    );
-    let note = crate::stages::grain_dye::effective_backend_note(&film, &params, true);
+    let error = crate::stages::grain_dye::resolve(&film, &params)
+        .expect_err("the retired selector must name the removed law");
     assert!(
-        note.contains("MASS_LAW") && note.contains("resident chain"),
-        "{note}"
+        error.contains("SPEKTRAFILM_GRAIN_DYE_MASS_LAW") && error.contains("retired"),
+        "{error}"
     );
-    let pipeline = Pipeline::new_with_spectral(film, print, params, &dir).unwrap();
-    assert!(matches!(
-        pipeline.resident_decision(),
-        ResidentDecision::UseResident
-    ));
-    let image = comparison_image(8);
-    {
-        // Each adapter owns the device lock for its lifetime, so the two
-        // devices in this test cannot be alive at the same time.
-        let gpu = spektrafilm_gpu::test_support::explicit_adapter();
-        let err = pipeline
-            .clone()
-            .with_params_with_backend(pipeline.params.clone(), gpu.backend())
-            .unwrap()
-            .process(image.clone(), gpu.backend())
-            .expect_err("explicit GPU must name the host field");
-        assert!(
-            err.contains("selected GPU") && err.contains("film grain distribution"),
-            "{err}"
-        );
-    }
-    // Selection policy is independent of the unsupported count law: an
-    // automatically selected GPU must also fail instead of entering a fence.
-    let auto = spektrafilm_gpu::test_support::adapter();
-    let err = pipeline
-        .clone()
-        .with_params_with_backend(pipeline.params.clone(), auto.backend())
-        .unwrap()
-        .process(image, auto.backend())
-        .expect_err("automatically selected GPU must name the host field");
-    assert!(err.contains("film grain distribution"), "{err}");
 }
 
 /// Camera optical diffusion runs on the resident chain as an assembled
@@ -1586,6 +1548,37 @@ fn resident_negative_matches_cpu_per_stage() {
     assert!(
         mean < 5e-2 && max_diff < 5e-1,
         "negative resident parity: mean={mean:.6} max={max_diff:.6}"
+    );
+}
+
+#[test]
+fn resident_negative_autoexposure_matches_cpu_film_raw_metering() {
+    let gpu = spektrafilm_gpu::test_support::adapter();
+    let dir = data_dir();
+    let film = crate::profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();
+    let print = crate::profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap();
+    let mut params = resident_parity_params(16);
+    params.camera.auto_exposure = true;
+    params.camera.exposure_compensation_ev = 0.0;
+    let pipeline = Pipeline::new_with_spectral(film, print, params, &dir).unwrap();
+    assert!(matches!(
+        pipeline.resident_decision(),
+        ResidentDecision::UseResident
+    ));
+    let image = comparison_image(16);
+    let gpu_out = pipeline
+        .clone()
+        .with_params_with_backend(pipeline.params.clone(), gpu.backend())
+        .unwrap()
+        .process(image.clone(), gpu.backend())
+        .unwrap();
+    let cpu_out = pipeline
+        .process(image, &spektrafilm_backend::cpu_backend::CpuBackend)
+        .unwrap();
+    let (mean, max_diff) = parity_metrics(&gpu_out, &cpu_out);
+    assert!(
+        mean < 5e-2 && max_diff < 5e-1,
+        "auto-exposure resident parity: mean={mean:.6} max={max_diff:.6}"
     );
 }
 

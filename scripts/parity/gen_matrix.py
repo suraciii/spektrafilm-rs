@@ -194,7 +194,6 @@ RUNTIME_FIELDS = {
         "use_enlarger_lut": (S, None, "printing.rs:201-215"),
         "use_scanner_lut": (S, None, "scanning/spectral.rs::scan_spectral_rgb"),
         "lut_resolution": (S, None, "printing.rs:214; scanning/spectral.rs::scan_spectral_rgb"),
-        "use_fast_stats": (S, None, "filming.rs:557"),
         "preview_max_size": (S, None, "runtime.rs:133-141"),
         "preview_mode": (S, None, "params_builder.rs:61-73"),
         "neutral_print_filters_from_database": (S, None, "neutral_filters.rs"),
@@ -240,7 +239,6 @@ AUDIT_RUNTIME_STATUSES = {
     "settings.spectral_gaussian_blur": UNREAD,
     "settings.use_enlarger_lut": UNREAD,
     "settings.lut_resolution": UNREAD,
-    "settings.use_fast_stats": UNREAD,
     "settings.preview_max_size": UNREAD,
     "settings.preview_mode": UNREAD,
 }
@@ -258,7 +256,7 @@ GUI_ACTIONS = [
     ("apply_film_profile_defaults", "film stock change re-applies stock specifics", DIVERGENT, 3),
     ("run_preview", "preview render through resize_for_preview (skimage order=1 anti-aliased)", DIVERGENT, 16),
     ("run_scan", "full-resolution simulation", ABSENT, 12),
-    ("scan_for_print", "force scanner corrections/glare and restore transient snapshot", ABSENT, 12),
+    ("scan_for_print", "force scanner corrections/glare and restore transient snapshot", RETIRED, None),
     ("request_auto_preview", "auto-preview request from a runtime editor", DIVERGENT, 11),
     ("report_display_transform_status", "napari display transform toggle", ABSENT, 12),
     ("set_gray_18_canvas", "18% gray canvas background", ABSENT, 12),
@@ -640,10 +638,11 @@ def gui_evidence(path):
 
 def gui_action_entry(action, desc, status, owner, evidence):
     entry = {"description": desc, **integration_entry(status, owner, "",
-        "crates/spektrafilm-gui/src/main.rs; state.rs; controls.rs; display.rs")}
+        "crates/spektrafilm-gui/src/main.rs; state.rs; controls.rs; display.rs",
+        audit_status=AUDIT_GUI_STATUSES.get(action))}
     rows = [row for row in evidence.get("records", [])
             if row.get("parity_action") == action]
-    if rows:
+    if rows and status != RETIRED:
         entry.update(rust_status="verified_exercised_path",
                      verification="Named native-window assertion; see measured_evidence.",
                      measured_evidence=rows, evidence_report_sha256=evidence["report_sha256"])

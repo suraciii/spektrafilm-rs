@@ -26,7 +26,7 @@ The product MUST describe this feature as a style simulation. It MUST NOT claim 
 - The feature MUST accept output-referred RGB with explicit primaries, white point, and transfer state. Linear encoding MUST NOT imply scene-referred exposure.
 - The feature MUST run once after the base workflow and its scanner-domain effects, before output publication:
 
-  The [film-chain order](../film-chain/spec.md#contract) includes eligible [common finishing](../finishing/design.md#color-and-order) before output gamut processing. CMYK ink style remains downstream of scanner-domain effects and upstream of output mix.
+  The [film-chain order](../film-chain/spec.md#contract) includes eligible [Tone & Color](../finishing/design.md#color-and-order) before output gamut processing. CMYK ink style remains downstream of scanner-domain effects and upstream of output mix.
 
 - Existing material controls run at their eligible exposure and development stages before scanning. They MUST NOT alter CMYK ink style's definition, Strength, or enablement.
 - Overall output mixing follows CMYK ink style in common linear output RGB. Material processing and CMYK ink style MUST each run once.

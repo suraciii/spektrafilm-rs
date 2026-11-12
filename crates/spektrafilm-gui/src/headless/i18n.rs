@@ -69,6 +69,108 @@ fn switching_language_preserves_photographic_identity_and_bilingual_search() {
         h.get_by_label("Search controls").value(),
         Some("camera.film_format_mm".into())
     );
+
+    reveal_control(h, "workflow.route");
+    choose(h, "Film route", "input > film > print > scan");
+    reveal_control(h, "finishing.brightness");
+    edit(h, "Brightness", "0.35");
+    assert_eq!(h.state().params.finishing.brightness, 0.35);
+    reveal_control(h, "finishing.warmth");
+    edit(h, "Warmth", "0.2");
+    assert_eq!(h.state().params.finishing.warmth, 0.2);
+    reveal_control(h, "workflow.route");
+    choose(h, "Film route", "input");
+    let inactive = h.state().params.clone();
+    let sections = h.state().gui_state.sections.clone();
+    let revision = h.state().parameter_revision;
+    assert!(h.state().can_undo());
+    click(h, "Only modified");
+    for (preference, search, label, warmth) in [
+        (
+            LanguagePreference::English,
+            "Search controls",
+            "Brightness",
+            "Warmth",
+        ),
+        (
+            LanguagePreference::SimplifiedChinese,
+            "搜索控件",
+            "明暗",
+            "冷暖",
+        ),
+        (
+            LanguagePreference::English,
+            "Search controls",
+            "Brightness",
+            "Warmth",
+        ),
+    ] {
+        language(h, preference);
+        for query in [
+            "Tone & Color",
+            "影调与色彩",
+            "Brightness",
+            "明暗",
+            "finishing.brightness",
+        ] {
+            h.get_by_label(search).focus();
+            h.step();
+            h.press_key_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+            h.get_by_label(search).type_text(query);
+            h.run_steps(3);
+            assert_eq!(
+                h.get_by_label(label)
+                    .value()
+                    .unwrap()
+                    .parse::<f64>()
+                    .unwrap(),
+                0.35,
+                "{query}"
+            );
+            assert_eq!(h.state().params, inactive);
+            assert_eq!(h.state().gui_state.sections, sections);
+            assert_eq!(h.state().parameter_revision, revision);
+            assert!(h.state().can_undo());
+        }
+        for query in ["Warmth", "冷暖", "finishing.warmth"] {
+            h.get_by_label(search).focus();
+            h.step();
+            h.press_key_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+            h.get_by_label(search).type_text(query);
+            h.run_steps(3);
+            assert_eq!(
+                h.get_by_label(warmth)
+                    .value()
+                    .unwrap()
+                    .parse::<f64>()
+                    .unwrap(),
+                0.2,
+                "{query}"
+            );
+            assert_eq!(h.state().params, inactive);
+        }
+        h.get_by_label(search).focus();
+        h.step();
+        h.press_key_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+        h.get_by_label(search).type_text("finishing.brightness");
+        h.run_steps(3);
+    }
+    let locator = locator_label(h, "finishing.brightness");
+    click(h, &locator);
+    assert_eq!(
+        h.get_by_label("Brightness")
+            .value()
+            .unwrap()
+            .parse::<f64>()
+            .unwrap(),
+        0.35
+    );
+    assert_eq!(h.state().params, inactive);
+    click(h, "Undo");
+    assert_eq!(h.state().params.finishing.brightness, 0.35);
+    assert!(!h.get_by_label("Brightness").node().is_disabled());
+    click(h, "Redo");
+    assert_eq!(h.state().params, inactive);
 }
 
 #[test]
@@ -432,6 +534,7 @@ fn real_language_selector_retains_invalid_and_deferred_numeric_drafts() {
         let mut independent = params.clone();
         independent.camera.auto_exposure = !independent.camera.auto_exposure;
         // The suspension must not monopolize another numeric field's wheel.
+        click(h, "拍摄设置");
         h.get_by_label("画面长边").hover();
         h.step();
         h.input_mut().events.push(egui::Event::MouseWheel {

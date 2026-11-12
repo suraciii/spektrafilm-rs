@@ -131,6 +131,7 @@ impl App {
         } else {
             crate::render::Comparison::None
         };
+        let backend: std::sync::Arc<dyn spektrafilm_backend::ComputeBackend> = self.backend.clone();
         let snapshot = self
             .render_snapshot(params)
             .with_comparison(comparison)
@@ -148,7 +149,7 @@ impl App {
             },
             image,
             snapshot,
-            backend: self.backend.clone(),
+            backend,
             source_metadata: self.source_metadata.clone(),
             display_enabled: self.viewer.settings.use_display_transform,
             display_profile: self
@@ -295,6 +296,12 @@ impl App {
                             "megapixels",
                             format!("{:.1}", width as f64 * height as f64 / 1e6),
                         );
+                    self.lut_clipped_fraction =
+                        r.lut_clipped_fraction.filter(|fraction| *fraction > 0.0);
+                    if let Some(fraction) = self.lut_clipped_fraction {
+                        self.status = crate::app::Message::new("operations.lut_domain_clipped")
+                            .arg("percent", format!("{:.2}", fraction * 100.0));
+                    }
                     let output = r.output.map(Arc::new);
                     if let Some(output) = output.as_ref() {
                         self.viewer.seed_prepared_output(
@@ -323,5 +330,65 @@ impl App {
                 }
             }
         }
+    }
+}
+
+impl App {
+    /// Result identity is independent from the current worker's operation.
+    /// In particular, a pending Scan must not relabel a retained Preview.
+    fn retained_dimensions(&self) -> Option<[u32; 2]> {
+        self.output_retained
+            .as_ref()
+            .map(|image| [image.width(), image.height()])
+            .or_else(|| {
+                self.output_image
+                    .as_ref()
+                    .map(|image| [image.width, image.height])
+            })
+    }
+
+    pub(crate) fn retained_save_caption(&self, ctx: &egui::Context) -> String {
+        self.retained_dimensions().map_or_else(
+            || crate::i18n::text(ctx, "surfaces.action.save_empty").into_owned(),
+            |[width, height]| {
+                crate::tr!(
+                    ctx,
+                    "surfaces.action.save_caption",
+                    operation = self.retained_kind.map_or_else(
+                        || crate::i18n::text(ctx, "result.identity.result").into_owned(),
+                        |kind| kind.message().localized(ctx),
+                    ),
+                    width = width,
+                    height = height
+                )
+                .into_owned()
+            },
+        )
+    }
+
+    pub(crate) fn retained_result_identity(&self, ctx: &egui::Context) -> String {
+        let Some([width, height]) = self.retained_dimensions() else {
+            return crate::i18n::text(ctx, "result.identity.empty").into_owned();
+        };
+        let operation = self.retained_kind.map_or_else(
+            || crate::i18n::text(ctx, "result.identity.result").into_owned(),
+            |kind| kind.message().localized(ctx),
+        );
+        crate::tr!(
+            ctx,
+            "result.identity.summary",
+            operation = operation,
+            width = width,
+            height = height,
+            currency = crate::i18n::text(
+                ctx,
+                if self.accepted_frame_is_stale() {
+                    "result.identity.stale"
+                } else {
+                    "result.identity.current"
+                }
+            )
+        )
+        .into_owned()
     }
 }

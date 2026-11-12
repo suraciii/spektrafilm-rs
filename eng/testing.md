@@ -2,9 +2,46 @@
 
 **Tests must catch meaningful failures, not serve as formalities; speed must never weaken assertions.**
 
-**PR — `ci-pr`:** Check tracked Python syntax, bytecode hygiene, documentation links and presentation, and workspace formatting; run the pure math unit tests in f32 and f64. This required gate must not restore the full workspace cache, install native libraries, compile the GUI/renderer, download image fixtures, or run native, rendering, GPU, browser, or platform acceptance. It uses a separate math-only cache with debug information disabled. Main refreshes that cache for subsequent PRs. New checks must add no more than 30 seconds, including preparation, compilation, linking, and execution.
+**PR — `ci-pr`:** Check tracked Python syntax, bytecode hygiene, documentation links and presentation, and workspace formatting; run the pure math unit tests in f32 and f64. This required gate must not restore the full workspace cache, install native libraries, compile the GUI/renderer, download image fixtures, or run native, rendering, GPU, browser, or platform acceptance. It uses a separate math-only cache with debug information disabled. New checks must add no more than 30 seconds, including preparation, compilation, linking, and execution.
 
 **Main — `ci`:** Run workspace type checks in both precisions, Clippy, and the full workspace suite, including rendering, GPU, GUI workers, benchmark, and statistical tests. These checks run after merge and do not block PR integration. A failure is handled as a separate integration repair. Moving tests out of PR must preserve regression coverage.
+
+The full gate uses `test-main`. Cargo runs the complete default workspace,
+including the benchmark package, integration harnesses, and doctests. The gate
+then reuses that invocation's GPU test executable for the device-free policy.
+It compiles the f64 fast targets together and runs the existing selections.
+`test-ci-tail` provides the same tail after a separate workspace invocation.
+
+[The selected-test script](../scripts/test_selected.py) owns the fast filters.
+It selects executables from the current Cargo JSON artifact stream by package
+and target identity. Missing or duplicate targets fail. Tests run from their
+package directory, and a compiler or test failure fails the gate. The GPU logic
+selection sets `SPEKTRAFILM_TEST_NO_DEVICE=1` in both precisions.
+
+Workspace features define the main gate's default coverage. The f64 selection
+uses the union of its selected packages' features. Package-only minimal
+dependency features are not a separate main-gate contract. `test-fast` compiles
+its targets once per precision. `benchmark-test` remains a standalone command.
+`parity-backend` uses the existing optimized test profile, retaining debug
+assertions, overflow checks, and the same numerical budgets.
+
+Main verification and packaging have separate concurrency groups and run in
+parallel. A failed verification leaves the workflow failed; package artifacts
+from a failed run are not accepted evidence. Nightly package runs are
+latest-only. Release attachment remains behind the release workflow, and the
+Linux package is attached only after its separate f64 acceptance passes.
+
+**Platform packages:** Linux runs the `spektrafilm-cli` f64 test package in a
+dedicated `linux-f64-acceptance` job alongside the Linux package build. That
+job owns the f64-only CLI and instrument acceptance that the f32 workspace
+cannot execute; the full f64 workspace remains the local `just test-f64` gate.
+The Linux package build owns the release binaries, LUT acceptance, and installed
+package smoke. Windows and macOS do not build workspace test targets in their
+package jobs. Their CI runners expose no binary64 shader arithmetic, while Main
+CI's llvmpipe lane owns the executable GPU coverage. Test-only platform
+compilation is not a product contract; the package build links and smoke-tests
+the shipped binaries. All three package builds still build the app and run the
+installed package smoke.
 
 **Fixtures:** A case must reuse a prepared fixture that another case in the same binary already prepared when both need the same inputs. A case must not rebuild a population, bank, or calibration that already exists for its inputs.
 
@@ -13,6 +50,8 @@ Shared host fixtures may retain prepared populations, CPU banks, and parameter r
 Parameterized device tests should acquire one backend outside the case loop unless device creation or replacement is the behavior under test. Reuse its pipeline cache, but keep mutable buffers, cancellation, and observation state local to each case. Do not share a global backend across tests.
 
 Prepared device banks may be reused within one test when formation parameters and sampling footprints match. Keep them on the backend that prepared them. Keep image and readout buffers local to each case. Prepared-bank reuse must not replace cold production-path acceptance.
+
+**Preset previews:** The [current-photograph thumbnail contract](../specs/presets/spec.md#current-photograph-thumbnails) is the shipped implementation. Preset cards render isolated runtime candidates from the accepted photograph; there is no fixed-reference bundle to regenerate. Built-in look or material changes remain covered by the normal preset, material, and render suites rather than a thumbnail authoring command.
 
 **Main cost:** The full gate must stay within the `Main full verification` timeout in [.github/workflows/ci.yml](../.github/workflows/ci.yml). A change that adds rendering or preparation work reports the measured wall clock of the affected suites in the pull request. Test codegen uses `[profile.test] opt-level = 2` in [Cargo.toml](../Cargo.toml); it still inherits `dev`, so debug assertions and overflow checks stay enabled and only code generation differs.
 
@@ -60,15 +99,18 @@ When asserting pixel invariance, compare decoded dimensions and samples rather t
 
 For successful CLI image publication, assert decoded output, replacement behavior, supported metadata, and staging-file cleanup. Do not assert incidental progress-message wording or require warning-free stderr. Valid inactive-setting feedback can accompany a successful write.
 
-The [Justfile](../Justfile) defines test selection. The [README](../README.md#build) documents dependencies and verification commands.
+Preset-preview regression coverage follows the [preset acceptance scenarios](../specs/presets/spec.md#acceptance). Use small deterministic real-render cases for candidate equivalence and isolation; use state transitions for stale source, dependency invalidation, priority, and cache bounds rather than wording or wiring assertions.
+
+The [Justfile](../Justfile) defines the gates; the selected-test script defines
+the fast test filters. The [README](../README.md#build) documents dependencies and verification commands.
 
 ## CPU and GPU are allowed to disagree
 
-We follow darktable: the GPU path is a second implementation, not a bit-exact twin
-of the CPU one. The two may differ in the last bits, and which one runs may depend
-on measured speed.
+The GPU path is a separate implementation. Same-algorithm arithmetic may differ
+in the last bits. An intentionally different algorithm variant needs its own
+documented image-quality budget.
 
-- Parity tests compare with a tolerance (relative <= 1e-5, or <= 1 LSB at 16 bits).
+- Same-algorithm parity tests compare with a tolerance (relative <= 1e-5, or <= 1 LSB at 16 bits).
   A bit-exact assertion between backends is a bug in the test.
 - Structural invariants stay exact: which pixels and planes a kernel writes, clamp
   ranges, untouched borders. A skipped write is not a precision difference.
@@ -77,10 +119,10 @@ on measured speed.
 - A numerical oracle (for example `xtrans_reference`) is a debugging aid, not a
   contract. When a deviation appears it says which step moved.
 - Acceptance is end to end: one real file through both paths, compared as an image
-  (PSNR and maximum deviation). That is the only comparison darktable makes too.
-- Prefer the faster path, measured rather than assumed. A GPU kernel that loses to
-  the CPU should not be enabled; darktable switches OpenCL off entirely when its
-  benchmark falls below the CPU.
+  (PSNR and maximum deviation). Different algorithm variants need independent
+  reference evidence and an explicit regression budget.
+- Measure GPU and CPU performance rather than assuming a speedup. Report the
+  adapter, workload, and timing scope. Backend selection follows the product
+  contract; a timing result does not authorize an undeclared CPU fallback.
 - Because the backends may disagree, document that toggling the GPU can change the
   output. Otherwise it comes back as a bug report.
-

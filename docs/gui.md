@@ -24,23 +24,28 @@ The header provides a **Photographs** menu (**照片**) containing **Save adjust
 
 The header keeps global actions on one row. Undo and Redo use named icon buttons. The source name sits above the read-only material and workflow summary; hover reveals truncated details.
 
-The left **Presets** browser is collapsible and resizable. **Search presets** finds looks by name or film/print stock, including stock display names. **Clear preset search** restores the full list. **Built-in** looks are read-only; **My Presets** holds user looks. **Save preset…** saves a look, not a photograph or startup default. Searching, collapsing, or scrolling the browser does not apply a look or change the photograph.
+The left **Presets** browser is collapsible and resizable. **Search presets** finds looks by name, film/print stock, or LUT title and file name, including stock display names. Film look and LUT presets share one list; there is no Film/LUT type filter. Cards identify film looks by their material context and LUT looks by their title and `.cube` file name. **Clear preset search** restores the full list. **Built-in** looks are read-only; **My Presets** holds user looks. **Save preset…** saves a look, not a photograph or startup default. Searching, collapsing, or scrolling the browser does not apply a look or change the photograph.
 At narrow window widths, the browser automatically becomes a reopenable rail under the [responsive preset layout](../specs/presets/design.md#boundaries). Reopening it while narrow is session-only; it does not change the saved expanded preference, which returns in a wider window.
-Built-in reference thumbnails sit beside the compact card controls. The fixed-reference warning, attribution, and license stay in a footer below the scrolling list. Each card's visible action menu supports pointer and keyboard activation, with focused controls scrolled into view. Library issues precede the cards. The current-look summary stays above the list, including when a filter hides the applied look. Without an applied preset, it identifies current adjustments.
+Every card previews the accepted photograph with that look, using the production resolver and display path. A pending preview shows an explicit pending state, a failed one shows an unavailable state with its cause, and with no accepted photograph the card offers Open guidance. Preview work never applies a look or changes the photograph, and main Preview, Scan, and Export take priority. Each card's visible action menu supports pointer and keyboard activation, with focused controls scrolled into view; arrow keys move focus between cards and Enter applies the focused card. Library issues precede the cards. The current-look summary stays above the list, including when a search hides the applied look. Without an applied preset, it identifies current adjustments.
 
-**Favorites** and **Recently used** filter the same library together with search. Favoriting or browsing does not apply a look. Recently used retains ten distinct successful whole-look applications. These discovery preferences persist separately from photographic controls and preset files. Reference thumbnails use one licensed photograph, not the active source; missing or outdated assets show an unavailable reference instead of a misleading image.
+The browser header's library menu offers **Import preset**, **Open preset folder**, and **Refresh presets**, and shows the resolved library directory. Saving an existing user name offers **Replace "name"** explicitly; Enter never replaces a document.
 
-The right inspector contains one continuous list, not mutually exclusive pages. Its sticky **Search controls**, **Only modified**, and stage-jump strip remain visible while controls scroll. The jumps reveal and scroll to **Input and capture**, **Film**, **Print**, **Scan**, or **Output** in that same list while preserving the active search and Only modified filter without changing parameters. Several stages and modules can remain open together. Folding a module changes its presentation only, and ordinary edits, render completion, and route changes retain its disclosure and scroll state.
+The right inspector contains one continuous list, not mutually exclusive pages. Its sticky **Search controls**, **Only modified**, and stage-jump strip remain visible while controls scroll. The jumps reveal and scroll to **Input and capture**, **Film**, **Print**, **Scan**, **Look**, or **Output** in that same list while preserving the active search and Only modified filter without changing parameters. All six stages remain reachable in both workflows: inactive stages stay visible with an **Inactive** marker and an explanation, and expanding one reads its retained values without enabling them. The **Look** stage owns the Film/LUT switch and the LUT controls. Several stages and modules can remain open together. Folding a module changes its presentation only, and ordinary edits, render completion, and route changes retain its disclosure and scroll state.
+
+Fresh disclosure expands Workflow, Camera, and Tone & Color. A closed inactive module shows a compact **Inactive** state beside its title; expand it to read the actual reason without hover. Expanded controls replace duplicate key-control summaries.
 
 | Stage | Main modules |
 | --- | --- |
 | Input and capture | Workflow, Camera, Camera diffusion, Input, Import Raw, Source rotation, Crop and upscale, Input gamut compress, Spectral upsampling, Convert |
 | Film | Film material, Film chemistry, Film base, Halation, Couplers, Grain |
 | Print | Print material, Enlarger, Preflash, Enlarger diffusion, Print chemistry, Print base |
-| Scan | Scanner, Print viewing glare |
-| Output | Finishing, Output, Output gamut compress, CMYK ink style |
+| Scan | Scanner, Print viewing glare, Tone & Color |
+| Look | Film/LUT workflow selection, LUT look |
+| Output | Output, Output gamut compress, CMYK ink style |
 
-The persistent **SCAN** and **SAVE** action bar stays below the inspector. SCAN shows `full-resolution effects`; SAVE shows `retained result · no rerender`. Preview updates automatically; there is no Preview button or enablement preference. **Settings** owns general application preferences, state files and startup defaults, display configuration, and Diagnostics. Independent file-delivery options belong to the **Export options** dialog, not a photographic module.
+The persistent **SCAN** and **SAVE** action bar stays below the inspector. SCAN shows `full-resolution effects`; SAVE identifies its retained operation and pixel dimensions, for example `Preview · 640 × 437 px`. It writes that result without rerendering. Preview updates automatically; there is no Preview button or enablement preference. **Settings** owns general application preferences, state files and startup defaults, display configuration, and Diagnostics. Independent file-delivery options belong to the **Export options** dialog, not a photographic module.
+
+Screen readers receive the retained result summary when SAVE is focused. An empty result uses a short unavailable caption.
 
 ## Interface language
 
@@ -60,7 +65,15 @@ The viewer also accepts a dropped image file through the same import path. An un
 
 Source loading, RAW reprocessing, rotation, and state loading prepare the replacement input view in the background. The header reports input preparation. Photographic editors and Undo/Redo pause during an input transaction; viewer navigation remains available. The previous accepted source, output, and history remain intact until preparation succeeds.
 
-Choose the base route in **Input and capture → Workflow → workflow**, the film in **Film → Film material → film profile**, and the paper in **Print → Print material → print profile**. Selecting a film keeps the current paper; selecting a paper keeps the current film. Film selection applies its workflow default and scanner normalization, reported in the header. A look preset selects the material pair and its owned controls atomically. Development-time choices follow the selected material's actual family; a material without a selectable family shows its effective development time instead.
+Choose the base route in **Input and capture → Workflow → Film route**, the film in **Film → Film material → film profile**, and the paper in **Print → Print material → print profile**. Selecting a film keeps the current paper; selecting a paper keeps the current film. Film selection applies its workflow default and scanner normalization, reported in the header. A look preset selects the material pair and its owned controls atomically. Development-time choices follow the selected material's actual family; a material without a selectable family shows its effective development time instead.
+
+**Look → LUT look → Workflow** selects **Film** or **LUT**. Film mode runs the spectral film chain. LUT mode runs an imported external 3D `.cube` look and does not execute film or print material simulation. Film, Print, and Scan remain visible in LUT mode with their stored values and are inactive until Film mode returns. The header identifies the active workflow and the active film pair or LUT preset.
+
+**Import cube as look...** in the Look stage reads one `.cube` file. The input and output spaces, domain policy, and strength stay visible; the content hash, per-axis domain, and shaper declaration are under **Advanced declaration**. A `.cube` file carries no color-space metadata, so the sRGB spaces are an assumption to confirm, not a file fact. The domain policy defaults to **Clamp and report**: out-of-domain channels are limited to the domain edge and the affected percentage is reported. **Fail before output** is available as a strict choice. The import preview shows a neutral gray ramp and a color checker without fitting exposure, white balance, or contrast; it checks the cube declaration, not the current photograph. A changed or missing LUT file fails before output; the product does not substitute another file.
+
+**Replace cube...** keeps the current strength, grade, and effect settings and replaces only the external cube declaration. **New look from cube...** imports a cube and resets strength and those finishing values. Effects and grade are independent and follow the fixed LUT evaluation order. A clamp render that clips reports a persistent warning with its percentage next to the LUT controls. See [LUT look](../specs/lut-look/spec.md) and [LUT workflow](../specs/lut-workflow/spec.md).
+
+**Export film look as .cube...** belongs to Film mode. It writes one 3D `.cube` file, reports its input and output encodings and the neutralized spatial or stochastic operations, and leaves the current workflow and preset library unchanged. It does not import the exported file or create a preset.
 
 Selecting a film refreshes unowned grain, DIR coupler, and halation defaults for that film while retaining explicit edits and effect switches. An explicit value remains owned even when it equals the old film's default. For example, selecting Kodak Gold 200, then Kodachrome 64, then Gold restores the unowned defaults for each selection; no film has a special exception. See [material defaults](../specs/presets/spec.md#material-defaults).
 
@@ -70,9 +83,11 @@ GPU Preview and Scan reuse the current RGB input upload while its source, device
 
 Input color-space and CCTF controls reinterpret the accepted samples; they do not convert or rewrite the stored RAW carrier. Preview, Scan, input viewing, and Export use that accepted declaration, and queued exports keep the declaration captured at submission even if the active photograph changes.
 
+**Input and capture → Camera** keeps exposure compensation and automatic exposure directly visible. Its **Capture setup** (**拍摄设置**) group starts closed and contains Film Format, Frame Long Edge, metering, color filter, and capture illuminant. Search, Only modified, and canonical locators reveal the actual controls without changing values; Camera reset still owns the complete module.
+
 ### Film Format
 
-**Input and capture → Camera → Film Format** offers **35mm**, **120**, **4×5**, and **Custom**. These choices set the physical film scale for grain and other film effects. They do not crop, resize, or change the image's aspect ratio.
+**Input and capture → Camera → Capture setup → Film Format** offers **35mm**, **120**, **4×5**, and **Custom**. These choices set the physical film scale for grain and other film effects. They do not crop, resize, or change the image's aspect ratio.
 
 The choices use exposed-image long edges of 36 mm, 56 mm, and 127 mm respectively. **120** uses one representative size; it does not select a square crop. **Custom** reveals **Frame Long Edge** for precise millimeter input. Opening Custom alone does not change the photograph.
 
@@ -90,7 +105,9 @@ Simulated exposure remains a separate control at **Input and capture → Camera 
 
 Each numeric row places the parameter name on the left, then the unit and right-aligned value. Unitless rows keep the same value column. The slider spans the module width below the row. A modified row shows a marker beside its label and marks its value; the marker uses the same reset baseline as the module's `modified` chip. Tuple, optional, extra, and boolean rows use the same marker rule. The slider only moves the value; the field stays the row's editor. The slider is logarithmic when the declared range spans more than three decades, or when the declared minimum is zero and the declared maximum reaches one thousand or more. A signed range stays linear. A logarithmic slider anchors its smallest positive value at the parameter's declared step, so its floor matches the field's own granularity. A declared minimum of zero keeps zero as the track's leftmost stop.
 
-A boolean row is a switch that names the concept it enables. A choice row shows the parameter's name on the left and its selector on the right. A row marked experimental carries an `experimental` chip beside its name. A checkbox belongs to list selection only.
+Dimensionless rows omit the unit text while retaining value-column alignment. Real units stay readable without mid-word wrapping.
+
+A boolean row is a switch that names the concept it enables. A choice row shows the parameter's name before its selector. Film and print material selectors use a full-width line below the label when the selected identity does not fit the shared value column; long identities wrap instead of truncating. A row marked experimental carries an `experimental` chip beside its name. A checkbox belongs to list selection only.
 
 **Search controls** searches labels and canonical paths across all stages, including folded or inactive modules, plus Settings, Export, and viewer controls. Results name the real owner and module. Selecting a locator reveals, scrolls to, and focuses the actual control; Settings and Export results open their own surfaces rather than creating duplicate editors. The inspector query does not filter those dialogs or change their selected options. **clear filter** restores ordinary disclosure; an empty result names the unmatched query. Closed module headings offer content summaries in help. Inactive controls explain their applicability while retaining stored values. Opening an inactive module does not enable it.
 
@@ -100,7 +117,9 @@ Inactive rows retain valid stored values and explain whether an operation is abs
 
 For Settings and Export, the filter compares accepted preferences with typed factory defaults. Unsubmitted Export drafts do not change these results.
 
-A module header's **reset** restores only that module's controls. Finishing also provides individual row resets, described below. Other parameter rows, sliders, and Export options do not have separate reset buttons. Use **Undo** to reverse an adjustment. For example, resetting **Preflash** leaves main **Enlarger** exposure and filtration unchanged; resetting **Print viewing glare** leaves **Print chemistry** unchanged. Material-module reset restores its factory material selection and development time.
+A module header's **reset** restores only that module's controls. Parameter rows, sliders, and Export options do not have separate reset buttons. Use **Undo** to reverse an individual adjustment. For example, resetting **Preflash** leaves main **Enlarger** exposure and filtration unchanged; resetting **Print viewing glare** leaves **Print chemistry** unchanged. Material-module reset restores its factory material selection and development time.
+
+**Film chemistry** and **Print chemistry** group their gamma controls under **Curve response**. **Profile gamma** changes the profile's density curve; **Morph gamma** shapes the density-curve sub-layer response. They compose, so editing one does not replace the other.
 
 For other modules, reset uses current-film defaults only for stock-derived leaves; other values use factory defaults. Reset also releases explicit ownership in its scope, even when the value already matches, so a later film selection can refresh it.
 
@@ -112,12 +131,13 @@ The left browser owns whole-look presets. Modules do not have section-preset men
 
 **Scan → Scanner** keeps its controls readable across routes and identifies whether the scanned medium is Paper, Slide, Negative, or Inactive:
 
+- **White reference** selects **Clear film base** (default calibrated readout) or **Readout illuminant** (the explicit upstream experimental `28bf883` alignment). The readout illuminant itself remains a fixed product value; this selector changes the normalization and chromatic-adaptation reference.
 - The scan-output selector offers **Preserve medium polarity** and **Negative to positive**. It is editable only for eligible negative-scanning routes; other routes retain the visible, inactive selector.
 - Conversion style is editable only while the eligible **Negative to positive** conversion is selected. Otherwise its stored value remains readable with an inactive explanation. `standard` is the built-in frozen tone; other names are declared fixed styles in `data/scan-styles/`. The experimental frame setup is a separate off-by-default switch.
 - The readout illuminant is a fixed product value selected by the material category, not an editable scanner lamp.
 - **Lens blur (readout optics)** and **Unsharp mask (digital sharpening)** describe readout optics and digital sharpening. On a route without scanning, these controls remain readable but inactive, with stored values retained.
 
-**Scan → Scanner → Negative conversion (exposure domain)** is a collapsed specialized group containing operator correction. It adjusts the finished positive before the fixed tone curve, after the experimental frame setup when it is enabled. **Finished exposure** is ±3 EV (positive is brighter); **Warmth** and **Green–magenta tint** are ±1 differential EV (positive is warmer and more magenta respectively, not Kelvin); **Contrast** spans 0.5–2 (1 is unchanged). These are editor ranges, not document limits. The controls are disabled outside eligible negative-to-positive scans, with their stored values retained. This exposure-domain operation is distinct from common Finishing and its values are not converted to finishing adjustments.
+**Scan → Scanner → Negative conversion (exposure domain)** is a collapsed specialized group containing operator correction. It adjusts the finished positive before the fixed tone curve, after the experimental frame setup when it is enabled. **Finished exposure** is ±3 EV (positive is brighter); **Warmth** and **Green–magenta tint** are ±1 differential EV (positive is warmer and more magenta respectively, not Kelvin); **Conversion contrast** spans 0.5–2 (1 is unchanged). These are editor ranges, not document limits. The controls are disabled outside eligible negative-to-positive scans, with their stored values retained. This exposure-domain operation is distinct from Tone & Color and its values are not converted to tone and color adjustments.
 
 **Restore automatic** resets only the four operator values to 0, 0, 0, 1. The workspace's source-local **Undo** and **Redo** include these edits, restore and paste actions. **Hold automatic comparison** (primary mouse button, or Space while focused) shows the same prepared frame with default operator values until release; it does not change saved corrections or the retained pixels used by Save. This is separate from the viewer's Original/Modified selection.
 
@@ -125,23 +145,23 @@ The left browser owns whole-look presets. Modules do not have section-preset men
 
 Changing the route resets an ineligible scan polarity; leaving negative conversion resets the conversion style to `standard`. The style selects the tone only; the separate off-by-default `scanner.experimental_setup` switch adds whole-frame exposure and color measurement before that tone. `neutral` is accepted only as an input migration alias and is saved as `standard`; it does not preserve the former fixed-curve appearance. See [scanning](scanning.md) for scanner mode and style semantics.
 
-### Finishing
+### Tone & Color
 
-**Output → Finishing** adjusts eligible positive film scans, negatives converted to positives, and photographic-paper scans after positive formation and before output gamut processing. Input-only routes, material outputs without a completed scan, and negative scans preserving polarity are inactive; stored controls remain available and are retained across route and material changes.
+**Scan → Tone & Color** adjusts eligible positive film scans, negatives converted to positives, and photographic-paper scans after positive formation and before output gamut processing. Input-only routes, material outputs without a completed scan, and negative scans preserving polarity are inactive; stored controls remain available and are retained across route and material changes.
 
 **Brightness**, **Contrast**, **Warmth**, and **Saturation** each range from -1 to 1 and default to zero. Brightness and Contrast affect internal tones with diminishing influence near the reference endpoints, rather than source exposure or sharpening. Warmth follows a fixed warm–cool direction, not Kelvin or capture white balance; Saturation changes color strength with restrained amplification of strong colors. Effects can interact and downstream processing can change the result.
 
-The collapsed **Expand** group optionally maps black and white input references in fixed sRGB encoding. It defaults off, retaining its references when disabled; when enabled, even its default 0 and 1 references hard-clip. The references range from -0.25 to 1.25 and must be separated by at least 1/1024. Invalid edits are rejected, not reordered or widened. Hard clipping destroys differences for that render; later adjustments cannot recover them and do not guarantee an in-gamut result.
+The collapsed **Range** group provides **Enable Expand** to map black and white input references in fixed sRGB encoding. It defaults off, retaining its references when disabled; when enabled, even its default 0 and 1 references hard-clip. The references range from -0.25 to 1.25 and must be separated by at least 1/1024. Invalid edits are rejected, not reordered or widened. Hard clipping destroys differences for that render; later adjustments cannot recover them and do not guarantee an in-gamut result.
 
-Each row's reset restores that control alone, subject to the same valid-reference constraint; module reset restores all four daily controls and disables Expand with its default references. Undo and Redo include these edits. **Hold finishing comparison** uses the primary mouse button or focused Space to temporarily bypass only Finishing, restoring it on release. It does not change stored controls, history, retained Save output, or independent Export, and does not bypass negative conversion, gamut processing, CMYK style, or output mix.
+Module reset restores all four daily controls and disables Expand with its default references. Undo and Redo include individual edits and the module reset. **Hold Tone & Color comparison** uses the primary mouse button or focused Space to temporarily bypass only Tone & Color, restoring it on release. It does not change stored controls, history, retained Save output, or independent Export, and does not bypass negative conversion, gamut processing, CMYK style, or output mix.
 
-Comparison preserves the retained Preview or Scan grid and detail effects. Releasing it restores the accepted finishing on that same grid. Comparing alone does not make the retained result stale.
+Comparison preserves the retained Preview or Scan grid and detail effects. Releasing it restores the accepted tone and color adjustments on that same grid. Comparing alone does not make the retained result stale.
 
 **Input and capture → Convert → scan illuminant** declares the acquisition light of an imported negative RGB image through `film_render.convert.scan_illuminant`. It defaults to `D55` and affects capture inversion and calibration only. Choose from the full shared illuminant catalog or enter a custom `BB<kelvin>` value accepted by the shared validator. It does not override the fixed product readout light. The control remains readable but inactive on routes without convert-film inversion.
 
 **Output → Output → Simulation blend** blends the complete result with the decoded, geometrically aligned source in linear output RGB. Amount `1` keeps the complete result. Amount `0` returns the prepared source before virtual camera exposure. A negative capture stays negative at zero. Preview, Scan, Export, and complete source-to-output LUTs share this operation. Segmented LUTs require amount `1`. See [the output mix specification](../specs/output-mix/spec.md#output-mix) and [the GUI workflow specification](../specs/gui-workflow/spec.md#material-controls-and-output-composition) for the control semantics.
 
-**Print → Enlarger → print exposure mode** selects `auto` or `manual`. `auto` normalizes the print exposure and follows camera exposure compensation, like a color analyzer or minilab. `manual` applies the print exposure time alone, like a test strip. The separate **Print → Preflash** module exposes **preflash exposure**, **preflash y filter shift**, and **preflash m filter shift**. Exposure is a linear multiplier, not EV; zero disables flash without clearing either filter value. On photographic paper, it can change weak highlight differences, but it may lower white, add fog, and shift color. It cannot recover absent detail. Routes without printing retain these values without applying them. See [the output mix specification](../specs/output-mix/spec.md#preflash) and [the GUI workflow specification](../specs/gui-workflow/spec.md#material-controls-and-output-composition) for the control semantics.
+**Print → Enlarger → print exposure mode** selects `auto` or `manual`. `auto` normalizes the print exposure and follows camera exposure compensation, like a color analyzer or minilab. `manual` applies the print exposure time alone, like a test strip. **Exposure compensation tracking** selects how that follow behavior is applied; the choice equivalent to the current mode is disabled and explained. The separate **Print → Preflash** module exposes **preflash exposure**, **preflash y filter shift**, and **preflash m filter shift**. Exposure is a linear multiplier, not EV; zero disables flash without clearing either filter value. On photographic paper, it can change weak highlight differences, but it may lower white, add fog, and shift color. It cannot recover absent detail. Routes without printing retain these values without applying them. See [the output mix specification](../specs/output-mix/spec.md#preflash) and [the GUI workflow specification](../specs/gui-workflow/spec.md#material-controls-and-output-composition) for the control semantics.
 
 The GUI has no standalone Output lightness-compression control. See [presets](presets.md) for the versioned state document rule.
 
@@ -196,13 +216,13 @@ New edits replace queued work. Stale results cannot replace the latest output. T
 
 If adjustment preparation fails, the viewer keeps the last completed image and its original Preview or Scan identity. Correct the controls or use Undo to return to the last working settings. A rejected adjustment does not discard compatible runtime preparation.
 
-The viewer status strip identifies the retained **Preview** or **Scan**, pixel dimensions, and whether it matches the current adjustments. This identity stays visible while another operation runs. Preview has an explicit detail-effects caveat; independent Export is the file-delivery action.
+The viewer status strip identifies the retained **Preview** or **Scan**, pixel dimensions, and whether it matches the current adjustments. This identity stays visible while another operation runs and when Original or Paper back is selected. Preview has an explicit detail-effects caveat; independent Export is the file-delivery action.
 
 **SCAN** renders the full-resolution input with spatial and stochastic effects. Automatic backend selection chooses CPU only when a usable GPU is unavailable. A selected GPU computation failure fails the operation without substituting host arithmetic. The resulting full-resolution output is retained for Save and inspection in the viewport.
 
 Large GPU operations may wait for earlier device work to release temporary storage. This scheduling preserves the selected resolution and effects; it does not substitute Preview or a different grain engine. Full-resolution input, retained output, and required model fields still consume memory proportional to their dimensions.
 
-**Scan → Scanner → scan for print** disables print viewing glare for the print scan. Toggle it again to restore the previous value. Loading state or changing profiles clears the transient snapshot.
+**Scan → Print viewing glare** is the single control for print-readout stray light. Use **Simulate viewing glare** to turn it on or off; off gives a clean print scan. Scanner reports whether the current print readout includes viewing glare and can jump to the switch. This is a normal saved adjustment, included in Undo/Redo, state, presets, recipes, and reports. It does not change print exposure, chemistry, or developed density. On a route that scans film directly, the module states that it does not apply and keeps the stored values.
 
 The current optical model moves scanner lens blur to linear readout light. It runs before interpretation, gamut, sharpening, and transfer encoding. Print viewing glare follows optical blur and does not expose or develop the print material. Nonzero blur can intentionally change historical direct-scan pixels. Recipes and reports identify the current model revision. Corrected scans use faithful per-stage execution when resident shaders cannot preserve that order. Preflash retains both exposure gains and floors. Resident printing applies its outer gain to flash as well as main exposure. Film grain stays in the material domain. Procedural grain stays a post-scan appearance. See [the output mix specification](../specs/output-mix/spec.md) and [the GUI workflow specification](../specs/gui-workflow/spec.md) for the owning semantics.
 
@@ -214,7 +234,7 @@ See the [GUI workflow specification](../specs/gui-workflow/spec.md) for the acti
 
 `100%`, `200%`, and `400%` map image pixels to exact device-pixel percentages. The viewer samples at device-pixel centers and treats image bounds as half-open, so fractional viewport origins and pans do not add or drop edge pixels. `fit` returns to the fitted zoom and keeps the pan; `reset view` also recentres it. Full-resolution Scan remains available in the viewport at these zoom levels. The preview long-edge limit controls Preview rendering, not Scan's available detail.
 
-The viewer accepts pointer gestures on its surface. The wheel and pinch zoom at the pointer. A primary-button drag pans. A Shift or secondary-button drag selects a rectangle and its release zooms so the selection fills the viewer. One click zooms one step at the pointer; a double click fits the view. Gestures change the retained view only and never saved or exported pixels.
+The viewer accepts pointer gestures on its surface. The wheel and pinch zoom at the pointer. A primary-button drag pans. A Shift or secondary-button drag selects a rectangle and its release zooms so the selection fills the viewer. A plain click can leave an editor without changing zoom or pan; a double click restores the fitted, centered view. Gestures change the retained view only and never saved or exported pixels.
 
 The `Paper back` layer is a viewer-only virtual rendering generated from paper texture, watermark, and noise. It is not an editable material stage and does not alter retained, saved, or exported pixels.
 
@@ -224,6 +244,8 @@ The footer uses compact named icons for the layer controls and transitions when 
 
 The footer switches between **Original** (原图), the retained input, and **Modified** (修改图), the latest accepted Preview or Scan. Modified is disabled until output exists. The first accepted Preview or Scan selects Modified. Switching does not render or edit adjustments; both views share zoom and pan. **Paper back** remains a separate presentation. **Settings → Display → output interpolation** selects nearest, linear, cubic, spline16, spline36, Lanczos, or Blackman sampling for Modified. Original uses nearest interpolation. Paper back uses spline36. The viewport samples the retained full-resolution image for visible detail.
 
+At reduced zoom, non-nearest full-source viewing averages the source area covered by each display pixel. Capped display rasters also average source areas. Native-size and magnified full-source views keep the selected interpolation kernel. Explicit nearest sampling remains unfiltered.
+
 ### Black and white endpoint warnings
 
 The two icon switches immediately left of **Image analysis** control **Shadow clipping warning** (阴影剪裁警告) and **Highlight clipping warning** (高光剪裁警告). Both start off without saved warning preferences.
@@ -231,6 +253,8 @@ The two icon switches immediately left of **Image analysis** control **Shadow cl
 Click a switch or focus it and press Enter to toggle its overlay. Blue marks black endpoints; red marks white endpoints. Both switches can be on together.
 
 Hold the secondary pointer button on a switch, or hold Space while it has keyboard focus, to inspect an isolated mask. Shadow inspection uses a white photograph area with black matches; highlight inspection uses a black photograph area with white matches. Release the hold to restore the requested overlays.
+
+Moving focus away from the switch also ends temporary inspection. Control search locates and focuses the switch without activating its overlay or isolated view.
 
 The warnings inspect the accepted **Original** or **Modified** in its native RGB interpretation before display conversion and ICC. They work with analysis closed and do not use its selection or sRGB range counts.
 
@@ -250,7 +274,7 @@ The two requested choices persist independently in `clipping_preferences.json`. 
 | Waveform | Picture position from left to right against Tone or RGB values. Choose RGB overlay or RGB parade to compare channels on matching scales. Density shows frequency. |
 | Vectorscope | Color frequency in the Oklab a,b plane. Neutral is central; fixed references identify hue directions, not a gamut boundary or a preferred result. |
 
-**Analysis mode** offers Histogram, Waveform, and Vectorscope directly. Histogram is the initial mode without a saved preference.
+**Analysis mode** offers Histogram, Waveform, and Vectorscope directly from the selector's chevron menu. Histogram is the initial mode without a saved preference.
 
 **Waveform display** offers **Tone**, **RGB overlay**, and **RGB parade**. Parade places Red, Green, and Blue in separate plots; it is a waveform display, not another analysis mode. Returning to Waveform restores the selected display.
 
@@ -258,19 +282,19 @@ Histogram offers **Tone** and **RGB**. Tone is display-encoded relative luminanc
 
 Histogram RGB and Waveform RGB overlay share channel visibility choices. RGB parade always shows all three channels without changing those choices. Histogram has no scale selector; logarithmic height ratios are not frequency ratios.
 
-The ordinary shelf contains one toolbar row and the plot. Mode help explains the question, sRGB interpretation, and Preview limitations. Active inspection readouts and meaningful exceptions appear inside the plot without changing its size; no empty information row or duplicate scope line remains.
+The ordinary shelf contains one toolbar row and the plot. Mode help explains the question, sRGB interpretation, and Preview limitations. Active inspection readouts and meaningful exceptions appear inside the plot without changing its size; no empty information row or duplicate scope line remains. A small marker at the value edge of the Histogram or Waveform/RGB parade indicates below- or above-range RGB observations; Vectorscope reports those counts on demand. Exact counts are available on demand or in the plot's accessible readout, rather than a permanent sentence.
 
 Vectorscope offers **1×**, **2×**, and **4×** chroma zoom and reports colors outside its window. All modes use the same sRGB analysis interpretation before monitor conversion. They do not predict a saving profile, bit depth, printer, or physical spectrum.
 
-**Select area** arms a temporary primary-drag tool. The committed rectangle changes the analysis population, not crop or photographic adjustments. Use the focusable move and resize handles with arrow keys and Enter for keyboard selection. Escape cancels an unfinished selection. **Full image** appears only while a selection exists and clears it. The selection follows its source area across rotation, crop, Preview, and Scan. If its complete area is absent in the other subject, analysis reports the mismatch instead of intersecting it with that frame.
+**Select area** arms a temporary primary-drag tool. The committed rectangle changes the analysis population, not crop or photographic adjustments. Use the focusable move and resize handles with arrow keys and Enter for keyboard selection. Escape cancels an unfinished selection. **Full image** appears only while a selection exists and clears it. The selection follows its source area across rotation, crop, Preview, and Scan. If its complete area is absent in the other subject, analysis reports the mismatch instead of intersecting it with that frame. While the selection tool is armed, **Pixel cursor** is hidden; finish or cancel the selection to inspect pixels.
 
-Hover over the photograph to show the native pixel coordinates, analysis values, and matching accent-colored plot markers. Focus **Analysis pixel cursor** and use arrow keys for keyboard inspection. A pixel outside the selected area retains a labeled numeric readout without a plot marker. Hover over or focus the plot to inspect bins with a subdued band and edge ticks; Waveform and RGB parade show the corresponding image band. Parade marks the same column in all three channel plots. Inspection never changes the distributions.
+Hover over the photograph to show the native pixel coordinates, analysis values, and matching accent-colored plot markers. Focus **Pixel cursor** in the analysis toolbar and use arrow keys for keyboard inspection. A pixel outside the selected area retains a labeled numeric readout without a plot marker. Hover over or focus the plot to inspect bins with a subdued band and edge ticks; Waveform and RGB parade show the corresponding image band. Parade marks the same column in all three channel plots. Inspection never changes the distributions.
 
 Readouts leave sample markers visible and do not intercept plot inspection. When a window limits the shelf height, Up preserves a larger requested height; Down shrinks from the displayed height. Divider drags include movement from the initial press.
 
 Active coordinates, values, and selection or off-scale indications stay visible without scrolling. If notices exceed their plot region, scroll that region to read them. With the plot focused, Page Up and Page Down scroll notices while arrow keys continue to inspect samples.
 
-Drag the photograph/analysis divider to change the total shelf height, including controls and plot. Focus the divider and use Up or Down to resize; Home or a double click restores the default. Sizes follow the [native layout baseline](../specs/gui-presentation/spec.md#native-layout-baseline).
+Drag the photograph/analysis divider, whose grip is visible at rest and emphasized on hover or focus, to change the total shelf height, including controls and plot. Focus the divider and use Up or Down to resize; Home or a double click restores the 152 default. Sizes follow the [native layout baseline](../specs/gui-presentation/spec.md#native-layout-baseline).
 
 When the photograph reserve and minimum shelf cannot both fit, analysis collapses without changing the requested expansion or height. The footer action explains the space limit and remains operable. Increasing the window restores requested analysis; turning the action off prevents reopening. A committed selection survives this space constraint, but unfinished selection and inspection stop.
 
@@ -280,7 +304,7 @@ Either close control cancels unfinished analysis and any armed area-selection to
 
 Requested expansion, total shelf height, mode, waveform display, signal choices, channel visibility, and chroma zoom persist as application preferences. Existing saved parade and waveform choices upgrade automatically. Legacy plot-only heights reset to the compact default unless a total shelf height is saved; legacy linear scale does not restore a linear branch. Selections and cursors do not enter photograph records, looks, or export metadata.
 
-Analysis reports below-range, above-range, and invalid samples separately. Endpoint accumulation is not proof of clipping. Preview retains its detail-effects caveat. Pending, stale, unavailable, or failed analysis does not replace the accepted photograph or block Save and Export. See the [image-analysis specification](../specs/gui-product-design/image-analysis/spec.md) for measurement and comparison rules.
+Analysis reports below-range, above-range, and invalid samples separately. Preview retains its detail-effects caveat. Pending, stale, unavailable, or failed analysis does not replace the accepted photograph or block Save and Export. See the [image-analysis specification](../specs/gui-product-design/image-analysis/spec.md) for measurement and comparison rules.
 
 ### Canvas and retained presentation
 
@@ -316,6 +340,8 @@ Export uses the in-memory input pixels with the simulation parameters. It runs a
 
 Export has no second options area in the inspector. Bottom **SAVE** chooses its format from the filename extension independently of Export preferences; it does not submit an Export request.
 
+Save and Export publish to the exact destination confirmed in the native chooser. Export rejects an extension that does not match the selected format instead of changing the filename. On GTK, **Ctrl+L** can select only the filename stem; use **Ctrl+A** to replace the whole name, including its extension, before entering a full path. Check the displayed final name before confirming replacement.
+
 Export's saving color space and transfer encoding are independent of Save's current simulation saving settings. Format capabilities follow the [shared writer](../specs/photo-export/spec.md) and [saving conversion rules](../specs/cli/spec.md#export-and-execution-options):
 
 | Format | Depth | Saving encoding | Compression or codec options |
@@ -337,7 +363,7 @@ The GUI warns that JPEG remains lossy even at quality 100. 4:2:0 can soften colo
 
 ## Save retained output
 
-**SAVE** saves the latest retained floating output without rerendering. If it no longer matches the accepted adjustments, an explicit confirmation offers to continue saving that frame or cancel before opening the file chooser. It uses **Output → Output → saving color space** and **saving cctf encoding**. The filename extension selects the format. `.jpg` is the default. Wait for automatic Preview or run Scan first when the file should reflect changed controls.
+**SAVE** saves the latest retained floating output without rerendering. Its caption identifies Preview or Scan and the retained pixel dimensions, not the source or independent Export dimensions. If it no longer matches the accepted adjustments, an explicit confirmation offers to continue saving that frame or cancel before opening the file chooser. It uses **Output → Output → saving color space** and **saving cctf encoding**. The filename extension selects the format. `.jpg` is the default. Wait for automatic Preview or run Scan first when the file should reflect changed controls.
 
 - JPEG/PNG use 8-bit integer samples.
 - TIFF uses 16-bit integer samples with ZIP compression.
@@ -363,11 +389,13 @@ Select destinations and an explicit copy scope before **Copy adjustments**. The 
 
 Choose an output directory and explicitly permit replacement when needed, then submit selected entries. Duplicate destinations must be resolved before submission. The sequential queue captures source pixels, accepted adjustments, dependency identities, delivery options, and destinations independently of later edits or removal. Changed dependencies fail that submission rather than silently rendering another result.
 
+At submission, the queue resolves parent-directory symlinks and keeps the selected filename. Retargeting that directory alias does not redirect queued writes. If the final filename is a symlink, replacement replaces that link rather than its target.
+
 The queue shows waiting, running, completed, failed, and canceled outcomes. Cancel one job or all remaining jobs without removing completed files. A failure does not stop unrelated entries. **Retry submitted snapshot** repeats the failed submission, not current adjustments. Queue work and interactive Export share the existing staged publication path; the batch is not one atomic transaction. Restart recovery is not supported.
 
 ## State and defaults
 
-**Settings → GUI parameters → Save current to file / Load from file** exchange the pinned Python 0.3.4 GUI JSON sections. Partial files merge into factory values. Legacy input aliases and nested sections normalize to the flat upstream format. Invalid JSON, field types, selections, or Rust extension versions appear in the header status without replacing accepted state. A successful load begins a new adjustment history rather than restoring an old undo stack.
+**Settings → State and startup → Save current to file / Load from file** exchange the pinned Python 0.3.4 GUI JSON sections. Partial files merge into factory values. Legacy input aliases and nested sections normalize to the flat upstream format. Invalid JSON, field types, selections, or Rust extension versions appear in the header status without replacing accepted state. A successful load begins a new adjustment history rather than restoring an old undo stack.
 
 An invalid supplied enlarger mirror fails even if another valid mirror would win. Valid mirror precedence stays unchanged. For example, a valid `simulation.enlarger.illuminant` cannot conceal an invalid `preflashing.illuminant`.
 
@@ -375,7 +403,7 @@ In the same settings section, **Save current as default** persists the current c
 
 To replace stored material coefficients with the selected film's defaults, use the affected module's **reset**. Reloading a complete saved state preserves its stored coefficients; it does not refresh them from the film tables.
 
-Startup files use the platform configuration directory. `SPEKTRAFILM_CONFIG_DIR` overrides it. Rust state uses `rust.version = 7`; older complete states migrate to neutral Finishing. File-dialog directories persist separately.
+Startup files use the platform configuration directory. `SPEKTRAFILM_CONFIG_DIR` overrides it. Rust state uses `rust.version = 7`; older complete states migrate to neutral Tone & Color. File-dialog directories persist separately.
 
 Legacy states without an explicit export format preserve 8-bit as PNG and 16/32-bit as TIFF before defaults and validation. Recipe values and viewer state remain intact. Explicitly incompatible format/depth combinations remain errors.
 
@@ -383,11 +411,11 @@ Older states may contain `simulation.auto_preview`. Loading discards that retire
 
 ### Preset browser state
 
-The GUI remembers the preset browser selection and layout independently of startup controls. An ordinary restart restores that metadata and recomputes the applied, modified, or missing marker. It does not apply the preset again. Loading an explicit GUI state uses that file's browser metadata. Use **Save current as default** to change startup controls.
+The GUI remembers the preset browser layout independently of startup controls. An ordinary restart restores that layout only, never a last-used applied look, so an old name cannot label unrelated controls. Loading an explicit GUI state uses that file's applied look metadata and recomputes the applied, modified, or missing marker without applying the preset again. Use **Save current as default** to change startup controls.
 
 A failed preset application preserves the current controls and temporary white/black correction state. See [presets](presets.md) for library and composition rules. The [presets specification](../specs/presets/spec.md) owns the preset contract.
 
-Each preset card carries its own `preset actions` control beside the entry name and a star toggle for favorites. The star changes favorites only; it does not apply the look. Opening `preset actions` reaches the same actions as the card's context menu — update, revert, rename, duplicate, export, show file, and delete — by pointer or by keyboard, so the context menu is an additional route rather than the only one. Update applies only to the applied user preset; revert, rename, and delete apply to user presets only.
+Each preset card carries its own `preset actions` control beside the entry name. Opening it reaches the same actions as the card's context menu — rename, duplicate, export, show file, and delete — by pointer or by keyboard, so the context menu is an additional route rather than the only one. Rename, show file, and delete apply to user presets only; duplication and export never apply the stored look.
 
 ## Diagnostics
 
@@ -411,7 +439,7 @@ For controlled launches, `SPEKTRAFILM_GUI_DIAGNOSTICS_DIR` can override the auto
 
 ## Application configuration
 
-**Settings** contains **General**, **GUI parameters**, **Display**, and **Diagnostics**. General and Display start open. Settings and Export block background pointer and keyboard input while open; a backdrop click does not dismiss them. **Close settings**, an explicit window close action, or Escape when Settings is the topmost modal returns to the workspace and restores focus to the invoking control. Closing Export options likewise restores its opener's focus. Factory-default confirmation can stack above Settings; Escape dismisses only the topmost modal.
+**Settings** contains **General**, **State and startup**, **Display**, and **Diagnostics**. General and Display start open. Settings and Export block background pointer and keyboard input while open; a backdrop click does not dismiss them. **Close settings**, an explicit window close action, or Escape when Settings is the topmost modal returns to the workspace and restores focus to the invoking control. Closing Export options likewise restores its opener's focus. Factory-default confirmation can stack above Settings; Escape dismisses only the topmost modal.
 
 The viewer interpolation mode, canvas, white padding, and display transform affect the disposable viewer raster. See [Viewer](#viewer).
 

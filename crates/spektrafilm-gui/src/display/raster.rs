@@ -187,6 +187,48 @@ where
     out
 }
 
+/// Average source cells covered by a presentation pixel. Coordinates use the
+/// same pixel centers as interpolation; callers clamp fetched edge samples.
+pub(super) fn sample_area_f32(
+    x: f32,
+    y: f32,
+    footprint: [f32; 2],
+    mut pixel: impl FnMut(i32, i32) -> [f32; 3],
+) -> [f32; 3] {
+    let [width, height] = footprint.map(|side| side.max(1.0));
+    let left = x + 0.5 - width * 0.5;
+    let top = y + 0.5 - height * 0.5;
+    let right = left + width;
+    let bottom = top + height;
+    let mut out = [0.0f64; 3];
+    for sy in top.floor() as i32..bottom.ceil() as i32 {
+        let wy = (bottom.min(sy as f32 + 1.0) - top.max(sy as f32)) / height;
+        for sx in left.floor() as i32..right.ceil() as i32 {
+            let wx = (right.min(sx as f32 + 1.0) - left.max(sx as f32)) / width;
+            let value = pixel(sx, sy);
+            let weight = f64::from(wx) * f64::from(wy);
+            for c in 0..3 {
+                out[c] += weight * f64::from(value[c]);
+            }
+        }
+    }
+    out.map(|value| value as f32)
+}
+
+pub(super) fn sample_footprint_f32(
+    x: f32,
+    y: f32,
+    mode: Interpolation,
+    footprint: [f32; 2],
+    pixel: impl FnMut(i32, i32) -> [f32; 3],
+) -> [f32; 3] {
+    if mode != Interpolation::Nearest && footprint.iter().any(|&side| side > 1.0) {
+        sample_area_f32(x, y, footprint, pixel)
+    } else {
+        sample_f32(x, y, mode, pixel)
+    }
+}
+
 pub(super) fn sample_rect(
     raster: &DisplayRaster,
     p: Pos2,
@@ -201,43 +243,14 @@ pub(super) fn sample_rect(
     )
 }
 
-/// Source coordinates, in image pixels, of viewer position `p` mapped over
-/// `rect`. The shared mapping of full-source sampling; the `- 0.5` keeps a
-/// sampled position over the center of source pixel 0.
-pub(super) fn source_coords(p: Pos2, rect: Rect, width: u32, height: u32) -> (f32, f32) {
-    let uv = (p - rect.min) / rect.size();
-    (uv.x * width as f32 - 0.5, uv.y * height as f32 - 0.5)
-}
-
-pub(super) fn sample_image_with(
-    image: &ImageBuf,
-    p: Pos2,
-    rect: Rect,
-    mode: Interpolation,
-    transform: impl Fn([f32; 3]) -> [f32; 3],
-) -> [f32; 3] {
-    let (x, y) = source_coords(p, rect, image.width, image.height);
-    sample_f32(x, y, mode, |x, y| {
-        transform(
-            image
-                .get(
-                    x.clamp(0, image.width as i32 - 1) as u32,
-                    y.clamp(0, image.height as i32 - 1) as u32,
-                )
-                // `Scalar` is f64 under `precision-f64`.
-                .map(spektrafilm_math::precision::to_f32),
-        )
-    })
-}
-
 #[cfg(test)]
 pub(super) fn capped_raster(image: &ImageBuf, max_edge: usize) -> Result<DisplayRaster, String> {
     capped_raster_with(&CpuBackend, image, max_edge)
 }
 
 /// The viewer's capped raster with a device route: the destination size is
-/// resolved here in f64 so the viewer owns the geometry, and the bilinear
-/// reduction itself runs on the compute device when the backend provides a
+/// resolved here in f64 so the viewer owns the geometry, and source-cell area
+/// averaging runs on the compute device when the backend provides a
 /// device resampler. The source image is read-only, so this never changes a
 /// retained or saved sample.
 pub(super) fn capped_raster_with(
@@ -282,24 +295,19 @@ fn host_capped_raster_pixels(
     w: usize,
     h: usize,
 ) -> Vec<[f32; 3]> {
+    let footprint = [w as f32 / size[0] as f32, h as f32 / size[1] as f32];
     let mut rgb = Vec::with_capacity(size[0] * size[1]);
     for y in 0..size[1] {
-        let sy = ((y as f64 + 0.5) * h as f64 / size[1] as f64 - 0.5).clamp(0.0, (h - 1) as f64);
-        let y0 = sy.floor() as usize;
-        let y1 = (y0 + 1).min(h - 1);
-        let fy = sy - y0 as f64;
+        let sy = (y as f32 + 0.5) * footprint[1] - 0.5;
         for x in 0..size[0] {
-            let sx =
-                ((x as f64 + 0.5) * w as f64 / size[0] as f64 - 0.5).clamp(0.0, (w - 1) as f64);
-            let x0 = sx.floor() as usize;
-            let x1 = (x0 + 1).min(w - 1);
-            let fx = sx - x0 as f64;
-            rgb.push(std::array::from_fn(|c| {
-                let a = image.data[(y0 * w + x0) * 3 + c] as f64;
-                let b = image.data[(y0 * w + x1) * 3 + c] as f64;
-                let d = image.data[(y1 * w + x0) * 3 + c] as f64;
-                let e = image.data[(y1 * w + x1) * 3 + c] as f64;
-                ((a * (1.0 - fx) + b * fx) * (1.0 - fy) + (d * (1.0 - fx) + e * fx) * fy) as f32
+            let sx = (x as f32 + 0.5) * footprint[0] - 0.5;
+            rgb.push(sample_area_f32(sx, sy, footprint, |x, y| {
+                image
+                    .get(
+                        x.clamp(0, w as i32 - 1) as u32,
+                        y.clamp(0, h as i32 - 1) as u32,
+                    )
+                    .map(spektrafilm_math::precision::to_f32)
             }));
         }
     }
@@ -368,30 +376,73 @@ mod tests {
         }
     }
     #[test]
-    fn image_sampling_transforms_each_tap_before_interpolation() {
+    fn area_reduction_covers_fractional_cells_and_repeats_the_edge() {
+        let sample = |x: i32, _: i32| [if x <= 0 { 1.0 } else { 0.0 }; 3];
+        for (x, footprint, expected) in [
+            (0.25, [2.5, 1.0], 0.6),
+            (0.5, [2.0, 1.0], 0.5),
+            (-0.25, [1.5, 1.0], 1.0),
+        ] {
+            for value in sample_area_f32(x, 0.0, footprint, sample) {
+                assert!((value - expected).abs() < 1e-6);
+            }
+        }
         let image = ImageBuf::from_data(
-            2,
-            1,
-            vec![
-                0.25 as _, 0.25 as _, 0.25 as _, 0.75 as _, 0.75 as _, 0.75 as _,
-            ],
+            99,
+            3,
+            (0..99 * 3)
+                .flat_map(|i| [(i % 3 == 2) as u8 as _; 3])
+                .collect(),
         );
-        let rect = Rect::from_min_size(Pos2::ZERO, egui::Vec2::new(2.0, 1.0));
-        let out = sample_image_with(
-            &image,
-            Pos2::new(1.0, 0.5),
-            rect,
-            Interpolation::Linear,
-            |p| p.map(|v| v * v),
-        );
-        assert_eq!(out, [0.3125; 3]);
+        let reduced = capped_raster(&image, 33).unwrap();
+        for value in reduced.rgb.iter().flatten() {
+            assert!((value - 1.0 / 3.0).abs() < 1e-6);
+        }
     }
 
-    /// The device resample must reproduce the host `capped_raster` the viewer
-    /// already shows. The device evaluates the source coordinates and the tap
-    /// weights in f32 while the host uses f64, so the agreement budget is the
-    /// f32 evaluation of the same formula, not exact equality: measured worst
-    /// absolute difference over the chromatic 37×23 → 8×8 case below.
+    #[test]
+    fn million_cell_area_preserves_constant_multichannel_brightness() {
+        let expected = [0.2, 0.5, 0.9];
+        let actual = sample_area_f32(499.5, 499.5, [1000.0, 1000.0], |_, _| expected);
+        for (got, want) in actual.into_iter().zip(expected) {
+            assert!((got - want).abs() < 1e-6, "{got} != {want}");
+        }
+    }
+
+    #[test]
+    fn explicit_native_footprints_keep_selected_kernels() {
+        let footprint = [1.0, 1.0];
+        let raster =
+            DisplayRaster::new([2, 2], vec![[0.0; 3], [1.0; 3], [0.5; 3], [0.25; 3]]).unwrap();
+        let pixel =
+            |x: i32, y: i32| raster.rgb[y.clamp(0, 1) as usize * 2 + x.clamp(0, 1) as usize];
+        for (mode, expected) in [
+            (Interpolation::Cubic, 0.3878919780),
+            (Interpolation::Spline16, 0.3957519829),
+            (Interpolation::Spline36, 0.3963389993),
+            (Interpolation::Lanczos, 0.3968215585),
+        ] {
+            for got in sample_footprint_f32(0.25, 0.75, mode, footprint, pixel) {
+                assert!(
+                    (got - expected).abs() < 1e-6,
+                    "{mode:?}: {got} != {expected}"
+                );
+            }
+        }
+        let reduced = [2.0, 2.0];
+        for mode in [
+            Interpolation::Cubic,
+            Interpolation::Spline36,
+            Interpolation::Lanczos,
+        ] {
+            for got in sample_footprint_f32(0.5, 0.5, mode, reduced, pixel) {
+                assert!((got - 0.4375).abs() < 1e-6);
+            }
+        }
+    }
+
+    /// Both processors integrate the same fractional source-cell areas. The
+    /// host accumulates in binary64, while the device uses binary32.
     #[test]
     fn device_resample_matches_the_host_reference_within_f32() {
         use spektrafilm_math::precision::from_f64;
@@ -401,8 +452,8 @@ mod tests {
         // this binary and must outlive the backend.
         let backend = spektrafilm_gpu::test_support::adapter();
         let (w, h) = (37u32, 23u32);
-        // A chromatic, out-of-range wedge: a smooth ramp would hide a wrong tap
-        // or a wrong clamp behind the bilinear average.
+        // A chromatic, out-of-range wedge exercises fractional-cell weights
+        // and preserves the display-side headroom before its own clamp.
         let image = ImageBuf::from_data(
             w,
             h,
@@ -428,8 +479,7 @@ mod tests {
                 worst = worst.max((f64::from(got[c]) - f64::from(want[c])).abs());
             }
         }
-        // f32 evaluation of the host formula, plus the matrix-free resample:
-        // 4 source taps, 3 mix terms, 1 rounding. Measured 1.2e-7.
+        // Allow for the device's binary32 area-weight accumulation.
         assert!(
             worst < 1e-6,
             "the device resample differs from the host reference by {worst:.3e}"

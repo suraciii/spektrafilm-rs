@@ -301,7 +301,7 @@ fn layers_and_interpolation_change_output_but_preserve_input_pixels() {
 
 #[test]
 fn exact_zoom_obeys_dpi_drag_pans_double_click_resets_and_hover_reads_float_source() {
-    for dpi in [1.0, 2.0] {
+    for dpi in [1.0, 1.25, 2.0] {
         let fixture = session();
         let state_path = fixture.directory.path().join("initial.json");
         let image_path = fixture.directory.path().join("asymmetric-ramp.png");
@@ -336,6 +336,15 @@ fn exact_zoom_obeys_dpi_drag_pans_double_click_resets_and_hover_reads_float_sour
             h.state_mut().viewer.pan = egui::vec2(
                 (-6.5 - image_min_x.fract()) / dpi,
                 (-4.5 - image_min_y.fract()) / dpi,
+            );
+            let observation = composed(h, time);
+            // Align the settled geometry just before device-pixel centers.
+            // An inverse fractional DPI is not exactly representable in f32;
+            // do not let its rounding move the fixture across the half-open edge.
+            let align = |point: f32| ((point * dpi - 0.5).round() + 0.5 - 0.001) / dpi - point;
+            h.state_mut().viewer.pan += egui::vec2(
+                align(observation.image_rect.min.x),
+                align(observation.image_rect.min.y),
             );
             let observation = composed(h, time);
             assert_eq!(h.state().viewer.zoom_percent, Some(percent));
@@ -474,35 +483,53 @@ fn exact_zoom_obeys_dpi_drag_pans_double_click_resets_and_hover_reads_float_sour
 }
 
 #[test]
-fn click_steps_the_zoom_at_the_pointer_and_a_double_click_fits() {
+fn clicking_the_photograph_leaves_an_editor_without_changing_the_view() {
     let mut s = session();
     let h = &mut s.harness;
-    click(h, "Original");
-    let baseline = composed(h, 10.0);
-    let time = h.ctx.input(|input| input.time);
-    let image = baseline.image_rect;
-    let at = image.center() + egui::vec2(24.0, -18.0);
-    let fraction = (at - image.min) / image.size();
-    pointer(h, at, true, time + 1.0);
-    pointer(h, at, false, time + 1.1);
-    let zoomed = composed(h, time + 2.0);
-    assert!((h.state().viewer.zoom - 2.0).abs() < 1e-6);
-    assert_eq!(h.state().viewer.zoom_percent, None);
-    assert!((zoomed.image_rect.size() - image.size() * 2.0).length() < 0.5);
-    // The clicked content stays under the pointer.
-    let landed = zoomed.image_rect.min + fraction * zoomed.image_rect.size();
-    assert!(
-        (landed - at).length() < 1.5,
-        "clicked content moved: {landed:?}"
-    );
-    // A double click fits the view again.
-    pointer(h, at, true, time + 3.0);
-    pointer(h, at, false, time + 3.1);
-    pointer(h, at, true, time + 3.2);
-    pointer(h, at, false, time + 3.3);
-    assert_eq!(h.state().viewer.zoom, 1.0);
-    assert_eq!(h.state().viewer.zoom_percent, None);
-    assert_eq!(h.state().viewer.pan, egui::Vec2::ZERO);
+    for exact in [false, true] {
+        click(h, "reset view");
+        if exact {
+            click(h, "200%");
+        }
+        h.state_mut().viewer.pan = egui::vec2(17.0, -11.0);
+        reveal_control(h, "output_mix.amount");
+        h.get_by_role_and_label(egui::accesskit::Role::TextInput, "Simulation blend")
+            .focus();
+        h.step();
+        assert!(
+            h.get_by_role_and_label(egui::accesskit::Role::TextInput, "Simulation blend")
+                .is_focused()
+        );
+        let time = h.ctx.input(|input| input.time) + 1.0;
+        let baseline = composed(h, time);
+        let view = (
+            h.state().viewer.zoom,
+            h.state().viewer.zoom_percent,
+            h.state().viewer.pan,
+        );
+        let params = h.state().params.clone();
+        let revision = h.state().parameter_revision;
+        let at = baseline.image_rect.center() + egui::vec2(24.0, -18.0);
+        pointer(h, at, true, time + 1.0);
+        pointer(h, at, false, time + 1.1);
+        let after = composed(h, time + 2.0);
+        assert!(
+            !h.get_by_role_and_label(egui::accesskit::Role::TextInput, "Simulation blend")
+                .is_focused()
+        );
+        assert_eq!(
+            (
+                h.state().viewer.zoom,
+                h.state().viewer.zoom_percent,
+                h.state().viewer.pan,
+            ),
+            view
+        );
+        assert_eq!(after.image_rect, baseline.image_rect);
+        assert_eq!(after.pixels, baseline.pixels);
+        assert_eq!(h.state().params, params);
+        assert_eq!(h.state().parameter_revision, revision);
+    }
 }
 
 #[test]
@@ -1251,62 +1278,4 @@ fn canonical_search_preserves_inspector_and_viewer_geometry_at_supported_desktop
             }
         }
     }
-}
-
-#[track_caller]
-fn wait_device_output(h: &mut Harness<'_, App>) {
-    wait_until(h, |app| {
-        let viewer = app.viewer.observation();
-        !app.dirty
-            && app.render_job.is_none()
-            && app.calibration_job.is_none()
-            && !app.accepted_frame_is_stale()
-            && app.output_retained.is_some()
-            && viewer.generation == viewer.accepted_generation
-            && viewer.transition.is_none()
-    });
-}
-
-#[track_caller]
-fn scan_device_output(h: &mut Harness<'_, App>) {
-    // Unlike the CPU pixel helpers, readiness is the accepted device carrier
-    // and its provenance, never a compatibility raster or a host readback.
-    wait_device_output(h);
-    let previous = h.state().source_render.as_ref().unwrap().operation_id;
-    h.get_by_label("SCAN").simulate_click();
-    h.run_steps(3);
-    assert!(
-        h.state().render_job.is_some() || h.state().full_scan_requested,
-        "SCAN click was dropped"
-    );
-    wait_for_new_scan(h, previous);
-}
-
-fn wait_for_new_scan(h: &mut Harness<'_, App>, previous: u64) {
-    wait_until(h, |app| {
-        !app.dirty
-            && app.render_job.is_none()
-            && !app.accepted_frame_is_stale()
-            && app.output_retained.is_some()
-            && app.retained_kind == Some(RenderKind::Scan)
-            && app
-                .source_render
-                .as_ref()
-                .is_some_and(|render| render.operation_id != previous)
-    });
-}
-
-/// Request the Scan before the next frame so the automatic Preview cannot
-/// form a whole Fotufilm bank that this test does not inspect. The Scan still
-/// exercises the same cold production formation and worker observation.
-#[track_caller]
-fn request_scan_device_output(h: &mut Harness<'_, App>) {
-    let previous = h.state().source_render.as_ref().unwrap().operation_id;
-    h.state_mut().full_scan_requested = true;
-    h.run_steps(3);
-    assert!(
-        h.state().render_job.is_some() || h.state().full_scan_requested,
-        "direct Scan request was dropped"
-    );
-    wait_for_new_scan(h, previous);
 }

@@ -1,13 +1,20 @@
 //! Editors for the pinned experimental GUI sections.
 use crate::routes::vocabulary;
 use crate::theme;
+mod applicability;
+mod component_name;
 mod localization;
+pub(crate) use applicability::{
+    control_inactive_reason, grain_control_inactive_reason, install_material_context, materials,
+};
+pub(crate) use component_name::component_name;
 use egui::Ui;
 pub(crate) use localization::{localized, localized_for};
 use serde_json::Value;
 use spektrafilm_core::feature_profiles::{self, FeatureProfileFamily, FeatureProfileSelection};
 use spektrafilm_core::params::{
     PrintCurvesMorphParams, PrintExposureEvTracking, PrintExposureMode, RuntimeParams,
+    WorkflowMode,
     grain::{FotufilmMaterial, GrainEngine, ProceduralGrainFilmType, ProceduralGrainMode},
 };
 use spektrafilm_core::profile::Profile;
@@ -186,6 +193,18 @@ pub(crate) fn enum_choice<T: Copy + PartialEq>(
     choices: &[(T, &str)],
     tooltip: &str,
 ) -> bool {
+    enum_choice_with_disabled(ui, label, value, choices, tooltip, |_| None)
+}
+
+/// Like [`enum_choice`], but a choice may be unavailable with a reason.
+pub(crate) fn enum_choice_with_disabled<T: Copy + PartialEq>(
+    ui: &mut Ui,
+    label: &str,
+    value: &mut T,
+    choices: &[(T, &str)],
+    tooltip: &str,
+    disabled: impl Fn(&T) -> Option<&'static str>,
+) -> bool {
     let selected = choices
         .iter()
         .find(|(option, _)| *option == *value)
@@ -215,8 +234,21 @@ pub(crate) fn enum_choice<T: Copy + PartialEq>(
             .wrap_mode(egui::TextWrapMode::Truncate)
             .selected_text(crate::controls::localized(ui.ctx(), selected))
             .show_ui(ui, |ui| {
-                for &(option, label) in choices {
-                    ui.selectable_value(value, option, crate::controls::localized(ui.ctx(), label));
+                for &(option, option_label) in choices {
+                    let reason = disabled(&option);
+                    let response = ui
+                        .add_enabled_ui(reason.is_none(), |ui| {
+                            ui.selectable_value(
+                                value,
+                                option,
+                                crate::controls::localized(ui.ctx(), option_label),
+                            )
+                        })
+                        .inner;
+                    if let Some(reason) = reason {
+                        response
+                            .on_disabled_hover_text(crate::controls::localized(ui.ctx(), reason));
+                    }
                 }
             })
             .response
@@ -361,6 +393,25 @@ pub(crate) fn section_header<R>(
         ui.make_persistent_id(egui::Id::new(title)),
         false,
     );
+    if title == "Capture setup"
+        && ui.ctx().data(|data| {
+            data.get_temp::<(String, String)>(egui::Id::new("control_focus_request"))
+                .is_some_and(|(section, target)| {
+                    section == "Camera"
+                        && lookup(&target).is_some_and(|entry| {
+                            matches!(
+                                entry.path.as_str(),
+                                "camera.film_format_mm"
+                                    | "camera.auto_exposure_method"
+                                    | "camera.color_filter"
+                                    | "camera.capture_illuminant"
+                            )
+                        })
+                })
+        })
+    {
+        state.set_open(true);
+    }
     let header = ui.horizontal(|ui| {
         if disclosure_header(ui, title, state.is_open()).clicked() {
             state.toggle(ui);
@@ -371,7 +422,7 @@ pub(crate) fn section_header<R>(
     // A closed sub-section states what it holds, so a page of collapsed
     // headers still names its controls. Display-only: it reads no value.
     if openness <= 0.0
-        && let Some(summary) = section_summary(title)
+        && let Some(summary) = sub_section_summary(title)
     {
         ui.label(
             egui::RichText::new(crate::controls::localized(ui.ctx(), summary))
@@ -381,22 +432,54 @@ pub(crate) fn section_header<R>(
     }
 }
 
-/// What a closed sub-section holds, in one line naming its own controls.
-///
-/// Keyed by the header title the sub-section renders, so the wording stays with
-/// the section that owns it. A sub-section without an entry shows its header
-/// alone.
-fn section_summary(title: &str) -> Option<&'static str> {
+/// Entries shared by a module header and the sub-section with the same title.
+fn shared_summary(title: &str) -> Option<&'static str> {
     match title {
-        "Base" => Some("Base density: scale and per-channel masks"),
-        "Print viewing glare" => Some("Print viewing glare: percent, roughness, blur"),
         "Input gamut compress" => Some("Input gamut compression: algorithm, knee, hull detail"),
         "Output gamut compress" => Some("Output gamut compression: algorithm, knee"),
+        _ => None,
+    }
+}
+
+/// What a closed module holds, in one line naming its own controls.
+///
+/// Keyed by the module header the inspector renders. A module without an entry
+/// shows its header alone.
+pub(crate) fn section_summary(title: &str) -> Option<&'static str> {
+    shared_summary(title).or(match title {
+        "Film base" => Some("Base density: scale, tilt, and per-channel masks"),
+        "Print base" => Some("Base density: scale and per-channel masks"),
+        "Halation" => {
+            Some("Highlight scatter and back-reflection; source response and RGB controls")
+        }
+        "Couplers" => Some("DIR couplers: inhibition and interlayer response"),
+        "Convert" => {
+            Some("Real negative capture: exposure, base estimation, calibration, channel swaps")
+        }
+        "Camera diffusion" => Some("Taking-lens diffusion: core, tail, and warmth"),
+        "Glare" => Some("Readout stray light: percent, roughness, blur"),
+        "Enlarger diffusion" => Some("Enlarger optics: core, tail, and warmth"),
+        "Preflash" => Some("Linear flash exposure and independent Yellow and Magenta shifts"),
+        "Film chemistry" | "Print chemistry" => {
+            Some("Density curves: development time, gamma, developer exhaustion")
+        }
+        _ => None,
+    })
+}
+
+/// What a closed sub-section holds, in one line naming its own controls.
+///
+/// Keyed by the sub-section header the controls render. A sub-section without an
+/// entry shows its header alone.
+fn sub_section_summary(title: &str) -> Option<&'static str> {
+    shared_summary(title).or(match title {
+        "Base" => Some("Base density: scale and per-channel masks"),
+        "Print viewing glare" => Some("Print viewing glare: percent, roughness, blur"),
         "Spectral upsampling" => Some("Spectral reconstruction: method, adaptation, blur"),
         "Input" => Some("Input decoding: color space and cctf"),
         "Crop and upscale" => Some("Geometry: crop toggle, center, size, upscale factor"),
         _ => None,
-    }
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -500,26 +583,68 @@ pub(crate) enum Stage {
     Film,
     Print,
     Scan,
+    Look,
     Output,
 }
 
 impl Stage {
-    pub(crate) const ALL: [Self; 5] = [
+    pub(crate) const ALL: [Self; 6] = [
         Self::Input,
         Self::Film,
         Self::Print,
         Self::Scan,
+        Self::Look,
         Self::Output,
     ];
+
+    /// Stages whose controls run in the selected workflow. Inactive stages
+    /// remain visible with their stored values; only their bodies are disabled.
+    pub(crate) fn active_in(self, mode: WorkflowMode) -> bool {
+        match mode {
+            // Look keeps the workflow-mode switch reachable in film mode;
+            // only its LUT controls are inactive.
+            WorkflowMode::Film => true,
+            WorkflowMode::Lut => !matches!(self, Self::Film | Self::Print | Self::Scan),
+        }
+    }
+
     pub(crate) fn label(self) -> &'static str {
         match self {
             Self::Input => "Input and capture",
             Self::Film => "Film",
             Self::Print => "Print",
             Self::Scan => "Scan",
+            Self::Look => "Look",
             Self::Output => "Output",
         }
     }
+}
+
+/// Modules whose editors belong to the film chain and are inactive in LUT mode.
+pub(crate) fn inactive_in_lut(section: &str, mode: WorkflowMode) -> bool {
+    mode == WorkflowMode::Lut
+        && matches!(
+            section,
+            "Camera"
+                | "Camera diffusion"
+                | "Film material"
+                | "Film chemistry"
+                | "Film base"
+                | "Halation"
+                | "Couplers"
+                | "Grain"
+                | "Print material"
+                | "Enlarger"
+                | "Preflash"
+                | "Enlarger diffusion"
+                | "Print chemistry"
+                | "Print base"
+                | "Scanner"
+                | "Glare"
+                | "Finishing"
+                | "Convert"
+                | "Spectral upsampling"
+        )
 }
 
 /// Each module has one visual owner; this is not serialized preset scope.
@@ -561,15 +686,11 @@ pub(crate) const STAGE_LAYOUT: &[(Stage, &[&str])] = &[
             "Print base",
         ],
     ),
-    (Stage::Scan, &["Scanner", "Glare"]),
+    (Stage::Scan, &["Scanner", "Glare", "Finishing"]),
+    (Stage::Look, &["LUT look"]),
     (
         Stage::Output,
-        &[
-            "Finishing",
-            "Output",
-            "Output gamut compress",
-            "CMYK ink style",
-        ],
+        &["Output", "Output gamut compress", "CMYK ink style"],
     ),
 ];
 
@@ -668,13 +789,26 @@ fn paint_focus_feedback(ui: &Ui, response: &egui::Response, located: bool) {
         egui::StrokeKind::Outside,
     );
     if located {
-        ui.painter().text(
-            response.rect.left_top() - egui::vec2(0.0, theme::SPACE_1),
-            egui::Align2::LEFT_BOTTOM,
-            localized(ui.ctx(), "Located control"),
-            theme::text(theme::TEXT_READOUT, theme::SIZE_HINT),
-            theme::FG,
-        );
+        let text = localized(ui.ctx(), "Located control");
+        let font = theme::text(theme::TEXT_READOUT, theme::SIZE_HINT);
+        let width = ui.fonts(|fonts| {
+            fonts
+                .layout_no_wrap(text.to_string(), font.clone(), theme::FG)
+                .size()
+                .x
+        });
+        let (pos, align) = if response.rect.left() + width > ui.clip_rect().right() {
+            (
+                response.rect.right_top() - egui::vec2(0.0, theme::SPACE_1),
+                egui::Align2::RIGHT_BOTTOM,
+            )
+        } else {
+            (
+                response.rect.left_top() - egui::vec2(0.0, theme::SPACE_1),
+                egui::Align2::LEFT_BOTTOM,
+            )
+        };
+        ui.painter().text(pos, align, text, font, theme::FG);
     }
 }
 
@@ -758,7 +892,7 @@ pub(crate) fn applicable_control(
     path: &str,
     edit: impl FnOnce(&mut Ui, &mut RuntimeParams) -> bool,
 ) -> bool {
-    let inactive = crate::ui::control_inactive_reason(ui.ctx(), path, params);
+    let inactive = crate::controls::control_inactive_reason(ui.ctx(), path, params);
     let changed = ui
         .add_enabled_ui(inactive.is_none(), |ui| edit(ui, params))
         .inner;
@@ -774,6 +908,14 @@ pub(crate) fn module_applicability(
     film: &Profile,
     print: Option<&Profile>,
 ) -> Option<String> {
+    if section == "Glare" {
+        return spektrafilm_core::params::sources::inactive_reason_with_materials(
+            "print_render.glare.active",
+            params,
+            Some(film),
+            print,
+        );
+    }
     if section == "Finishing" {
         let scanned = match spektrafilm_core::finishing::scanned_material(params) {
             Some(spektrafilm_core::stage_artifact::MaterialKind::Film) => Some(film),
@@ -781,7 +923,7 @@ pub(crate) fn module_applicability(
             None => None,
         };
         return (!finishing_applicable(params, scanned.is_some_and(|profile| profile.is_paper() || profile.is_positive())))
-            .then(|| "Finishing is inactive: the route does not deliver an eligible positive reading. Stored values are retained.".to_owned());
+            .then(|| "Tone & Color is inactive: the route does not deliver an eligible positive reading. Stored values are retained.".to_owned());
     }
     // A module banner states that the whole module has no effect. Reporting
     // the first inactive control would promote an optional subfeature (the
@@ -1092,8 +1234,14 @@ mod tests {
     #[test]
     fn camera_capture_illuminant_control_sets_and_clears_the_option() {
         let ctx = egui::Context::default();
+        ctx.style_mut(|style| style.animation_time = 0.0);
         let mut params = RuntimeParams::default();
         // The control renders inside the Camera section, not Scanner/Convert.
+        let (_, output) = camera_frame(&ctx, &mut params, vec![]);
+        assert!(!has_text(&output, "Inherit (film profile) · D55"));
+        let setup = text_position(&output, "Capture setup");
+        camera_frame(&ctx, &mut params, click(setup, true));
+        camera_frame(&ctx, &mut params, click(setup, false));
         let (_, output) = camera_frame(&ctx, &mut params, vec![]);
         assert!(has_text(&output, "Inherit (film profile) · D55"));
         assert_eq!(params.camera.capture_illuminant, None);
@@ -1193,7 +1341,12 @@ mod tests {
     #[test]
     fn camera_capture_illuminant_accepts_custom_blackbody_text() {
         let ctx = egui::Context::default();
+        ctx.style_mut(|style| style.animation_time = 0.0);
         let mut params = RuntimeParams::default();
+        let (_, output) = camera_frame(&ctx, &mut params, vec![]);
+        let setup = text_position(&output, "Capture setup");
+        camera_frame(&ctx, &mut params, click(setup, true));
+        camera_frame(&ctx, &mut params, click(setup, false));
         let (_, output) = camera_frame(&ctx, &mut params, vec![]);
         let position = text_position(&output, "custom BB<kelvin>");
         camera_frame(&ctx, &mut params, click(position, true));
@@ -1315,7 +1468,7 @@ mod tests {
                     egui::CentralPanel::default().show(ctx, |ui| {
                         let mut cache = SectionLabelCache::default();
                         let mut filter = ControlFilter::new("", &mut cache);
-                        changed = fotufilm_sublayer_shares(ui, &mut shares, &mut filter);
+                        changed = grain::fotufilm_sublayer_shares(ui, &mut shares, &mut filter);
                     });
                 },
             );

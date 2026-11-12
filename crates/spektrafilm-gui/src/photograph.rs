@@ -83,7 +83,6 @@ pub(crate) fn copy_session_settings(target: &mut SettingsParams, source: &Settin
     target.use_enlarger_lut = source.use_enlarger_lut;
     target.use_scanner_lut = source.use_scanner_lut;
     target.lut_resolution = source.lut_resolution;
-    target.use_fast_stats = source.use_fast_stats;
     target.neutral_print_filters_from_database = source.neutral_print_filters_from_database;
 }
 
@@ -248,6 +247,7 @@ impl App {
         settings.params.debug = self.params.debug.clone();
         settings.params.taps = self.params.taps.clone();
         self.params = settings.params;
+        self.film_route = settings.film_route;
         self.params
             .restore_render_preparation_state(&settings.preparation);
         self.film_name = settings.film;
@@ -287,7 +287,6 @@ impl App {
         self.source_render = None;
         self.retained_kind = None;
         self.stale_save_confirmation = false;
-        self.scan_for_print_snapshot = None;
         self.operator_compare = false;
         self.finishing_compare = false;
         self.displayed_comparison = None;

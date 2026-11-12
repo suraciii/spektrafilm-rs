@@ -15,7 +15,10 @@ use crate::params::RuntimeParams;
 use crate::profile::Profile;
 
 mod metering;
-pub use metering::{MAX_SIZE, MID_GREY, measure_autoexposure_ev, meter_autoexposure_ev};
+pub use metering::{
+    MAX_SIZE, MID_GREY, measure_autoexposure_ev, measure_raw_autoexposure_ev,
+    meter_autoexposure_ev, metering_preview,
+};
 
 /// Per-pixel `raw = m · rgb` for the Mallett2019 path (f64 matmul, rayon-parallel).
 fn apply_mallett_matrix(image: &ImageBuf, m: &[[f64; 3]; 3]) -> ImageBuf {
@@ -31,6 +34,105 @@ fn apply_mallett_matrix(image: &ImageBuf, m: &[[f64; 3]; 3]) -> ImageBuf {
             dst[2] = from_f64(v[2]);
         });
     out
+}
+
+/// Linear RGB → film raw exposure through the active spectral front end.
+/// The simplified fallback treats linear RGB as proportional to raw.
+fn rgb_to_raw(
+    rgb: &ImageBuf,
+    params: &RuntimeParams,
+    backend: &dyn ComputeBackend,
+    tc_lut: Option<&TcLut>,
+    mallett_core: Option<&[[f64; 3]; 3]>,
+    front_illuminant: &[f32],
+) -> Result<ImageBuf, String> {
+    if let Some(core) = mallett_core {
+        let _mallett = super::StageObservation::cpu(
+            backend,
+            "rgb_to_raw",
+            spektrafilm_backend::telemetry::CpuReason::Mallett,
+        );
+        // Mallett2019: per-pixel `raw = (core · M_cs) · rgb`, a single 3×3
+        // matrix folding the input-colour-space → linear-sRGB conversion.
+        let m = crate::mallett::film_matrix(core, &params.io.input_color_space);
+        Ok(apply_mallett_matrix(rgb, &m))
+    } else if let Some(lut) = tc_lut {
+        // Full Hanatos2025 spectral upsampling with CAT02 adaptation.
+        backend.hanatos2025_rgb_to_raw(
+            rgb,
+            lut,
+            &params.io.input_color_space,
+            front_illuminant,
+            params.settings.use_cat16,
+        )
+    } else {
+        Ok(rgb.clone())
+    }
+}
+
+fn decode_input_cctf(rgb: &mut ImageBuf, params: &RuntimeParams) {
+    if !params.io.input_cctf_decoding {
+        return;
+    }
+    let input_space = colorspace::resolve(&params.io.input_color_space)
+        .expect("input color space must be validated before filming");
+    rgb.data.par_iter_mut().for_each(|v| {
+        *v = from_f64(colorspace::cctf_decode(to_f64(*v), input_space.cctf));
+    });
+}
+
+/// Film raw for an image that still carries the input CCTF (the auto-exposure
+/// metering preview). Decoding is part of the film-sensitivity path, so this
+/// resolves the same raw the exposure stage would from decoded samples.
+pub fn encoded_rgb_to_film_raw(
+    rgb: &ImageBuf,
+    params: &RuntimeParams,
+    backend: &dyn ComputeBackend,
+    tc_lut: Option<&TcLut>,
+    mallett_core: Option<&[[f64; 3]; 3]>,
+    front_illuminant: &[f32],
+) -> Result<ImageBuf, String> {
+    let mut decoded = rgb.clone();
+    decode_input_cctf(&mut decoded, params);
+    rgb_to_raw(
+        &decoded,
+        params,
+        backend,
+        tc_lut,
+        mallett_core,
+        front_illuminant,
+    )
+}
+
+/// Auto-exposure EV on the full-frame metering preview's **film raw**, the
+/// domain upstream meters. The preview is resolved before crop/resize, then
+/// passed through the same spectral front end as the real exposure; only the
+/// resulting bounded EV is used by the pipeline.
+pub fn meter_raw_autoexposure_ev(
+    image: &ImageBuf,
+    params: &RuntimeParams,
+    backend: &dyn ComputeBackend,
+    tc_lut: Option<&TcLut>,
+    mallett_core: Option<&[[f64; 3]; 3]>,
+    front_illuminant: &[f32],
+) -> Result<f64, String> {
+    if !params.camera.auto_exposure {
+        return Ok(0.0);
+    }
+    let preview = metering::metering_preview(image);
+    let raw = encoded_rgb_to_film_raw(
+        &preview,
+        params,
+        backend,
+        tc_lut,
+        mallett_core,
+        front_illuminant,
+    )?;
+    Ok(metering::measure_raw_autoexposure_ev(
+        &raw,
+        &params.camera.auto_exposure_method,
+        1.0,
+    ))
 }
 
 /// The reference host diffusion filter, with its telemetry marker.
@@ -63,11 +165,10 @@ pub(crate) fn host_diffusion(
 /// TC LUT is provided), or a simplified RGB → log10 fallback.
 ///
 /// `pixel_size_um` is the working-geometry pitch derived by
-/// [`crate::resizing::crop_and_rescale`] from the full (pre-crop)
-/// image; `ae_ev` is the auto-exposure EV metered on the full input
-/// (Python meters before crop/resize and scales the encoded source in
-/// `_preprocess`; `Pipeline::apply_autoexposure` owns that multiply, so
-/// this in-stage scaling stays a no-op for pipeline callers).
+/// [`crate::resizing::crop_and_rescale`] from the full (pre-crop) image;
+/// `ae_ev` is the film-raw auto-exposure EV metered on the full-input
+/// preview. The exposure multiply lands on film raw after `rgb_to_raw`,
+/// matching upstream's `_auto_exposure` order.
 #[allow(clippy::too_many_arguments)]
 pub fn expose(
     image: &ImageBuf,
@@ -81,11 +182,7 @@ pub fn expose(
     ae_ev: f64,
 ) -> Result<ImageBuf, String> {
     let pix_um = pixel_size_um as f32;
-    let input_space = colorspace::resolve(&params.io.input_color_space)
-        .expect("input color space must be validated before filming");
 
-    // Auto-exposure EV is metered upstream on the full input (the meter
-    // previews/decodes internally in `small_preview` order).
     let mut rgb = image.clone();
     if params.io.input_cctf_decoding {
         let _decode = super::StageObservation::cpu(
@@ -93,41 +190,25 @@ pub fn expose(
             "input_transfer",
             spektrafilm_backend::telemetry::CpuReason::InputTransferDecoding,
         );
-        rgb.data.par_iter_mut().for_each(|v| {
-            *v = from_f64(colorspace::cctf_decode(to_f64(*v), input_space.cctf));
-        });
+        decode_input_cctf(&mut rgb, params);
     }
 
-    // Auto-exposure scales linear irradiance after metering decoded luminance.
+    // RGB → film raw exposure.
+    let mut raw = rgb_to_raw(
+        &rgb,
+        params,
+        backend,
+        tc_lut,
+        mallett_core,
+        front_illuminant,
+    )?;
+
+    // Auto-exposure scales film raw, exactly where upstream's `expose`
+    // applies `2 ** ev` after `_rgb_to_film_raw`.
     if params.camera.auto_exposure {
         let scale = from_f64(2.0f64.powf(ae_ev));
-        rgb.data.par_iter_mut().for_each(|v| *v *= scale);
+        raw.data.par_iter_mut().for_each(|v| *v *= scale);
     }
-
-    // RGB → film raw exposure
-    let mut raw = if let Some(core) = mallett_core {
-        let _mallett = super::StageObservation::cpu(
-            backend,
-            "rgb_to_raw",
-            spektrafilm_backend::telemetry::CpuReason::Mallett,
-        );
-        // Mallett2019: per-pixel `raw = (core · M_cs) · rgb`, a single 3×3
-        // matrix folding the input-colour-space → linear-sRGB conversion.
-        let m = crate::mallett::film_matrix(core, &params.io.input_color_space);
-        apply_mallett_matrix(&rgb, &m)
-    } else if let Some(lut) = tc_lut {
-        // Full Hanatos2025 spectral upsampling with CAT02 adaptation.
-        backend.hanatos2025_rgb_to_raw(
-            &rgb,
-            lut,
-            &params.io.input_color_space,
-            front_illuminant,
-            params.settings.use_cat16,
-        )?
-    } else {
-        // Simplified fallback: treat RGB values as proportional to raw exposure
-        rgb.clone()
-    };
 
     // Python applies camera compensation to film raw, before optical effects.
     let exp_comp = from_f32(2.0f32.powf(params.camera.exposure_compensation_ev));
@@ -304,7 +385,6 @@ pub fn develop(
             film,
             grain,
             norm_curves_f64,
-            params.settings.use_fast_stats,
             params.random_seed,
             pixel_size_um,
             backend,
@@ -365,7 +445,6 @@ pub(crate) fn spektra_grain_device_params(
     film: &Profile,
     grain: &crate::params::grain::GrainParams,
     norm_curves_f64: &[[f64; 3]],
-    use_fast_stats: bool,
     random_seed: u64,
     pixel_size_um: f64,
 ) -> Result<spektrafilm_backend::SpektraGrainGpuParams, String> {
@@ -405,7 +484,6 @@ pub(crate) fn spektra_grain_device_params(
         usm_amount: grain.mult_usm_amount,
         curve_x,
         curve_layers,
-        mt19937_regime: !use_fast_stats,
     })
 }
 
@@ -415,7 +493,6 @@ pub(crate) fn apply_spektra_grain(
     film: &Profile,
     grain: &crate::params::grain::GrainParams,
     norm_curves_f64: &[[f64; 3]],
-    use_fast_stats: bool,
     random_seed: u64,
     pixel_size_um: f64,
     backend: &dyn ComputeBackend,
@@ -434,7 +511,6 @@ pub(crate) fn apply_spektra_grain(
         grain.mult_usm_amount,
         film.is_positive(),
         grain.monochrome,
-        use_fast_stats,
         random_seed,
         backend,
     )
@@ -453,7 +529,7 @@ pub fn process(
     pixel_size_um: f64,
 ) -> Result<ImageBuf, String> {
     let ref_illuminant = select_illuminant(&film.info.reference_illuminant);
-    let ae_ev = meter_autoexposure_ev(image, params);
+    let ae_ev = meter_raw_autoexposure_ev(image, params, backend, tc_lut, None, &ref_illuminant)?;
     let log_raw = expose(
         image,
         film,
@@ -592,7 +668,6 @@ mod tests {
                 &film,
                 g,
                 &curves,
-                false,
                 0,
                 aperture_area.sqrt(),
                 &CpuBackend,
@@ -610,32 +685,38 @@ mod tests {
             }
         }
 
-        /// `use_fast_stats` switches the layered sampler's RNG regime:
-        /// different texture, same statistical center (bounded comparison
-        /// — bit parity is impossible for upstream's numba kernels).
+        /// Pin the stock Portra 400 particle population to the experimental
+        /// branch (`28bf883`) rather than the older main `particle_area`
+        /// model. These values are the layer/channel `n_particles` produced by
+        /// the reference `_layer_grain_params` for the stock RMS, layer scales,
+        /// uniformity and curves at the 4.861 µm chart pitch.
         #[test]
-        fn use_fast_stats_switches_regime() {
+        fn stock_portra_400_population_matches_experimental_reference() {
             let film = portra();
-            let backend = CpuBackend;
-            let log_raw = log_raw();
             let mut params = base_params();
-            params.film_render.grain.blur = 0.0; // raw particle field
-            params.film_render.grain.blur_dye_clouds_um = 0.0;
-
-            params.settings.use_fast_stats = false;
-            let scipy = develop(&log_raw, &film, &params, &backend, 12.0)
-                .expect("SciPy-statistics film development failed");
-            params.settings.use_fast_stats = true;
-            let fast = develop(&log_raw, &film, &params, &backend, 12.0)
-                .expect("fast-statistics film development failed");
-            assert_ne!(scipy.data, fast.data);
-            for ch in 0..3 {
-                assert!(
-                    (ch_mean(&scipy, ch) - ch_mean(&fast, ch)).abs() < 0.1,
-                    "ch {ch}: {} vs {}",
-                    ch_mean(&scipy, ch),
-                    ch_mean(&fast, ch)
-                );
+            let grain = &mut params.film_render.grain;
+            grain.rms_granularity = [4.5; 3];
+            grain.particle_scale_sublayers = [1.0, 0.4, 0.25];
+            grain.density_min = [0.03; 3];
+            grain.uniformity = [0.97; 3];
+            let norm = spektrafilm_model::density_curves::normalize_density_curves_f64(
+                &film.density_curves_f64(),
+            );
+            let prepared = prepare_spektra(&film, grain, &norm, 4.861).unwrap();
+            let expected = [
+                [64.91677267196839, 57.884374469814034, 77.8072288653685],
+                [187.86977725515436, 158.93972799559683, 221.9017231549409],
+                [305.6418132010311, 254.50507087872967, 360.9772117363274],
+            ];
+            assert_eq!(prepared.grain.layer_count, 3);
+            for (sl, layer) in expected.iter().enumerate() {
+                for (ch, &reference) in layer.iter().enumerate() {
+                    let actual = prepared.grain.n_particles[sl][ch];
+                    assert!(
+                        (actual - reference).abs() <= reference.abs() * 1e-5,
+                        "layer {sl} channel {ch}: {actual} != {reference}"
+                    );
+                }
             }
         }
 

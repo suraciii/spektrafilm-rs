@@ -243,6 +243,10 @@ pub(crate) fn path_modified(
     }
 }
 
+pub(crate) fn route_modified(route: &str, baseline: &Value) -> bool {
+    value_at(baseline, "workflow.route").is_none_or(|factory| factory.as_str() != Some(route))
+}
+
 /// The GUI sections whose parameters a reset restores.
 pub fn sections() -> impl Iterator<Item = &'static str> {
     SECTION_PARAMETERS.iter().map(|&(section, _, _)| section)

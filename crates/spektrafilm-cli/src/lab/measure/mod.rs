@@ -21,7 +21,9 @@ use spektrafilm_core::WorkflowRoute;
 pub use crate::lab::report::{csv_field, number_field};
 use spektrafilm_core::params::{RuntimeParams, Tap};
 use spektrafilm_core::presets::PresetLibrary;
-use spektrafilm_core::process_params::{self, InputDeclaration, ProcessParamsRequest};
+use spektrafilm_core::process_params::{
+    self, FilmSelection, InputDeclaration, ProcessParamsRequest,
+};
 use spektrafilm_core::profile::Profile;
 use spektrafilm_core::runtime::DigestMode;
 
@@ -113,7 +115,7 @@ pub fn resolve_chain(
     };
     let resolved = process_params::resolve(
         ProcessParamsRequest {
-            film: args.film.as_deref(),
+            film: args.film.as_deref().map(FilmSelection::Name),
             paper: args.paper.as_deref(),
             presets: &presets,
             params_file: None,

@@ -122,38 +122,46 @@ pub(crate) fn show_mode_controls(ui: &mut egui::Ui, prefs: &mut PlotPreferences)
         PlotMode::Waveform => "analysis.waveform",
         PlotMode::Vectorscope => "analysis.vectorscope",
     };
-    let response = egui::menu::menu_button(ui, label(ui, selected), |ui| {
-        ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
-        for (mode, name, help) in [
-            (
-                PlotMode::Histogram,
-                "analysis.histogram",
-                "analysis.histogram_help",
-            ),
-            (
-                PlotMode::Waveform,
-                "analysis.waveform",
-                "analysis.waveform_help",
-            ),
-            (
-                PlotMode::Vectorscope,
-                "analysis.vectorscope",
-                "analysis.vectorscope_help",
-            ),
-        ] {
-            let name = label(ui, name);
-            let help = label(ui, help);
-            if ui
-                .selectable_value(&mut prefs.mode, mode, name)
-                .on_hover_text(help)
-                .clicked()
-            {
-                ui.close_menu();
+    let response = egui::ComboBox::from_id_salt("analysis-mode")
+        .width(110.0)
+        .selected_text(label(ui, selected))
+        .show_ui(ui, |ui| {
+            ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
+            for (mode, name, help) in [
+                (
+                    PlotMode::Histogram,
+                    "analysis.histogram",
+                    "analysis.histogram_help",
+                ),
+                (
+                    PlotMode::Waveform,
+                    "analysis.waveform",
+                    "analysis.waveform_help",
+                ),
+                (
+                    PlotMode::Vectorscope,
+                    "analysis.vectorscope",
+                    "analysis.vectorscope_help",
+                ),
+            ] {
+                let clicked = ui
+                    .selectable_value(&mut prefs.mode, mode, label(ui, name))
+                    .on_hover_text(label(ui, help))
+                    .clicked();
+                if clicked {
+                    ui.memory_mut(|memory| memory.close_popup());
+                }
             }
-        }
-    })
-    .response;
-    let selected_name = label(ui, selected);
+        })
+        .response;
+    let selected_name = label(
+        ui,
+        match prefs.mode {
+            PlotMode::Histogram => "analysis.histogram",
+            PlotMode::Waveform => "analysis.waveform",
+            PlotMode::Vectorscope => "analysis.vectorscope",
+        },
+    );
     let mode_label = label(ui, "analysis.mode");
     let help_key = match prefs.mode {
         PlotMode::Histogram => "analysis.histogram_help",
@@ -191,10 +199,15 @@ pub(crate) fn show_mode_controls(ui: &mut egui::Ui, prefs: &mut PlotPreferences)
             .width(72.0)
             .selected_text(current.clone())
             .show_ui(ui, |ui| {
-                ui.selectable_value(&mut prefs.histogram_rgb, false, label(ui, "analysis.tone"))
-                    .on_hover_text(label(ui, "analysis.histogram_help"));
-                ui.selectable_value(&mut prefs.histogram_rgb, true, label(ui, "analysis.rgb"))
-                    .on_hover_text(label(ui, "analysis.histogram_help"));
+                for (rgb, name) in [(false, "analysis.tone"), (true, "analysis.rgb")] {
+                    let clicked = ui
+                        .selectable_value(&mut prefs.histogram_rgb, rgb, label(ui, name))
+                        .on_hover_text(label(ui, "analysis.histogram_help"))
+                        .clicked();
+                    if clicked {
+                        ui.memory_mut(|memory| memory.close_popup());
+                    }
+                }
             })
             .response;
         let help = label(ui, "analysis.histogram_help");
@@ -232,8 +245,13 @@ pub(crate) fn show_mode_controls(ui: &mut egui::Ui, prefs: &mut PlotPreferences)
                 for (view, name, help) in views {
                     let name = label(ui, name);
                     let help = label(ui, help);
-                    ui.selectable_value(&mut prefs.waveform_view, view, name)
-                        .on_hover_text(help);
+                    let clicked = ui
+                        .selectable_value(&mut prefs.waveform_view, view, name)
+                        .on_hover_text(help)
+                        .clicked();
+                    if clicked {
+                        ui.memory_mut(|memory| memory.close_popup());
+                    }
                 }
             })
             .response;
@@ -327,6 +345,44 @@ fn plot_rect(rect: Rect, mode: AnalysisMode) -> Rect {
     } else {
         rect
     }
+}
+
+// Short strokes just outside the trace indicate out-of-range samples without
+// treating endpoint samples as clipping or obscuring the plotted data.
+fn range_marker_segments(
+    rect: Rect,
+    mode: AnalysisMode,
+    below: u64,
+    above: u64,
+) -> [Option<[Pos2; 2]>; 2] {
+    let center = rect.center();
+    let segments = match mode {
+        AnalysisMode::Histogram => [
+            [
+                Pos2::new(rect.left() - 1.0, center.y - 3.0),
+                Pos2::new(rect.left() - 1.0, center.y + 3.0),
+            ],
+            [
+                Pos2::new(rect.right() + 1.0, center.y - 3.0),
+                Pos2::new(rect.right() + 1.0, center.y + 3.0),
+            ],
+        ],
+        AnalysisMode::Waveform | AnalysisMode::Parade => [
+            [
+                Pos2::new(center.x - 3.0, rect.bottom() + 1.0),
+                Pos2::new(center.x + 3.0, rect.bottom() + 1.0),
+            ],
+            [
+                Pos2::new(center.x - 3.0, rect.top() - 1.0),
+                Pos2::new(center.x + 3.0, rect.top() - 1.0),
+            ],
+        ],
+        AnalysisMode::Vectorscope => return [None, None],
+    };
+    [
+        (below != 0).then_some(segments[0]),
+        (above != 0).then_some(segments[1]),
+    ]
 }
 
 fn grid(painter: &egui::Painter, rect: Rect, mode: AnalysisMode) {
@@ -439,6 +495,10 @@ fn mesh_quad(mesh: &mut egui::Mesh, points: [Pos2; 4], color: Color32) {
     mesh.add_triangle(first, first + 2, first + 3);
 }
 
+fn histogram_height(p: f64, peak: f64) -> f32 {
+    ((256.0 * p).ln_1p() / (256.0 * peak).ln_1p()) as f32
+}
+
 fn histogram(
     painter: &egui::Painter,
     state: &mut PlotState,
@@ -461,11 +521,9 @@ fn histogram(
     });
     if stale {
         let mut heights = [[0.0_f32; BINS]; 3];
-        let normalizer = (256.0 * peak).ln_1p();
         for (channel, &signal) in signals[..signal_count].iter().enumerate() {
             for (i, &count) in data.histogram[signal].iter().take(BINS).enumerate() {
-                let p = fraction(count, data.finite);
-                heights[channel][i] = ((256.0 * p).ln_1p() / normalizer) as f32;
+                heights[channel][i] = histogram_height(fraction(count, data.finite), peak);
             }
         }
         let mut mesh = egui::Mesh::default();
@@ -947,6 +1005,7 @@ pub(crate) fn show_plot(
     data: &AnalysisData,
     counterpart: Option<&AnalysisData>,
     sample: Option<PlotSample>,
+    allow_pointer_inspection: bool,
     max_height: f32,
     mut messages: Vec<String>,
 ) -> PlotResponse {
@@ -956,6 +1015,32 @@ pub(crate) fn show_plot(
         Vec2::new(ui.available_width(), max_height.max(0.0)),
         Sense::hover(),
     );
+    let axes_help = label(
+        ui,
+        match mode {
+            AnalysisMode::Histogram => "analysis.histogram_axes",
+            AnalysisMode::Vectorscope => "analysis.oklab",
+            _ => "analysis.waveform_axes",
+        },
+    );
+    let range_help = label(ui, "analysis.range_help")
+        .replace("{below}", &data.below.to_string())
+        .replace("{above}", &data.above.to_string())
+        .replace("{invalid}", &data.invalid.to_string())
+        .replace("{total}", &data.total.to_string());
+    let plot_help = format!("{axes_help}\n{range_help}");
+    let (signal_array, signal_count) = active_signals(prefs);
+    let signals = &signal_array[..signal_count];
+    if data.finite == 0 {
+        let cursor_label = label(ui, "analysis.plot_cursor");
+        allocation.widget_info(|| {
+            egui::WidgetInfo::labeled(egui::WidgetType::Other, true, cursor_label.as_ref())
+        });
+        ui.ctx().accesskit_node_builder(allocation.id, |node| {
+            node.set_description(plot_help.as_str())
+        });
+        allocation.clone().on_hover_text(plot_help.clone());
+    }
     if mode == AnalysisMode::Vectorscope && data.outside_window != 0 {
         messages.push(format!(
             "{}: {} ({:.2}%)",
@@ -963,12 +1048,6 @@ pub(crate) fn show_plot(
             data.outside_window,
             fraction(data.outside_window, data.finite) * 100.0
         ));
-    }
-    if data.below != 0 {
-        messages.push(format!("{}: {}", label(ui, "analysis.below"), data.below));
-    }
-    if data.above != 0 {
-        messages.push(format!("{}: {}", label(ui, "analysis.above"), data.above));
     }
     if data.invalid != 0 {
         messages.push(
@@ -982,12 +1061,8 @@ pub(crate) fn show_plot(
         let _ = overlay(ui, allocated, &messages, &[], 0.0);
         return result;
     }
-    let (signal_array, signal_count) = active_signals(prefs);
-    let signals = &signal_array[..signal_count];
     if signals.is_empty() && mode != AnalysisMode::Vectorscope {
         messages.push(label(ui, "analysis.choose_channel").into_owned());
-        let _ = overlay(ui, allocated, &messages, &[], 0.0);
-        return result;
     }
     let bounds = if mode == AnalysisMode::Histogram {
         allocated.shrink2(Vec2::new(2.0, 2.0))
@@ -1050,22 +1125,24 @@ pub(crate) fn show_plot(
         }
     }
     axes(ui.painter(), rect, mode, prefs.chroma_zoom);
-    let axes_help = label(
-        ui,
-        match mode {
-            AnalysisMode::Histogram => "analysis.histogram_axes",
-            AnalysisMode::Vectorscope => "analysis.oklab",
-            _ => "analysis.waveform_axes",
-        },
-    );
-    response.clone().on_hover_text(axes_help);
+    for segment in range_marker_segments(rect, mode, data.below, data.above)
+        .into_iter()
+        .flatten()
+    {
+        ui.painter()
+            .line_segment(segment, Stroke::new(2.0_f32, theme::FG_SECONDARY));
+    }
+    ui.ctx()
+        .accesskit_node_builder(response.id, |node| node.set_description(plot_help.as_str()));
+    response.clone().on_hover_text(plot_help);
     let bins = match mode {
         AnalysisMode::Histogram | AnalysisMode::Vectorscope => BINS,
         _ => data.spatial_bins.max(1) as usize,
     };
-    if let Some(pos) = response
-        .hover_pos()
-        .filter(|pos| rect.contains(*pos) && (!response.has_focus() || response.clicked()))
+    if allow_pointer_inspection
+        && let Some(pos) = response
+            .hover_pos()
+            .filter(|pos| rect.contains(*pos) && (!response.has_focus() || response.clicked()))
     {
         let mut x = ((pos.x - rect.left()) / rect.width()).clamp(0.0, 0.999_999);
         if mode == AnalysisMode::Parade {
@@ -1254,6 +1331,34 @@ mod tests {
     }
 
     #[test]
+    fn range_markers_follow_plot_edges_and_nonzero_counts() {
+        let rect = Rect::from_min_max(Pos2::new(10.0, 20.0), Pos2::new(110.0, 80.0));
+        let [Some(left), Some(right)] = range_marker_segments(rect, AnalysisMode::Histogram, 1, 2)
+        else {
+            panic!("histogram needs both range markers");
+        };
+        assert!(left.iter().all(|p| p.x < rect.left()));
+        assert!(right.iter().all(|p| p.x > rect.right()));
+        for mode in [AnalysisMode::Waveform, AnalysisMode::Parade] {
+            let [Some(bottom), Some(top)] = range_marker_segments(rect, mode, 1, 2) else {
+                panic!("waveform needs both range markers");
+            };
+            assert!(bottom.iter().all(|p| p.y > rect.bottom()));
+            assert!(top.iter().all(|p| p.y < rect.top()));
+            assert_eq!(range_marker_segments(rect, mode, 0, 2)[0], None);
+            assert_eq!(range_marker_segments(rect, mode, 1, 0)[1], None);
+        }
+        assert_eq!(
+            range_marker_segments(rect, AnalysisMode::Histogram, 0, 0),
+            [None, None]
+        );
+        assert_eq!(
+            range_marker_segments(rect, AnalysisMode::Vectorscope, 1, 2),
+            [None, None]
+        );
+    }
+
+    #[test]
     fn trace_density_composites_between_surface_and_signal() {
         assert_eq!(composite(theme::SURFACE2, theme::FG, 0.0), theme::SURFACE2);
         assert_eq!(composite(theme::SURFACE2, theme::FG, 1.0), theme::FG);
@@ -1312,6 +1417,16 @@ mod tests {
         assert_eq!(pair_peak(&original, None), 0.7);
         assert_eq!(pair_peak(&original, Some(&modified)), 0.8);
         assert_eq!(pair_peak(&modified, Some(&original)), 0.8);
+    }
+
+    #[test]
+    fn histogram_height_uses_fixed_logarithmic_mapping() {
+        assert_eq!(histogram_height(1.0, 1.0), 1.0);
+        let low = histogram_height(1.0 / 256.0, 1.0);
+        let expected = (2.0_f64.ln() / 257.0_f64.ln()) as f32;
+        assert!((low - expected).abs() < 1e-7);
+        assert!(low > (1.0_f32 / 256.0));
+        assert!(histogram_height(0.25, 1.0) > histogram_height(0.125, 1.0));
     }
 
     #[test]

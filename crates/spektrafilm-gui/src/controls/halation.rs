@@ -10,18 +10,16 @@ pub(crate) fn sections(
     filter: &mut ControlFilter<'_>,
 ) {
     if section == "Halation" {
-        let inactive =
-            crate::ui::control_inactive_reason(ui.ctx(), "film_render.halation.active", params);
+        let inactive = crate::controls::control_inactive_reason(
+            ui.ctx(),
+            "film_render.halation.active",
+            params,
+        );
         if let Some(reason) = &inactive {
             ui.label(localized(ui.ctx(), reason));
         }
         ui.add_enabled_ui(inactive.is_none(), |ui| {
             let halation_active = params.film_render.halation.active;
-            ui.label(
-                egui::RichText::new(crate::i18n::text(ui.ctx(), "controls.halation.key_controls"))
-                    .small()
-                    .color(theme::FG_MUTED),
-            );
             if filter_matches(filter, "Halation Profiles") {
                 if !halation_active {
                     ui.label(egui::RichText::new(crate::i18n::text(ui.ctx(), "controls.halation.inactive_profile")).color(theme::FG_MUTED));

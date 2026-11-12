@@ -2,7 +2,7 @@
 
 ![banner](docs/card.jpg)
 
-SpektraFilm simulates analog color film and the print-and-scan chain spectrally. A digital image exposes a film stock, the developed record is enlarged onto photographic paper, and a scanner reads the result. Film, paper, enlarger light and scanner response are integrated over 81 wavelengths, so a stock, a paper, or a light source changes the image through its spectral profile rather than through a color preset. Bundled profiles carry measured or fitted spectral data; the CineStill 800T Cs41 material is an experimental fit, see [scanning](docs/scanning.md).
+SpektraFilm simulates analog color film and the print-and-scan chain spectrally. A digital image exposes a film stock, the developed record is enlarged onto photographic paper, and a scanner reads the result. Film, paper, enlarger light and scanner response are integrated over 81 wavelengths, so a stock, a paper, or a light source changes the image through its spectral profile rather than through a color preset. Bundled profiles carry measured or fitted spectral data; the CineStill 800T material is an experimental fit, see [scanning](docs/scanning.md).
 
 This is a Rust port of [andreavolpato/spektrafilm](https://github.com/andreavolpato/spektrafilm), forked from [turbasvin/spektrafilm-rs](https://github.com/turbasvin/spektrafilm-rs), the original Rust port. The desktop GUI renders at the build's native precision; GPU execution is f32 WGPU with faithful CPU stages where a GPU implementation would change the result. The separate `spektrafilm-f64` CLI remains the CPU f64 reference. Numeric agreement is judged against per-scenario budgets, not universal bit identity; see [parity and backends](docs/parity.md).
 
@@ -44,6 +44,13 @@ Render a film stock onto a print paper:
 ```bash
 ./target/release/spektrafilm-f64 process input.ORF -o out.png \
     --backend cpu --film kodak_gold_200 --paper kodak_portra_endura --data-dir data
+```
+
+Apply one external LUT as the LUT workflow:
+
+```bash
+./target/release/spektrafilm process input.png -o out.tif --lut look.cube \
+    --input-color-space sRGB --input-cctf-decoding true --data-dir data
 ```
 
 Start the desktop GUI, optionally on an image:

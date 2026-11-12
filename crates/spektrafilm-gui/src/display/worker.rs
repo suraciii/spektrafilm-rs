@@ -14,6 +14,7 @@ use super::ViewLayer;
 use super::colortransform::{input_display_raster_with, output_display_raster_with};
 use super::decorations::{PolaroidState, virtual_paper_back};
 use super::full_transform::{ProfileStamp, TransformCache, TransformIdentity};
+use super::geometry::contains_half_open;
 use super::raster::{DisplayRaster, Interpolation, sample_rect};
 #[derive(Clone)]
 pub(super) struct PreparedDisplay {
@@ -38,6 +39,8 @@ pub(super) struct DisplayRequest {
     pub(super) paper_rect: Rect,
     pub(super) image_rect: Rect,
     pub(super) texture_size: [usize; 2],
+    /// Source pixels covered by each composition texture texel.
+    pub(super) source_footprint: [f32; 2],
     pub(super) gray: Color32,
     pub(super) layer: ViewLayer,
     pub(super) clipping: spektrafilm_backend::ViewerClipping,
@@ -66,10 +69,6 @@ pub(super) struct DisplaySource {
     pub(super) encoded: bool,
     pub(super) transform: bool,
     pub(super) profile: Option<PathBuf>,
-}
-/// Matches device composition: the minimum edge belongs to the image, the maximum does not.
-pub(super) fn contains_half_open(rect: Rect, point: Pos2) -> bool {
-    rect.min.x <= point.x && point.x < rect.max.x && rect.min.y <= point.y && point.y < rect.max.y
 }
 
 struct FitCacheEntry {
@@ -132,6 +131,7 @@ struct CompositionCache {
     fit: [Option<FitCacheEntry>; 2],
     device_fit: [Option<DeviceFitEntry>; 4],
     device_source: [Option<DeviceSourceEntry>; 2],
+    clipping_source: [Option<DeviceSourceEntry>; 2],
     full: TransformCache,
     #[cfg(test)]
     pause: Option<Arc<CompositionPause>>,
@@ -393,6 +393,7 @@ impl DisplaySource {
         image_rect: Rect,
         rect: Rect,
         texture_size: [usize; 2],
+        source_footprint: [f32; 2],
         interpolation: Interpolation,
         cache: &mut TransformCache,
     ) -> Option<(DisplayRaster, Option<crate::app::Message>)> {
@@ -403,6 +404,7 @@ impl DisplaySource {
             image_rect,
             rect,
             texture_size,
+            source_footprint,
             interpolation,
             cache,
         )
@@ -419,6 +421,7 @@ impl DisplaySource {
         image_rect: Rect,
         rect: Rect,
         texture_size: [usize; 2],
+        source_footprint: [f32; 2],
         interpolation: Interpolation,
         cache: &mut TransformCache,
     ) -> Option<(DisplayRaster, Option<crate::app::Message>)> {
@@ -460,6 +463,7 @@ impl DisplaySource {
                         rect_size: [rect.width(), rect.height()],
                         image_min: [image_rect.min.x, image_rect.min.y],
                         image_size: [image_rect.width(), image_rect.height()],
+                        source_footprint,
                         interpolation: interpolation.discriminant(),
                         transform: false,
                         src_cctf: 0,
@@ -558,6 +562,7 @@ impl DisplaySource {
             image_rect,
             rect,
             texture_size,
+            source_footprint,
             interpolation,
         );
         let raster = DisplayRaster::new(texture_size, rgb).ok()?;
@@ -617,6 +622,7 @@ fn compose_display_cancellable(
         paper_rect,
         image_rect,
         texture_size,
+        source_footprint,
         gray,
         layer,
         interpolation,
@@ -759,6 +765,7 @@ fn compose_display_cancellable(
                 image_rect,
                 rect,
                 texture_size,
+                source_footprint,
                 interpolation,
                 &mut cache.full,
             )
@@ -1048,7 +1055,8 @@ fn compose_display_device(
         }
         let need_full =
             request.full_source && request.layer != ViewLayer::PaperBack && image.is_some();
-        let native = if need_full || params.clipping.active() {
+        let native = if need_full || (params.clipping.active() && !cfg!(feature = "precision-f64"))
+        {
             let source = request.source.as_ref();
             let metadata = &request.metadata;
             let raw = if let Some(retained) = request.retained_source.as_ref() {
@@ -1148,6 +1156,7 @@ fn compose_display_device(
                         rect_size: [request.rect.width(), request.rect.height()],
                         image_min: [request.image_rect.min.x, request.image_rect.min.y],
                         image_size: [request.image_rect.width(), request.image_rect.height()],
+                        source_footprint: request.source_footprint,
                         interpolation: request.interpolation.discriminant(),
                         transform: false,
                         src_cctf: 0,
@@ -1174,7 +1183,60 @@ fn compose_display_device(
             })
             .transpose()?;
         let native_for_clipping = if params.clipping.active() {
-            native.as_ref()
+            if cfg!(feature = "precision-f64")
+                && request.source.is_some()
+                && (request.layer == ViewLayer::Input || request.retained_source.is_none())
+            {
+                let source = request
+                    .source
+                    .as_ref()
+                    .ok_or("viewer clipping has no accepted source")?;
+                let metadata = &request.metadata;
+                let slot =
+                    &mut cache.clipping_source[usize::from(request.layer == ViewLayer::Output)];
+                if !slot
+                    .as_ref()
+                    .is_some_and(|entry| entry.matches(source, &request.backend, metadata))
+                {
+                    let space = spektrafilm_math::colorspace::resolve(
+                        metadata
+                            .space
+                            .as_deref()
+                            .ok_or("viewer source has no color space")?,
+                    )?;
+                    let image = backend.retain_viewer_clipping_source(
+                        source,
+                        &spektrafilm_backend::RetainedImageMeta {
+                            width: source.width,
+                            height: source.height,
+                            domain: if metadata.encoded {
+                                spektrafilm_backend::SampleDomain::Encoded
+                            } else {
+                                spektrafilm_backend::SampleDomain::Linear
+                            },
+                            precision: spektrafilm_backend::Precision::host(),
+                            space,
+                            pixel_pitch_um: None,
+                        },
+                    )?;
+                    *slot = Some(DeviceSourceEntry {
+                        source: source.clone(),
+                        backend: request.backend.clone(),
+                        device_id: request.backend.preparation_device_id(),
+                        space: metadata.space.clone(),
+                        encoded: metadata.encoded,
+                        image,
+                    });
+                }
+                Some(
+                    slot.as_ref()
+                        .expect("clipping source uploaded")
+                        .image
+                        .clone(),
+                )
+            } else {
+                request.retained_source.clone().or_else(|| native.clone())
+            }
         } else {
             None
         };
@@ -1182,7 +1244,7 @@ fn compose_display_device(
             image.as_ref(),
             cache.paper.as_ref().and_then(|r| r.retained.as_ref()),
             previous,
-            native_for_clipping,
+            native_for_clipping.as_ref(),
             &params,
         )?;
         Ok(egui::ColorImage {
@@ -1292,6 +1354,7 @@ mod tests {
             paper_rect: rect,
             image_rect: rect,
             texture_size: [4, 1],
+            source_footprint: [1.0, 1.0],
             gray: Color32::BLACK,
             layer: ViewLayer::Output,
             interpolation: Interpolation::Nearest,
@@ -1484,8 +1547,14 @@ mod tests {
             let expected = compose_display(host, &mut CompositionCache::default());
             assert!(expected.error.is_none(), "{:?}", expected.error);
             assert_eq!(actual.image.pixels, expected.image.pixels);
-            let raw = &cache.device_source[1].as_ref().unwrap().image;
-            assert_eq!(raw.to_host(device.backend.as_ref()).unwrap().data, saved);
+            if let Some(raw) = cache.device_source[1].as_ref() {
+                assert_eq!(
+                    raw.image.to_host(device.backend.as_ref()).unwrap().data,
+                    saved
+                );
+            } else {
+                assert!(cfg!(feature = "precision-f64") && !full_source);
+            }
         }
         let raw = cache.device_source[1].as_ref().unwrap().image.clone();
         let mut resident = device.clone();
@@ -1516,6 +1585,129 @@ mod tests {
                 .unwrap()
         ));
         assert_eq!(raw.to_host(device.backend.as_ref()).unwrap().data, saved);
+    }
+
+    #[cfg(feature = "precision-f64")]
+    #[test]
+    fn host_original_warnings_survive_narrowed_view_upload_and_reuse() {
+        use spektrafilm_backend::ViewerClipping;
+        let gpu = spektrafilm_gpu::test_support::explicit_adapter();
+        let mut current = request(1);
+        current.layer = ViewLayer::Input;
+        current.backend = Arc::new(gpu.derived_explicit());
+        current.metadata.encoded = false;
+        current.source = Some(Arc::new(ImageBuf::from_data(
+            4,
+            1,
+            vec![
+                0.999999999,
+                0.5,
+                0.5,
+                1e-46,
+                1e-46,
+                1e-46,
+                -0.0,
+                0.0,
+                0.0,
+                1e300,
+                0.5,
+                0.5,
+            ],
+        )));
+        current.max_size = 4;
+        current.full_source = true;
+        current.frame = 10;
+        let mut cache = CompositionCache::default();
+        let off = compose_display(current.clone(), &mut cache);
+        assert!(off.error.is_none(), "{:?}", off.error);
+        assert!(cache.clipping_source[0].is_none());
+        current.retained_source = off.uploaded_input;
+        assert!(current.retained_source.is_some());
+        current.clipping = ViewerClipping::Overlay {
+            shadows: true,
+            highlights: true,
+        };
+        let on = compose_display(current.clone(), &mut cache);
+        assert!(on.error.is_none(), "{:?}", on.error);
+        assert_ne!(on.image.pixels[0], Color32::from_rgb(255, 64, 64));
+        assert_ne!(on.image.pixels[1], Color32::from_rgb(64, 112, 255));
+        assert_eq!(on.image.pixels[2], Color32::from_rgb(64, 112, 255));
+        assert_eq!(on.image.pixels[3], Color32::from_rgb(255, 64, 64));
+        let source = cache.clipping_source[0].as_ref().unwrap().image.clone();
+        assert!(source.to_host(current.backend.as_ref()).is_err());
+        current.image_rect = current.image_rect.translate(Vec2::new(0.25, 0.0));
+        current.clipping = ViewerClipping::Shadows;
+        let panned = compose_display(current.clone(), &mut cache);
+        assert!(panned.error.is_none(), "{:?}", panned.error);
+        assert!(Arc::ptr_eq(
+            source.payload().unwrap(),
+            cache.clipping_source[0]
+                .as_ref()
+                .unwrap()
+                .image
+                .payload()
+                .unwrap()
+        ));
+        current.clipping = ViewerClipping::Off;
+        let off_again = compose_display(current.clone(), &mut cache);
+        assert!(off_again.error.is_none(), "{:?}", off_again.error);
+        assert!(Arc::ptr_eq(
+            source.payload().unwrap(),
+            cache.clipping_source[0]
+                .as_ref()
+                .unwrap()
+                .image
+                .payload()
+                .unwrap()
+        ));
+        current.clipping = ViewerClipping::Highlights;
+        current.metadata.encoded = true;
+        let reinterpreted = compose_display(current.clone(), &mut cache);
+        assert!(reinterpreted.error.is_none(), "{:?}", reinterpreted.error);
+        assert!(!Arc::ptr_eq(
+            source.payload().unwrap(),
+            cache.clipping_source[0]
+                .as_ref()
+                .unwrap()
+                .image
+                .payload()
+                .unwrap()
+        ));
+        let interpreted = cache.clipping_source[0].as_ref().unwrap().image.clone();
+        current.source = Some(Arc::new((**current.source.as_ref().unwrap()).clone()));
+        let replaced = compose_display(current.clone(), &mut cache);
+        assert!(replaced.error.is_none(), "{:?}", replaced.error);
+        assert!(!Arc::ptr_eq(
+            interpreted.payload().unwrap(),
+            cache.clipping_source[0]
+                .as_ref()
+                .unwrap()
+                .image
+                .payload()
+                .unwrap()
+        ));
+        let replaced_source = cache.clipping_source[0].as_ref().unwrap().image.clone();
+        current.backend = Arc::new(gpu.derived_explicit());
+        let switched = compose_display(current.clone(), &mut cache);
+        assert!(switched.error.is_none(), "{:?}", switched.error);
+        let switched_source = cache.clipping_source[0].as_ref().unwrap().image.clone();
+        assert!(!Arc::ptr_eq(
+            replaced_source.payload().unwrap(),
+            switched_source.payload().unwrap()
+        ));
+        current.source = Some(Arc::new((**current.source.as_ref().unwrap()).clone()));
+        let canceled =
+            compose_display_cancellable(current, &mut cache, Some(Arc::new(AtomicBool::new(true))));
+        assert!(canceled.error.is_some());
+        assert!(Arc::ptr_eq(
+            switched_source.payload().unwrap(),
+            cache.clipping_source[0]
+                .as_ref()
+                .unwrap()
+                .image
+                .payload()
+                .unwrap()
+        ));
     }
 
     #[test]
@@ -1788,15 +1980,9 @@ mod tests {
         drop(worker);
     }
 
-    /// The magnified full-source view must compose on the device exactly as
-    /// the host composition does: the same viewport geometry, the same
-    /// separable interpolation kernel, the same display transform. A device
-    /// port that changed any of the three would change what the magnified
-    /// viewer shows.
-    ///
-    /// The comparison is against the host reference over a chromatic source
-    /// and every interpolation mode, because the kernels differ in radius and
-    /// in weight and an error in either shows up only at the edges.
+    /// Compare reduction and magnification through the real device and host
+    /// display transforms. Reduction checks source-cell coverage; magnification
+    /// checks every interpolation kernel at fractional coordinates.
     #[test]
     fn device_full_source_matches_the_host_reference() {
         use spektrafilm_math::colorspace::resolve;
@@ -1834,12 +2020,15 @@ mod tests {
             Interpolation::Lanczos,
             Interpolation::Blackman,
         ];
-        for interpolation in modes {
-            // A viewport that fits the source with a fractional offset, so the
-            // kernel's taps land off the pixel centres.
-            let image_rect = Rect::from_min_size(Pos2::new(3.0, 2.0), Vec2::new(31.0, 17.0));
+        for (interpolation, extent) in modes.into_iter().flat_map(|mode| {
+            [Vec2::new(31.0, 17.0), Vec2::new(80.0, 60.0)]
+                .into_iter()
+                .map(move |extent| (mode, extent))
+        }) {
+            let image_rect = Rect::from_min_size(Pos2::new(3.0, 2.0), extent);
             let rect = Rect::from_min_size(Pos2::ZERO, Vec2::new(64.0, 48.0));
             let texture_size = [64usize, 48usize];
+            let footprint = [w as f32 / extent.x, h as f32 / extent.y];
             let device = metadata
                 .full_source_view_with(
                     backend.backend(),
@@ -1848,6 +2037,7 @@ mod tests {
                     image_rect,
                     rect,
                     texture_size,
+                    footprint,
                     interpolation,
                     &mut TransformCache::default(),
                 )
@@ -1859,6 +2049,7 @@ mod tests {
                     image_rect,
                     rect,
                     texture_size,
+                    footprint,
                     interpolation,
                     &mut TransformCache::default(),
                 )
@@ -1921,6 +2112,7 @@ mod tests {
                 image_rect,
                 rect,
                 [16, 8],
+                [1.0, 1.0],
                 Interpolation::Spline36,
                 &mut TransformCache::default(),
             )

@@ -37,50 +37,69 @@ pub(crate) fn sections(
         });
     }
     if section == "Print base" {
+        let inactive = control_inactive_reason(ui.ctx(), "print_render.base.active", params);
+        let values_inactive = control_inactive_reason(ui.ctx(), "print_render.base.scale", params);
         section_header(ui, filter, "Base", |ui, filter| {
-            if filter_matches(filter, "enable print base") {
-                flags.runtime_changed |= toggle(
-                    ui,
-                    "Enable print base",
-                    &mut params.print_render.base.active,
-                    "Enable print base-density tuning.",
-                );
+            ui.label(
+                egui::RichText::new(crate::i18n::text(ui.ctx(), "controls.base.print_base_note"))
+                    .color(theme::FG_MUTED)
+                    .small(),
+            );
+            if let Some(reason) = &inactive {
+                ui.label(localized(ui.ctx(), reason));
             }
-            if filter_matches(filter, "scale") {
-                flags.runtime_changed |= param_numeric(
-                    ui,
-                    "scale",
-                    &mut params.print_render.base.scale,
-                    "print_render.base.scale",
-                    "Overall multiplier on the print base density.",
-                );
-            }
-            if filter_matches(filter, "cyan") {
-                flags.runtime_changed |= param_numeric(
-                    ui,
-                    "cyan",
-                    &mut params.print_render.base.cyan,
-                    "print_render.base.cyan",
-                    "Cyan-channel multiplicative scale of the print base min around 610 nm (1.0 = neutral).",
-                );
-            }
-            if filter_matches(filter, "magenta") {
-                flags.runtime_changed |= param_numeric(
-                    ui,
-                    "magenta",
-                    &mut params.print_render.base.magenta,
-                    "print_render.base.magenta",
-                    "Magenta-channel multiplicative scale of the print base min around 530 nm (1.0 = neutral).",
-                );
-            }
-            if filter_matches(filter, "yellow") {
-                flags.runtime_changed |= param_numeric(
-                    ui,
-                    "yellow",
-                    &mut params.print_render.base.yellow,
-                    "print_render.base.yellow",
-                    "Yellow-channel multiplicative scale of the print base min around 445 nm (1.0 = neutral).",
-                );
+            ui.add_enabled_ui(inactive.is_none(), |ui| {
+                if filter_matches(filter, "enable print base") {
+                    flags.runtime_changed |= toggle(
+                        ui,
+                        "Enable print base",
+                        &mut params.print_render.base.active,
+                        "Enable print base-density tuning.",
+                    );
+                }
+                ui.add_enabled_ui(values_inactive.is_none(), |ui| {
+                    if filter_matches(filter, "scale") {
+                        flags.runtime_changed |= param_numeric(
+                            ui,
+                            "scale",
+                            &mut params.print_render.base.scale,
+                            "print_render.base.scale",
+                            "Overall multiplier on the print base density.",
+                        );
+                    }
+                    if filter_matches(filter, "cyan") {
+                        flags.runtime_changed |= param_numeric(
+                            ui,
+                            "cyan",
+                            &mut params.print_render.base.cyan,
+                            "print_render.base.cyan",
+                            "Cyan-channel multiplicative scale of the print base min around 610 nm (1.0 = neutral).",
+                        );
+                    }
+                    if filter_matches(filter, "magenta") {
+                        flags.runtime_changed |= param_numeric(
+                            ui,
+                            "magenta",
+                            &mut params.print_render.base.magenta,
+                            "print_render.base.magenta",
+                            "Magenta-channel multiplicative scale of the print base min around 530 nm (1.0 = neutral).",
+                        );
+                    }
+                    if filter_matches(filter, "yellow") {
+                        flags.runtime_changed |= param_numeric(
+                            ui,
+                            "yellow",
+                            &mut params.print_render.base.yellow,
+                            "print_render.base.yellow",
+                            "Yellow-channel multiplicative scale of the print base min around 445 nm (1.0 = neutral).",
+                        );
+                    }
+                });
+            });
+            if inactive.is_none()
+                && let Some(reason) = &values_inactive
+            {
+                ui.label(localized(ui.ctx(), reason));
             }
         });
     }

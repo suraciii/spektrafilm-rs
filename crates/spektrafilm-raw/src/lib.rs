@@ -1193,9 +1193,13 @@ mod tests {
             assert_eq!((actual.width, actual.height), (width, height));
             for i in 0..(width * height) as usize {
                 for c in 0..3 {
-                    assert_eq!(
-                        spektrafilm_math::precision::to_f64(actual.data[i * 3 + c]),
-                        f64::from(expected[i * 4 + c] / 65535.0)
+                    let got = spektrafilm_math::precision::to_f64(actual.data[i * 3 + c]);
+                    let want = f64::from(expected[i * 4 + c] / 65535.0);
+                    // Division and reciprocal multiplication can round apart.
+                    // A wrong source pixel differs by at least 7/65535 here.
+                    assert!(
+                        got.is_finite() && (got - want).abs() <= 1e-5 * want.abs(),
+                        "pixel {i} channel {c}: {got} != {want}"
                     );
                 }
             }

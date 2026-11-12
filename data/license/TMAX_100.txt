@@ -1,0 +1,25 @@
+KODAK PROFESSIONAL T-MAX 100 / 100TMX source approximation
+
+Manufacturer source: Eastman Kodak Company / Kodak Alaris, KODAK
+PROFESSIONAL T-MAX 100 Film, F-4016, June 2018, page 8. D-76 stock,
+small tank, 20 C, 7.5-minute characteristic curve and 0.3-above-D-min
+log-sensitivity curve. Scope: 100TMX 135 only; 120/sheet and the reported
+2026 Ektapan 100 rename are not delivered or treated as confirmed identity.
+https://www.kodakprofessional.com/sites/default/files/wysiwyg/pro/resources/f4016_TMax_100.pdf
+PDF SHA256 00518d7d1e296d6065f6e41ea3db999e5d8714679fb3d2b76d9a49eb207113be
+
+Source data and trademarks remain the property of their respective holders.
+The original PDF is not included in the product repository. Public availability
+is not an open redistribution grant. No manufacturer permission for
+redistribution of digitized curves or derived parameters is established by
+this technical work.
+
+New coordinate-extraction and reconstruction contributions:
+Copyright (c) 2026 SpektraFilm contributors, CC BY-SA 4.0.
+https://creativecommons.org/licenses/by-sa/4.0/
+This contribution license does not relicense manufacturer material.
+
+The F-4016 page-8 plots used here are vector paths, not raster images. The
+profile is an effective aggregate silver-record approximation. It does not
+identify a real emulsion sublayer decomposition, measured base spectrum,
+scanner response, or a stock-specific grain/halation PSF. See docs/tmax100.md.

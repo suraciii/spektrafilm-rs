@@ -1,3 +1,6 @@
+use super::errors::{library_error_message, library_fault_message};
+use super::thumbnail_worker::ThumbnailKey;
+use super::thumbnails::Status;
 use super::*;
 use crate::theme;
 
@@ -6,8 +9,11 @@ pub struct Browser {
     /// Session-only presentation state; deliberately outside BrowserState.
     pub(crate) query: String,
     pub(super) search: Option<(String, Vec<usize>)>,
-    pub(crate) preferences: super::discovery::Preferences,
-    pub(super) preference_error: Option<String>,
+    /// Row to scroll into view after a successful addition.
+    pub(super) reveal: Option<(PresetGroup, String)>,
+    /// Preset-library generation; candidate runtime state is rebuilt when it
+    /// changes, so referenced documents are re-read.
+    pub(super) refresh_epoch: u64,
     thumbnails: super::thumbnails::Thumbnails,
     pub(crate) library: PresetLibrary,
     pub(crate) entries: Vec<LibraryEntry>,
@@ -27,8 +33,8 @@ impl Browser {
             state: serde_json::from_value(extras["rust"]["presets"].clone()).unwrap_or_default(),
             query: String::new(),
             search: None,
-            preferences: Default::default(),
-            preference_error: None,
+            reveal: None,
+            refresh_epoch: 0,
             thumbnails: Default::default(),
             library,
             entries: vec![],
@@ -41,27 +47,22 @@ impl Browser {
             dialog_composing: false,
         };
         browser.refresh();
-        let path = browser
-            .library
-            .directory()
-            .parent()
-            .unwrap_or(Path::new("."))
-            .join("preset_discovery_preferences.json");
-        match super::discovery::Preferences::load(&path) {
-            Ok(preferences) => browser.preferences = preferences,
-            Err(error) => browser.preference_error = Some(error.to_string()),
-        }
         browser
     }
     pub(crate) fn refresh(&mut self) {
         self.search = None;
-        self.thumbnails = Default::default();
+        self.thumbnails.update_content(&[]);
+        self.refresh_epoch = self.refresh_epoch.wrapping_add(1);
         match self.library.scan() {
             Ok(entries) => {
                 self.entries = entries;
                 self.scan_error = None;
+                self.thumbnails.update_content(&self.entries);
             }
-            Err(e) => self.scan_error = Some(e),
+            Err(e) => {
+                self.entries.clear();
+                self.scan_error = Some(e);
+            }
         }
     }
 
@@ -83,12 +84,12 @@ impl Browser {
             .iter()
             .enumerate()
             .filter_map(|(index, entry)| {
-                let is_look = entry.fault.is_none()
-                    && entry
-                        .preset
-                        .as_ref()
-                        .is_some_and(|preset| preset.kind() == Ok(PresetKind::Look));
-                if !is_look || !self.preferences.includes(entry) {
+                let kind = entry
+                    .fault
+                    .is_none()
+                    .then(|| entry.preset.as_ref().and_then(|preset| preset.kind().ok()))
+                    .flatten();
+                if !matches!(kind, Some(PresetKind::Look | PresetKind::Lut)) {
                     return None;
                 }
                 let stock_matches = |stock: &str, profiles: &[crate::profiles::ProfileEntry]| {
@@ -98,8 +99,21 @@ impl Browser {
                             .find(|profile| profile.stock == stock)
                             .is_some_and(|profile| profile.display.to_lowercase().contains(&query))
                 };
+                let lut_matches = entry
+                    .preset
+                    .as_ref()
+                    .and_then(|preset| preset.lut.as_ref())
+                    .is_some_and(|lut| {
+                        lut.path
+                            .file_name()
+                            .and_then(|name| name.to_str())
+                            .is_some_and(|name| name.to_lowercase().contains(&query))
+                            || lut.title.to_lowercase().contains(&query)
+                            || lut.path.to_string_lossy().to_lowercase().contains(&query)
+                    });
                 (query.is_empty()
                     || entry.name.to_lowercase().contains(&query)
+                    || lut_matches
                     || entry
                         .film_profile
                         .as_ref()
@@ -164,8 +178,8 @@ impl App {
                 ui.disable();
             }
             if expanded {
-                // Title and save share one compact row; the collapse control
-                // stays reachable at the row's end.
+                // Title and the named save action share one compact row; the
+                // collapse and library controls stay reachable at its end.
                 ui.horizontal(|ui| {
                     ui.label(
                         egui::RichText::new(crate::i18n::text(ui.ctx(), "surfaces.presets.title"))
@@ -173,16 +187,26 @@ impl App {
                             .strong(),
                     );
                     let save_name = crate::i18n::text(ui.ctx(), "surfaces.presets.save");
-                    if quiet_button(ui, |ui| {
-                        crate::controls::icon_button(
-                            ui,
-                            save_name.as_ref(),
-                            crate::controls::Icon::Add,
+                    let save_available = self.params.workflow.mode
+                        != spektrafilm_core::params::WorkflowMode::Lut
+                        || (!self.params.lut_look.path.as_os_str().is_empty()
+                            && self.params.lut_look.path.is_file());
+                    let save = ui
+                        .add_enabled(
+                            save_available,
+                            egui::Button::new(save_name.as_ref()).truncate(),
                         )
-                    })
-                    .on_hover_text(crate::i18n::text(ui.ctx(), "surfaces.presets.save_help"))
-                    .clicked()
-                    {
+                        .on_hover_text(crate::i18n::text(ui.ctx(), "surfaces.presets.save_help"));
+                    let save = if save_available {
+                        save
+                    } else {
+                        save.on_disabled_hover_text(crate::i18n::text(
+                            ui.ctx(),
+                            "surfaces.presets.lut_save_unavailable",
+                        ))
+                    };
+                    crate::controls::locate_row(ui, "presets.save", &save);
+                    if save.clicked() {
                         self.save_preset_as();
                     }
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -201,6 +225,7 @@ impl App {
                                 self.presets.narrow_open = false;
                             }
                         }
+                        self.preset_library_menu(ui);
                     });
                 });
             } else {
@@ -211,7 +236,7 @@ impl App {
                         crate::controls::icon_button(
                             ui,
                             toggle_name.as_ref(),
-                            crate::controls::Icon::Image,
+                            crate::controls::Icon::ChevronRight,
                         )
                     })
                     .clicked()
@@ -222,81 +247,50 @@ impl App {
                             self.presets.narrow_open = true;
                         }
                     }
+                    ui.label(
+                        egui::RichText::new(crate::i18n::text(ui.ctx(), "surfaces.presets.title"))
+                            .size(theme::SIZE_HINT)
+                            .color(theme::FG_MUTED),
+                    );
                 });
             }
             if !expanded {
+                self.presets.thumbnails.suspend();
                 return;
             }
-            let search_response = ui.add_sized(
-                egui::vec2(ui.available_width(), theme::HEIGHT_CONTROL),
-                egui::TextEdit::singleline(&mut self.presets.query)
-                    .id_salt("preset search")
-                    .margin(egui::vec2(theme::SPACE_2, 5.0))
-                    .desired_width(ui.available_width())
-                    .hint_text(crate::i18n::text(ui.ctx(), "surfaces.presets.search_hint")),
-            );
-            // The hint states the wording on screen, so the redundant visible
-            // label is gone while the field keeps the same accessible name.
-            let search_name = crate::i18n::text(ui.ctx(), "surfaces.presets.search");
-            ui.ctx().accesskit_node_builder(search_response.id, |node| {
-                node.set_label(search_name.as_ref());
-            });
-            crate::controls::locate_row(ui, "presets.discovery.search", &search_response);
-            if !self.presets.query.is_empty()
-                && ui
-                    .button(crate::i18n::text(ui.ctx(), "surfaces.presets.clear_search"))
-                    .clicked()
-            {
-                self.presets.query.clear();
-            }
             ui.horizontal(|ui| {
-                use super::discovery::Filter;
-                ui.spacing_mut().item_spacing.x = 0.0;
-                let segment_width = ui.available_width() / 3.0;
-                let mut changed = false;
-                for (filter, key, path) in [
-                    (
-                        Filter::All,
-                        "surfaces.presets.discovery_all",
-                        "presets.discovery.all",
+                let search_response = ui.add_sized(
+                    egui::vec2(
+                        (ui.available_width() - theme::HEIGHT_CONTROL - theme::SPACE_2).max(0.0),
+                        theme::HEIGHT_CONTROL,
                     ),
-                    (
-                        Filter::Favorites,
-                        "surfaces.presets.discovery_favorites",
-                        "presets.discovery.favorites",
-                    ),
-                    (
-                        Filter::Recent,
-                        "surfaces.presets.discovery_recent",
-                        "presets.discovery.recent",
-                    ),
-                ] {
-                    let response = ui
+                    egui::TextEdit::singleline(&mut self.presets.query)
+                        .id_salt("preset search")
+                        .margin(egui::vec2(theme::SPACE_2, 5.0))
+                        .desired_width(f32::INFINITY)
+                        .hint_text(crate::i18n::text(ui.ctx(), "surfaces.presets.search_hint")),
+                );
+                // The hint states the wording on screen, so the redundant visible
+                // label is gone while the field keeps the same accessible name.
+                let search_name = crate::i18n::text(ui.ctx(), "surfaces.presets.search");
+                ui.ctx().accesskit_node_builder(search_response.id, |node| {
+                    node.set_label(search_name.as_ref());
+                });
+                crate::controls::locate_row(ui, "presets.search", &search_response);
+                if !self.presets.query.is_empty()
+                    && ui
                         .add_sized(
-                            egui::vec2(segment_width, theme::HEIGHT_CONTROL),
-                            egui::Button::new(crate::i18n::text(ui.ctx(), key))
-                                .truncate()
-                                .selected(self.presets.preferences.filter == filter),
+                            egui::vec2(theme::HEIGHT_CONTROL, theme::HEIGHT_CONTROL),
+                            egui::Button::new("×"),
                         )
-                        .on_hover_text(crate::i18n::text(ui.ctx(), key));
-                    if response.clicked() && self.presets.preferences.filter != filter {
-                        self.presets.preferences.filter = filter;
-                        changed = true;
-                    }
-                    crate::controls::locate_row(ui, path, &response);
-                }
-                if changed {
-                    self.presets.save_preferences();
+                        .on_hover_text(crate::i18n::text(ui.ctx(), "surfaces.presets.clear_search"))
+                        .clicked()
+                {
+                    self.presets.query.clear();
                 }
             });
-            if let Some(error) = &self.presets.preference_error {
-                ui.colored_label(
-                    theme::ERROR,
-                    crate::tr!(ui.ctx(), "surfaces.presets.discovery_error", detail = error),
-                );
-            }
-            // The summary is independent of search and filters. Matching the
-            // default parameters never manufactures an applied preset identity.
+            // The summary is independent of the search. Matching the default
+            // parameters never manufactures an applied preset identity.
             let current = egui::Frame::NONE
                 .inner_margin(theme::SPACE_2)
                 .show(ui, |ui| {
@@ -329,9 +323,8 @@ impl App {
                             name = &applied.name,
                             state = crate::controls::localized(ui.ctx(), state)
                         );
-                        // Group identity stays visible even when search or a
-                        // discovery filter removes the applied row itself;
-                        // names may repeat across the two groups.
+                        // Group identity stays visible even when a search removes
+                        // the applied row itself; names may repeat across groups.
                         ui.horizontal(|ui| {
                             let (slot, _) = ui.allocate_exact_size(
                                 egui::vec2(CHECK_ICON, theme::SIZE_LABEL),
@@ -381,29 +374,51 @@ impl App {
                     });
             }
             self.presets.update_search(&self.films, &self.papers);
-            if (!self.presets.query.is_empty()
-                || self.presets.preferences.filter != super::discovery::Filter::All)
-                && self.presets.visible_indices().is_empty()
-            {
+            if !self.presets.query.is_empty() && self.presets.visible_indices().is_empty() {
                 ui.label(crate::i18n::text(ui.ctx(), "surfaces.presets.no_matches"));
-                let reset = ui.button(crate::i18n::text(
-                    ui.ctx(),
-                    "surfaces.presets.discovery_reset",
-                ));
-                crate::controls::locate_row(ui, "presets.discovery.reset", &reset);
-                if reset.clicked() {
+                if ui
+                    .button(crate::i18n::text(ui.ctx(), "surfaces.presets.clear_search"))
+                    .clicked()
+                {
                     self.presets.query.clear();
-                    self.presets.preferences.filter = super::discovery::Filter::All;
-                    self.presets.save_preferences();
                 }
             }
-            self.presets
-                .thumbnails
-                .prepare(ctx, &self.presets.entries, &self.data_dir);
-            egui::TopBottomPanel::bottom("preset library reference footer")
-                .resizable(false)
-                .frame(egui::Frame::NONE.inner_margin(egui::Margin::symmetric(0, 8)))
-                .show_inside(ui, super::thumbnails::Thumbnails::reference_credit);
+            let signature = self.presets.thumbnails.accepted_signature(self);
+            if let Some(recheck) = self.presets.thumbnails.display_recheck_at() {
+                ctx.request_repaint_after(
+                    recheck
+                        .saturating_duration_since(std::time::Instant::now())
+                        .max(std::time::Duration::from_millis(1)),
+                );
+            }
+            if self.presets.thumbnails.signature() != signature {
+                let now = ui.ctx().input(|input| input.time);
+                let context = signature.map(|_| self.presets.thumbnails.accepted_context(self));
+                self.presets.thumbnails.reset(signature, context, now);
+            }
+            let visible = self.presets.visible_indices().to_vec();
+            // Keyboard order follows the presentation order across both groups,
+            // so arrow keys never stop at a group boundary.
+            let ordering = presentation_order(&visible, &self.presets.entries);
+            let mut navigation = vec![[None, None]; self.presets.entries.len()];
+            for (position, index) in ordering.iter().enumerate() {
+                navigation[*index] = [
+                    position
+                        .checked_sub(1)
+                        .map(|previous| card_id(ordering[previous])),
+                    ordering.get(position + 1).copied().map(card_id),
+                ];
+            }
+            // A card can only request a render for the accepted context it is
+            // already cached under; listing keys is otherwise free.
+            let mut keys: Vec<Option<ThumbnailKey>> = vec![None; self.presets.entries.len()];
+            for index in &visible {
+                let entry = &self.presets.entries[*index];
+                if let Some(signature) = signature {
+                    keys[*index] = Some(self.presets.thumbnails.candidate_key(signature, entry));
+                }
+            }
+            let mut demand: Vec<(ThumbnailKey, Preset)> = Vec::new();
             egui::ScrollArea::vertical()
                 .id_salt("preset browser scroll")
                 .show(ui, |ui| {
@@ -449,56 +464,20 @@ impl App {
                             .color(theme::FG_SECONDARY)
                             .strong(),
                         );
-                        if group == PresetGroup::User {
-                            let directory = self.presets.library.directory().to_path_buf();
-                            ui.add(egui::Label::new(directory.display().to_string()).wrap());
-                            ui.horizontal_wrapped(|ui| {
-                                if ui
-                                    .button(crate::i18n::text(
-                                        ui.ctx(),
-                                        "surfaces.presets.show_directory",
-                                    ))
-                                    .clicked()
-                                    && let Err(e) = reveal(&directory)
-                                {
-                                    self.status = e;
-                                }
-                                if ui
-                                    .button(crate::i18n::text(ui.ctx(), "surfaces.presets.refresh"))
-                                    .clicked()
-                                {
-                                    self.presets.refresh();
-                                    self.status = crate::app::Message::new(
-                                        "surfaces.status.presets_refreshed",
-                                    );
-                                }
-                                if ui
-                                    .button(crate::i18n::text(ui.ctx(), "surfaces.presets.import"))
-                                    .clicked()
-                                {
-                                    self.import_preset();
-                                }
-                            });
-                        }
-                        self.presets.update_search(&self.films, &self.papers);
-                        let mut action = None;
-                        let mut favorite = None;
-                        let mut entries = self
-                            .presets
-                            .search
-                            .as_ref()
-                            .into_iter()
-                            .flat_map(|(_, matches)| matches.iter().copied())
-                            .map(|index| (index, &self.presets.entries[index]))
-                            .filter(|(_, entry)| entry.group == group)
-                            .peekable();
-                        if entries.peek().is_none() {
+                        let indices: Vec<usize> = visible
+                            .iter()
+                            .copied()
+                            .filter(|index| self.presets.entries[*index].group == group)
+                            .collect();
+                        if indices.is_empty() {
                             let has_looks = self.presets.entries.iter().any(|entry| {
                                 entry.group == group
-                                    && entry
-                                        .preset
-                                        .as_ref()
-                                        .is_some_and(|preset| preset.kind() == Ok(PresetKind::Look))
+                                    && entry.preset.as_ref().is_some_and(|preset| {
+                                        matches!(
+                                            preset.kind(),
+                                            Ok(PresetKind::Look | PresetKind::Lut)
+                                        )
+                                    })
                             });
                             if has_looks {
                                 ui.weak(crate::i18n::text(
@@ -506,359 +485,520 @@ impl App {
                                     "surfaces.presets.group_no_matches",
                                 ));
                             } else if group == PresetGroup::User {
-                                ui.weak(crate::i18n::text(ui.ctx(), "surfaces.presets.empty"));
-                            }
-                        }
-                        for (index, entry) in entries {
-                            let active =
-                                self.presets.state.applied.as_ref().is_some_and(|a| {
-                                    a.group == entry.group && a.name == entry.name
-                                });
-                            let suffix = if active {
-                                match marker(
-                                    self.presets.state.applied.as_ref().unwrap(),
-                                    &self.presets.entries,
-                                    &self.params,
-                                    &self.film_name,
-                                    &self.print_name,
-                                ) {
-                                    Marker::Modified => " • modified",
-                                    Marker::Missing => " • missing",
-                                    Marker::Applied => " • applied",
-                                }
-                            } else {
-                                ""
-                            };
-                            // Only the applied identity gets a frame. Name and
-                            // two material lines fit beside the 46 pt reference.
-                            let card_frame = egui::Frame::NONE
-                                .fill(if active {
-                                    theme::SURFACE2
-                                } else {
-                                    egui::Color32::TRANSPARENT
-                                })
-                                .stroke(if active {
-                                    theme::stroke(theme::ACCENT_DIM)
-                                } else {
-                                    egui::Stroke::NONE
-                                })
-                                .corner_radius(theme::RADIUS_CARD)
-                                .inner_margin(theme::SPACE_2);
-                            let card = card_frame.show(ui, |ui| {
-                                ui.set_min_height(CARD_HEIGHT - 2.0 * theme::SPACE_2);
-                                ui.set_width(ui.available_width());
-                                ui.horizontal(|ui| {
-                                    if group == PresetGroup::BuiltIn {
-                                        self.presets.thumbnails.show(ui, entry, THUMBNAIL);
-                                    }
-                                    let controls =
-                                        theme::HEIGHT_CONTROL + ui.spacing().item_spacing.x;
-                                    ui.vertical(|ui| {
-                                        ui.set_width((ui.available_width() - controls).max(0.0));
-                                        ui.spacing_mut().item_spacing.y = 2.0;
-                                        ui.spacing_mut().interact_size.y = 0.0;
-                                        ui.spacing_mut().button_padding = egui::Vec2::ZERO;
-                                        ui.horizontal(|ui| {
-                                            if active {
-                                                let (slot, _) = ui.allocate_exact_size(
-                                                    egui::vec2(CHECK_ICON, theme::SIZE_LABEL),
-                                                    egui::Sense::hover(),
-                                                );
-                                                paint_check(ui.painter(), slot);
-                                            }
-                                            let response = quiet_button(ui, |ui| {
-                                                ui.add(
-                                                    egui::Button::new(
-                                                        egui::RichText::new(&entry.name)
-                                                            .color(theme::FG)
-                                                            .size(theme::SIZE_LABEL)
-                                                            .strong(),
-                                                    )
-                                                    .wrap(),
-                                                )
-                                            })
-                                            .on_hover_text(&entry.name);
-                                            if active {
-                                                let name = format!("{}{suffix}", entry.name);
-                                                ui.ctx().accesskit_node_builder(
-                                                    response.id,
-                                                    |node| {
-                                                        node.set_label(name);
-                                                    },
-                                                );
-                                            }
-                                            crate::controls::focus_feedback(ui, &response);
-                                            if response.gained_focus() {
-                                                response.scroll_to_me(Some(egui::Align::Center));
-                                            }
-                                            if response.clicked() {
-                                                action = Some((index, PresetAction::Load));
-                                            }
-                                            response.context_menu(|ui| {
-                                                if let Some(selected) =
-                                                    self.preset_actions(ui, entry)
-                                                {
-                                                    response.request_focus();
-                                                    action = Some((index, selected));
-                                                }
-                                            });
-                                        });
-                                        for (role, reference, profiles) in [
-                                            ("Film", &entry.film_profile, &self.films),
-                                            ("Print", &entry.print_profile, &self.papers),
-                                        ] {
-                                            if let Some(reference) = reference {
-                                                let display = crate::profiles::selected_display(
-                                                    profiles,
-                                                    &reference.stock,
-                                                );
-                                                let description = crate::tr!(
-                                                    ui.ctx(),
-                                                    "surfaces.presets.role",
-                                                    role =
-                                                        crate::controls::localized(ui.ctx(), role),
-                                                    name = &display
-                                                );
-                                                let material = ui.add(
-                                                    egui::Label::new(
-                                                        egui::RichText::new(display)
-                                                            .color(theme::FG_SECONDARY)
-                                                            .size(theme::SIZE_HINT),
-                                                    )
-                                                    .truncate(),
-                                                );
-                                                ui.ctx().accesskit_node_builder(
-                                                    material.id,
-                                                    |node| {
-                                                        node.set_label(description.as_ref());
-                                                    },
-                                                );
-                                                material.on_hover_text(format!(
-                                                    "{description}\n{}",
-                                                    reference.stock
-                                                ));
-                                            }
-                                        }
-                                    });
-                                    // One narrow action area fits within the
-                                    // thumbnail height. Both controls remain
-                                    // visible and independently keyboard reachable.
-                                    ui.vertical(|ui| {
-                                        ui.set_width(theme::HEIGHT_CONTROL);
-                                        ui.spacing_mut().item_spacing.y = 2.0;
-                                        ui.spacing_mut().interact_size.y = CARD_ACTION_HEIGHT;
-                                        ui.spacing_mut().button_padding.y = 0.0;
-                                        let selected =
-                                            self.presets.preferences.favorites.iter().any(
-                                                |identity| {
-                                                    identity.group == entry.group
-                                                        && identity.name == entry.name
-                                                },
-                                            );
-                                        let favorite_response = quiet_button(ui, |ui| {
-                                            ui.add(egui::Button::new("").min_size(egui::vec2(
-                                                theme::HEIGHT_CONTROL,
-                                                CARD_ACTION_HEIGHT,
-                                            )))
-                                        });
-                                        // The star is drawn rather than typeset:
-                                        // filled once favorited and outlined before,
-                                        // so no font glyph can go missing and the
-                                        // state is never carried by colour alone.
-                                        // The localized action name stays this
-                                        // control's accessible name exactly.
-                                        paint_star(ui.painter(), favorite_response.rect, selected);
-                                        let accessible_name = crate::tr!(
+                                ui.add(
+                                    egui::Label::new(
+                                        egui::RichText::new(crate::i18n::text(
                                             ui.ctx(),
-                                            "surfaces.presets.discovery_favorite_accessible",
-                                            action = crate::i18n::text(
-                                                ui.ctx(),
-                                                if selected {
-                                                    "surfaces.presets.discovery_unfavorite"
-                                                } else {
-                                                    "surfaces.presets.discovery_favorite"
-                                                }
-                                            ),
-                                            group = crate::i18n::text(
-                                                ui.ctx(),
-                                                if entry.group == PresetGroup::BuiltIn {
-                                                    "surfaces.presets.builtin"
-                                                } else {
-                                                    "surfaces.presets.mine"
-                                                }
-                                            ),
-                                            name = &entry.name
-                                        );
-                                        favorite_response.widget_info(|| {
-                                            egui::WidgetInfo::labeled(
-                                                egui::WidgetType::Button,
-                                                ui.is_enabled(),
-                                                accessible_name.as_ref(),
-                                            )
-                                        });
-                                        ui.ctx().accesskit_node_builder(
-                                            favorite_response.id,
-                                            |node| {
-                                                node.set_label(accessible_name.as_ref());
-                                            },
-                                        );
-                                        let favorite_response =
-                                            favorite_response.on_hover_text(accessible_name);
-                                        crate::controls::focus_feedback(ui, &favorite_response);
-                                        if favorite_response.gained_focus() {
-                                            favorite_response
-                                                .scroll_to_me(Some(egui::Align::Center));
-                                        }
-                                        if favorite_response.clicked() {
-                                            favorite = Some(AppliedPreset {
-                                                group: entry.group,
-                                                name: entry.name.clone(),
-                                            });
-                                        }
-                                        // A visible action control for the entry. The
-                                        // same actions are reachable here by pointer and
-                                        // by keyboard: the button takes focus, and Space
-                                        // or Enter opens its menu.
-                                        let entry_id = ui.id().with((
-                                            "preset actions",
-                                            entry.group == PresetGroup::User,
-                                            &entry.name,
-                                        ));
-                                        let actions = ui.push_id(entry_id, |ui| {
-                                            let actions = quiet_button(ui, |ui| {
-                                                egui::menu::menu_custom_button(
-                                                    ui,
-                                                    egui::Button::new("").min_size(egui::vec2(
-                                                        theme::HEIGHT_CONTROL,
-                                                        CARD_ACTION_HEIGHT,
-                                                    )),
-                                                    |ui| {
-                                                        ui.spacing_mut().interact_size.y =
-                                                            theme::HEIGHT_CONTROL;
-                                                        ui.spacing_mut().button_padding.y =
-                                                            theme::SPACE_1;
-                                                        self.preset_actions(ui, entry)
-                                                    },
-                                                )
-                                            });
-                                            // The affordance is drawn rather than
-                                            // typeset: three dots cannot go missing
-                                            // with a font.
-                                            paint_actions(ui.painter(), actions.response.rect);
-                                            // Name the control after its entry, so the
-                                            // action menu of one card is addressable among
-                                            // the cards.
-                                            let accessible_name = crate::tr!(
-                                                ui.ctx(),
-                                                "surfaces.presets.actions_name",
-                                                name = &entry.name
-                                            );
-                                            actions.response.widget_info(|| {
-                                                egui::WidgetInfo::labeled(
-                                                    egui::WidgetType::Button,
-                                                    ui.is_enabled(),
-                                                    accessible_name.as_ref(),
-                                                )
-                                            });
-                                            ui.ctx().accesskit_node_builder(
-                                                actions.response.id,
-                                                |node| {
-                                                    node.set_label(accessible_name);
-                                                },
-                                            );
-                                            crate::controls::focus_feedback(ui, &actions.response);
-                                            if actions.inner.as_ref().is_some_and(Option::is_some) {
-                                                // Capture the card control, not the transient
-                                                // focused menu item, as the dialog's invoker.
-                                                actions.response.request_focus();
-                                            }
-                                            if actions.response.gained_focus() {
-                                                actions
-                                                    .response
-                                                    .scroll_to_me(Some(egui::Align::Center));
-                                            }
-                                            actions.response.on_hover_text(crate::tr!(
-                                                ui.ctx(),
-                                                "surfaces.presets.actions_help",
-                                                name = &entry.name
-                                            ));
-                                            actions.inner.flatten()
-                                        });
-                                        if let Some(selected) = actions.inner {
-                                            action = Some((index, selected));
-                                        }
-                                    });
-                                });
-                            });
-                            if active {
-                                // The applied look's left rail: the solid cue
-                                // that keeps company with the check and the
-                                // state word instead of a filled name button.
-                                let rect = card.response.rect;
-                                ui.painter().rect_filled(
-                                    egui::Rect::from_min_max(
-                                        egui::pos2(rect.left(), rect.top() + theme::SPACE_3),
-                                        egui::pos2(
-                                            rect.left() + CARD_RAIL,
-                                            rect.bottom() - theme::SPACE_3,
-                                        ),
-                                    ),
-                                    egui::CornerRadius::same(1),
-                                    theme::ACCENT,
+                                            "surfaces.presets.empty",
+                                        ))
+                                        .size(theme::SIZE_HINT)
+                                        .color(theme::FG_SECONDARY),
+                                    )
+                                    .wrap(),
                                 );
                             }
                         }
-                        if let Some(identity) = favorite {
-                            self.presets.preferences.toggle_favorite(identity);
-                            self.presets.save_preferences();
-                        }
+                        // Fit the columns inside the scroll viewport itself; the
+                        // reserved scrollbar is not part of the usable width. A
+                        // narrow panel keeps one reachable column.
+                        let usable = (ui.clip_rect().width() - 2.0 * theme::SPACE_2).max(120.0);
+                        let columns = if usable >= 250.0 { 2 } else { 1 };
+                        let card_width = ((usable - theme::SPACE_2 * (columns - 1) as f32)
+                            / columns as f32)
+                            .max(110.0);
+                        let mut action = None;
+                        egui::Grid::new(("preset cards", group == PresetGroup::User))
+                            .num_columns(columns)
+                            .spacing(egui::vec2(theme::SPACE_2, theme::SPACE_2))
+                            .show(ui, |ui| {
+                                for (position, index) in indices.iter().enumerate() {
+                                    let nav = navigation[*index];
+                                    if let Some(selected) = self.preset_card(
+                                        ui,
+                                        *index,
+                                        keys[*index].as_ref(),
+                                        nav,
+                                        card_width,
+                                        &mut demand,
+                                    ) {
+                                        action = Some((*index, selected));
+                                    }
+                                    if (position + 1) % columns == 0 {
+                                        ui.end_row();
+                                    }
+                                }
+                            });
                         if let Some((index, action)) = action {
                             self.apply_preset_action(index, action);
                         }
                     }
                 });
+            self.presets.reveal = None;
+            let foreground_busy =
+                self.render_job.is_some() || self.dirty || self.export_job.is_some();
+            self.presets
+                .thumbnails
+                .prepare(ui.ctx(), &demand, foreground_busy);
         });
         if expanded && wide {
             self.presets.state.width = response.response.rect.width();
         }
         self.preset_dialogs(ctx);
     }
+
+    /// One unambiguous entry point for library-wide actions.
+    fn preset_library_menu(&mut self, ui: &mut egui::Ui) {
+        let popup_id = ui.make_persistent_id("preset-library-actions");
+        let button = ui.add(
+            egui::Button::new("")
+                .min_size(egui::vec2(theme::HEIGHT_CONTROL, theme::HEIGHT_CONTROL)),
+        );
+        paint_actions(ui.painter(), button.rect);
+        crate::controls::locate_row(ui, "presets.library", &button);
+        let accessible_name = crate::i18n::text(ui.ctx(), "surfaces.presets.library");
+        button.widget_info(|| {
+            egui::WidgetInfo::labeled(
+                egui::WidgetType::Button,
+                ui.is_enabled(),
+                accessible_name.as_ref(),
+            )
+        });
+        ui.ctx()
+            .accesskit_node_builder(button.id, |node| node.set_label(accessible_name.as_ref()));
+        crate::controls::focus_feedback(ui, &button);
+        let mut selected = None;
+        let button = button.on_hover_text(accessible_name);
+        if button.clicked() {
+            ui.memory_mut(|memory| memory.toggle_popup(popup_id));
+        }
+        let above = button.rect.bottom() + 160.0 > ui.ctx().screen_rect().bottom();
+        egui::popup::popup_above_or_below_widget(
+            ui,
+            popup_id,
+            &button,
+            if above {
+                egui::AboveOrBelow::Above
+            } else {
+                egui::AboveOrBelow::Below
+            },
+            egui::popup::PopupCloseBehavior::CloseOnClick,
+            |ui| {
+                ui.set_min_width(180.0);
+                ui.spacing_mut().interact_size.y = theme::HEIGHT_CONTROL;
+                ui.spacing_mut().button_padding.y = theme::SPACE_1;
+                ui.add(
+                    egui::Label::new(
+                        egui::RichText::new(self.presets.library.directory().display().to_string())
+                            .size(theme::SIZE_HINT)
+                            .color(theme::FG_MUTED),
+                    )
+                    .truncate(),
+                );
+                if ui
+                    .button(crate::i18n::text(ui.ctx(), "surfaces.presets.import"))
+                    .clicked()
+                {
+                    selected = Some(0_u8);
+                    ui.close_menu();
+                }
+                if ui
+                    .button(crate::i18n::text(
+                        ui.ctx(),
+                        "surfaces.presets.show_directory",
+                    ))
+                    .clicked()
+                {
+                    selected = Some(1_u8);
+                    ui.close_menu();
+                }
+                if ui
+                    .button(crate::i18n::text(ui.ctx(), "surfaces.presets.refresh"))
+                    .clicked()
+                {
+                    selected = Some(2_u8);
+                    ui.close_menu();
+                }
+            },
+        );
+        match selected {
+            Some(0) => self.import_preset(),
+            Some(1) => {
+                let directory = self.presets.library.directory().to_path_buf();
+                if let Err(e) = open_directory(&directory) {
+                    self.status = e;
+                }
+            }
+            Some(2) => {
+                self.presets.refresh();
+                self.status = crate::app::Message::new("surfaces.status.presets_refreshed");
+            }
+            _ => {}
+        }
+    }
+
+    fn preset_card(
+        &self,
+        ui: &mut egui::Ui,
+        index: usize,
+        key: Option<&ThumbnailKey>,
+        nav: [Option<egui::Id>; 2],
+        card_width: f32,
+        demand: &mut Vec<(ThumbnailKey, Preset)>,
+    ) -> Option<PresetAction> {
+        let entry = &self.presets.entries[index];
+        let active = self
+            .presets
+            .state
+            .applied
+            .as_ref()
+            .is_some_and(|a| a.group == entry.group && a.name == entry.name);
+        let state = active.then(|| {
+            match marker(
+                self.presets.state.applied.as_ref().unwrap(),
+                &self.presets.entries,
+                &self.params,
+                &self.film_name,
+                &self.print_name,
+            ) {
+                Marker::Modified => "modified",
+                Marker::Missing => "missing",
+                Marker::Applied => "applied",
+            }
+        });
+        let mut action = None;
+        let inner = (card_width - 2.0 * theme::SPACE_1).max(0.0);
+        let thumbnail_height = (inner * 2.0 / 3.0).max(44.0);
+        // Reserve the whole card before laying out its rows: the full-width
+        // thumbnail consumes the cell, so the later rows need their own region.
+        let card_height = 2.0 * theme::SPACE_1
+            + thumbnail_height
+            + 2.0
+            + theme::HEIGHT_CONTROL
+            + if active { 2.0 + theme::SIZE_HINT } else { 0.0 };
+        let (card_rect, _) =
+            ui.allocate_exact_size(egui::vec2(card_width, card_height), egui::Sense::hover());
+        if active {
+            ui.painter().rect_filled(
+                card_rect,
+                egui::CornerRadius::same(theme::RADIUS_CARD),
+                theme::SURFACE2,
+            );
+            ui.painter().rect_stroke(
+                card_rect,
+                egui::CornerRadius::same(theme::RADIUS_CARD),
+                theme::stroke(theme::ACCENT),
+                egui::StrokeKind::Inside,
+            );
+        }
+        {
+            let mut card = ui.new_child(
+                egui::UiBuilder::new()
+                    .max_rect(card_rect.shrink(theme::SPACE_1))
+                    .layout(egui::Layout::top_down(egui::Align::Min)),
+            );
+            let ui = &mut card;
+            ui.spacing_mut().item_spacing = egui::vec2(theme::SPACE_1, 2.0);
+            let (rect, _) =
+                ui.allocate_exact_size(egui::vec2(inner, thumbnail_height), egui::Sense::hover());
+            ui.painter()
+                .rect_filled(rect, egui::CornerRadius::same(2), theme::SURFACE3);
+            let status_text = match key {
+                Some(key) => {
+                    let text = match self.presets.thumbnails.status(key) {
+                        Status::Ready(texture) => {
+                            let available = rect.size();
+                            let size = texture.size_vec2();
+                            let scale = (available.x / size.x).min(available.y / size.y).min(1.0);
+                            let target = egui::Rect::from_center_size(rect.center(), size * scale);
+                            ui.painter().image(
+                                texture.id(),
+                                target,
+                                egui::Rect::from_min_max(
+                                    egui::pos2(0.0, 0.0),
+                                    egui::pos2(1.0, 1.0),
+                                ),
+                                egui::Color32::WHITE,
+                            );
+                            None
+                        }
+                        Status::Pending => {
+                            let pending =
+                                crate::i18n::text(ui.ctx(), "surfaces.presets.thumbnail_pending");
+                            paint_status_owned(ui, rect, pending.as_ref());
+                            Some(pending.to_string())
+                        }
+                        Status::Failed(message) => {
+                            let unavailable = crate::i18n::text(
+                                ui.ctx(),
+                                "surfaces.presets.thumbnail_unavailable",
+                            );
+                            paint_status_owned(ui, rect, unavailable.as_ref());
+                            Some(format!("{unavailable}: {}", message.localized(ui.ctx())))
+                        }
+                    };
+                    if ui.is_rect_visible(rect)
+                        && let Some(preset) = &entry.preset
+                    {
+                        demand.push((key.clone(), preset.clone()));
+                    }
+                    text
+                }
+                None => {
+                    let text = crate::i18n::text(ui.ctx(), "surfaces.presets.thumbnail_no_photo")
+                        .to_string();
+                    paint_status_owned(ui, rect, &text);
+                    Some(text)
+                }
+            };
+            // Thumbnail and name row are one activation surface; the actions
+            // control is drawn later and therefore stays on top.
+            let hit_rect = egui::Rect::from_min_size(
+                rect.min,
+                egui::vec2(inner, thumbnail_height + 2.0 + theme::HEIGHT_CONTROL),
+            );
+            let card_click = ui.interact(hit_rect, card_id(index), egui::Sense::click());
+            crate::controls::locate_row(ui, "presets.card", &card_click);
+            crate::controls::focus_feedback(ui, &card_click);
+            if card_click.gained_focus() {
+                card_click.scroll_to_me(Some(egui::Align::Center));
+            }
+            if card_click.clicked() {
+                action = Some(PresetAction::Load);
+            }
+            if card_click.has_focus() {
+                // Arrow keys move focus only; Enter applies, matching the
+                // keyboard contract for the focused card.
+                let (previous, next) = ui.input_mut(|input| {
+                    let previous = input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowLeft)
+                        || input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowUp);
+                    let next = input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowRight)
+                        || input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowDown);
+                    (previous, next)
+                });
+                let target = if previous {
+                    nav[0]
+                } else if next {
+                    nav[1]
+                } else {
+                    None
+                };
+                if let Some(target) = target {
+                    ui.memory_mut(|memory| memory.request_focus(target));
+                }
+                if ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Enter))
+                {
+                    action = Some(PresetAction::Load);
+                }
+            }
+            card_click.context_menu(|ui| {
+                if let Some(selected) = self.preset_actions(ui, entry) {
+                    card_click.request_focus();
+                    action = Some(selected);
+                }
+            });
+            let controls = theme::HEIGHT_CONTROL + ui.spacing().item_spacing.x * 2.0;
+            let name_width =
+                (inner - controls - if active { CHECK_ICON + 2.0 } else { 0.0 }).max(20.0);
+            ui.horizontal(|ui| {
+                if active {
+                    let (slot, _) = ui.allocate_exact_size(
+                        egui::vec2(CHECK_ICON, theme::SIZE_LABEL),
+                        egui::Sense::hover(),
+                    );
+                    paint_check(ui.painter(), slot);
+                }
+                // Painted text keeps the card as the only node carrying the
+                // preset name in the accessibility tree.
+                let mut job = egui::text::LayoutJob::default();
+                job.append(
+                    &entry.name,
+                    0.0,
+                    egui::TextFormat {
+                        font_id: egui::FontId::proportional(theme::SIZE_LABEL),
+                        color: theme::FG,
+                        ..Default::default()
+                    },
+                );
+                job.wrap.max_width = name_width;
+                job.wrap.max_rows = 1;
+                job.wrap.break_anywhere = true;
+                let galley = ui.fonts(|fonts| fonts.layout_job(job));
+                let (name_rect, _) = ui.allocate_exact_size(
+                    egui::vec2(name_width, theme::SIZE_LABEL + 4.0),
+                    egui::Sense::hover(),
+                );
+                ui.painter().galley(name_rect.min, galley, theme::FG);
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let entry_id = ui.id().with((
+                        "preset actions",
+                        entry.group == PresetGroup::User,
+                        &entry.name,
+                    ));
+                    if let Some(selected) = self.preset_actions_button(ui, entry_id, entry) {
+                        action = Some(selected);
+                    }
+                });
+            });
+            if let Some(state) = state {
+                ui.label(
+                    egui::RichText::new(crate::controls::localized(ui.ctx(), state))
+                        .size(theme::SIZE_HINT)
+                        .color(theme::FG_SECONDARY),
+                );
+            }
+            // Materials stay in the card's accessible description and hover
+            // text rather than a repeated paragraph on every card.
+            let mut label = entry.name.clone();
+            if let Some(state) = state {
+                label.push_str(" • ");
+                label.push_str(&crate::controls::localized(ui.ctx(), state));
+            }
+            let mut description = String::new();
+            if let Some(lut) = entry.preset.as_ref().and_then(|preset| preset.lut.as_ref()) {
+                if lut.title.is_empty() {
+                    description.push_str(&format!("LUT: {}", lut.path.display()));
+                } else {
+                    description.push_str(&format!("LUT: {} ({})", lut.title, lut.path.display()));
+                }
+            }
+            for (role, reference, profiles) in [
+                ("Film", &entry.film_profile, &self.films),
+                ("Print", &entry.print_profile, &self.papers),
+            ] {
+                if let Some(reference) = reference {
+                    if !description.is_empty() {
+                        description.push_str("; ");
+                    }
+                    description.push_str(&crate::tr!(
+                        ui.ctx(),
+                        "surfaces.presets.role",
+                        role = crate::controls::localized(ui.ctx(), role),
+                        name = crate::profiles::selected_display(profiles, &reference.stock)
+                    ));
+                }
+            }
+            if let Some(text) = &status_text {
+                if !description.is_empty() {
+                    description.push_str("; ");
+                }
+                description.push_str(text);
+            }
+            card_click.widget_info(|| {
+                egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), label.as_str())
+            });
+            ui.ctx().accesskit_node_builder(card_click.id, |node| {
+                node.set_label(label.as_str());
+                node.set_description(description.as_str());
+            });
+            card_click.on_hover_text(description);
+            if self
+                .presets
+                .reveal
+                .as_ref()
+                .is_some_and(|(group, name)| *group == entry.group && name == &entry.name)
+            {
+                ui.scroll_to_rect(rect, Some(egui::Align::Center));
+            }
+        }
+        if active {
+            // The applied look's left rail: the solid cue that keeps company
+            // with the check and the state word instead of a filled name.
+            ui.painter().rect_filled(
+                egui::Rect::from_min_max(
+                    egui::pos2(card_rect.left(), card_rect.top() + theme::SPACE_1),
+                    egui::pos2(
+                        card_rect.left() + CARD_RAIL,
+                        card_rect.bottom() - theme::SPACE_1,
+                    ),
+                ),
+                egui::CornerRadius::same(1),
+                theme::ACCENT,
+            );
+        }
+        action
+    }
+
+    fn preset_actions_button(
+        &self,
+        ui: &mut egui::Ui,
+        entry_id: egui::Id,
+        entry: &LibraryEntry,
+    ) -> Option<PresetAction> {
+        ui.push_id(entry_id, |ui| {
+            let actions = quiet_button(ui, |ui| {
+                let popup_id = ui.make_persistent_id("preset-actions");
+                let button = ui.add(
+                    egui::Button::new("")
+                        .min_size(egui::vec2(theme::HEIGHT_CONTROL, CARD_ACTION_HEIGHT)),
+                );
+                if button.clicked() {
+                    ui.memory_mut(|memory| memory.toggle_popup(popup_id));
+                }
+                let above = button.rect.bottom() + 220.0 > ui.ctx().screen_rect().bottom();
+                let selected = egui::popup::popup_above_or_below_widget(
+                    ui,
+                    popup_id,
+                    &button,
+                    if above {
+                        egui::AboveOrBelow::Above
+                    } else {
+                        egui::AboveOrBelow::Below
+                    },
+                    egui::popup::PopupCloseBehavior::CloseOnClick,
+                    |ui| {
+                        ui.set_min_width(180.0);
+                        ui.spacing_mut().interact_size.y = theme::HEIGHT_CONTROL;
+                        ui.spacing_mut().button_padding.y = theme::SPACE_1;
+                        self.preset_actions(ui, entry)
+                    },
+                );
+                egui::InnerResponse::new(selected, button)
+            });
+            paint_actions(ui.painter(), actions.response.rect);
+            let accessible_name = crate::tr!(
+                ui.ctx(),
+                "surfaces.presets.actions_name",
+                name = &entry.name
+            );
+            actions.response.widget_info(|| {
+                egui::WidgetInfo::labeled(
+                    egui::WidgetType::Button,
+                    ui.is_enabled(),
+                    accessible_name.as_ref(),
+                )
+            });
+            ui.ctx()
+                .accesskit_node_builder(actions.response.id, |node| {
+                    node.set_label(accessible_name);
+                });
+            crate::controls::focus_feedback(ui, &actions.response);
+            if actions.inner.as_ref().is_some_and(Option::is_some) {
+                actions.response.request_focus();
+            }
+            if actions.response.gained_focus() {
+                actions.response.scroll_to_me(Some(egui::Align::Center));
+            }
+            actions.response.on_hover_text(crate::tr!(
+                ui.ctx(),
+                "surfaces.presets.actions_help",
+                name = &entry.name
+            ));
+            actions.inner.flatten()
+        })
+        .inner
+    }
+
     fn preset_actions(&self, ui: &mut egui::Ui, entry: &LibraryEntry) -> Option<PresetAction> {
         let preset = entry.preset.as_ref()?;
         let mut action = None;
-        if entry.group == PresetGroup::User {
-            let active = self
-                .presets
-                .state
-                .applied
-                .as_ref()
-                .is_some_and(|a| a.group == entry.group && a.name == entry.name);
-            if preset.kind() == Ok(PresetKind::Look) {
-                if ui
-                    .add_enabled(
-                        active,
-                        egui::Button::new(crate::i18n::text(ui.ctx(), "surfaces.presets.update")),
-                    )
-                    .clicked()
-                {
-                    action = Some(PresetAction::Update);
-                    ui.close_menu();
-                }
-                if ui
-                    .button(crate::i18n::text(ui.ctx(), "surfaces.presets.revert"))
-                    .clicked()
-                {
-                    action = Some(PresetAction::Load);
-                    ui.close_menu();
-                }
-            }
-            if ui
+        if entry.group == PresetGroup::User
+            && matches!(preset.kind(), Ok(PresetKind::Look | PresetKind::Lut))
+            && ui
                 .button(crate::i18n::text(ui.ctx(), "surfaces.presets.rename"))
                 .clicked()
-            {
-                action = Some(PresetAction::Rename);
-                ui.close_menu();
-            }
+        {
+            action = Some(PresetAction::Rename);
+            ui.close_menu();
         }
         if ui
             .button(crate::i18n::text(
@@ -948,6 +1088,8 @@ impl App {
         if let Some(mut dialog) = self.presets.name_dialog.take() {
             let mut cancel = false;
             let mut submit = false;
+            let mut replace = false;
+            let mut collision = false;
             egui::Window::new(crate::i18n::text(ctx, "surfaces.presets.name_title"))
                 .id(egui::Id::new("Preset name"))
                 .collapsible(false)
@@ -965,7 +1107,20 @@ impl App {
                         NameAction::Rename(old) => Some(old.as_str()),
                         _ => None,
                     };
-                    let invalid = name_error(&dialog.name, &self.presets.entries, rename_from);
+                    // Saving over an existing look is only ever an explicit
+                    // replacement: the collision disables Save and names the
+                    // document it would replace.
+                    collision = matches!(&dialog.action, NameAction::Save(_))
+                        && self.presets.entries.iter().any(|entry| {
+                            entry.group == PresetGroup::User
+                                && entry.name.to_lowercase() == dialog.name.to_lowercase()
+                                && entry.preset.is_some()
+                        });
+                    let invalid = if collision {
+                        None
+                    } else {
+                        name_error(&dialog.name, &self.presets.entries, rename_from)
+                    };
                     if let Some(e) = &invalid {
                         ui.colored_label(theme::ERROR, e.localized(ui.ctx()));
                     }
@@ -975,13 +1130,22 @@ impl App {
                     ui.horizontal(|ui| {
                         submit = ui
                             .add_enabled(
-                                invalid.is_none(),
+                                invalid.is_none() && !collision,
                                 egui::Button::new(crate::i18n::text(
                                     ui.ctx(),
                                     "surfaces.action.save",
                                 )),
                             )
                             .clicked();
+                        if collision {
+                            replace = ui
+                                .button(crate::tr!(
+                                    ui.ctx(),
+                                    "surfaces.presets.replace",
+                                    name = &dialog.name
+                                ))
+                                .clicked();
+                        }
                         cancel = ui
                             .button(crate::i18n::text(ui.ctx(), "surfaces.action.cancel"))
                             .clicked();
@@ -990,15 +1154,23 @@ impl App {
                         cancel |= ui.input_mut(|input| {
                             input.consume_key(egui::Modifiers::NONE, egui::Key::Escape)
                         });
-                        if invalid.is_none() {
+                        if invalid.is_none() && !collision {
                             submit |= ui.input_mut(|input| {
                                 input.consume_key(egui::Modifiers::NONE, egui::Key::Enter)
                             });
                         }
                     }
                 });
-            if submit {
+            if submit || replace {
                 let result = match &dialog.action {
+                    NameAction::Save(preset) if collision => {
+                        let mut preset = preset.clone();
+                        preset.name = dialog.name.clone();
+                        self.presets
+                            .library
+                            .replace_look_detailed(&preset, &self.data_dir)
+                            .map_err(|error| library_error_message(&error))
+                    }
                     NameAction::Save(preset) => {
                         let mut preset = preset.clone();
                         preset.name = dialog.name.clone();
@@ -1021,26 +1193,32 @@ impl App {
                 };
                 match result {
                     Ok(path) => {
+                        let published = path
+                            .file_stem()
+                            .and_then(|stem| stem.to_str())
+                            .unwrap_or(&dialog.name)
+                            .to_owned();
                         if let NameAction::Rename(old) = &dialog.action
                             && let Some(active) = self.presets.state.applied.as_mut()
                             && active.group == PresetGroup::User
                             && active.name == *old
                         {
-                            active.name = dialog.name.clone();
+                            active.name = published.clone();
                         }
-                        if let NameAction::Rename(old) = &dialog.action {
-                            self.presets.record_rename(old, &dialog.name);
-                        }
-                        if matches!(&dialog.action, NameAction::Save(preset) if preset.kind() == Ok(PresetKind::Look))
-                        {
+                        if matches!(
+                            &dialog.action,
+                            NameAction::Save(preset) if matches!(preset.kind(), Ok(PresetKind::Look | PresetKind::Lut))
+                        ) {
                             self.presets.state.applied = Some(AppliedPreset {
                                 group: PresetGroup::User,
-                                name: dialog.name.clone(),
+                                name: published.clone(),
                             });
                         }
                         self.status = crate::app::Message::new("surfaces.status.preset_saved")
-                            .arg("name", &dialog.name)
+                            .arg("name", &published)
                             .arg("path", path.display());
+                        self.presets.query.clear();
+                        self.presets.reveal = Some((PresetGroup::User, published));
                         self.presets.refresh();
                     }
                     Err(e) => {
@@ -1109,12 +1287,10 @@ impl App {
         }
     }
 }
-/// The collapsed library rail and the prototype's card metrics: a 48 pt rail,
-/// and 64 pt rows around the 46 pt fixed-reference thumbnail.
-const RAIL_WIDTH: f32 = 48.0;
-const CARD_HEIGHT: f32 = 64.0;
-const THUMBNAIL: f32 = 46.0;
-/// Two visible controls and a 2 pt gap fit inside the reference image height.
+/// The collapsed library rail: a 56 pt strip leaves room for the visible
+/// Presets label.
+const RAIL_WIDTH: f32 = 56.0;
+/// The visible actions control inside a card row.
 const CARD_ACTION_HEIGHT: f32 = 22.0;
 /// The size of the current look's painted check.
 const CHECK_ICON: f32 = 12.0;
@@ -1140,46 +1316,32 @@ fn paint_check(painter: &egui::Painter, rect: egui::Rect) {
     let center = rect.center();
     painter.line(
         vec![
-            center + egui::vec2(-4.5, 0.5),
-            center + egui::vec2(-1.5, 3.5),
+            center + egui::vec2(-4.0, 0.0),
+            center + egui::vec2(-1.0, 3.0),
             center + egui::vec2(4.5, -3.5),
         ],
-        egui::Stroke::new(2.0_f32, theme::ACCENT),
+        egui::Stroke::new(1.6_f32, theme::ACCENT),
     );
 }
 
-/// The favorite star, drawn rather than typeset: filled once favorited and
-/// outlined before, so the state is not carried by colour alone and no glyph
-/// can go missing. A star is not convex, and epaint fills a closed path with a
-/// fan from its first point, so the filled path starts and ends at the centre:
-/// the fan then covers the star exactly in either winding order.
-fn paint_star(painter: &egui::Painter, rect: egui::Rect, favorited: bool) {
-    let center = rect.center();
-    let radius = 8.0;
-    let inner = radius * 0.4;
-    let boundary: Vec<egui::Pos2> = (0..10)
-        .map(|step| {
-            let angle = -std::f32::consts::FRAC_PI_2 + step as f32 * std::f32::consts::PI / 5.0;
-            let radius = if step % 2 == 0 { radius } else { inner };
-            center + radius * egui::vec2(angle.cos(), angle.sin())
-        })
-        .collect();
-    if favorited {
-        let mut points = Vec::with_capacity(boundary.len() + 2);
-        points.push(center);
-        points.extend(boundary.iter().copied());
-        points.push(center);
-        painter.add(egui::Shape::convex_polygon(
-            points,
-            theme::ACCENT,
-            egui::Stroke::NONE,
-        ));
-    } else {
-        painter.add(egui::Shape::closed_line(
-            boundary,
-            egui::Stroke::new(1.2_f32, theme::FG_MUTED),
-        ));
+/// Stable card identity across frames and grid cells.
+fn card_id(index: usize) -> egui::Id {
+    egui::Id::new(("preset card", index))
+}
+
+/// Visual keyboard order: groups render one after the other, so arrows must
+/// cross the Built-in/My Presets boundary in that same order.
+pub(super) fn presentation_order(visible: &[usize], entries: &[LibraryEntry]) -> Vec<usize> {
+    let mut ordering = Vec::with_capacity(visible.len());
+    for group in [PresetGroup::BuiltIn, PresetGroup::User] {
+        ordering.extend(
+            visible
+                .iter()
+                .copied()
+                .filter(|index| entries[*index].group == group),
+        );
     }
+    ordering
 }
 
 /// The entry-actions affordance, drawn rather than typeset.
@@ -1190,197 +1352,16 @@ fn paint_actions(painter: &egui::Painter, rect: egui::Rect) {
     }
 }
 
-pub(super) fn document_error_message(
-    error: &spektrafilm_core::presets::PresetDocumentError,
-) -> crate::app::Message {
-    use spektrafilm_core::presets::PresetDocumentReason;
-    match &error.reason {
-        PresetDocumentReason::Parser { detail } => {
-            crate::app::Message::new("surfaces.presets.document_invalid").arg("detail", detail)
-        }
-        PresetDocumentReason::Carrier { path } => {
-            crate::app::Message::new("surfaces.presets.carrier_invalid").arg("path", path.display())
-        }
-        PresetDocumentReason::Schema { version } => {
-            crate::app::Message::new("surfaces.presets.schema_version").arg("version", version)
-        }
-        PresetDocumentReason::Name { name } => {
-            crate::app::Message::new("surfaces.presets.name_guidance").arg("name", name)
-        }
-        PresetDocumentReason::ProvenanceVersions => {
-            crate::app::Message::new("surfaces.presets.provenance_versions")
-        }
-        PresetDocumentReason::Shape => crate::app::Message::new("surfaces.presets.shape"),
-        PresetDocumentReason::Stock { kind, stock } => {
-            crate::app::Message::new("surfaces.presets.stock_invalid")
-                .message_arg("kind", crate::app::Message::control(kind))
-                .arg("stock", stock)
-        }
-        PresetDocumentReason::ContentIdentity { kind, identity } => {
-            crate::app::Message::new("surfaces.presets.identity_invalid")
-                .message_arg("kind", crate::app::Message::control(kind))
-                .arg("identity", identity)
-        }
-        PresetDocumentReason::ScannerProvenance => {
-            crate::app::Message::new("surfaces.presets.scanner_provenance")
-        }
-        PresetDocumentReason::RootObject => {
-            crate::app::Message::new("surfaces.presets.root_object")
-        }
-        PresetDocumentReason::ParametersObject => {
-            crate::app::Message::new("surfaces.presets.parameters_object")
-        }
-        PresetDocumentReason::LegacyField { field } => {
-            crate::app::Message::new("surfaces.presets.legacy_field").arg("field", field)
-        }
-        PresetDocumentReason::UnownedField { path } => {
-            crate::app::Message::new("surfaces.presets.unowned_field").arg("path", path)
-        }
-        PresetDocumentReason::RetiredField { path, replacement } => {
-            crate::app::Message::new("surfaces.presets.retired_field")
-                .arg("path", path)
-                .arg("replacement", replacement)
-        }
-        PresetDocumentReason::EmptySection => {
-            crate::app::Message::new("surfaces.presets.empty_section")
-        }
-        PresetDocumentReason::MultipleSections => {
-            crate::app::Message::new("surfaces.presets.multiple_sections")
-        }
-        PresetDocumentReason::TomlNull { paths } => {
-            crate::app::Message::new("surfaces.presets.toml_null").arg("paths", paths.join(", "))
-        }
-        PresetDocumentReason::ExpectedLook => {
-            crate::app::Message::new("surfaces.presets.expected_look")
-        }
-        PresetDocumentReason::ExpectedSection => {
-            crate::app::Message::new("surfaces.presets.expected_section")
-        }
-        PresetDocumentReason::Profile { kind, stock, error } => {
-            crate::app::Message::new("surfaces.presets.profile_load")
-                .message_arg("kind", crate::app::Message::control(kind))
-                .arg("stock", stock)
-                .message_arg("detail", crate::app::Message::profile(error.as_ref()))
-        }
-        PresetDocumentReason::ProfileRead {
-            stock,
-            path,
-            detail,
-        } => crate::app::Message::new("surfaces.presets.profile_read")
-            .arg("stock", stock)
-            .arg("path", path.display())
-            .arg("detail", detail),
-        PresetDocumentReason::Read { path, detail } => {
-            crate::app::Message::new("surfaces.presets.document_read")
-                .arg("path", path.display())
-                .arg("detail", detail)
-        }
-        PresetDocumentReason::ProfileIdentity {
-            stock,
-            expected,
-            actual,
-        } => crate::app::Message::new("surfaces.presets.profile_identity")
-            .arg("stock", stock)
-            .arg("expected", expected)
-            .arg("actual", actual),
-        PresetDocumentReason::ProfileStock { kind, stock } => {
-            crate::app::Message::new("surfaces.presets.profile_stock")
-                .message_arg("kind", crate::app::Message::control(kind))
-                .arg("stock", stock)
-        }
-        PresetDocumentReason::ProfileSupport { kind, stock } => {
-            crate::app::Message::new("surfaces.presets.profile_support")
-                .message_arg("kind", crate::app::Message::control(kind))
-                .arg("stock", stock)
-        }
-        PresetDocumentReason::ProfileVersion {
-            kind,
-            stock,
-            expected,
-            actual,
-        } => crate::app::Message::new("surfaces.presets.profile_version")
-            .message_arg("kind", crate::app::Message::control(kind))
-            .arg("stock", stock)
-            .arg("expected", expected)
-            .arg("actual", actual),
-        PresetDocumentReason::ProfileUnverified { kind, stock } => {
-            crate::app::Message::new("surfaces.presets.profile_unverified")
-                .message_arg("kind", crate::app::Message::control(kind))
-                .arg("stock", stock)
-        }
-        PresetDocumentReason::Runtime(error) => crate::app::Message::validation(error),
-    }
+fn paint_status_owned(ui: &egui::Ui, rect: egui::Rect, text: &str) {
+    ui.painter().with_clip_rect(rect).text(
+        rect.center(),
+        egui::Align2::CENTER_CENTER,
+        text,
+        egui::FontId::proportional(theme::SIZE_HINT),
+        theme::FG_MUTED,
+    );
 }
-pub(super) fn library_error_message(
-    error: &spektrafilm_core::presets::LibraryError,
-) -> crate::app::Message {
-    use spektrafilm_core::presets::LibraryErrorReason;
-    match &error.reason {
-        LibraryErrorReason::Document { path, error } => match path {
-            Some(path) => crate::app::Message::new("surfaces.presets.fault")
-                .arg("path", path.display())
-                .message_arg("detail", document_error_message(error)),
-            None => document_error_message(error),
-        },
-        LibraryErrorReason::Fault { path, fault } => {
-            crate::app::Message::new("surfaces.presets.fault")
-                .arg("path", path.display())
-                .message_arg("detail", library_fault_message(Some(fault)))
-        }
-        LibraryErrorReason::NameConflict { name } => {
-            crate::app::Message::new("surfaces.presets.duplicate_name").arg("name", name)
-        }
-        LibraryErrorReason::UnknownName { name, suggestions } => {
-            crate::app::Message::new("surfaces.presets.unknown_name")
-                .arg("name", name)
-                .arg("suggestions", suggestions.join(", "))
-        }
-        LibraryErrorReason::MissingPath => {
-            crate::app::Message::new("surfaces.presets.missing_path")
-        }
-        LibraryErrorReason::Io {
-            operation,
-            path,
-            detail,
-        } => crate::app::Message::new(match *operation {
-            "create" => "surfaces.presets.io_create",
-            "resolve" => "surfaces.presets.io_resolve",
-            "open_lock" => "surfaces.presets.io_open_lock",
-            "lock" => "surfaces.presets.io_lock",
-            "rename" => "surfaces.presets.io_rename",
-            "remove" => "surfaces.presets.io_remove",
-            "write" => "surfaces.presets.io_write",
-            _ => unreachable!("library IO operation is declared at its owner"),
-        })
-        .arg("path", path.display())
-        .arg("detail", detail),
-        LibraryErrorReason::ExportName { path, name } => {
-            crate::app::Message::new("surfaces.presets.export_name")
-                .arg("path", path.display())
-                .arg("name", name)
-        }
-    }
-}
-fn library_fault_message(
-    fault: Option<&spektrafilm_core::presets::LibraryFault>,
-) -> crate::app::Message {
-    use spektrafilm_core::presets::LibraryFault;
-    match fault {
-        Some(LibraryFault::DirectoryRead { detail }) => {
-            crate::app::Message::new("surfaces.presets.directory_read").arg("detail", detail)
-        }
-        Some(LibraryFault::Document { detail }) => document_error_message(detail),
-        Some(LibraryFault::NameMismatch { name, stem }) => {
-            crate::app::Message::new("surfaces.presets.name_mismatch")
-                .arg("name", name)
-                .arg("stem", stem)
-        }
-        Some(LibraryFault::DuplicateName { name }) => {
-            crate::app::Message::new("surfaces.presets.duplicate_library_name").arg("name", name)
-        }
-        None => crate::app::Message::new("surfaces.presets.invalid_document"),
-    }
-}
+
 fn show_fault(ui: &mut egui::Ui, entry: &LibraryEntry) {
     let detail = library_fault_message(entry.fault.as_ref());
     ui.colored_label(

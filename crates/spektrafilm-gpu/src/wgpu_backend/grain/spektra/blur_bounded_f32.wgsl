@@ -16,14 +16,13 @@ fn index(coordinate: u32, line: u32, length: u32) -> u32 {
 fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
   let line = gid.x;
   if line >= p.lines { return; }
-  if p.mode == 0u || p.mode == 3u {
+  if p.mode == 0u {
     for (var j = 0u; j < p.count; j++) {
       var sum = 0.0;
       for (var k = 0u; k < 2u * p.radius + 1u; k++) {
-        let value = source[index(j + k, line, p.count + 2u * p.radius)];
-        if p.mode == 3u { sum = sum + value; } else { sum = sum + value * kernel[k]; }
+        sum = sum + source[index(j + k, line, p.count + 2u * p.radius)] * kernel[k];
       }
-      destination[index(j, line, p.count)] = select(sum, sum * kernel[0], p.mode == 3u);
+      destination[index(j, line, p.count)] = sum;
     }
     return;
   }

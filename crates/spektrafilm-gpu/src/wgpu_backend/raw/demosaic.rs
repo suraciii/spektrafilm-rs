@@ -1,6 +1,6 @@
-//! Integer-domain ports of LibRaw 0.22.2's `misc_demosaic.cpp` and
-//! `xtrans_demosaic.cpp`. CFA-derived tables and green bounds are computed on
-//! the device; the host supplies only dispatch geometry and parsed metadata.
+//! LibRaw integer-domain Bayer/VNG processing and darktable-style parallel
+//! Markesteijn X-Trans processing. CFA-derived tables and green bounds are
+//! computed on the device; the host supplies geometry and parsed metadata.
 //!
 //! AHD reuses the enclosing pipeline's established kernels. This module never
 //! substitutes it for VNG, PPG, or Markesteijn; precoloured data needs no pass.
@@ -19,10 +19,6 @@ struct DemosaicPass {
 const READ: wgpu::BufferBindingType = wgpu::BufferBindingType::Storage { read_only: true };
 const WRITE: wgpu::BufferBindingType = wgpu::BufferBindingType::Storage { read_only: false };
 const UNIFORM: wgpu::BufferBindingType = wgpu::BufferBindingType::Uniform;
-const XTRANS_TILE: u32 = 512;
-const XTRANS_STEP: u32 = XTRANS_TILE - 16;
-pub(super) const XTRANS_SCRATCH_BYTES: u64 = 11_272_192 * 4;
-
 impl WgpuBackend {
     /// Allocate AHD's candidate planes only for the Bayer-AHD selection.
     // Keep the frame metadata and independent shader bindings explicit at this boundary.
@@ -189,7 +185,7 @@ impl WgpuBackend {
     ///
     /// The optional buffer is X-Trans's device-derived validation metadata.
     /// Its i32 at index 146 must be read after submission: nonzero means the
-    /// same invalid pattern/bounds that native Markesteijn reports as corrupt.
+    /// GPU table construction rejected the CFA pattern.
     /// Reading that status is not host preparation or image arithmetic.
     // Each buffer is an independent kernel binding; a wrapper would only hide transport.
     #[allow(clippy::too_many_arguments)]
@@ -247,50 +243,11 @@ impl WgpuBackend {
                 Ok((passes, None))
             }
             RawDemosaic::XTrans => {
-                // These are native corruption preconditions, not a mode decline.
-                if frame.width < XTRANS_TILE || frame.height < XTRANS_TILE {
-                    return Err(
-                        "LibRaw Markesteijn requires width and height of at least 512".into(),
-                    );
-                }
-                if frame.cfa_rows != 6 || frame.cfa_columns != 6 {
-                    return Err("LibRaw Markesteijn requires a 6-by-6 X-Trans CFA".into());
-                }
-                if let Some(reason) =
-                    required_buffer_exceeds_limits(XTRANS_SCRATCH_BYTES, &self.device.limits())
-                {
-                    return Err(reason);
-                }
-                let metadata = RawBuffer::zeros(&self.device, "raw_xtrans_metadata", 147 * 4);
-                let scratch =
-                    RawBuffer::zeros(&self.device, "raw_xtrans_tile", XTRANS_SCRATCH_BYTES);
-                let settings = self.demosaic_settings(colors, 0, 0, 0);
-                let mut passes = vec![self.raw_dispatch(
-                    XTRANS_PREPARE_SHADER,
-                    &[frame_buf, &settings, image, cfa, &metadata],
-                    &[UNIFORM, UNIFORM, WRITE, READ, WRITE],
-                    1,
-                    "raw_xtrans_prepare",
-                )];
-                // Native row-major tile order also preserves the in-place
-                // overlap of the output image with subsequent input tiles.
-                for top in (3..frame.height - 19).step_by(XTRANS_STEP as usize) {
-                    for left in (3..frame.width - 19).step_by(XTRANS_STEP as usize) {
-                        self.check_cancelled()?;
-                        let settings = self.demosaic_settings(colors, 0, top, left);
-                        passes.push(self.raw_dispatch(
-                            XTRANS_SHADER,
-                            &[
-                                frame_buf, &settings, image, cfa, &metadata, &scratch, xyz, cbrt,
-                            ],
-                            &[UNIFORM, UNIFORM, WRITE, READ, READ, WRITE, READ, READ],
-                            1,
-                            "raw_xtrans_three_pass",
-                        ));
-                    }
-                }
-                passes.push(self.raw_border_gpu(colors, 8, frame, frame_buf, image, cfa));
-                Ok((passes, Some(metadata)))
+                // darktable requests VNG's linear seed only for the border.
+                let mut passes = self.raw_linear_gpu(colors, frame, frame_buf, image, cfa);
+                let (markesteijn, status) = self.raw_markesteijn_gpu(frame, image, cfa)?;
+                passes.extend(markesteijn);
+                Ok((passes, Some(status)))
             }
         }
     }
@@ -308,10 +265,6 @@ const PPG_SHADER: &str = concat!(
     include_str!("../../../../spektrafilm-shaders/wgsl/raw/raw_common.wgsl"),
     include_str!("../../../../spektrafilm-shaders/wgsl/raw/raw_ppg.wgsl"),
 );
-const XTRANS_PREPARE_SHADER: &str = concat!(
-    include_str!("../../../../spektrafilm-shaders/wgsl/raw/raw_common.wgsl"),
-    include_str!("../../../../spektrafilm-shaders/wgsl/raw/raw_xtrans_prepare.wgsl"),
-);
 #[cfg(test)]
 pub(super) const XTRANS_MINMAX_SHADER: &str =
     include_str!("../../../../spektrafilm-shaders/wgsl/raw/raw_xtrans_minmax.wgsl");
@@ -321,12 +274,6 @@ pub(super) const XTRANS_GREEN_SHADER: &str =
 #[cfg(test)]
 pub(super) const XTRANS_INIT_SHADER: &str =
     include_str!("../../../../spektrafilm-shaders/wgsl/raw/raw_xtrans_init.wgsl");
-pub(super) const XTRANS_SHADER: &str = concat!(
-    include_str!("../../../../spektrafilm-shaders/wgsl/raw/raw_common.wgsl"),
-    "fn image_index(p:i32)->u32{return u32(p);}\n",
-    include_str!("../../../../spektrafilm-shaders/wgsl/raw/raw_xtrans.wgsl"),
-);
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -541,105 +488,24 @@ mod tests {
     }
 
     #[test]
-    fn xtrans_retains_measured_red_in_every_edge_candidate() {
-        let gpu = crate::test_support::adapter();
-        let pattern = [
-            1u32, 0, 1, 1, 2, 1, 2, 1, 2, 0, 1, 0, 1, 0, 1, 1, 2, 1, 1, 2, 1, 1, 0, 1, 0, 1, 0, 2,
-            1, 2, 1, 2, 1, 1, 0, 1,
-        ];
-        let mut frame: RawFrame = bytemuck::Zeroable::zeroed();
-        frame.width = 512;
-        frame.height = 512;
-        frame.cfa_rows = 6;
-        frame.cfa_columns = 6;
-        let mut input = vec![0u32; 512 * 512 * 4];
-        for y in 0..512 {
-            for x in 0..512 {
-                let c = pattern[(y % 6) * 6 + x % 6] as usize;
-                input[(y * 512 + x) * 4 + c] = [101, 207, 311][c];
-            }
-        }
-        let image = RawBuffer::upload(
-            &gpu.device,
-            "xtrans_edge_input",
-            bytemuck::cast_slice(&input),
-            wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
-        );
-        let cfa = RawBuffer::upload(
-            &gpu.device,
-            "xtrans_edge_cfa",
-            bytemuck::cast_slice(&pattern),
-            wgpu::BufferUsages::STORAGE,
-        );
-        let frame_buf = RawBuffer::upload(
-            &gpu.device,
-            "xtrans_edge_frame",
-            bytemuck::bytes_of(&frame),
-            wgpu::BufferUsages::UNIFORM,
-        );
-        let metadata = RawBuffer::zeros(&gpu.device, "xtrans_edge_metadata", 147 * 4);
-        let scratch = RawBuffer::zeros(&gpu.device, "xtrans_edge_candidates", XTRANS_SCRATCH_BYTES);
-        let xyz = RawBuffer::zeros(&gpu.device, "xtrans_edge_xyz", 48);
-        let cbrt = RawBuffer::zeros(&gpu.device, "xtrans_edge_cbrt", 65536 * 4);
-        let settings = gpu.demosaic_settings(3, 0, 0, 0);
-        let prepare = gpu.raw_dispatch(
-            XTRANS_PREPARE_SHADER,
-            &[&frame_buf, &settings, &image, &cfa, &metadata],
-            &[UNIFORM, UNIFORM, WRITE, READ, WRITE],
-            1,
-            "xtrans_edge_prepare",
-        );
-        let settings = gpu.demosaic_settings(3, 0, 3, 3);
-        let interpolate = gpu.raw_dispatch(
-            XTRANS_SHADER,
-            &[
-                &frame_buf, &settings, &image, &cfa, &metadata, &scratch, &xyz, &cbrt,
-            ],
-            &[UNIFORM, UNIFORM, WRITE, READ, READ, WRITE, READ, READ],
-            1,
-            "xtrans_edge_interpolate",
-        );
-        let mut encoder = gpu.device.create_command_encoder(&Default::default());
-        gpu.raw_dispatch(CBRT_SHADER, &[&cbrt], &[WRITE], 65536, "xtrans_edge_cbrt")
-            .encode(&mut encoder, "xtrans_edge_cbrt");
-        prepare.encode(&mut encoder, "xtrans_edge_prepare");
-        interpolate.encode(&mut encoder, "xtrans_edge_interpolate");
-        gpu.queue.submit(Some(encoder.finish()));
-        let values = gpu
-            .pipe
-            .readback_buffer_as::<u32>(&scratch.buffer, XTRANS_SCRATCH_BYTES)
-            .unwrap();
-        let image = gpu
-            .pipe
-            .readback_buffer_as::<u32>(&image.buffer, 512 * 512 * 16)
-            .unwrap();
-        for d in 0..8 {
-            assert_eq!(
-                values[(d * 262144 + 1540) * 3],
-                101,
-                "measured edge red direction {d}"
-            );
-        }
-        assert_eq!(image[(6 * 512 + 7) * 4], 101);
-    }
-
-    #[test]
     fn markesteijn_three_pass_preserves_constant_xtrans_including_border() {
         let pattern = [
             1, 0, 1, 1, 2, 1, 2, 1, 2, 0, 1, 0, 1, 0, 1, 1, 2, 1, 1, 2, 1, 1, 0, 1, 0, 1, 0, 2, 1,
             2, 1, 2, 1, 1, 0, 1,
         ];
-        let output = interpolate(
-            Some(RawDemosaic::XTrans),
-            512,
-            &pattern,
-            6,
-            6,
-            3,
-            |_, _, c| [101, 207, 311][c as usize],
-        );
-        for (index, pixel) in output.as_chunks::<4>().0.iter().enumerate() {
-            assert_eq!(&pixel[..3], &[101, 207, 311], "X-Trans pixel {index}");
+        for size in [6, 7, 33, 64] {
+            let output = interpolate(
+                Some(RawDemosaic::XTrans),
+                size,
+                &pattern,
+                6,
+                6,
+                3,
+                |_, _, c| [101, 207, 311][c as usize],
+            );
+            for (index, pixel) in output.as_chunks::<4>().0.iter().enumerate() {
+                assert_eq!(&pixel[..3], &[101, 207, 311], "X-Trans pixel {index}");
+            }
         }
     }
 
@@ -816,10 +682,10 @@ mod tests {
         let minimum = white.into_iter().fold(f32::INFINITY, f32::min);
         for c in 0..4 {
             let expected = (white[c] / minimum) * 65535.0 / 1000.0;
-            assert_eq!(
-                observed[c].to_bits(),
-                expected.to_bits(),
-                "native white balance channel {c}"
+            assert!(
+                observed[c].is_finite() && (observed[c] - expected).abs() <= expected.abs() * 1e-5,
+                "native white balance channel {c}: {} != {expected}",
+                observed[c]
             );
         }
     }

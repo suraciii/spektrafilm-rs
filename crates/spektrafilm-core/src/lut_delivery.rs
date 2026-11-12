@@ -199,6 +199,7 @@ pub fn write_bundle_files(
         let document = LutDocumentRef {
             resolution: lut.resolution,
             table: &lut.table,
+            shaper: None,
             title: &lut.title,
             domain_min: [0.0; 3],
             domain_max: [1.0; 3],

@@ -22,6 +22,7 @@ pub enum Section {
 #[serde(tag = "kind", content = "section", rename_all = "snake_case")]
 pub enum PresetKind {
     Look,
+    Lut,
     Section(Section),
 }
 pub const SECTIONS: &[Section] = &[
@@ -179,7 +180,7 @@ pub fn section_matches_detailed(
     let PresetKind::Section(_) = preset.kind_detailed()? else {
         return Ok(false);
     };
-    let PresetParameters::Section(payload) = &preset.parameters else {
+    let Some(PresetParameters::Section(payload)) = preset.parameters.as_ref() else {
         unreachable!()
     };
     params.validate_values_detailed()?;

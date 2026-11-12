@@ -8,14 +8,14 @@ This is the final target scope for material-control simplification, Output light
 
 ## Product decisions
 
-This capability reuses existing material controls and adds final output mixing. Independent [common finishing](../finishing/spec.md#scope-and-applicability) is not a Film or Print digital-response group.
+This capability reuses existing material controls and adds final output mixing. Independent [Tone & Color](../finishing/spec.md#scope-and-applicability) is not a Film or Print digital-response group.
 
 | User need | Final decision | Deliberate limit |
 |---|---|---|
 | Shape photographic-paper highlights | Use existing preflash, print exposure, and material curves | No independent highlight onset; paper white and midgray need not remain fixed |
 | Adjust film contrast and shoulder | Keep existing development, chemistry, gamma, and developer-exhaustion controls with their existing profile capabilities | No new universal Film highlight compressor; no fitted-model fallback for unsupported profiles |
 | Adjust global print color | Keep existing M/Y shifts, calibrated neutral filter pack, and exposure | No new Cyan shift; retaining cyan calibration does not expose another creative slider |
-| Adjust color strength | Do not add Film or Print Saturation in this capability | [Common finishing saturation](../finishing/spec.md#controls) remains independent of material controls |
+| Adjust color strength | Do not add Film or Print Saturation in this capability | [Tone & Color saturation](../finishing/spec.md#controls) remains independent of material controls |
 | Make colors heavier/lighter | Do not add Color Density | The ambiguous appearance request does not justify new material-color coordinates |
 | Color different tonal regions | Keep global filtration and independently filtered preflash | No three-region print toning; these controls are not claimed to replace arbitrary split toning |
 | Map positive input range | Use independent [Expand](../finishing/spec.md#expand) | No scanner point aliases or measured-density/display-endpoint conflation |
@@ -25,7 +25,7 @@ This capability reuses existing material controls and adds final output mixing. 
 
 The unshipped draft groups `film_render.response` and `print_render.response`, and draft `enlarger.c_filter_shift`, are not accepted parameter paths. They MUST NOT appear in runtime models, GUI, discovery, new presets, or compatibility aliases. Documents containing them fail normal unknown-field validation.
 
-No migration or reserved empty group is required for these drafts. Common finishing does not introduce independent film highlights or Film or Print saturation.
+No migration or reserved empty group is required for these drafts. Tone & Color does not introduce independent film highlights or Film or Print saturation.
 
 ## Preflash
 
@@ -51,7 +51,7 @@ Scanner calibration and automatic setup retain their existing material-setting s
 
 The runtime, GUI, discovery, shaders, and new serialized documents MUST NOT expose or execute `io.output_gamut_compress.lightness_compression`. There MUST be no Output start, limit, or softness controls and no hidden replacement brightness curve in gamut processing. The remaining gamut algorithm and chroma controls retain their own meanings and placement.
 
-This change does not remove required negative-conversion tone responses or redefine CMYK ink style. [Common finishing](../finishing/spec.md#scope-and-applicability) is independent of the retired Output lightness operation.
+This change does not remove required negative-conversion tone responses or redefine CMYK ink style. [Tone & Color](../finishing/spec.md#scope-and-applicability) is independent of the retired Output lightness operation.
 
 A versioned legacy complete-document migration MAY discard an absent or null retired value. It MUST reject every explicitly stored numeric triplet, including a value ignored by the old gamut algorithm. The error MUST identify the retired path and require explicit removal; no equivalent parameter conversion is claimed.
 
@@ -63,11 +63,11 @@ Removing lightness compression does not guarantee that every highlight fits the 
 
 ## Output mix
 
-`output_mix.amount` MUST be f64, finite in [0,1], and default to 1. It mixes the prepared source with the complete result after [common finishing](../finishing/design.md#color-and-order) and the existing output tail, before saving conversion. Both branches MUST use the same output-space linear RGB and the same orientation, rotation, crop, and resize.
+`output_mix.amount` MUST be f64, finite in [0,1], and default to 1. It mixes the prepared source with the complete result after [Tone & Color](../finishing/design.md#color-and-order) and the existing output tail, before saving conversion. Both branches MUST use the same output-space linear RGB and the same orientation, rotation, crop, and resize.
 
 This is one look-owned Output control, not an additional workflow, per-stage opacity, or CMYK Strength alias.
 
-The prepared source includes decoding, RAW white balance, and requested lens correction. It excludes virtual camera metering and exposure compensation, film, print, scanner interpretation, common finishing, output gamut processing, and CMYK ink style. It uses the existing input-to-output color-space conversion, without a new creative tone curve.
+The prepared source includes decoding, RAW white balance, and requested lens correction. It excludes virtual camera metering and exposure compensation, film, print, scanner interpretation, Tone & Color, output gamut processing, and CMYK ink style. It uses the existing input-to-output color-space conversion, without a new creative tone curve.
 
 A negative-capture source remains negative. Final mixing does not guarantee an in-gamut or nonnegative result; float headroom and normal integer clipping rules still apply.
 

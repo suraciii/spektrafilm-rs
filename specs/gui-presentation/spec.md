@@ -119,10 +119,15 @@ Expanded modules MUST use a quiet bounded surface. Collapsed modules MUST remain
 - Slider bounds, step, and entry decimals come from the same declaration under [numeric editor ranges](../gui-workflow/spec.md#numeric-editor-ranges). Presentation MUST NOT add a different slider-only bound or rounding rule.
 - Units MUST remain readable beside values without becoming part of the label or editable numeric text.
 - Numeric rows MUST place the unit before the right-aligned value.
-- A unitless row MUST retain the same value-column alignment.
+- A visible unit MUST NOT break in the middle of a word at a supported inspector width.
+- A dimensionless numeric row MUST leave the unit position empty rather than display `dimensionless` or a localized equivalent.
+- A unitless or dimensionless row MUST retain the same value-column alignment.
 - The slider MUST span the module's usable row width.
 - A tuple parameter row presents one editor per component, each with its component identifier.
 - A choice parameter row presents a selector as its editor. The row label is the selector's only label.
+- Film and print material selectors MUST present the complete selected display identity without truncation.
+- When the shared value column cannot contain that identity, the selector MUST use a full-width line below its label and MAY wrap the selected identity onto another line. This presentation MUST NOT change the selector's owner or available choices.
+- Switching between inline and stacked material-selector layouts MUST preserve keyboard focus.
 - A boolean parameter row presents a switch as its editor. A checkbox belongs to list selection only.
 
 ## Module headers and resets
@@ -142,7 +147,7 @@ The [presentation design](design.md#factory-projection-and-modified-state) owns 
 
 ## Stage navigation and control locators
 
-The inspector MUST present Input and capture, Film, Print, Scan, and Output as stage headings in one continuous list. The stage jump strip MUST look like navigation to those headings, not a mutually exclusive page selector. The interface MUST NOT present MAIN, FILM, PRINT, ADVANCED, or CONFIG tabs.
+The inspector MUST present Input and capture, Film, Print, Scan, Look, and Output as stage headings in one continuous list. The stage jump strip MUST look like navigation to those headings, not a mutually exclusive page selector. The interface MUST NOT present MAIN, FILM, PRINT, ADVANCED, or CONFIG tabs.
 
 The search field MUST remain visible above the inspector list. Search behavior follows [control search](../gui-workflow/spec.md#control-search). A locator MUST show the control label, owning module, and destination stage or dialog.
 
@@ -179,13 +184,13 @@ Linked sample markers MUST remain distinguishable from aggregate traces and plot
 
 ## Preset browser
 
-- A preset entry presents its film stock and its print stock.
-- A stock presents the same visual identifier everywhere it appears.
+- A compact preset card presents a current-photograph thumbnail, name, and applied state under [browser interaction](../presets/spec.md#browser-interaction). Pending and unavailable thumbnails remain explicit under [current-photograph thumbnails](../presets/spec.md#current-photograph-thumbnails).
+- Film and print material identities remain available in accessible descriptions and the current inspector; cards MUST NOT require always-visible explanatory paragraphs. Detailed help is disclosed on demand.
 - The browser MUST have a labeled, keyboard-operable collapse and reopen control. Collapsing it MUST NOT hide the only indication of how to reopen it.
-- Selection, hover, and keyboard focus MUST remain visually distinct. A selected preset MUST have a non-color cue.
-- Preset names and material identifiers MUST remain readable in long lists. Truncated names MUST remain available through accessible text and help.
-- The browser MUST keep the current-look summary independent of search and filters. Without an applied preset, it MUST identify current adjustments without inventing an applied look.
-- Reference credit MUST remain in a fixed footer outside the scrolling cards.
+- Applied state, hover, and keyboard focus MUST remain visually distinct. Applied state MUST have a non-color cue.
+- Preset names MUST remain readable in long lists. Truncated names and material identities MUST remain available through accessible text and help.
+- The browser MUST keep the current-look summary independent of search. Without an applied preset, it MUST identify current adjustments without inventing an applied look.
+- Thumbnail updates MUST NOT steal keyboard focus or imply that the retained viewer result already reflects the applied controls.
 
 ## States
 

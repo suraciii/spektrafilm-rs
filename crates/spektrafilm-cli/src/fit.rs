@@ -7,7 +7,7 @@ use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
 use spektrafilm_core::fit::{ChartLayout, FitGroup, FitOptions, FitRequest, PatchTable};
 use spektrafilm_core::presets::PresetLibrary;
-use spektrafilm_core::process_params::{self, ProcessParamsRequest};
+use spektrafilm_core::process_params::{self, FilmSelection, ProcessParamsRequest};
 use spektrafilm_core::runtime::DigestMode;
 use std::path::{Path, PathBuf};
 
@@ -172,7 +172,7 @@ pub fn cmd_fit_with_result(args: &FitArgs, matches: &clap::ArgMatches) -> Result
         .collect::<Result<Vec<_>>>()?;
     let resolved = process_params::resolve(
         ProcessParamsRequest {
-            film: args.film.as_deref(),
+            film: args.film.as_deref().map(FilmSelection::Name),
             paper: args.paper.as_deref(),
             presets: &presets,
             params_file: None,

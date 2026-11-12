@@ -1,0 +1,248 @@
+schema_version = 7
+
+name = "CineStill 800T"
+author = "SpektraFilm"
+description = "CineStill 800T in Cs41: experimental negative-curve fit with borrowed Vision3 spectra, verified before printing. Cs41 curves are anchored to the chart's 3200 K tungsten exposure light, so a 3200 K-lit gray renders neutral. Halation and Dye grain are fitted to public PhotonFolly lab scans: halation radial red-excess around lamps (160 um first sigma, 3 bounces, strength [0.15,0.045,0.005], scatter off); grain RMS, channel ratio and tonal trend on tone-matched flat windows (RMS [13.1,19.2,24.4], particle scales [4.0,0.15,0.03]). They are appearance controls, not a measured PSF or granularity. Grain is active; its Dye controls were fitted at 36 mm, so set camera.film_format_mm=36 for exact physical scale. Input white follows the tungsten reference T (about 2812 K): balance RAW to custom 2812 K, not as-shot. Negative-to-positive tone is fitted to two real 800T lab scans with linear scene references and neutralizes 3200 K; it assumes scene-linear input. Highlight boost is off. Optional Portra Endura settings balance synthetic midgray; they do not calibrate the film. Neutral print filtration comes from the per-paper database. Select workflow separately: negative_to_positive stays selected on a film-scan route and is normalized away on other routes."
+
+[parameters.finishing]
+brightness = 0.0
+contrast = 0.0
+warmth = 0.0
+saturation = 0.0
+[parameters.finishing.expand]
+enabled = false
+black = 0.0
+white = 1.0
+[film_profile]
+stock = "cinestill_800t_cs41_approx"
+version = "0.3.4"
+
+[print_profile]
+stock = "kodak_portra_endura"
+version = "0.3.4"
+
+[parameters.output_mix]
+amount = 1.0
+
+[parameters.settings]
+# TE226-fitted adaptation surface (data-l1-notone): smooth per-chromaticity log-exposure
+# correction of the spectral reconstruction, fitted against a real 800T lab scan.
+apply_hanatos2025_adaptation_surface = true
+
+[parameters.enlarger]
+illuminant = "TH-KG3"
+print_exposure = 0.5996882786352805
+print_exposure_mode = "manual"
+y_filter_shift = 0.0
+m_filter_shift = 0.0
+# Neutral print filtration is not pinned here: it comes from
+# data/filters/neutral_print_filters.json, fitted per (paper, illuminant, film), so
+# every photo paper gets its own baseline instead of one paper's pack.
+preflash_exposure = 0.0
+preflash_y_filter_shift = 0.0
+preflash_m_filter_shift = 0.0
+
+[parameters.enlarger.diffusion_filter]
+active = false
+filter_family = "black_pro_mist"
+strength = 0.5
+spatial_scale = 1.0
+halo_warmth = 0.0
+core_intensity = 1.0
+core_size = 1.0
+halo_intensity = 1.0
+halo_size = 1.0
+bloom_intensity = 1.0
+bloom_size = 1.0
+
+[parameters.scanner]
+lens_blur = 0.0
+# The scan output polarity is the mode this look was verified with. Preset
+# resolution keeps it when the caller declares a film-scan route
+# (--route "input > film > scan"); on any other route it is normalized away.
+scan_output = "negative_to_positive"
+unsharp_mask = [
+    0.0,
+    0.0,
+]
+
+[parameters.film_render]
+density_curve_gamma = 1.0
+
+[parameters.film_render.chemistry]
+active = true
+gamma_factor = 1.0
+gamma_factor_fast = 1.0
+gamma_factor_slow = 1.0
+gamma_factor_red = 1.0
+gamma_factor_green = 1.0
+gamma_factor_blue = 1.0
+developer_exhaustion = 0.0
+
+[parameters.film_render.grain]
+active = true
+engine = "dye"
+procedural_profile = "35mm250"
+procedural_film_type = "negative"
+procedural_mode = "analogue"
+procedural_resolution_type = 1
+procedural_timer = 0.0
+particle_scale_sublayers = [
+    4.0,
+    0.15,
+    0.03,
+]
+mult_usm_sigma = 0.699999988079071
+mult_usm_amount = 1.5
+rms_granularity = [
+    13.1,
+    19.2,
+    24.4,
+]
+density_min = [
+    0.03,
+    0.03,
+    0.03,
+]
+uniformity = [
+    0.97,
+    0.97,
+    0.97,
+]
+blur = 0.8899999856948853
+blur_dye_clouds_um = 2.0
+micro_structure = [
+    0.20000000298023224,
+    30.0,
+]
+
+[parameters.film_render.halation]
+active = true
+scatter_amount = 0.0
+scatter_spatial_scale = 1.0
+halation_amount = 1.0
+halation_spatial_scale = 1.0
+scatter_core_um = [
+    2.2,
+    2.0,
+    1.6,
+]
+scatter_tail_um = [
+    9.3,
+    9.7,
+    9.1,
+]
+scatter_tail_weight = [
+    0.78,
+    0.65,
+    0.67,
+]
+boost_ev = 0.0
+boost_range = 0.699999988079071
+protect_ev = 4.0
+halation_strength = [
+    0.15,
+    0.045,
+    0.005,
+]
+halation_first_sigma_um = [
+    160.0,
+    160.0,
+    160.0,
+]
+halation_n_bounces = 3
+halation_bounce_decay = 0.5
+halation_renormalize = true
+
+[parameters.film_render.dir_couplers]
+active = false
+amount = 1.0
+inhibition_samelayer = 1.0
+inhibition_interlayer = 1.0
+gamma_samelayer_rgb = [
+    0.5159,
+    0.5934,
+    0.2829,
+]
+gamma_interlayer_r_to_gb = [
+    0.4032,
+    0.2488,
+]
+gamma_interlayer_g_to_rb = [
+    0.2227,
+    0.434,
+]
+gamma_interlayer_b_to_rg = [
+    0.1829,
+    0.1799,
+]
+langmuir_donor_k_rgb = [
+    1.0,
+    1.0,
+    1.0,
+]
+langmuir_receiver_k_rgb = [
+    1.0,
+    1.0,
+    1.0,
+]
+diffusion_size_um = 20.0
+diffusion_tail_um = 200.0
+diffusion_tail_weight = 0.03
+
+[parameters.film_render.base]
+active = true
+scale = 1.0
+tilt = 0.0
+cyan = 1.0
+magenta = 1.0
+yellow = 1.0
+
+[parameters.film_render.convert]
+exposure_compensation_ev = 0.0
+base_percentile = 99.0
+calibration = "1 0 0  0 1 0  0 0 1"
+
+[parameters.print_render]
+density_curve_gamma = 1.0
+
+[parameters.print_render.glare]
+active = false
+percent = 0.029999999329447746
+roughness = 0.699999988079071
+blur = 0.5
+
+[parameters.print_render.density_curves_morph]
+active = false
+gamma_factor = 1.0
+gamma_factor_fast = 1.0
+gamma_factor_slow = 1.0
+gamma_factor_red = 1.0
+gamma_factor_green = 1.0
+gamma_factor_blue = 1.0
+developer_exhaustion = 0.0
+
+[parameters.print_render.base]
+active = true
+scale = 1.0
+cyan = 1.0
+magenta = 1.0
+yellow = 1.0
+
+[parameters.camera_diffusion_filter]
+active = false
+filter_family = "black_pro_mist"
+strength = 0.5
+spatial_scale = 1.0
+halo_warmth = 0.0
+core_intensity = 1.0
+core_size = 1.0
+halo_intensity = 1.0
+halo_size = 1.0
+bloom_intensity = 1.0
+bloom_size = 1.0
+
+[provenance]
+implementation_version = "0.3.4"
+model_version = "0.3.4"
+

@@ -1,0 +1,32 @@
+ILFORD XP2 SUPER 400 — source notice
+
+The profile and built-in look reconstruct coordinate data from:
+ILFORD XP2 SUPER Technical Information, November 2018 (5 pages),
+page 2 wedge spectrogram and page 3 characteristic curve.
+
+The technical sheet is published by Harman technology Limited / ILFORD.
+Copyright in the original technical material remains with its rights holder.
+No manufacturer permission to redistribute the technical sheet, artwork,
+or derived profile is claimed.
+
+New contributions in this repository — coordinate extraction, curve
+reconstruction, profile preparation, tests and documentation — are released
+under CC BY-SA 4.0:
+https://creativecommons.org/licenses/by-sa/4.0/
+
+The spectral ordinate is printed only as "Sensitivity" with 0.5/1.0 ticks.
+This implementation treats it as linear normalized sensitivity with zero at
+the frame bottom; that is an explicit interpretation, not a statement printed
+by Harman. The curve is a 2856 K tungsten wedge response with no equal-energy
+correction; it is not equal-energy film sensitivity.
+
+The 380-355 nm and 660-780 nm tails in the profile are endpoint-slope
+extrapolations clamped at 1e-12, not measured.
+
+XP2 SUPER is a chromogenic B&W film: its image is made of dyes, not silver.
+The datasheet publishes no RMS granularity or MTF, so the built-in look uses
+the Dye grain engine with an explicitly class-level, uncalibrated strength.
+`densitometer=diffuse_visual` and `antihalation=weak` are conservative metadata
+assumptions. No physical film, scanner, grain, halation or color-accuracy
+calibration is claimed. This is an internal research profile, not a
+manufacturer-endorsed reproduction.

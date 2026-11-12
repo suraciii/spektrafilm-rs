@@ -604,53 +604,94 @@ fn effective_control(value: f32) -> f32 {
     let t = value.clamp(0., 1.);
     0.12 * t * t + 0.68 * t + 0.2
 }
-/// A materialized virtual canvas.
-///
-/// The grain texture is a function of its canvas cell only and the scan reads
-/// every cell many times, so the cells are generated once and stored. Only the
-/// region the resampler addresses is materialized: `gx` never exceeds
-/// `size / resampler_scale`.
-struct CanvasTable {
+/// The same virtual canvas, materialized only when its cells are reused enough
+/// to offset generation. Small scans evaluate their exact tap coordinates.
+struct CanvasTable<'a> {
     width: i32,
     height: i32,
-    /// Half-storage cells, three per entry, row major.
-    cells: Vec<[u16; 3]>,
+    /// Half-storage cells, three per entry, row major; None evaluates on demand.
+    cells: Option<Vec<[u16; 3]>>,
+    source: &'a ImageBuf,
+    size: [f32; 2],
+    params: ProceduralGrainParams,
+    phase: f32,
 }
 
-impl CanvasTable {
-    fn build(source: &ImageBuf, size: [f32; 2], p: ProceduralGrainParams, phase: f32) -> Self {
+impl<'a> CanvasTable<'a> {
+    fn direct(source: &'a ImageBuf, size: [f32; 2], p: ProceduralGrainParams, phase: f32) -> Self {
         let used = |extent: f32| (extent / p.resampler_scale()).ceil() as i32 + 2;
-        let width = used(size[0]).clamp(1, size[0].max(1.) as i32);
-        let height = used(size[1]).clamp(1, size[1].max(1.) as i32);
-        // A cell is a pure function of its coordinates, so building rows in
-        // parallel cannot reorder or perturb a single value. The virtual canvas
-        // is ~5200x3100 regardless of frame size, which makes this the dominant
-        // CPU cost of the engine.
-        let mut cells = vec![[0u16; 3]; (width as usize) * (height as usize)];
+        Self {
+            width: used(size[0]).clamp(1, size[0].max(1.) as i32),
+            height: used(size[1]).clamp(1, size[1].max(1.) as i32),
+            cells: None,
+            source,
+            size,
+            params: p,
+            phase,
+        }
+    }
+
+    fn generate(&self, col: i32, row: i32) -> [u16; 3] {
+        let rgb = sample_grain_source(self.source, self.size, col, row);
+        let luma = rgb[0] * 0.2125 + rgb[1] * 0.7154 + rgb[2] * 0.0721;
+        generator(
+            [col as f32, row as f32],
+            self.size,
+            luma,
+            rgb,
+            self.params,
+            false,
+            self.phase,
+        )
+        .map(|v| half::f16::from_f32(v).to_bits())
+    }
+
+    fn materialize(mut self) -> Self {
+        let mut cells = vec![[0u16; 3]; self.width as usize * self.height as usize];
         cells
-            .par_chunks_mut(width as usize)
+            .par_chunks_mut(self.width as usize)
             .enumerate()
             .for_each(|(row, out)| {
                 for (col, slot) in out.iter_mut().enumerate() {
-                    let rgb = sample_grain_source(source, size, col as i32, row as i32);
-                    let luma = rgb[0] * 0.2125 + rgb[1] * 0.7154 + rgb[2] * 0.0721;
-                    let value =
-                        generator([col as f32, row as f32], size, luma, rgb, p, false, phase);
-                    *slot = value.map(|v| half::f16::from_f32(v).to_bits());
+                    *slot = self.generate(col as i32, row as i32);
                 }
             });
-        Self {
-            width,
-            height,
-            cells,
+        self.cells = Some(cells);
+        self
+    }
+
+    #[cfg(test)]
+    fn build(source: &'a ImageBuf, size: [f32; 2], p: ProceduralGrainParams, phase: f32) -> Self {
+        Self::direct(source, size, p, phase).materialize()
+    }
+
+    fn for_scan(
+        source: &'a ImageBuf,
+        size: [f32; 2],
+        p: ProceduralGrainParams,
+        phase: f32,
+        width: u32,
+        height: u32,
+    ) -> Self {
+        let table = Self::direct(source, size, p, phase);
+        // Mean and composition each read nine cells per output pixel. Avoid
+        // building the full rectangle when even uncached taps cost less.
+        let taps = u64::from(width) * u64::from(height) * 18;
+        if taps < table.width as u64 * table.height as u64 {
+            table
+        } else {
+            table.materialize()
         }
     }
 
     fn cell(&self, col: i32, row: i32) -> [f32; 3] {
         let col = col.clamp(0, self.width - 1);
         let row = row.clamp(0, self.height - 1);
-        self.cells[(row * self.width + col) as usize]
-            .map(|bits| half::f16::from_bits(bits).to_f32())
+        let bits = match &self.cells {
+            Some(cells) => cells[(row * self.width + col) as usize],
+            None => self.generate(col, row),
+        };
+        bits.map(|bits| half::f16::from_bits(bits).to_f32())
     }
 
     /// The nine-tap clamped neighbourhood mean the scan composes.
@@ -703,7 +744,7 @@ pub fn apply_cpu(input: &ImageBuf, p: ProceduralGrainParams) -> ImageBuf {
     ];
     let canvas_source = original.as_ref().unwrap_or(&source);
     let canvas = (p.mode == ProceduralGrainMode::Analogue)
-        .then(|| CanvasTable::build(canvas_source, size, p, phase));
+        .then(|| CanvasTable::for_scan(canvas_source, size, p, phase, input.width, input.height));
     // The exact mean of every grain value this scan composes. Digital grain has
     // no canvas, so its displacement is measured at the neutral grain value.
     let grain_mean = match &canvas {
@@ -774,6 +815,48 @@ pub fn apply_cpu(input: &ImageBuf, p: ProceduralGrainParams) -> ImageBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn direct_canvas_matches_dense_cells_and_scan_mean() {
+        let source = ImageBuf::from_data(
+            9,
+            7,
+            (0..9 * 7 * 3)
+                .map(|i| from_f32((i % 29) as f32 / 28.))
+                .collect(),
+        );
+        for profile in 0..PROFILES.len() {
+            for size in [[23., 19.], [2., 31.], [29., 2.]] {
+                let mut p = ProceduralGrainParams::for_profile(profile);
+                p.seed = 42;
+                p.timer = Some(0.25);
+                let dense = CanvasTable::build(&source, size, p, p.resolved_timer());
+                let direct = CanvasTable::direct(&source, size, p, p.resolved_timer());
+                for y in -2..dense.height + 2 {
+                    for x in -2..dense.width + 2 {
+                        assert_eq!(direct.neighbourhood(x, y), dense.neighbourhood(x, y));
+                    }
+                }
+                for (width, height) in [(1, 1), (1, 7), (9, 1), (9, 7)] {
+                    assert_eq!(
+                        canvas_mean(&direct, size, p, width, height),
+                        canvas_mean(&dense, size, p, width, height)
+                    );
+                }
+            }
+        }
+        let p = ProceduralGrainParams::default();
+        assert!(
+            CanvasTable::for_scan(&source, [100., 100.], p, 0., 1, 1)
+                .cells
+                .is_none()
+        );
+        assert!(
+            CanvasTable::for_scan(&source, [23., 19.], p, 0., 100, 100)
+                .cells
+                .is_some()
+        );
+    }
+
     /// Exercise the production row scheduler on a small virtual canvas. The
     /// oracle generates each cell serially without calling the table builder.
     #[test]
@@ -812,7 +895,8 @@ mod tests {
                 let actual = pool.install(|| CanvasTable::build(&source, size, p, phase));
                 assert_eq!((actual.width, actual.height), (width, height));
                 assert_eq!(
-                    actual.cells, expected,
+                    actual.cells.as_ref().unwrap(),
+                    &expected,
                     "profile={profile}, threads={threads}"
                 );
             }
@@ -1058,13 +1142,13 @@ mod tests {
                 });
                 let gsf = (5200. / 37.0f32).max(3100. / 23.0f32);
                 let canvas = [(37.0f32 * gsf).floor(), (23.0f32 * gsf).floor()];
-                let table_ref = CanvasTable::build(&source, canvas, p, phase);
-                let mean = canvas_mean(&table_ref, canvas, p, 37, 23);
-                let mut expected = source.clone();
+                // Build only the oracle samples this scan reads. Keep the
+                // independent per-tap generator and half-storage rounding;
+                // dense-table equivalence is checked on the small canvas above.
+                let mut grains = Vec::new();
+                let mut sum = [0f64; 3];
                 for y in 0..23u32 {
                     for x in 0..37u32 {
-                        let rgb = source.get(x, y).map(to_f32);
-                        let luma = rgb[0] * 0.2125 + rgb[1] * 0.7154 + rgb[2] * 0.0721;
                         let uv = [x as f32 * (1. / 36.0f32), y as f32 * (1. / 22.0f32)];
                         let gx = (uv[0] * (canvas[0] / p.resampler_scale())) as i32;
                         let gy = (uv[1] * (canvas[1] / p.resampler_scale())) as i32;
@@ -1090,6 +1174,19 @@ mod tests {
                             gx,
                             gy,
                         );
+                        for c in 0..3 {
+                            sum[c] += f64::from(g[c]);
+                        }
+                        grains.push(g);
+                    }
+                }
+                let mean = sum.map(|v| (v / grains.len() as f64) as f32);
+                let mut expected = source.clone();
+                for y in 0..23u32 {
+                    for x in 0..37u32 {
+                        let rgb = source.get(x, y).map(to_f32);
+                        let luma = rgb[0] * 0.2125 + rgb[1] * 0.7154 + rgb[2] * 0.0721;
+                        let g = grains[(y * 37 + x) as usize];
                         let a_raw = p.amount.clamp(0., 1.);
                         let a = effective_control(a_raw);
                         let weight = [
@@ -1296,10 +1393,17 @@ mod tests {
                 .map(|v| from_f32((v % 17) as f32 / 17.0))
                 .collect(),
         );
-        for profile in 0..PROFILES.len() {
+        // One profile per gauge family keeps every gauge and both control
+        // states without 96 software-adapter dispatches. Exhaustive profile
+        // values are covered by the host tests above; this test owns the
+        // GPU/CPU parity contract.
+        for profile in [0, 4, 8, 11] {
             for resolution_type in [0, 1] {
                 for mode in [ProceduralGrainMode::Analogue, ProceduralGrainMode::Noise] {
                     for control in [0., 1.] {
+                        if profile != 0 && control == 0. {
+                            continue;
+                        }
                         let mut params = ProceduralGrainParams::for_profile(profile);
                         params.resolution_type = resolution_type;
                         params.mode = mode;

@@ -343,25 +343,20 @@ mod tests {
         );
     }
 
-    /// Both Spektra sampling regimes resolve on the device, so an active
-    /// Spektra grain is not a host fence: an explicit GPU request stays
-    /// covered whether or not the request selects the fast-statistics regime.
+    /// Active Spektra grain resolves on the device and is not a host fence.
     #[test]
     fn spektra_grain_is_not_a_device_gap() {
-        for use_fast_stats in [false, true] {
-            let mut p = covered_params();
-            p.settings.use_fast_stats = use_fast_stats;
-            p.film_render.grain.active = true;
-            p.film_render.grain.engine = crate::params::grain::GrainEngine::Spektra;
-            p.film_render.grain.rms_granularity = [6.0, 8.0, 10.0];
-            let pipeline = Pipeline::new_with_spectral(portra(), endura(), p, &data_dir()).unwrap();
-            assert_eq!(
-                pipeline.preflight(&FakeExplicitGpu),
-                Preflight::Covered,
-                "Spektra grain (use_fast_stats={use_fast_stats}) must not be a host fence"
-            );
-            assert!(pipeline.ensure_gpu_coverage(&FakeExplicitGpu).is_ok());
-        }
+        let mut p = covered_params();
+        p.film_render.grain.active = true;
+        p.film_render.grain.engine = crate::params::grain::GrainEngine::Spektra;
+        p.film_render.grain.rms_granularity = [6.0, 8.0, 10.0];
+        let pipeline = Pipeline::new_with_spectral(portra(), endura(), p, &data_dir()).unwrap();
+        assert_eq!(
+            pipeline.preflight(&FakeExplicitGpu),
+            Preflight::Covered,
+            "Spektra grain must not be a host fence"
+        );
+        assert!(pipeline.ensure_gpu_coverage(&FakeExplicitGpu).is_ok());
     }
 
     #[test]

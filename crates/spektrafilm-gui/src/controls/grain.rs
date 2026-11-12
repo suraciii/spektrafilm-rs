@@ -1,4 +1,6 @@
+use super::widgets::editor_range_for;
 use super::*;
+use crate::numeric::numeric;
 use egui::Ui;
 use spektrafilm_core::params::grain::GrainParams;
 
@@ -24,7 +26,7 @@ fn control(
     if !filter_matches(filter, label) || !row_path_matches(ui.ctx(), path) {
         return false;
     }
-    let reason = crate::ui::grain_control_inactive_reason(ui.ctx(), path, params, None);
+    let reason = crate::controls::grain_control_inactive_reason(ui.ctx(), path, params, None);
     if reason.is_some() && !filter.active() {
         return false;
     }
@@ -42,6 +44,82 @@ fn control(
     changed
 }
 
+/// `param_numeric` whose effective maximum is additionally capped at
+/// `max_cap`; the sublayer-share editor keeps the authored total at one.
+fn param_numeric_capped<T: egui::emath::Numeric>(
+    ui: &mut Ui,
+    label: &str,
+    value: &mut T,
+    path: &str,
+    max_cap: f64,
+    tooltip: &str,
+) -> bool {
+    if !super::row_path_matches(ui.ctx(), path) {
+        return false;
+    }
+    let _identity = super::row_identity(ui.ctx(), path);
+    let (min, max, step, decimals) = editor_range_for(path);
+    let changed = numeric(
+        ui,
+        label,
+        value,
+        min,
+        max.min(max_cap),
+        step,
+        decimals,
+        tooltip,
+        crate::numeric::unit_suffix(path),
+        false,
+    );
+    if changed {
+        super::record_edited_path(ui.ctx(), path);
+    }
+    changed
+}
+
+pub(super) fn fotufilm_sublayer_shares(
+    ui: &mut Ui,
+    shares: &mut [f64; 4],
+    filter: &mut ControlFilter<'_>,
+) -> bool {
+    if filter_matches(filter, "sublayer shares") {
+        ui.label(super::localized(ui.ctx(), "Sublayer shares")).on_hover_text(super::localized(ui.ctx(), "Edit the first three shares; the fourth is the remaining share so the authored total stays one. All four shares must be positive."));
+    }
+    let mut changed = false;
+    for index in 0..3 {
+        if !filter_matches(filter, ["sublayer 1", "sublayer 2", "sublayer 3"][index]) {
+            continue;
+        }
+        let other_sum: f64 = shares[..3]
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| *i != index)
+            .map(|(_, share)| *share)
+            .sum();
+        let maximum = 1.0 - other_sum - 1e-9;
+        let edited = param_numeric_capped(
+            ui,
+            ["Sublayer 1", "Sublayer 2", "Sublayer 3"][index],
+            &mut shares[index],
+            "film_render.grain.fotufilm.sublayer_shares",
+            maximum,
+            "Authored share; transfers weight to or from sublayer 4.",
+        );
+        if edited {
+            shares[3] = 1.0 - shares[..3].iter().sum::<f64>();
+            changed = true;
+        }
+    }
+    if filter_matches(filter, "sublayer 4 (remainder)") {
+        ui.label(crate::tr!(
+            ui.ctx(),
+            "controls.grain.remainder_value",
+            value = format!("{:.6}", shares[3])
+        ));
+    }
+    changed
+}
+
 #[allow(clippy::too_many_arguments)]
 fn grain_tuple<T: egui::emath::Numeric, const N: usize>(
     ui: &mut Ui,
@@ -55,7 +133,7 @@ fn grain_tuple<T: egui::emath::Numeric, const N: usize>(
     let discovery = filter.active();
     control(ui, params, filter, label, path, |ui, params| {
         let reasons = std::array::from_fn(|index| {
-            crate::ui::grain_control_inactive_reason(ui.ctx(), path, params, Some(index))
+            crate::controls::grain_control_inactive_reason(ui.ctx(), path, params, Some(index))
         });
         widgets::param_tuple_applicable(
             ui,
@@ -219,6 +297,7 @@ pub(crate) fn sections(
         "Minimum grain density for Spektra; also sets bounds for executing film-scanner and enlarger LUTs."
     );
     if !params.film_render.grain.active && !filter.active() {
+        notice(ui, engine_description(params.film_render.grain.engine));
         notice(ui, "controls.grain.off");
         return;
     }
@@ -236,15 +315,7 @@ pub(crate) fn sections(
         flags.runtime_changed |= shared_controls(ui, params, filter);
     } else {
         let engine = params.film_render.grain.engine;
-        notice(
-            ui,
-            match engine {
-                GrainEngine::Dye => "controls.grain.dye_description",
-                GrainEngine::Spektra => "controls.grain.spektra_description",
-                GrainEngine::Procedural => "controls.grain.procedural_description",
-                GrainEngine::Fotufilm => "controls.grain.fotufilm_description",
-            },
-        );
+        notice(ui, engine_description(engine));
         ui.push_id(("grain", engine_label(engine)), |ui| {
             flags.runtime_changed |= engine_controls(ui, params, filter, engine);
         });
@@ -260,6 +331,15 @@ pub(crate) fn sections(
                 notice(ui, "controls.grain.noise_notice");
             }
         }
+    }
+}
+
+fn engine_description(engine: GrainEngine) -> &'static str {
+    match engine {
+        GrainEngine::Dye => "controls.grain.dye_description",
+        GrainEngine::Spektra => "controls.grain.spektra_description",
+        GrainEngine::Procedural => "controls.grain.procedural_description",
+        GrainEngine::Fotufilm => "controls.grain.fotufilm_description",
     }
 }
 

@@ -362,29 +362,77 @@ fn preset_discovery_exports_both_carriers_and_reloads_same_parameters() {
         String::from_utf8_lossy(&list.stderr)
     );
     let listed: Value = serde_json::from_slice(&list.stdout).unwrap();
-    let portra = listed
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|entry| entry["name"] == "Kodak Portra 400")
-        .unwrap();
-    assert_eq!(portra["film_profile"]["stock"], "kodak_portra_400");
-    assert_eq!(portra["print_profile"]["stock"], "kodak_portra_endura");
-    let mut reports = Vec::new();
-    for format in ["json", "toml"] {
-        let shown = f.run(&["preset", "show", "Kodak Portra 400", "--format", format]);
-        assert!(
-            shown.status.success(),
-            "{}",
-            String::from_utf8_lossy(&shown.stderr)
-        );
-        let path = f.root.join(format!("portable.{format}"));
-        std::fs::write(&path, &shown.stdout).unwrap();
-        let before = std::fs::read(&path).unwrap();
-        reports.push(f.report(&["--preset", path.to_str().unwrap(), "--dry-run"]));
-        assert_eq!(std::fs::read(&path).unwrap(), before);
+    for (name, film, paper) in [
+        (
+            "Kodak Portra 400",
+            "kodak_portra_400",
+            "kodak_portra_endura",
+        ),
+        (
+            "Kodak Tri-X 400",
+            "kodak_trix_400",
+            "kodak_polymax_fine_art",
+        ),
+        (
+            "Fujifilm Astia 100F",
+            "fujifilm_astia_100f",
+            "fujifilm_crystal_archive_typeii",
+        ),
+        (
+            "Agfachrome RSX II 100",
+            "agfachrome_rsx_ii_100",
+            "fujifilm_crystal_archive_typeii",
+        ),
+        (
+            "Fujifilm Acros 100 II",
+            "fujifilm_acros_100_ii",
+            "kodak_polymax_fine_art",
+        ),
+        (
+            "Kodak T-MAX 100",
+            "kodak_tmax_100",
+            "kodak_polymax_fine_art",
+        ),
+        (
+            "Kodak Double-X 5222",
+            "kodak_doublex",
+            "kodak_polymax_fine_art",
+        ),
+        (
+            "Ilford HP5 Plus 400",
+            "ilford_hp5_plus",
+            "kodak_polymax_fine_art",
+        ),
+        ("Kodak Vision3 250D", "kodak_vision3_250d", "kodak_2383"),
+        ("Kodak Vision3 500T", "kodak_vision3_500t", "kodak_2383"),
+        ("Kodak Vision3 50D", "kodak_vision3_50d", "kodak_2383"),
+        ("Kodak Verita 200D", "kodak_verita_200d", "kodak_2383"),
+        ("Kodak Vision3 200T", "kodak_vision3_200t", "kodak_2383"),
+    ] {
+        let entry = listed
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|entry| entry["name"] == name)
+            .unwrap();
+        assert_eq!(entry["film_profile"]["stock"], film);
+        assert_eq!(entry["print_profile"]["stock"], paper);
+        let mut reports = Vec::new();
+        for format in ["json", "toml"] {
+            let shown = f.run(&["preset", "show", name, "--format", format]);
+            assert!(
+                shown.status.success(),
+                "{}",
+                String::from_utf8_lossy(&shown.stderr)
+            );
+            let path = f.root.join(format!("portable-{film}.{format}"));
+            std::fs::write(&path, &shown.stdout).unwrap();
+            let before = std::fs::read(&path).unwrap();
+            reports.push(f.report(&["--preset", path.to_str().unwrap(), "--dry-run"]));
+            assert_eq!(std::fs::read(&path).unwrap(), before);
+        }
+        assert_eq!(reports[0], reports[1], "{name}");
     }
-    assert_eq!(reports[0], reports[1]);
     let description = f.run(&[
         "describe",
         "--module",
@@ -2013,4 +2061,94 @@ fn describe_text_lists_non_settable_runtime_leaves_and_set_rejects_them() {
         "{error}"
     );
     assert!(error.contains("recipe runner"), "{error}");
+}
+
+#[test]
+fn lut_preset_runs_without_film_or_print_selectors_and_rejects_mixing() {
+    let f = Fixture::new();
+    let lut_path = f.root.join("identity.cube");
+    std::fs::write(
+        &lut_path,
+        "TITLE \"identity\"\nLUT_3D_SIZE 2\nDOMAIN_MIN 0 0 0\nDOMAIN_MAX 1 1 1\n\
+         0 0 0\n0 0 1\n0 1 0\n0 1 1\n1 0 0\n1 0 1\n1 1 0\n1 1 1\n",
+    )
+    .unwrap();
+    let mut lut = spektrafilm_core::lut_look::LutLookParams::default();
+    let lut_path_arg = format!("lut_look.path={}", lut_path.display());
+    lut.path = lut_path;
+    lut.sha256 = spektrafilm_core::lut_look::hash_file(&lut.path).unwrap();
+    let lut_sha = lut.sha256.clone();
+    let preset = spektrafilm_core::presets::Preset::capture_lut(
+        "CLI LUT",
+        lut,
+        spektrafilm_core::presets::Provenance {
+            implementation_version: "test".into(),
+            model_version: "test".into(),
+            scanner: None,
+        },
+    );
+    let library = spektrafilm_core::presets::PresetLibrary::new(f.root.join("config/presets"));
+    library.save_new(&preset, &f.data).unwrap();
+
+    let report = f.report(&["--preset", "CLI LUT", "--dry-run"]);
+    assert_eq!(report["parameters"]["workflow"]["mode"], "lut");
+    assert_eq!(report["parameters"]["workflow"]["route"], "input");
+    assert!(!report["parameters"]["io"]["scan_film"].as_bool().unwrap());
+
+    let edited = f.report(&[
+        "--preset",
+        "CLI LUT",
+        "--set",
+        "lut_look.strength=0.5",
+        "--dry-run",
+    ]);
+    assert_eq!(edited["parameters"]["lut_look"]["strength"], 0.5);
+
+    let listing = f.run(&["preset", "list", "--source", "user", "--format", "json"]);
+    assert!(listing.status.success());
+    let listing: Value = serde_json::from_slice(&listing.stdout).unwrap();
+    assert_eq!(listing[0]["kind"], "lut");
+    assert_eq!(listing[0]["lut_file_exists"], true);
+
+    let rendered = f.process(&[
+        "--preset",
+        "CLI LUT",
+        "--set",
+        "lut_look.domain_policy=clamp",
+    ]);
+    assert!(
+        rendered.status.success(),
+        "{}",
+        String::from_utf8_lossy(&rendered.stderr)
+    );
+    assert!(f.root.join("output.tif").is_file());
+
+    let conflict = f.process(&[
+        "--preset",
+        "CLI LUT",
+        "--film",
+        "kodak_portra_400",
+        "--dry-run",
+    ]);
+    assert!(!conflict.status.success());
+    assert!(String::from_utf8_lossy(&conflict.stderr).contains("LUT preset conflicts"));
+
+    let path_arg = lut_path_arg;
+    let sha_arg = format!("lut_look.sha256={lut_sha}");
+    let declared = f.process(&[
+        "--set",
+        "workflow.mode=lut",
+        "--set",
+        &path_arg,
+        "--set",
+        &sha_arg,
+        "--set",
+        "lut_look.domain_policy=clamp",
+    ]);
+    assert!(
+        declared.status.success(),
+        "{}",
+        String::from_utf8_lossy(&declared.stderr)
+    );
+    assert!(f.root.join("output.tif").is_file());
 }

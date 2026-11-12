@@ -6,7 +6,7 @@ fn operator_controls(h: &mut Harness<'_, App>) {
 
 fn standard_operator(h: &mut Harness<'_, App>) {
     reveal_control(h, "workflow.route");
-    choose(h, "workflow", "input > film > scan");
+    choose(h, "Film route", "input > film > scan");
     assert_eq!(h.state().film_medium, controls::ScanMedium::Negative);
     reveal_control(h, "scanner.scan_output");
     choose(h, "scan output", "Negative to positive");
@@ -306,7 +306,7 @@ fn operator_edits_copy_paste_and_restore_share_global_adjustment_history() {
         ("Finished exposure", "1.25"),
         ("Warmth", "0.35"),
         ("Green–magenta tint", "-0.20"),
-        ("Contrast", "1.40"),
+        ("Conversion contrast", "1.40"),
     ] {
         operator_edit(h, label, value);
         states.push(h.state().params.scanner.operator);
@@ -387,7 +387,7 @@ fn operator_restore_paste_and_text_edits_replace_global_redo_branches() {
         ("Finished exposure", "0.25"),
         ("Warmth", "0.35"),
         ("Green–magenta tint", "-0.20"),
-        ("Contrast", "1.40"),
+        ("Conversion contrast", "1.40"),
     ] {
         operator_edit(h, label, value);
     }
@@ -429,6 +429,8 @@ fn inactive_operator_values_remain_stored_while_rendering_neutrally() {
     standard_operator(h);
     operator_edit(h, "Finished exposure", "1.0");
     operator_edit(h, "Warmth", "0.25");
+    reveal_control(h, "finishing.brightness");
+    operator_edit(h, "Brightness", "0.35");
     let stored = h.state().params.scanner.operator;
     let corrected = preview(h);
 
@@ -438,12 +440,24 @@ fn inactive_operator_values_remain_stored_while_rendering_neutrally() {
     assert!(h.get_by_label("Finished exposure").node().is_disabled());
     assert!(h.get_by_label("Restore automatic").node().is_disabled());
     assert_eq!(h.state().params.scanner.operator, stored);
+    reveal_control(h, "finishing.brightness");
+    reveal_control(h, "action.finishing_compare");
+    assert!(
+        h.get_by_label("Hold Tone & Color comparison")
+            .node()
+            .is_disabled()
+    );
+    assert_eq!(h.state().params.finishing.brightness, 0.35);
     let inactive = preview(h);
     // Undoing the route choice reactivates precisely the retained correction.
     click(h, "Undo");
     assert_eq!(h.state().params.scanner.operator, stored);
+    assert_eq!(h.state().params.finishing.brightness, 0.35);
+    reveal_control(h, "finishing.brightness");
+    assert!(!h.get_by_label("Brightness").node().is_disabled());
     let reactivated = preview(h);
     assert_eq!(reactivated.data, corrected.data);
+    operator_controls(h);
     click(h, "Restore automatic");
     reveal_control(h, "scanner.scan_output");
     choose(h, "scan output", "Preserve medium polarity");
@@ -460,13 +474,35 @@ fn neighboring_module_reset_retains_inactive_operator_and_uses_global_history() 
         ("Finished exposure", "1.0"),
         ("Warmth", "0.25"),
         ("Green–magenta tint", "-0.20"),
-        ("Contrast", "1.40"),
+        ("Conversion contrast", "1.40"),
     ] {
         operator_edit(h, label, value);
     }
+    reveal_control(h, "finishing.brightness");
+    operator_edit(h, "Brightness", "0.35");
+    let tone_edited = h.state().params.clone();
+    let factory_tone = state::GuiState::factory()
+        .runtime_params()
+        .unwrap()
+        .finishing;
+    let mut tone_reset = tone_edited.clone();
+    tone_reset.finishing = factory_tone;
+    let mut ownership = tone_reset.render_preparation_state();
+    ownership
+        .explicit_section_paths
+        .retain(|path| !path.starts_with("finishing."));
+    tone_reset.restore_render_preparation_state(&ownership);
+    click(h, "reset Tone & Color");
+    assert_eq!(h.state().params, tone_reset);
+    click(h, "Undo");
+    assert_eq!(h.state().params, tone_edited);
+    click(h, "Redo");
+    assert_eq!(h.state().params, tone_reset);
+    click(h, "Undo");
+    assert_eq!(h.state().params, tone_edited);
     let stored = h.state().params.scanner.operator;
     reveal_control(h, "workflow.route");
-    choose(h, "workflow", "input");
+    choose(h, "Film route", "input");
     assert_eq!(h.state().params.workflow.route, "input");
     assert_eq!(h.state().params.scanner.operator, stored);
 

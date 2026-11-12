@@ -184,11 +184,10 @@ impl ControlEntry {
             )
             .into_owned();
         }
-        rust_i18n::t!(
-            "controls.component.name",
-            locale = locale.as_str(),
-            label = super::localized_for(locale, &self.label),
-            component = super::localized_for(locale, &component.id)
+        super::component_name(
+            locale,
+            super::localized_for(locale, &self.label),
+            super::localized_for(locale, &component.id),
         )
         .into_owned()
     }
@@ -219,7 +218,7 @@ pub(crate) fn inventory() -> &'static [ControlEntry] {
         entries.push(nonruntime(
             SurfaceEntry {
                 path: "workflow.route",
-                label: "workflow",
+                label: "Film route",
                 owner: ControlOwner::Stage(Stage::Input),
                 section: "Workflow",
                 editor: EditorKind::Choice,
@@ -277,6 +276,10 @@ pub(crate) fn inventory() -> &'static [ControlEntry] {
                 for label in [&entry.label[..], entry.section, module, entry.owner.label()] {
                     text.push('\n');
                     text.push_str(&super::localized_for(locale, label));
+                }
+                if entry.path.starts_with("finishing.expand.") {
+                    text.push('\n');
+                    text.push_str(&super::localized_for(locale, "Expand"));
                 }
                 if entry.path == "camera.film_format_mm" {
                     text.push('\n');
@@ -343,7 +346,10 @@ fn runtime_entry(path: &str, validation: Value) -> ControlEntry {
         .unwrap_or_else(|| path.rsplit('.').next().unwrap_or(path).replace('_', " "));
     let editor = if let Some(reason) = exclusion(path, &validation) {
         EditorKind::Excluded(reason)
-    } else if !LABELS.iter().any(|(candidate, _)| *candidate == path) {
+    } else if !LABELS.iter().any(|(candidate, _)| *candidate == path)
+        && !path.starts_with("lut_look.")
+        && path != "workflow.mode"
+    {
         EditorKind::Unconnected
     } else if path == "film_render.grain.procedural_profile" || path.ends_with("development_time") {
         EditorKind::Profile
@@ -404,7 +410,7 @@ fn runtime_entry(path: &str, validation: Value) -> ControlEntry {
                 id,
                 label: component_label,
                 derived: (shares && index == 3).then_some(
-                    "1 - sum of the first three shares; widgets::fotufilm_sublayer_shares",
+                    "1 - sum of the first three shares; grain::fotufilm_sublayer_shares",
                 ),
             }
         })
@@ -458,12 +464,11 @@ fn exclusion(path: &str, description: &Value) -> Option<&'static str> {
         "settings.preview_mode" => {
             Some("render.rs derives this request flag from Preview versus Scan")
         }
-        "settings.use_enlarger_lut"
-        | "settings.use_scanner_lut"
-        | "settings.lut_resolution"
-        | "settings.use_fast_stats" => Some(
-            "core SettingsParams / params_builder: execution approximation and performance configuration, outside photographic look ownership; specs/presets/design.md",
-        ),
+        "settings.use_enlarger_lut" | "settings.use_scanner_lut" | "settings.lut_resolution" => {
+            Some(
+                "core SettingsParams / params_builder: execution approximation and performance configuration, outside photographic look ownership; specs/presets/design.md",
+            )
+        }
         "settings.neutral_print_filters_from_database" => Some(
             "core params_builder::apply_database_neutral_print_filters: calibration preparation policy, not a photographic editor",
         ),
@@ -487,7 +492,9 @@ fn exclusion(path: &str, description: &Value) -> Option<&'static str> {
 
 fn runtime_owner(path: &str) -> (ControlOwner, &'static str) {
     use ControlOwner::Stage as Owner;
-    if path.starts_with("film_render.grain.") {
+    if path == "workflow.mode" || path.starts_with("lut_look.") {
+        (Owner(Stage::Look), "LUT look")
+    } else if path.starts_with("film_render.grain.") {
         (Owner(Stage::Film), "Grain")
     } else if path.starts_with("film_render.halation.") {
         (Owner(Stage::Film), "Halation")
@@ -522,7 +529,7 @@ fn runtime_owner(path: &str) -> (ControlOwner, &'static str) {
     } else if path.starts_with("scanner.") {
         (Owner(Stage::Scan), "Scanner")
     } else if path.starts_with("finishing.") {
-        (Owner(Stage::Output), "Finishing")
+        (Owner(Stage::Scan), "Finishing")
     } else if path.starts_with("cmyk.") {
         (Owner(Stage::Output), "CMYK ink style")
     } else if path.starts_with("io.input_gamut_compress.") {
@@ -646,7 +653,7 @@ fn append_nonruntime(entries: &mut Vec<ControlEntry>) {
         SurfaceEntry {
             path: "action.finishing_compare",
             label: "Hold finishing comparison",
-            owner: Owner(Stage::Output),
+            owner: Owner(Stage::Scan),
             section: "Finishing",
             editor: Action,
             validator: "controls::finishing::sections",
@@ -676,18 +683,6 @@ fn append_nonruntime(entries: &mut Vec<ControlEntry>) {
             "film_render.halation.halation_first_sigma_um",
             "film_render.halation.halation_strength",
         ],
-    ));
-    entries.push(nonruntime(
-        SurfaceEntry {
-            path: "action.scan_for_print",
-            label: "scan for print",
-            owner: Owner(Stage::Scan),
-            section: "Scanner",
-            editor: Action,
-            validator: "App::toggle_scan_for_print",
-            conditions: &[],
-        },
-        &["print_render.glare.active"],
     ));
     // Extras vectors are edited independently by the production tuple helper.
     for (path, label) in [
@@ -902,49 +897,40 @@ const SURFACES: &[SurfaceEntry] = &[
         conditions: &["failed queue entry; first eligible entry"],
     },
     SurfaceEntry {
-        path: "presets.discovery.search",
+        path: "presets.search",
         label: "Search presets",
         owner: ControlOwner::Presets,
-        section: "Preset discovery",
+        section: "Presets",
         editor: EditorKind::Text,
         validator: "presets::Browser::update_search",
         conditions: &[],
     },
     SurfaceEntry {
-        path: "presets.discovery.all",
-        label: "All looks",
+        path: "presets.save",
+        label: "Save preset",
         owner: ControlOwner::Presets,
-        section: "Preset discovery",
+        section: "Presets",
         editor: EditorKind::Action,
-        validator: "presets::discovery::Filter",
+        validator: "App::save_preset_as",
         conditions: &[],
     },
     SurfaceEntry {
-        path: "presets.discovery.favorites",
-        label: "Favorites",
+        path: "presets.library",
+        label: "Preset library actions",
         owner: ControlOwner::Presets,
-        section: "Preset discovery",
+        section: "Presets",
         editor: EditorKind::Action,
-        validator: "presets::discovery::Filter",
-        conditions: &["favorites retain built-in or user group identity"],
-    },
-    SurfaceEntry {
-        path: "presets.discovery.recent",
-        label: "Recently used",
-        owner: ControlOwner::Presets,
-        section: "Preset discovery",
-        editor: EditorKind::Action,
-        validator: "presets::discovery::Filter",
+        validator: "App::preset_library_menu",
         conditions: &[],
     },
     SurfaceEntry {
-        path: "presets.discovery.reset",
-        label: "Clear search and filters",
+        path: "presets.card",
+        label: "Preset card",
         owner: ControlOwner::Presets,
-        section: "Preset discovery",
+        section: "Presets",
         editor: EditorKind::Action,
-        validator: "presets::Browser::update_search",
-        conditions: &["no matching presets"],
+        validator: "App::apply_preset_action",
+        conditions: &["visible look card"],
     },
     SurfaceEntry {
         path: "extras.simulation.film_stock",
@@ -1193,7 +1179,7 @@ const SURFACES: &[SurfaceEntry] = &[
         path: "action.save_state",
         label: "Save current to file",
         owner: ControlOwner::Settings,
-        section: "GUI parameters",
+        section: "State and startup",
         editor: EditorKind::Action,
         validator: "App::save_state_with_dialog",
         conditions: &[],
@@ -1202,7 +1188,7 @@ const SURFACES: &[SurfaceEntry] = &[
         path: "action.load_state",
         label: "Load from file",
         owner: ControlOwner::Settings,
-        section: "GUI parameters",
+        section: "State and startup",
         editor: EditorKind::Action,
         validator: "App::load_state_with_dialog",
         conditions: &[],
@@ -1211,7 +1197,7 @@ const SURFACES: &[SurfaceEntry] = &[
         path: "action.save_startup",
         label: "Save current as default",
         owner: ControlOwner::Settings,
-        section: "GUI parameters",
+        section: "State and startup",
         editor: EditorKind::Action,
         validator: "GuiState::save",
         conditions: &[],
@@ -1220,7 +1206,7 @@ const SURFACES: &[SurfaceEntry] = &[
         path: "action.restore_factory",
         label: "Restore factory default",
         owner: ControlOwner::Settings,
-        section: "GUI parameters",
+        section: "State and startup",
         editor: EditorKind::Action,
         validator: "App::factory_reset_confirmation",
         conditions: &["confirmation required"],
@@ -1374,7 +1360,7 @@ const SURFACES: &[SurfaceEntry] = &[
 const LABELS: &[(&str, &str)] = &[
     ("finishing.brightness", "Brightness"),
     ("finishing.contrast", "Contrast"),
-    ("finishing.warmth", "Warmth"),
+    ("finishing.warmth", "Tone & Color warmth"),
     ("finishing.saturation", "Saturation"),
     ("finishing.expand.enabled", "Enable Expand"),
     ("finishing.expand.black", "Black reference"),
@@ -1441,32 +1427,32 @@ const LABELS: &[(&str, &str)] = &[
         "film_render.chemistry.developer_exhaustion",
         "developer exhaustion",
     ),
-    ("film_render.chemistry.gamma_factor", "gamma factor"),
+    ("film_render.chemistry.gamma_factor", "Morph gamma"),
     (
         "film_render.chemistry.gamma_factor_blue",
-        "gamma factor blue",
+        "Morph gamma blue",
     ),
     (
         "film_render.chemistry.gamma_factor_fast",
-        "gamma factor fast",
+        "Morph gamma fast",
     ),
     (
         "film_render.chemistry.gamma_factor_green",
-        "gamma factor green",
+        "Morph gamma green",
     ),
-    ("film_render.chemistry.gamma_factor_red", "gamma factor red"),
+    ("film_render.chemistry.gamma_factor_red", "Morph gamma red"),
     (
         "film_render.chemistry.gamma_factor_slow",
-        "gamma factor slow",
+        "Morph gamma slow",
     ),
     ("film_render.convert.base_percentile", "base percentile"),
     ("film_render.convert.calibration", "calibration"),
     (
         "film_render.convert.exposure_compensation_ev",
-        "exposure compensation ev",
+        "Conversion exposure compensation ev",
     ),
     ("film_render.convert.scan_illuminant", "scan illuminant"),
-    ("film_render.density_curve_gamma", "density curve gamma"),
+    ("film_render.density_curve_gamma", "Profile gamma"),
     ("film_render.development_time", "development time"),
     ("film_render.dir_couplers.active", "Enable DIR couplers"),
     ("film_render.dir_couplers.amount", "inhibition amount"),
@@ -1644,7 +1630,7 @@ const LABELS: &[(&str, &str)] = &[
     ("print_render.base.magenta", "magenta"),
     ("print_render.base.scale", "scale"),
     ("print_render.base.yellow", "yellow"),
-    ("print_render.density_curve_gamma", "density curve gamma"),
+    ("print_render.density_curve_gamma", "Profile gamma"),
     (
         "print_render.density_curves_morph.active",
         "Enable print density curves",
@@ -1655,30 +1641,30 @@ const LABELS: &[(&str, &str)] = &[
     ),
     (
         "print_render.density_curves_morph.gamma_factor",
-        "gamma factor",
+        "Morph gamma",
     ),
     (
         "print_render.density_curves_morph.gamma_factor_blue",
-        "gamma factor blue",
+        "Morph gamma blue",
     ),
     (
         "print_render.density_curves_morph.gamma_factor_fast",
-        "gamma factor fast",
+        "Morph gamma fast",
     ),
     (
         "print_render.density_curves_morph.gamma_factor_green",
-        "gamma factor green",
+        "Morph gamma green",
     ),
     (
         "print_render.density_curves_morph.gamma_factor_red",
-        "gamma factor red",
+        "Morph gamma red",
     ),
     (
         "print_render.density_curves_morph.gamma_factor_slow",
-        "gamma factor slow",
+        "Morph gamma slow",
     ),
     ("print_render.development_time", "development time"),
-    ("print_render.glare.active", "Enable print glare"),
+    ("print_render.glare.active", "Simulate viewing glare"),
     ("print_render.glare.blur", "Blur (viewing glare)"),
     ("print_render.glare.percent", "percent"),
     ("print_render.glare.roughness", "roughness"),
@@ -1688,8 +1674,9 @@ const LABELS: &[(&str, &str)] = &[
     ("scanner.operator.exposure_ev", "Finished exposure"),
     ("scanner.operator.warmth_ev", "Warmth"),
     ("scanner.operator.tint_ev", "Green–magenta tint"),
-    ("scanner.operator.contrast", "Contrast"),
+    ("scanner.operator.contrast", "Conversion contrast"),
     ("scanner.scan_output", "scan output"),
+    ("scanner.white_reference", "white reference"),
     ("scanner.unsharp_mask", "Unsharp mask (digital sharpening)"),
     (
         "settings.apply_hanatos2025_adaptation_surface",

@@ -25,7 +25,7 @@ flowchart LR
     W --> Q[Queue exports]
 ```
 
-[Result identity](../gui-workflow/spec.md#result-identity-and-delivery-guidance) owns confidence in the displayed and delivered image. [Visual hierarchy](../gui-presentation/spec.md#visual-hierarchy) owns control density. [Preset discovery aids](../presets/spec.md#preset-discovery-aids) owns reference thumbnails, favorites, and recently used looks.
+[Result identity](../gui-workflow/spec.md#result-identity-and-delivery-guidance) owns confidence in the displayed and delivered image. [Visual hierarchy](../gui-presentation/spec.md#visual-hierarchy) owns control density. [Preset browser interaction](../presets/spec.md#browser-interaction) and [current-photograph thumbnails](../presets/spec.md#current-photograph-thumbnails) own look discovery and candidate images.
 
 [Photograph work](photo-work/spec.md) owns Original/Modified inspection, adjustment records, and multi-photograph work.
 
@@ -33,7 +33,7 @@ flowchart LR
 
 [Black and white endpoint warnings](clipping-warnings/spec.md) own native endpoint overlays and temporary isolated inspection in the viewer.
 
-[Common finishing](../finishing/spec.md) owns the shared positive-image adjustments. Its inspector placement follows [stage and surface ownership](../gui-workflow/spec.md#stage-and-surface-ownership).
+[Tone & Color](../finishing/spec.md) owns the shared positive-image adjustments. Its inspector placement follows [stage and surface ownership](../gui-workflow/spec.md#stage-and-surface-ownership).
 
 These are target capabilities, not a statement of implementation. Delivery schedules and research candidates are not product contracts.
 
@@ -49,7 +49,13 @@ Preview MUST update automatically under the [workflow contract](../gui-workflow/
 
 Delivery emphasis follows [Result identity and delivery guidance](../gui-workflow/spec.md#result-identity-and-delivery-guidance).
 
-The inspector MUST present Input and capture, Film, Print, Scan, and Output in that order. A stage jump strip MUST reveal and scroll to the corresponding heading in the same inspector. It MUST NOT switch between mutually exclusive pages.
+The inspector MUST present Input and capture, Film, Print, Scan, Look, and Output in that order. The Look stage is the single Film/LUT workflow surface; it is not a physical film-chain stage.
+
+A stage jump strip MUST reveal and scroll to the corresponding heading in the same inspector. It MUST NOT switch between mutually exclusive pages.
+
+The six stage headings MUST remain reachable in both workflows. An inactive stage MUST keep its heading visible with an explanation, MUST retain its stored values, and MUST present its body disabled and collapsed by default.
+
+In LUT mode, Film, Print, and Scan remain inspectable in the stored film chain. In Film mode, the Look stage remains reachable for the workflow selector while its LUT controls stay inactive.
 
 Several stages and modules MUST be able to remain open together.
 
@@ -74,7 +80,9 @@ RAW decoding and reprocessing MUST remain distinguishable from simulated camera 
 
 ### Choose a look or a material
 
-A look preset selects the material pair and its owned controls under [Presets](../presets/spec.md#apply). The browser MUST support search and distinguish applied, modified, and missing states. Built-in presets remain read-only.
+A look preset selects the material pair and its owned controls under [Presets](../presets/spec.md#apply). The browser MUST support search and distinguish applied, modified, and missing states.
+
+Built-in presets remain read-only. Compact cards and their accessible material descriptions follow [browser interaction](../presets/spec.md#browser-interaction).
 
 Choosing a film alone MUST retain the selected print material. Choosing a print material alone MUST retain the selected film. Workflow defaulting and scanner normalization MUST follow the existing [material-selection rules](../presets/spec.md#workflow-defaulting), not the browser prototype's behavior.
 
@@ -118,11 +126,19 @@ The [stage and surface table](../gui-workflow/spec.md#stage-and-surface-ownershi
 
 Closed module headings MUST name their contents with physical terms and expose their modified and inactive states without color alone. Enabling a module MUST NOT be required to discover its contents. Inactive values MUST remain readable.
 
-Default disclosure MUST put the source workflow and camera exposure within reach before detailed material controls. Other modules MAY start collapsed. Folding one module MUST NOT close another.
+A collapsed module MUST confine its content summary and applicability state to its heading and help. It MUST NOT render a multi-line summary or applicability notice beneath its heading.
+
+Expanding the module MUST show the actual applicability reason without requiring hover. A summary that duplicates visible controls MUST NOT remain above the expanded controls.
+
+Default disclosure MUST put the source workflow, camera exposure, and daily tone and color adjustments within reach before detailed material and delivery controls. Workflow, Camera, and Tone & Color MUST start expanded in a fresh disclosure session.
+
+With default disclosure, the Scan jump MUST reveal Tone & Color without requiring a second module expansion. Other modules MAY start collapsed. Folding one module MUST NOT close another.
 
 A parameter edit, preview completion, or route change MUST NOT collapse the user's open modules or reset the inspector scroll position.
 
 Halation MUST be a named Film module, not a hidden generic effect. It MUST retain the feature-profile action, scatter and back-reflection controls, source response, all editable RGB components, bounce controls, and normalization. A profile is a scoped starting configuration, not a substitute for these controls.
+
+Grain MUST be a named Film module beside Halation. It MUST keep the four engine choices in one editing location, distinguish material grain from Procedural's post-scan appearance, and MUST NOT be presented as a global effect or shared with the LUT workflow. LUT grain belongs to the LUT look and remains independent.
 
 Preflash MUST be a named Print module beside the main enlarger exposure controls. Exposure, Yellow shift, and Magenta shift MUST all be available. Zero exposure disables flash and retains the filter values.
 
@@ -150,7 +166,7 @@ Closing a dialog MUST return focus to its invoking control. Labels and state cue
 
 ## Non-goals
 
-This specification does not introduce new film algorithms, artistic macro parameters, parameter aliases, basic/expert modes, a second preset library, live current-photograph preset thumbnails, media cataloging, or a new GUI framework. It does not restore retired output-lightness or draft digital-response controls. Favorites and multi-photograph work follow the owners in the [capability map](#capability-map).
+This specification does not introduce new film algorithms, artistic macro parameters, parameter aliases, basic/expert modes, a second preset library, media cataloging, or a new GUI framework. It does not restore retired output-lightness or draft digital-response controls. Preset thumbnails and multi-photograph work follow the owners in the [capability map](#capability-map).
 
 The HTML design reference is not an engine implementation. Its sample values, parameter count, browser storage, image assets, and disabled engine actions are not native product contracts. Native acceptance MUST use actual source images, production controls, and real render and writer operations.
 
@@ -162,6 +178,12 @@ The HTML design reference is not an engine implementation. Its sample values, pa
 | Choose a look, change exposure, undo | The look applies atomically; its modified state follows owned controls; undo restores the previous edit without rewriting the preset file. |
 | Change only the film | The print selection remains; route defaulting and scanner normalization follow their owners and are reported. |
 | Expand several modules; edit and wait for preview | Open state, scroll, and numeric focus remain usable; the image remains visible. |
+| Use fresh disclosure and jump to Scan | Tone & Color is already expanded; its four daily controls have no row resets and no mid-word unit wrapping. |
+| Collapse an inactive module, then expand it | The closed heading retains a compact non-color state without a notice below it; the expanded module shows the actual reason without hover and does not repeat its content summary above the controls. |
+| Expand Camera and locate `camera.capture_illuminant` | Both exposure controls remain directly visible; Capture setup starts closed, the locator reveals the actual control without an edit, and Camera reset still covers the complete module. |
+| Select a long film or print material name | The complete selected identity remains readable without widening the inspector or truncating the selector. |
+| Click the photograph to leave a numeric editor | Editor focus changes without changing zoom, pan, the source, or accepted adjustments. |
+| Confirm Save and Export destinations through ordinary filename and native full-path entry | The published path and extension exactly match each confirmation; Save's explicit extension selects the actual container and overwrite checks use the confirmed path. |
 | Search a folded or inactive control by label or canonical path | The correct owner is revealed with its current value and applicability reason; no second editor or parameter change appears. |
 | Search an Export or display option | The result opens that dialog or setting; unrelated dialogs are not filtered by the inspector query. |
 | Use Only modified, reset a module, then undo | Filtering uses the reset baseline; reset changes only the module's owned scope; undo restores values and edit provenance. |

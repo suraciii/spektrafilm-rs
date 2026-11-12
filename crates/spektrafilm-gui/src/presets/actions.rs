@@ -1,17 +1,32 @@
+use super::errors::library_error_message;
 use super::*;
 
 impl App {
     pub(crate) fn load_preset(&mut self, group: PresetGroup, name: &str) {
-        let mut current = self.params.clone();
-        if let Some(glare) = self.scan_for_print_snapshot {
-            current.print_render.glare.active = glare;
-        }
+        let current = self.params.clone();
         let before_scanner = current.scanner.clone();
         let result = self
             .presets
             .library
             .load_detailed(group, name)
             .and_then(|selected| {
+                if selected.preset.lut.is_some() {
+                    let resolved = selected.preset.resolve_lut_detailed(&current)?;
+                    if current.workflow.mode == spektrafilm_core::params::WorkflowMode::Film {
+                        self.film_route = Some(current.workflow.route.clone());
+                    }
+                    self.params = resolved.params;
+                    self.presets.state.applied = Some(AppliedPreset {
+                        group,
+                        name: name.to_owned(),
+                    });
+                    self.invalidate_look_render();
+                    self.label_adjustment_message(
+                        crate::app::Message::new("operations.history.apply_named_look")
+                            .arg("name", name),
+                    );
+                    return Ok(());
+                }
                 let resolved = selected.preset.resolve_detailed(&self.data_dir, &current)?;
                 self.film_medium = crate::scan_medium(&resolved.film);
                 self.film_reference_illuminant = resolved.film.info.reference_illuminant.clone();
@@ -21,6 +36,8 @@ impl App {
                 self.gui_state.sections["simulation"]["print_paper"] =
                     self.print_name.clone().into();
                 self.params = resolved.params;
+                self.params.workflow.mode = spektrafilm_core::params::WorkflowMode::Film;
+                self.film_route = None;
                 self.params.film_render.grain.monochrome = resolved.film.is_bw();
                 self.film_dev_times = resolved.film.data.development_time;
                 self.print_dev_times = resolved.print.data.development_time;
@@ -28,7 +45,6 @@ impl App {
                     group,
                     name: name.to_owned(),
                 });
-                self.presets.record_application(group, name);
                 self.invalidate_look_render();
                 self.label_adjustment_message(
                     crate::app::Message::new("operations.history.apply_named_look")
@@ -49,20 +65,35 @@ impl App {
                 )
             }
             Err(e) => crate::app::Message::new("surfaces.status.preset_error")
-                .message_arg("error", super::render::library_error_message(&e)),
+                .message_arg("error", library_error_message(&e)),
         };
     }
     pub(crate) fn save_preset_as(&mut self) {
-        let preset = Preset::capture(
-            "New preset",
-            &self.film_name,
-            &self.print_name,
-            &self.params,
-            provenance(),
-        );
+        let preset = if self.params.workflow.mode == spektrafilm_core::params::WorkflowMode::Lut {
+            if let Err(error) = self.params.lut_look.load() {
+                self.status = crate::app::Message::new("surfaces.presets.lut_unavailable")
+                    .arg("detail", error);
+                return;
+            }
+            Preset::capture_lut("New preset", self.params.lut_look.clone(), provenance())
+        } else {
+            Preset::capture(
+                "New preset",
+                &self.film_name,
+                &self.print_name,
+                &self.params,
+                provenance(),
+            )
+        };
+        let name = rust_i18n::t!(
+            "surfaces.presets.new_name",
+            locale = self.resolved_locale.as_str()
+        )
+        .into_owned();
+        let name = available_name(&name, &self.presets.entries);
         self.presets.name_dialog = Some(NameDialog {
             action: NameAction::Save(preset),
-            name: String::new(),
+            name,
             error: None,
         });
     }
@@ -70,32 +101,19 @@ impl App {
         let entry = &self.presets.entries[index];
         match action {
             PresetAction::Load => {
+                if self.params.workflow.mode == spektrafilm_core::params::WorkflowMode::Lut
+                    && matches!(
+                        entry.preset.as_ref().and_then(|preset| preset.kind().ok()),
+                        Some(PresetKind::Section(_))
+                    )
+                {
+                    self.status =
+                        crate::app::Message::new("surfaces.status.section_unavailable_in_lut");
+                    return;
+                }
                 let group = entry.group;
                 let name = entry.name.clone();
                 self.load_preset(group, &name);
-            }
-            PresetAction::Update => {
-                let preset = entry.preset.as_ref().unwrap();
-                let mut captured = Preset::capture(
-                    &entry.name,
-                    &self.film_name,
-                    &self.print_name,
-                    &self.params,
-                    preset.provenance.clone(),
-                );
-                captured.author = preset.author.clone();
-                captured.description = preset.description.clone();
-                self.status = match self
-                    .presets
-                    .library
-                    .update_detailed(&captured, &self.data_dir)
-                {
-                    Ok(_) => crate::app::Message::new("surfaces.status.preset_updated")
-                        .arg("name", &entry.name),
-                    Err(e) => crate::app::Message::new("surfaces.status.preset_error")
-                        .message_arg("error", super::render::library_error_message(&e)),
-                };
-                self.presets.refresh();
             }
             PresetAction::Rename => {
                 self.presets.name_dialog = Some(NameDialog {
@@ -107,12 +125,14 @@ impl App {
             PresetAction::Duplicate => {
                 self.presets.name_dialog = Some(NameDialog {
                     action: NameAction::Duplicate(entry.preset.as_ref().unwrap().clone()),
-                    name: rust_i18n::t!(
-                        "surfaces.presets.copy_name",
-                        locale = self.resolved_locale.as_str(),
-                        name = &entry.name
-                    )
-                    .into_owned(),
+                    name: available_name(
+                        &rust_i18n::t!(
+                            "surfaces.presets.copy_name",
+                            locale = self.resolved_locale.as_str(),
+                            name = &entry.name
+                        ),
+                        &self.presets.entries,
+                    ),
                     error: None,
                 });
             }
@@ -130,10 +150,17 @@ impl App {
                             .library
                             .export_detailed(preset, &path, &self.data_dir)
                         {
-                            Ok(path) => crate::app::Message::new("surfaces.status.preset_exported")
-                                .arg("path", path.display()),
+                            Ok(path) => {
+                                if preset.lut.is_some() {
+                                    crate::app::Message::new("surfaces.status.lut_preset_exported")
+                                        .arg("path", path.display())
+                                } else {
+                                    crate::app::Message::new("surfaces.status.preset_exported")
+                                        .arg("path", path.display())
+                                }
+                            }
                             Err(e) => crate::app::Message::new("surfaces.status.preset_error")
-                                .message_arg("error", super::render::library_error_message(&e)),
+                                .message_arg("error", library_error_message(&e)),
                         };
                 }
             }
@@ -155,15 +182,24 @@ impl App {
                 Ok(path) => {
                     self.status = crate::app::Message::new("surfaces.status.preset_imported")
                         .arg("path", path.display());
+                    if let Some(name) = path.file_stem().and_then(|stem| stem.to_str()) {
+                        self.presets.query.clear();
+                        self.presets.reveal = Some((PresetGroup::User, name.to_owned()));
+                    }
                     self.presets.refresh();
                 }
                 Err(e) => {
                     let detail = e;
                     self.status = crate::app::Message::new("surfaces.status.preset_error")
                         .message_arg("error", detail.clone());
+                    let base = path
+                        .file_stem()
+                        .and_then(|stem| stem.to_str())
+                        .unwrap_or("Preset");
+                    let name = available_name(base, &self.presets.entries);
                     self.presets.name_dialog = Some(NameDialog {
                         action: NameAction::Import(path),
-                        name: String::new(),
+                        name,
                         error: Some(
                             crate::app::Message::new("surfaces.presets.import_rename")
                                 .message_arg("detail", detail),
@@ -180,8 +216,8 @@ impl App {
         name: Option<&str>,
     ) -> Result<PathBuf, crate::app::Message> {
         let mut preset = spektrafilm_core::presets::load_file_detailed(path)
-            .map_err(|error| super::render::library_error_message(&error))?;
-        if preset.kind() != Ok(PresetKind::Look) {
+            .map_err(|error| library_error_message(&error))?;
+        if !matches!(preset.kind(), Ok(PresetKind::Look | PresetKind::Lut)) {
             return Err(crate::app::Message::new("surfaces.presets.expected_look"));
         }
         if let Some(name) = name {
@@ -195,6 +231,6 @@ impl App {
                 path.extension()
                     .is_some_and(|extension| extension.eq_ignore_ascii_case("toml")),
             )
-            .map_err(|error| super::render::library_error_message(&error))
+            .map_err(|error| library_error_message(&error))
     }
 }

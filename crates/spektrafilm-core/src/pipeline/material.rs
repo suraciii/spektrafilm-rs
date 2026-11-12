@@ -58,8 +58,11 @@ impl Pipeline {
             "metering",
             spektrafilm_backend::telemetry::CpuReason::BackendDefault,
         );
-        let metered_ev = pipeline.meter_autoexposure(&image, backend)?;
-        let image = pipeline.apply_autoexposure(image, metered_ev);
+        let metered_ev = if pipeline.params.workflow.route_enum().exposes_film() {
+            pipeline.meter_autoexposure(&image, backend)?
+        } else {
+            0.0
+        };
         drop(metering);
         let (working, pitch) = pipeline.rescale_working(&image, backend)?;
         let working = match working {
@@ -71,7 +74,7 @@ impl Pipeline {
             Tap::RgbPre,
             collect,
             backend,
-            Some((pitch, 0.0)),
+            Some((pitch, metered_ev)),
             None,
             None,
             Some(&mut geometry),
@@ -224,6 +227,7 @@ impl Pipeline {
             ),
             film: Arc::new(film),
             print: Arc::new(print),
+            lut_look: None,
             spectral: None,
             convert_converter: None,
             print_calibration: Some(Arc::new(crate::pipeline_calibration::PrintCalibration {

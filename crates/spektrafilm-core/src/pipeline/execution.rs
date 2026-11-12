@@ -76,8 +76,14 @@ impl Pipeline {
                     .into(),
             );
         }
-        if crate::stages::grain_dye::active(&self.params) {
+        if !self.params.workflow.mode.is_lut() && crate::stages::grain_dye::active(&self.params) {
             crate::stages::grain_dye::validate_supported(&self.film, &self.params)?;
+        }
+        if self.params.workflow.mode.is_lut() {
+            if inject != Tap::RgbIn || collect != Tap::RgbOut {
+                return Err("LUT mode exposes only the rgb_in and rgb_out boundaries".into());
+            }
+            return self.process_full(image, backend, timings, capture);
         }
         if backend.is_gpu() {
             // Diagnostic endpoints are not permission to enter the CPU
@@ -208,12 +214,49 @@ impl Pipeline {
         mut timings: Option<&mut BTreeMap<String, f64>>,
         mut capture: Option<&mut crate::stage_evidence::StageCapture>,
     ) -> Result<ImageBuf, String> {
+        self.check_cancelled()?;
+        if self.params.workflow.mode.is_lut() {
+            if capture.is_some() {
+                return Err("stage evidence is unavailable in LUT mode".into());
+            }
+            // LUT effects are independent of inactive film controls. Use a
+            // fixed 35 mm reference for their micrometre scaling so changing
+            // the stored camera format cannot alter an active LUT look.
+            let (working, pixel_size_um) =
+                crate::resizing::crop_and_rescale(&image, &self.params.io, 35.0)?;
+            let source = spektrafilm_math::colorspace::resolve(&self.params.io.input_color_space)?;
+            let output = spektrafilm_math::colorspace::resolve(&self.params.io.output_color_space)?;
+            let look = self
+                .lut_look
+                .as_deref()
+                .ok_or_else(|| "LUT mode has no resolved LUT look".to_owned())?;
+            let _lut_observation = if backend.is_gpu() {
+                crate::stages::StageObservation::new(backend, "lut_look")
+            } else {
+                crate::stages::StageObservation::cpu(
+                    backend,
+                    "lut_look",
+                    spektrafilm_backend::telemetry::CpuReason::CpuSelected,
+                )
+            };
+            let result = look.render(
+                working.as_ref(),
+                source,
+                self.params.io.input_cctf_decoding,
+                output,
+                self.params.io.output_cctf_encoding,
+                pixel_size_um,
+                &self.output_gamut,
+                backend,
+            )?;
+            self.check_cancelled()?;
+            return Ok(result);
+        }
         // Active Dye outside its supported condition fails here, before any
         // route work — including the passthrough and convert routes, which
         // never reach a grain stage.
         crate::stages::grain_dye::validate_supported(&self.film, &self.params)?;
         crate::stages::grain_fotufilm::validate_supported(&self.film, &self.params)?;
-        self.check_cancelled()?;
         if self.params.workflow.route_enum() == WorkflowRoute::Input {
             if let Some(capture) = capture.as_deref_mut() {
                 use crate::stage_evidence::StageId;
@@ -301,7 +344,7 @@ impl Pipeline {
             );
             return Ok(output);
         }
-        let image = self.expose_full_input(image, backend, capture.as_deref_mut())?;
+        let (image, ae_ev) = self.expose_full_input(image, backend, capture.as_deref_mut())?;
         let t = Instant::now();
         let (working, pixel_size_um) = self.rescale_working(&image, backend)?;
         print_stage_timing(stage_timings_enabled(), "resize", t);
@@ -325,7 +368,7 @@ impl Pipeline {
             }
             return self.process_convert(working, pixel_size_um, backend, capture);
         }
-        self.run(working, pixel_size_um, 0.0, backend, timings, capture)
+        self.run(working, pixel_size_um, ae_ev, backend, timings, capture)
     }
 
     fn process_convert(
@@ -570,22 +613,17 @@ impl Pipeline {
         // The device meter records its own GPU executor observation, so this
         // scope only exists to bound the host reference meter's stage.
         let metering = crate::stages::StageObservation::new(backend, "metering");
-        let ae_ev = self.meter_autoexposure(image, backend)?;
-        // Clone only when the exposure multiply actually needs owned pixels;
-        // a full-resolution preview must not deep-clone a no-op exposure.
-        let exposed;
-        let image = if self.params.camera.auto_exposure {
-            exposed = self.apply_autoexposure(image.clone(), ae_ev);
-            &exposed
+        let ae_ev = if self.params.workflow.route_enum().exposes_film() {
+            self.meter_autoexposure(image, backend)?
         } else {
-            image
+            0.0
         };
         drop(metering);
         let (working, pixel_size_um) = self.rescale_working(image, backend)?;
         if let Some(context) = backend.observation_context() {
             context.set_working_dimensions(working.width, working.height);
         }
-        let out = match self.try_gpu_resident(&working, backend, pixel_size_um, 0.0)? {
+        let out = match self.try_gpu_resident(&working, backend, pixel_size_um, ae_ev)? {
             Some(out) => out,
             None => return Ok(None),
         };

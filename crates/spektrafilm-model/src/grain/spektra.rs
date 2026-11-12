@@ -5,15 +5,11 @@
 
 mod filter;
 
-use rayon::prelude::*;
 use spektrafilm_backend::ComputeBackend;
 use spektrafilm_math::image::ImageBuf;
 use spektrafilm_math::numpy_rng::{GaussRng, rk_binomial, rk_poisson};
 use spektrafilm_math::precision::{from_f64, to_f64};
-use spektrafilm_math::stats::{self, FastStatsRng};
 
-const POISSON_TAG: u64 = 0;
-const BINOMIAL_TAG: u64 = 1;
 const APERTURE_AREA_UM2: f64 = std::f64::consts::PI * (24.0 * 24.0);
 
 /// Prepared rows are indexed `[sublayer][channel]`. Inactive rows are zero.
@@ -198,8 +194,7 @@ fn observe_sampler(
 }
 
 /// Apply the original whole-plane sampling law in f32 working precision.
-/// The returned MT state is the state after the entire binomial plane, or
-/// the freshly seeded state in fast-stats mode (numba does not advance it).
+/// The returned MT state is the state after the entire binomial plane.
 #[allow(clippy::too_many_arguments)]
 fn layer_particle_model(
     mut density: Vec<f32>,
@@ -210,7 +205,6 @@ fn layer_particle_model(
     uniformity: f64,
     seed: u64,
     blur_particle: f64,
-    use_fast_stats: bool,
 ) -> (Vec<f32>, rand_mt::Mt) {
     let mut rng = rand_mt::Mt::new(seed as u32);
     let od_particle = density_max / n_particles_per_pixel;
@@ -223,31 +217,15 @@ fn layer_particle_model(
         *value = (*value / density_max as f32).clamp(1e-6f32, 1.0f32 - 1e-6f32);
         saturation.push(1.0f32 - *value * uniformity * (1.0f32 - 1e-6f32));
     }
-    if use_fast_stats {
-        density
-            .par_iter_mut()
-            .zip(&saturation)
-            .enumerate()
-            .for_each(|(i, (value, &sat))| {
-                let mut poisson = FastStatsRng::stream(seed, POISSON_TAG, i as u64);
-                let sensitized = stats::fast_poisson(&mut poisson, (npp / sat) as f64);
-                let mut binomial = FastStatsRng::stream(seed, BINOMIAL_TAG, i as u64);
-                let developed = stats::fast_binomial(&mut binomial, sensitized, *value as f64);
-                *value = developed as f32;
-                *value *= od_particle as f32;
-                *value *= sat;
-            });
-    } else {
-        // scipy draws the whole Poisson array before any binomial sample.
-        let counts: Vec<u64> = saturation
-            .iter()
-            .map(|&sat| rk_poisson(&mut rng, (npp / sat) as f64))
-            .collect();
-        for ((value, &sat), count) in density.iter_mut().zip(&saturation).zip(counts) {
-            *value = rk_binomial(&mut rng, count, *value as f64) as f32;
-            *value *= od_particle as f32;
-            *value *= sat;
-        }
+    // scipy draws the whole Poisson array before any binomial sample.
+    let counts: Vec<u64> = saturation
+        .iter()
+        .map(|&sat| rk_poisson(&mut rng, (npp / sat) as f64))
+        .collect();
+    for ((value, &sat), count) in density.iter_mut().zip(&saturation).zip(counts) {
+        *value = rk_binomial(&mut rng, count, *value as f64) as f32;
+        *value *= od_particle as f32;
+        *value *= sat;
     }
     if blur_particle > 0.0 {
         density = filter::blur(&density, width, height, blur_particle * od_particle.sqrt());
@@ -406,7 +384,6 @@ pub fn apply_grain(
     usm_amount: f64,
     positive_film: bool,
     monochrome: bool,
-    use_fast_stats: bool,
     base_seed: u64,
     backend: &dyn ComputeBackend,
 ) -> Result<ImageBuf, String> {
@@ -499,7 +476,6 @@ pub fn apply_grain(
                 prepared.uniformity[ch],
                 seed,
                 blur_dye_clouds_um,
-                use_fast_stats,
             );
             if sl == 0 {
                 channel = layer;
@@ -565,13 +541,7 @@ mod tests {
         .unwrap()
     }
 
-    fn render(
-        monochrome: bool,
-        fast: bool,
-        pixel_size: f64,
-        blur: f64,
-        micro: [f64; 2],
-    ) -> ImageBuf {
+    fn render(monochrome: bool, pixel_size: f64, blur: f64, micro: [f64; 2]) -> ImageBuf {
         let (composite, layers) = curves();
         let params = prepared(&layers, 3, pixel_size);
         let mut image = ImageBuf::new(64, 32);
@@ -591,7 +561,6 @@ mod tests {
             0.0,
             false,
             monochrome,
-            fast,
             0,
             &CpuBackend,
         )
@@ -644,30 +613,26 @@ mod tests {
 
     #[test]
     fn monochrome_samples_one_channel_then_replicates_clumping() {
-        let mono = render(true, false, 0.2, 0.89, [0.1, 30.0]);
+        let mono = render(true, 0.2, 0.89, [0.1, 30.0]);
         assert_eq!(mono.extract_channel(0), mono.extract_channel(1));
         assert_eq!(mono.extract_channel(0), mono.extract_channel(2));
-        let color = render(false, false, 0.2, 0.89, [0.1, 30.0]);
+        let color = render(false, 0.2, 0.89, [0.1, 30.0]);
         assert_ne!(color.extract_channel(0), color.extract_channel(1));
     }
 
     #[test]
-    fn grain_blur_smooths_both_sampling_regimes() {
-        for fast in [false, true] {
-            let raw = render(false, fast, 12.0, 0.0, [0.0; 2]);
-            let blurred = render(false, fast, 12.0, 0.89, [0.0; 2]);
-            for ch in 0..3 {
-                assert!(
-                    variance(&blurred.extract_channel(ch)) < variance(&raw.extract_channel(ch))
-                );
-            }
+    fn grain_blur_smooths_the_original_realization() {
+        let raw = render(false, 12.0, 0.0, [0.0; 2]);
+        let blurred = render(false, 12.0, 0.89, [0.0; 2]);
+        for ch in 0..3 {
+            assert!(variance(&blurred.extract_channel(ch)) < variance(&raw.extract_channel(ch)));
         }
     }
 
     #[test]
     fn finishing_controls_preserve_sigma_across_f32_dispatch_boundary() {
-        let below = render(false, false, 12.0, 2.99999999, [0.0; 2]);
-        let boundary = render(false, false, 12.0, 3.0, [0.0; 2]);
+        let below = render(false, 12.0, 2.99999999, [0.0; 2]);
+        let boundary = render(false, 12.0, 3.0, [0.0; 2]);
         // Both controls narrow to the same f32. Preserve the Python float
         // until dispatch so these still select FIR and IIR respectively.
         assert!(
@@ -725,7 +690,6 @@ mod tests {
             [0.0; 2],
             0.0,
             0.0,
-            false,
             false,
             false,
             0,

@@ -1,19 +1,19 @@
-// GUI viewer magnified full-source composition: the device port of
+// GUI viewer full-source composition: the device port of
 // `DisplaySource::full_source_view` in
 // `crates/spektrafilm-gui/src/display/worker.rs`.
 //
-// The magnified view samples the full-resolution source at every visible
+// The view samples the full-resolution source at every visible
 // viewport pixel, applies the display colour transform, and — when a profile
 // is selected — the ICC conversion. Doing that on the host is image
 // arithmetic on the host, so a device route must not download the source and
 // resample it on the CPU. This kernel reads the source image read-only and
 // writes only the bounded viewport texture.
 //
-// The per-pixel arithmetic reproduces the host exactly:
+// Filtering follows the host's mapping and source-cell coverage:
 //   * the viewport pixel centre maps to the source coordinate through the
 //     image rectangle, with the host's `- 0.5` pixel-centre convention;
-//   * the separable interpolation kernel, its radius, its weights, and its
-//     edge clamp are the host's own, evaluated in f32 as the host does;
+//   * minification uses exact source-cell overlap; otherwise the separable
+//     interpolation kernel and edge clamp are evaluated in f32;
 //   * the display transform is the same decode → display matrix → sRGB
 //     encode → clamp the viewer applies;
 //   * the ICC tables, when present, are the resolved profile pipeline.
@@ -66,6 +66,7 @@ struct Params {
     icc_off0: i32,
     icc_off1: i32,
     icc_off2: i32,
+    footprint_x: f32, footprint_y: f32,
 }
 
 @group(0) @binding(0) var<uniform> params: Params;
@@ -193,6 +194,57 @@ fn sample_source(x: f32, y: f32, c: u32) -> f32 {
         j = j + 1u;
     }
     return out;
+}
+
+fn compensated(sum: f32, correction: f32, value: f32) -> vec2<f32> {
+    let next = sum + value;
+    if (bitcast<u32>(next) & 0x7f800000u) == 0x7f800000u { return vec2<f32>(next, 0.0); }
+    var error: f32;
+    if abs(sum) >= abs(value) { error = (sum - next) + value; }
+    else { error = (value - next) + sum; }
+    return vec2<f32>(next, correction + error);
+}
+
+// Average transformed source cells over the destination pixel's footprint.
+fn sample_area(x: f32, y: f32, fx: f32, fy: f32, c: u32) -> f32 {
+    let lo_x = (x + 0.5) - fx / 2.0;
+    let lo_y = (y + 0.5) - fy / 2.0;
+    let hi_x = lo_x + fx;
+    let hi_y = lo_y + fy;
+    var result = 0.0;
+    var correction = 0.0;
+    // Bound correction accumulation, then compensate the chunk totals too.
+    var chunk = vec2<f32>(0.0);
+    var chunk_count = 0u;
+    var iy = i32(floor(lo_y));
+    let end_y = i32(ceil(hi_y));
+    let end_x = i32(ceil(hi_x));
+    loop {
+        if iy >= end_y { break; }
+        let wy = max(0.0, min(hi_y, f32(iy + 1)) - max(lo_y, f32(iy))) / fy;
+        var ix = i32(floor(lo_x));
+        loop {
+            if ix >= end_x { break; }
+            let wx = max(0.0, min(hi_x, f32(ix + 1)) - max(lo_x, f32(ix))) / fx;
+            chunk = compensated(chunk.x, chunk.y, wx * wy * source_pixel(ix, iy, c));
+            chunk_count += 1u;
+            if chunk_count == 1024u {
+                let total = compensated(result, correction, chunk.x + chunk.y);
+                result = total.x;
+                correction = total.y;
+                chunk = vec2<f32>(0.0);
+                chunk_count = 0u;
+            }
+            ix = ix + 1;
+        }
+        iy = iy + 1;
+    }
+    if chunk_count != 0u {
+        let total = compensated(result, correction, chunk.x + chunk.y);
+        result = total.x;
+        correction = total.y;
+    }
+    return result + correction;
 }
 
 // --- Display transform, shared with the viewer's display-transform kernel. ---
@@ -393,11 +445,22 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_workgroups) 
     let uvy = (py - params.image_min_y) / params.image_height;
     let sx = uvx * f32(params.src_width) - 0.5;
     let sy = uvy * f32(params.src_height) - 0.5;
-    var rgb = vec3<f32>(
-        sample_source(sx, sy, 0u),
-        sample_source(sx, sy, 1u),
-        sample_source(sx, sy, 2u),
-    );
+    let fx = max(1.0, params.footprint_x);
+    let fy = max(1.0, params.footprint_y);
+    var rgb: vec3<f32>;
+    if params.interpolation != 0u && (fx > 1.0 || fy > 1.0) {
+        rgb = vec3<f32>(
+            sample_area(sx, sy, fx, fy, 0u),
+            sample_area(sx, sy, fx, fy, 1u),
+            sample_area(sx, sy, fx, fy, 2u),
+        );
+    } else {
+        rgb = vec3<f32>(
+            sample_source(sx, sy, 0u),
+            sample_source(sx, sy, 1u),
+            sample_source(sx, sy, 2u),
+        );
+    }
     out[base] = rgb.x;
     out[base + 1u] = rgb.y;
     out[base + 2u] = rgb.z;

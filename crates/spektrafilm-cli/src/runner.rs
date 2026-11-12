@@ -154,7 +154,7 @@ fn render_recipe(
         IssueBoundary::InputPrepare,
         &context,
         |_| {
-            let image = if recipe.output.format == "png" && !params.scanner.requires_full_frame() {
+            let image = if recipe.output.format == "png" && !params.requires_full_frame() {
                 resize_for_preview(&loaded.image, params.settings.preview_max_size)
             } else {
                 loaded.image
@@ -170,7 +170,7 @@ fn render_recipe(
     });
     let result = result?;
     let result = if recipe.output.format == "png"
-        && params.scanner.requires_full_frame()
+        && params.requires_full_frame()
         && params
             .taps
             .collect

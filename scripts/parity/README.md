@@ -163,11 +163,10 @@ alone does not establish it.
 Start D-Bus inside Xvfb so the GTK portal inherits DISPLAY. The driver waits for
 the initial automatic Preview before saving state to establish the output viewing
 layer. It selects the uppercase SCAN footer action independently of neighboring
-button OCR and distinguishes SCAN from the Scan for print checkbox. It observes
-automatic Preview or explicit Scan completion from the report the GUI publishes
-for each operation (`SPEKTRAFILM_GUI_DIAGNOSTICS_DIR`), so render readiness never
-depends on the viewer status badge; the human status text is still recorded in
-the scenario records.
+button OCR. It observes automatic Preview or explicit Scan completion from the
+report the GUI publishes for each operation (`SPEKTRAFILM_GUI_DIAGNOSTICS_DIR`),
+so render readiness never depends on the viewer status badge; the human status
+text is still recorded in the scenario records.
 RAW import requires the pinned fixture's loaded/full dimensions or corresponding
 preview dimensions, plus saved ACES2065-1 state with decoding disabled; transient
 Loaded text can be replaced by a completed preview.
@@ -388,13 +387,20 @@ python scripts/parity/lut_acceptance.py \
     --evidence-dir target/lut-acceptance
 ```
 
-The LUT gate compares numeric QA metrics and the original PASS/FAIL/INFO
-statuses independently. An upstream quality failure remains a failure in the
-delivered QA report; acceptance requires the same result as the pinned Python
-implementation. Relative tolerance is `1e-5` with a `1e-7` absolute floor.
-Independent format readers and OCIO processors exercise the delivered files.
-The same gate compares 32 additional diagnostic results for disabled xy and
-active oklch input compression, separately from the 112 baseline results.
+The pinned Python creator still models the retired pre-v2 scanner, so the gate
+compares every material-stage lattice (`range != output_rgb`) at the
+unchanged `2e-6` budget against it and marks scan-inclusive roots as
+`skipped-retired-scan-model`.
+That covers the film, exposure, develop, print-expose and material combination
+stages; delivered scan-inclusive roots are exercised through the QA and
+artifact contracts instead. The QA check requires the pinned 16-scenario set
+and order, finite numeric summaries, truthful PASS/FAIL/INFO aggregation, and
+the delivered report/HTML bytes. Independent format readers and OCIO
+processors exercise the delivered files. The same gate checks 32 additional
+diagnostic results for disabled xy and active oklch input compression,
+separately from the 112 baseline scenarios. This split follows the scan-model
+v2 retirement in PR #315 and the package acceptance repair in issue #323; it
+does not compare a retired model's pixels.
 
 
 The package smoke command always covers installed image/metadata/RAW paths,
@@ -476,7 +482,7 @@ local header crops: whole-row OCR can omit its amber label even when adjacent
 Open, Undo, Redo and Settings are recognized. Coordinates still come from the
 rendered text; no fixed-position click substitutes for observing Export.
 The highlighted Settings state toolbar is similarly read as an independent
-row anchored below the observed GUI parameters heading, rather than being
+row anchored below the observed State and startup heading, rather than being
 borrowed from inspector locator text or inferred from button order.
 Settings also has an independent modal observation beside the preset panel;
 once a photograph is rendered, including that photograph in the same OCR block
@@ -591,8 +597,12 @@ screenshots or PNG-clamped comparisons are not substitutes.
 
 
 The package smoke exports the pinned 0.3.4 bare-chain midgray through the real
-spectral assets and compares the saved 32-bit TIFF against the recorded Python
-result within `1e-6`. Saving into the output layer's own colour space and
+spectral assets and the shipped image writer, then separately runs the
+`input > film > print` route and compares the `cmy_print` f64 density artifact
+against the recorded Python material result within `1e-6`. The final scan
+comparison was retired because the pinned Python oracle predates the neutral
+scan model v2; the image export still proves the installed image path and
+spectral assets end to end. Saving into the output layer's own colour space and
 encoding is a bit-exact copy of the pipeline buffer — the pinned Python save
 guard skips the transform there, and re-running the 4-digit IEC sRGB matrices
 would shift pixels by ~2e-5 (`crates/spektrafilm-core/src/image_io.rs`).

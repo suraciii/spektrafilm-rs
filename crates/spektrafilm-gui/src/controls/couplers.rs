@@ -11,11 +11,6 @@ pub(crate) fn sections(
 ) {
     if section == "Couplers" {
         ui.scope(|ui| {
-            ui.label(
-                egui::RichText::new(crate::i18n::text(ui.ctx(), "controls.couplers.key_controls"))
-                    .small()
-                    .color(theme::FG_MUTED),
-            );
             if filter_matches(filter, "enable dir couplers") {
                 flags.runtime_changed |= toggle(
                     ui,

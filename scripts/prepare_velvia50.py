@@ -123,11 +123,12 @@ def calibrate_sensitivity(raw_sensitivity, data_dir, cmfs, daylight):
         raise RuntimeError(f'Adaptation window did not converge: {fit.message}')
     before = np.log2(prediction(train, fit.x)/train[3])
     # Ridge penalty limits high-order excursions outside the 99 measured samples.
-    surface = least_squares(lambda p: np.r_[(before+bounded(train[2] @ p.reshape(3, 14).T)).ravel(), .01*p],
-                            np.zeros(42), max_nfev=500, ftol=1e-11, xtol=1e-11, gtol=1e-11)
+    channels = raw_sensitivity.shape[1]
+    surface = least_squares(lambda p: np.r_[(before+bounded(train[2] @ p.reshape(channels, 14).T)).ravel(), .01*p],
+                            np.zeros(channels*14), max_nfev=500, ftol=1e-11, xtol=1e-11, gtol=1e-11)
     if not surface.success:
         raise RuntimeError(f'Adaptation surface did not converge: {surface.message}')
-    coeff = surface.x.reshape(3, 14)
+    coeff = surface.x.reshape(channels, 14)
     def metrics(context, coefficients=coeff):
         error = np.log2(prediction(context, fit.x, coefficients)/context[3])
         return {'rmse_stops_rgb': np.sqrt(np.mean(error**2, axis=0)).tolist(),

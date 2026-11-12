@@ -203,6 +203,7 @@ impl RenderSnapshot {
             special,
             raw: crate::state::GuiState::factory().sections["load_raw"].clone(),
             rotation: 0,
+            film_route: None,
             applied: None,
         };
         crate::photograph::record::dependencies(&settings, &self.data_dir)
@@ -248,7 +249,7 @@ impl RenderSnapshot {
         if !params.scanner.operator_eligible() {
             params.scanner.operator = Default::default();
         }
-        params.settings.preview_mode = preview && !params.scanner.requires_full_frame();
+        params.settings.preview_mode = preview && !params.requires_full_frame();
         spektrafilm_core::runtime::digest_params_with_neutral(
             params,
             film,
@@ -308,6 +309,7 @@ struct RuntimeCacheKey {
 #[derive(Default)]
 pub(super) struct RuntimeCache {
     entry: Option<RuntimeCacheEntry>,
+    lut: Option<(RuntimeParams, Runtime)>,
 }
 
 struct RuntimeCacheEntry {
@@ -360,6 +362,30 @@ impl RuntimeCache {
         context: &ObservationContext,
         backend: &dyn spektrafilm_backend::ComputeBackend,
     ) -> Result<&mut Runtime, crate::app::Message> {
+        if snapshot.params.workflow.mode.is_lut() {
+            let mut params = snapshot.params.clone();
+            params.settings.preview_mode = preview;
+            if let Some((cached_params, mut runtime)) = self.lut.take() {
+                if cached_params != params {
+                    runtime
+                        .update_with_backend(params.clone(), backend)
+                        .map_err(|error| {
+                            crate::app::Message::new("operations.runtime_update_error")
+                                .arg("detail", error)
+                        })?;
+                }
+                self.lut = Some((params, runtime));
+                return Ok(&mut self.lut.as_mut().expect("LUT runtime reinstated").1);
+            }
+            let runtime =
+                Runtime::new_lut(params.clone(), &snapshot.data_dir, backend).map_err(|error| {
+                    crate::app::Message::new("operations.runtime_update_error").arg("detail", error)
+                })?;
+            self.entry = None;
+            self.lut = Some((params, runtime));
+            return Ok(&mut self.lut.as_mut().expect("LUT runtime cache inserted").1);
+        }
+        self.lut = None;
         let cached_update = self.entry.as_ref().and_then(|cached| {
             let digested = snapshot.digested_params(
                 preview,
@@ -458,6 +484,13 @@ pub(super) fn build_runtime_observed_with_backend(
     let backend = cancellable.as_deref().unwrap_or(backend);
     let prepare = context.scope("runtime_prepare", ObservationKind::Phase, Purpose::Image);
     let result = (|| {
+        if snapshot.params.workflow.mode.is_lut() {
+            let mut params = snapshot.params.clone();
+            params.settings.preview_mode = preview;
+            return Runtime::new_lut(params, &snapshot.data_dir, backend).map_err(|error| {
+                crate::app::Message::new("operations.runtime_update_error").arg("detail", error)
+            });
+        }
         let film = profile::load_profile_by_name(&snapshot.data_dir, &snapshot.film_name).map_err(
             |e| {
                 crate::app::Message::new("operations.film_profile_error")
@@ -684,5 +717,76 @@ mod tests {
             .process(input.clone(), &backend)
             .unwrap();
         assert_eq!(recovered.data, expected.data);
+    }
+}
+
+#[cfg(test)]
+mod lut_tests {
+    use super::*;
+    use spektrafilm_backend::cpu_backend::CpuBackend;
+    use spektrafilm_backend::telemetry::ObservationContext;
+    use spektrafilm_core::lut_look::{LutLookParams, hash_file};
+    use spektrafilm_core::params::WorkflowMode;
+    use spektrafilm_math::image::ImageBuf;
+
+    #[test]
+    fn lut_snapshot_renders_and_roundtrips_through_gui_state() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("identity.cube");
+        std::fs::write(
+            &path,
+            "TITLE \"identity\"\nLUT_3D_SIZE 2\nDOMAIN_MIN 0 0 0\nDOMAIN_MAX 1 1 1\n\
+             0 0 0\n0 0 1\n0 1 0\n0 1 1\n1 0 0\n1 0 1\n1 1 0\n1 1 1\n",
+        )
+        .unwrap();
+        let mut params = RuntimeParams::default();
+        params.workflow.mode = WorkflowMode::Lut;
+        params.workflow.route = "input".into();
+        params.io.scan_film = false;
+        params.io.input_color_space = "sRGB".into();
+        params.io.input_cctf_decoding = true;
+        params.io.output_color_space = "sRGB".into();
+        params.io.output_cctf_encoding = true;
+        params.settings.preview_mode = false;
+        let sha256 = hash_file(&path).unwrap();
+        params.lut_look = LutLookParams {
+            path,
+            sha256,
+            ..LutLookParams::default()
+        };
+        let state = crate::state::GuiState::from_runtime(
+            &params,
+            "kodak_portra_400",
+            "kodak_portra_endura",
+            &serde_json::json!({}),
+        )
+        .unwrap();
+        let restored = state.runtime_params().unwrap();
+        assert_eq!(restored.workflow.mode, WorkflowMode::Lut);
+        assert_eq!(restored.lut_look, params.lut_look);
+
+        let snapshot = RenderSnapshot::new(
+            restored,
+            "missing-film".into(),
+            "missing-print".into(),
+            crate::headless::data_dir(),
+            serde_json::json!({}),
+        );
+        let mut cache = RuntimeCache::default();
+        let runtime = cache
+            .prepare_observed(&snapshot, false, &ObservationContext::default())
+            .unwrap();
+        let input = ImageBuf::from_data(
+            2,
+            1,
+            [0.25, 0.5, 0.75, 1.0, 0.0, 0.5]
+                .into_iter()
+                .map(spektrafilm_math::precision::from_f64)
+                .collect(),
+        );
+        let output = runtime.process(input, &CpuBackend).unwrap();
+        assert_eq!(output.width, 2);
+        assert_eq!(output.height, 1);
+        assert!(output.data.iter().all(|value| value.is_finite()));
     }
 }

@@ -1,16 +1,20 @@
 # Scanning and negative conversion
 
-This page explains the scan model, scan output modes, negative conversion, and film-scan controls. It also describes the experimental CineStill 800T Cs41 material and look.
+This page explains scanner readout, scan output modes, negative conversion, and the broader Scan workflow. It also describes the experimental CineStill 800T material and look.
 
 ## Neutral scan model
 
-A scan is one colorimetric capture. The scanner has one sensor, modeled on the CIE 1931 color-matching functions, and one readout light. There is no receiver profile to choose, no scanner calibration matrix, and no scanner finish.
+Scanner readout is one colorimetric capture. The scanner has one sensor, modeled on the CIE 1931 color-matching functions, and one readout light. There is no receiver profile to choose, no scanner calibration matrix, and no scanner finish.
+
+The GUI Scan stage covers readout, interpretation, and digital adjustments. **Scan → Tone & Color** adjusts an eligible completed positive without changing the scanned material, acquisition, or negative-conversion operator correction. Its independent `finishing.*` controls and preset section remain separate from `scanner.*`; see [Tone & Color](gui.md#tone--color).
 
 The readout light is a product constant selected by the material category: `BB5800` for colour cine print materials (ISO 2910:2018) and `D50` for every other material (ISO 3664). It is not a runtime parameter and not a profile field, so there is no `scanner.lamp` to set; a document that carries that field fails validation.
 
-The white reference of a scan is the clear film base of the scanned medium. A clear area of that base reads as the output color space's white, and the scan chromatically adapts from that clear-film white to the output white. The scan matrix is the identity. The readout light is part of the final colour transform, not an acquisition control.
+By default, the white reference of a scan is the clear film base of the scanned medium. A clear area of that base reads as the output color space's white, and the scan chromatically adapts from that clear-film white to the output white. The scan matrix is the identity. The readout light is part of the final colour transform, not an acquisition control.
 
-The scanner controls include `scanner.scan_output`, `scanner.conversion_style`, `scanner.experimental_setup`, `scanner.operator`, `scanner.lens_blur`, and `scanner.unsharp_mask`. Lens blur models readout optics on linear transmitted light and runs before any density interpretation. Unsharp mask is digital sharpening and runs after interpretation and output gamut processing. Legacy white/black correction, white/black levels, film-scan black and white points, receiver profiles, negative conversion methods, the retired `scanner.auto_setup` control, scanner finish, and Digital Reference remain removed; their field names fail validation at the current schema version.
+`scanner.white_reference` selects the calibration reference. `clear_film_base` is the default calibrated readout. `readout_illuminant` opts out: the scan divides by the readout-light Y and adapts from the readout-light white. That mode reproduces the upstream experimental `28bf883` scanner normalization and is intended for upstream comparison; it does not claim clear-base calibration. Scan provenance reports the selected reference. On the pinned Portra Endura flat reference, the remaining encoded difference after matching all other settings is below `2e-5`, attributable to upstream output-gamut compression.
+
+The scanner controls include `scanner.scan_output`, `scanner.white_reference`, `scanner.conversion_style`, `scanner.experimental_setup`, `scanner.operator`, `scanner.lens_blur`, and `scanner.unsharp_mask`. Lens blur models readout optics on linear transmitted light and runs before any density interpretation. Unsharp mask is digital sharpening and runs after interpretation and output gamut processing. Legacy white/black correction, white/black levels, film-scan black and white points, receiver profiles, negative conversion methods, the retired `scanner.auto_setup` control, scanner finish, and Digital Reference remain removed; their field names fail validation at the current schema version.
 
 `settings.use_scanner_lut` selects a PCHIP lattice of normalized `log_xyz`, not a direct spectral scan or an RGB lattice. After interpolation, the scanner applies `10^log_xyz`, chromatic adaptation, and XYZ-to-RGB in that order. On the GPU route, lattice generation, slope and cell-hull preparation, interpolation, and the color transforms remain on the device. Storage limits split the lattice into overlapping source halos without changing its domain or resolution. A limit below the minimum halo or spectral coefficient binding returns an error; it does not select a CPU implementation.
 
@@ -21,6 +25,17 @@ The GUI exposes passthrough, film-scan, film-print-scan, and the three convert-f
 `direct_scan` preserves the medium's polarity. Calibrated `negative_to_positive` supports direct `input > film > scan`, resumed `film > scan`, and real negative-capture `input > convert-film > scan`. It rejects paper, positive-film, print-paper, and scan-minus-base combinations; every grain engine is accepted.
 
 `scanner.scan_output` accepts `direct_scan` and `negative_to_positive`. Replace the removed `positive_scan` value in CLI commands, parameter files, presets, recipes, and GUI states. Old values fail validation. The GUI displays **Preserve medium polarity** and **Negative to positive**. See [scanner language](../specs/film-chain/spec.md#scanner-language).
+
+To match the upstream experimental scanner while keeping the product default, select the readout-light white reference explicitly:
+
+```bash
+./target/release/spektrafilm-f64 process input.tif -o upstream-aligned.tif \
+    --input-color-space 'sRGB' --backend cpu --film kodak_portra_400 \
+    --paper kodak_portra_endura --route 'input > film > print > scan' --data-dir data \
+    --set scanner.white_reference=readout_illuminant
+```
+
+The same field is available to presets, recipes, and GUI state. Omitted values default to `clear_film_base`.
 
 ## Negative conversion
 
@@ -74,7 +89,7 @@ Four controls adjust the positive image before the fixed tone. They are exposure
 | `tint_ev` | `0` | More magenta; mean(R,B)−G exposure difference in stops |
 | `contrast` | `1` | Values above one increase common-exposure contrast about the reference |
 
-Warmth and tint are differential EV, not Kelvin. These controls do not change negative density, camera exposure, Convert recovery, or the experimental setup. Contrast does not amplify channel differences before tone. The nonlinear tone can still change perceived hue and saturation. See the [equations and numerical contract](../specs/film-chain/lab-scan/spec.md#operator-correction).
+Warmth and tint are differential EV, not Kelvin. These controls do not change negative density, camera exposure, Convert recovery, or the experimental setup. Conversion contrast does not amplify channel differences before tone. The nonlinear tone can still change perceived hue and saturation. See the [equations and numerical contract](../specs/film-chain/lab-scan/spec.md#operator-correction).
 
 ```bash
 ./target/release/spektrafilm-f64 process input.tif -o corrected.tif \
@@ -150,14 +165,15 @@ The resolved style appears in the effective configuration of the render report, 
 
 `cinestill_800t_cs41_approx` is an experimental fitted approximation of CineStill 800T in Cs41.
 
-The material profile computes developed dye amounts and spectral density before printing or scanning. It does not provide measured CineStill spectral sensitivity, dye spectra, grain, or halation. Keep grain disabled for material comparisons. Compare halation separately.
+The material profile computes developed dye amounts and spectral density before printing or scanning. It does not provide measured CineStill spectral sensitivity, dye spectra, grain, or halation. For material-only comparisons, disable the look's grain and halation; those are separate appearance controls.
 
 The model exposure origin does not establish absolute ISO. It does not prove that the manufacturer's reference is an 18% gray exposure. Metadata records the sources, approximations, and attribution. The derivative retains Andrea Volpato's CC BY-SA 4.0 asset license.
 
-## Experimental CineStill 800T Cs41 look
+## Experimental CineStill 800T look
 
-The built-in `CineStill 800T Cs41 (experimental)` look sets halation and Grain Dye controls.
-The look keeps grain off because its grain controls were fitted at the 36 mm reference frame; enable them with `film_render.grain.active=true`. Another positive `camera.film_format_mm` changes the physical sampling and does not establish calibration there.
+The built-in `CineStill 800T` look sets halation and Grain Dye controls. Both are fitted to public CineStill 800T lab scans: halation uses a 160 um first Gaussian sigma, three bounces and RGB strength `[0.15, 0.045, 0.005]`; Dye grain uses RMS `[13.1, 19.2, 24.4]` and particle scales `[4.0, 0.15, 0.03]`. These are appearance controls, not a measured PSF or granularity.
+
+The look enables grain by default, but its Dye controls were fitted at the 36 mm reference frame. Set `camera.film_format_mm=36` for exact physical-scale interpretation; another positive format changes the physical sampling and does not establish calibration there. The former `Night 280um` appearance is documented below as an optional override, not a separate built-in. The look name changed from `CineStill 800T Cs41 (experimental)`; the old selector string is not an alias.
 
 ### Reference illuminant and tungsten balance
 
@@ -172,8 +188,20 @@ The look's `negative_to_positive` tone assumes scene-linear input. Its tone valu
 ```bash
 ./target/release/spektrafilm-f64 process input.tif -o cinestill.png \
     --input-color-space 'ProPhoto RGB' --input-cctf-decoding false \
-    --preset 'CineStill 800T Cs41 (experimental)' --backend cpu --data-dir data \
+    --preset 'CineStill 800T' --backend cpu --data-dir data \
     --route 'input > film > scan' --scan-output negative_to_positive
+```
+
+### Former Night 280 um appearance
+
+The broad-halation night variant is no longer a separate built-in. Starting from `CineStill 800T`, these overrides reproduce its appearance experiment (not a second scan fit):
+
+```bash
+--set film_render.halation.halation_first_sigma_um=[280,280,280] \
+--set film_render.halation.halation_n_bounces=2 \
+--set film_render.halation.halation_bounce_decay=0.45 \
+--set film_render.halation.halation_strength=[0.15,0.045,0.0] \
+--set film_render.grain.rms_granularity=[4.5,7.0,9.0]
 ```
 
 ## See also
@@ -190,4 +218,4 @@ The look's `negative_to_positive` tone assumes scene-linear input. Its tone valu
 
 ## Saved document cutover
 
-GUI state version 5, preset schema 6, and recipe schema `spektrafilm-rs-params-6` own the scanner cutover. The additive `scanner.operator` group uses these same versions; omitted values default to `0, 0, 0, 1`. Saved corrections contain no automatic offsets. Unknown and retired fields remain errors. Explicit older versions migrate `scanner.lamp` out of the readout controls. Complete captures preserve it as the Convert acquisition illuminant unless already declared. Current versions reject `scanner.lamp`. The built-in `neutral` spelling becomes `standard`; this migration intentionally changes the automatic scan output.
+GUI state version 5, preset schema 6, and recipe schema `spektrafilm-rs-params-6` own the scanner cutover. The additive `scanner.operator` group uses these same versions; omitted values default to `0, 0, 0, 1`. The additive `scanner.white_reference` leaf also uses those versions; an omitted value defaults to `clear_film_base`, and existing documents retain their pixels. Saved corrections contain no automatic offsets. Unknown and retired fields remain errors. Explicit older versions migrate `scanner.lamp` out of the readout controls. Complete captures preserve it as the Convert acquisition illuminant unless already declared. Current versions reject `scanner.lamp`. The built-in `neutral` spelling becomes `standard`; this migration intentionally changes the automatic scan output.

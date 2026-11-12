@@ -40,3 +40,143 @@ pub struct ViewerComposeGpuParams {
     pub fade: f32,
     pub clipping: ViewerClipping,
 }
+
+/// One GUI viewer resample request: the long-edge cap the viewer applies to a
+/// full-resolution image before it composes viewport pixels.
+///
+/// A device route averages the complete source-cell area covered by each
+/// output pixel on the device, matching the host `capped_raster`. Returned
+/// pixels are disposable viewer data, never retained or saved samples.
+///
+/// The host owns the destination size: it derives the long-edge factor and the
+/// rounded destination dimensions in f64, so one authoritative rule decides
+/// how many pixels the viewer keeps, and a device backend cannot disagree
+/// with the viewer about the raster geometry.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ViewerResampleGpuParams {
+    /// Source width in pixels.
+    pub width: u32,
+    /// Source height in pixels.
+    pub height: u32,
+    /// Destination width in pixels, computed host-side.
+    pub out_width: u32,
+    /// Destination height in pixels, computed host-side.
+    pub out_height: u32,
+}
+
+/// One GUI viewer display-colour transform request: native image samples to
+/// encoded sRGB viewing pixels.
+///
+/// This is the viewer's display transform (`display_rgb`), not the saving
+/// conversion: the matrix is the source space's display matrix and the
+/// destination transfer is always sRGB. The result is clamped to 0..=1 for the
+/// bounded display surface, exactly as the host viewer does.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct DisplayTransformGpuParams {
+    /// Source CCTF discriminant, used only when `decode` is set.
+    pub src_cctf: u32,
+    /// Whether to decode the source transfer before the matrix.
+    pub decode: bool,
+    /// Source → encoded sRGB matrix.
+    pub matrix: [[f32; 3]; 3],
+    /// Whether to clamp the encoded result to 0..=1.
+    pub clamp: bool,
+}
+
+/// Fixed RGB8 display-transform representations prepared by the host CMM.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u32)]
+pub enum ViewerIccKind {
+    Identity = 0,
+    /// Three packed 256-byte channel tables.
+    Curves = 1,
+    /// Twelve Q14 matrix/offset words, 768 Q14 input-shaper words, then
+    /// three packed 16385-byte output-shaper tables.
+    MatrixShaper = 2,
+    /// Exact RGB8-domain map, lexicographic RGB order, packed RGB bytes.
+    /// Unlike a sampled 3D LUT, this representation has no interpolation error.
+    ExactRgb8 = 3,
+}
+
+impl ViewerIccKind {
+    pub fn word_count(self) -> usize {
+        match self {
+            Self::Identity => 1,
+            Self::Curves => 3 * 256 / 4,
+            Self::MatrixShaper => 12 + 3 * 256 + (3 * 16385usize).div_ceil(4),
+            Self::ExactRgb8 => 3 * 256 * 256 * 256 / 4,
+        }
+    }
+
+    pub fn from_id(id: u32) -> Option<Self> {
+        match id {
+            0 => Some(Self::Identity),
+            1 => Some(Self::Curves),
+            2 => Some(Self::MatrixShaper),
+            3 => Some(Self::ExactRgb8),
+            _ => None,
+        }
+    }
+}
+
+/// Immutable, image-independent LittleCMS preparation for fixed GPU application.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ViewerIccGpuParams<'a> {
+    /// Content identity of the profiles, conversion semantics, CMM and format.
+    pub identity: [u8; 32],
+    pub kind: ViewerIccKind,
+    pub words: &'a [u32],
+}
+
+/// One full-source viewer composition request for a bounded viewport raster.
+///
+/// Non-nearest reductions integrate source-cell areas after the display and
+/// ICC transforms. Native-size and magnified views use the selected
+/// interpolation kernel. Explicit nearest sampling remains unfiltered.
+/// The host resolves viewport geometry and the transforms. A viewport pixel
+/// outside the image rectangle stays transparent.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ViewerFullSourceGpuParams<'a> {
+    /// Viewport texture size in pixels.
+    pub tex_width: u32,
+    /// Viewport texture size in pixels.
+    pub tex_height: u32,
+    /// Viewport rectangle minimum, in points.
+    pub rect_min: [f32; 2],
+    /// Viewport rectangle size, in points.
+    pub rect_size: [f32; 2],
+    /// Image rectangle minimum, in points.
+    pub image_min: [f32; 2],
+    /// Image rectangle size, in points.
+    pub image_size: [f32; 2],
+    /// Native source pixels covered by each composition texture texel.
+    /// Resolved from intended scale and presentation grid, independently of
+    /// rounding in the screen-space rectangle endpoints.
+    pub source_footprint: [f32; 2],
+    /// Interpolation mode discriminant, matching the viewer's `Interpolation`
+    /// order: nearest, linear, cubic, spline16, spline36, lanczos, blackman.
+    pub interpolation: u32,
+    /// Whether the display colour transform applies at all. When it does not,
+    /// the host views raw output-space values.
+    pub transform: bool,
+    /// Source CCTF discriminant, used only when `transform` is set.
+    pub src_cctf: u32,
+    /// Whether to decode the source transfer before the display matrix.
+    pub decode: bool,
+    /// Source → encoded sRGB display matrix.
+    pub matrix: [[f32; 3]; 3],
+    /// Whether the request carries the resolved ICC pipeline.
+    pub icc: bool,
+    /// Whether the ICC request carries a matrix stage.
+    pub icc_matrix: bool,
+    /// ICC matrix in the reference's 1.14 fixed point, used only when
+    /// `icc_matrix` is set.
+    pub icc_matrix_fixed14: [[i32; 3]; 3],
+    /// ICC matrix offset in 1.14 fixed point, used only when `icc_matrix` is
+    /// set.
+    pub icc_offset_fixed14: [i32; 3],
+    /// ICC first-shaper tables, one per channel, used only when `icc` is set.
+    pub icc_first: &'a [Vec<i32>],
+    /// ICC second-shaper tables, one per channel, used only when `icc` is set.
+    pub icc_second: &'a [Vec<u32>],
+}

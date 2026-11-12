@@ -4,7 +4,9 @@ struct Params {
     count: u32,
     first: u32,
     seed: u32,
-    pad: u32,
+    // Page-local first pixel. Bounded dispatches write straight into the
+    // destination page at this offset instead of a temporary window.
+    base: u32,
     mu: f32,
     sigma: f32,
     pad_tail: vec2<u32>,
@@ -79,7 +81,7 @@ fn main() {
             exponent = fma(params.sigma, rk_gauss(), exponent);
         }
         let value = exp(exponent);
-        let base = i * 3u;
+        let base = (params.base + i) * 3u;
         glare_buf[base] = value;
         glare_buf[base + 1u] = value;
         glare_buf[base + 2u] = value;

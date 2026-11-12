@@ -107,7 +107,7 @@ The artifact MUST provide the baseline for continuation. Existing preset and `--
 The resolver MUST NOT replay a complete saved parameter snapshot through input preparation and stock initialization. It MUST restore validated completed state and prepare only remaining operations. Frozen interpretation data, recorded provenance, and editable downstream defaults MUST remain distinct even when they refer to the same parameter vocabulary.
 
 - Applicability MUST follow the executed operation and the owning model, not a parameter prefix or GUI section. Procedural grain remains post-scan appearance even though it is configured under `film_render.grain`.
-- [Common finishing](../finishing/spec.md#scope-and-applicability) remains editable downstream of a saved material. It MUST execute only on an eligible positive continuation and MUST NOT alter the frozen material or its interpretation dependencies.
+- [Tone & Color](../finishing/spec.md#scope-and-applicability) remains editable downstream of a saved material. It MUST execute only on an eligible positive continuation and MUST NOT alter the frozen material or its interpretation dependencies.
 - Already formed material grain MUST NOT be generated again. Camera context needed by negative conversion MUST remain available without applying camera exposure again.
 - Omitted `--seed` MUST inherit the artifact's seed. An explicit seed MUST affect only the remaining random operations and MUST NOT replace an already stored realization.
 - Image input keeps the default seed of 0. Existing repeated-iteration rules apply to the selected seed.

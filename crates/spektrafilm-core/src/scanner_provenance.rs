@@ -19,8 +19,16 @@ pub struct ScannerProvenance {
 }
 
 impl ScannerProvenance {
-    pub fn from_params(_params: &crate::params::RuntimeParams) -> Self {
-        Self::LAB_SCAN_V1
+    pub fn from_params(params: &crate::params::RuntimeParams) -> Self {
+        if params.scanner.white_reference == crate::params::SCAN_WHITE_REFERENCE_READOUT_ILLUMINANT
+        {
+            Self {
+                white_reference: "readout_illuminant",
+                ..Self::LAB_SCAN_V1
+            }
+        } else {
+            Self::LAB_SCAN_V1
+        }
     }
 
     /// Validate metadata from a versioned legacy capture before re-deriving
@@ -74,11 +82,16 @@ mod tests {
 
     #[test]
     fn provenance_is_derived_from_the_builtin_model() {
-        let params = crate::params::RuntimeParams::default();
+        let mut params = crate::params::RuntimeParams::default();
         let provenance = ScannerProvenance::from_params(&params);
         assert_eq!(provenance.model, "lab_scan_v1");
         assert_eq!(provenance.white_reference, "clear_film_base");
         assert_eq!(provenance.output_white, "output_color_space_white");
         assert_eq!(provenance.matrix, "identity");
+
+        params.scanner.white_reference =
+            crate::params::SCAN_WHITE_REFERENCE_READOUT_ILLUMINANT.into();
+        let provenance = ScannerProvenance::from_params(&params);
+        assert_eq!(provenance.white_reference, "readout_illuminant");
     }
 }

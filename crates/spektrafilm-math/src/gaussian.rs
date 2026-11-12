@@ -4,8 +4,9 @@ use rayon::prelude::*;
 
 /// Separable Gaussian blur on an ImageBuf.
 ///
-/// Uses reflect-boundary FIR below sigma 3, sample-replicating
-/// Young-van Vliet IIR below sigma 8, and reflected three-box filtering above.
+/// Uses reflect-boundary FIR below sigma 3 and sample-replicating
+/// Young-van Vliet IIR at or above sigma 3. The pinned upstream reference
+/// uses IIR for every sigma >= 3; there is no large-sigma box approximation.
 /// Each channel is processed independently with rayon.
 /// Single-channel form for callers with per-channel sigma values.
 pub fn gaussian_blur_channel(
@@ -105,92 +106,9 @@ fn blur_1d_parallel(
 ) {
     if sigma < 3.0 {
         fir_blur_1d(src, dst, w, h, from_f64(sigma), horizontal);
-    } else if sigma < 8.0 {
-        iir_blur_1d(src, dst, w, h, from_f64(sigma), horizontal);
     } else {
-        box_blur_1d(src, dst, w, h, sigma, horizontal);
+        iir_blur_1d(src, dst, w, h, sigma, horizontal);
     }
-}
-
-/// Choose an odd box width minimizing squared error against the normalized,
-/// three-sigma truncated Gaussian. Ties favor the smaller width.
-pub fn gaussian_box_width(sigma: f64) -> usize {
-    let center = ((4.0 * sigma * sigma + 1.0).sqrt() + 0.5).floor() as usize;
-    let radius = (3.0 * sigma + 0.5) as usize;
-    let gaussian: Vec<f64> = (0..=radius)
-        .map(|i| (-0.5 * (i as f64 / sigma).powi(2)).exp())
-        .collect();
-    let norm = gaussian[0] + 2.0 * gaussian[1..].iter().sum::<f64>();
-    let triangle = |n: isize| -> f64 {
-        if n < 0 {
-            0.0
-        } else {
-            (n as f64 + 1.0) * (n as f64 + 2.0) * 0.5
-        }
-    };
-    let mut best = (f64::INFINITY, 1);
-    for width in center.saturating_sub(12).max(1)..=center.saturating_add(12) {
-        if width % 2 == 0 {
-            continue;
-        }
-        let half = width / 2;
-        let extent = radius.max(3 * half);
-        let denom = (width as f64).powi(3);
-        let mut error = 0.0;
-        for i in 0..=extent {
-            let x = (i + 3 * half) as isize;
-            let w = width as isize;
-            let box_value = (triangle(x) - 3.0 * triangle(x - w) + 3.0 * triangle(x - 2 * w)
-                - triangle(x - 3 * w))
-                / denom;
-            let reference = gaussian.get(i).map_or(0.0, |&g| g / norm);
-            let delta = box_value - reference;
-            error += delta * delta * if i == 0 { 1.0 } else { 2.0 };
-        }
-        if error < best.0 {
-            best = (error, width);
-        }
-    }
-    best.1
-}
-
-/// Three unit-sum boxes, with reflection applied independently on each pass.
-fn box_blur_1d(
-    src: &[Scalar],
-    dst: &mut [Scalar],
-    w: usize,
-    h: usize,
-    sigma: f64,
-    horizontal: bool,
-) {
-    let width = gaussian_box_width(sigma);
-    let radius = (width / 2) as isize;
-    let mut first = vec![ZERO; src.len()];
-    let mut second = vec![ZERO; src.len()];
-    let (lines, length, stride) = if horizontal { (h, w, 1) } else { (w, h, w) };
-    let pass = |input: &[Scalar], output: &mut [Scalar]| {
-        for line in 0..lines {
-            let start = if horizontal { line * w } else { line };
-            let mut sum = 0.0;
-            for offset in -radius..=radius {
-                sum += to_f64(input[start + reflect_index(offset, length) * stride]);
-            }
-            for index in 0..length {
-                output[start + index * stride] = from_f64(sum / width as f64);
-                if index + 1 < length {
-                    sum -= to_f64(
-                        input[start + reflect_index(index as isize - radius, length) * stride],
-                    );
-                    sum += to_f64(
-                        input[start + reflect_index(index as isize + radius + 1, length) * stride],
-                    );
-                }
-            }
-        }
-    };
-    pass(src, &mut first);
-    pass(&first, &mut second);
-    pass(&second, dst);
 }
 
 /// FIR Gaussian blur (truncated kernel). Good for small sigma.
@@ -265,16 +183,15 @@ fn iir_blur_1d(
     dst: &mut [Scalar],
     w: usize,
     h: usize,
-    sigma: Scalar,
+    sigma: f64,
     horizontal: bool,
 ) {
     // Young-van Vliet coefficients stay binary64 in every build. Their DC gain
     // is `a / (1 - b1 - b2 - b3)`, and at large sigma `a` is around 1e-6, so
     // working-precision f32 arithmetic cannot separate `1 - b1 - b2 - b3` from
     // 1.0: an f32 recurrence loses the gain and a constant field drifts (36 %
-    // at sigma = 147 px on a 1024-wide frame). The device kernel has always
-    // carried f64 coefficients and f64 state, so this also restores parity.
-    let sigma = to_f64(sigma);
+    // at sigma = 147 px on a 1024-wide frame). The f64 device kernel carries
+    // f64 coefficients and f64 state, so this also restores parity.
     let q = if sigma >= 2.5 {
         0.98711 * sigma - 0.96330
     } else {
@@ -431,68 +348,52 @@ mod tests {
     }
 
     #[test]
-    fn box_kernel_fidelity_against_truncated_gaussian() {
-        // σ / width: L1 / max / RMS over the union of the supports:
-        // 8 / 15:   0.03645100 / 0.00168298 / 0.00090100
-        // 32 / 61:  0.03129204 / 0.00033285 / 0.00018418
-        // 147 / 283: 0.03289820 / 0.00007097 / 0.00004107
-        // Upper bounds allow 2% margin for working-buffer rounding.
-        for (sigma, width, expected) in [
-            (8.0_f64, 15, [0.03645100, 0.00168298, 0.00090100]),
-            (32.0, 61, [0.03129204, 0.00033285, 0.00018418]),
-            (147.0, 283, [0.03289820, 0.00007097, 0.00004107]),
+    fn large_sigma_matches_upstream_iir_not_boxes() {
+        // Frozen f32 output from `fast_gaussian_filter` at experimental
+        // 28bf883 for a 7x5 ramp. This guards the shared CPU Gaussian used by
+        // halation, DIR and Spektra finishing independently of the GPU path.
+        let data: Vec<Scalar> = (0..35)
+            .map(|index| from_f64(((index * 37 + 11) % 97) as f64 / 97.0))
+            .collect();
+        for (sigma, expected) in [
+            (
+                8.0,
+                [
+                    0.21965311467647552,
+                    0.22280146181583405,
+                    0.22518789768218994,
+                    0.2268066257238388,
+                    0.22774997353553772,
+                    0.22818094491958618,
+                    0.2283034771680832,
+                    0.22065573930740356,
+                    0.22379407286643982,
+                    0.22617292404174805,
+                ],
+            ),
+            (
+                20.0,
+                [
+                    0.12586252391338348,
+                    0.12590548396110535,
+                    0.1259356588125229,
+                    0.12595488131046295,
+                    0.12596552073955536,
+                    0.12597021460533142,
+                    0.12597151100635529,
+                    0.12587271630764008,
+                    0.12591567635536194,
+                    0.1259458363056183,
+                ],
+            ),
         ] {
-            assert_eq!(gaussian_box_width(sigma), width);
-            let radius = (3.0 * sigma + 0.5) as usize;
-            let extent = radius.max(3 * (width / 2));
-            let length = 2 * extent + 1;
-            let mut impulse = vec![ZERO; length];
-            impulse[extent] = from_f64(1.0);
-            let mut actual = vec![ZERO; length];
-            box_blur_1d(&impulse, &mut actual, length, 1, sigma, true);
-            let gaussian = make_gaussian_kernel(from_f64(sigma), radius);
-            let mut l1 = 0.0_f64;
-            let mut max = 0.0_f64;
-            let mut squares = 0.0_f64;
-            for (i, &value) in actual.iter().enumerate() {
-                let distance = i.abs_diff(extent);
-                let reference = if distance <= radius {
-                    to_f64(gaussian[i + radius - extent])
-                } else {
-                    0.0
-                };
-                let error = (to_f64(value) - reference).abs();
-                l1 += error;
-                max = max.max(error);
-                squares += error * error;
-            }
-            let measured = [l1, max, (squares / length as f64).sqrt()];
-            for (value, baseline) in measured.into_iter().zip(expected) {
-                assert!(value <= baseline * 1.02, "sigma {sigma}: {measured:?}");
-            }
-        }
-    }
-
-    #[test]
-    fn box_cascade_reflects_on_short_axes() {
-        let input = [from_f64(0.0), from_f64(1.0), from_f64(0.25)];
-        let mut expected = input;
-        let radius = 7isize; // sigma 8 gives width 15
-        for _ in 0..3 {
-            let previous = expected;
-            for (i, value) in expected.iter_mut().enumerate() {
-                *value = from_f64(
-                    (-radius..=radius)
-                        .map(|d| to_f64(previous[reflect_index(i as isize + d, 3)]))
-                        .sum::<f64>()
-                        / 15.0,
+            let actual = gaussian_blur_channel(&data, 7, 5, sigma);
+            for (index, (&got, &want)) in actual.iter().zip(&expected).enumerate() {
+                assert!(
+                    (to_f64(got) - want).abs() < 1e-6,
+                    "sigma {sigma} sample {index}: {got} != {want}"
                 );
             }
-        }
-        let mut actual = [ZERO; 3];
-        box_blur_1d(&input, &mut actual, 3, 1, 8.0, true);
-        for (a, b) in actual.into_iter().zip(expected) {
-            assert!((to_f64(a) - to_f64(b)).abs() < 1e-6);
         }
     }
 

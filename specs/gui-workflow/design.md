@@ -19,12 +19,12 @@ The [GUI language design](../gui-language/design.md) owns localized presentation
 - Material controls MUST use existing runtime ownership and capability checks under [Ownership](../output-mix/design.md#ownership). Print contains Enlarger and Preflash under [Print exposure composition](../output-mix/design.md#print-exposure-composition).
 - Film and Print retain existing chemistry and model-specific developer exhaustion. Inactive routes and unsupported profiles MUST retain stored values and report capability conditions.
 - Print-filter neutralization MUST fit a deterministic pointwise request with spatial and stochastic effects disabled. It MUST retain caller parameters and vary only local trial M/Y shifts.
-- Module resets and serialized section payloads have separate scopes under [Section reset](spec.md#section-reset). Apart from [common finishing](../finishing/design.md#ownership), the GUI MUST NOT add digital-response preparation, tonal masks, creative cyan shifts, saturation or color-density groups, or duplicate Scanner levels.
+- Module resets and serialized section payloads have separate scopes under [Section reset](spec.md#section-reset). Apart from [tone and color adjustments](../finishing/design.md#ownership), the GUI MUST NOT add digital-response preparation, tonal masks, creative cyan shifts, saturation or color-density groups, or duplicate Scanner levels.
 - Material selection and reset-baseline construction MUST use the core-owned [material defaults](../presets/design.md#material-defaults), not a GUI copy of stock tables. Reset baseline construction starts from a fresh factory projection without live explicit edits.
 - Ordinary rendering, full-state restoration, and history replay retain accepted values without material-default initialization. State compatibility follows [finishing wire and compatibility](../finishing/design.md#wire-and-compatibility).
 - Scanner references and inverses retain their existing dependencies. Input and capture → Camera exposes the canonical `camera.capture_illuminant` leaf under the [Camera control contract](spec.md#contract), including inherited effective values and the CLI's shared type, validator, and conditions.
 - The output amount control MUST use [core output composition](../output-mix/design.md#output-composition). The GUI MUST NOT derive an output-mix source from the Input viewer raster, restore retired output lightness processing, or add a separate output-processing switch for the `input` workflow.
-- Finishing controls and inactive reasons MUST consume the core-owned [finishing applicability](../finishing/design.md#ownership), not a GUI route table. Module comparison MUST use [finishing editing and comparison](../finishing/spec.md#editing-and-comparison) without creating another history owner.
+- Tone & Color controls and inactive reasons MUST consume the core-owned [adjustment applicability](../finishing/design.md#ownership), not a GUI route table. Module comparison MUST use [adjustment editing and comparison](../finishing/spec.md#editing-and-comparison) without creating another history owner.
 - State and preset loading MUST validate and migrate a candidate before committing any UI or runtime state. With a loaded source, state application prepares RAW reloads, GPU upload and the input view on the input worker before one UI-side commit.
 - RGB state application MUST reuse accepted source samples and preserve their metadata and source identity without rereading the file. Completion status and history replacement occur only after that commit; preparation failure preserves the source, controls, accepted output, history and numeric drafts.
 - Rejected retired settings likewise leave the accepted transaction intact under [Persistence and delivery](../output-mix/design.md#persistence-and-delivery).
@@ -36,7 +36,10 @@ The [GUI language design](../gui-language/design.md) owns localized presentation
 - The profile selection module owns catalog discovery and stock and development-time pickers. The application owns selection state and render invalidation.
 - Viewer presentation uses disposable device or host display rasters under [GPU residency](../gpu-execution/design.md#device-residency). Save and Export consume retained floating output or invoke the export renderer and shared writer.
 - The private raster module owns interpolation kernels and pixel sampling. The viewer owns color transforms, caching, and presentation state.
-- Full-source sampling transforms each source tap before interpolation. Capped display rasters reduce the source before color conversion.
+- Full-source viewing MUST apply display and ICC transforms before filtering. Capped display rasters MUST reduce before color conversion.
+- Transform-cache and device source windows MUST cover the complete filter support. Binding or cache limits MUST NOT truncate an output pixel's source footprint.
+- The viewer MUST resolve source-pixel coverage before rounding screen rectangles. Sampling MUST include texture-size limits without deriving scale from the rectangle origin.
+- Large area reductions MUST preserve accumulation precision and bound each device submission's work. Off-image pixels MUST NOT trigger source-footprint tiling.
 - GPU viewing MUST satisfy [numerical alignment](../gpu-execution/design.md#numerical-alignment) without CPU image arithmetic.
 - Preview and viewport composition use separate persistent workers. Each worker retains one queued snapshot and replaces it when a newer request arrives.
 - The UI always schedules Preview after the frame validates and accepts adjustments. The final edit MUST arm its debounce wakeup before the event loop becomes idle.
@@ -56,7 +59,8 @@ The [GUI language design](../gui-language/design.md) owns localized presentation
 - Export work runs outside the UI event loop. Completion, failure, and cancellation are explicit states; temporary output is never presented as completed output.
 - Numeric editors associate visible labels with their text inputs. Tuple editors identify each component.
 - Profile and development-time selectors associate their visible labels with the selection control.
-- Native Save and Export actions select a path before entering the shared output operation. Headless acceptance enters at that path boundary and executes the same worker and writer.
+- Native Save and Export actions select a path before entering the shared output operation. The chooser-confirmed path is the final publication identity; the adapter MUST NOT rewrite it after confirmation.
+- Headless acceptance enters at that path boundary and executes the same worker and writer. Native desktop acceptance MUST also exercise ordinary filename and full-path location entry, the published name and container, and overwrite protection for the exact confirmed path.
 - Headless App acceptance exercises production controls and real workers. CPU coverage, hardware-GPU computation coverage, offscreen layout checks, and native desktop acceptance have separate evidence scopes under [GPU acceptance](../gpu-execution/spec.md#acceptance) and the [GUI acceptance guide](../../scripts/parity/README.md#headless-gui-acceptance).
 - Numeric editing and validation share one control implementation under [numeric editor ranges](spec.md#numeric-editor-ranges); an editor cannot accept a value the validator rejects. State loading and runtime candidates use [shared canonical validation](../cli/design.md#shared-value-validation) after their existing normalization.
 - The GUI editor-range table owns interaction limits and steps, not parameter value domains. Core-owned typed validators and discovery share document bounds under [Field description](../cli/design.md#field-description).
@@ -68,6 +72,14 @@ The [GUI language design](../gui-language/design.md) owns localized presentation
 - Image-to-plot sample linking MUST follow [linked pixel sampling](../gui-product-design/image-analysis/design.md#linked-pixel-sampling) rather than create another pixel-readback or coordinate-mapping owner.
 - A GUI surface has one owner. Duplicated rendering of one value from two surfaces is a defect, not a convenience.
 - Region, action, and editor ownership follow [Window layout](spec.md#window-layout) and [Stage and surface ownership](spec.md#stage-and-surface-ownership). The stage inspector replaces page tabs; neither application settings nor independent Export MAY create a second photographic editor.
+
+### Tone and color presentation boundary
+
+The control inventory MUST assign the adjustment controls and comparison action to Scan under [Tone and color access](spec.md#tone-and-color-access). Inspector rendering, search, locators, modified markers, and reset dispatch MUST use that same owner.
+
+The module's display name MUST be independent of its `finishing` parameter and section identities. Localization MUST follow [identity before presentation](../gui-language/design.md#identity-before-presentation), rather than replacing English strings only during painting.
+
+This surface change MUST preserve the [response and wire contract](../finishing/design.md#wire-and-compatibility). Scan membership MUST NOT merge adjustment reset or copy scopes with Scanner, or alter render-worker preparation and comparison behavior.
 
 ## Adjustment state ownership
 
@@ -86,7 +98,7 @@ The shared settings boundary is:
 | Scope | `SettingsParams` fields |
 | --- | --- |
 | Photograph | `spectral_shape`, `rgb_to_raw_method`, `apply_hanatos2025_adaptation_window`, `apply_hanatos2025_adaptation_surface`, `spectral_gaussian_blur`, `use_cat16`, `print_exposure_ev_tracking` |
-| Session | `preview_max_size`, `preview_mode`, `use_enlarger_lut`, `use_scanner_lut`, `lut_resolution`, `use_fast_stats`, `neutral_print_filters_from_database` |
+| Session | `preview_max_size`, `preview_mode`, `use_enlarger_lut`, `use_scanner_lut`, `lut_resolution`, `neutral_print_filters_from_database` |
 
 History snapshots and photograph documents MUST retain their existing normalization values. History replay and photograph activation MUST preserve the current session settings through the shared copy operation. Seed handling, accepted RAW settings, applied-preset markers, rotation, and preparation ownership remain with each operation; they MUST NOT be folded into one universal state identity.
 

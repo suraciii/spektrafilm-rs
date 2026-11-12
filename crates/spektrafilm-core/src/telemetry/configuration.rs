@@ -58,6 +58,29 @@ pub enum WorkflowRoute {
 }
 
 impl WorkflowRoute {
+    /// Every supported workflow route in the order exposed by discovery and
+    /// CLI help. `Custom` is deliberately absent: it is a parse sentinel, not
+    /// a route a caller may select.
+    pub const ALL: [Self; 12] = [
+        Self::Input,
+        Self::FilmScan,
+        Self::FilmPrintScan,
+        Self::ConvertFilmPrintScan,
+        Self::ConvertFilmScanMinusBase,
+        Self::ConvertFilmScan,
+        Self::InputFilm,
+        Self::InputFilmPrint,
+        Self::StoredFilmScan,
+        Self::StoredFilmPrint,
+        Self::StoredFilmPrintScan,
+        Self::StoredPrintScan,
+    ];
+
+    /// The removed dedicated magazine workflow. Saved configurations that still
+    /// name it must be migrated to a base workflow plus `cmyk.active`; it is not
+    /// a selectable route.
+    pub const REMOVED_MAGAZINE_ROUTE: &'static str = "input > film > scan > magazine";
+
     pub fn parse(value: &str) -> Self {
         let mut nodes = value
             .split('>')
@@ -375,7 +398,6 @@ pub struct GrainConfiguration {
     pub active: bool,
     pub engine: GrainEngine,
     pub mode: GrainMode,
-    pub spektra_fast_statistics_sampler: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub record: Option<RecordConfiguration>,
 }
@@ -639,9 +661,6 @@ impl RenderConfiguration {
                     crate::params::GrainEngine::Dye => GrainMode::DyeField,
                     crate::params::GrainEngine::Fotufilm => GrainMode::FotufilmFilm,
                 },
-                spektra_fast_statistics_sampler: grain_active
-                    && grain.engine == crate::params::GrainEngine::Spektra
-                    && params.settings.use_fast_stats,
                 record: None,
             },
             spatial: SpatialConfiguration {
@@ -771,6 +790,19 @@ impl SavingConfiguration {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn supported_routes_round_trip_and_exclude_the_parse_sentinel() {
+        let mut seen = std::collections::BTreeSet::new();
+        for route in WorkflowRoute::ALL {
+            let text = route.as_str();
+            assert!(!text.is_empty());
+            assert_eq!(WorkflowRoute::parse(text), route);
+            assert!(seen.insert(text), "duplicate route spelling {text:?}");
+            assert_ne!(route, WorkflowRoute::Custom);
+        }
+        assert_eq!(seen.len(), WorkflowRoute::ALL.len());
+    }
 
     #[test]
     fn fotufilm_engine_and_model_have_distinct_telemetry_identity() {

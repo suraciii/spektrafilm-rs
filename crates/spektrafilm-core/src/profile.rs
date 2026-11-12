@@ -3,8 +3,12 @@
 //! The private modules separate responsibilities while this facade preserves
 //! the public profile API.
 
+#[cfg(test)]
+mod fbclassic_tests;
 mod io;
 mod model;
+#[cfg(test)]
+mod polymax_tests;
 mod render;
 mod validation;
 
@@ -86,17 +90,15 @@ mod tests {
         assert!(film.is_film() && film.is_filming() && !film.is_print_stock());
     }
 
-    /// The bundled K64 ships the digitized E-88 characteristic curves with
-    /// no fitted model, so the sampled arrays are authoritative: the loader
-    /// must not regenerate or rescale them. The curves are floor-stripped
-    /// (per-channel minima zero, as upstream; the base fog lives in
-    /// `base_density`). The upstream sublayer decomposition is kept: the
-    /// research round validated its grain statistics against the E-88
-    /// composite, and rebuilding it to sum to the new composite removes the
-    /// grain density contribution (measured +13 L*50 on the reference
-    /// scenes) — pinned here by the upstream layer-sum maxima.
+    /// The bundled K64 ships the single experimental K64 look: the pre-E-88
+    /// upstream characteristic curves with a narrowed magenta dye and a local
+    /// M/Y curve re-anchor, no fitted model. The sampled arrays are
+    /// authoritative: the loader must not regenerate or rescale them. The
+    /// curves are floor-stripped (per-channel minima zero; the base fog lives
+    /// in `base_density`). The upstream sublayer decomposition is kept and
+    /// sums to the composite Dmax (pre-E-88 upstream fit).
     #[test]
-    fn kodachrome_64_ships_authoritative_e88_curves() {
+    fn kodachrome_64_ships_single_experimental_curves() {
         let Some(p) = data_profile("kodak_kodachrome_64") else {
             return;
         };
@@ -119,8 +121,8 @@ mod tests {
                 .fold(f64::INFINITY, f64::min);
             assert!(min.abs() < 1e-9, "channel {ch} floor {min}");
         }
-        // E-88 Status A scale per channel: Dmax ≈ 3.50 / 3.26 / 3.13.
-        for (ch, expected) in [3.4976, 3.2577, 3.1280].into_iter().enumerate() {
+        // Pre-E-88 upstream Status A scale per channel: Dmax ≈ 2.914 / 2.792 / 2.272.
+        for (ch, expected) in [2.9141, 2.7915, 2.2724].into_iter().enumerate() {
             let dmax = p
                 .data
                 .density_curves
@@ -129,12 +131,8 @@ mod tests {
                 .fold(f64::MIN, f64::max);
             assert!((dmax - expected).abs() < 0.02, "channel {ch} Dmax {dmax}");
         }
-        // The sublayer decomposition stays the pre-E-88 upstream fit: its
-        // per-channel sum maxima are the old curve's Dmax. No E-88 sublayer
-        // data exists, and the research round validated this pairing's grain
-        // statistics against the E-88 composite — refitting the tensor to
-        // sum to the new composite removes the grain density contribution
-        // (measured +13 L*50 on the reference scenes).
+        // The sublayer decomposition is the pre-E-88 upstream fit; its
+        // per-channel sum maxima equal the composite Dmax.
         let tensor = p.density_curves_layers_f64();
         assert_eq!(tensor.len(), p.data.density_curves.len());
         for (ch, expected) in [2.9136, 2.7911, 2.2720].into_iter().enumerate() {
@@ -306,3 +304,6 @@ mod tests {
         std::fs::remove_dir_all(directory).unwrap();
     }
 }
+
+#[cfg(test)]
+mod trix400_tests;

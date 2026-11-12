@@ -1,4 +1,8 @@
-use super::super::super::{CachedPipelineRef, WgpuBackend};
+pub(super) mod mass;
+
+#[cfg(test)]
+use super::super::super::CachedPipelineRef;
+use super::super::super::WgpuBackend;
 use super::super::raster::{RasterCommands, RasterStorage, paged_transport, transport, uniform};
 use super::blur::{GrainBlurState, build_grain_blur_paged};
 use spektrafilm_backend::SpektraGrainGpuParams;
@@ -246,36 +250,17 @@ fn build_grain_post_with_limit(
             );
         }
         let pair = transport(backend, 24, "grain_usm_mass")?;
-        let lanes = transport(backend, 192, "grain_usm_pairwise_lanes")?;
-        let stack = paged_transport(
+        mass::build(
             backend,
-            u64::from(n.ilog2() + 1) * 24,
-            "grain_usm_pairwise_stack",
-        )?;
-        let reduce_pipe = backend.cached_pipeline(
-            include_str!("post_reduce.wgsl"),
-            &[
-                wgpu::BufferBindingType::Uniform,
-                wgpu::BufferBindingType::Storage { read_only: true },
-                wgpu::BufferBindingType::Storage { read_only: true },
-                wgpu::BufferBindingType::Storage { read_only: false },
-                wgpu::BufferBindingType::Storage { read_only: false },
-            ],
-        );
-        MassReduction {
-            backend,
-            commands: &mut after,
-            source: &source,
-            sharpened: &sharpened,
-            source_window: &source_window,
-            sharpen_window: &blur_window,
-            lanes: &lanes,
-            pair: &pair,
-            stack: &stack,
-            pipeline: &reduce_pipe,
+            &mut after,
+            &source,
+            &sharpened,
+            &source_window,
+            &blur_window,
+            &pair,
+            n,
             chunk,
-        }
-        .emit(0, n, 0);
+        )?;
         let apply_pipe = backend.cached_pipeline(
             include_str!("post_apply.wgsl"),
             &[
@@ -320,83 +305,6 @@ fn build_grain_post_with_limit(
         usm_blur,
         after,
     })
-}
-
-/// Emit the global NumPy pairwise tree, not a tree over transport chunks.
-/// Only logarithmically many left-child results are retained; a leaf's eight
-/// accumulators carry across arbitrarily placed storage windows.
-struct MassReduction<'a> {
-    backend: &'a WgpuBackend,
-    commands: &'a mut RasterCommands,
-    source: &'a dyn RasterStorage,
-    sharpened: &'a dyn RasterStorage,
-    source_window: &'a wgpu::Buffer,
-    sharpen_window: &'a wgpu::Buffer,
-    lanes: &'a wgpu::Buffer,
-    pair: &'a wgpu::Buffer,
-    stack: &'a dyn RasterStorage,
-    pipeline: &'a CachedPipelineRef,
-    chunk: u32,
-}
-
-impl MassReduction<'_> {
-    fn emit(&mut self, first: u32, count: u32, depth: u32) {
-        if count > 128 {
-            let midpoint = (count / 2) & !7;
-            self.emit(first, midpoint, depth + 1);
-            self.commands
-                .copy(self.pair, 0, self.stack, u64::from(depth) * 24, 24);
-            self.emit(first + midpoint, count - midpoint, depth + 1);
-            self.commands
-                .copy(self.stack, u64::from(depth) * 24, self.source_window, 0, 24);
-            let p = uniform(self.backend, &[0u32, 0, 0, 1]);
-            self.commands.dispatch(
-                self.pipeline,
-                &[
-                    &p,
-                    self.source_window,
-                    self.sharpen_window,
-                    self.lanes,
-                    self.pair,
-                ],
-                3,
-                false,
-                self.backend,
-            );
-        } else {
-            for offset in (0..count).step_by(self.chunk as usize) {
-                let size = self.chunk.min(count - offset);
-                self.commands.copy(
-                    self.source,
-                    u64::from(first + offset) * 12,
-                    self.source_window,
-                    0,
-                    u64::from(size) * 12,
-                );
-                self.commands.copy(
-                    self.sharpened,
-                    u64::from(first + offset) * 12,
-                    self.sharpen_window,
-                    0,
-                    u64::from(size) * 12,
-                );
-                let p = uniform(self.backend, &[size, offset, count, 0]);
-                self.commands.dispatch(
-                    self.pipeline,
-                    &[
-                        &p,
-                        self.source_window,
-                        self.sharpen_window,
-                        self.lanes,
-                        self.pair,
-                    ],
-                    3,
-                    false,
-                    self.backend,
-                );
-            }
-        }
-    }
 }
 
 impl GrainPostState {
@@ -453,7 +361,6 @@ mod tests {
             usm_amount: 0.0,
             curve_x: vec![0.0, 0.0, 0.0, 1.0, 1.0, 1.0],
             curve_layers: vec![0.0; 18],
-            mt19937_regime: false,
         }
     }
 
@@ -850,11 +757,88 @@ mod tests {
         }
     }
 
+    /// Emit the global NumPy pairwise tree, not a tree over transport chunks.
+    /// Only logarithmically many left-child results are retained; a leaf's eight
+    /// accumulators carry across arbitrarily placed storage windows.
+    struct MassReduction<'a> {
+        backend: &'a WgpuBackend,
+        commands: &'a mut RasterCommands,
+        source: &'a dyn RasterStorage,
+        sharpened: &'a dyn RasterStorage,
+        source_window: &'a wgpu::Buffer,
+        sharpen_window: &'a wgpu::Buffer,
+        lanes: &'a wgpu::Buffer,
+        pair: &'a wgpu::Buffer,
+        stack: &'a dyn RasterStorage,
+        pipeline: &'a CachedPipelineRef,
+        chunk: u32,
+    }
+
+    impl MassReduction<'_> {
+        fn emit(&mut self, first: u32, count: u32, depth: u32) {
+            if count > 128 {
+                let midpoint = (count / 2) & !7;
+                self.emit(first, midpoint, depth + 1);
+                self.commands
+                    .copy(self.pair, 0, self.stack, u64::from(depth) * 24, 24);
+                self.emit(first + midpoint, count - midpoint, depth + 1);
+                self.commands
+                    .copy(self.stack, u64::from(depth) * 24, self.source_window, 0, 24);
+                let p = uniform(self.backend, &[0u32, 0, 0, 1]);
+                self.commands.dispatch(
+                    self.pipeline,
+                    &[
+                        &p,
+                        self.source_window,
+                        self.sharpen_window,
+                        self.lanes,
+                        self.pair,
+                    ],
+                    3,
+                    false,
+                    self.backend,
+                );
+            } else {
+                for offset in (0..count).step_by(self.chunk as usize) {
+                    let size = self.chunk.min(count - offset);
+                    self.commands.copy(
+                        self.source,
+                        u64::from(first + offset) * 12,
+                        self.source_window,
+                        0,
+                        u64::from(size) * 12,
+                    );
+                    self.commands.copy(
+                        self.sharpened,
+                        u64::from(first + offset) * 12,
+                        self.sharpen_window,
+                        0,
+                        u64::from(size) * 12,
+                    );
+                    let p = uniform(self.backend, &[size, offset, count, 0]);
+                    self.commands.dispatch(
+                        self.pipeline,
+                        &[
+                            &p,
+                            self.source_window,
+                            self.sharpen_window,
+                            self.lanes,
+                            self.pair,
+                        ],
+                        3,
+                        false,
+                        self.backend,
+                    );
+                }
+            }
+        }
+    }
+
     #[test]
-    fn bounded_mass_reduction_matches_global_pairwise_tree_bit_for_bit() {
+    fn batched_mass_reduction_preserves_original_device_tree_across_windows() {
         let gpu = test_support::adapter();
         let pipeline = gpu.cached_pipeline(
-            include_str!("post_reduce.wgsl"),
+            include_str!("post_reduce_reference.wgsl"),
             &[
                 wgpu::BufferBindingType::Uniform,
                 wgpu::BufferBindingType::Storage { read_only: true },
@@ -863,13 +847,33 @@ mod tests {
                 wgpu::BufferBindingType::Storage { read_only: false },
             ],
         );
-        for n in [1u32, 7, 8, 31, 128, 129, 256, 4096] {
+        for n in [
+            1u32, 2, 7, 8, 31, 127, 128, 129, 255, 256, 257, 513, 1025, 4096, 4097,
+        ] {
             let values: Vec<f32> = (0..n)
                 .flat_map(|index| {
                     [
-                        if index % 8 == 0 { 1.0 } else { 1e-7 },
-                        (index % 7) as f32 * 0.3 + 1e-8,
-                        if index % 129 == 0 { 1000.0 } else { 1e-5 },
+                        if n == 2 {
+                            -0.0
+                        } else if index % 8 == 0 {
+                            1.0
+                        } else {
+                            1e-7
+                        },
+                        if n == 1025 && index == 129 {
+                            f32::NAN
+                        } else {
+                            (index % 7) as f32 * 0.3 + 1e-8
+                        },
+                        if n == 1025 && index == 7 {
+                            f32::INFINITY
+                        } else if n == 1025 && index == 511 {
+                            f32::NEG_INFINITY
+                        } else if index % 129 == 0 {
+                            1000.0
+                        } else {
+                            1e-5
+                        },
                     ]
                 })
                 .collect();
@@ -888,7 +892,7 @@ mod tests {
                     contents: bytemuck::cast_slice(&sharpened),
                     usage: wgpu::BufferUsages::COPY_SRC,
                 });
-            for window in [192u64, 1560] {
+            for window in [192u64, 204, 348, 1560, 65532] {
                 let source_window = transport(&gpu, window, "pairwise_test_source_window").unwrap();
                 let sharpen_window =
                     transport(&gpu, window, "pairwise_test_sharpen_window").unwrap();
@@ -913,6 +917,30 @@ mod tests {
                 }
                 .emit(0, n, 0);
                 commands.submit(&gpu).unwrap();
+                let expected_mass = gpu.device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some("pairwise_test_original_mass"),
+                    size: 24,
+                    usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+                    mapped_at_creation: false,
+                });
+                let mut encoder = gpu.device.create_command_encoder(&Default::default());
+                encoder.copy_buffer_to_buffer(&pair, 0, &expected_mass, 0, 24);
+                gpu.queue.submit(Some(encoder.finish()));
+                let original: Vec<f32> = gpu.pipe.read_mapped(&expected_mass, 24).unwrap();
+                let mut commands = RasterCommands::default();
+                mass::build(
+                    &gpu,
+                    &mut commands,
+                    &image,
+                    &output,
+                    &source_window,
+                    &sharpen_window,
+                    &pair,
+                    n,
+                    (window / 12) as u32,
+                )
+                .unwrap();
+                commands.submit(&gpu).unwrap();
                 let readback = gpu.device.create_buffer(&wgpu::BufferDescriptor {
                     label: Some("pairwise_test_readback"),
                     size: 24,
@@ -933,11 +961,23 @@ mod tests {
                                 .map(|pixel| pixel[channel])
                                 .collect::<Vec<_>>(),
                         );
-                        assert_eq!(
-                            actual[plane * 3 + channel].to_bits(),
-                            expected.to_bits(),
-                            "pairwise mass n={n}, window={window}, plane={plane}, channel={channel}"
-                        );
+                        let index = plane * 3 + channel;
+                        if expected.is_finite() {
+                            assert!(
+                                (actual[index] - expected).abs() <= 1e-5 * expected.abs().max(1.0)
+                            );
+                        }
+                        // Non-finite max semantics are device-specific; the unchanged
+                        // production GPU tree below is the exact regression reference.
+                        if original[index].is_nan() {
+                            assert!(actual[index].is_nan());
+                        } else {
+                            assert_eq!(
+                                actual[index].to_bits(),
+                                original[index].to_bits(),
+                                "pairwise mass n={n}, window={window}, plane={plane}, channel={channel}"
+                            );
+                        }
                     }
                 }
             }

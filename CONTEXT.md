@@ -17,6 +17,9 @@ _Avoid_: Debug dump, scan capture
 
 **Scanned medium**: The developed film or photographic paper read for digital output. Its native polarity is independent of the delivered image's polarity.
 
+**Scan workflow**: Reading a developed film or photographic print for a digital image, with interpretation and image adjustments appropriate to the delivered polarity. It includes optical readout and digital operations without treating them as the same physical process.
+_Avoid_: Scan capture alone
+
 **Scanner lamp**: The single physical light source of a scan. Its accepted values are the illuminant vocabulary the enlarger lamp uses: `D50`, `D55`, `D65`, `T`, `TH-KG3`, `TH-KG3-L`, `K75P`, and a `BB<kelvin>` blackbody token. `D55` is the default.
 _Avoid_: Scanner look, output color space, scan illuminant
 
@@ -26,7 +29,7 @@ _Avoid_: Scanner look, output color space, receiver profile
 **Scan capture**: The RGB readings the scan sensor acquires from a scanned medium. A negative conversion reads record densities instead of a scan capture.
 _Avoid_: Scan output, scanned medium
 
-**Clear film base**: The unexposed base of the scanned medium. It is the white reference of a scan: a clear area reads as the output color space's white.
+**Clear film base**: The unexposed base of the scanned medium. It is the default white reference of a scan: a clear area reads as the output color space's white. The explicit readout-illuminant white-reference mode opts out of that calibration.
 _Avoid_: Scanner white and black correction, output levels
 
 **Scanned density**: The density derived from one channel of a scan capture, relative to that channel's clear reference.
@@ -50,8 +53,8 @@ _Avoid_: Capture exposure, operator correction, scanner calibration
 **Operator correction**: The user's global finished-positive exposure, warmth, green–magenta balance, and common-exposure contrast judgment over a frame's automatic result. It does not change the developed negative or the automatic judgment.
 _Avoid_: Capture white balance, material gamma, scanner calibration
 
-**Common finishing**: The user's tonal and color adjustments to a completed positive image, independent of the material and readout route that formed it. It does not describe material exposure, development, or negative-conversion operator correction.
-_Avoid_: Scanner finish, material response, color density
+**Tone and color adjustments**: The user's brightness, contrast, warmth, saturation, and input-range adjustments to a completed positive image, independent of the material and readout route that formed it. They do not describe material exposure, development, scanner calibration, or negative-conversion operator correction.
+_Avoid_: Common finishing, scanner finish, material response, color density
 
 **Digital output**: The color space, transfer encoding, geometry, and file representation used to deliver an image.
 _Avoid_: Scanned medium, negative conversion
@@ -72,6 +75,30 @@ _Avoid_: Prepared chart image
 _Avoid_: Chart group
 
 **Patch window**: The declared rectangular area of one grid patch used for visual inspection. It may cover the patch or a smaller central area, but it does not include an inferred correspondence to another set.
+
+**Look preset**: A named, reusable choice of film and print materials with their look-owned adjustments. It is a starting point for a photograph, not a saved photograph or a complete application setup. An unqualified look preset is a film look preset; a LUT preset is a separate kind.
+_Avoid_: Photograph record, startup state, LUT
+
+**LUT look**: A non-spectral RGB color transform and its independent effect layers, applied without film or print material simulation. A LUT look may be saved as a LUT preset, but it is not a film look preset.
+_Avoid_: Film profile, look preset, LUT delivery
+
+**LUT preset**: A named, user-owned LUT look with an external LUT file path and content hash, declaration, effects, and optional grade. It selects the LUT workflow and carries no film or print profile references.
+_Avoid_: Film look preset, film profile, embedded LUT
+
+**Exported LUT**: A `.cube` file produced from a spectral film look. It is a file, not an active look, imported LUT, or preset.
+_Avoid_: Film profile, film look preset, measured stock
+
+**LUT workflow**: The product workflow that exports a LUT file, imports a LUT file for use, saves and recalls LUT presets, and renders a LUT look. It is separate from the spectral film workflow.
+_Avoid_: Film workflow, spectral simulation
+
+**LUT mode**: The render mode that applies a LUT look. It is exclusive with the spectral film mode and carries no material or illuminant simulation.
+_Avoid_: Film workflow, spectral simulation
+
+**LUT stage**: The pointwise 3D color transform declared by a LUT look, with its input and output color spaces, domain, domain policy, shaper, and strength.
+_Avoid_: Film density, camera profile
+
+**Preset thumbnail**: A small rendering of the current photograph with a candidate look preset, used to compare looks without changing accepted adjustments. It is not a reference sample or the retained Preview result.
+_Avoid_: Reference thumbnail, saved preset image
 
 **Feature profile**: A named, reusable parameter set for one film-chain feature. It resolves only that feature's editable controls and does not select film or print materials, change workflow, or represent a complete look.
 

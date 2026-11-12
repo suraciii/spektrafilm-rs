@@ -1,16 +1,17 @@
-# Common finishing design
+# Tone and color adjustment design
 
 ## Ownership
 
-The [product contract](spec.md) owns control behavior, applicability, and delivery. The design preserves one finishing definition without adding a second image pipeline.
+The [product contract](spec.md) owns tone and color adjustment behavior, applicability, and delivery. The internal `finishing` capability implements this response without adding a second image pipeline.
 
 | Boundary | Owner |
 | --- | --- |
 | Typed values, neutral defaults, validation, and canonical metadata | Core runtime parameters |
-| Route, medium, and delivered-polarity applicability | Core film-chain resolution |
+| Route, medium, delivered-polarity, and LUT look applicability | Core film-chain resolution and LUT look |
 | Fixed response definition and prepared color transforms | Core finishing |
 | Image resources and device dispatch | The selected compute backend |
 | Look capture, section scope, and document migrations | Presets and each versioned carrier |
+| LUT look grade persistence | [LUT workflow](../lut-workflow/spec.md#lut-presets) |
 | Control presentation, transient comparison, and edit transactions | GUI workflow |
 | Prepared-source composition | Output mix |
 | Delivery conversion and bounded output clipping | Photo export |
@@ -19,9 +20,9 @@ CLI, GUI, LUT baking, and diagnostic collection MUST consume the same effective 
 
 ## Color and order
 
-The finishing boundary MUST receive the completed positive after eligible print viewing glare. It MUST precede existing output gamut processing.
+The finishing boundary MUST receive the completed positive after eligible print viewing glare or after the declared LUT color transform. It MUST precede existing output gamut processing.
 
-The remaining tail MUST retain the [film-chain order](../film-chain/spec.md#contract). Finishing MUST NOT move a nonlinear response across scanner optics, readout glare, output gamut, or encoded-domain appearance processing.
+The remaining tail MUST retain the [film-chain order](../film-chain/spec.md#contract). In LUT mode, finishing MUST follow the LUT and precede output encoding and grain. Finishing MUST NOT move a nonlinear response across scanner optics, readout glare, output gamut, or encoded-domain appearance processing.
 
 An active finishing evaluation MUST follow this order:
 
@@ -149,7 +150,11 @@ Material-density and reconstructed-exposure taps MUST remain upstream and retain
 
 ## Wire and compatibility
 
-The canonical look-owned runtime group MUST be `finishing`, with an independent Finishing section scope. Exhaustive leaf names and public bounds belong to the schema and discovery metadata, not a second inventory in this document.
+The canonical look-owned runtime group MUST remain `finishing`, with its independent section scope. Exhaustive leaf names and public bounds belong to the schema and discovery metadata, not a second inventory in this document.
+
+The Scan placement and Tone & Color label MUST NOT rename canonical leaves, the serialized section identifier, or `common_finishing_v1`. This presentation change MUST NOT add `scanner.*` aliases, change carrier versions, or migrate stored adjustment values.
+
+Inspector placement MUST NOT change applicability, response constants, evaluation order, or preparation reuse. Scanner and adjustment sections MUST retain their independent capture, apply, copy, and reset scopes under [Presets](../presets/design.md#sections).
 
 Publishing that group MUST update its parameter language, validator, discovery, and consumer documentation together. New syntax or changed omission behavior MUST have an explicit compatibility decision before publication.
 

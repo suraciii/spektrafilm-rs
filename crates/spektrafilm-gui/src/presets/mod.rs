@@ -44,7 +44,9 @@ impl BrowserState {
         }
         let text = match std::fs::read_to_string(path) {
             Ok(text) => text,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(embedded),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return Ok(layout_only(embedded));
+            }
             Err(error) => return Err(error.into()),
         };
         let carrier: serde_json::Value = serde_json::from_str(&text)?;
@@ -54,7 +56,11 @@ impl BrowserState {
                 .arg("version", &carrier["rust"]["version"])
                 .arg("path", path.display())
         );
-        Ok(serde_json::from_value(carrier["rust"]["presets"].clone())?)
+        // The global carrier restores layout only: an old applied name must
+        // never label unrelated controls after a restart.
+        Ok(layout_only(serde_json::from_value(
+            carrier["rust"]["presets"].clone(),
+        )?))
     }
 
     pub fn save(&self, path: &Path) -> anyhow::Result<()> {
@@ -64,7 +70,12 @@ impl BrowserState {
         {
             std::fs::create_dir_all(parent)?;
         }
-        let carrier = serde_json::json!({"rust": {"version": 1, "presets": self}});
+        // The global carrier owns layout only; a last-used applied identity
+        // would label unrelated controls after a restart.
+        let carrier = serde_json::json!({"rust": {"version": 1, "presets": {
+            "width": self.width,
+            "expanded": self.expanded,
+        }}});
         std::fs::write(path, serde_json::to_vec_pretty(&carrier)?)?;
         Ok(())
     }
@@ -87,10 +98,23 @@ pub fn marker(
         .iter()
         .find(|e| e.group == applied.group && e.name == applied.name)
         .and_then(|e| e.preset.as_ref())
-        .filter(|p| p.kind() == Ok(PresetKind::Look))
+        .filter(|p| matches!(p.kind(), Ok(PresetKind::Look | PresetKind::Lut)))
     else {
         return Marker::Missing;
     };
+    if preset.kind() == Ok(PresetKind::Lut) {
+        return if params.workflow.mode == spektrafilm_core::params::WorkflowMode::Lut
+            && preset.lut.as_ref() == Some(&params.lut_look)
+        {
+            if preset.lut.as_ref().is_some_and(|lut| lut.load().is_ok()) {
+                Marker::Applied
+            } else {
+                Marker::Missing
+            }
+        } else {
+            Marker::Modified
+        };
+    }
     if preset
         .film_profile
         .as_ref()
@@ -129,6 +153,36 @@ pub fn name_error(
                 })
         })
 }
+
+/// Preset names are 1-64 portable characters; the dialog proposes names that
+/// already satisfy the validation instead of opening with an invalid default.
+const MAX_PRESET_NAME_CHARS: usize = 64;
+
+/// A free name in `My Presets`, so the name dialog proposes an available copy
+/// instead of an invalid one.
+pub(super) fn available_name(base: &str, entries: &[LibraryEntry]) -> String {
+    let mut base: String = base.trim().chars().take(MAX_PRESET_NAME_CHARS).collect();
+    while !base.is_empty() && validate_name(&base).is_err() {
+        base.pop();
+    }
+    if base.is_empty() {
+        base = "Preset".to_owned();
+    }
+    if name_error(&base, entries, None).is_none() {
+        return base;
+    }
+    (2..1000)
+        .find_map(|suffix| {
+            let suffix = format!(" {suffix}");
+            let keep = MAX_PRESET_NAME_CHARS.saturating_sub(suffix.chars().count());
+            let mut candidate: String = base.chars().take(keep).collect();
+            candidate.push_str(&suffix);
+            name_error(&candidate, entries, None)
+                .is_none()
+                .then_some(candidate)
+        })
+        .unwrap_or(base)
+}
 pub fn reveal_command(path: &Path) -> std::process::Command {
     if cfg!(target_os = "macos") {
         let mut command = std::process::Command::new("open");
@@ -151,15 +205,43 @@ pub fn reveal_command(path: &Path) -> std::process::Command {
     }
 }
 fn reveal(path: &Path) -> Result<(), crate::app::Message> {
-    let status = reveal_command(path).status().map_err(|e| {
-        crate::app::Message::new("surfaces.presets.reveal_error")
+    run_opener(reveal_command(path), path, "surfaces.presets.reveal_error")
+}
+
+/// Open a directory itself rather than selecting or revealing its parent.
+fn open_directory(path: &Path) -> Result<(), crate::app::Message> {
+    let mut command = if cfg!(target_os = "macos") {
+        std::process::Command::new("open")
+    } else if cfg!(windows) {
+        std::process::Command::new("explorer")
+    } else {
+        std::process::Command::new("xdg-open")
+    };
+    command.arg(path);
+    // A missing preset directory is an empty library, not an unusable one;
+    // create it so a fresh installation can open the folder it advertises.
+    std::fs::create_dir_all(path).map_err(|detail| {
+        crate::app::Message::new("surfaces.presets.open_error")
             .arg("path", path.display())
-            .arg("detail", e)
+            .arg("detail", detail)
+    })?;
+    run_opener(command, path, "surfaces.presets.open_error")
+}
+
+fn run_opener(
+    mut command: std::process::Command,
+    path: &Path,
+    error_key: &'static str,
+) -> Result<(), crate::app::Message> {
+    let status = command.status().map_err(|detail| {
+        crate::app::Message::new(error_key)
+            .arg("path", path.display())
+            .arg("detail", detail)
     })?;
     if status.success() {
         Ok(())
     } else {
-        Err(crate::app::Message::new("surfaces.presets.reveal_error")
+        Err(crate::app::Message::new(error_key)
             .arg("path", path.display())
             .arg("detail", status))
     }
@@ -172,9 +254,13 @@ fn provenance() -> Provenance {
     }
 }
 
+fn layout_only(mut state: BrowserState) -> BrowserState {
+    state.applied = None;
+    state
+}
+
 pub(crate) enum PresetAction {
     Load,
-    Update,
     Rename,
     Duplicate,
     Export,
@@ -195,13 +281,11 @@ pub(crate) struct NameDialog {
 }
 
 mod actions;
-mod discovery;
+mod errors;
 mod render;
+mod thumbnail_worker;
 mod thumbnails;
 pub use render::*;
 
 #[cfg(test)]
 mod tests;
-
-#[cfg(test)]
-mod discovery_tests;

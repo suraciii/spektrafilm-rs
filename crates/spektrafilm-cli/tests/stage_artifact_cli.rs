@@ -116,6 +116,9 @@ fn film_terminal_dry_run_has_no_print_or_image_writer_dependency_and_debug_prese
         assert_eq!(plain.stdout, debug.stdout);
         assert!(String::from_utf8_lossy(&debug.stderr).contains("Debug:"));
         let report: Value = serde_json::from_slice(&plain.stdout).unwrap();
+        assert_eq!(report["workflow"]["mode"], "film");
+        assert_eq!(report["workflow"]["route"], "input > film");
+        assert_eq!(report["workflow"]["film_stages"], "active");
         assert!(report["print_profile"].is_null());
         assert_eq!(report["output"]["kind"], "stage_artifact");
         assert_eq!(report["output"]["format"], "sfstage");

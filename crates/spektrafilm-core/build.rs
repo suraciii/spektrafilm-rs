@@ -24,13 +24,22 @@ fn main() {
         source,
     )
     .expect("writing preset asset list");
-    let oiio = pkg_config::Config::new().probe("OpenImageIO").expect("Install OpenImageIO development libraries (libopenimageio-dev, brew install openimageio, or vcpkg openimageio)");
-    let exiv = pkg_config::Config::new().probe("exiv2").expect(
-        "Install Exiv2 development libraries (libexiv2-dev, brew install exiv2, or vcpkg exiv2)",
-    );
+    let oiio = pkg_config::Config::new()
+        .cargo_metadata(false)
+        .probe("OpenImageIO")
+        .expect("Install OpenImageIO development libraries (libopenimageio-dev, brew install openimageio, or vcpkg openimageio)");
+    let exiv = pkg_config::Config::new()
+        .cargo_metadata(false)
+        .probe("exiv2")
+        .expect(
+            "Install Exiv2 development libraries (libexiv2-dev, brew install exiv2, or vcpkg exiv2)",
+        );
     // OpenImageIO.pc can omit public header dependencies. Imath supplies half.h;
     // external fmt installs use a forwarding header instead of bundled headers.
-    let imath = pkg_config::Config::new().probe("Imath").expect("Install Imath development libraries (libimath-dev, brew install imath, or mingw-w64-ucrt-x86_64-imath) and expose Imath.pc through PKG_CONFIG_PATH");
+    let imath = pkg_config::Config::new()
+        .cargo_metadata(false)
+        .probe("Imath")
+        .expect("Install Imath development libraries (libimath-dev, brew install imath, or mingw-w64-ucrt-x86_64-imath) and expose Imath.pc through PKG_CONFIG_PATH");
     let fmt_header = oiio.include_paths.iter()
         .map(|path| path.join("OpenImageIO/detail/fmt/format.h"))
         .find(|path| path.is_file())
@@ -47,6 +56,7 @@ fn main() {
     } else {
         None
     };
+    let external_fmt = fmt.is_some();
     let mut build = cc::Build::new();
     build
         .cpp(true)
@@ -60,11 +70,25 @@ fn main() {
     {
         build.include(path);
     }
-    if let Some(fmt) = fmt {
-        for path in fmt.include_paths {
+    if let Some(fmt) = &fmt {
+        for path in &fmt.include_paths {
             build.include(path);
         }
     }
+    // The bridge archive must precede every library it references: GNU ld on
+    // Windows resolves an import library only against symbols already pending.
     build.compile("spektrafilm_image_io");
+    pkg_config::Config::new()
+        .probe("OpenImageIO")
+        .expect("Install OpenImageIO development libraries (libopenimageio-dev, brew install openimageio, or vcpkg openimageio)");
+    pkg_config::Config::new().probe("exiv2").expect(
+        "Install Exiv2 development libraries (libexiv2-dev, brew install exiv2, or vcpkg exiv2)",
+    );
+    pkg_config::Config::new()
+        .probe("Imath")
+        .expect("Install Imath development libraries (libimath-dev, brew install imath, or mingw-w64-ucrt-x86_64-imath) and expose Imath.pc through PKG_CONFIG_PATH");
+    if external_fmt {
+        pkg_config::Config::new().probe("fmt").expect("This OpenImageIO installation uses external fmt headers: install libfmt-dev, brew install fmt, or mingw-w64-ucrt-x86_64-fmt and expose fmt.pc through PKG_CONFIG_PATH");
+    }
     println!("cargo:rerun-if-changed=src/image_io_bridge.cpp");
 }

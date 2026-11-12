@@ -540,6 +540,7 @@ pub(crate) struct NeutralInputs<'a> {
     illuminant: &'a str,
     controls: [f32; 3],
     protected: [bool; 3],
+    monochrome_paper: bool,
     database: bool,
 }
 
@@ -562,25 +563,26 @@ impl<'a> NeutralInputs<'a> {
             protected: crate::params_builder::authored_filter_axes(
                 params.neutral_print_filters_protected,
             ),
+            monochrome_paper: print.is_bw() && print.is_paper(),
             database: prepare_print && params.settings.neutral_print_filters_from_database,
         }
     }
 
     pub fn build(&self, data_dir: Option<&Path>) -> Result<[f64; 3], String> {
-        let mut cmy = self.controls.map(f64::from);
-        if self.database
-            && let Some(data_dir) = data_dir
-        {
-            let db = crate::neutral_filters::NeutralFilters::load(data_dir)?;
-            if let Some(database) = db.lookup(self.print_stock, self.illuminant, self.film_stock) {
-                for axis in 0..3 {
-                    if !self.protected[axis] {
-                        cmy[axis] = database[axis];
-                    }
-                }
-            }
+        let controls = self.controls.map(f64::from);
+        if !self.database {
+            return Ok(controls);
         }
-        Ok(cmy)
+        let database = data_dir
+            .map(crate::neutral_filters::NeutralFilters::load)
+            .transpose()?
+            .and_then(|db| db.lookup(self.print_stock, self.illuminant, self.film_stock));
+        Ok(crate::neutral_filters::resolve_baseline(
+            controls,
+            self.protected,
+            self.monochrome_paper,
+            database,
+        ))
     }
 }
 

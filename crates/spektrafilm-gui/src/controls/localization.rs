@@ -4,6 +4,23 @@ use std::borrow::Cow;
 
 fn key(label: &str) -> Option<&'static str> {
     match label {
+        "Simulate viewing glare" => Some("controls.label.simulate_viewing_glare"),
+        "Off. Stored values are kept." => Some("surfaces.glare.off_status"),
+        "Glare amount is 0, so viewing glare is not applied. Increase the amount to enable it." => {
+            Some("surfaces.glare.no_effect_status")
+        }
+        "Debug settings disable stochastic effects, so viewing glare does not run." => {
+            Some("surfaces.glare.stochastic_disabled_status")
+        }
+        "Stray light as a fraction of readout light. 0 turns the effect off. Default 0.03 (3%)." => {
+            Some("controls.help.glare.percent")
+        }
+        "Random variation of the glare amount: 0 is even, 1 is strongly mottled." => {
+            Some("controls.help.glare.roughness")
+        }
+        "Spatial spread of the glare amount in pixels; 0 is per-pixel, larger values look like broad reflections." => {
+            Some("controls.help.glare.blur")
+        }
         "film-exposure route and executed span required" => {
             Some("controls.condition.film_exposure_operation")
         }
@@ -43,28 +60,17 @@ fn key(label: &str) -> Option<&'static str> {
         "selected material capability is unavailable" => {
             Some("controls.condition.material_unavailable")
         }
-        "Finishing" => Some("controls.finishing.title"),
+        "Capture setup" => Some("controls.section.capture_setup"),
+        "Finishing" | "finishing" => Some("controls.finishing.title"),
         "Brightness" => Some("controls.finishing.brightness"),
+        "Tone & Color warmth" => Some("controls.finishing.warmth"),
         "Saturation" => Some("controls.finishing.saturation"),
         "Expand" => Some("controls.finishing.expand"),
         "Enable Expand" => Some("controls.finishing.enable_expand"),
         "Black reference" => Some("controls.finishing.black"),
         "White reference" => Some("controls.finishing.white"),
-        "Reset Brightness" => Some("controls.finishing.reset_brightness"),
-        "Reset Contrast" => Some("controls.finishing.reset_contrast"),
-        "Reset Warmth" => Some("controls.finishing.reset_warmth"),
-        "Reset Saturation" => Some("controls.finishing.reset_saturation"),
-        "Reset Enable Expand" => Some("controls.finishing.reset_enabled"),
-        "Reset Black reference" => Some("controls.finishing.reset_black"),
-        "Reset White reference" => Some("controls.finishing.reset_white"),
         "Hold finishing comparison" => Some("controls.finishing.compare"),
         "Negative conversion (exposure domain)" => Some("controls.finishing.negative_conversion"),
-        "Finishing is inactive: the route does not deliver an eligible positive reading. Stored values are retained." => {
-            Some("controls.finishing.inactive")
-        }
-        "Reset only this finishing control to its default. An invalid Expand span cannot be accepted." => {
-            Some("controls.finishing.reset_help")
-        }
         "Raise or lower internal tones with less influence near reference endpoints. This is not source exposure or linear EV." => {
             Some("controls.finishing.brightness_help")
         }
@@ -89,6 +95,9 @@ fn key(label: &str) -> Option<&'static str> {
         "Hold the primary mouse button or focused Space to bypass only finishing. Release to restore it. Saved and exported adjustments are unchanged." => {
             Some("controls.finishing.compare_help")
         }
+        "Tone & Color is inactive: the route does not deliver an eligible positive reading. Stored values are retained." => {
+            Some("controls.finishing.inactive_help")
+        }
         "hoya_x0" => Some("controls.scanner.filter_x0"),
         "hoya_x1" => Some("controls.scanner.filter_x1"),
         "hoya_y2" => Some("controls.scanner.filter_y2"),
@@ -111,7 +120,6 @@ fn key(label: &str) -> Option<&'static str> {
         "Retained image" => Some("controls.section.retained_image"),
         "Photograph records" => Some("controls.section.photograph_records"),
         "Export queue" => Some("photo.queue.title"),
-        "Preset discovery" => Some("controls.section.preset_discovery"),
         "Shadow clipping warning" => Some("surfaces.viewer.clipping_shadows"),
         "Highlight clipping warning" => Some("surfaces.viewer.clipping_highlights"),
         "Continue saving retained pixels" => Some("result.save.continue"),
@@ -130,10 +138,6 @@ fn key(label: &str) -> Option<&'static str> {
         "Cancel remaining queue entries" => Some("photo.queue.cancel_remaining"),
         "Cancel this export" => Some("photo.queue.cancel"),
         "Retry submitted snapshot" => Some("photo.queue.retry_snapshot"),
-        "All looks" => Some("surfaces.presets.discovery_all"),
-        "Favorites" => Some("surfaces.presets.discovery_favorites"),
-        "Recently used" => Some("surfaces.presets.discovery_recent"),
-        "Clear search and filters" => Some("surfaces.presets.discovery_reset"),
         "retained image" => Some("controls.condition.retained_image"),
         "stale Save confirmation is open" => Some("controls.condition.stale_save"),
         "adjacent work list entry" => Some("controls.condition.work_adjacent"),
@@ -145,10 +149,6 @@ fn key(label: &str) -> Option<&'static str> {
         "pending queued exports" => Some("controls.condition.queue_pending"),
         "pending queue entry; first eligible entry" => Some("controls.condition.queue_cancel"),
         "failed queue entry; first eligible entry" => Some("controls.condition.queue_retry"),
-        "favorites retain built-in or user group identity" => {
-            Some("controls.condition.preset_favorites")
-        }
-        "no matching presets" => Some("controls.condition.preset_empty"),
         " • applied" => Some("surfaces.presets.suffix_applied"),
         " • missing" => Some("surfaces.presets.suffix_missing"),
         " • modified" => Some("surfaces.presets.suffix_modified"),
@@ -178,7 +178,7 @@ fn key(label: &str) -> Option<&'static str> {
             Some("controls.scanner.camera_exposure_help")
         }
         "Add grain to the negative" => Some("controls.grain.enable_help"),
-        "Add readout stray light after lens blur and before scanner correction. This does not change print exposure or developed density." => {
+        "Adds stray light from viewing or scanning a paper print: shadows lift and contrast drops. It does not change print exposure, chemistry, or developed density." => {
             Some("controls.help.glare.enable")
         }
         "Additive offset on the family's halo warmth axis. Positive = warm outer halo / cool inner halo. Energy-preserving per channel. 0 = use family default." => {
@@ -304,9 +304,14 @@ fn key(label: &str) -> Option<&'static str> {
         }
         "Chroma" => Some("controls.grain.chroma"),
         "Chromatic grain amount." => Some("controls.grain.chroma_help"),
+        "Clear film base" => Some("controls.scanner.clear_film_base"),
         "Clear preset search" => Some("surfaces.presets.clear_search"),
         "Clear search and restore ordinary inspector disclosure." => {
             Some("surfaces.search.clear_help")
+        }
+        "Readout illuminant" => Some("controls.scanner.readout_illuminant"),
+        "Select the reference the scanner divides by and adapts from. Clear film base is the default calibrated readout: a clear area of the scanned medium reads as output white. Readout illuminant opts out to the fixed readout light and reproduces upstream experimental 28bf883 scanner normalization." => {
+            Some("controls.scanner.white_reference_help")
         }
         "Close settings" => Some("surfaces.settings.close"),
         "Cloud radius (µm)" => Some("controls.grain.cloud_radius"),
@@ -330,7 +335,7 @@ fn key(label: &str) -> Option<&'static str> {
             Some("controls.help.diffusion.strength")
         }
         "Common exposure contrast around the fixed reference exposure. Above 1 is harder; below 1 is softer. Channel differences and automatic setup are unchanged." => {
-            Some("controls.scanner.contrast_help")
+            Some("controls.scanner.conversion_contrast_help")
         }
         "Compress input chromaticities toward the visible spectral locus before spectral upsampling. Off passes input through unchanged." => {
             Some("controls.gamut.input_enable_help")
@@ -345,7 +350,8 @@ fn key(label: &str) -> Option<&'static str> {
         "Compression: ZIP — required by the EXR writer" => {
             Some("surfaces.export.compression_exr")
         }
-        "Contrast" => Some("controls.scanner.contrast"),
+        "Conversion contrast" => Some("controls.scanner.conversion_contrast"),
+        "Contrast" => Some("controls.finishing.contrast"),
         "Controls how quickly the highlight boost ramps in, from 0 to 1." => {
             Some("controls.halation.boost_range_help")
         }
@@ -431,9 +437,6 @@ fn key(label: &str) -> Option<&'static str> {
         "Digital scan sharpening after interpretation and output gamut processing: [sigma in pixels, amount]." => {
             Some("controls.scanner.unsharp_mask_help")
         }
-        "Disable print viewing glare for a print scan; toggle again to restore its previous state." => {
-            Some("surfaces.scanner.print_help")
-        }
         "Discard these export settings. The retained output is unchanged." => {
             Some("surfaces.export.discard_help")
         }
@@ -506,7 +509,6 @@ fn key(label: &str) -> Option<&'static str> {
         "Enable print density-curve morphing." => {
             Some("controls.chemistry.enable_print_curves_help")
         }
-        "Enable print glare" => Some("controls.label.enable_print_glare"),
         "Enable the independent CMYK ink style processing stage; retains its strength while disabled." => {
             Some("controls.cmyk.enable_help")
         }
@@ -553,6 +555,8 @@ fn key(label: &str) -> Option<&'static str> {
         }
         "Factory reset error: %{error}" => Some("surfaces.status.factory_error"),
         "Film" => Some("controls.label.film"),
+        "Film route" => Some("surfaces.route.label"),
+        "Look" => Some("controls.label.look"),
         "Film Format" => Some("controls.scanner.film_format"),
         "Film Resolution" => Some("controls.grain.film_resolution"),
         "Film Type" => Some("controls.grain.film_type"),
@@ -588,7 +592,7 @@ fn key(label: &str) -> Option<&'static str> {
         "Frame Long Edge" => Some("controls.scanner.frame_long_edge"),
         "GPU passes and measurement availability" => Some("surfaces.diagnostics.gpu"),
         "GPU timing" => Some("surfaces.diagnostics.gpu_timing"),
-        "GUI parameters" => Some("controls.label.gui_parameters"),
+        "State and startup" => Some("controls.label.state_and_startup"),
         "Gamma applied to the film density curves during development or a calibrated film-curve reference; 1.0 keeps the profile curves unchanged." => {
             Some("controls.chemistry.film_density_curve_gamma_help")
         }
@@ -629,6 +633,16 @@ fn key(label: &str) -> Option<&'static str> {
         "Green–magenta tint" => Some("controls.scanner.tint"),
         "Halation" => Some("controls.halation.section"),
         "Halation Profiles" => Some("controls.halation.profiles"),
+        "still_strong" | "Still / strong antihalation" => {
+            Some("controls.halation.profile_still_strong")
+        }
+        "still_weak" | "Still / weak antihalation" => Some("controls.halation.profile_still_weak"),
+        "still_no" | "Still / no antihalation" => Some("controls.halation.profile_still_no"),
+        "cine_strong" | "Cine / strong antihalation" => {
+            Some("controls.halation.profile_cine_strong")
+        }
+        "cine_weak" | "Cine / weak antihalation" => Some("controls.halation.profile_cine_weak"),
+        "cine_no" | "Cine / no antihalation" => Some("controls.halation.profile_cine_no"),
         "Halation is inactive; stored profile values retained and available when enabled." => {
             Some("controls.halation.inactive_profile")
         }
@@ -650,14 +664,37 @@ fn key(label: &str) -> Option<&'static str> {
         "Hold the primary mouse button or focused Space to view this same frame with default operator values. Release to restore the corrected view. Saved and exported corrections are unchanged." => {
             Some("controls.scanner.hold_comparison_help")
         }
-        "How the print exposure follows camera exposure compensation. follow_mode tracks it in auto mode and does not track it in manual; never disables tracking in auto; always applies the relative compensation factor in manual." => {
+        "How the print exposure follows camera exposure compensation. follow_mode tracks it in auto mode and does not track it in manual; never disables tracking in auto; always applies the relative compensation factor in manual. The choice equivalent to the current mode is disabled." => {
             Some("controls.scanner.print_tracking_help")
+        }
+        "In auto mode, Always is equivalent to Follow exposure mode; this choice is disabled." => {
+            Some("controls.scanner.print_tracking_auto_redundant")
+        }
+        "In manual mode, Follow exposure mode is equivalent to Never; this choice is disabled." => {
+            Some("controls.scanner.print_tracking_manual_redundant")
         }
         "If enabled, divide by (1 + sum of bounce amplitudes) so mid-grey is preserved. If disabled, halation is purely additive and subtly lifts shadows as well as highlights." => {
             Some("controls.halation.renormalize_help")
         }
-        "Import" => Some("surfaces.presets.import"),
+        "Import preset" => Some("surfaces.presets.import"),
         "Import Raw" => Some("controls.label.import_raw"),
+        // Workflow choices store the canonical route and present a physical
+        // process label. Both spellings resolve here so acceptance can select
+        // the canonical value while the visible option remains product language.
+        "input" | "Color-manage input" => Some("controls.route.input"),
+        "input > film > scan" | "Expose film, scan film" => Some("controls.route.film_scan"),
+        "input > film > print > scan" | "Expose film, print, scan" => {
+            Some("controls.route.film_print_scan")
+        }
+        "input > convert-film > print > scan" | "Convert negative, print, scan" => {
+            Some("controls.route.convert_film_print_scan")
+        }
+        "input > convert-film > scan-minus-base" | "Convert negative, scan (no base)" => {
+            Some("controls.route.convert_film_scan_minus_base")
+        }
+        "input > convert-film > scan" | "Convert negative, scan" => {
+            Some("controls.route.convert_film_scan")
+        }
         "Import failed. You can import a renamed copy. %{detail}" => {
             Some("surfaces.presets.import_rename")
         }
@@ -712,12 +749,6 @@ fn key(label: &str) -> Option<&'static str> {
         "JPEG: lossy 8-bit for web. PNG: lossless 8-bit. TIFF: 8/16-bit integer or 32-bit float, ZIP or uncompressed. EXR: 16/32-bit linear for compositing." => {
             Some("surfaces.export.format_help")
         }
-        "Key controls: halation amount (strength) · halation spatial scale (size) · scatter amount (highlight glow)" => {
-            Some("controls.halation.key_controls")
-        }
-        "Key controls: inhibition samelayer (contrast) · inhibition interlayer (saturation) · inhibition amount (global)" => {
-            Some("controls.couplers.key_controls")
-        }
         "Largest nonnested phase: %{phase} · %{ms} ms" => Some("surfaces.diagnostics.phase"),
         "Layer amounts" => Some("controls.grain.layer_amounts"),
         "Layer size ratio" => Some("controls.grain.layer_size_ratio"),
@@ -751,7 +782,7 @@ fn key(label: &str) -> Option<&'static str> {
             Some("surfaces.diagnostics.transfers_help")
         }
         "Logical transfers and work counters" => Some("surfaces.diagnostics.transfers"),
-        "Look, film or print stock" => Some("surfaces.presets.search_hint"),
+        "Look, film, print or LUT" => Some("surfaces.presets.search_hint"),
         "M filter shift of the color enlarger from a neutral position, in Kodak CC units" => {
             Some("controls.scanner.print_m_shift_help")
         }
@@ -876,7 +907,6 @@ fn key(label: &str) -> Option<&'static str> {
         "Per-channel granularity G: Spektra derives statistical particle area from the film density curves using upstream granularity. It is not a certified optical RMS target. Distinct from Procedural Amount." => {
             Some("controls.grain.rms_granularity_help")
         }
-        "Percentage of the glare light (typically 0.1-0.25)" => Some("controls.help.glare.percent"),
         "Performance logs are recorded automatically." => Some("surfaces.diagnostics.automatic"),
         "Permutation of film density channels. Selecting a channel swaps its prior position so no record is duplicated or dropped." => {
             Some("controls.help.channels.permutation")
@@ -974,7 +1004,7 @@ fn key(label: &str) -> Option<&'static str> {
         }
         "Redo" => Some("surfaces.action.redo"),
         "Redo %{label}" => Some("surfaces.history.redo"),
-        "Refresh" => Some("surfaces.presets.refresh"),
+        "Refresh presets" => Some("surfaces.presets.refresh"),
         "Refreshed preset library" => Some("surfaces.status.presets_refreshed"),
         "Reinhard knee (threshold, limit, power) on normalized chroma C/C_max. Default (0.0, 1.0, 6.0) rolls off smoothly from the center with the asymptote on the output cube edge." => {
             Some("controls.gamut.output_knee_help")
@@ -1020,7 +1050,6 @@ fn key(label: &str) -> Option<&'static str> {
         "Reveal and scroll to this stage in the continuous inspector." => {
             Some("surfaces.search.stage_help")
         }
-        "Revert" => Some("surfaces.presets.revert"),
         "Rotate the retained source 90° clockwise; this is not a viewer transform." => {
             Some("surfaces.source.rotate_cw_help")
         }
@@ -1028,7 +1057,6 @@ fn key(label: &str) -> Option<&'static str> {
             Some("surfaces.source.rotate_ccw_help")
         }
         "Rotated input %{degrees}°" => Some("surfaces.status.rotated"),
-        "Roughness of the glare light (0-1)" => Some("controls.help.glare.roughness"),
         "Route: %{route}" => Some("surfaces.header.route"),
         "Modified becomes available when automatic Preview or Scan completes." => {
             Some("surfaces.viewer.output_disabled")
@@ -1054,11 +1082,15 @@ fn key(label: &str) -> Option<&'static str> {
         "Scanner inactive on this route; stored values are retained." => {
             Some("controls.scanner.scanner_inactive")
         }
-        "Scanner sequence: scan output polarity, then readout optics and digital sharpening." => {
+        "Scanner sequence: white reference, scan output polarity, then readout optics and digital sharpening." => {
             Some("controls.scanner.sequence")
         }
         "Search controls" => Some("surfaces.search.label"),
         "Search presets" => Some("surfaces.presets.search"),
+        "Preset card" => Some("surfaces.presets.card"),
+        "visible look card" => Some("controls.condition.preset_card"),
+        "Save preset" => Some("surfaces.presets.save"),
+        "Preset library actions" => Some("surfaces.presets.library"),
         "Select the JPEG chroma subsampling." => Some("surfaces.export.subsampling_help"),
         "Select the TIFF compression method." => Some("surfaces.export.compression_help"),
         "Select the bit depth." => Some("surfaces.export.depth_help"),
@@ -1078,7 +1110,7 @@ fn key(label: &str) -> Option<&'static str> {
         "Show controls that differ from their factory baseline, independently of an applied preset." => {
             Some("surfaces.search.modified_help")
         }
-        "Show directory" => Some("surfaces.presets.show_directory"),
+        "Open preset folder" => Some("surfaces.presets.show_directory"),
         "Show file" => Some("surfaces.presets.show_file"),
         "Show the retained image at %{percent}% — one source pixel per device pixel at 100%. Viewer only; retained and written pixels are unchanged." => {
             Some("surfaces.viewer.zoom_exact_help")
@@ -1095,7 +1127,6 @@ fn key(label: &str) -> Option<&'static str> {
         "Sigma in um for the diffusion of the couplers, (5-20 um), controls sharpness and affects saturation." => {
             Some("controls.couplers.diffusion_size_help")
         }
-        "Sigma of gaussian blur in pixels for the glare" => Some("controls.help.glare.blur"),
         "Sigma of the first halation bounce per channel [R,G,B], in micrometers. Set by the base thickness (40-80 um for typical cine/still bases)." => {
             Some("controls.halation.first_sigma_help")
         }
@@ -1108,6 +1139,9 @@ fn key(label: &str) -> Option<&'static str> {
         "Slide" => Some("controls.scanner.slide"),
         "Softness" => Some("controls.grain.softness"),
         "Software compute adapter — not a hardware GPU." => Some("surfaces.diagnostics.software"),
+        "Black-and-white print contrast cannot be calibrated by color neutralization." => {
+            Some("controls.convert.bw_neutralization_inactive")
+        }
         "Solve main enlarger M/Y shifts so the current film base midgray prints neutral. Writes the Enlarger controls." => {
             Some("controls.convert.neutralize_filters_help")
         }
@@ -1165,11 +1199,9 @@ fn key(label: &str) -> Option<&'static str> {
         "Undo" => Some("surfaces.action.undo"),
         "Undo %{label}" => Some("surfaces.history.undo"),
         "Unsharp mask (digital sharpening)" => Some("controls.scanner.unsharp_mask"),
-        "Update" => Some("surfaces.presets.update"),
-        "Update, rename, duplicate, export, reveal or delete %{name}" => {
+        "Rename, duplicate, export, reveal or delete %{name}" => {
             Some("surfaces.presets.actions_help")
         }
-        "Updated preset '%{name}'" => Some("surfaces.status.preset_updated"),
         "Use the CAT16 chromatic adaptation transform for the input RGB to film-space adaptation that feeds the Hanatos spectral upsampling. Off selects CAT02, the pre-0.3.4 behavior." => {
             Some("controls.upsampling.use_cat16_help")
         }
@@ -1209,7 +1241,7 @@ fn key(label: &str) -> Option<&'static str> {
         "Which physical path the image takes through the pipeline: input color-manages RGB. input > film > scan exposes and scans film; negative film can retain its negative polarity or use Negative to positive, while slide film remains positive. input > film > print > scan exposes film, prints photographically, and scans positive paper. input > convert-film > print > scan converts the input to negative capture, prints photographically, and scans positive paper. input > convert-film > scan scans the negative capture with its film base; it can preserve negative polarity or convert Negative to positive. input > convert-film > scan-minus-base removes the film base and keeps negative polarity. CMYK ink style is independent in every workflow." => {
             Some("surfaces.route.help")
         }
-        "Workflow" => Some("controls.label.workflow"),
+        "Workflow" => Some("controls.section.workflow"),
         "Workflow route changed" => Some("surfaces.status.route_changed"),
         "Workflow: 1) Detect base → 2) Blind calibration (vibrant frame) → 3) Neutralize filters" => {
             Some("controls.convert.workflow")
@@ -1273,7 +1305,7 @@ fn key(label: &str) -> Option<&'static str> {
         "color component transfer function" => Some("controls.output.cctf_expansion"),
         "color filter" => Some("controls.scanner.color_filter"),
         "confirmation required" => Some("controls.condition.confirm"),
-        "contrast" => Some("controls.scanner.contrast"),
+        "contrast" => Some("controls.finishing.contrast"),
         "conversion style" => Some("controls.scanner.conversion_style"),
         "experimental frame setup" => Some("controls.scanner.experimental_setup"),
         "Measure the whole developed frame for exposure, cast and contrast placement before the fixed tone. Off by default: the algorithm is a declared heuristic with no validated photographic model behind it, it makes the scan frame-dependent, and it cannot be baked into a point-wise LUT. Turning it off keeps the readout a fixed, frame-independent transform." => {
@@ -1295,7 +1327,11 @@ fn key(label: &str) -> Option<&'static str> {
         "cw rotate" => Some("surfaces.source.rotate_cw"),
         "cyan" => Some("controls.base.cyan"),
         "daylight" => Some("controls.scanner.daylight"),
-        "density curve gamma" => Some("controls.chemistry.density_curve_gamma"),
+        "Profile gamma" => Some("controls.chemistry.density_curve_gamma"),
+        "Curve response" => Some("controls.chemistry.curve_response"),
+        "Profile gamma changes the profile density curve; Morph gamma shapes the density-curve sub-layer response. They compose." => {
+            Some("controls.chemistry.curve_response_help")
+        }
         "density min" => Some("controls.grain.density_min"),
         "detect base" => Some("controls.convert.detect_base"),
         "developer exhaustion" => Some("controls.chemistry.developer_exhaustion"),
@@ -1323,7 +1359,8 @@ fn key(label: &str) -> Option<&'static str> {
             Some("controls.condition.preflash")
         }
         "enum" => Some("controls.metadata.enum"),
-        "exposure compensation ev" => Some("controls.convert.exposure_compensation"),
+        "exposure compensation ev" => Some("controls.scanner.camera_exposure"),
+        "Conversion exposure compensation ev" => Some("controls.convert.exposure_compensation"),
         "exposure ×" => Some("controls.unit.exposure"),
         "film profile" => Some("controls.label.film_profile"),
         "film resolution" => Some("controls.grain.film_resolution"),
@@ -1359,12 +1396,12 @@ fn key(label: &str) -> Option<&'static str> {
         "follow_mode" => Some("controls.scanner.follow_mode"),
         "format-dependent" => Some("controls.condition.format"),
         "format-dependent color spaces" => Some("controls.condition.color_space"),
-        "gamma factor" => Some("controls.chemistry.gamma_factor"),
-        "gamma factor blue" => Some("controls.chemistry.gamma_factor_blue"),
-        "gamma factor fast" => Some("controls.chemistry.gamma_factor_fast"),
-        "gamma factor green" => Some("controls.chemistry.gamma_factor_green"),
-        "gamma factor red" => Some("controls.chemistry.gamma_factor_red"),
-        "gamma factor slow" => Some("controls.chemistry.gamma_factor_slow"),
+        "Morph gamma" => Some("controls.chemistry.gamma_factor"),
+        "Morph gamma blue" => Some("controls.chemistry.gamma_factor_blue"),
+        "Morph gamma fast" => Some("controls.chemistry.gamma_factor_fast"),
+        "Morph gamma green" => Some("controls.chemistry.gamma_factor_green"),
+        "Morph gamma red" => Some("controls.chemistry.gamma_factor_red"),
+        "Morph gamma slow" => Some("controls.chemistry.gamma_factor_slow"),
         "gamma interlayer b to rg" => Some("controls.couplers.gamma_blue_to_red_green"),
         "gamma interlayer g to rb" => Some("controls.couplers.gamma_green_to_red_blue"),
         "gamma interlayer r to gb" => Some("controls.couplers.gamma_red_to_green_blue"),
@@ -1494,9 +1531,9 @@ fn key(label: &str) -> Option<&'static str> {
         "saving cctf encoding" => Some("controls.output.saving_cctf"),
         "saving color space" => Some("controls.output.saving_color_space"),
         "scale" => Some("controls.base.scale"),
-        "scan for print" => Some("controls.label.scan_for_print"),
         "scan illuminant" => Some("controls.convert.scan_illuminant"),
         "scan output" => Some("controls.scanner.scan_output"),
+        "white reference" => Some("controls.scanner.white_reference"),
         "scanner selections retained; scanner controls inactive for this route; stored selections retained" => {
             Some("surfaces.status.scanner_inactive")
         }
@@ -1565,386 +1602,60 @@ pub(crate) fn localized<'a>(ctx: &egui::Context, label: &'a str) -> Cow<'a, str>
     localized_for(crate::i18n::locale(ctx), label)
 }
 
+/// Composite labels join a known control label and one of its component ids.
+///
+/// The explicit base/component pairs keep names supplied by profiles, standards
+/// and users from being recomposed just because they contain a space.
+const COMPOSITE_LABELS: &[(&str, &[&str])] = &[
+    ("Layer amounts", &["0", "1", "2"]),
+    ("Layer size ratio", &["0", "1", "2"]),
+    ("Layer weights", &["0", "1", "2"]),
+    ("Unsharp mask (digital sharpening)", &["amount", "sigma"]),
+    ("crop center", &["x", "y"]),
+    ("crop size", &["x", "y"]),
+    ("density min", &["B", "G", "R"]),
+    ("gamma interlayer b to rg", &["G", "R"]),
+    ("gamma interlayer g to rb", &["B", "R"]),
+    ("gamma interlayer r to gb", &["B", "G"]),
+    ("gamma samelayer rgb", &["B", "G", "R"]),
+    ("halation first sigma um", &["B", "G", "R"]),
+    ("halation strength", &["B", "G", "R"]),
+    ("knee", &["limit", "power", "threshold"]),
+    ("langmuir donor k rgb", &["B", "G", "R"]),
+    ("langmuir receiver k rgb", &["B", "G", "R"]),
+    ("micro structure", &["blur", "clump"]),
+    ("particle scale sublayers", &["0", "1", "2"]),
+    ("rms granularity", &["B", "G", "R"]),
+    ("scatter core um", &["B", "G", "R"]),
+    ("scatter tail um", &["B", "G", "R"]),
+    ("scatter tail weight", &["B", "G", "R"]),
+    ("uniformity", &["B", "G", "R"]),
+];
+
+fn composite_label(locale: crate::i18n::Locale, label: &str) -> Option<Cow<'static, str>> {
+    let (base, component) = label.rsplit_once(' ')?;
+    let (_, components) = COMPOSITE_LABELS.iter().find(|(known, _)| *known == base)?;
+    if !components.contains(&component) {
+        return None;
+    }
+    let label = crate::i18n::text_for(locale, key(base)?);
+    Some(super::component_name(
+        locale,
+        label,
+        localized_for(locale, component),
+    ))
+}
+
 pub(crate) fn localized_for<'a>(locale: crate::i18n::Locale, label: &'a str) -> Cow<'a, str> {
     if let Some(key) = key(label) {
         return crate::i18n::text_for(locale, key);
     }
-    match label {
-        "Layer amounts 0" => rust_i18n::t!(
-            "controls.component.name",
-            locale = locale.as_str(),
-            label = crate::i18n::text_for(locale, "controls.grain.layer_amounts"),
-            component = Cow::Borrowed("0")
-        ),
-        "Layer amounts 1" => rust_i18n::t!(
-            "controls.component.name",
-            locale = locale.as_str(),
-            label = crate::i18n::text_for(locale, "controls.grain.layer_amounts"),
-            component = Cow::Borrowed("1")
-        ),
-        "Layer amounts 2" => rust_i18n::t!(
-            "controls.component.name",
-            locale = locale.as_str(),
-            label = crate::i18n::text_for(locale, "controls.grain.layer_amounts"),
-            component = Cow::Borrowed("2")
-        ),
-        "Layer size ratio 0" => rust_i18n::t!(
-            "controls.component.name",
-            locale = locale.as_str(),
-            label = crate::i18n::text_for(locale, "controls.grain.layer_size_ratio"),
-            component = Cow::Borrowed("0")
-        ),
-        "Layer size ratio 1" => rust_i18n::t!(
-            "controls.component.name",
-            locale = locale.as_str(),
-            label = crate::i18n::text_for(locale, "controls.grain.layer_size_ratio"),
-            component = Cow::Borrowed("1")
-        ),
-        "Layer size ratio 2" => rust_i18n::t!(
-            "controls.component.name",
-            locale = locale.as_str(),
-            label = crate::i18n::text_for(locale, "controls.grain.layer_size_ratio"),
-            component = Cow::Borrowed("2")
-        ),
-        "Layer weights 0" => rust_i18n::t!(
-            "controls.component.name",
-            locale = locale.as_str(),
-            label = crate::i18n::text_for(locale, "controls.grain.layer_weights"),
-            component = Cow::Borrowed("0")
-        ),
-        "Layer weights 1" => rust_i18n::t!(
-            "controls.component.name",
-            locale = locale.as_str(),
-            label = crate::i18n::text_for(locale, "controls.grain.layer_weights"),
-            component = Cow::Borrowed("1")
-        ),
-        "Layer weights 2" => rust_i18n::t!(
-            "controls.component.name",
-            locale = locale.as_str(),
-            label = crate::i18n::text_for(locale, "controls.grain.layer_weights"),
-            component = Cow::Borrowed("2")
-        ),
-        "Unsharp mask (digital sharpening) amount" => rust_i18n::t!(
-            "controls.component.name",
-            locale = locale.as_str(),
-            label = crate::i18n::text_for(locale, "controls.scanner.unsharp_mask"),
-            component = crate::i18n::text_for(locale, "controls.label.amount")
-        ),
-        "Unsharp mask (digital sharpening) sigma" => rust_i18n::t!(
-            "controls.component.name",
-            locale = locale.as_str(),
-            label = crate::i18n::text_for(locale, "controls.scanner.unsharp_mask"),
-            component = crate::i18n::text_for(locale, "controls.label.sigma")
-        ),
-        "crop center x" => rust_i18n::t!(
-            "controls.component.name",
-            locale = locale.as_str(),
-            label = crate::i18n::text_for(locale, "controls.crop.center"),
-            component = Cow::Borrowed("x")
-        ),
-        "crop center y" => rust_i18n::t!(
-            "controls.component.name",
-            locale = locale.as_str(),
-            label = crate::i18n::text_for(locale, "controls.crop.center"),
-            component = Cow::Borrowed("y")
-        ),
-        "crop size x" => rust_i18n::t!(
-            "controls.component.name",
-            locale = locale.as_str(),
-            label = crate::i18n::text_for(locale, "controls.crop.size"),
-            component = Cow::Borrowed("x")
-        ),
-        "crop size y" => rust_i18n::t!(
-            "controls.component.name",
-            locale = locale.as_str(),
-            label = crate::i18n::text_for(locale, "controls.crop.size"),
-            component = Cow::Borrowed("y")
-        ),
-        "density min B" => rust_i18n::t!(
-            "controls.component.name",
-            locale = locale.as_str(),
-            label = crate::i18n::text_for(locale, "controls.grain.density_min"),
-            component = Cow::Borrowed("B")
-        ),
-        "density min G" => rust_i18n::t!(
-            "controls.component.name",
-            locale = locale.as_str(),
-            label = crate::i18n::text_for(locale, "controls.grain.density_min"),
-            component = Cow::Borrowed("G")
-        ),
-        "density min R" => rust_i18n::t!(
-            "controls.component.name",
-            locale = locale.as_str(),
-            label = crate::i18n::text_for(locale, "controls.grain.density_min"),
-            component = Cow::Borrowed("R")
-        ),
-        "gamma interlayer b to rg G" => rust_i18n::t!(
-            "controls.component.name",
-            locale = locale.as_str(),
-            label = crate::i18n::text_for(locale, "controls.couplers.gamma_blue_to_red_green"),
-            component = Cow::Borrowed("G")
-        ),
-        "gamma interlayer b to rg R" => rust_i18n::t!(
-            "controls.component.name",
-            locale = locale.as_str(),
-            label = crate::i18n::text_for(locale, "controls.couplers.gamma_blue_to_red_green"),
-            component = Cow::Borrowed("R")
-        ),
-        "gamma interlayer g to rb B" => rust_i18n::t!(
-            "controls.component.name",
-            locale = locale.as_str(),
-            label = crate::i18n::text_for(locale, "controls.couplers.gamma_green_to_red_blue"),
-            component = Cow::Borrowed("B")
-        ),
-        "gamma interlayer g to rb R" => rust_i18n::t!(
-            "controls.component.name",
-            locale = locale.as_str(),
-            label = crate::i18n::text_for(locale, "controls.couplers.gamma_green_to_red_blue"),
-            component = Cow::Borrowed("R")
-        ),
-        "gamma interlayer r to gb B" => rust_i18n::t!(
-            "controls.component.name",
-            locale = locale.as_str(),
-            label = crate::i18n::text_for(locale, "controls.couplers.gamma_red_to_green_blue"),
-            component = Cow::Borrowed("B")
-        ),
-        "gamma interlayer r to gb G" => rust_i18n::t!(
-            "controls.component.name",
-            locale = locale.as_str(),
-            label = crate::i18n::text_for(locale, "controls.couplers.gamma_red_to_green_blue"),
-            component = Cow::Borrowed("G")
-        ),
-        "gamma samelayer rgb B" => rust_i18n::t!(
-            "controls.component.name",
-            locale = locale.as_str(),
-            label = crate::i18n::text_for(locale, "controls.couplers.gamma_samelayer"),
-            component = Cow::Borrowed("B")
-        ),
-        "gamma samelayer rgb G" => rust_i18n::t!(
-            "controls.component.name",
-            locale = locale.as_str(),
-            label = crate::i18n::text_for(locale, "controls.couplers.gamma_samelayer"),
-            component = Cow::Borrowed("G")
-        ),
-        "gamma samelayer rgb R" => rust_i18n::t!(
-            "controls.component.name",
-            locale = locale.as_str(),
-            label = crate::i18n::text_for(locale, "controls.couplers.gamma_samelayer"),
-            component = Cow::Borrowed("R")
-        ),
-        "halation first sigma um B" => rust_i18n::t!(
-            "controls.component.name",
-            locale = locale.as_str(),
-            label = crate::i18n::text_for(locale, "controls.halation.first_sigma"),
-            component = Cow::Borrowed("B")
-        ),
-        "halation first sigma um G" => rust_i18n::t!(
-            "controls.component.name",
-            locale = locale.as_str(),
-            label = crate::i18n::text_for(locale, "controls.halation.first_sigma"),
-            component = Cow::Borrowed("G")
-        ),
-        "halation first sigma um R" => rust_i18n::t!(
-            "controls.component.name",
-            locale = locale.as_str(),
-            label = crate::i18n::text_for(locale, "controls.halation.first_sigma"),
-            component = Cow::Borrowed("R")
-        ),
-        "halation strength B" => rust_i18n::t!(
-            "controls.component.name",
-            locale = locale.as_str(),
-            label = crate::i18n::text_for(locale, "controls.halation.halation_strength"),
-            component = Cow::Borrowed("B")
-        ),
-        "halation strength G" => rust_i18n::t!(
-            "controls.component.name",
-            locale = locale.as_str(),
-            label = crate::i18n::text_for(locale, "controls.halation.halation_strength"),
-            component = Cow::Borrowed("G")
-        ),
-        "halation strength R" => rust_i18n::t!(
-            "controls.component.name",
-            locale = locale.as_str(),
-            label = crate::i18n::text_for(locale, "controls.halation.halation_strength"),
-            component = Cow::Borrowed("R")
-        ),
-        "knee limit" => rust_i18n::t!(
-            "controls.component.name",
-            locale = locale.as_str(),
-            label = crate::i18n::text_for(locale, "controls.gamut.knee"),
-            component = crate::i18n::text_for(locale, "controls.label.limit")
-        ),
-        "knee power" => rust_i18n::t!(
-            "controls.component.name",
-            locale = locale.as_str(),
-            label = crate::i18n::text_for(locale, "controls.gamut.knee"),
-            component = crate::i18n::text_for(locale, "controls.label.power")
-        ),
-        "knee threshold" => rust_i18n::t!(
-            "controls.component.name",
-            locale = locale.as_str(),
-            label = crate::i18n::text_for(locale, "controls.gamut.knee"),
-            component = crate::i18n::text_for(locale, "controls.label.threshold")
-        ),
-        "langmuir donor k rgb B" => rust_i18n::t!(
-            "controls.component.name",
-            locale = locale.as_str(),
-            label = crate::i18n::text_for(locale, "controls.couplers.langmuir_donor"),
-            component = Cow::Borrowed("B")
-        ),
-        "langmuir donor k rgb G" => rust_i18n::t!(
-            "controls.component.name",
-            locale = locale.as_str(),
-            label = crate::i18n::text_for(locale, "controls.couplers.langmuir_donor"),
-            component = Cow::Borrowed("G")
-        ),
-        "langmuir donor k rgb R" => rust_i18n::t!(
-            "controls.component.name",
-            locale = locale.as_str(),
-            label = crate::i18n::text_for(locale, "controls.couplers.langmuir_donor"),
-            component = Cow::Borrowed("R")
-        ),
-        "langmuir receiver k rgb B" => rust_i18n::t!(
-            "controls.component.name",
-            locale = locale.as_str(),
-            label = crate::i18n::text_for(locale, "controls.couplers.langmuir_receiver"),
-            component = Cow::Borrowed("B")
-        ),
-        "langmuir receiver k rgb G" => rust_i18n::t!(
-            "controls.component.name",
-            locale = locale.as_str(),
-            label = crate::i18n::text_for(locale, "controls.couplers.langmuir_receiver"),
-            component = Cow::Borrowed("G")
-        ),
-        "langmuir receiver k rgb R" => rust_i18n::t!(
-            "controls.component.name",
-            locale = locale.as_str(),
-            label = crate::i18n::text_for(locale, "controls.couplers.langmuir_receiver"),
-            component = Cow::Borrowed("R")
-        ),
-        "micro structure blur" => rust_i18n::t!(
-            "controls.component.name",
-            locale = locale.as_str(),
-            label = crate::i18n::text_for(locale, "controls.grain.micro_structure"),
-            component = crate::i18n::text_for(locale, "controls.grain.blur")
-        ),
-        "micro structure clump" => rust_i18n::t!(
-            "controls.component.name",
-            locale = locale.as_str(),
-            label = crate::i18n::text_for(locale, "controls.grain.micro_structure"),
-            component = crate::i18n::text_for(locale, "controls.label.clump")
-        ),
-        "particle scale sublayers 0" => rust_i18n::t!(
-            "controls.component.name",
-            locale = locale.as_str(),
-            label = crate::i18n::text_for(locale, "controls.grain.particle_scale_sublayers"),
-            component = Cow::Borrowed("0")
-        ),
-        "particle scale sublayers 1" => rust_i18n::t!(
-            "controls.component.name",
-            locale = locale.as_str(),
-            label = crate::i18n::text_for(locale, "controls.grain.particle_scale_sublayers"),
-            component = Cow::Borrowed("1")
-        ),
-        "particle scale sublayers 2" => rust_i18n::t!(
-            "controls.component.name",
-            locale = locale.as_str(),
-            label = crate::i18n::text_for(locale, "controls.grain.particle_scale_sublayers"),
-            component = Cow::Borrowed("2")
-        ),
-        "rms granularity B" => rust_i18n::t!(
-            "controls.component.name",
-            locale = locale.as_str(),
-            label = crate::i18n::text_for(locale, "controls.grain.rms_granularity"),
-            component = Cow::Borrowed("B")
-        ),
-        "rms granularity G" => rust_i18n::t!(
-            "controls.component.name",
-            locale = locale.as_str(),
-            label = crate::i18n::text_for(locale, "controls.grain.rms_granularity"),
-            component = Cow::Borrowed("G")
-        ),
-        "rms granularity R" => rust_i18n::t!(
-            "controls.component.name",
-            locale = locale.as_str(),
-            label = crate::i18n::text_for(locale, "controls.grain.rms_granularity"),
-            component = Cow::Borrowed("R")
-        ),
-        "scatter core um B" => rust_i18n::t!(
-            "controls.component.name",
-            locale = locale.as_str(),
-            label = crate::i18n::text_for(locale, "controls.halation.scatter_core"),
-            component = Cow::Borrowed("B")
-        ),
-        "scatter core um G" => rust_i18n::t!(
-            "controls.component.name",
-            locale = locale.as_str(),
-            label = crate::i18n::text_for(locale, "controls.halation.scatter_core"),
-            component = Cow::Borrowed("G")
-        ),
-        "scatter core um R" => rust_i18n::t!(
-            "controls.component.name",
-            locale = locale.as_str(),
-            label = crate::i18n::text_for(locale, "controls.halation.scatter_core"),
-            component = Cow::Borrowed("R")
-        ),
-        "scatter tail um B" => rust_i18n::t!(
-            "controls.component.name",
-            locale = locale.as_str(),
-            label = crate::i18n::text_for(locale, "controls.halation.scatter_tail"),
-            component = Cow::Borrowed("B")
-        ),
-        "scatter tail um G" => rust_i18n::t!(
-            "controls.component.name",
-            locale = locale.as_str(),
-            label = crate::i18n::text_for(locale, "controls.halation.scatter_tail"),
-            component = Cow::Borrowed("G")
-        ),
-        "scatter tail um R" => rust_i18n::t!(
-            "controls.component.name",
-            locale = locale.as_str(),
-            label = crate::i18n::text_for(locale, "controls.halation.scatter_tail"),
-            component = Cow::Borrowed("R")
-        ),
-        "scatter tail weight B" => rust_i18n::t!(
-            "controls.component.name",
-            locale = locale.as_str(),
-            label = crate::i18n::text_for(locale, "controls.halation.scatter_tail_weight"),
-            component = Cow::Borrowed("B")
-        ),
-        "scatter tail weight G" => rust_i18n::t!(
-            "controls.component.name",
-            locale = locale.as_str(),
-            label = crate::i18n::text_for(locale, "controls.halation.scatter_tail_weight"),
-            component = Cow::Borrowed("G")
-        ),
-        "scatter tail weight R" => rust_i18n::t!(
-            "controls.component.name",
-            locale = locale.as_str(),
-            label = crate::i18n::text_for(locale, "controls.halation.scatter_tail_weight"),
-            component = Cow::Borrowed("R")
-        ),
-        "uniformity B" => rust_i18n::t!(
-            "controls.component.name",
-            locale = locale.as_str(),
-            label = crate::i18n::text_for(locale, "controls.grain.uniformity"),
-            component = Cow::Borrowed("B")
-        ),
-        "uniformity G" => rust_i18n::t!(
-            "controls.component.name",
-            locale = locale.as_str(),
-            label = crate::i18n::text_for(locale, "controls.grain.uniformity"),
-            component = Cow::Borrowed("G")
-        ),
-        "uniformity R" => rust_i18n::t!(
-            "controls.component.name",
-            locale = locale.as_str(),
-            label = crate::i18n::text_for(locale, "controls.grain.uniformity"),
-            component = Cow::Borrowed("R")
-        ),
-        // Names supplied by profiles, standards and users retain their identity.
-        _ => Cow::Borrowed(label),
+    if let Some(composite) = composite_label(locale, label) {
+        return composite;
     }
+
+    // Names supplied by profiles, standards and users retain their identity.
+    Cow::Borrowed(label)
 }
 
 #[cfg(test)]
@@ -1954,10 +1665,22 @@ mod tests {
 
     #[test]
     fn exposure_and_metering_labels_use_product_language_without_changing_values() {
-        for (locale, exposure, center, multizone, highlight) in [
+        for (
+            locale,
+            exposure,
+            conversion,
+            contrast,
+            conversion_contrast,
+            center,
+            multizone,
+            highlight,
+        ) in [
             (
                 Locale::English,
                 "Exposure compensation",
+                "Conversion exposure compensation",
+                "Contrast",
+                "Conversion contrast",
                 "Center-weighted",
                 "Multi-zone",
                 "Highlight-weighted",
@@ -1965,12 +1688,24 @@ mod tests {
             (
                 Locale::SimplifiedChinese,
                 "曝光补偿",
+                "转换曝光补偿",
+                "反差",
+                "转换反差",
                 "中央重点",
                 "多区",
                 "亮部重点",
             ),
         ] {
             assert_eq!(localized_for(locale, "exposure compensation ev"), exposure);
+            assert_eq!(
+                localized_for(locale, "Conversion exposure compensation ev"),
+                conversion
+            );
+            assert_eq!(localized_for(locale, "Contrast"), contrast);
+            assert_eq!(
+                localized_for(locale, "Conversion contrast"),
+                conversion_contrast
+            );
             for (stored, display) in [
                 ("center_weighted", center),
                 ("multi_zone", multizone),
@@ -1978,6 +1713,28 @@ mod tests {
             ] {
                 assert_eq!(localized_for(locale, stored), display);
             }
+        }
+    }
+
+    #[test]
+    fn chemistry_gamma_labels_are_distinct_in_both_languages() {
+        for (locale, profile, morph, response) in [
+            (
+                Locale::English,
+                "Profile gamma",
+                "Morph gamma",
+                "Curve response",
+            ),
+            (
+                Locale::SimplifiedChinese,
+                "基曲线伽马",
+                "形变伽马",
+                "曲线响应",
+            ),
+        ] {
+            assert_eq!(localized_for(locale, "Profile gamma"), profile);
+            assert_eq!(localized_for(locale, "Morph gamma"), morph);
+            assert_eq!(localized_for(locale, "Curve response"), response);
         }
     }
 
@@ -1997,6 +1754,29 @@ mod tests {
                 assert!(!display.contains('_'), "{display}");
                 assert!(!display.contains('='), "{display}");
             }
+        }
+    }
+
+    #[test]
+    fn composite_labels_reuse_the_component_name_rule() {
+        for (locale, label, display) in [
+            (Locale::SimplifiedChinese, "Layer amounts 0", "各层颗粒量 0"),
+            (
+                Locale::SimplifiedChinese,
+                "Unsharp mask (digital sharpening) amount",
+                "反差蒙版（数字锐化） 数量",
+            ),
+            (
+                Locale::SimplifiedChinese,
+                "gamma samelayer rgb R",
+                "同层伽马 RGB R",
+            ),
+            (Locale::SimplifiedChinese, "knee threshold", "拐点 阈值"),
+        ] {
+            assert_eq!(localized_for(locale, label), display);
+        }
+        for label in ["My Profile 0", "knee 0"] {
+            assert_eq!(localized_for(Locale::SimplifiedChinese, label), label);
         }
     }
 }

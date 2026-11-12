@@ -632,6 +632,9 @@ pub fn neutralize_filters(
     data: &std::path::Path,
     backend: &dyn spektrafilm_backend::ComputeBackend,
 ) -> Result<(f32, f32), String> {
+    if print.is_bw() {
+        return Err("Print filter color neutralization requires a color print material; black-and-white contrast is not identified by RGB chroma".into());
+    }
     let mut p = params.clone();
     p.workflow.route = "input > film > print > scan".into();
     p.io.scan_film = false;
@@ -645,17 +648,20 @@ pub fn neutralize_filters(
     // LUT switch alone does not apply its deterministic calibration constraints.
     // Resolve once before assigning the trial shifts, which LUT digestion resets.
     crate::params_builder::apply_runtime_constraints(&mut p);
+    let prepared = crate::pipeline::Pipeline::new_with_spectral_backend(
+        film.clone(),
+        print.clone(),
+        p.clone(),
+        data,
+        backend,
+    )?;
     let residual = |x: &[f64; 2]| {
         let mut trial = p.clone();
         trial.enlarger.m_filter_shift = x[0] as f32;
         trial.enlarger.y_filter_shift = x[1] as f32;
-        let pipeline = crate::pipeline::Pipeline::new_with_spectral_backend(
-            film.clone(),
-            print.clone(),
-            trial,
-            data,
-            backend,
-        )?;
+        // The existing update boundary rebuilds filter-dependent calibration
+        // while retaining compatible material and spectral preparation.
+        let pipeline = prepared.clone().with_params_with_backend(trial, backend)?;
         let output = pipeline.process(
             ImageBuf::from_data(2, 2, vec![from_f64(0.184); 12]),
             backend,
@@ -724,6 +730,57 @@ mod action_tests {
         assert_eq!(positive, direct);
         assert_eq!(params.workflow.route, "input > film > scan");
         assert_eq!(params.scanner.scan_output, "negative_to_positive");
+    }
+
+    #[test]
+    fn neutralization_trial_reuse_matches_cold_preparation() {
+        let data = data_dir();
+        let film = crate::profile::load_profile_by_name(&data, "kodak_portra_400").unwrap();
+        let print = crate::profile::load_profile_by_name(&data, "kodak_portra_endura").unwrap();
+        let backend = spektrafilm_backend::cpu_backend::CpuBackend;
+        let mut params = RuntimeParams::default();
+        params.debug.lut_mode = true;
+        params.io.output_cctf_encoding = false;
+        params.io.output_gamut_compress.algorithm = "off".into();
+        params.settings.use_enlarger_lut = false;
+        params.settings.use_scanner_lut = false;
+        crate::params_builder::apply_runtime_constraints(&mut params);
+        let prepared = crate::pipeline::Pipeline::new_with_spectral_backend(
+            film.clone(),
+            print.clone(),
+            params.clone(),
+            &data,
+            &backend,
+        )
+        .unwrap();
+        let input = ImageBuf::from_data(2, 2, vec![from_f64(0.184); 12]);
+        let mut results = Vec::new();
+        for (m, y) in [(0.0, 0.0), (0.0001, 0.0), (0.0, 0.0001), (12.0, -9.0)] {
+            let mut trial = params.clone();
+            trial.enlarger.m_filter_shift = m;
+            trial.enlarger.y_filter_shift = y;
+            let warm = prepared
+                .clone()
+                .with_params_with_backend(trial.clone(), &backend)
+                .unwrap();
+            let cold = crate::pipeline::Pipeline::new_with_spectral_backend(
+                film.clone(),
+                print.clone(),
+                trial,
+                &data,
+                &backend,
+            )
+            .unwrap();
+            let actual = warm.process(input.clone(), &backend).unwrap();
+            let expected = cold.process(input.clone(), &backend).unwrap();
+            assert!(actual.data.iter().all(|v| v.is_finite()));
+            assert_eq!(actual.data, expected.data, "filter shifts ({m}, {y})");
+            results.push(actual.data);
+        }
+        assert_ne!(
+            results[0], results[3],
+            "trial filter shifts must affect the residual"
+        );
     }
 
     #[test]

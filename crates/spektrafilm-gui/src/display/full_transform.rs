@@ -1,6 +1,6 @@
-//! Cached per-pixel display transforms for magnified viewer sampling.
+//! Cached per-pixel display transforms for full-source viewer sampling.
 //!
-//! Full-source viewing transforms every source tap before interpolation. The
+//! Full-source viewing transforms every source tap before filtering. The
 //! transform is pointwise in the source pixel, so caching each touched source
 //! pixel's transformed value keeps every sampled pixel identical while zoom
 //! and pan frames reuse the work. Tiles keep one array index per tap and let
@@ -14,7 +14,8 @@ use rayon::prelude::*;
 use spektrafilm_math::image::ImageBuf;
 use spektrafilm_math::precision::to_f32;
 
-use super::raster::{Interpolation, sample_f32, sample_image_with, source_coords};
+use super::geometry::{contains_half_open, source_coords};
+use super::raster::{Interpolation, sample_footprint_f32};
 
 /// Source pixels per cache tile edge.
 const TILE: usize = 256;
@@ -142,9 +143,8 @@ impl TransformCache {
 
     /// Sample `texture_size` viewer pixels of `source` through `transform`.
     ///
-    /// The pixels are exactly the direct per-tap sampling of
-    /// [`super::raster::sample_image_with`]: the same mapping, the same
-    /// interpolation weights, and the same transformed tap values.
+    /// Cached and direct paths share source-cell area averaging for reductions
+    /// and the selected interpolation for native-size or magnified views.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn sample_view(
         &mut self,
@@ -154,6 +154,7 @@ impl TransformCache {
         image_rect: Rect,
         rect: Rect,
         texture_size: [usize; 2],
+        footprint: [f32; 2],
         interpolation: Interpolation,
     ) -> Vec<[f32; 3]> {
         let (w, h) = (source.width as usize, source.height as usize);
@@ -164,8 +165,7 @@ impl TransformCache {
         if self.identity.as_ref() != Some(identity) {
             self.reset(identity.clone());
         }
-        // The tapped source window is the mapped texture span expanded by the
-        // interpolation radius and clamped to the image.
+        // Include every cell touched by either interpolation or the area filter.
         let corner = |x: usize, y: usize| {
             let p = Pos2::new(
                 rect.min.x + (x as f32 + 0.5) * rect.width() / texture_size[0] as f32,
@@ -173,20 +173,38 @@ impl TransformCache {
             );
             source_coords(p, image_rect, identity.width, identity.height)
         };
-        let margin = interpolation.radius() as isize + 1;
+        let margin = |side: f32| {
+            let area = if interpolation == Interpolation::Nearest {
+                0.0
+            } else {
+                side * 0.5
+            };
+            (interpolation.radius() as f32).max(area).ceil() as isize + 1
+        };
+        let (margin_x, margin_y) = (margin(footprint[0]), margin(footprint[1]));
         let (x0, y0) = corner(0, 0);
         let (x1, y1) = corner(texture_size[0] - 1, texture_size[1] - 1);
-        let lo_x = (x0.min(x1).floor() as isize - margin).clamp(0, w as isize - 1) as usize;
-        let hi_x = (x0.max(x1).floor() as isize + margin).clamp(0, w as isize - 1) as usize;
-        let lo_y = (y0.min(y1).floor() as isize - margin).clamp(0, h as isize - 1) as usize;
-        let hi_y = (y0.max(y1).floor() as isize + margin).clamp(0, h as isize - 1) as usize;
+        let lo_x = (x0.min(x1).floor() as isize - margin_x).clamp(0, w as isize - 1) as usize;
+        let hi_x = (x0.max(x1).floor() as isize + margin_x).clamp(0, w as isize - 1) as usize;
+        let lo_y = (y0.min(y1).floor() as isize - margin_y).clamp(0, h as isize - 1) as usize;
+        let hi_y = (y0.max(y1).floor() as isize + margin_y).clamp(0, h as isize - 1) as usize;
         let tiles_x = self.tiles_x();
         let (tx0, tx1) = (lo_x / TILE, hi_x / TILE);
         let (ty0, ty1) = (lo_y / TILE, hi_y / TILE);
         if (tx1 - tx0 + 1) * (ty1 - ty0 + 1) * TILE * TILE > self.budget_px {
             fill_rows(&mut out, texture_size, rect, &|p| {
-                if super::worker::contains_half_open(image_rect, p) {
-                    sample_image_with(source, p, image_rect, interpolation, transform)
+                if contains_half_open(image_rect, p) {
+                    let (sx, sy) = source_coords(p, image_rect, identity.width, identity.height);
+                    sample_footprint_f32(sx, sy, interpolation, footprint, |x, y| {
+                        transform(
+                            source
+                                .get(
+                                    x.clamp(0, w as i32 - 1) as u32,
+                                    y.clamp(0, h as i32 - 1) as u32,
+                                )
+                                .map(to_f32),
+                        )
+                    })
                 } else {
                     [0.0; 3]
                 }
@@ -223,9 +241,9 @@ impl TransformCache {
             height: h,
         };
         fill_rows(&mut out, texture_size, rect, &|p| {
-            if super::worker::contains_half_open(image_rect, p) {
+            if contains_half_open(image_rect, p) {
                 let (sx, sy) = source_coords(p, image_rect, identity.width, identity.height);
-                sample_f32(sx, sy, interpolation, |x, y| grid.fetch(x, y))
+                sample_footprint_f32(sx, sy, interpolation, footprint, |x, y| grid.fetch(x, y))
             } else {
                 [0.0; 3]
             }
@@ -350,6 +368,7 @@ mod tests {
                 image_rect,
                 rect,
                 texture_size,
+                [1.0, 1.0],
                 interpolation,
             );
             let got = cached.sample_view(
@@ -359,9 +378,109 @@ mod tests {
                 image_rect,
                 rect,
                 texture_size,
+                [1.0, 1.0],
                 interpolation,
             );
             assert_eq!(expected, got, "zoom {zoom} {interpolation:?}");
+        }
+    }
+
+    #[test]
+    fn reduced_grain_averages_source_cells_after_the_display_transform() {
+        let source = Arc::new(ImageBuf::from_data(
+            99,
+            63,
+            (0..99 * 63)
+                .flat_map(|i| {
+                    [
+                        (if i % 3 == 2 { 0.75 } else { 0.25 }) as _,
+                        (if (i / 99) % 3 == 2 { 0.75 } else { 0.25 }) as _,
+                        0.5 as _,
+                    ]
+                })
+                .collect(),
+        ));
+        let rect = Rect::from_min_size(Pos2::ZERO, egui::vec2(33.0, 21.0));
+        for budget in [0, BUDGET_PX] {
+            let pixels = TransformCache::with_budget(budget).sample_view(
+                &identity(&source),
+                &source,
+                &|rgb| rgb.map(|v| v * v),
+                rect,
+                rect,
+                [33, 21],
+                [3.0, 3.0],
+                Interpolation::Spline36,
+            );
+            for rgb in pixels {
+                for (got, expected) in rgb.into_iter().zip([11.0 / 48.0, 11.0 / 48.0, 0.25]) {
+                    assert!((got - expected).abs() < 1e-6, "{got} != {expected}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn explicit_footprint_selects_filter_independently_of_translation() {
+        let source = Arc::new(ImageBuf::from_data(
+            4,
+            1,
+            (0..4).flat_map(|x| [((x % 2) as f32) as _; 3]).collect(),
+        ));
+        let identity = identity(&source);
+        for budget in [0, BUDGET_PX] {
+            let mut cache = TransformCache::with_budget(budget);
+            for origin in [0.0, 100.0, 2000.0] {
+                let image_rect =
+                    Rect::from_min_size(Pos2::new(origin, origin), egui::vec2(4.0, 1.0));
+                let rect =
+                    Rect::from_min_size(Pos2::new(origin + 0.25, origin), egui::vec2(1.0, 1.0));
+                for (footprint, expected) in
+                    [([1.0, 1.0], 1.890625 / 6.0), ([1.001, 1.0], 0.2505 / 1.001)]
+                {
+                    let pixels = cache.sample_view(
+                        &identity,
+                        &source,
+                        &|rgb| rgb,
+                        image_rect,
+                        rect,
+                        [1, 1],
+                        footprint,
+                        Interpolation::Cubic,
+                    );
+                    assert!(
+                        (pixels[0][0] - expected).abs() < 1e-6,
+                        "origin {origin} footprint {footprint:?}: {} != {expected}",
+                        pixels[0][0]
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn reduced_pixel_reads_both_sides_of_a_cache_tile_boundary() {
+        let source = Arc::new(ImageBuf::from_data(
+            600,
+            1,
+            (0..600).flat_map(|x| [(x < 256) as u8 as _; 3]).collect(),
+        ));
+        let image_rect = Rect::from_min_size(Pos2::ZERO, egui::vec2(600.0, 1.0));
+        let rect = Rect::from_min_size(Pos2::new(240.0, 0.0), egui::vec2(40.0, 1.0));
+        for budget in [0, BUDGET_PX] {
+            let pixels = TransformCache::with_budget(budget).sample_view(
+                &identity(&source),
+                &source,
+                &|rgb| rgb,
+                image_rect,
+                rect,
+                [1, 1],
+                [40.0, 1.0],
+                Interpolation::Spline36,
+            );
+            for value in pixels[0] {
+                assert!((value - 0.4).abs() < 1e-6);
+            }
         }
     }
 
@@ -380,6 +499,7 @@ mod tests {
             image_rect,
             rect,
             texture_size,
+            [2.0, 2.0],
             Interpolation::Nearest,
         );
         let filled = cache.filled;
@@ -393,6 +513,7 @@ mod tests {
             panned,
             rect,
             texture_size,
+            [2.0, 2.0],
             Interpolation::Nearest,
         );
         assert!(cache.filled >= filled);
@@ -407,6 +528,7 @@ mod tests {
             rect,
             rect,
             texture_size,
+            [2.0, 2.0],
             Interpolation::Nearest,
         );
         let mut fresh = TransformCache::default();
@@ -417,6 +539,7 @@ mod tests {
             rect,
             rect,
             texture_size,
+            [2.0, 2.0],
             Interpolation::Nearest,
         );
         assert_eq!(expected, pixels, "stale tiles must not survive the change");
@@ -459,6 +582,7 @@ mod tests {
             image_rect,
             rect,
             texture_size,
+            [1.0, 1.0],
             Interpolation::Nearest,
         );
         assert!(cache.filled > 0);
@@ -471,6 +595,7 @@ mod tests {
             image_rect,
             rect,
             texture_size,
+            [1.0, 1.0],
             Interpolation::Nearest,
         );
         assert_eq!(tiny.filled, 0);

@@ -31,7 +31,7 @@
 - Segmented topologies MUST reject that selection before baking because their scan-stage input does not carry the source branch.
 - The baker MUST NOT silently reset output amount to 1.
 - Image-specific geometry remains neutralized under the existing LUT contract.
-- Eligible [common finishing](../finishing/spec.md#delivery) MUST be included once at the existing scan/final RGB boundary in segmented, collapsed, and complete bakes.
+- Eligible [Tone & Color](../finishing/spec.md#delivery) MUST be included once at the existing scan/final RGB boundary in segmented, collapsed, and complete bakes.
 - The bundle MUST retain the finishing definition and its applied boundary in provenance, including when stages are collapsed.
 - CMYK ink style MUST run once at its post-scan finishing boundary.
 - The final RGB stage retains its `cmyk_` role and records its definition independently of material stages.
@@ -40,3 +40,6 @@
 - A complete one-LUT mixed transform MUST retain appearance and amount provenance even though intermediate nodes are collapsed.
 - Existing output gamut algorithms remain unchanged except for standalone lightness retirement under [Output boundary and retirement](../output-mix/spec.md#output-boundary-and-retirement).
 - A bake MUST NOT introduce a separate material response, replacement output lightness stage, or separate `input`-workflow output-processing switch.
+- A complete one-LUT source-to-output bake MAY be written as one `.cube` for explicit LUT import under [LUT workflow](../lut-workflow/spec.md#export-lut). The simple export MUST require one selected print target, a LUT-workflow-supported input and output encoding, output mix amount 1, and an inactive frame-dependent setup.
+- A segmented bundle is not the simple exported `.cube`; the simple LUT workflow MUST NOT select one stage from an ambiguous bundle.
+- The simple export MUST report its neutralized operations. It MUST NOT import, apply, or create a LUT preset, and it MUST NOT switch workflow.

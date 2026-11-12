@@ -12,9 +12,13 @@ pub mod grain;
 mod grain_compat;
 pub use grain_compat::normalize_grain_control_names;
 pub mod halation;
+mod migrations;
 pub mod sources;
 
 pub(crate) mod validation;
+pub use crate::lut_look::{
+    LutDomainPolicy, LutGrainParams, LutLookParams, LutShaper, LutSpace, WorkflowMode,
+};
 use couplers::DirCouplersParams;
 pub use diffusion::DiffusionFilterParams;
 pub use finishing::{ExpandParams, FinishingParams};
@@ -198,6 +202,11 @@ impl ScanOperatorParams {
     }
 }
 
+/// White reference mode: divide by the clear film base and adapt from it.
+pub const SCAN_WHITE_REFERENCE_CLEAR_FILM_BASE: &str = "clear_film_base";
+/// White reference mode: divide by the readout light and adapt from it.
+pub const SCAN_WHITE_REFERENCE_READOUT_ILLUMINANT: &str = "readout_illuminant";
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ScannerParams {
@@ -206,6 +215,12 @@ pub struct ScannerParams {
     /// positive image.
     #[serde(default = "default_direct_scan")]
     pub scan_output: String,
+    /// White reference of the spectral scan: the clear film base by default.
+    /// `readout_illuminant` opts out of clear-base white calibration and uses
+    /// the resolved readout light, matching upstream experimental `28bf883`
+    /// scan normalization.
+    #[serde(default = "default_scan_white_reference")]
+    pub white_reference: String,
     /// Named positive-conversion style applied by the negative-to-positive
     /// interpretation: `standard` is the built-in frozen tone; any other
     /// name resolves to `data/scan-styles/<name>.json` (declared
@@ -237,6 +252,7 @@ impl Default for ScannerParams {
     fn default() -> Self {
         Self {
             scan_output: default_direct_scan(),
+            white_reference: default_scan_white_reference(),
             conversion_style: default_conversion_style(),
             experimental_setup: false,
             operator: ScanOperatorParams::default(),
@@ -400,12 +416,15 @@ impl Default for CmykParams {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct WorkflowParams {
+    #[serde(default)]
+    pub mode: WorkflowMode,
     #[serde(default = "default_route")]
     pub route: String,
 }
 impl Default for WorkflowParams {
     fn default() -> Self {
         Self {
+            mode: WorkflowMode::Film,
             route: default_route(),
         }
     }
@@ -719,8 +738,6 @@ pub struct SettingsParams {
     pub use_scanner_lut: bool,
     #[serde(default = "default_17")]
     pub lut_resolution: u32,
-    #[serde(default)]
-    pub use_fast_stats: bool,
     #[serde(default = "default_640")]
     pub preview_max_size: u32,
     #[serde(default)]
@@ -751,7 +768,6 @@ impl Default for SettingsParams {
             use_enlarger_lut: false,
             use_scanner_lut: false,
             lut_resolution: 17,
-            use_fast_stats: false,
             preview_max_size: 640,
             preview_mode: false,
             neutral_print_filters_from_database: true,
@@ -814,6 +830,13 @@ impl RuntimeParams {
     /// Validate using the same rules while retaining semantic failures for adapters.
     pub fn validate_detailed(&self) -> Result<(), ValidationError> {
         validation::validate_detailed(self)
+    }
+
+    /// Whether the active workflow needs a full-frame scanner pass. LUT mode
+    /// never consumes scanner setup, so retained film settings cannot select
+    /// the film scan cache while LUT mode is active.
+    pub fn requires_full_frame(&self) -> bool {
+        !self.workflow.mode.is_lut() && self.scanner.requires_full_frame()
     }
 
     /// Validate canonical value domains without route or resource checks.
@@ -953,6 +976,8 @@ pub struct RuntimeParams {
     #[serde(default)]
     pub finishing: FinishingParams,
     #[serde(default)]
+    pub lut_look: LutLookParams,
+    #[serde(default)]
     pub settings: SettingsParams,
     #[serde(default)]
     pub debug: DebugParams,
@@ -1027,6 +1052,10 @@ fn default_65() -> f32 {
 }
 fn default_direct_scan() -> String {
     "direct_scan".into()
+}
+
+fn default_scan_white_reference() -> String {
+    SCAN_WHITE_REFERENCE_CLEAR_FILM_BASE.into()
 }
 
 fn default_unsharp() -> [f64; 2] {
@@ -1109,6 +1138,16 @@ mod tests {
             Some([false, false, true])
         );
         assert!(params.explicit_paths_match(&expected));
+    }
+
+    #[test]
+    fn lut_mode_ignores_retained_full_frame_scanner_setup() {
+        let mut params = RuntimeParams::default();
+        params.scanner.scan_output = "negative_to_positive".into();
+        params.scanner.experimental_setup = true;
+        assert!(params.scanner.requires_full_frame());
+        params.workflow.mode = crate::lut_look::WorkflowMode::Lut;
+        assert!(!params.requires_full_frame());
     }
 
     #[test]

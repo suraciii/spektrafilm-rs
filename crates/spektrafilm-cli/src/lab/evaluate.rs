@@ -8,7 +8,6 @@ use clap::ArgMatches;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use spektrafilm_core::params::RuntimeParams;
-use spektrafilm_core::params::sources::ParameterEdits;
 use spektrafilm_core::presets::PresetLibrary;
 use spektrafilm_core::process_params::{self, ProcessParamsRequest};
 use spektrafilm_core::profile::{self, Profile};
@@ -273,25 +272,37 @@ pub fn run_with_result(args: &EvaluateArgs, matches: &ArgMatches) -> Result<(Val
 
 fn resolve_chain(args: &EvaluateArgs, data_dir: &Path) -> Result<ResolvedChain> {
     if let Some(path) = &args.profile {
-        let film = profile::load_profile(path)
-            .map_err(|e| anyhow!("loading profile {}: {e}", path.display()))?;
-        let mut params = RuntimeParams::default();
-        for source in &args.sources {
-            let edits =
-                ParameterEdits::parse(source).map_err(|e| anyhow!("--set {source:?}: {e}"))?;
-            edits
-                .apply(&mut params)
-                .map_err(|e| anyhow!("--set {source:?}: {e}"))?;
-        }
-        params.validate().map_err(anyhow::Error::msg)?;
+        let resolved = process_params::resolve(
+            ProcessParamsRequest {
+                film: Some(process_params::FilmSelection::Path(path)),
+                paper: None,
+                presets: &[],
+                params_file: None,
+                sources: &args.sources,
+                feature_profiles: &[],
+                // A standalone profile evaluation exercises only the film
+                // front; do not manufacture a print selection.
+                route: Some("input > film"),
+                scan_film: false,
+                scan_output: None,
+                input_is_raw: false,
+                input_color_space: None,
+                input_cctf_decoding: None,
+                require_input_declaration: false,
+                digest_mode: DigestMode::ApplyStockSpecifics,
+            },
+            data_dir,
+        )
+        .map_err(anyhow::Error::msg)
+        .with_context(|| format!("resolving profile {}", path.display()))?;
         let profile_name = path
             .file_stem()
             .and_then(|stem| stem.to_str())
             .unwrap_or("profile")
             .to_owned();
         return Ok(ResolvedChain {
-            film,
-            params,
+            film: resolved.film,
+            params: resolved.params,
             profile_path: path.clone(),
             profile_name,
         });

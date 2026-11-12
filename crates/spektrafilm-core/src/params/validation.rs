@@ -43,6 +43,16 @@ impl std::fmt::Display for ValidationError {
 }
 impl std::error::Error for ValidationError {}
 
+pub(crate) const RETIRED_LIGHTNESS_MESSAGE: &str = "io.output_gamut_compress.lightness_compression was retired; no automatic replacement exists; explicitly remove this field from the document";
+
+pub(crate) fn retired_lightness_error_detailed() -> ValidationError {
+    ValidationError::new(
+        ValidationReason::RetiredLightness,
+        "io.output_gamut_compress.lightness_compression",
+        RETIRED_LIGHTNESS_MESSAGE,
+    )
+}
+
 /// Reasons are emitted at the authoritative failing rule, never parsed from prose.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ValidationReason {
@@ -127,30 +137,12 @@ pub enum ValidationReason {
     TomlDatetime,
     ScanNegativeProfile,
     ScanFiniteDensity,
+    LutLook,
 }
 
 use ValidationReason as Reason;
 
-pub(crate) const SUPPORTED_ROUTES: [&str; 12] = [
-    "input",
-    "input > film > scan",
-    "input > film > print > scan",
-    "input > convert-film > print > scan",
-    "input > convert-film > scan-minus-base",
-    "input > convert-film > scan",
-    "input > film",
-    "input > film > print",
-    "film > scan",
-    "film > print",
-    "film > print > scan",
-    "print > scan",
-];
-
-/// The removed dedicated magazine workflow. Saved configurations that still
-/// name it must be migrated to a base workflow plus `cmyk.active`; it is not
-/// a selectable route. The constant name keeps the historical spelling of
-/// the retired route.
-pub(crate) const REMOVED_MAGAZINE_ROUTE: &str = "input > film > scan > magazine";
+const REMOVED_MAGAZINE_ROUTE: &str = crate::WorkflowRoute::REMOVED_MAGAZINE_ROUTE;
 
 /// Registered RGB-to-raw implementations. Parsing and construction share this
 /// vocabulary so a method cannot validate successfully and fail at dispatch.
@@ -538,10 +530,24 @@ pub(crate) fn validate_procedural_timer_detailed(value: f64) -> Result<(), Valid
 /// validated but not enumerable (for example `BB<kelvin>` blackbody sources).
 pub(crate) fn enum_values(path: &str) -> Option<Vec<String>> {
     let values: Vec<String> = match path {
+        "workflow.mode" => ["film", "lut"].iter().map(|v| (*v).into()).collect(),
+        "lut_look.input_space" | "lut_look.output_space" => ["sRGB Linear", "sRGB", "Display P3"]
+            .iter()
+            .map(|v| (*v).into())
+            .collect(),
+        "lut_look.domain_policy" => ["fail", "clamp"].iter().map(|v| (*v).into()).collect(),
+        "lut_look.shaper" => ["none", "cube_1d"].iter().map(|v| (*v).into()).collect(),
         "scanner.scan_output" => ["direct_scan", "negative_to_positive"]
             .iter()
             .map(|v| (*v).into())
             .collect(),
+        "scanner.white_reference" => [
+            crate::params::SCAN_WHITE_REFERENCE_CLEAR_FILM_BASE,
+            crate::params::SCAN_WHITE_REFERENCE_READOUT_ILLUMINANT,
+        ]
+        .iter()
+        .map(|v| (*v).into())
+        .collect(),
         "film_render.grain.engine" => ["spektra", "procedural", "dye", "fotufilm"]
             .iter()
             .map(|v| (*v).into())
@@ -576,7 +582,9 @@ pub(crate) fn enum_values(path: &str) -> Option<Vec<String>> {
             .map(|v| (*v).to_owned())
             .chain(std::iter::once("BB<kelvin> (1667..=25000)".into()))
             .collect(),
-        "camera.diffusion_filter.filter_family" | "enlarger.diffusion_filter.filter_family" => {
+        "camera.diffusion_filter.filter_family"
+        | "enlarger.diffusion_filter.filter_family"
+        | "lut_look.diffusion.filter_family" => {
             ["glimmerglass", "black_pro_mist", "pro_mist", "cinebloom"]
                 .iter()
                 .map(|v| (*v).into())
@@ -651,9 +659,10 @@ pub(crate) fn validate_enum_value_detailed(path: &str, value: &str) -> Result<()
             ));
         }
         if crate::WorkflowRoute::parse(value) == crate::WorkflowRoute::Custom {
+            let supported = crate::WorkflowRoute::ALL.map(|route| route.as_str());
             let suggestions = closest(
                 value,
-                SUPPORTED_ROUTES.iter().map(|route| (*route).to_owned()),
+                supported.iter().map(|route| (*route).to_owned()),
                 MAX_SUGGESTIONS,
             );
             let suffix = error_suffix(
@@ -666,7 +675,7 @@ pub(crate) fn validate_enum_value_detailed(path: &str, value: &str) -> Result<()
                 format!("workflow.route: unsupported route {value:?}; {suffix}"),
             )
             .arg("value", format!("{value:?}"))
-            .arg("supported", SUPPORTED_ROUTES.join(", "))
+            .arg("supported", supported.join(", "))
             .arg("suggestions", suggestions.join(", ")));
         }
         return Ok(());
@@ -723,6 +732,11 @@ pub(crate) fn validate_enum_value_detailed(path: &str, value: &str) -> Result<()
     }
     let valid = match path {
         "scanner.scan_output" => matches!(value, "direct_scan" | "negative_to_positive"),
+        "scanner.white_reference" => matches!(
+            value,
+            crate::params::SCAN_WHITE_REFERENCE_CLEAR_FILM_BASE
+                | crate::params::SCAN_WHITE_REFERENCE_READOUT_ILLUMINANT
+        ),
         "film_render.grain.engine" => {
             matches!(value, "spektra" | "procedural" | "dye" | "fotufilm")
         }
@@ -1205,6 +1219,10 @@ pub(super) fn validate_values_detailed(params: &RuntimeParams) -> Result<(), Val
     params.output_mix.validate_detailed()?;
     params.finishing.validate_detailed()?;
     validate_enum_value_detailed("workflow.route", &params.workflow.route)?;
+    params
+        .lut_look
+        .validate(params.workflow.mode.is_lut())
+        .map_err(|detail| ValidationError::new(Reason::LutLook, "lut_look", detail))?;
     for (path, value) in [
         ("io.input_color_space", &params.io.input_color_space),
         ("io.output_color_space", &params.io.output_color_space),
@@ -1317,6 +1335,7 @@ pub(super) fn validate_values_detailed(params: &RuntimeParams) -> Result<(), Val
         &params.camera.auto_exposure_method,
     )?;
     validate_enum_value_detailed("scanner.scan_output", &params.scanner.scan_output)?;
+    validate_enum_value_detailed("scanner.white_reference", &params.scanner.white_reference)?;
     params.scanner.operator.validate_detailed()?;
     validate_enum_value_detailed("scanner.conversion_style", &params.scanner.conversion_style)?;
     validate_scalar_detailed(
@@ -1366,6 +1385,9 @@ fn validate_context_detailed(params: &RuntimeParams) -> Result<(), ValidationErr
         )).arg("expected", format!("{expected:?}")).arg("value", format!("{bounds:?}")));
     }
     params.validate_color_detailed()?;
+    if params.workflow.mode.is_lut() {
+        return Ok(());
+    }
     if !params.scanner.operator.is_default() {
         if !params.scanner.operator_eligible() {
             return Err(ValidationError::new(
@@ -1473,6 +1495,11 @@ mod tests {
                 "scanner.operator.contrast",
             ),
             (
+                |p| p.scanner.white_reference = "clear".into(),
+                Reason::UnsupportedValue,
+                "scanner.white_reference",
+            ),
+            (
                 |p| p.settings.rgb_to_raw_method = "unknown".into(),
                 Reason::RgbMethod,
                 "settings.rgb_to_raw_method",
@@ -1542,8 +1569,8 @@ mod tests {
             params.workflow.route = route.into();
             assert!(validate(&params).is_err(), "invalid finite route {route}");
         }
-        for route in SUPPORTED_ROUTES {
-            params.workflow.route = route.to_owned();
+        for route in crate::WorkflowRoute::ALL {
+            params.workflow.route = route.as_str().to_owned();
             validate(&params).unwrap();
         }
     }

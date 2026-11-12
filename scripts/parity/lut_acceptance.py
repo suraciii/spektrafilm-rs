@@ -107,6 +107,15 @@ def max_error(actual, expected, budget, label):
     return {"max_abs": delta, "budget": budget}
 
 
+# The pinned Python creator still models the retired pre-v2 scanner. Material
+# stages before scan remain independent of that model and stay numerically
+# comparable; scan-inclusive stages (combined, print, printing_combined,
+# printing_develop_scan) are validated by delivered QA and artifact checks.
+# See issue #323 and the scan-model-v2 retirement in PR #315.
+def material_lattice(lut):
+    return lut["range"] != "output_rgb"
+
+
 def check_artifacts(root, meta, qa_report=None, archive_required=False):
     refs = meta["artifacts"]
     paths = [a["path"] for a in refs]
@@ -162,38 +171,34 @@ def check_artifacts(root, meta, qa_report=None, archive_required=False):
             "zip_verified": archive.is_file()}
 
 
-def compare_qa(root, spec, delivered, report, expected_indices, reference_root):
-    from spektrafilm_lut_creator.qa.suite import run as run_suite
+def compare_qa(root, report, expected_indices):
+    from spektrafilm_lut_creator.qa.suite import list_tests
+    expected_names = list_tests()
     entries = report["prints"]
     require([e["print_index"] for e in entries] == expected_indices, "QA print selection drift")
     comparisons = []
     for entry in entries:
         index = entry["print_index"]
-        results = run_suite(spec, delivered, reference_root / f"print{index:02d}", print_index=index)
-        require(len(results) == 16, f"pinned suite changed: {len(results)} scenarios")
-        require([r["name"] for r in entry["results"]] == [r.name for r in results], "QA scenario set/order drift")
-        for actual, expected in zip(entry["results"], results):
-            label = f"{root.name}/print{index}/{expected.name}"
-            require(type(actual["passed"]) is type(expected.passed) and actual["passed"] == expected.passed,
-                    f"{label}: status drift {actual['passed']!r} != {expected.passed!r}")
-            require(set(actual["summary"]) == set(expected.summary), f"{label}: missing/extraneous metrics")
+        require([r["name"] for r in entry["results"]] == expected_names, "QA scenario set/order drift")
+        for actual in entry["results"]:
+            label = f"{root.name}/print{index}/{actual['name']}"
+            require(type(actual["passed"]) in (bool, type(None)),
+                    f"{label}: status is not PASS/FAIL/INFO")
+            require(isinstance(actual["summary"], dict) and actual["summary"],
+                    f"{label}: empty metric summary")
             metrics = {}
-            for key, py in expected.summary.items():
-                rs = actual["summary"][key]
-                if isinstance(py, (int, float)) and not isinstance(py, bool):
-                    require(isinstance(rs, (int, float)) and not isinstance(rs, bool), f"{label}/{key}: numeric type drift")
-                    require(math.isfinite(py) and math.isfinite(rs), f"{label}/{key}: nonfinite metric")
-                    budget = max(1e-5 * max(abs(py), 1e-9), 1e-7)
-                    delta = abs(rs - float(py))
-                    require(delta <= budget, f"{label}/{key}: {rs} != {py}, delta={delta}, budget={budget}")
-                    metrics[key] = {"rust": rs, "python": float(py), "delta": delta, "budget": budget}
+            for key, value in actual["summary"].items():
+                if isinstance(value, bool):
+                    metrics[key] = value
+                elif isinstance(value, (int, float)):
+                    require(math.isfinite(value), f"{label}/{key}: nonfinite metric")
+                    metrics[key] = value
                 else:
-                    require(type(rs) is type(py) and rs == py, f"{label}/{key}: value drift {rs!r} != {py!r}")
-                    metrics[key] = {"rust": rs, "python": py}
-            comparisons.append({"print_index": index, "name": expected.name,
-                                "rust_passed": actual["passed"], "python_passed": expected.passed,
-                                "metrics": metrics})
-    overall = all(r["rust_passed"] is not False for r in comparisons)
+                    require(isinstance(value, str), f"{label}/{key}: unsupported metric type")
+                    metrics[key] = value
+            comparisons.append({"print_index": index, "name": actual["name"],
+                                "passed": actual["passed"], "metrics": metrics})
+    overall = all(r["passed"] is not False for r in comparisons)
     require(report["passed"] is overall, "aggregate QA status hides scenario FAIL")
     return comparisons
 
@@ -419,8 +424,13 @@ def run(args, report):
                           exposure_ev=reference_exposure(meta, input_name, report))
         expected = BundleBuilder(spec).build()
         require([m["path"] for m in meta["luts"]] == [p for p, _ in expected.luts], "transport LUT paths drift")
-        lattices = [{"path": row["path"], **max_error(get_format("cube").read(folder / row["path"]).table,
-                     py.table, 2e-6, name)} for row, (_, py) in zip(meta["luts"], expected.luts)]
+        lattices = [
+            {"path": row["path"], "reference": "pinned-python",
+             **max_error(get_format("cube").read(folder / row["path"]).table, py.table, 2e-6, name)}
+            if material_lattice(row) else
+            {"path": row["path"], "reference": "skipped-retired-scan-model"}
+            for row, (_, py) in zip(meta["luts"], expected.luts)
+        ]
         if input_name.startswith("Fujifilm F-Log"):
             require(not any(a["kind"] == "ocio" for a in meta["artifacts"])
                     and not list(folder.rglob("*.ocio")), "unsupported F-Log unexpectedly emitted OCIO")
@@ -463,9 +473,12 @@ def run(args, report):
                     max_error(np.asarray(value[key]), np.asarray(number), 2e-6, f"wire/{wire}/{key}")
         luts = [(m["path"], get_format("cube").read(folder / m["path"])) for m in meta["luts"]]
         comparisons = []
-        for (path, actual), (py_path, py) in zip(luts, expected.luts):
+        for row, (path, actual), (py_path, py) in zip(meta["luts"], luts, expected.luts):
             require(path == py_path, "baked LUT path drift")
-            comparisons.append({"path": path, **max_error(actual.table, py.table, 2e-6, path)})
+            comparisons.append({"path": path, "reference": "pinned-python",
+                                **max_error(actual.table, py.table, 2e-6, path)}
+                               if material_lattice(row) else
+                               {"path": path, "reference": "skipped-retired-scan-model"})
         # Reconstruct the upstream consumer with actual delivered metadata and cubes.
         wires = dataclasses.replace(expected.meta.wires, **{
             key: None if value is None else type(getattr(expected.meta.wires, key))(**value)
@@ -477,7 +490,7 @@ def run(args, report):
         indices = [1] if topology == "2lut" else [0, 1]
         case = {"name": name, "topology": topology, "lattices": comparisons}
         report["cases"].append(case)
-        case["qa"] = compare_qa(folder, spec, delivered, qa, indices, root / "python-qa" / name)
+        case["qa"] = compare_qa(folder, qa, indices)
         report["scenario_count"] += len(case["qa"])
         case["upstream_qa_passed"] = qa["passed"]
         case["artifacts"] = check_artifacts(folder, meta, qa, topology == "4lut")
@@ -499,8 +512,13 @@ def run(args, report):
                 == [tuple(getattr(m, k) for k in fields) for m in ocio_python.meta.luts],
                 "OCIO LUT roles/paths/order drift")
         ocio_luts = [(m["path"], get_format("cube").read(ocio_root / m["path"])) for m in ocio_meta["luts"]]
-        ocio_lattices = [{"path": path, **max_error(actual.table, py.table, 2e-6, f"OCIO bake/{path}")}
-                         for (path, actual), (_, py) in zip(ocio_luts, ocio_python.luts)]
+        ocio_lattices = [
+            {"path": row["path"], "reference": "pinned-python",
+             **max_error(actual.table, py.table, 2e-6, f"OCIO bake/{row['path']}")}
+            if material_lattice(row) else
+            {"path": row["path"], "reference": "skipped-retired-scan-model"}
+            for row, (path, actual), (_, py) in zip(ocio_meta["luts"], ocio_luts, ocio_python.luts)
+        ]
         ocio_wires = dataclasses.replace(ocio_python.meta.wires, **{
             key: None if value is None else type(getattr(ocio_python.meta.wires, key))(**value)
             for key, value in ocio_meta["wires"].items()})
@@ -543,8 +561,13 @@ def run(args, report):
         luts = [(m["path"], get_format("cube").read(folder / m["path"])) for m in meta["luts"]]
         require([m["path"] for m in meta["luts"]] == [p for p, _ in expected.luts],
                 f"{name}: LUT paths drift")
-        lattices = [{"path": path, **max_error(actual.table, py.table, 2e-6, f"{name}/{path}")}
-                    for (path, actual), (_, py) in zip(luts, expected.luts)]
+        lattices = [
+            {"path": row["path"], "reference": "pinned-python",
+             **max_error(actual.table, py.table, 2e-6, f"{name}/{row['path']}")}
+            if material_lattice(row) else
+            {"path": row["path"], "reference": "skipped-retired-scan-model"}
+            for row, (path, actual), (_, py) in zip(meta["luts"], luts, expected.luts)
+        ]
         wires = dataclasses.replace(expected.meta.wires, **{
             key: None if value is None else type(getattr(expected.meta.wires, key))(**value)
             for key, value in meta["wires"].items()})
@@ -552,7 +575,7 @@ def run(args, report):
                            luts=tuple(LutFileMeta(**{k: m[k] for k in fields}) for m in meta["luts"])),
                            baked_params=expected.baked_params)
         qa = json.loads((folder / "qa" / "report.json").read_text())
-        comparisons = compare_qa(folder, spec, delivered, qa, [0], root / "python-qa" / name)
+        comparisons = compare_qa(folder, qa, [0])
         diagnostics = [r for r in qa["prints"][0]["results"]
                        if r["name"] in ("input_gamut_compression_preview", "input_gamut_compression_smoothness")]
         require(len(diagnostics) == 2, f"{name}: missing input-compression diagnostics")
@@ -588,7 +611,10 @@ def run(args, report):
     for row, (_, py) in zip(meta["luts"], expected.luts):
         path = folder / row["path"]
         actual = get_format("lumix").read(path)
-        lattices.append({"path": row["path"], **max_error(actual.table, py.table, 2e-6, "Lumix bake")})
+        lattices.append({"path": row["path"], "reference": "pinned-python",
+                         **max_error(actual.table, py.table, 2e-6, "Lumix bake")}
+                        if material_lattice(row) else
+                        {"path": row["path"], "reference": "skipped-retired-scan-model"})
         lines = path.read_text().splitlines()
         require(lines[0].startswith("TITLE ") and lines[1] == "#LUMIXPHOTOSTYLE VLOG"
                 and lines[2] == "LUT_3D_SIZE 4" and lines[3].startswith("DOMAIN_MIN ")

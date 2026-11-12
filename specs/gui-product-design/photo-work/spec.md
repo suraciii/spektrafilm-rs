@@ -82,6 +82,8 @@ stateDiagram-v2
 
 Submission MUST capture each entry independently of later edits or removal. Pending RAW changes MUST remain distinct from the accepted decode being exported. Duplicate destinations MUST be resolved before submission; replacement of existing files MUST require an explicit choice.
 
+A queued destination MUST capture its resolved parent path at submission and preserve its selected filename. Publication MUST replace the final directory entry rather than follow a symlink at that filename.
+
 The queue MUST expose per-entry outcomes and cancellation. Live export operation status stays in the [header](../../gui-workflow/spec.md#labels-and-surfaces), separate from viewer rendering. A failed entry MUST NOT stop unrelated work.
 
 Canceling remaining work MUST preserve completed files. [Photo export](../../photo-export/spec.md#publication) owns individual publication guarantees; the batch is not one atomic transaction.

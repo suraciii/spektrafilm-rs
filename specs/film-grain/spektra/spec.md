@@ -2,16 +2,22 @@
 ## Contract
 - Spektra MUST sample developed film density and return film density for the remaining print or scan stages.
 - The reference algorithm is `andreavolpato/spektrafilm` experimental commit `28bf883e1672e884307edc75852549376e13644e`.
+- The pinned experimental branch is distinct from the older `main` particle-area model. Their parameter documents, stock values, and rendered grain MUST NOT be treated as interchangeable.
 - Spektra MUST use the profile's available density-curve layers.
 - A profile without layer curves MUST use its total density curve as one active layer of the same sampler.
 - `rms_granularity` MUST size the particle population from the maximum of the profile's summed layer-variance curves at the reference 48 µm diameter aperture. It MUST NOT be treated as a direct particle area or a measured final-scan RMS guarantee.
 - Spektra MUST retain per-layer density floors, `particle_scale_sublayers`, uniformity, dye-cloud blur, micro-structure, and multiplicative unsharp masking.
+- Spatial Gaussian filtering MUST use reflected FIR below sigma 3 and the reference sample-replicating IIR at or above sigma 3. A large-sigma box approximation MUST NOT replace the reference law.
 - CLI source composition and complete looks MUST use `[6, 8, 10]` for omitted Spektra RMS before stock defaults apply.
 - Authored RMS values MUST retain precedence; the shared Dye default MUST NOT become Spektra's omitted-strength fallback.
 - Direct runtime callers that select Spektra MUST supply a positive RMS target; shared typed defaults remain Dye defaults.
 - The configured seed MUST control repeatable sampling.
-- The sequential sampler MUST draw the complete Poisson plane before the complete binomial plane.
-- Its micro-structure field MUST continue the final active plane's NumPy random state.
-- `settings.use_fast_stats` MUST select the reference distribution branches with deterministic per-element streams. It MUST NOT claim pixel identity with upstream's schedule-dependent numba streams.
+- The CPU sequential sampler MUST draw the complete Poisson plane before the complete binomial plane.
+- The CPU micro-structure field MUST continue the final active plane's NumPy random state.
+- CPU Spektra MUST use the original sequential MT19937 realization.
+- GPU Spektra MUST use the per-pixel PCG32 realization; there is no GPU sampler selector or fallback.
+- The PCG32 realization MUST preserve the prepared model, density floors, layer/channel identities, Poisson-before-binomial order per sample, and f32 conditioning/products. It MUST use independent per-pixel streams.
+- The PCG32 realization is a different random realization, not an MT19937 identity claim. CPU and GPU outputs therefore need not be bit-identical.
+- GPU micro-structure MUST use PCG32 lognormal clumping. CPU micro-structure MUST continue the original MT19937 state.
 - Active Spektra grain MUST run on the selected executor under [GPU algorithm alignment](../../gpu-execution/spec.md#algorithm-alignment). Missing device precision or resources MUST fail explicitly rather than substitute another engine or CPU image work.
 - `particle_area_um2`, `particle_scale`, `particle_scale_layers`, `sublayers_active`, and `n_sub_layers` are obsolete controls. Parameter sources MUST reject them rather than map them to the RMS model.

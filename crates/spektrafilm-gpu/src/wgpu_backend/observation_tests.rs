@@ -855,9 +855,13 @@ fn one_submission_of_multiple_command_buffers_has_exact_work_sum() {
         assert_eq!(pass.occurrence, index as u64);
         sum += seconds(&pass.duration);
     }
-    assert_eq!(
-        seconds(&parent.batch.as_ref().unwrap().compute_pass_sum),
-        sum
+    let total = seconds(&parent.batch.as_ref().unwrap().compute_pass_sum);
+    // The batch combines command-buffer subtotals; the detail loop adds each
+    // pass. Their association can differ by floating-point rounding only.
+    let rounding = passes.len() as f64 * f64::EPSILON * sum.abs();
+    assert!(
+        total.is_finite() && (total - sum).abs() <= rounding,
+        "batch seconds {total} != pass sum {sum}"
     );
 }
 
