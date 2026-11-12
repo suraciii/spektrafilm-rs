@@ -541,6 +541,13 @@ pub(crate) fn enum_values(path: &str) -> Option<Vec<String>> {
             .iter()
             .map(|v| (*v).into())
             .collect(),
+        "scanner.white_reference" => [
+            crate::params::SCAN_WHITE_REFERENCE_CLEAR_FILM_BASE,
+            crate::params::SCAN_WHITE_REFERENCE_READOUT_ILLUMINANT,
+        ]
+        .iter()
+        .map(|v| (*v).into())
+        .collect(),
         "film_render.grain.engine" => ["spektra", "procedural", "dye", "fotufilm"]
             .iter()
             .map(|v| (*v).into())
@@ -725,6 +732,11 @@ pub(crate) fn validate_enum_value_detailed(path: &str, value: &str) -> Result<()
     }
     let valid = match path {
         "scanner.scan_output" => matches!(value, "direct_scan" | "negative_to_positive"),
+        "scanner.white_reference" => matches!(
+            value,
+            crate::params::SCAN_WHITE_REFERENCE_CLEAR_FILM_BASE
+                | crate::params::SCAN_WHITE_REFERENCE_READOUT_ILLUMINANT
+        ),
         "film_render.grain.engine" => {
             matches!(value, "spektra" | "procedural" | "dye" | "fotufilm")
         }
@@ -1323,6 +1335,7 @@ pub(super) fn validate_values_detailed(params: &RuntimeParams) -> Result<(), Val
         &params.camera.auto_exposure_method,
     )?;
     validate_enum_value_detailed("scanner.scan_output", &params.scanner.scan_output)?;
+    validate_enum_value_detailed("scanner.white_reference", &params.scanner.white_reference)?;
     params.scanner.operator.validate_detailed()?;
     validate_enum_value_detailed("scanner.conversion_style", &params.scanner.conversion_style)?;
     validate_scalar_detailed(
@@ -1480,6 +1493,11 @@ mod tests {
                 |p| p.scanner.operator.contrast = 0.0,
                 Reason::FinitePositive,
                 "scanner.operator.contrast",
+            ),
+            (
+                |p| p.scanner.white_reference = "clear".into(),
+                Reason::UnsupportedValue,
+                "scanner.white_reference",
             ),
             (
                 |p| p.settings.rgb_to_raw_method = "unknown".into(),

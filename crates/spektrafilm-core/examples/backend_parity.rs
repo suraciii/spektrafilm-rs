@@ -100,6 +100,7 @@ fn main() -> Result<(), String> {
                 "decode",
                 "spectral_lut",
                 "wide_blur",
+                "readout_illuminant",
             ] {
                 let mut p = base.clone();
                 p.io.output_color_space = space.into();
@@ -135,6 +136,11 @@ fn main() -> Result<(), String> {
                         p.settings.use_scanner_lut = true;
                     }
                     "wide_blur" => p.scanner.lens_blur = 90.0,
+                    "readout_illuminant" => {
+                        p.scanner.white_reference =
+                            spektrafilm_core::params::SCAN_WHITE_REFERENCE_READOUT_ILLUMINANT
+                                .into();
+                    }
                     _ => {}
                 }
                 let pipeline = Pipeline::new_with_spectral(film.clone(), print.clone(), p, &dir)?;

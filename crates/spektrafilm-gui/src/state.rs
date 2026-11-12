@@ -317,7 +317,12 @@ impl GuiState {
                 }
             }
         }
-        for key in ["scan_output", "conversion_style", "operator"] {
+        for key in [
+            "scan_output",
+            "white_reference",
+            "conversion_style",
+            "operator",
+        ] {
             if normalized["scanner"].get(key).is_none()
                 && let Some(selection) = value["rust"]["runtime"]["scanner"].get(key)
             {

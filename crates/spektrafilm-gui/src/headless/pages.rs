@@ -1368,6 +1368,27 @@ fn control_search_and_scan_tone_access_preserve_canonical_state() {
 }
 
 #[test]
+fn scanner_white_reference_defaults_to_clear_film_base_and_can_opt_out() {
+    let mut s = session();
+    let h = &mut s.harness;
+    assert_eq!(
+        h.state().params.scanner.white_reference,
+        spektrafilm_core::params::SCAN_WHITE_REFERENCE_CLEAR_FILM_BASE
+    );
+    search_controls(h, "Scanner");
+    choose(h, "white reference", "Readout illuminant");
+    assert_eq!(
+        h.state().params.scanner.white_reference,
+        spektrafilm_core::params::SCAN_WHITE_REFERENCE_READOUT_ILLUMINANT
+    );
+    choose(h, "white reference", "Clear film base");
+    assert_eq!(
+        h.state().params.scanner.white_reference,
+        spektrafilm_core::params::SCAN_WHITE_REFERENCE_CLEAR_FILM_BASE
+    );
+}
+
+#[test]
 fn experimental_frame_setup_toggle_is_off_by_default_and_gated_by_the_negative_route() {
     let mut s = session();
     let h = &mut s.harness;

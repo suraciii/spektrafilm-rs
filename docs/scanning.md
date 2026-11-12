@@ -10,9 +10,11 @@ The GUI Scan stage covers readout, interpretation, and digital adjustments. **Sc
 
 The readout light is a product constant selected by the material category: `BB5800` for colour cine print materials (ISO 2910:2018) and `D50` for every other material (ISO 3664). It is not a runtime parameter and not a profile field, so there is no `scanner.lamp` to set; a document that carries that field fails validation.
 
-The white reference of a scan is the clear film base of the scanned medium. A clear area of that base reads as the output color space's white, and the scan chromatically adapts from that clear-film white to the output white. The scan matrix is the identity. The readout light is part of the final colour transform, not an acquisition control.
+By default, the white reference of a scan is the clear film base of the scanned medium. A clear area of that base reads as the output color space's white, and the scan chromatically adapts from that clear-film white to the output white. The scan matrix is the identity. The readout light is part of the final colour transform, not an acquisition control.
 
-The scanner controls include `scanner.scan_output`, `scanner.conversion_style`, `scanner.experimental_setup`, `scanner.operator`, `scanner.lens_blur`, and `scanner.unsharp_mask`. Lens blur models readout optics on linear transmitted light and runs before any density interpretation. Unsharp mask is digital sharpening and runs after interpretation and output gamut processing. Legacy white/black correction, white/black levels, film-scan black and white points, receiver profiles, negative conversion methods, the retired `scanner.auto_setup` control, scanner finish, and Digital Reference remain removed; their field names fail validation at the current schema version.
+`scanner.white_reference` selects the calibration reference. `clear_film_base` is the default calibrated readout. `readout_illuminant` opts out: the scan divides by the readout-light Y and adapts from the readout-light white. That mode reproduces the upstream experimental `28bf883` scanner normalization and is intended for upstream comparison; it does not claim clear-base calibration. Scan provenance reports the selected reference. On the pinned Portra Endura flat reference, the remaining encoded difference after matching all other settings is below `2e-5`, attributable to upstream output-gamut compression.
+
+The scanner controls include `scanner.scan_output`, `scanner.white_reference`, `scanner.conversion_style`, `scanner.experimental_setup`, `scanner.operator`, `scanner.lens_blur`, and `scanner.unsharp_mask`. Lens blur models readout optics on linear transmitted light and runs before any density interpretation. Unsharp mask is digital sharpening and runs after interpretation and output gamut processing. Legacy white/black correction, white/black levels, film-scan black and white points, receiver profiles, negative conversion methods, the retired `scanner.auto_setup` control, scanner finish, and Digital Reference remain removed; their field names fail validation at the current schema version.
 
 `settings.use_scanner_lut` selects a PCHIP lattice of normalized `log_xyz`, not a direct spectral scan or an RGB lattice. After interpolation, the scanner applies `10^log_xyz`, chromatic adaptation, and XYZ-to-RGB in that order. On the GPU route, lattice generation, slope and cell-hull preparation, interpolation, and the color transforms remain on the device. Storage limits split the lattice into overlapping source halos without changing its domain or resolution. A limit below the minimum halo or spectral coefficient binding returns an error; it does not select a CPU implementation.
 
@@ -23,6 +25,17 @@ The GUI exposes passthrough, film-scan, film-print-scan, and the three convert-f
 `direct_scan` preserves the medium's polarity. Calibrated `negative_to_positive` supports direct `input > film > scan`, resumed `film > scan`, and real negative-capture `input > convert-film > scan`. It rejects paper, positive-film, print-paper, and scan-minus-base combinations; every grain engine is accepted.
 
 `scanner.scan_output` accepts `direct_scan` and `negative_to_positive`. Replace the removed `positive_scan` value in CLI commands, parameter files, presets, recipes, and GUI states. Old values fail validation. The GUI displays **Preserve medium polarity** and **Negative to positive**. See [scanner language](../specs/film-chain/spec.md#scanner-language).
+
+To match the upstream experimental scanner while keeping the product default, select the readout-light white reference explicitly:
+
+```bash
+./target/release/spektrafilm-f64 process input.tif -o upstream-aligned.tif \
+    --input-color-space 'sRGB' --backend cpu --film kodak_portra_400 \
+    --paper kodak_portra_endura --route 'input > film > print > scan' --data-dir data \
+    --set scanner.white_reference=readout_illuminant
+```
+
+The same field is available to presets, recipes, and GUI state. Omitted values default to `clear_film_base`.
 
 ## Negative conversion
 
@@ -205,4 +218,4 @@ The broad-halation night variant is no longer a separate built-in. Starting from
 
 ## Saved document cutover
 
-GUI state version 5, preset schema 6, and recipe schema `spektrafilm-rs-params-6` own the scanner cutover. The additive `scanner.operator` group uses these same versions; omitted values default to `0, 0, 0, 1`. Saved corrections contain no automatic offsets. Unknown and retired fields remain errors. Explicit older versions migrate `scanner.lamp` out of the readout controls. Complete captures preserve it as the Convert acquisition illuminant unless already declared. Current versions reject `scanner.lamp`. The built-in `neutral` spelling becomes `standard`; this migration intentionally changes the automatic scan output.
+GUI state version 5, preset schema 6, and recipe schema `spektrafilm-rs-params-6` own the scanner cutover. The additive `scanner.operator` group uses these same versions; omitted values default to `0, 0, 0, 1`. The additive `scanner.white_reference` leaf also uses those versions; an omitted value defaults to `clear_film_base`, and existing documents retain their pixels. Saved corrections contain no automatic offsets. Unknown and retired fields remain errors. Explicit older versions migrate `scanner.lamp` out of the readout controls. Complete captures preserve it as the Convert acquisition illuminant unless already declared. Current versions reject `scanner.lamp`. The built-in `neutral` spelling becomes `standard`; this migration intentionally changes the automatic scan output.

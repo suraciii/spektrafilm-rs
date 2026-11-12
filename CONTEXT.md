@@ -29,7 +29,7 @@ _Avoid_: Scanner look, output color space, receiver profile
 **Scan capture**: The RGB readings the scan sensor acquires from a scanned medium. A negative conversion reads record densities instead of a scan capture.
 _Avoid_: Scan output, scanned medium
 
-**Clear film base**: The unexposed base of the scanned medium. It is the white reference of a scan: a clear area reads as the output color space's white.
+**Clear film base**: The unexposed base of the scanned medium. It is the default white reference of a scan: a clear area reads as the output color space's white. The explicit readout-illuminant white-reference mode opts out of that calibration.
 _Avoid_: Scanner white and black correction, output levels
 
 **Scanned density**: The density derived from one channel of a scan capture, relative to that channel's clear reference.

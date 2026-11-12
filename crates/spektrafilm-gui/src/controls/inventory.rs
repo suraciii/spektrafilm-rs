@@ -1678,6 +1678,7 @@ const LABELS: &[(&str, &str)] = &[
     ("scanner.operator.tint_ev", "Green–magenta tint"),
     ("scanner.operator.contrast", "Conversion contrast"),
     ("scanner.scan_output", "scan output"),
+    ("scanner.white_reference", "white reference"),
     ("scanner.unsharp_mask", "Unsharp mask (digital sharpening)"),
     (
         "settings.apply_hanatos2025_adaptation_surface",

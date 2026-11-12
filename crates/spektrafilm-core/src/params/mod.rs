@@ -202,6 +202,11 @@ impl ScanOperatorParams {
     }
 }
 
+/// White reference mode: divide by the clear film base and adapt from it.
+pub const SCAN_WHITE_REFERENCE_CLEAR_FILM_BASE: &str = "clear_film_base";
+/// White reference mode: divide by the readout light and adapt from it.
+pub const SCAN_WHITE_REFERENCE_READOUT_ILLUMINANT: &str = "readout_illuminant";
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ScannerParams {
@@ -210,6 +215,12 @@ pub struct ScannerParams {
     /// positive image.
     #[serde(default = "default_direct_scan")]
     pub scan_output: String,
+    /// White reference of the spectral scan: the clear film base by default.
+    /// `readout_illuminant` opts out of clear-base white calibration and uses
+    /// the resolved readout light, matching upstream experimental `28bf883`
+    /// scan normalization.
+    #[serde(default = "default_scan_white_reference")]
+    pub white_reference: String,
     /// Named positive-conversion style applied by the negative-to-positive
     /// interpretation: `standard` is the built-in frozen tone; any other
     /// name resolves to `data/scan-styles/<name>.json` (declared
@@ -241,6 +252,7 @@ impl Default for ScannerParams {
     fn default() -> Self {
         Self {
             scan_output: default_direct_scan(),
+            white_reference: default_scan_white_reference(),
             conversion_style: default_conversion_style(),
             experimental_setup: false,
             operator: ScanOperatorParams::default(),
@@ -1040,6 +1052,10 @@ fn default_65() -> f32 {
 }
 fn default_direct_scan() -> String {
     "direct_scan".into()
+}
+
+fn default_scan_white_reference() -> String {
+    SCAN_WHITE_REFERENCE_CLEAR_FILM_BASE.into()
 }
 
 fn default_unsharp() -> [f64; 2] {

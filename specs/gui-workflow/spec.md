@@ -21,7 +21,9 @@ The [GUI presentation specification](../gui-presentation/spec.md) owns visual hi
 - The Scanner controls show exactly the controls that
 [Scan medium and scanner controls](../film-chain/spec.md#scan-medium-and-scanner-controls) assign to the scanned medium. For a negative film profile on the direct `input > film > scan` route or the real negative-capture `input > convert-film > scan` route, they offer `direct_scan` and `negative_to_positive`. Labels MUST follow the [scan output naming contract](../film-chain/spec.md#scan-output-naming-acceptance).
 
-Every route shows lens blur and unsharp mask; the readout illuminant is not a control. Conversion control display names MUST follow the [conversion control naming contract](../film-chain/spec.md#conversion-control-naming-acceptance). Eligible `standard` negative scans MUST expose operator correction and its restore, copy/paste and held automatic-comparison actions under the [operator contract](../film-chain/lab-scan/spec.md#operator-correction).
+Every route shows the white-reference selector, lens blur, and unsharp mask; the readout illuminant is not a control. The white-reference selector chooses clear-film-base calibration by default or the upstream-aligned readout-illuminant normalization.
+
+Conversion control display names MUST follow the [conversion control naming contract](../film-chain/spec.md#conversion-control-naming-acceptance). Eligible `standard` negative scans MUST expose operator correction and its restore, copy/paste and held automatic-comparison actions under the [operator contract](../film-chain/lab-scan/spec.md#operator-correction).
 
 Negative conversion MUST place `scanner.operator` in a collapsible specialized correction group. Its labels and help MUST identify exposure-domain units and distinguish it from Tone & Color. Its values MUST NOT be renamed or migrated into the `finishing` group.
 

@@ -385,6 +385,11 @@ fn conditions(path: &str) -> Vec<String> {
     if path == "scanner.scan_output" {
         out.push("negative_to_positive requires a negative film profile and direct input > film > scan or input > convert-film > scan route; every grain engine is accepted".into());
     }
+    if path == "scanner.white_reference" {
+        out.push(
+            "clear_film_base is the default white calibration; readout_illuminant opts out to the fixed readout light and reproduces upstream experimental 28bf883 scanner normalization".into(),
+        );
+    }
     if path == "scanner.conversion_style" {
         out.push(
             "named positive-conversion tone for negative_to_positive; standard is the built-in frozen tone; neutral is an input-only alias; other names resolve to data/scan-styles/<name>.json (declared per-channel tone parameters, never fitted); a style never runs the experimental frame setup"
@@ -457,6 +462,9 @@ fn description(path: &str) -> Option<&'static str> {
         ),
         path if path.ends_with(".developer_exhaustion") => Some(
             "Model-specific material development control; requires enabled chemistry, actual development and a supported fitted density-curve model. Does not provide universal highlight compression.",
+        ),
+        "scanner.white_reference" => Some(
+            "White reference of the spectral scan. clear_film_base divides by the clear film base and adapts from it; readout_illuminant opts out and uses the fixed readout light, matching upstream experimental 28bf883.",
         ),
         "scanner.lens_blur" => Some(
             "Optical softness in linear scanner readout before interpretation, corrections, gamut processing and digital sharpening.",

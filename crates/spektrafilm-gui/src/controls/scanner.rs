@@ -340,6 +340,25 @@ pub(crate) fn sections(
                 ui.label(localized(ui.ctx(), "Scanner inactive on this route; stored values are retained."));
             }
             ui.add_enabled_ui(medium != ScanMedium::None, |ui| {
+            if filter_matches(filter, vocabulary::WHITE_REFERENCE) {
+                flags.runtime_changed |= choice_tip_entries(
+                    ui,
+                    vocabulary::WHITE_REFERENCE,
+                    &mut params.scanner.white_reference,
+                    [
+                        (
+                            spektrafilm_core::params::SCAN_WHITE_REFERENCE_CLEAR_FILM_BASE,
+                            vocabulary::WHITE_REFERENCE_CLEAR_FILM_BASE,
+                        ),
+                        (
+                            spektrafilm_core::params::SCAN_WHITE_REFERENCE_READOUT_ILLUMINANT,
+                            vocabulary::WHITE_REFERENCE_READOUT_ILLUMINANT,
+                        ),
+                    ]
+                    .into_iter(),
+                    vocabulary::WHITE_REFERENCE_HELP,
+                );
+            }
             if filter_matches(filter, vocabulary::SCAN_OUTPUT)
                 && ui.add_enabled_ui(positive_route, |ui| choice_tip_entries(
                     ui,

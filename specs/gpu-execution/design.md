@@ -28,7 +28,7 @@ Gamut validation MUST check controls and destination compatibility without const
 
 Numerical calibration grids, spectral lookup generation, full-source statistics, spatial field formation, stochastic population preparation, and image-sized intermediate construction MUST have GPU implementations. CPU-generated image or grain data MUST NOT be relabeled as cached preparation to satisfy GPU coverage. A cache hit does not prove where its content was computed.
 
-CPU and GPU preparation MUST derive the same calibrated model. Scanner preparation MUST retain the owning spectral grid and clear-film white reference. The negative-density inverse MUST retain profile-derived monotone density-to-log-exposure knots, finite endpoint slopes, and per-record independence under the [film-chain design](../film-chain/design.md).
+CPU and GPU preparation MUST derive the same calibrated model. Scanner preparation MUST retain the owning spectral grid and selected white reference (`clear_film_base` or `readout_illuminant`). The negative-density inverse MUST retain profile-derived monotone density-to-log-exposure knots, finite endpoint slopes, and per-record independence under the [film-chain design](../film-chain/design.md).
 
 Finishing preparation and its reuse follow [Finishing preparation and execution](../finishing/design.md#preparation-and-execution) for both backends.
 

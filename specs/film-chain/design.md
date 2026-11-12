@@ -14,7 +14,8 @@
 - The scan matrix is the identity.
 - The readout illuminant is a product constant selected by the material category. It resolves through the shared illuminant service that `enlarger.illuminant` uses, so one service owns every light-source name.
 - Its spectral power distribution is prepared once per render and participates in the prepared scan identity and its cache key.
-- Scan acquisition is one spectral integration of the scanned medium under the readout illuminant, taken against the clear film base of that medium as the white reference. The acquisition chromatically adapts from that clear-film white to the output color space's white and emits output-space linear RGB.
+- Scan acquisition is one spectral integration of the scanned medium under the readout illuminant. By default, it is taken against the clear film base of that medium as the white reference and adapts from that clear-film white to the output color space's white.
+- `scanner.white_reference = readout_illuminant` instead normalizes by the readout-light Y and adapts from the readout-light white. This is the upstream experimental `28bf883` alignment mode; both emit output-space linear RGB.
 - Bulk scanning and scalar forward calibration share log-XYZ LUT construction and density-coordinate scaling. Each path retains its own sample precision, interpolation, correction, and color-transform order.
 - Negative conversion has one preparation-time interpretation. It reads record densities, as a narrowband scanner does, and derives one private per-record response from the selected profile density curves: monotone density-to-log-exposure knots with finite endpoint slopes.
 - One record's reconstructed exposure MUST NOT depend on another record's density, and image pixels reuse the response without any spectral capture.
@@ -23,7 +24,7 @@
 - Every exposure-reconstruction path reads the profile density curves in the domain the film stage emits: each record measured over its own minimum. Calibration rows and record axes use that domain, so a record's curve minimum is never read as exposure.
 - The scanned medium determines the stage topology and the scanner calibration references.
 - Exposure reconstruction MUST NOT estimate its response from image content.
-- Scan provenance serializes the neutral scan model identity: the CIE 1931 sensor, the clear-film white reference, the output space white, the identity scan matrix, and the resolved readout illuminant.
+- Scan provenance serializes the neutral scan model identity: the CIE 1931 sensor, the selected white-reference mode (`clear_film_base` or `readout_illuminant`), the output space white, the identity scan matrix, and the resolved readout illuminant.
 - CPU and GPU execute one photographic stage contract under [GPU execution](../gpu-execution/design.md#ownership). A resident chain is an execution strategy, not a second model or permission for CPU image-stage fallback.
 - Runtime owns complete-operation capability validation, preparation, stage order, and output finalization. Known GPU limitations MUST be checked before dispatch; an explicit GPU request MUST fail rather than use a hidden CPU stage.
 - The WGPU backend owns device-resident stage execution and resource lifetimes. Multiple submissions or bounded tiles MUST preserve the same domains and do not require a second public pipeline.

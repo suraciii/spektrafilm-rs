@@ -23,7 +23,9 @@ The readout MUST NOT apply a device infrared filter. It MUST NOT accept a runtim
 
 The readout illuminant MUST NOT change film exposure, development, or reconstructed record exposure. It MUST NOT depend on image content, the capture illuminant, or the enlarger illuminant. It MUST participate in scan preparation and its cache identity.
 
-Positive transmission and paper reflection readout MUST use the clear material base as the white reference. The readout MUST adapt that white to the output color space white. It MUST NOT apply a selectable receiver profile or scan calibration matrix.
+Positive transmission and paper reflection readout MUST use the clear material base as the white reference by default. The readout MUST adapt that white to the output color space white.
+
+`scanner.white_reference = readout_illuminant` explicitly opts out to the readout-light Y and white, matching upstream experimental `28bf883`. It MUST be identified in provenance and does not claim clear-base calibration. The readout MUST NOT apply a selectable receiver profile or scan calibration matrix.
 
 Paper readout MUST compute color from spectral reflectance. The densitometer convention describes profile measurement; it MUST NOT replace the reflectance integration.
 

@@ -250,7 +250,7 @@ Legacy baseline preparation MUST retain its existing initialization policy under
 
 This section describes film look and section ownership. LUT preset ownership follows [LUT presets](#lut-presets).
 
-A film look preset owns film and print selection plus explicit film, print, enlarger, diffusion, halation, coupler, grain, base, chemistry, scanner, CMYK ink style, and output-mix controls. The scanner controls it owns are `scanner.scan_output`, `scanner.conversion_style`, `scanner.experimental_setup`, `scanner.operator`, `scanner.lens_blur`, and `scanner.unsharp_mask`. Viewing glare ownership is limited to effective `print_render.glare`; the non-effective `film_render.glare` group is not preset-owned.
+A film look preset owns film and print selection plus explicit film, print, enlarger, diffusion, halation, coupler, grain, base, chemistry, scanner, CMYK ink style, and output-mix controls. The scanner controls it owns are `scanner.scan_output`, `scanner.white_reference`, `scanner.conversion_style`, `scanner.experimental_setup`, `scanner.operator`, `scanner.lens_blur`, and `scanner.unsharp_mask`. Viewing glare ownership is limited to effective `print_render.glare`; the non-effective `film_render.glare` group is not preset-owned.
 
 Neutral enlarger filter anchors are calibration baselines, not look controls, and are not preset-owned. Existing material controls and `output_mix` follow [Output mix and material controls](../output-mix/spec.md). A section preset owns exactly the controls of its section.
 
@@ -427,7 +427,9 @@ A failed application MUST preserve active controls, the applied marker, transien
 
 CLI preset selection MUST use the same core resolver and name rules as GUI preset application. The [CLI parameter language](../cli/spec.md) defines selection, sparse parameter files, and command compatibility.
 
-The version 5 scanner cutover MUST NOT reopen older retired-field migrations. A version 5 document that carries the retired CMYK spelling or legacy conversion fields MUST still fail. A sparse scanner section MUST normalize `neutral` to `standard` without acquiring omitted leaves.
+The version 5 scanner cutover MUST NOT reopen older retired-field migrations. A version 5 document that carries the retired CMYK spelling or legacy conversion fields MUST still fail.
+
+A sparse scanner section MUST normalize `neutral` to `standard` without acquiring omitted leaves. The additive `scanner.white_reference` leaf follows the same rule: omission resolves to `clear_film_base` without acquiring an authored leaf or requiring a schema-version migration.
 
 The readout cutover intentionally changes negative scan appearance; it does not promise historical pixels for the migrated built-in style.
 

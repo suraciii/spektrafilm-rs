@@ -67,7 +67,7 @@ A section is a named set of look-owned parameter paths. This table is authoritat
 - `camera filter`: `camera_diffusion_filter`. Primary module anchor: Input and capture / Camera diffusion.
 - `enlarger filter`: `enlarger.diffusion_filter`. Primary module anchor: Print / Enlarger diffusion.
 - `enlarger`: `enlarger` without `enlarger.diffusion_filter`. Primary module anchor: Print / Enlarger.
-- `scanner`: `scanner.scan_output`, `scanner.conversion_style`, `scanner.experimental_setup`, `scanner.operator`, `scanner.lens_blur`, `scanner.unsharp_mask`. Primary module anchor: Scan / Scanner.
+- `scanner`: `scanner.scan_output`, `scanner.white_reference`, `scanner.conversion_style`, `scanner.experimental_setup`, `scanner.operator`, `scanner.lens_blur`, `scanner.unsharp_mask`. Primary module anchor: Scan / Scanner.
 - `cmyk ink style`: `cmyk`. Primary module anchor: Output / CMYK ink style.
 - `print`: `print_render`. Primary module anchor: Print / Chemistry.
 - `output mix`: `output_mix`. Primary module anchor: Output / Simulation blend.
