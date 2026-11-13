@@ -83,6 +83,11 @@ pub(crate) struct App {
     pub(crate) settings_open: bool,
     pub(crate) only_modified: bool,
     pub(crate) pending_stage: Option<controls::Stage>,
+    /// Stage heading nearest the inspector viewport top; presentation only.
+    pub(crate) inspector_stage: controls::Stage,
+    /// Stage-jump destination while the controls scroll area eases toward it.
+    /// Keeps the stage cue on the destination instead of the traversed stages.
+    pub(crate) stage_jump_target: Option<controls::Stage>,
     pub(crate) settings_return_focus: Option<egui::Id>,
     pub(crate) export_return_focus: Option<egui::Id>,
     pub(crate) output_color_space: String,
@@ -371,6 +376,8 @@ impl App {
             settings_open: false,
             only_modified: false,
             pending_stage: None,
+            inspector_stage: controls::Stage::Input,
+            stage_jump_target: None,
             settings_return_focus: None,
             export_return_focus: None,
             output_color_space: "sRGB".into(),

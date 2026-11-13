@@ -146,6 +146,21 @@ impl eframe::App for App {
                 inspector.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
                 let ui = &mut inspector;
                 ui.add_space(theme::SPACE_BLOCK);
+                // The field below carries the accessible name. Paint this
+                // visible label rather than adding a second widget with the
+                // same name to the accessibility tree.
+                let label_height = theme::SIZE_HINT + 2.0;
+                let (label_rect, _) = ui.allocate_exact_size(
+                    egui::vec2(ui.available_width(), label_height),
+                    egui::Sense::hover(),
+                );
+                ui.painter().text(
+                    label_rect.left_center(),
+                    egui::Align2::LEFT_CENTER,
+                    crate::i18n::text(ui.ctx(), "surfaces.search.label"),
+                    egui::FontId::proportional(theme::SIZE_HINT),
+                    theme::FG_MUTED,
+                );
                 ui.horizontal(|ui| {
                     let clear_width = if self.filter.is_empty() {
                         0.0
@@ -172,7 +187,7 @@ impl eframe::App for App {
                         egui::TextEdit::singleline(&mut self.filter)
                             .margin(egui::vec2(theme::SPACE_2, 5.0))
                             .id(egui::Id::new("control-search"))
-                            .hint_text(crate::i18n::text(ui.ctx(), "surfaces.search.label"))
+                            .hint_text(crate::i18n::text(ui.ctx(), "surfaces.search.placeholder"))
                             .clip_text(true)
                             .desired_width(search_width),
                     );
@@ -208,6 +223,9 @@ impl eframe::App for App {
                         },
                     );
                 });
+                ui.add_space(theme::SPACE_1);
+                self.mode_selector(ui);
+                ui.add_space(theme::SPACE_1);
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = theme::SPACE_1;
                     let stages = controls::Stage::ALL;
@@ -220,15 +238,33 @@ impl eframe::App for App {
                         } else {
                             controls::localized(ui.ctx(), stage.label())
                         };
+                        let current = self.inspector_stage == stage;
                         let response = ui
                             .add_sized(
                                 [stage_width, theme::HEIGHT_CONTROL],
-                                egui::Button::new(egui::RichText::new(label).small()).frame(false),
+                                egui::Button::new(egui::RichText::new(label).small().color(
+                                    if current {
+                                        theme::FG
+                                    } else {
+                                        theme::FG_SECONDARY
+                                    },
+                                ))
+                                .frame(false),
                             )
                             .on_hover_text(crate::i18n::text(
                                 ui.ctx(),
                                 "surfaces.search.stage_help",
                             ));
+                        if current {
+                            let y = response.rect.bottom() - 1.0;
+                            ui.painter().line_segment(
+                                [
+                                    egui::pos2(response.rect.left() + theme::SPACE_1, y),
+                                    egui::pos2(response.rect.right() - theme::SPACE_1, y),
+                                ],
+                                egui::Stroke::new(2.0_f32, theme::ACCENT),
+                            );
+                        }
                         // A pointer activation navigates to the heading; the
                         // boxed keyboard-focus ring must not linger and read as
                         // a selected tab.
@@ -237,17 +273,24 @@ impl eframe::App for App {
                         }
                         controls::focus_feedback(ui, &response);
                         let accessible_name = controls::localized(ui.ctx(), stage.label());
+                        let current_help =
+                            crate::i18n::text(ui.ctx(), "surfaces.search.stage_current");
                         ui.ctx().accesskit_node_builder(response.id, |node| {
-                            node.set_label(accessible_name.as_ref())
+                            node.set_label(accessible_name.as_ref());
+                            if current {
+                                node.set_description(current_help.as_ref());
+                            }
                         });
                         if response.clicked() {
                             self.pending_stage = Some(stage);
+                            self.inspector_stage = stage;
+                            self.stage_jump_target = Some(stage);
+                            self.pending_scroll = None;
                         }
                     }
                 });
                 ui.separator();
                 self.search_results(ui);
-                self.mode_selector(ui);
                 controls::install_view_filter(ui.ctx(), self.only_modified);
                 ui.add_space(theme::SPACE_ROW);
                 // Reserve the action bar's height below the scrollable
@@ -255,6 +298,7 @@ impl eframe::App for App {
                 let scroll_height =
                     (ui.available_height() - theme::HEIGHT_ACTION_BAR_RESERVE).max(1.0);
                 ui.allocate_ui(egui::vec2(ui.available_width(), scroll_height), |ui| {
+                    let mut stage_rects = [None; controls::Stage::ALL.len()];
                     let scroll = egui::ScrollArea::vertical()
                         .id_salt((
                             "controls-scroll",
@@ -263,9 +307,13 @@ impl eframe::App for App {
                         .max_width(ui.available_width())
                         .auto_shrink([false, false])
                         .show(ui, |ui| {
-                            self.controls_panel(ui);
+                            stage_rects = self.controls_panel(ui);
                             ui.unique_id()
                         });
+                    let at_end = scroll.content_size.y > scroll.inner_rect.height() + 1.0
+                        && scroll.state.offset.y + scroll.inner_rect.height()
+                            >= scroll.content_size.y - 1.0;
+                    self.update_current_stage(ctx, &stage_rects, scroll.inner_rect, at_end);
                     let content_label = crate::i18n::text(ctx, "surfaces.search.content");
                     ctx.accesskit_node_builder(scroll.inner, |node| {
                         node.set_role(egui::accesskit::Role::ScrollView);

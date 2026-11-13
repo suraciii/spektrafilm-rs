@@ -158,7 +158,7 @@ impl App {
         {
             return false;
         }
-        if controls::inactive_in_lut(section, self.params.workflow.mode) {
+        if controls::inactive_in_workflow(section, self.params.workflow.mode) {
             return false;
         }
         if !matches!(section, "Session" | "Display") {

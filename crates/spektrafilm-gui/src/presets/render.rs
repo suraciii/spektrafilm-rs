@@ -149,6 +149,100 @@ impl Browser {
     }
 }
 
+/// The kind is a dispatch fact, never a browser category. The card context
+/// below uses the payload itself so the visible line identifies content
+/// without introducing a mode-type badge.
+fn preset_kind(entry: &LibraryEntry) -> Option<PresetKind> {
+    if entry.fault.is_some() {
+        return None;
+    }
+    entry.preset.as_ref()?.kind().ok()
+}
+
+fn preset_context(
+    ui: &egui::Ui,
+    entry: &LibraryEntry,
+    films: &[crate::profiles::ProfileEntry],
+) -> Option<String> {
+    let preset = entry.preset.as_ref()?;
+    match preset_kind(entry)? {
+        PresetKind::Look => entry
+            .film_profile
+            .as_ref()
+            .map(|reference| crate::profiles::selected_display(films, &reference.stock)),
+        PresetKind::Lut => {
+            let lut = preset.lut.as_ref()?;
+            let title = lut.title.trim();
+            if !title.is_empty() {
+                Some(title.to_owned())
+            } else {
+                lut.path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .map(str::to_owned)
+            }
+        }
+        PresetKind::Effects => {
+            let effects = preset.effects_parameters()?;
+            let mut active = Vec::new();
+            for (enabled, key) in [
+                (effects.diffusion.active, "surfaces.lut.diffusion"),
+                (effects.halation.active, "surfaces.lut.halation"),
+                (effects.grain.active, "surfaces.lut.grain"),
+            ] {
+                if enabled {
+                    active.push(crate::i18n::text(ui.ctx(), key).into_owned());
+                }
+            }
+            Some(format!(
+                "{}: {}",
+                crate::i18n::text(ui.ctx(), "surfaces.effects.label"),
+                if active.is_empty() {
+                    crate::i18n::text(ui.ctx(), "surfaces.effects.none_active").into_owned()
+                } else {
+                    active.join(" · ")
+                }
+            ))
+        }
+        PresetKind::Section(_) => None,
+    }
+}
+
+fn preset_target_mode(kind: PresetKind) -> Option<spektrafilm_core::params::WorkflowMode> {
+    use spektrafilm_core::params::WorkflowMode;
+    match kind {
+        PresetKind::Look => Some(WorkflowMode::Film),
+        PresetKind::Lut => Some(WorkflowMode::Lut),
+        PresetKind::Effects => Some(WorkflowMode::Off),
+        PresetKind::Section(_) => None,
+    }
+}
+
+fn workflow_label_key(mode: spektrafilm_core::params::WorkflowMode) -> &'static str {
+    use spektrafilm_core::params::WorkflowMode;
+    match mode {
+        WorkflowMode::Film => "surfaces.workflow.film",
+        WorkflowMode::Lut => "surfaces.workflow.lut",
+        WorkflowMode::Off => "surfaces.workflow.off",
+    }
+}
+
+fn preset_switch(
+    ui: &egui::Ui,
+    entry: &LibraryEntry,
+    current: spektrafilm_core::params::WorkflowMode,
+) -> Option<String> {
+    let target = preset_target_mode(preset_kind(entry)?)?;
+    (target != current).then(|| {
+        crate::tr!(
+            ui.ctx(),
+            "surfaces.presets.switches_to",
+            workflow = crate::i18n::text(ui.ctx(), workflow_label_key(target))
+        )
+        .into_owned()
+    })
+}
+
 impl App {
     pub(crate) fn preset_panel(&mut self, ctx: &egui::Context) {
         // Responsive collapse: at compact workspace widths the library lives in
@@ -432,6 +526,33 @@ impl App {
                     keys[*index] = Some(self.presets.thumbnails.candidate_key(signature, entry));
                 }
             }
+            // The count belongs to the cards actually intersecting the scroll
+            // viewport. Card demand is discovered inside the scroll area, so
+            // the header uses the previous frame's measurement; that avoids
+            // counting offscreen cards that were never requested.
+            let progress_id = egui::Id::new("preset-thumbnail-progress");
+            let (remaining, total): (usize, usize) = ui
+                .ctx()
+                .data(|data| data.get_temp(progress_id))
+                .unwrap_or((0, 0));
+            if remaining > 0 {
+                ui.add(
+                    egui::Label::new(
+                        egui::RichText::new(
+                            crate::tr!(
+                                ui.ctx(),
+                                "surfaces.presets.thumbnail_progress",
+                                remaining = remaining,
+                                total = total
+                            )
+                            .to_string(),
+                        )
+                        .size(theme::SIZE_HINT)
+                        .color(theme::FG_SECONDARY),
+                    )
+                    .truncate(),
+                );
+            }
             let mut demand: Vec<(ThumbnailKey, Preset)> = Vec::new();
             egui::ScrollArea::vertical()
                 .id_salt("preset browser scroll")
@@ -518,7 +639,7 @@ impl App {
                         // reserved scrollbar is not part of the usable width. A
                         // narrow panel keeps one reachable column.
                         let usable = (ui.clip_rect().width() - 2.0 * theme::SPACE_2).max(120.0);
-                        let columns = if usable >= 250.0 { 2 } else { 1 };
+                        let columns = if usable >= 230.0 { 2 } else { 1 };
                         let card_width = ((usable - theme::SPACE_2 * (columns - 1) as f32)
                             / columns as f32)
                             .max(110.0);
@@ -550,6 +671,12 @@ impl App {
                     }
                 });
             self.presets.reveal = None;
+            let remaining_visible = demand
+                .iter()
+                .filter(|(key, _)| matches!(self.presets.thumbnails.status(key), Status::Pending))
+                .count();
+            ui.ctx()
+                .data_mut(|data| data.insert_temp(progress_id, (remaining_visible, demand.len())));
             let foreground_busy =
                 self.render_job.is_some() || self.dirty || self.export_job.is_some();
             self.presets
@@ -682,15 +809,23 @@ impl App {
             }
         });
         let mut action = None;
+        let context = preset_context(ui, entry, &self.films);
+        let switch = preset_switch(ui, entry, self.params.workflow.mode);
         let inner = (card_width - 2.0 * theme::SPACE_1).max(0.0);
         let thumbnail_height = (inner * 2.0 / 3.0).max(44.0);
+        let details_height = if context.is_some() {
+            2.0 + theme::SIZE_HINT
+        } else {
+            0.0
+        } + if switch.is_some() {
+            2.0 + theme::SIZE_HINT
+        } else {
+            0.0
+        } + if active { 2.0 + theme::SIZE_HINT } else { 0.0 };
         // Reserve the whole card before laying out its rows: the full-width
         // thumbnail consumes the cell, so the later rows need their own region.
-        let card_height = 2.0 * theme::SPACE_1
-            + thumbnail_height
-            + 2.0
-            + theme::HEIGHT_CONTROL
-            + if active { 2.0 + theme::SIZE_HINT } else { 0.0 };
+        let card_height =
+            2.0 * theme::SPACE_1 + thumbnail_height + 2.0 + theme::HEIGHT_CONTROL + details_height;
         let (card_rect, _) =
             ui.allocate_exact_size(egui::vec2(card_width, card_height), egui::Sense::hover());
         if active {
@@ -770,7 +905,10 @@ impl App {
             // control is drawn later and therefore stays on top.
             let hit_rect = egui::Rect::from_min_size(
                 rect.min,
-                egui::vec2(inner, thumbnail_height + 2.0 + theme::HEIGHT_CONTROL),
+                egui::vec2(
+                    inner,
+                    thumbnail_height + 2.0 + theme::HEIGHT_CONTROL + details_height,
+                ),
             );
             let card_click = ui.interact(hit_rect, card_id(index), egui::Sense::click());
             crate::controls::locate_row(ui, "presets.card", &card_click);
@@ -855,6 +993,26 @@ impl App {
                     }
                 });
             });
+            if let Some(context) = &context {
+                ui.add(
+                    egui::Label::new(
+                        egui::RichText::new(context)
+                            .size(theme::SIZE_HINT)
+                            .color(theme::FG_SECONDARY),
+                    )
+                    .truncate(),
+                );
+            }
+            if let Some(switch) = &switch {
+                ui.add(
+                    egui::Label::new(
+                        egui::RichText::new(switch)
+                            .size(theme::SIZE_HINT)
+                            .color(theme::FG_SECONDARY),
+                    )
+                    .truncate(),
+                );
+            }
             if let Some(state) = state {
                 ui.label(
                     egui::RichText::new(crate::controls::localized(ui.ctx(), state))
@@ -870,6 +1028,9 @@ impl App {
                 label.push_str(&crate::controls::localized(ui.ctx(), state));
             }
             let mut description = String::new();
+            if let Some(switch) = &switch {
+                description.push_str(switch);
+            }
             if let Some(lut) = entry.preset.as_ref().and_then(|preset| preset.lut.as_ref()) {
                 if lut.title.is_empty() {
                     description.push_str(&format!("LUT: {}", lut.path.display()));

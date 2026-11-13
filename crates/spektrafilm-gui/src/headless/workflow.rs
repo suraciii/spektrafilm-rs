@@ -161,17 +161,28 @@ fn legacy_disabled_preview_state_still_renders_accepted_numeric_edits_automatica
 fn workflow_modes_keep_stage_navigation_visible_and_mark_inactive_stages() {
     let mut s = session();
     let h = &mut s.harness;
+    h.state_mut().params.effects = None;
+    let before = serde_json::to_value(&h.state().params).unwrap();
+    navigate_stage(h, controls::Stage::Effects);
+    click(h, "Effect controls");
+    let diffusion = h.get_by_role_and_label(egui::accesskit::Role::CheckBox, "Diffusion");
+    assert!(diffusion.node().is_disabled());
+    diffusion.simulate_click();
+    h.run_steps(3);
+    assert_eq!(serde_json::to_value(&h.state().params).unwrap(), before);
     navigate_stage(h, controls::Stage::Film);
     assert!(h.query_by_label("Film material").is_some());
-    // The Look stage stays reachable in film mode because it owns the mode
-    // switch; its controls explain that they are inactive.
+    // The Look stage stays reachable in film mode; its body is disabled and
+    // explains that its stored LUT declaration is inactive.
     navigate_stage(h, controls::Stage::Look);
-    assert!(h.query_all_by_label("LUT").next().is_some());
-    assert!(
-        h.query_all_by_label("Inactive in this workflow. Stored values are retained.")
-            .next()
-            .is_some()
-    );
+    assert_eq!(h.state().inspector_stage, controls::Stage::Look);
+    let import_label = crate::i18n::text(&h.ctx, "surfaces.lut.import").into_owned();
+    assert!(h.get_by_label(&import_label).node().is_disabled());
+    navigate_stage(h, controls::Stage::Output);
+    assert_eq!(h.state().inspector_stage, controls::Stage::Output);
+    let heading = h.get_by_label("Output stage").raw_bounds().unwrap();
+    let viewport = h.get_by_label("Inspector controls").raw_bounds().unwrap();
+    assert!(heading.y0 >= viewport.y0 && heading.y0 <= viewport.y0 + 8.0);
 
     // Give the active LUT a valid external file so the production workflow
     // switch does not open a chooser; import itself has separate coverage.
@@ -253,9 +264,9 @@ fn workflow_modes_keep_stage_navigation_visible_and_mark_inactive_stages() {
     search_controls(h, "Film material");
     assert!(h.query_by_label("Film material").is_some());
     assert!(
-        h.query_all_by_label("Inactive in the current workflow. Stored values are retained.")
-            .next()
-            .is_some()
+        h.get_by_role_and_label(egui::accesskit::Role::ComboBox, "film profile")
+            .node()
+            .is_disabled()
     );
     search_controls(h, "");
     h.run_steps(3);
@@ -298,12 +309,9 @@ fn workflow_modes_keep_stage_navigation_visible_and_mark_inactive_stages() {
     );
     assert!(h.state().params.effects.as_ref().unwrap().halation.active);
     navigate_stage(h, controls::Stage::Effects);
-    assert!(
-        h.query_all_by_label("Inactive in the film workflow. Stored values are retained.")
-            .next()
-            .is_none()
-    );
+    assert_eq!(h.state().inspector_stage, controls::Stage::Effects);
     navigate_stage(h, controls::Stage::Film);
+    assert_eq!(h.state().inspector_stage, controls::Stage::Film);
     assert!(h.get_by_label("reset Film material").node().is_disabled());
     navigate_stage(h, controls::Stage::Look);
     h.query_all_by_role_and_label(egui::accesskit::Role::Button, "Film")

@@ -605,6 +605,7 @@ fn key(label: &str) -> Option<&'static str> {
         "Film route" => Some("surfaces.route.label"),
         "LUT" => Some("surfaces.workflow.lut"),
         "Effects" => Some("surfaces.effects.label"),
+        "Effect controls" => Some("surfaces.effects.controls"),
         "Look" => Some("controls.label.look"),
         "Film Format" => Some("controls.scanner.film_format"),
         "Film Resolution" => Some("controls.grain.film_resolution"),

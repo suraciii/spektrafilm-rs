@@ -62,15 +62,82 @@ impl App {
     /// list so changing modes never requires scrolling back to a stage.
     pub(crate) fn mode_selector(&mut self, ui: &mut egui::Ui) {
         let mut selected = self.params.workflow.mode;
-        ui.horizontal_wrapped(|ui| {
-            ui.label(crate::i18n::text(ui.ctx(), "surfaces.workflow.mode"));
-            for (mode, key) in [
-                (WorkflowMode::Film, "surfaces.workflow.film"),
-                (WorkflowMode::Lut, "surfaces.workflow.lut"),
-                (WorkflowMode::Off, "surfaces.workflow.off"),
-            ] {
-                ui.selectable_value(&mut selected, mode, crate::i18n::text(ui.ctx(), key));
-            }
+        let label = crate::i18n::text(ui.ctx(), "surfaces.workflow.mode");
+        let help = crate::i18n::text(ui.ctx(), "surfaces.workflow.mode_help");
+        ui.horizontal(|ui| {
+            ui.label(
+                egui::RichText::new(label.as_ref())
+                    .small()
+                    .color(theme::FG_SECONDARY),
+            )
+            .on_hover_text(help.as_ref());
+            egui::Frame::new()
+                .fill(theme::SURFACE2)
+                .stroke(theme::stroke(theme::BORDER))
+                .corner_radius(theme::RADIUS_CARD)
+                .inner_margin(2)
+                .show(ui, |ui| {
+                    ui.spacing_mut().item_spacing.x = 2.0;
+                    ui.visuals_mut().selection.bg_fill = theme::ACCENT;
+                    ui.visuals_mut().selection.stroke = theme::stroke(theme::ACCENT);
+                    let width = ((ui.available_width() - 4.0) / 3.0).max(1.0);
+                    ui.horizontal(|ui| {
+                        for (mode, key, help_key) in [
+                            (
+                                WorkflowMode::Film,
+                                "surfaces.workflow.film",
+                                "surfaces.workflow.film_help",
+                            ),
+                            (
+                                WorkflowMode::Lut,
+                                "surfaces.workflow.lut",
+                                "surfaces.workflow.lut_help",
+                            ),
+                            (
+                                WorkflowMode::Off,
+                                "surfaces.workflow.off",
+                                "surfaces.workflow.off_help",
+                            ),
+                        ] {
+                            let mode_label = crate::i18n::text(ui.ctx(), key);
+                            let mode_help = crate::i18n::text(ui.ctx(), help_key);
+                            let response = ui.add_sized(
+                                [width, theme::HEIGHT_CONTROL - 4.0],
+                                egui::Button::new(
+                                    egui::RichText::new(mode_label.as_ref()).small().color(
+                                        if selected == mode {
+                                            theme::CONTRAST_ON_ACCENT
+                                        } else {
+                                            theme::FG
+                                        },
+                                    ),
+                                )
+                                .selected(selected == mode),
+                            );
+                            response.clone().on_hover_text(mode_help.as_ref());
+                            response.widget_info(|| {
+                                egui::WidgetInfo::selected(
+                                    egui::WidgetType::SelectableLabel,
+                                    ui.is_enabled(),
+                                    selected == mode,
+                                    mode_label.as_ref(),
+                                )
+                            });
+                            ui.ctx().accesskit_node_builder(response.id, |node| {
+                                node.set_label(mode_label.as_ref());
+                                node.set_description(mode_help.as_ref());
+                                node.set_toggled(if selected == mode {
+                                    egui::accesskit::Toggled::True
+                                } else {
+                                    egui::accesskit::Toggled::False
+                                });
+                            });
+                            if response.clicked() {
+                                selected = mode;
+                            }
+                        }
+                    });
+                });
         });
         if selected != self.params.workflow.mode {
             crate::controls::record_edited_path(ui.ctx(), "workflow.mode");
@@ -81,6 +148,7 @@ impl App {
     pub(crate) fn switch_workflow(&mut self, mode: WorkflowMode) {
         self.pending_stage = None;
         self.pending_scroll = None;
+        self.stage_jump_target = None;
         if self.params.workflow.mode == mode {
             return;
         }

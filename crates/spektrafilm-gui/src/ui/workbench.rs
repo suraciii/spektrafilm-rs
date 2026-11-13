@@ -570,26 +570,19 @@ impl App {
                                 let enabled = self.image.is_some()
                                     && self.calibration_job.is_none()
                                     && !self.export_dialog.is_open();
+                                let export_help =
+                                    crate::i18n::text(ctx, "surfaces.action.export_help");
                                 let export = ui
                                     .add_enabled_ui(enabled, |ui| {
-                                        let visuals = ui.visuals_mut();
-                                        for visual in [
-                                            &mut visuals.widgets.inactive,
-                                            &mut visuals.widgets.hovered,
-                                            &mut visuals.widgets.active,
-                                        ] {
-                                            visual.weak_bg_fill = theme::ACCENT;
-                                            visual.bg_fill = theme::ACCENT;
-                                            visual.fg_stroke =
-                                                theme::stroke(theme::CONTRAST_ON_ACCENT);
-                                        }
                                         controls::action_button(
                                             ui,
                                             export_name.as_ref(),
                                             controls::Icon::Export,
                                         )
                                     })
-                                    .inner;
+                                    .inner
+                                    .on_hover_text(export_help.clone())
+                                    .on_disabled_hover_text(export_help);
                                 if export.clicked() {
                                     self.export_return_focus = Some(export.id);
                                     self.export_dialog.open(&self.export_options);

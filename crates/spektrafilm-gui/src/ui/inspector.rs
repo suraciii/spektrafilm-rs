@@ -2,7 +2,7 @@
 use crate::*;
 
 impl App {
-    fn parameter_section(&mut self, ui: &mut egui::Ui, section: &str) {
+    fn parameter_section(&mut self, ui: &mut egui::Ui, section: &str, explain_inactive: bool) {
         if !controls::section_matches(
             section,
             &self.filter,
@@ -63,10 +63,13 @@ impl App {
                 ui.spacing_mut().item_spacing.y = theme::SPACE_2;
                 let mut heading = None;
                 ui.horizontal(|ui| {
-                    let title = if section == "Glare" {
-                        "Print viewing glare"
-                    } else {
-                        section
+                    let title = match section {
+                        "Glare" => "Print viewing glare",
+                        // The stage already names this module's subject; the
+                        // inner heading names the controls instead of repeating
+                        // the stage title.
+                        "Effects" => "Effect controls",
+                        _ => section,
                     };
                     let mut response = controls::disclosure_header(ui, title, open);
                     if let Some(summary) = controls::section_summary(section) {
@@ -122,15 +125,15 @@ impl App {
                     }
                 }
                 if open {
-                    let inactive_in_lut =
-                        controls::inactive_in_lut(section, self.params.workflow.mode);
+                    let inactive =
+                        controls::inactive_in_workflow(section, self.params.workflow.mode);
                     ui.push_id("body", |ui| {
-                        ui.add_enabled_ui(!inactive_in_lut, |ui| self.module_body(ui, section));
+                        ui.add_enabled_ui(!inactive, |ui| self.module_body(ui, section));
                     });
-                    if inactive_in_lut {
+                    if inactive && explain_inactive {
                         ui.weak(crate::i18n::text(
                             ui.ctx(),
-                            "surfaces.section.inactive_in_lut",
+                            "surfaces.section.inactive_workflow",
                         ));
                     }
                 }
@@ -206,15 +209,7 @@ impl App {
                 }
             }
             "LUT look" => {
-                if self.params.workflow.mode != spektrafilm_core::params::WorkflowMode::Lut {
-                    ui.weak(crate::i18n::text(ui.ctx(), "surfaces.lut.inactive"));
-                    if ui
-                        .button(crate::i18n::text(ui.ctx(), "surfaces.lut.import"))
-                        .clicked()
-                    {
-                        self.begin_import_lut(false);
-                    }
-                } else if self
+                if self
                     .params
                     .lut
                     .as_ref()
@@ -368,23 +363,22 @@ impl App {
                 }
             }
             "Effects" => {
-                if self.params.workflow.mode == spektrafilm_core::params::WorkflowMode::Film {
-                    ui.weak(crate::i18n::text(
-                        ui.ctx(),
-                        "surfaces.effects.inactive_film",
-                    ));
-                } else {
-                    let mut changed = false;
-                    effects_controls(
-                        ui,
-                        self.params.effects.get_or_insert_with(Default::default),
-                        &mut changed,
-                    );
-                    if changed {
-                        controls::record_edited_path(ui.ctx(), "effects");
-                        self.label_adjustment("Adjust Effects");
-                        self.invalidate_look_render();
+                let mut changed = false;
+                // Reading an absent group must not create accepted parameters.
+                let mut pending_effects = None;
+                let effects = self
+                    .params
+                    .effects
+                    .as_mut()
+                    .unwrap_or_else(|| pending_effects.get_or_insert_with(Default::default));
+                effects_controls(ui, effects, &mut changed);
+                if changed {
+                    if let Some(effects) = pending_effects {
+                        self.params.effects = Some(effects);
                     }
+                    controls::record_edited_path(ui.ctx(), "effects");
+                    self.label_adjustment("Adjust Effects");
+                    self.invalidate_look_render();
                 }
             }
             "Film material" | "Print material" => {
@@ -606,7 +600,7 @@ impl App {
                 )
             };
         let resettable = section_reset::sections().any(|name| name == section);
-        let reset_allowed = !controls::inactive_in_lut(section, self.params.workflow.mode)
+        let reset_allowed = !controls::inactive_in_workflow(section, self.params.workflow.mode)
             && (section != "Workflow"
                 || self.params.workflow.mode == spektrafilm_core::params::WorkflowMode::Film);
         let mut changed = false;
@@ -718,6 +712,8 @@ impl App {
             match owner {
                 controls::ControlOwner::Stage(stage) => {
                     self.pending_stage = Some(stage);
+                    self.inspector_stage = stage;
+                    self.stage_jump_target = Some(stage);
                     self.pending_scroll = Some(section.to_owned());
                 }
                 controls::ControlOwner::Settings => {
@@ -868,7 +864,10 @@ impl App {
         controls::locate_row(ui, path, &response);
     }
 
-    pub(super) fn controls_panel(&mut self, ui: &mut egui::Ui) {
+    pub(super) fn controls_panel(
+        &mut self,
+        ui: &mut egui::Ui,
+    ) -> [Option<(controls::Stage, egui::Rect)>; controls::Stage::ALL.len()] {
         let input_view_before = (
             self.params.io.input_color_space.clone(),
             self.params.io.input_cctf_decoding,
@@ -912,6 +911,7 @@ impl App {
             }
         }
         let workflow_mode = self.params.workflow.mode;
+        let mut stage_rects = [None; controls::Stage::ALL.len()];
         for &(stage, sections) in controls::STAGE_LAYOUT {
             let reveal_stage = self.pending_stage == Some(stage);
             let has_locator = sections
@@ -984,11 +984,14 @@ impl App {
                 ui.ctx()
                     .accesskit_node_builder(response.id, |node| node.set_label(accessible_name));
                 controls::focus_feedback(ui, &response);
-                if !stage_active {
+                if let Some(index) = stage_index {
+                    stage_rects[index] = Some((stage, response.rect));
+                }
+                if !stage_active && open {
                     ui.label(
                         egui::RichText::new(crate::i18n::text(
                             ui.ctx(),
-                            "surfaces.section.inactive_in_lut",
+                            "surfaces.section.inactive_workflow",
                         ))
                         .small()
                         .color(theme::FG_MUTED),
@@ -1002,14 +1005,20 @@ impl App {
                     ui.ctx()
                         .data_mut(|data| data.insert_persisted(open_id, true));
                     if reveal_stage && !has_locator {
-                        response.request_focus();
+                        // A pointer jump must keep scrolling; requesting the
+                        // heading's focus can make the scroll area chase the
+                        // previous focus target. Keyboard activation still
+                        // moves focus to the destination heading.
+                        if !ui.input(|input| input.pointer.any_click()) {
+                            response.request_focus();
+                        }
                         ui.scroll_to_rect(response.rect, Some(egui::Align::TOP));
                     }
                     self.pending_stage = None;
                 }
                 if open {
                     for section in sections {
-                        self.parameter_section(ui, section);
+                        self.parameter_section(ui, section, stage_active);
                     }
                 }
                 ui.add_space(theme::SPACE_MODULE);
@@ -1023,6 +1032,59 @@ impl App {
         {
             self.refresh_input_viewer();
             self.refresh_viewing_artifacts();
+        }
+        // Let any stage heading reach the viewport top. Without the trailing
+        // room the last stages stop short because their content is shorter
+        // than the viewport, so a jump cannot align them.
+        if self.filter.is_empty() && !self.only_modified {
+            ui.add_space(ui.clip_rect().height());
+        }
+        stage_rects
+    }
+
+    /// Resolve the heading nearest the scroll viewport's top edge. The stage
+    /// strip is rendered before the scroll area, so a change repaints once to
+    /// update the underline without delaying the jump itself.
+    pub(super) fn update_current_stage(
+        &mut self,
+        ctx: &egui::Context,
+        stage_rects: &[Option<(controls::Stage, egui::Rect)>],
+        viewport: egui::Rect,
+        at_end: bool,
+    ) {
+        // egui leaves one item-spacing gap above a top-aligned scroll target.
+        let top = viewport.top() + ctx.style().spacing.item_spacing.y + 1.0;
+        if let Some(target) = self.stage_jump_target {
+            let target_rect = stage_rects
+                .iter()
+                .flatten()
+                .find(|(stage, _)| *stage == target)
+                .map(|(_, rect)| *rect);
+            let user_scrolled = ctx.input(|input| input.raw_scroll_delta != egui::Vec2::ZERO);
+            let settled = target_rect.is_some_and(|rect| (rect.top() - top).abs() <= 2.0);
+            if user_scrolled || target_rect.is_none() || settled {
+                self.stage_jump_target = None;
+            } else {
+                // Keep the destination cue while the scroll area eases toward
+                // it; the jump must not flash every traversed stage.
+                self.inspector_stage = target;
+                ctx.request_repaint();
+                return;
+            }
+        }
+        let stage = stage_rects
+            .iter()
+            .rev()
+            .flatten()
+            .find(|(_, rect)| at_end || rect.top() <= top)
+            .or_else(|| stage_rects.iter().flatten().next())
+            .map(|(stage, _)| *stage);
+        let Some(stage) = stage else {
+            return;
+        };
+        if self.inspector_stage != stage {
+            self.inspector_stage = stage;
+            ctx.request_repaint();
         }
     }
 }
@@ -1255,8 +1317,8 @@ mod tests {
         app.only_modified = false;
         let mut harness = Harness::new_ui_state(
             |ui, app: &mut App| {
-                app.parameter_section(ui, "Scanner");
-                app.parameter_section(ui, "Glare");
+                app.parameter_section(ui, "Scanner", true);
+                app.parameter_section(ui, "Glare", true);
             },
             app,
         );

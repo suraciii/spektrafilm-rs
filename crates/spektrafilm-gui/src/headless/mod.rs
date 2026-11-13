@@ -375,7 +375,31 @@ fn navigate_stage(h: &mut Harness<'_, App>, stage: controls::Stage) {
         })
         .expect("persistent stage jump")
         .simulate_click();
-    h.run_steps(3);
+    // The jump keeps its destination cue while the scroll area eases toward
+    // the heading. Verify the cue immediately, then wait only until the
+    // heading reaches the viewport top.
+    h.run_steps(1);
+    assert_eq!(
+        h.state().inspector_stage,
+        stage,
+        "stage jump must keep the destination cue"
+    );
+    let heading_label = format!("{} stage", stage.label());
+    for _ in 0..24 {
+        let aligned = h
+            .query_by_label(&heading_label)
+            .and_then(|node| node.raw_bounds())
+            .zip(
+                h.query_by_label("Inspector controls")
+                    .and_then(|node| node.raw_bounds()),
+            )
+            .is_some_and(|(heading, viewport)| (heading.y0 - viewport.y0).abs() <= 8.0);
+        if aligned {
+            return;
+        }
+        h.run_steps(1);
+    }
+    panic!("stage jump did not settle at {heading_label}");
 }
 
 fn open_export(h: &mut Harness<'_, App>) {

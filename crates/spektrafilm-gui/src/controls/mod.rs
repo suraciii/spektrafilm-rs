@@ -607,11 +607,10 @@ impl Stage {
     /// remain visible with their stored values; only their bodies are disabled.
     pub(crate) fn active_in(self, mode: WorkflowMode) -> bool {
         match mode {
-            // Look keeps the workflow-mode switch reachable in film mode;
-            // only its LUT controls are inactive.
-            WorkflowMode::Film => !matches!(self, Self::Effects),
-            WorkflowMode::Lut | WorkflowMode::Off => {
-                !matches!(self, Self::Film | Self::Print | Self::Scan)
+            WorkflowMode::Film => !matches!(self, Self::Look | Self::Effects),
+            WorkflowMode::Lut => !matches!(self, Self::Film | Self::Print | Self::Scan),
+            WorkflowMode::Off => {
+                !matches!(self, Self::Film | Self::Print | Self::Scan | Self::Look)
             }
         }
     }
@@ -629,32 +628,39 @@ impl Stage {
     }
 }
 
-/// Modules whose editors belong to the film chain and are inactive in LUT mode.
-pub(crate) fn inactive_in_lut(section: &str, mode: WorkflowMode) -> bool {
-    (mode.is_off() && section == "LUT look")
-        || (!mode.is_film()
-            && matches!(
-                section,
-                "Camera"
-                    | "Camera diffusion"
-                    | "Film material"
-                    | "Film chemistry"
-                    | "Film base"
-                    | "Halation"
-                    | "Couplers"
-                    | "Grain"
-                    | "Print material"
-                    | "Enlarger"
-                    | "Preflash"
-                    | "Enlarger diffusion"
-                    | "Print chemistry"
-                    | "Print base"
-                    | "Scanner"
-                    | "Glare"
-                    | "Finishing"
-                    | "Convert"
-                    | "Spectral upsampling"
-            ))
+/// Modules whose editors belong to another workflow and are inactive in `mode`.
+///
+/// Stage activity is coarser: Input and Output remain reachable in every mode
+/// because they own the mode selector and delivery controls. The per-module
+/// check keeps inactive values readable while disabling their editors.
+pub(crate) fn inactive_in_workflow(section: &str, mode: WorkflowMode) -> bool {
+    match section {
+        "LUT look" => !mode.is_lut(),
+        "Effects" => mode.is_film(),
+        _ if mode.is_film() => false,
+        _ => matches!(
+            section,
+            "Camera"
+                | "Camera diffusion"
+                | "Film material"
+                | "Film chemistry"
+                | "Film base"
+                | "Halation"
+                | "Couplers"
+                | "Grain"
+                | "Print material"
+                | "Enlarger"
+                | "Preflash"
+                | "Enlarger diffusion"
+                | "Print chemistry"
+                | "Print base"
+                | "Scanner"
+                | "Glare"
+                | "Finishing"
+                | "Convert"
+                | "Spectral upsampling"
+        ),
+    }
 }
 
 /// Each module has one visual owner; this is not serialized preset scope.
@@ -1120,6 +1126,43 @@ mod tests {
         params.debug.lut_mode = false;
         params.settings.use_scanner_lut = false;
         assert!(module_applicability("Grain", &params, &film, Some(&print)).is_some());
+    }
+
+    #[test]
+    fn workflow_activity_matches_the_owned_stage_values() {
+        use WorkflowMode::{Film, Lut, Off};
+
+        for (mode, section, expected) in [
+            (Film, "LUT look", true),
+            (Film, "Effects", true),
+            (Film, "Film material", false),
+            (Film, "Workflow", false),
+            (Lut, "LUT look", false),
+            (Lut, "Effects", false),
+            (Lut, "Film material", true),
+            (Off, "LUT look", true),
+            (Off, "Effects", false),
+            (Off, "Film material", true),
+        ] {
+            assert_eq!(
+                inactive_in_workflow(section, mode),
+                expected,
+                "{mode:?} / {section}"
+            );
+        }
+
+        for (mode, stage, expected) in [
+            (Film, Stage::Film, true),
+            (Film, Stage::Look, false),
+            (Film, Stage::Effects, false),
+            (Lut, Stage::Look, true),
+            (Lut, Stage::Effects, true),
+            (Lut, Stage::Film, false),
+            (Off, Stage::Look, false),
+            (Off, Stage::Effects, true),
+        ] {
+            assert_eq!(stage.active_in(mode), expected, "{mode:?} / {stage:?}");
+        }
     }
 
     fn has_text(output: &egui::FullOutput, text: &str) -> bool {
