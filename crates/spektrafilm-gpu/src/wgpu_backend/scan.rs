@@ -63,10 +63,6 @@ impl ScanDensityState {
         }
         Ok(())
     }
-    #[cfg(test)]
-    pub(super) fn submit_setup(&self, backend: &WgpuBackend) -> Result<(), String> {
-        self.submit_setup_observed(backend, &backend.device.context)
-    }
     pub(super) fn submit_setup_observed(
         &self,
         backend: &WgpuBackend,
