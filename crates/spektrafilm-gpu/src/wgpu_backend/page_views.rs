@@ -3,6 +3,10 @@ use super::grain::RasterStorage;
 use super::*;
 
 pub(super) const ADAPTER_WORKSPACE_BYTES: u64 = 8 << 20;
+/// Bound one pointwise dispatch even when the storage binding could hold the
+/// whole frame. Large frames otherwise put a slow per-pixel shader behind the
+/// driver watchdog in a single command.
+const MAX_CHUNK_ITEMS: u64 = 1_048_576;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Access {
@@ -234,7 +238,8 @@ impl ViewPlan {
             scratch_capacity
         } else {
             (limit / bytes_per_item).min(n)
-        };
+        }
+        .min(MAX_CHUNK_ITEMS);
         let plan = Self {
             bindings,
             n,
@@ -698,6 +703,29 @@ fn main(@builtin(global_invocation_id) gid:vec3<u32>, @builtin(num_workgroups) g
             }
         }
     }
+    #[test]
+    fn large_direct_plans_are_split_at_the_dispatch_cap() {
+        let backend = crate::test_support::adapter();
+        let n = MAX_CHUNK_ITEMS + 1;
+        let values: Vec<u32> = (0..n * 3).map(|v| v as u32).collect();
+        let zeros = vec![0u32; n as usize * 3];
+        let source = pages(&backend, &[n as u32], &values, true);
+        let output = pages(&backend, &[n as u32], &zeros, true);
+        let plan = ViewPlan::new(
+            &backend,
+            n,
+            12,
+            &[(&source, Access::Read), (&output, Access::Write)],
+            "large_direct",
+        )
+        .unwrap();
+        assert_eq!(plan.capacity, MAX_CHUNK_ITEMS);
+        let first = plan.chunk(0).unwrap();
+        assert_eq!(first.count, MAX_CHUNK_ITEMS as u32);
+        let tail = plan.chunk(u64::from(first.count)).unwrap();
+        assert_eq!(tail.count, 1);
+    }
+
     #[test]
     fn malformed_pages_and_cross_chunk_alias_fail_before_writes() {
         let backend = crate::test_support::adapter();

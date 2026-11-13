@@ -248,7 +248,11 @@ impl RasterCommands {
 
     /// Keep the owning pass observable when non-grain stages reuse transport.
     pub fn submit_named(&self, backend: &WgpuBackend, label: &str) -> Result<(), String> {
-        for commands in self.0.chunks(64) {
+        // A raster batch can contain a long single-invocation generator. Keep
+        // each fence well below the driver watchdog rather than coalescing a
+        // long batch into one submission.
+        const MAX_COMMANDS_PER_SUBMIT: usize = 8;
+        for commands in self.0.chunks(MAX_COMMANDS_PER_SUBMIT) {
             backend.check_cancelled()?;
             let mut encoder = backend.device.create_command_encoder(&Default::default());
             for command in commands {
