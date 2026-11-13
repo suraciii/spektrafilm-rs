@@ -693,7 +693,7 @@ fn n2p_device_density_reading_matches_cpu() {
         snapshot
             .observations
             .iter()
-            .filter(|stage| stage.name == "standard_setup")
+            .filter(|stage| stage.name == "frame_setup")
             .count(),
         0,
         "resident acquisition must measure the complete frame exactly once"

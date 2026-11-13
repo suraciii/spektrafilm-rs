@@ -47,7 +47,7 @@ pub(super) fn build(
     // is checked between short device submissions.
     let capacity = (bounded::chunk_elements(limit, 12)? as u32).min(4096);
     let window = backend.device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("standard_setup_density_window"),
+        label: Some("frame_setup_density_window"),
         size: u64::from(capacity.min(pixels)) * 12,
         usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
@@ -69,7 +69,7 @@ pub(super) fn build(
     );
     // 65536 bins per rank; integers, so window order cannot change the result.
     let histogram = backend.device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("standard_setup_digit_histogram"),
+        label: Some("frame_setup_digit_histogram"),
         size: 131072 * 4,
         usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
@@ -78,7 +78,7 @@ pub(super) fn build(
     let params = |count: u32, operation: u32, first: u32| -> Result<wgpu::Buffer, String> {
         backend.check_cancelled()?;
         let result = backend.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("standard_setup_window_params"),
+            label: Some("frame_setup_window_params"),
             size: uniform.size(),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,

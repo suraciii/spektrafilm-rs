@@ -1235,7 +1235,7 @@ mod tests {
                 let snapshot = context.snapshot();
                 assert!(!snapshot.observations.iter().any(|stage| stage.executor == Some(Executor::Cpu)),
                     "selected GPU executed CPU image arithmetic: {:?}", snapshot.observations);
-                assert_eq!(snapshot.observations.iter().filter(|stage| stage.name == "standard_setup").count(), 0);
+                assert_eq!(snapshot.observations.iter().filter(|stage| stage.name == "frame_setup").count(), 0);
                 let reused = ObservationContext::new(CollectionMode::Summary);
                 let preview = runtime.process_host_scan_cached_retained_observed(&image, &mut cache,
                     crate::pipeline::RetainedRender::preview(2), backend, &reused).unwrap().to_host(backend.as_ref()).unwrap();
@@ -1261,7 +1261,7 @@ mod tests {
                 let changed = ObservationContext::new(CollectionMode::Summary);
                 let actual = corrected.process_host_scan_cached_retained_observed(&image, &mut cache,
                     crate::pipeline::RetainedRender::FULL, backend, &changed).unwrap().to_host(backend.as_ref()).unwrap();
-                assert!(!changed.snapshot().observations.iter().any(|stage| stage.name == "standard_setup"),
+                assert!(!changed.snapshot().observations.iter().any(|stage| stage.name == "frame_setup"),
                     "operator edit must not repeat upstream computation");
                 assert!(actual.data.iter().zip(&cached.data).any(|(a,b)| (*a as f64 - *b as f64).abs() > 1e-4),
                     "operator edit must change actual output pixels");
