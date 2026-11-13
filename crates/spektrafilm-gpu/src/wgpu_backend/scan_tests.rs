@@ -189,7 +189,7 @@ fn standard_fullframe_exact_percentile_neutral_locus_and_operator_destination() 
 
 #[test]
 #[allow(dead_code)]
-fn removed_frame_setup_large_frame_error_budget() {
+fn standard_setup_large_frame_error_budget() {
     let gpu = crate::test_support::adapter();
     let p = parameters();
     let pixels = 262_144u32;
