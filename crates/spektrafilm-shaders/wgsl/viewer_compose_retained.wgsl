@@ -91,9 +91,19 @@ fn pixel(which:u32,x:i32,y:i32,w:u32,h:u32)->vec3<f32> {
  if which==2u { return vec3<f32>(previous[i],previous[i+1u],previous[i+2u]); }
  return vec3<f32>(source[i],source[i+1u],source[i+2u]);
 }
+fn nearest_coord(x:f32)->i32 {
+ let shifted=x+0.5;
+ let base=floor(shifted);
+ let frac=shifted-base;
+ // Devices may round the shifted coordinate one ulp below an exact integer.
+ // Snap such near-boundary values up so the host and device select the same cell.
+ let tolerance=2.0*1.1920929e-7*max(1.0,abs(shifted));
+ if frac>=1.0-tolerance { return i32(base)+1; }
+ return i32(base);
+}
 fn sample(which:u32,p:vec2<f32>,rect:vec4<f32>,w:u32,h:u32,mode:u32)->vec3<f32> {
  let q=(p-rect.xy)/(rect.zw-rect.xy)*vec2<f32>(f32(w),f32(h))-vec2<f32>(0.5);
- if mode==0u { return pixel(which,i32(floor(q.x+0.5)),i32(floor(q.y+0.5)),w,h); }
+ if mode==0u { return pixel(which,nearest_coord(q.x),nearest_coord(q.y),w,h); }
  let r=radius(mode); let b=vec2<i32>(floor(q)); var rgb=vec3<f32>(0.0);
  for(var j=0;j<2*r;j++){for(var i=0;i<2*r;i++){
  let x=b.x+i-r+1;let y=b.y+j-r+1;

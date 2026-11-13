@@ -1036,10 +1036,10 @@ mod triangle_tests;
 
 #[cfg(test)]
 mod tests {
-    /// Device transport is f32. Measured worst cases on the existing
-    /// high-amplitude fixtures are 1.91e-6 and 2.86e-6, about 0.6 ulp at the
+    /// Device transport is f32. Measured worst cases on the existing spline
+    /// and triangle fixtures are 1.52e-6 to 2.86e-6, about 0.6 ulp at the
     /// fixture amplitudes; the frozen stage budget is 4e-6.
-    const SPLINE_BUDGET: f64 = 4e-6;
+    pub(super) const GEOMETRY_BUDGET: f64 = 4e-6;
 
     use super::*;
     use spektrafilm_backend::ComputeBackend;
@@ -1362,7 +1362,7 @@ mod tests {
             let actual = run(&gpu, &source, &params);
             let paged = run_bounded(&gpu, &source, &params, 24);
             worst = worst.max(max_abs_diff(&actual, &expected));
-            assert_within(&actual, &expected, SPLINE_BUDGET, "restricted spline");
+            assert_within(&actual, &expected, GEOMETRY_BUDGET, "restricted spline");
             assert_within(&paged, &actual, 0.0, "restricted spline page seams");
         }
         eprintln!("restricted spline max |delta|: {worst}");
@@ -1380,7 +1380,7 @@ mod tests {
             pixel_pitch_um: 12.0,
         };
         let out = run(&gpu, &source, &params);
-        assert_within(&out, &expected, SPLINE_BUDGET, "spline upscale");
+        assert_within(&out, &expected, GEOMETRY_BUDGET, "spline upscale");
     }
 
     #[test]
@@ -1401,7 +1401,7 @@ mod tests {
         // Device transport is f32. The fixture carries +/-40 samples; the
         // measured worst case is 2.861e-6, about 0.6 ulp at that amplitude,
         // so the frozen budget is 4e-6 rather than the f64-era 1e-6.
-        assert_within(&out, &expected, 4e-6, "spline downscale");
+        assert_within(&out, &expected, GEOMETRY_BUDGET, "spline downscale");
         // Non-square crop and extrema at opposite physical edges exercise
         // global range carry, mirror support, and both whole-line recursions.
         let mut full = patterned(11, 9);
@@ -1428,7 +1428,7 @@ mod tests {
                 assert_within(
                     &bounded,
                     &expected,
-                    SPLINE_BUDGET,
+                    GEOMETRY_BUDGET,
                     &format!("bounded cropped spline {scale}, {limit}"),
                 );
             }
@@ -1467,14 +1467,14 @@ mod tests {
             assert_within(
                 &out,
                 &expected,
-                SPLINE_BUDGET,
+                GEOMETRY_BUDGET,
                 &format!("spline {width}x{height} at {scale}"),
             );
             let bounded = run_bounded(&gpu, &source, &params, 12);
             assert_within(
                 &bounded,
                 &expected,
-                SPLINE_BUDGET,
+                GEOMETRY_BUDGET,
                 &format!("bounded singleton spline {width}x{height}"),
             );
         }
@@ -1497,7 +1497,7 @@ mod tests {
             assert_within(
                 &out,
                 &expected,
-                SPLINE_BUDGET,
+                GEOMETRY_BUDGET,
                 &format!("preview {width}x{height} to {out_width}x{out_height}"),
             );
             for limit in [12, 101] {
@@ -1505,7 +1505,7 @@ mod tests {
                 assert_within(
                     &bounded,
                     &expected,
-                    SPLINE_BUDGET,
+                    GEOMETRY_BUDGET,
                     &format!("bounded preview {width}x{height}, {limit}"),
                 );
             }
@@ -1524,13 +1524,13 @@ mod tests {
             pixel_pitch_um: 12.0,
         };
         let out = run(&gpu, &source, &params);
-        assert_within(&out, &expected, SPLINE_BUDGET, "preview upscale");
+        assert_within(&out, &expected, GEOMETRY_BUDGET, "preview upscale");
         for limit in [12, 101] {
             let bounded = run_bounded(&gpu, &source, &params, limit);
             assert_within(
                 &bounded,
                 &expected,
-                SPLINE_BUDGET,
+                GEOMETRY_BUDGET,
                 &format!("bounded preview upscale {limit}"),
             );
         }

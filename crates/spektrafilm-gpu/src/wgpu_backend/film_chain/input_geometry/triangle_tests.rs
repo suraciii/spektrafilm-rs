@@ -7,7 +7,8 @@
 //! touching retained sources.
 
 use super::tests::{
-    assert_within, patterned, reference_preview, run, run_bounded, space, triangle_preview, upload,
+    GEOMETRY_BUDGET, assert_within, patterned, reference_preview, run, run_bounded, space,
+    triangle_preview, upload,
 };
 use super::{READ, TRIANGLE_SHADER, TriangleParams, UNIFORM, WRITE};
 use spektrafilm_backend::telemetry::{CollectionMode, ObservationContext, WorkCounters};
@@ -54,7 +55,7 @@ fn triangle_preview_streams_the_geometry_stage_without_per_tap_copies() {
     let params = resize_only(64, 32);
     let expected = reference_preview(&source, 64, 32);
     let (out, work) = measured(&source, &params);
-    assert_within(&out, &expected, 1e-6, "256x128 preview to 64x32");
+    assert_within(&out, &expected, GEOMETRY_BUDGET, "256x128 preview to 64x32");
     // The retired per-tap path issued 91008 buffer copies for this request.
     // The streamed stage binds the source pages read-only and never copies,
     // stages, or reads back.
@@ -102,7 +103,12 @@ fn triangle_paged_stream_matches_the_unpaged_preview_across_row_seams() {
         let params = resize_only(width, height);
         let expected = reference_preview(&source, width, height);
         let unpaged = run(&gpu, &source, &params);
-        assert_within(&unpaged, &expected, 1e-6, &format!("unpaged {what}"));
+        assert_within(
+            &unpaged,
+            &expected,
+            GEOMETRY_BUDGET,
+            &format!("unpaged {what}"),
+        );
         for limit in caps {
             // The carried accumulation must reproduce the unpaged tap order
             // exactly: a mis-set reset or page seam shows up as a nonzero
@@ -134,7 +140,12 @@ fn triangle_saturates_only_on_the_completed_horizontal_pass() {
     let params = resize_only(11, 7);
     let expected = reference_preview(&source, 11, 7);
     let out = run(&gpu, &source, &params);
-    assert_within(&out, &expected, 1e-6, "clamped preview 23x15 to 11x7");
+    assert_within(
+        &out,
+        &expected,
+        GEOMETRY_BUDGET,
+        "clamped preview 23x15 to 11x7",
+    );
     let mut saturated = [false, false];
     for &sample in &out.data {
         let value = to_f64(sample);

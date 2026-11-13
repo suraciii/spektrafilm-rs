@@ -158,12 +158,26 @@ impl DisplayRaster {
     }
 }
 
+fn floor_snap(x: f32) -> i32 {
+    let base = x.floor();
+    let frac = x - base;
+    // Devices may round the shifted coordinate one ulp below an exact
+    // integer. Snap such near-boundary values up so the host and device
+    // select the same cell.
+    let tolerance = 2.0 * f32::EPSILON * x.abs().max(1.0);
+    if frac >= 1.0 - tolerance {
+        (base + 1.0) as i32
+    } else {
+        base as i32
+    }
+}
+
 pub(super) fn sample_f32<F>(x: f32, y: f32, mode: Interpolation, mut pixel: F) -> [f32; 3]
 where
     F: FnMut(i32, i32) -> [f32; 3],
 {
     if mode == Interpolation::Nearest {
-        return pixel((x + 0.5).floor() as i32, (y + 0.5).floor() as i32);
+        return pixel(floor_snap(x + 0.5), floor_snap(y + 0.5));
     }
     let r = mode.radius();
     let bx = x.floor() as i32;
