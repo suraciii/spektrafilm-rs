@@ -1613,6 +1613,8 @@ mod tests {
             super::GrainEngine::Spektra,
             super::GrainEngine::Procedural,
             super::GrainEngine::Dye,
+            super::GrainEngine::Fotufilm,
+            super::GrainEngine::Exposure,
         ] {
             params.film_render.grain.engine = engine;
             for mm in [0.0, -1.0, f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {

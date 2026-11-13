@@ -114,6 +114,8 @@ _Avoid_: Grain V1
 **Procedural**: The Dehancer-derived encoded-RGB grain model with Analogue and Noise modes.
 _Avoid_: Grain V2
 
+**Exposure Grain**: The reconstructed post-scan encoded-RGB value-noise grain appearance model.
+
 **Dye**: The self-developed film-coordinate dye-field grain model.
 _Avoid_: Grain V3
 

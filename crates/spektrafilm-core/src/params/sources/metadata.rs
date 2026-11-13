@@ -345,6 +345,10 @@ fn unit(path: &str) -> Option<&'static str> {
         } else {
             "dimensionless"
         })
+    } else if path == "film_render.grain.exposure.absolute_size_px" {
+        Some("px")
+    } else if path.starts_with("film_render.grain.exposure.") {
+        Some("dimensionless")
     } else if path.ends_with("_ev") {
         Some("EV")
     } else if path.ends_with("_um2") {
@@ -496,6 +500,9 @@ fn description(path: &str) -> Option<&'static str> {
         ),
         path if path.starts_with("film_render.grain.fotufilm.") => Some(
             "Fotufilm Film effective-appearance population control; authored metadata, not a measured stock claim.",
+        ),
+        path if path.starts_with("film_render.grain.exposure.") => Some(
+            "Reconstructed Exposure Grain post-scan appearance control; not material formation and not a pixel-parity claim.",
         ),
         "io.input_color_space" => Some(
             "Color primaries of source raster samples before simulation; not scanner output or saving conversion.",

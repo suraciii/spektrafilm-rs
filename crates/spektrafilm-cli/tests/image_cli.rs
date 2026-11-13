@@ -519,6 +519,46 @@ fn fotufilm_dry_run_reports_authored_controls_without_selecting_an_executor() {
 }
 
 #[test]
+fn exposure_dry_run_and_render_accept_authored_controls() {
+    const CONTROLS: &str = "film_render.grain.engine=exposure,film_render.grain.exposure.strength=73,film_render.grain.exposure.size=2.5,film_render.grain.exposure.auto_size=false,film_render.grain.exposure.format=medium_format,film_render.grain.exposure.absolute_size_px=3.5,film_render.grain.exposure.roughness=64,film_render.grain.exposure.shadows=41,film_render.grain.exposure.midtones=62,film_render.grain.exposure.highlights=24,film_render.grain.exposure.push=1.25";
+    let f = Fixture::new();
+    let common = [
+        "--input-color-space",
+        "sRGB",
+        "--input-cctf-decoding",
+        "true",
+        "--route",
+        "input > film > scan",
+        "--set",
+        CONTROLS,
+    ];
+    let mut dry_run = common.to_vec();
+    dry_run.push("--dry-run");
+    let report = f.report(&dry_run);
+    let grain = &report["parameters"]["film_render"]["grain"];
+    assert_eq!(grain["engine"], "exposure");
+    assert_eq!(grain["exposure"]["strength"], 73.0);
+    assert_eq!(grain["exposure"]["size"], 2.5);
+    assert_eq!(grain["exposure"]["auto_size"], false);
+    assert_eq!(grain["exposure"]["format"], "medium_format");
+    assert_eq!(grain["exposure"]["absolute_size_px"], 3.5);
+    assert_eq!(grain["exposure"]["roughness"], 64.0);
+    assert_eq!(grain["exposure"]["shadows"], 41.0);
+    assert_eq!(grain["exposure"]["midtones"], 62.0);
+    assert_eq!(grain["exposure"]["highlights"], 24.0);
+    assert_eq!(grain["exposure"]["push"], 1.25);
+    assert!(!f.0.join("output.tif").exists());
+
+    let result = f.run("output.tif", &common);
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    assert!(f.0.join("output.tif").exists());
+}
+
+#[test]
 fn dye_dry_run_does_not_claim_an_unchecked_executor() {
     let f = Fixture::new();
     let report = f.report(&[

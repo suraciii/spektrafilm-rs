@@ -5,7 +5,9 @@
 //! `lib.rs`.
 use crate::device_image::DeviceImagePayload;
 use crate::dye_params::DyeGpuParams;
-use crate::grain_params::{FotufilmGpuParams, ProceduralGrainGpuParams, SpektraGrainGpuParams};
+use crate::grain_params::{
+    ExposureGrainGpuParams, FotufilmGpuParams, ProceduralGrainGpuParams, SpektraGrainGpuParams,
+};
 use crate::preparation::PreparedTable;
 use spektrafilm_math::image::ImageBuf;
 
@@ -154,7 +156,10 @@ pub struct FilmChainParams<'a> {
     /// Optional Grain Procedural pass — applied after scanner effects, the destination
     /// same-space matrix roundtrip, and transfer encoding. Returns encoded RGB.
     pub grain_procedural: Option<ProceduralGrainGpuParams>,
-    /// Destination space used to encode the resident Grain Procedural input.
+    /// Optional Exposure Grain pass — the same post-scan slot as Procedural,
+    /// with its own reconstructed value-noise tables. Returns encoded RGB.
+    pub grain_exposure: Option<ExposureGrainGpuParams>,
+    /// Destination space used to encode the resident post-scan grain input.
     pub scan_output_space: &'static spektrafilm_math::colorspace::RgbColorSpace,
     /// Optional camera lens Gaussian blur on the raw film exposure buffer,
     /// before halation.

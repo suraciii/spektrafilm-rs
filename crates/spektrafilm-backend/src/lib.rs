@@ -426,6 +426,18 @@ pub trait ComputeBackend: Send + Sync {
         Ok(None)
     }
 
+    /// Return a rendered Exposure Grain image when this backend supports the
+    /// reconstructed post-scan shader. Input and output are native encoded RGB;
+    /// `None` is a backend without a device operation and may use the CPU
+    /// reference. A selected device surfaces dispatch/resource failures as Err.
+    fn grain_exposure(
+        &self,
+        _image: &ImageBuf,
+        _params: &crate::ExposureGrainGpuParams,
+    ) -> Result<Option<ImageBuf>, String> {
+        Ok(None)
+    }
+
     /// Film-grain Fotufilm residual readout on the device: form the pinned
     /// crystal bank, measure its pitch statistics, and sample the grain
     /// residual against the developed CMY density in `params.grid`.

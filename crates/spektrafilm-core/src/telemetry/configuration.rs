@@ -355,6 +355,7 @@ pub enum GrainEngine {
     Procedural,
     Dye,
     Fotufilm,
+    Exposure,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -367,6 +368,8 @@ pub enum GrainMode {
     DyeField,
     /// The Fotufilm effective-appearance film population model.
     FotufilmFilm,
+    /// The reconstructed post-scan Exposure value-noise appearance model.
+    ExposureGrain,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -611,7 +614,9 @@ impl RenderConfiguration {
         let grain_active = grain.active
             && !params.debug.deactivate_stochastic_effects
             && !(grain.engine == crate::params::GrainEngine::Fotufilm
-                && grain.fotufilm.amount == 0.0);
+                && grain.fotufilm.amount == 0.0)
+            && !(grain.engine == crate::params::GrainEngine::Exposure
+                && grain.exposure.strength == 0.0);
         let spatial_active = !params.debug.deactivate_spatial_effects;
         Self {
             workflow_route: WorkflowRoute::parse(&params.workflow.route),
@@ -651,6 +656,7 @@ impl RenderConfiguration {
                     crate::params::GrainEngine::Procedural => GrainEngine::Procedural,
                     crate::params::GrainEngine::Dye => GrainEngine::Dye,
                     crate::params::GrainEngine::Fotufilm => GrainEngine::Fotufilm,
+                    crate::params::GrainEngine::Exposure => GrainEngine::Exposure,
                 },
                 mode: match grain.engine {
                     crate::params::GrainEngine::Spektra => GrainMode::Spektra,
@@ -660,6 +666,7 @@ impl RenderConfiguration {
                     },
                     crate::params::GrainEngine::Dye => GrainMode::DyeField,
                     crate::params::GrainEngine::Fotufilm => GrainMode::FotufilmFilm,
+                    crate::params::GrainEngine::Exposure => GrainMode::ExposureGrain,
                 },
                 record: None,
             },
@@ -824,5 +831,13 @@ mod tests {
             "procedural"
         );
         assert_eq!(serde_json::to_value(GrainEngine::Dye).unwrap(), "dye");
+        assert_eq!(
+            serde_json::to_value(GrainEngine::Exposure).unwrap(),
+            "exposure"
+        );
+        assert_eq!(
+            serde_json::to_value(GrainMode::ExposureGrain).unwrap(),
+            "exposure_grain"
+        );
     }
 }

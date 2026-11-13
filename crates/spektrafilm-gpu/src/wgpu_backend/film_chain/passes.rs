@@ -1,4 +1,5 @@
 use super::super::blur::GaussianScratch;
+use super::super::grain::build_grain_exposure_state;
 use super::super::grain::raster::RasterStorage;
 use super::super::page_views::Access::{Read, ReadWrite, Write};
 use super::super::paged::ImagePage;
@@ -803,6 +804,15 @@ impl WgpuBackend {
                             backend,
                         )?
                         .submit(backend, &rasters.tail_b),
+                        ExposureGrain => build_grain_exposure_state(
+                            p.grain_exposure.as_ref().ok_or("exposure grain missing")?,
+                            geometry.tail.0,
+                            geometry.tail.1,
+                            &rasters.tail_b,
+                            p.scan_output_space,
+                            backend,
+                        )?
+                        .submit(backend, &rasters.tail_b),
                         Transfer => backend
                             .chain_output_transfer(
                                 &rasters.tail_b,
@@ -889,7 +899,7 @@ impl WgpuBackend {
         tracing::debug!(target: "spektrafilm_gpu::wgpu_backend", cpu_setup_ms = format!("{:.1}", t_start.elapsed().as_secs_f32() * 1000.0), "film chain timings");
         let encoded = match p.output_transfer.as_ref() {
             Some(transfer) => !transfer.decode,
-            None => p.grain_procedural.is_some(),
+            None => p.grain_procedural.is_some() || p.grain_exposure.is_some(),
         };
         let domain = match p.collect {
             Tap::LogEFilm | Tap::LogEPrint => spektrafilm_backend::SampleDomain::LogExposure,
@@ -1002,6 +1012,7 @@ mod tests {
             gamut: None,
             unsharp: None,
             grain_procedural: None,
+            grain_exposure: None,
             grain_spektra: None,
             scan_output_space: &spektrafilm_math::colorspace::SRGB,
             camera_lens_blur_px: None,

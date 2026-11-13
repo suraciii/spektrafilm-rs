@@ -138,7 +138,7 @@ A parameter edit, preview completion, or route change MUST NOT collapse the user
 
 Halation MUST be a named Film module, not a hidden generic effect. It MUST retain the feature-profile action, scatter and back-reflection controls, source response, all editable RGB components, bounce controls, and normalization. A profile is a scoped starting configuration, not a substitute for these controls.
 
-Grain MUST be a named Film module beside Halation. It MUST keep the four engine choices in one editing location, distinguish material grain from Procedural's post-scan appearance, and MUST NOT be presented as a global effect or shared with the LUT workflow. LUT grain belongs to the LUT look and remains independent.
+Grain MUST be a named Film module beside Halation. It MUST keep the five engine choices in one editing location, distinguish material grain from Procedural and Exposure Grain post-scan appearance, and MUST NOT be presented as a global effect or shared with the LUT workflow. LUT grain belongs to the LUT look and remains independent.
 
 Preflash MUST be a named Print module beside the main enlarger exposure controls. Exposure, Yellow shift, and Magenta shift MUST all be available. Zero exposure disables flash and retains the filter values.
 

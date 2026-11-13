@@ -295,6 +295,14 @@ impl ComputeBackend for ObservedBackend<'_> {
         self.cpu();
         self.backend.grain_procedural(i, p)
     }
+    fn grain_exposure(
+        &self,
+        i: &ImageBuf,
+        p: &crate::ExposureGrainGpuParams,
+    ) -> Result<Option<ImageBuf>, String> {
+        self.cpu();
+        self.backend.grain_exposure(i, p)
+    }
     fn dye_field(
         &self,
         i: &ImageBuf,

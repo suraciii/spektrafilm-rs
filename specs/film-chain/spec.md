@@ -8,7 +8,7 @@
 - Optional CMYK ink style MUST satisfy the [CMYK ink style](../cmyk-style/spec.md) contract. It MUST NOT determine base workflow topology.
 - Base workflows include input color management, direct film scanning, photographic printing, and the existing film-conversion routes.
 - The default film path starts with source color and exposure → spectral film exposure and development → film-domain effects (including Spektra, Dye, and Fotufilm Film grain) → the selected base route → scanner interpretation.
-- It continues with [Tone & Color](../finishing/spec.md#scope-and-applicability) → output gamut processing → unsharp masking → transfer encoding → Procedural grain → optional CMYK ink style → output mix → output handoff.
+- It continues with [Tone & Color](../finishing/spec.md#scope-and-applicability) → output gamut processing → unsharp masking → transfer encoding → Procedural or Exposure Grain → optional CMYK ink style → output mix → output handoff.
 - [Output mix and material controls](../output-mix/spec.md) owns reuse of existing preflash and chemistry, retirement of Output lightness compression, and overall output mix. It adds no digital material-response layer or scan-reference isolation pass.
 - CMYK ink style remains after all scanner-domain effects; overall output mix follows it before output handoff.
 - Film, photographic paper, spectral, and color profiles are data inputs. A missing or invalid data input consumed by the selected route is an error before output publication.
@@ -149,7 +149,7 @@ Scanner lens blur MUST model readout optics on linear transmitted or reflected l
 - It MUST NOT change print exposure, chemistry, or developed print density. It remains eligible only on the existing print-scan routes, with its existing controls and seed behavior.
 - Film-scan routes MUST NOT acquire this effect through `film_render.glare` or another alias.
 
-Unsharp mask is digital scan sharpening, not lens resolution. It remains downstream of interpretation and output gamut processing. Procedural grain retains its separate [post-scan boundary](../film-grain/procedural/spec.md); it MUST NOT be moved into optical acquisition to make the grain engines appear equivalent.
+Unsharp mask is digital scan sharpening, not lens resolution. It remains downstream of interpretation and output gamut processing. Procedural and Exposure Grain retain their separate [post-scan boundaries](../film-grain/spec.md#contract); they MUST NOT be moved into optical acquisition to make the grain engines appear equivalent.
 
 ## Film halation source response
 
@@ -197,7 +197,7 @@ The [Print exposure composition](../output-mix/design.md#print-exposure-composit
 - Film continuation reads the saved densities without repeating their formation.
 - The [lab scan contract](lab-scan/spec.md) owns the inverse, the opt-in frame setup, tone, the `standard` default, the `neutral` migration alias, and fixed file styles. Every style retains the frozen camera compensation on simulated film continuation; the enabled setup does not subtract it again.
 - Scanner lens blur acts on transmitted light before density reconstruction. [Tone & Color](../finishing/design.md#color-and-order) follows positive interpretation before the existing output tail.
-- `negative_to_positive` accepts every grain engine, because Procedural composites on the encoded scanner output. Backend selection follows [GPU execution](../gpu-execution/spec.md#backend-selection).
+- `negative_to_positive` accepts every grain engine, because the post-scan appearance engines composite on the encoded scanner output. Backend selection follows [GPU execution](../gpu-execution/spec.md#backend-selection).
 
 ## Fixed-condition black-and-white paper
 

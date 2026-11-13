@@ -213,11 +213,16 @@ fn grain_look_control_search_survives_language_switch_without_changing_the_recip
             h.press_key_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
             h.get_by_label(search).type_text(query);
             h.run_steps(3);
+            // Dye and Exposure both name their amplitude "Grain strength"; the
+            // Dye engine is selected here, so its own row is the editable one.
+            let rows: Vec<_> = h
+                .query_all_by_label(label)
+                .filter(|node| node.node().value() != Some("100.0".to_owned()))
+                .collect();
             assert!(
-                h.query_by_label(label).is_some(),
+                rows.iter().any(|node| !node.node().is_disabled()),
                 "grain control unavailable for {query}"
             );
-            assert!(!h.get_by_label(label).node().is_disabled());
             assert_eq!(h.state().params, params);
             assert_eq!(h.state().gui_state.sections, sections);
             assert_eq!(h.state().parameter_revision, revision);

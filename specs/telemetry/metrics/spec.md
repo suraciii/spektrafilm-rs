@@ -85,7 +85,7 @@ A changed current scope MUST reflect observed begin and end events. Dropped even
 - Scan provenance in rendering configuration MUST identify the colorimetric sensor, the selected white reference (`clear_film_base` or `readout_illuminant`), the output space white, and the identity scan matrix.
 - Record the existing `negative_to_positive_output` reason only when negative conversion actually executes on CPU and that condition declined the historical resident route; GPU execution MUST NOT carry a forced CPU or resident-decline reason. The report MUST preserve the selected backend identity when the pipeline executes an explicit CPU override.
 - Scan provenance MUST identify the neutral scan model and version. A static state declaration MUST NOT claim prepared scan identities before preparation.
-- Render provenance MUST identify the model/version implementing the [optical-order cutover](../../film-chain/spec.md#optical-order-cutover). Effective stage descriptions MUST distinguish scanner readout blur, digital unsharp mask, print viewing glare, material grain, and Procedural post-scan appearance.
+- Render provenance MUST identify the model/version implementing the [optical-order cutover](../../film-chain/spec.md#optical-order-cutover). Effective stage descriptions MUST distinguish scanner readout blur, digital unsharp mask, print viewing glare, material grain, and post-scan appearance grain.
 - Fused execution MUST retain those semantic boundaries in its declared model even when it has no separate timing observation per operation. A declaration alone MUST NOT be reported as measured stage-order acceptance.
 - Rendering configuration MUST retain `output_mix.amount` and identify whether final output composition ran or was bypassed for an intermediate tap under [Output mix](../../output-mix/spec.md#output-mix). Source-branch rejection MUST be an operation failure, not a reported successful amount-1 render.
 - Preflash eligibility follows the actual print-development route; its controls retain existing parameter provenance. Preflash MUST NOT introduce a digital material-response definition, baseline/effective reference identity, or calibration pass.
@@ -122,7 +122,7 @@ These measurements answer where an operation spent time and whether work crossed
 - `worker_wait` measures worker dispatch to worker start; it is a host scheduling observation and MUST NOT be called GPU queue wait. Input snapshot copies belong to `input_prepare`.
 - Post-publication output hashing and machine-result assembly belong to `result_prepare` and remain inside invocation duration.
 - `simulation` encloses the Runtime processing call, including metering, geometry, scan preparation, the executed film chain, and output post-scan handling. Input loading and Runtime construction belong to separate phases.
-- A GUI image load completed before render acceptance MUST NOT be charged again to Preview or Scan. Stage observations identify `metering`, `geometry`, `filming_expose`, `filming_develop`, `converting`, `grain_spektra`, `grain_procedural`, `grain_dye_field`, `grain_fotufilm`, `printing`, `scanning`, `negative_to_positive`, and `post_scan` when separately observable.
+- A GUI image load completed before render acceptance MUST NOT be charged again to Preview or Scan. Stage observations identify `metering`, `geometry`, `filming_expose`, `filming_develop`, `converting`, `grain_spektra`, `grain_procedural`, `grain_exposure`, `grain_exposure_cpu`, `grain_dye_field`, `grain_fotufilm`, `printing`, `scanning`, `negative_to_positive`, and `post_scan` when separately observable.
 - Historical reports MAY retain the `color_reference` stage name; current execution MUST NOT invent that removed preparation stage. A fused chain MUST report its batch rather than invent independent host stage durations for passes within it.
 - `file_write` includes native pixel conversion, encoding/compression, and metadata work when the writer does not expose them separately. A separately observed `metadata` duration is a child of `file_write`; it MUST NOT be added to that inclusive duration.
 - A nonfatal metadata warning MUST remain a warning on a successful pixel write. `publication` ends after the destination has been published or publication has failed.
@@ -191,7 +191,7 @@ Omitted pass nodes do not make aggregate timing incomplete. Missing timestamps c
 
 Query-pool or per-command exhaustion MUST report `query_capacity` as an unavailable reason. Missing historical `groups` defaults to an empty array, which does not prove that no passes executed.
 
-GPU stages are `other`, `spectral_prepare`, `gamut_prepare`, `input`, `metering`, `geometry`, `film_expose`, `halation`, `film_develop`, `dir`, `grain_spektra`, `grain_procedural`, `dye_formation`, `dye_readout`, `fotufilm_formation`, `fotufilm_statistics`, `fotufilm_readout`, `print_expose`, `print_develop`, `glare`, `scan`, `negative_to_positive`, `unsharp`, `gamut`, `output`, `saving`, and `display`.
+GPU stages are `other`, `spectral_prepare`, `gamut_prepare`, `input`, `metering`, `geometry`, `film_expose`, `halation`, `film_develop`, `dir`, `grain_spektra`, `grain_procedural`, `grain_exposure`, `dye_formation`, `dye_readout`, `fotufilm_formation`, `fotufilm_statistics`, `fotufilm_readout`, `print_expose`, `print_develop`, `glare`, `scan`, `negative_to_positive`, `unsharp`, `gamut`, `output`, `saving`, and `display`.
 
 Pass kinds are `other`, `pointwise`, `gather`, `scatter`, `copy`, `filter`, `reduction`, `prefix_sum`, `spectral`, `formation`, and `readout`. Purpose is `image`, `calibration`, or `telemetry`.
 
@@ -236,6 +236,6 @@ A useful diagnosis first identifies the executed route and CPU stages, then comp
 
 ## Grain naming compatibility
 
-New stage and reason names MUST identify Spektra, Procedural, or Dye.
+New stage and reason names MUST identify Spektra, Procedural, Dye, Fotufilm, or Exposure Grain.
 Readers MUST accept the historical numbered stage and reason names in schema-one reports and normalize them to canonical names.
 This migration MUST NOT accept arbitrary stage names outside the existing privacy allowlist.

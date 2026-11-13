@@ -158,7 +158,7 @@ Scan MUST expose `print_render.glare` in a module labeled Print viewing glare. I
 
 Preflash and Enlarger diffusion remain separate Print modules for exposure and optics.
 
-The existing grain selector MUST retain its stable engine names and preset section. It MUST identify Spektra, Dye, and Fotufilm Film as material grain and Procedural as post-scan grain appearance. Selecting Procedural MUST describe its Film Resolution control as part of that appearance algorithm, not as scanner lens resolution.
+The existing grain selector MUST retain its stable engine names and preset section. It MUST identify Spektra, Dye, and Fotufilm Film as material grain and Procedural and Exposure Grain as post-scan grain appearance. Selecting Procedural MUST describe its Film Resolution control as part of that appearance algorithm, not as scanner lens resolution.
 
 No duplicate grain selector or automatic engine conversion is required.
 
@@ -186,6 +186,8 @@ Spektra MUST hide Dye-only RMS strength. Composite and sublayer controls MUST fo
 
 Missing profile layer data MUST NOT imply a composite fallback while sublayers are requested. An unsupported request MUST retain an explicit reason and the control that permits an explicit correction.
 
+Exposure Grain MUST expose strength, size, automatic size, format, absolute size, roughness, shadows, midtones, highlights, and push. Automatic size MUST hide absolute size while active. Exposure Grain MUST NOT expose Color Variation.
+
 Fotufilm Film MUST preserve the constrained sublayer-share editor and read-only fourth remainder. An unsupported material selection MUST state its reason without changing the requested material or engine.
 
 Search, Only modified, and canonical locators MUST reveal hidden stored controls at their existing owners. Inactive matches MUST retain readable values and their actual applicability reasons.
@@ -212,7 +214,7 @@ Each module has one editing owner. The inspector MUST contain these stages and m
 
 Film owns the Grain module. LUT look owns LUT grain as a separate control.
 
-The Grain module keeps the four-engine selector and all engine-specific controls in one location. It MUST label Spektra, Dye, and Fotufilm Film as material grain and Procedural as post-scan appearance.
+The Grain module keeps the five-engine selector and all engine-specific controls in one location. It MUST label Spektra, Dye, and Fotufilm Film as material grain and Procedural and Exposure Grain as post-scan appearance.
 
 The Grain module MUST NOT be presented as a global effects module or shared with the LUT workflow.
 

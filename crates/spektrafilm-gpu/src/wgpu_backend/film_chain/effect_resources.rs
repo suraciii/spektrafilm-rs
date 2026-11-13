@@ -185,6 +185,7 @@ impl WgpuBackend {
                 )?;
                 bytes
             }
+            "grain_exposure" => super::super::grain::exposure_workspace_bytes(self, width, height)?,
             "grain_procedural" => {
                 // The procedural owner validates its resolution support. Four
                 // full rasters and eight capped sample/filter windows coexist.

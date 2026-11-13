@@ -1,4 +1,6 @@
-//! Numerical primitives shared by Grain Procedural host paths.
+//! Numerical primitives shared by grain host paths.
+
+pub mod exposure;
 
 use rand_mt::Mt;
 

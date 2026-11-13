@@ -4,8 +4,8 @@ Use this page to select a grain engine and configure its controls. It also descr
 
 ## Select an engine
 
-`film_render.grain.engine` accepts `spektra`, `procedural`, `dye`, or `fotufilm`.
-Use `procedural_*` for Procedural controls and `dye_strength` / `dye_scale` for Dye look controls.
+`film_render.grain.engine` accepts `spektra`, `procedural`, `dye`, `fotufilm`, or `exposure`.
+Use `procedural_*` for Procedural controls, `dye_strength` / `dye_scale` for Dye look controls, and `film_render.grain.exposure.*` for Exposure Grain controls.
 
 Historical numbered control keys remain readable; saved documents and parameter descriptions emit only canonical names.
 Supplying both spellings of one control in the same grain object is an error.
@@ -19,6 +19,7 @@ Dye diagnostics use `SPEKTRAFILM_GRAIN_DYE_*`. Historical numbered diagnostic na
 - Procedural derives from Dehancer. It provides Analogue/Noise grain with twelve format/speed profiles. Its controls include Size, Amount, Shadows, Midtones, Highlights, Chroma, and Film Resolution. Pixel parity with Dehancer is not claimed.
 - Dye is the default self-developed experimental film-coordinate dye field. `dye_strength` and `dye_scale` control it.
 - Fotufilm Film is an adapted appearance population model fitted to resolved film curves. It is opt-in. `film_render.grain.fotufilm.*` controls it.
+- Exposure Grain is a reconstructed post-scan encoded-RGB value-noise appearance model. It is opt-in. `film_render.grain.exposure.*` controls it.
 
 Explicit engines in existing looks remain unchanged. To keep the historical engine in a sparse source, set `film_render.grain.engine = spektra`. See [default compatibility](../specs/film-grain/spec.md#defaults-and-compatibility) for omitted-engine and GUI state migration rules.
 
@@ -167,6 +168,23 @@ The device implementation retains crystal deposits, dye-cloud sums, per-sublayer
 
 Each Gaussian cloud term prepares its normalized binary32 taps once on the device, in the reference's ascending order. Both separable passes reuse those taps rather than regenerating the same exponential and normalization at every texel; the support, accumulation order, and four-term cloud law are unchanged.
 
+## Exposure Grain
+
+Select Exposure Grain with `film_render.grain.engine: "exposure"`. It is a post-scan appearance model reconstructed from Exposure X7's scalar luma grain, not a film-development or material-grain model. It consumes and returns display-encoded RGB; the film and paper profiles still determine everything upstream.
+
+It runs after scan acquisition, output gamut, unsharp masking, and transfer encoding, before CMYK ink style and output mix. Direct scan and negative-to-positive outputs therefore differ only in the encoded image the model receives. Linear export encodes before Exposure, applies the grain once, then decodes the selected transfer; it does not rerun Exposure in linear RGB. Routes without a scan do not synthesize Exposure Grain.
+
+Controls live in `film_render.grain.exposure`:
+
+- `strength` (0–100, default 100) scales the appearance.
+- `size` (0.25–4.5, default 1) sets the relative grain scale.
+- `auto_size` (default `true`) derives the absolute grain size from `format` and the full source dimensions. Setting it to `false` uses `absolute_size_px` (0.5–64, default 1.5).
+- `format` chooses `35mm`, `medium_format`, or `large_format` for automatic sizing.
+- `roughness`, `shadows`, `midtones`, and `highlights` (each 0–100) set the roughness S curve and zone partition.
+- `push` (0–3, default 0) applies the reconstructed push response.
+
+The shared `random_seed` drives the reconstruction; Exposure adds no second phase input. CPU and GPU use the reconstructed minstd permutation and value-noise tables, with deterministic repeatability at the same seed and declared dimensions. The GPU path runs the complete Exposure stage on the selected device and does not claim pixel parity with Exposure X7 or its presets. Color Variation is not part of this engine.
+
 ## See also
 
 - [Presets](presets.md)
@@ -175,3 +193,4 @@ Each Gaussian cloud term prepares its normalized binary32 taps once on the devic
 - [Attribution](attribution.md)
 - [Grain specification](../specs/film-grain/spec.md)
 - [Dye design](../specs/film-grain/dye/design.md)
+- [Exposure design](../specs/film-grain/exposure/design.md)

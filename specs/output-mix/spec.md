@@ -93,7 +93,7 @@ Enlarger and Preflash MUST therefore reset their own visible controls even thoug
 
 [CLI parameters](../cli/spec.md) owns canonical paths, sparse edits, discovery, and inactive-edit feedback.
 
-Optical and grain labels MUST follow [Film chain](../film-chain/spec.md#scan-optics-and-print-viewing-glare) and [Film grain](../film-grain/spec.md). Scan / Print viewing glare MUST identify readout light, not paper exposure, without changing its `print` preset ownership. Procedural is post-scan appearance, not material-grain formation.
+Optical and grain labels MUST follow [Film chain](../film-chain/spec.md#scan-optics-and-print-viewing-glare) and [Film grain](../film-grain/spec.md). Scan / Print viewing glare MUST identify readout light, not paper exposure, without changing its `print` preset ownership. Procedural and Exposure Grain are post-scan appearance, not material-grain formation.
 
 These distinctions remain required even though the digital-response proposal is withdrawn.
 

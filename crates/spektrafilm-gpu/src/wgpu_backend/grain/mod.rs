@@ -3,6 +3,8 @@ use super::*;
 pub mod dye;
 mod dye_law;
 mod dye_law_paged;
+mod exposure;
+pub(in crate::wgpu_backend) use exposure::{build_grain_exposure_state, exposure_workspace_bytes};
 pub(in crate::wgpu_backend) mod fotufilm;
 pub(in crate::wgpu_backend) mod raster;
 pub mod spektra;

@@ -1521,6 +1521,71 @@ fn procedural_grain_linear_export_with_cmyk_matches_cpu() {
     assert!(effect > 1e-3, "cmyk had no effect: mean={effect:.6}");
 }
 
+/// The Exposure engine owns the same post-scan slot as Procedural on the
+/// resident chain. Its device tables and encode ordering must agree with
+/// the CPU post-scan branch.
+#[test]
+fn exposure_grain_matches_cpu_on_resident_chain() {
+    let gpu = spektrafilm_gpu::test_support::adapter();
+    let dir = data_dir();
+    let film = crate::profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();
+    let print = crate::profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap();
+    let mut params = resident_parity_params(16);
+    params.film_render.grain.active = true;
+    params.film_render.grain.engine = crate::params::GrainEngine::Exposure;
+    params.film_render.grain.exposure.auto_size = false;
+    params.film_render.grain.exposure.absolute_size_px = 2.0;
+    params.random_seed = 7;
+    let pipeline =
+        Pipeline::new_with_spectral(film.clone(), print.clone(), params.clone(), &dir).unwrap();
+    assert!(matches!(
+        pipeline.resident_decision(),
+        ResidentDecision::UseResident
+    ));
+    let image = comparison_image(16);
+    let gpu_out = pipeline
+        .clone()
+        .with_params_with_backend(pipeline.params.clone(), gpu.backend())
+        .unwrap()
+        .process(image.clone(), gpu.backend())
+        .unwrap();
+    let cpu_out = pipeline
+        .process(image.clone(), &spektrafilm_backend::cpu_backend::CpuBackend)
+        .unwrap();
+    let (mean, max_diff) = parity_metrics(&gpu_out, &cpu_out);
+    assert!(
+        mean < 5e-2 && max_diff < 5e-1,
+        "exposure resident parity: mean={mean:.6} max={max_diff:.6}"
+    );
+
+    let mut off = params.clone();
+    off.film_render.grain.active = false;
+    let without = Pipeline::new_with_spectral(film.clone(), print.clone(), off.clone(), &dir)
+        .unwrap()
+        .process(image.clone(), &spektrafilm_backend::cpu_backend::CpuBackend)
+        .unwrap();
+    let (effect, _) = parity_metrics(&cpu_out, &without);
+    assert!(
+        effect > 1e-5,
+        "exposure grain had no effect: mean={effect:.6}"
+    );
+
+    let resident = |p| {
+        let pipeline = Pipeline::new_with_spectral(film.clone(), print.clone(), p, &dir).unwrap();
+        pipeline
+            .clone()
+            .with_params_with_backend(pipeline.params.clone(), gpu.backend())
+            .unwrap()
+            .process(image.clone(), gpu.backend())
+            .unwrap()
+    };
+    let mut zero = params;
+    zero.film_render.grain.exposure.strength = 0.0;
+    let resident_zero = resident(zero);
+    let resident_off = resident(off);
+    assert_eq!(resident_zero.data, resident_off.data);
+}
+
 #[test]
 fn resident_negative_matches_cpu_per_stage() {
     let gpu = spektrafilm_gpu::test_support::adapter();

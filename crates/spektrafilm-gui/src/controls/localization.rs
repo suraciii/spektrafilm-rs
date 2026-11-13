@@ -469,6 +469,17 @@ fn key(label: &str) -> Option<&'static str> {
         "Dye reversal" => Some("controls.grain.dye_reversal"),
         "Grain strength" => Some("controls.grain.dye_strength"),
         "Grain scale" => Some("controls.grain.dye_scale"),
+        "Grain size" => Some("controls.grain.grain_size"),
+        "Automatic size" => Some("controls.grain.automatic_size"),
+        "Film format" => Some("controls.grain.film_format"),
+        "Absolute size (px)" => Some("controls.grain.absolute_size_px"),
+        "Roughness" => Some("controls.grain.roughness"),
+        "Push" => Some("controls.grain.push"),
+        "35mm" => Some("controls.grain.format_35mm"),
+        "Medium format" => Some("controls.grain.format_medium"),
+        "Large format" => Some("controls.grain.format_large"),
+        "Exposure Grain" => Some("controls.grain.exposure"),
+        "Exposure Advanced" => Some("controls.grain.exposure_advanced"),
         "Dye-cloud blur in micrometers." => Some("controls.grain.dye_cloud_blur_help"),
         "EXR uses linear color and ZIP compression; encoding is fixed off." => {
             Some("surfaces.export.exr_fixed")
@@ -613,6 +624,34 @@ fn key(label: &str) -> Option<&'static str> {
         }
         "Relative Dye grain scale in film coordinates: 1 keeps the delivered correlation length, and the texture's octaves and band limit scale together. Not a crystal diameter, scanner blur, or output-pixel size." => {
             Some("controls.grain.dye_scale_help")
+        }
+        "Overall Exposure grain amplitude in encoded RGB; post-scan appearance, not material formation." => {
+            Some("controls.grain.exposure_strength_help")
+        }
+        "Exposure grain particle size in output pixels; the authored grain scale." => {
+            Some("controls.grain.exposure_size_help")
+        }
+        "Derive the grain size from the film format; off reveals the absolute size in pixels." => {
+            Some("controls.grain.automatic_size_help")
+        }
+        "Captured film format driving the automatic grain size." => {
+            Some("controls.grain.film_format_help")
+        }
+        "Explicit grain size in output pixels; used while automatic size is off." => {
+            Some("controls.grain.absolute_size_px_help")
+        }
+        "Exposure grain shape; 50 keeps the reference value-noise shape." => {
+            Some("controls.grain.roughness_help")
+        }
+        "Exposure grain amplitude in the shadows." => Some("controls.grain.exposure_shadows_help"),
+        "Exposure grain amplitude in the midtones." => {
+            Some("controls.grain.exposure_midtones_help")
+        }
+        "Exposure grain amplitude in the highlights." => {
+            Some("controls.grain.exposure_highlights_help")
+        }
+        "Additional Exposure grain amplitude added to the resolved zone amounts." => {
+            Some("controls.grain.push_help")
         }
         "General" => Some("surfaces.settings.general"),
         "Geometry: crop toggle, center, size, upscale factor" => {
@@ -1094,7 +1133,7 @@ fn key(label: &str) -> Option<&'static str> {
         "Select the JPEG chroma subsampling." => Some("surfaces.export.subsampling_help"),
         "Select the TIFF compression method." => Some("surfaces.export.compression_help"),
         "Select the bit depth." => Some("surfaces.export.depth_help"),
-        "Select the grain engine: Spektra for material grain in developed film density, Procedural for post-scan grain appearance in encoded RGB, Dye for material grain formed in a film-coordinate dye field, Fotufilm Film for effective-appearance film population grain model." => {
+        "Select the grain engine: Spektra for material grain in developed film density, Procedural for post-scan grain appearance in encoded RGB, Dye for material grain formed in a film-coordinate dye field, Fotufilm Film for effective-appearance film population grain model, Exposure Grain for reconstructed post-scan grain appearance in encoded RGB." => {
             Some("controls.grain.engine_help")
         }
         "Session" => Some("controls.label.general"),
@@ -1334,6 +1373,11 @@ fn key(label: &str) -> Option<&'static str> {
         }
         "density min" => Some("controls.grain.density_min"),
         "detect base" => Some("controls.convert.detect_base"),
+        "automatic size" => Some("controls.grain.automatic_size"),
+        "absolute size (px)" => Some("controls.grain.absolute_size_px"),
+        "film format" => Some("controls.grain.film_format"),
+        "grain size" => Some("controls.grain.grain_size"),
+        "push" => Some("controls.grain.push"),
         "developer exhaustion" => Some("controls.chemistry.developer_exhaustion"),
         "development time" => Some("controls.label.development_time"),
         "diffusion size um" => Some("controls.couplers.diffusion_size"),
@@ -1379,6 +1423,8 @@ fn key(label: &str) -> Option<&'static str> {
         "film_render.grain.engine = dye; supported stock, format and route" => {
             Some("controls.condition.dye")
         }
+        "film_render.grain.engine = exposure" => Some("controls.condition.exposure"),
+        "film_render.grain.exposure.auto_size = false" => Some("controls.condition.auto_size"),
         "film_render.grain.engine = fotufilm" => Some("controls.condition.fotufilm"),
         "film_render.grain.engine = procedural" => Some("controls.condition.procedural"),
         "film_render.grain.engine = spektra" => Some("controls.condition.spektra"),

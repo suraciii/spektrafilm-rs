@@ -122,7 +122,7 @@ Resident and per-stage scenarios MUST show different observed GPU boundary count
 
 Selecting an engine alone MUST NOT force a CPU-stage reason or resident decline.
 
-A Procedural grain resident scenario MUST identify the actual dispatched grain pass. GPU execution of supported grain stages MUST be reported as GPU work. CPU-only execution MUST report zero observed GPU work and unavailable GPU timestamp measurements.
+A Procedural or Exposure Grain resident scenario MUST identify the actual dispatched grain pass. GPU execution of supported grain stages MUST be reported as GPU work. CPU-only execution MUST report zero observed GPU work and unavailable GPU timestamp measurements.
 
 Telemetry acceptance MUST also verify negative conversion with neutral and user-authored per-channel styles, scanner lens blur, and unsharp masking against their actual executors. GPU execution MUST be reported as GPU work without a forced CPU reason. CPU execution MUST retain its applicable existing reason.
 

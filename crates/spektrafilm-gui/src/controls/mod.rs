@@ -15,7 +15,10 @@ use spektrafilm_core::feature_profiles::{self, FeatureProfileFamily, FeatureProf
 use spektrafilm_core::params::{
     PrintCurvesMorphParams, PrintExposureEvTracking, PrintExposureMode, RuntimeParams,
     WorkflowMode,
-    grain::{FotufilmMaterial, GrainEngine, ProceduralGrainFilmType, ProceduralGrainMode},
+    grain::{
+        ExposureGrainFormat, FotufilmMaterial, GrainEngine, ProceduralGrainFilmType,
+        ProceduralGrainMode,
+    },
 };
 use spektrafilm_core::profile::Profile;
 use std::path::Path;
@@ -1035,6 +1038,7 @@ mod tests {
             GrainEngine::Spektra,
             GrainEngine::Procedural,
             GrainEngine::Fotufilm,
+            GrainEngine::Exposure,
         ] {
             params.film_render.grain.engine = engine;
             params.film_render.grain.active = true;

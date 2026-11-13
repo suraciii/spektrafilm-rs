@@ -33,7 +33,7 @@ The current catalog provides these families:
 
 There is no Dye feature-profile family in this algorithm revision. A future Dye profile requires a separate parameter scope, calibration record, and acceptance contract.
 
-There is no universal profile that maps one parameter set across Spektra, Procedural, Dye, and Fotufilm Film. Grain engines retain independent domains and controls under [Film grain](../film-grain/spec.md).
+There is no universal profile that maps one parameter set across Spektra, Procedural, Dye, Fotufilm Film, and Exposure Grain. Grain engines retain independent domains and controls under [Film grain](../film-grain/spec.md).
 
 ### Procedural grain profile family
 
