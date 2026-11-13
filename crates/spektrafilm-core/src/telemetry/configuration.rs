@@ -368,7 +368,7 @@ pub enum GrainMode {
     DyeField,
     /// The Fotufilm effective-appearance film population model.
     FotufilmFilm,
-    /// The reconstructed post-scan Exposure value-noise appearance model.
+    /// The reconstructed post-scan Exposure gradient-noise appearance model.
     ExposureGrain,
 }
 

@@ -141,6 +141,7 @@ pub struct ExposureGrainParams {
     pub midtones: f64,
     pub highlights: f64,
     pub push: f64,
+    pub color_variation: f64,
 }
 
 impl Default for ExposureGrainParams {
@@ -156,6 +157,7 @@ impl Default for ExposureGrainParams {
             midtones: 70.0,
             highlights: 30.0,
             push: 0.0,
+            color_variation: 20.0,
         }
     }
 }
@@ -175,6 +177,7 @@ impl ExposureGrainParams {
             ("midtones", self.midtones),
             ("highlights", self.highlights),
             ("push", self.push),
+            ("color_variation", self.color_variation),
         ] {
             super::validation::validate_scalar_detailed(
                 &format!("film_render.grain.exposure.{name}"),
@@ -511,6 +514,7 @@ impl GrainParams {
             midtones: self.exposure.midtones as f32,
             highlights: self.exposure.highlights as f32,
             push: self.exposure.push as f32,
+            color_variation: self.exposure.color_variation as f32,
             seed: spektrafilm_model::grain::exposure::exposure_seed(random_seed),
             render_scale: 1.0,
         }
@@ -539,6 +543,7 @@ impl GrainParams {
             midtones: self.exposure.midtones as f32,
             highlights: self.exposure.highlights as f32,
             push: self.exposure.push as f32,
+            color_variation: self.exposure.color_variation as f32,
             seed: spektrafilm_model::grain::exposure::exposure_seed(random_seed),
             render_scale: 1.0,
         }
@@ -659,7 +664,8 @@ mod fotufilm_tests {
                 "shadows": 12.0,
                 "midtones": 80.0,
                 "highlights": 44.0,
-                "push": 2.0
+                "push": 2.0,
+                "color_variation": 35.0
             }
         });
         let parsed: GrainParams = serde_json::from_value(source.clone()).unwrap();
@@ -680,6 +686,17 @@ mod fotufilm_tests {
         ] {
             assert!(serde_json::from_value::<GrainParams>(source).is_err());
         }
+    }
+
+    #[test]
+    fn exposure_strength_range_covers_observed_factory_values() {
+        let mut params = ExposureGrainParams {
+            strength: 150.0,
+            ..Default::default()
+        };
+        assert!(params.validate().is_ok());
+        params.strength = 150.1;
+        assert!(params.validate().is_err());
     }
 
     #[test]

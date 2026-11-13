@@ -164,7 +164,7 @@ pub struct FilmChainParams<'a> {
     /// same-space matrix roundtrip, and transfer encoding. Returns encoded RGB.
     pub grain_procedural: Option<ProceduralGrainGpuParams>,
     /// Optional Exposure Grain pass — the same post-scan slot as Procedural,
-    /// with its own reconstructed value-noise tables. Returns encoded RGB.
+    /// with its own reconstructed gradient-noise tables. Returns encoded RGB.
     pub grain_exposure: Option<ExposureGrainGpuParams>,
     /// Destination space used to encode the resident post-scan grain input.
     pub scan_output_space: &'static spektrafilm_math::colorspace::RgbColorSpace,

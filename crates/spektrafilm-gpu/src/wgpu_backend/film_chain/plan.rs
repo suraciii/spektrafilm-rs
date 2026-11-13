@@ -461,7 +461,19 @@ pub(in crate::wgpu_backend) fn required_chain_buffers(
         needed(ChainStep::Front, tc_lut_bytes),
         needed(ChainStep::Gamut, cmax_bytes),
         needed(ChainStep::SpektraGrain, grain_spektra_curve_bytes),
-        needed(ChainStep::ExposureGrain, 8192 * 2 * 4),
+        needed(
+            ChainStep::ExposureGrain,
+            8192 * 4
+                * if p
+                    .grain_exposure
+                    .as_ref()
+                    .is_some_and(|g| g.color_variation > 0.0)
+                {
+                    2
+                } else {
+                    1
+                },
+        ),
         needed(ChainStep::Readout, scan_axes_bytes),
         needed(ChainStep::Inverse, convert_table_bytes),
         MAX_FIXED_AUX_BYTES,
