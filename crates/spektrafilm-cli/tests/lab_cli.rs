@@ -290,8 +290,6 @@ struct MeasureFixture {
     root: PathBuf,
     data: PathBuf,
     stimuli: PathBuf,
-    plan: PathBuf,
-    working_plan: PathBuf,
     /// The same values declared in the film log-exposure domain: no color
     /// space and no transfer state, as the film domains require.
     log_e_manifest: PathBuf,
@@ -431,8 +429,6 @@ impl MeasureFixture {
             root,
             data,
             stimuli,
-            plan,
-            working_plan,
             log_e_manifest,
             density_manifest,
         }
@@ -466,11 +462,6 @@ impl MeasureFixture {
     /// Run the lab binary with one environment entry declared.
     fn lab_with_env(&self, args: &[&str], env: &[(&str, &str)]) -> Output {
         self.command_env(env!("CARGO_BIN_EXE_spektrafilm-f64"), args, env)
-    }
-
-    /// Measure the declared scene RGB through the real chain.
-    fn measure(&self, out: &Path) -> Output {
-        self.measure_with(&self.stimuli.clone(), out)
     }
 
     /// Measure an otherwise identical declaration with another stimulus
@@ -637,37 +628,6 @@ fn read_points(path: &Path, stage: &str) -> BTreeMap<String, [f64; 3]> {
         );
     }
     rows
-}
-
-/// The samples of one available stage of a stage-evidence bundle, in row-major
-/// order.
-/// One stage record of a retained bundle manifest.
-fn bundle_stage_record(directory: &Path, id: &str) -> Value {
-    let manifest: Value =
-        serde_json::from_slice(&std::fs::read(directory.join("stage-evidence.json")).unwrap())
-            .unwrap();
-    manifest["stages"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|record| record["id"] == id)
-        .unwrap_or_else(|| panic!("no {id} stage"))
-        .clone()
-}
-
-/// Copy one retained directory, so a test can damage the copy.
-fn copy_tree(from: &Path, to: &Path) {
-    std::fs::create_dir_all(to).unwrap();
-    for entry in std::fs::read_dir(from).unwrap() {
-        let entry = entry.unwrap();
-        let target = to.join(entry.file_name());
-        match entry.file_type().unwrap().is_dir() {
-            true => copy_tree(&entry.path(), &target),
-            false => {
-                std::fs::copy(entry.path(), target).unwrap();
-            }
-        }
-    }
 }
 
 fn bundle_stage(directory: &Path, id: &str) -> Vec<[f64; 3]> {
