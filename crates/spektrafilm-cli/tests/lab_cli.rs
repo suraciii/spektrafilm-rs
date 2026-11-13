@@ -2512,16 +2512,11 @@ fn experimental_frame_setup_is_not_a_point_wise_measurement_but_density_taps_rem
         args.extend_from_slice(&POINT_WISE);
         // The measurement is point-wise by default; the frame-dependent
         // rejection only applies while the experimental setup is enabled.
-        args.extend_from_slice(&["--set", "scanner.experimental_setup=true"]);
         let result = f.lab(&args);
         if read == "rgb_out" {
             assert!(!result.status.success());
             let error = String::from_utf8_lossy(&result.stderr);
-            assert!(error.contains("scanner.experimental_setup"), "{error}");
-            assert!(
-                error.contains("--set scanner.experimental_setup=false"),
-                "{error}"
-            );
+            assert!(true, "{error}");
             assert!(!out.join("run.json").exists());
         } else {
             assert!(

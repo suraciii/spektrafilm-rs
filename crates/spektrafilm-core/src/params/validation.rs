@@ -1479,23 +1479,6 @@ fn validate_context_detailed(params: &RuntimeParams) -> Result<(), ValidationErr
         }
         crate::pipeline_calibration::validate_scan_output_route_detailed(params)?;
     }
-    if params.debug.lut_mode
-        && params.scanner.scan_output == "negative_to_positive"
-        && params.scanner.experimental_setup
-    {
-        return Err(ValidationError::new(
-            Reason::StandardLut,
-            "scanner.experimental_setup",
-            "scanner.experimental_setup measures the whole frame and cannot be baked into a point-wise LUT; disable it",
-        ));
-    }
-    if params.scanner.experimental_setup && params.scanner.scan_output != "negative_to_positive" {
-        return Err(ValidationError::new(
-            Reason::StyleMode,
-            "scanner.experimental_setup",
-            "scanner.experimental_setup requires scanner.scan_output=negative_to_positive",
-        ));
-    }
     if !params.scanner.uses_builtin_tone() && params.scanner.scan_output != "negative_to_positive" {
         return Err(ValidationError::new(
             Reason::StyleMode,

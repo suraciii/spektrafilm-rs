@@ -271,7 +271,6 @@ roughness = 0.699999988079071
 
 [parameters.scanner]
 conversion_style = "standard"
-experimental_setup = false
 lens_blur = 0.0
 scan_output = "direct_scan"
 unsharp_mask = [

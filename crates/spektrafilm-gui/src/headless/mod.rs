@@ -841,7 +841,6 @@ fn scanner_ui_real_preview_scan_persistence_save_and_export() {
     assert_eq!(h.state().params.scanner.scan_output, "negative_to_positive");
     // Negative conversion previews stay frame-independent until the
     // experimental setup asks for the complete frame.
-    h.state_mut().params.scanner.experimental_setup = true;
     h.run_steps(3);
     assert!(
         h.query_by_role_and_label(egui::accesskit::Role::ComboBox, "scanner lamp")
@@ -944,7 +943,8 @@ fn scanner_ui_real_preview_scan_persistence_save_and_export() {
     assert!(h.query_by_label("auto preview").is_none());
     close_settings(h);
     let bounded = self::preview(h);
-    assert_eq!((bounded.width, bounded.height), (160, 80));
+    let preview_dims = spektrafilm_core::resizing::preview_dimensions(160, 80, 128);
+    assert_eq!((bounded.width, bounded.height), preview_dims);
     assert_eq!(h.state().retained_kind, Some(RenderKind::Preview));
     assert_ne!(
         h.state().source_render.as_ref().unwrap().operation_id,

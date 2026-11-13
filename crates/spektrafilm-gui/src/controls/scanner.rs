@@ -460,7 +460,7 @@ pub(crate) fn sections(
                     let changed = toggle(
                         ui,
                         vocabulary::EXPERIMENTAL_SETUP,
-                        &mut params.scanner.experimental_setup,
+                        &mut false,
                         vocabulary::EXPERIMENTAL_SETUP_HELP,
                     );
                     flags.runtime_changed |= changed;
