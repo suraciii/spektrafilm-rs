@@ -46,7 +46,7 @@ See the current P1+P2 record in the project context workspace for the execution 
 
 Feature ownership stays inside the existing crates:
 
-- `spektrafilm-model/src/`: `grain/{spektra,procedural,dye}.rs`, `halation/`, `diffusion/`, `couplers/`, and `glare/` own their models and numerical tests. `optics/` owns shared physical blur, unsharp masking, and highlight boost.
+- `spektrafilm-model/src/`: `grain/{spektra,procedural,dye,exposure}.rs`, `halation/`, `diffusion/`, `couplers/`, and `glare/` own their models and numerical tests. `optics/` owns shared physical blur, unsharp masking, and highlight boost.
 - `spektrafilm-core/src/params/`: grain, halation, diffusion, couplers, and glare each own their parameter types and feature-specific defaults. `RuntimeParams` remains the aggregate. Grain readers migrate historical numbered control names; serialization uses engine names.
 - `spektrafilm-core/src/params/migrations.rs` owns shared transformations of versioned legacy parameter documents. `params::sources` retains their established public entry points through direct re-exports; it does not implement migrations. Recipe, preset, and GUI-state readers retain their own version gates, payload scopes, and commit boundaries. Complete-parameter migrations preflight exposure and CMYK changes before mutating the document, preserving rejection precedence and leaving rejected input unchanged. Shared parameter diagnostics remain in `params::validation`.
 - `spektrafilm-gpu/src/wgpu_backend/`: each effect owns its buffers, pass encoding, and dedicated WGSL. `blur/` owns Gaussian FIR weight generation and its shared uniform layout. `film_chain.rs` owns resident orchestration and its resource lifetimes; `film_chain/plan.rs` owns the device-free stage topology, geometry, and binding-size preflight. `mod.rs` retains device setup and shared dispatch.
@@ -58,7 +58,7 @@ Feature ownership stays inside the existing crates:
 - `spektrafilm-backend/src/lib.rs` owns the `ComputeBackend` trait and its crate-root re-exports. `chain_params.rs`, `grain_params.rs`, `viewer_params.rs`, `dye_params.rs`, and `raw_params.rs` own the device-independent parameter records for their families.
 - `spektrafilm-benchmark/src/documents.rs` owns authored-document validation and shared document helpers. `documents/evidence.rs` owns generated run/comparison validation. `documents/masks.rs` owns render/reference geometry-mask decoding with their distinct acceptance rules.
 
-Canonical Rust paths include `spektrafilm_model::grain::spektra`, `spektrafilm_model::grain::procedural`, and `spektrafilm_core::params::grain::GrainParams`.
+Canonical Rust paths include `spektrafilm_model::grain::spektra`, `spektrafilm_model::grain::procedural`, `spektrafilm_model::grain::exposure`, and `spektrafilm_core::params::grain::GrainParams`.
 The former flat module paths have been removed.
 
 ## See also
