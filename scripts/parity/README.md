@@ -145,7 +145,7 @@ xvfb-run -a -s '-screen 0 1600x1100x24' dbus-run-session -- \
   --factory-reference scripts/parity/fixtures/gui_28bf883/factory_state.json \
   --raw /path/to/RAW_KODAK_DC50_é.KDC \
   --upstream /tmp/spektrafilm-upstream-28bf \
-  --evidence /tmp/spektrafilm-experimental-native
+  --evidence /tmp/spektrafilm-f64al-native
 ```
 
 The Linux gate uses real X11 input, OCR, and native file choosers. It checks the
@@ -218,7 +218,7 @@ their hashes. Use a newly built f64 CLI from the recorded commit:
 SPEKTRAFILM_RS_BIN="$PWD/target/release/spektrafilm-f64" \
 SPEKTRAFILM_UPSTREAM=/tmp/spektrafilm-upstream-28bf \
   /tmp/spektrafilm-034-venv/bin/python scripts/parity/experimental_runtime.py \
-  --out /tmp/spektrafilm-experimental-runtime
+  --out /tmp/spektrafilm-f64al-runtime
 ```
 
 The runtime gate also rejects a dirty checkout unless `--development-smoke` is

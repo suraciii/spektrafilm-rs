@@ -1,6 +1,6 @@
 # Profile fitting
 
-`spektrafilm-experiment fit` derives film-profile surface terms from reference patch data instead of hand measurement. It renders a chart through the calibrated chain and minimizes the CIELAB difference between the rendered patches and the reference table. The command exists only in the lab binary.
+`spektrafilm-f64 fit` derives film-profile surface terms from reference patch data instead of hand measurement. It renders a chart through the calibrated chain and minimizes the CIELAB difference between the rendered patches and the reference table. The command exists only in the lab binary.
 
 ## Inputs and fitting
 
@@ -38,7 +38,7 @@ The shipped `kodak_portra_800` surface came from this command. The profile's `me
 ## Example
 
 ```bash
-./target/release/spektrafilm-experiment fit \
+./target/release/spektrafilm-f64 fit \
     --layout layout.json --scene scene.json --reference reference.json \
     --fit surface --surface-terms 9 --lambda 1.0 \
     --preset "CineStill 800T" \

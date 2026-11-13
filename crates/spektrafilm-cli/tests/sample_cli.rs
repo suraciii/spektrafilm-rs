@@ -42,7 +42,7 @@ fn sample_reads_the_exact_stage_from_a_retained_run_directory_or_manifest() {
         (root.join("run.json"), "sample-manifest"),
     ] {
         let output = temp.path().join(output_name);
-        let result = Command::new(env!("CARGO_BIN_EXE_spektrafilm-experiment"))
+        let result = Command::new(env!("CARGO_BIN_EXE_spektrafilm-f64"))
             .args(["sample", "--from-run"])
             .arg(&run_argument)
             .args([

@@ -22,7 +22,7 @@ The prepared-image review manifest supports chart-like sets, shared grid arithme
 
 Photo Report MUST NOT add `sets`, `grid`, `measurement`, or `default_pair` to its input. It MUST NOT overload the prepared-image review manifest with single-photo mode or arbitrary multi-photo comparison requests. One small contract is easier for a user and an agent to author, validate, and repair.
 
-The command MUST NOT be added to `spektrafilm-lab` or `spektrafilm-experiment`. The lab remains the instrument for measurement, retained comparison, inspection, and comparison reporting; `spektrafilm-experiment` renders evidence. If the benchmark executable is consolidated later, the Photo Report subcommand MUST remain a benchmark product command with its own document kind and handler.
+The command MUST NOT be added to `spektrafilm-lab` or `spektrafilm-f64`. The lab remains the instrument for measurement, retained comparison, inspection, and comparison reporting; `spektrafilm-f64` renders evidence. If the benchmark executable is consolidated later, the Photo Report subcommand MUST remain a benchmark product command with its own document kind and handler.
 
 ## Domain model
 

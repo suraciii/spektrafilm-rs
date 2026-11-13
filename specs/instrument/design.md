@@ -3,7 +3,7 @@
 ## Boundary
 
 - `SpektraFilm` remains the renderer.
-- `spektrafilm-experiment` is the research renderer: it executes a declaration and publishes retained evidence.
+- `spektrafilm-f64` is the research renderer: it executes a declaration and publishes retained evidence.
 - `spektrafilm-lab` measures delivered images and retained evidence, and publishes comparisons and reports. The lab never renders.
 - `spektrafilm-bench` applies an evaluation policy and builds visual review.
 - The research renderer consumes the renderer's public CLI, machine-readable dry-run output, floating image output, and diagnostics, and it shares the renderer's parameter surface and chain execution for readings. It does not import renderer internals or duplicate runtime parameter resolution.
@@ -12,7 +12,7 @@
 - The lab owns image decoding under an explicit declaration, region sampling, metric execution, comparison joins, condition differences, native-stage statistics, and offline reporting over a retained comparison. A metric adapter owns one measurement implementation.
 - The report builder owns presentation of an existing comparison only. Prepared-image review and the benchmark-owned Photo Report are outside the laboratory boundary; their image inventories and visual-report builders belong to separate benchmark commands.
 
-The lab and the benchmark product share one evaluation library that stays renderer-independent and depends only on the shared mathematics crate. The command plumbing shared with the user binaries stays a library rather than forked code. A development command lands in `spektrafilm-experiment` when it renders, and in `spektrafilm-lab` when it measures.
+The lab and the benchmark product share one evaluation library that stays renderer-independent and depends only on the shared mathematics crate. The command plumbing shared with the user binaries stays a library rather than forked code. A development command lands in `spektrafilm-f64` when it renders, and in `spektrafilm-lab` when it measures.
 
 Ordinary suite/image execution MUST NOT offer optional native capture. Dedicated research endpoints own research observation. Human debug diagnostics and resumable film/print artifacts remain separate contracts.
 
@@ -24,7 +24,7 @@ Ordinary suite/image execution MUST NOT offer optional native capture. Dedicated
 
 ```mermaid
 flowchart LR
-    S[Suite] --> R[Run orchestrator<br/>spektrafilm-experiment]
+    S[Suite] --> R[Run orchestrator<br/>spektrafilm-f64]
     T[Target] --> R
     R --> X[Renderer CLI]
     X --> M[Render masters and diagnostics]
@@ -195,7 +195,7 @@ The loader parses strict JSON, rejects duplicate keys and unknown authored field
 
 The resolver hashes executable bytes, selected data inventory, source files, presets, sparse parameter files, masks, transforms, references, and protocol inputs. It MUST produce a deterministic sorted inventory. Modification times and directory traversal order MUST NOT affect identity.
 
-### Run orchestrator (`spektrafilm-experiment`)
+### Run orchestrator (`spektrafilm-f64`)
 
 The orchestrator selects cases, applies target changes after case configuration, invokes the renderer, captures stdout and stderr separately, validates the machine result, and records the actual output and diagnostics. It MUST use unique artifact paths and refuse destination replacement. It MUST remove incomplete case artifacts or mark them incomplete.
 

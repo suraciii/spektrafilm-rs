@@ -3,7 +3,7 @@
 //! The lab renders nothing. It decodes delivered rasters with the measurement
 //! library's reader, runs the shared metric implementations, and publishes
 //! immutable comparison and report records. Rendering endpoints live in
-//! `spektrafilm-experiment`.
+//! `spektrafilm-f64`.
 
 use std::path::PathBuf;
 
@@ -79,7 +79,7 @@ enum Commands {
         #[command(subcommand)]
         command: ReportCommand,
     },
-    /// A render endpoint that belongs to `spektrafilm-experiment`.
+    /// A render endpoint that belongs to `spektrafilm-f64`.
     #[command(external_subcommand)]
     External(Vec<String>),
 }
@@ -311,7 +311,7 @@ fn moved(name: &str) -> Option<String> {
     ];
     MOVED
         .contains(&name)
-        .then(|| format!("spektrafilm-experiment {name} ..."))
+        .then(|| format!("spektrafilm-f64 {name} ..."))
 }
 
 /// Review documents belong to the benchmark's policy surface.
@@ -332,7 +332,7 @@ fn run() -> i32 {
         let name = args.first().map(String::as_str).unwrap_or("<unknown>");
         match moved(name) {
             Some(replacement) => eprintln!(
-                "argument_syntax: `{name}` belongs to spektrafilm-experiment; run `{replacement}`"
+                "argument_syntax: `{name}` belongs to spektrafilm-f64; run `{replacement}`"
             ),
             None => eprintln!("argument_syntax: unknown endpoint `{name}`"),
         }

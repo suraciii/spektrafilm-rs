@@ -10,7 +10,7 @@ The implementation target is a benchmark-owned command with this form:
 spektrafilm-bench report photos --manifest FILE --out DIRECTORY
 ```
 
-The command name is a product boundary. It MUST NOT be registered as a `spektrafilm-lab` or `spektrafilm-experiment` endpoint. The benchmark MAY provide the executable entry point in the implementation work that follows.
+The command name is a product boundary. It MUST NOT be registered as a `spektrafilm-lab` or `spektrafilm-f64` endpoint. The benchmark MAY provide the executable entry point in the implementation work that follows.
 
 ## Purpose
 

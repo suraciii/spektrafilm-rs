@@ -8,7 +8,7 @@ A **chart layout** defines the patch grid and the patch index sets that a fit co
 
 Profile fitting is a calibration mechanism for profile authors. It is not a GUI feature. It MUST NOT modify a preset library, a profile file, or any other input in place; every result is written to the paths the caller names.
 
-Fitting is exposed as `spektrafilm-experiment fit`; see the [research machine interface](../instrument/spec.md). The command MUST exist in `spektrafilm-experiment` and MUST NOT exist in `spektrafilm`, `spektrafilm-f64`, or `spektrafilm-lab`.
+Fitting is exposed as `spektrafilm-f64 fit`; see the [research machine interface](../instrument/spec.md). The command MUST exist in `spektrafilm-f64` and MUST NOT exist in `spektrafilm`, `spektrafilm-f64`, or `spektrafilm-lab`.
 
 ## Inputs
 

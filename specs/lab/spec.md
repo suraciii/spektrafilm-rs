@@ -48,7 +48,7 @@ Three binaries serve the laboratory. Each owns one question.
 | Binary | Owns | Links a renderer |
 |---|---|---|
 | `spektrafilm-lab` | analysis, comparison, reporting | no |
-| `spektrafilm-experiment` | rendering a declaration into retained evidence | yes |
+| `spektrafilm-f64` | f64 reference export; its experimental research commands render a declaration into retained evidence | yes |
 | `spektrafilm-bench` | evaluation policy, visual review, photo report | no, it starts the renderer as a process |
 
 The lab MUST NOT start a renderer, and it MUST NOT link the renderer's crates.
@@ -56,21 +56,21 @@ The lab MUST NOT start a renderer, and it MUST NOT link the renderer's crates.
 A research workflow connects them through files:
 
 ```text
-declaration → spektrafilm-experiment → images and evidence → spektrafilm-lab → comparison → report
+declaration → spektrafilm-f64 → images and evidence → spektrafilm-lab → comparison → report
 ```
 
 ### Endpoints moved out of the lab
 
-`spektrafilm-lab` no longer renders a chain, a suite, or an image. These endpoints keep their names and move to `spektrafilm-experiment`; only the executable changes:
+`spektrafilm-lab` no longer renders a chain, a suite, or an image. These endpoints keep their names and move to `spektrafilm-f64`; only the executable changes:
 
 | Removed from `spektrafilm-lab` | Replacement |
 |---|---|
-| `run suite`, `run image` | `spektrafilm-experiment run suite`, `spektrafilm-experiment run image` |
-| `target`, `fixtures` | `spektrafilm-experiment target`, `spektrafilm-experiment fixtures` |
-| `measure run` | `spektrafilm-experiment measure run` |
-| `experiment run`, `experiment export` | `spektrafilm-experiment experiment run`, `spektrafilm-experiment experiment export` |
-| `spectral evaluate` | `spektrafilm-experiment spectral evaluate` |
-| `fit` | `spektrafilm-experiment fit` |
+| `run suite`, `run image` | `spektrafilm-f64 run suite`, `spektrafilm-f64 run image` |
+| `target`, `fixtures` | `spektrafilm-f64 target`, `spektrafilm-f64 fixtures` |
+| `measure run` | `spektrafilm-f64 measure run` |
+| `experiment run`, `experiment export` | `spektrafilm-f64 experiment run`, `spektrafilm-f64 experiment export` |
+| `spectral evaluate` | `spektrafilm-f64 spectral evaluate` |
+| `fit` | `spektrafilm-f64 fit` |
 
 This revision removes the endpoints. The lab MUST NOT accept them as aliases, MUST NOT forward them to another process, and MUST fail an invocation with `argument_syntax` naming the replacement.
 
@@ -311,8 +311,8 @@ A caller who needs the renderer's reading of a file does not need a shared codec
 1. `cargo tree -p spektrafilm-lab` names none of the forbidden crates.
 2. The lab builds and runs on a host with no GPU, no raw decoder, and no renderer installed.
 3. `spektrafilm-lab report comparison` succeeds with the renderer removed from the machine.
-4. `spektrafilm-lab run suite ...` fails with `argument_syntax` and names `spektrafilm-experiment run suite`.
-5. `spektrafilm-lab measure run ...` fails with `argument_syntax` and names `spektrafilm-experiment measure run`.
+4. `spektrafilm-lab run suite ...` fails with `argument_syntax` and names `spektrafilm-f64 run suite`.
+5. `spektrafilm-lab measure run ...` fails with `argument_syntax` and names `spektrafilm-f64 measure run`.
 6. Two identical images produce a comparison whose every available delta is zero and whose every unavailable row carries a reason.
 7. A pair whose dimensions differ fails with `dimension_mismatch` and writes no comparison.
 8. A directory pair with a name on one side only fails with `incompatible_image_sets` and names both lists.
@@ -330,12 +330,12 @@ A caller who needs the renderer's reading of a file does not need a shared codec
 20. An EXR and the float TIFF written from the same render decode to the same samples.
 21. A single-channel PNG decodes to three equal channels, and a four-channel PNG ignores its alpha instead of compositing.
 22. A `<path>.json` sidecar beside a measured image does not change the reading.
-23. `spektrafilm-experiment compare runs ...` fails with `argument_syntax` and names `spektrafilm-lab compare runs`.
+23. `spektrafilm-f64 compare runs ...` fails with `argument_syntax` and names `spektrafilm-lab compare runs`.
 
 ## Current implementation gap
 
 - The binary split is implemented: `spektrafilm-lab` is its own package, links no renderer, and the render endpoints reject a lab invocation naming the owning binary.
-- `sample`, `verify`, and `compare readings` are specified here but still hosted by `spektrafilm-experiment`; they move once the reader and the identity checker no longer share code with the renderer.
+- `sample`, `verify`, and `compare readings` are specified here but still hosted by `spektrafilm-f64`; they move once the reader and the identity checker no longer share code with the renderer.
 - `sample --source` still loads through the renderer's image bridge instead of the lab reader; `compare images` is the only endpoint on the lab reader today.
 - `compare images` is implemented: directory pairing, `--roi`, `--regions`, two analysis profiles, and the `--report` composition.
 - `--map-scale` is not implemented.

@@ -1,10 +1,10 @@
 # Measurement
 
-`spektrafilm-experiment` reads the executed chain and reports what it produced. Four commands
+`spektrafilm-f64` reads the executed chain and reports what it produced. Four commands
 carry the measurement surface: `measure run` measures the chain on a declared stimulus set,
 `sample` reads declared regions from an image or a retained stage capture, `compare readings`
 matches two retained measurements, and `verify` re-resolves a recorded run. The commands run at
-f64 reference precision and live in the research renderer until the reading family moves to
+f64 reference precision inside `spektrafilm-f64` until the reading family moves to
 `spektrafilm-lab`; the instrument compares and reports the records it consumes. They compute values and write
 evidence; they do not fit parameters, render images, or judge a result. See the [measurement
 contract](../specs/instrument/spec.md#measurement) for the requirements.
@@ -49,7 +49,7 @@ The command does not disable a stage on your behalf. Pass the `--set` edits it n
 ## `measure run`
 
 ```bash
-./target/release/spektrafilm-experiment measure run \
+./target/release/spektrafilm-f64 measure run \
     --stimuli points.json --enter log_e_film \
     --read log_e_film,cmy_film,rgb_out \
     --preset "Kodak Portra 800" \
@@ -158,7 +158,7 @@ named after a flag.
 
 `run.json` carries the declared inputs and their hashes, the resolved chain identity,
 the entry boundary, the read stages, the stimulus identity, and the group summaries.
-The `command` record retains the owning replayable `spektrafilm-experiment measure run`
+The `command` record retains the owning replayable `spektrafilm-f64 measure run`
 argv, executable identity, executed seed, and the dependency identities already used by
 `verify`: parameter-source hashes, stimulus manifest/array hashes, profile identities,
 and the data inventory. It reuses the canonical `declaration`, rather than serializing
@@ -188,7 +188,7 @@ command prints its human text on stderr and a result object on stdout whose
 ## `sample`
 
 ```bash
-./target/release/spektrafilm-experiment sample \
+./target/release/spektrafilm-f64 sample \
     --source chart.tif --input-color-space 'ProPhoto RGB' --input-cctf-decoding false \
     --regions regions.json --out sample-1
 ```
@@ -233,7 +233,7 @@ A region window that leaves the source bounds fails with the region identity. Th
 ## `compare readings`
 
 ```bash
-./target/release/spektrafilm-experiment compare readings \
+./target/release/spektrafilm-f64 compare readings \
     --baseline run-1 --candidate run-2 \
     --reference run-ref --out compare-1
 ```
@@ -277,7 +277,7 @@ comparison's record reports that metric unavailable.
 ## `verify`
 
 ```bash
-./target/release/spektrafilm-experiment verify --record run-1 --data-dir data
+./target/release/spektrafilm-f64 verify --record run-1 --data-dir data
 ```
 
 The command re-resolves the declaration recorded in `run-1/run.json` against the data
@@ -300,7 +300,7 @@ halation, DIR couplers, grain, print glare, and scanner unsharp masking, so the 
 fails before it executes:
 
 ```bash
-./target/release/spektrafilm-experiment measure run \
+./target/release/spektrafilm-f64 measure run \
     --stimuli log_e.json --enter log_e_film \
     --preset "Kodak Portra 800" \
     --data-dir data --out run-1
@@ -322,7 +322,7 @@ do. The list names exactly the operations the measured range can reach.
 Disable the stages the failure names, and the same run completes:
 
 ```bash
-./target/release/spektrafilm-experiment measure run \
+./target/release/spektrafilm-f64 measure run \
     --stimuli log_e.json --enter log_e_film \
     --preset "Kodak Portra 800" \
     --set film_render.grain.active=false \
@@ -348,7 +348,7 @@ stages before it, which the route never executed for this measurement, report
 `not_applicable`. Retain the run, then verify it after a rebuild or a data change:
 
 ```bash
-./target/release/spektrafilm-experiment verify --record run-1 --data-dir data
+./target/release/spektrafilm-f64 verify --record run-1 --data-dir data
 ```
 
 ## See also

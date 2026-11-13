@@ -5,7 +5,7 @@ default:
     @just --list
 
 # Build the portable default (wgpu/WGSL) release binaries plus the lab instrument binary.
-build: build-gui build-cli build-f64 build-experiment build-lab build-bench decode-raw
+build: build-gui build-cli build-f64 build-lab build-bench decode-raw
 
 build-gui:
     cargo build --locked --release -p spektrafilm-gui
@@ -15,10 +15,6 @@ build-cli:
 
 build-f64:
     cargo build --locked --release -p spektrafilm-cli --bin spektrafilm-f64 --features precision-f64
-
-# Build the research renderer: it executes a declaration and retains evidence.
-build-experiment:
-    cargo build --locked --release -p spektrafilm-cli --bin spektrafilm-experiment --features precision-f64
 
 # Build the lab instrument binary. f64 reference precision; links no renderer.
 build-lab:

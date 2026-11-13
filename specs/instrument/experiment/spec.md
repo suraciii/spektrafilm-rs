@@ -8,8 +8,8 @@ The experiment document is a typed declaration carrier, not a second parameter l
 
 ## Command surface
 
-- `spektrafilm-experiment experiment run` — render one declared experiment and retain its boundary values.
-- `spektrafilm-experiment experiment export` — convert a bundle's buffers into `.npy` arrays.
+- `spektrafilm-f64 experiment run` — render one declared experiment and retain its boundary values.
+- `spektrafilm-f64 experiment export` — convert a bundle's buffers into `.npy` arrays.
 
 ## Experiment document
 
@@ -44,7 +44,7 @@ The first implementation slice for this document MUST NOT publish one result wit
 ## Invocation
 
 ```bash
-spektrafilm-experiment experiment run --experiment EXPERIMENT.json --out DIR \
+spektrafilm-f64 experiment run --experiment EXPERIMENT.json --out DIR \
     [--data-dir DIR] [--output-format FORMAT] [--force]
 ```
 
@@ -58,7 +58,7 @@ spektrafilm-experiment experiment run --experiment EXPERIMENT.json --out DIR \
 `run` resolves the chain with the shared `process_params::resolve` and executes the shared core pipeline with the CPU f64 backend and the common core observer. The instrument owns observation configuration and publication; it MUST NOT synthesize a `process` capture invocation, invoke a removed process option, or implement a second rendering path or stage walk.
 
 - `resolved.json` is the resolved chain of the executed run: profiles, effective parameters, input declaration, and edit feedback. It is the single record of what the run actually used.
-- `command.json` records the owning replayable `spektrafilm-experiment experiment run` invocation, not a fabricated `process` argument vector. It MUST retain canonical document and data paths, executable identity, the experiment document and every parameter-source content hash, the executed seed, and the observer configuration (selected named taps, CPU f64 execution, bundle destination, and native observation schema version).
+- `command.json` records the owning replayable `spektrafilm-f64 experiment run` invocation, not a fabricated `process` argument vector. It MUST retain canonical document and data paths, executable identity, the experiment document and every parameter-source content hash, the executed seed, and the observer configuration (selected named taps, CPU f64 execution, bundle destination, and native observation schema version).
 - Replaying the owning invocation with the retained declarations and dependencies MUST reproduce that configuration; a resolved parameter snapshot is not a substitute declaration.
 - `report.json` records the experiment identity, the resolved chain's profile names and input declaration, the bundle manifest, the grid and case references, and the tool version.
 
@@ -80,7 +80,7 @@ The manifest is the authority for stage identity and layout. `export` MUST NOT i
 ## Buffer conversion
 
 ```bash
-spektrafilm-experiment experiment export INPUT --out DIR [--stage ID]... [--force]
+spektrafilm-f64 experiment export INPUT --out DIR [--stage ID]... [--force]
 ```
 
 - `INPUT` — the native observation bundle directory containing `stage-evidence.json`, not a resumable `.sfstage` artifact.

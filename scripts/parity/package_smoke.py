@@ -62,14 +62,11 @@ def _write_provenance(evidence, package_root, binaries, observations):
 
 def _benchmark_smoke(exporter, data, evidence, environment):
     suffix = exporter.suffix
-    binaries = {
-        'instrument': exporter.with_name('spektrafilm-lab' + suffix),
-        'experiment': exporter.with_name('spektrafilm-experiment' + suffix),
-    }
+    binaries = {'instrument': exporter.with_name('spektrafilm-lab' + suffix)}
     instrument = binaries['instrument']
-    experiment = binaries['experiment']
     assert instrument.is_file(), f'Installed instrument missing: {instrument}'
-    assert experiment.is_file(), f'Installed research renderer missing: {experiment}'
+    # The research command surface ships in the f64 build the exporter is.
+    assert exporter.is_file(), f'Installed f64 build missing: {exporter}'
     root = evidence / 'benchmark'
     root.mkdir()
     commands = []
@@ -86,20 +83,20 @@ def _benchmark_smoke(exporter, data, evidence, environment):
 
     fixtures = root / 'fixtures'
     invoke('fixtures', '--renderer', exporter, '--data-dir', data,
-           '--out', fixtures, binary=experiment)
+           '--out', fixtures, binary=exporter)
     target = root / 'local-target.json'
     invoke('target', '--renderer', exporter, '--data-dir', data,
-           '--backend', 'cpu', '--out', target, binary=experiment)
+           '--backend', 'cpu', '--out', target, binary=exporter)
     invoke('validate', '--kind', 'target', '--file', target)
     preflight = root / 'preflight'
     invoke('run', 'suite', '--suite', fixtures / 'complete.json', '--target',
-           target, '--dry-run', '--out', preflight, binary=experiment)
+           target, '--dry-run', '--out', preflight, binary=exporter)
     preflight_manifest = json.loads((preflight / 'preflight.json').read_text())
     assert preflight_manifest['execution_status'] == 'validated'
     assert not (preflight / 'run.json').exists()
     run = root / 'run'
     invoke('run', 'suite', '--suite', fixtures / 'quick.json', '--target',
-           target, '--case', 'color_chart', '--out', run, binary=experiment)
+           target, '--case', 'color_chart', '--out', run, binary=exporter)
     invoke('validate', '--kind', 'run', '--file', run / 'run.json')
     comparison = root / 'comparison'
     invoke('compare', 'runs', '--baseline', run, '--candidate', run,

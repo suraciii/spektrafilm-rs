@@ -42,12 +42,12 @@ fn documented_instrument_commands_use_supported_flags() {
             if words
                 .first()
                 .map(|word| word.rsplit('/').next().unwrap_or(word))
-                != Some("spektrafilm-experiment")
+                != Some("spektrafilm-f64")
             {
                 command.clear();
                 continue;
             }
-            let binary = env!("CARGO_BIN_EXE_spektrafilm-experiment");
+            let binary = env!("CARGO_BIN_EXE_spektrafilm-f64");
             let command_path: Vec<_> = words
                 .iter()
                 .skip(1)

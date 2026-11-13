@@ -7,7 +7,7 @@ use std::{fs, path::Path, process::Command};
 use tempfile::TempDir;
 
 fn cli() -> Command {
-    Command::new(env!("CARGO_BIN_EXE_spektrafilm-experiment"))
+    Command::new(env!("CARGO_BIN_EXE_spektrafilm-f64"))
 }
 
 fn write_json(path: &Path, value: &Value) {

@@ -396,7 +396,7 @@ try {
     if ($LASTEXITCODE -ne 0) { throw "Failed building default CLI binaries" }
 
     if ($Aio) {
-        cargo build --release -p spektrafilm-cli --features precision-f64 --bin spektrafilm-f64 --bin spektrafilm-experiment --target-dir $BuildTargetDir
+        cargo build --release -p spektrafilm-cli --features precision-f64 --bin spektrafilm-f64 --target-dir $BuildTargetDir
         if ($LASTEXITCODE -ne 0) { throw "Failed building f64 binaries" }
         cargo build --release -p spektrafilm-lab --features precision-f64 --target-dir $BuildTargetDir
         if ($LASTEXITCODE -ne 0) { throw "Failed building the lab instrument" }
@@ -436,9 +436,8 @@ This executable embeds application assets and the CPU f64 exporter;
 the adjacent native DLLs, external exporter, helper, instrument binary and Lensfun database are required.
 - application data/profiles/LUTs
 - arctic2026alpha02 assets
-- spektrafilm-f64.exe for CPU f64 Export
+- spektrafilm-f64.exe for CPU f64 export and the research command surface
 - spektrafilm-lab.exe for measurement, comparison, and reporting
-- spektrafilm-experiment.exe for executing a declaration and retaining evidence
 On first launch it extracts the embedded payload to:
 %LOCALAPPDATA%\spektrafilm\embedded
 
@@ -451,7 +450,7 @@ Backends:
     } else {
         cargo build --release -p spektrafilm-gui --target-dir $BuildTargetDir
         if ($LASTEXITCODE -ne 0) { throw "Failed building GUI" }
-        cargo build --release -p spektrafilm-cli --features precision-f64 --bin spektrafilm-f64 --bin spektrafilm-experiment --target-dir $BuildTargetDir
+        cargo build --release -p spektrafilm-cli --features precision-f64 --bin spektrafilm-f64 --target-dir $BuildTargetDir
         if ($LASTEXITCODE -ne 0) { throw "Failed building f64 binaries" }
         cargo build --release -p spektrafilm-lab --features precision-f64 --target-dir $BuildTargetDir
         if ($LASTEXITCODE -ne 0) { throw "Failed building the lab instrument" }
@@ -473,7 +472,7 @@ Backends:
         Write-Host "Packaged: $(Resolve-Path -LiteralPath $DistDir)"
         Write-Host "Icon:     $(Resolve-Path -LiteralPath $iconPath)"
     }
-    foreach ($binary in @("spektrafilm", "spektrafilm-f64", "decode_raw_gui", "spektrafilm-lab", "spektrafilm-experiment")) {
+    foreach ($binary in @("spektrafilm", "spektrafilm-f64", "decode_raw_gui", "spektrafilm-lab")) {
         Copy-Item -LiteralPath (Join-Path $releaseDir "$binary.exe") -Destination (Join-Path $DistDir "$binary.exe") -Force
     }
     Copy-NativeBundle $DistDir

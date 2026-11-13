@@ -97,7 +97,7 @@ esac
 }
 
 fn fixtures(root: &Path, destination: &str) -> Command {
-    let mut command = Command::new(env!("CARGO_BIN_EXE_spektrafilm-experiment"));
+    let mut command = Command::new(env!("CARGO_BIN_EXE_spektrafilm-f64"));
     command
         .arg("fixtures")
         .arg("--renderer")

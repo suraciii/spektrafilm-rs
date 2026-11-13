@@ -9,6 +9,9 @@ use spektrafilm_cli::{DiscoveryFormat, contract, lut, preset, process, runner, s
 use spektrafilm_core::image_io;
 use spektrafilm_core::profile;
 
+#[cfg(feature = "precision-f64")]
+mod research;
+
 #[derive(Parser)]
 #[command(
     name = "spektrafilm",
@@ -102,6 +105,91 @@ enum Commands {
         #[command(subcommand)]
         command: preset::PresetCommand,
     },
+
+    /// Pin a renderer executable in an existing target document.
+    #[cfg(feature = "precision-f64")]
+    Target {
+        /// Renderer executable.
+        #[arg(long, value_name = "FILE")]
+        renderer: PathBuf,
+        /// Explicit profile/data directory.
+        #[arg(long, value_name = "DIR")]
+        data_dir: PathBuf,
+        /// Requested compute backend; availability is checked during rendering.
+        #[arg(long, value_name = "BACKEND", value_parser = ["cpu", "gpu"])]
+        backend: String,
+        /// New target JSON file; must not exist.
+        #[arg(long, value_name = "FILE")]
+        out: PathBuf,
+    },
+    /// Execute an image-domain endpoint.
+    #[cfg(feature = "precision-f64")]
+    Run {
+        #[command(subcommand)]
+        command: spektrafilm_cli::lab::cli::RunCommand,
+    },
+    /// Execute one declared chain measurement.
+    #[cfg(feature = "precision-f64")]
+    Measure {
+        #[command(subcommand)]
+        command: spektrafilm_cli::lab::cli::MeasureCommand,
+    },
+    /// Compare retained records through one explicit endpoint.
+    #[cfg(feature = "precision-f64")]
+    Compare {
+        #[command(subcommand)]
+        command: spektrafilm_cli::lab::cli::CompareCommand,
+    },
+    /// Generate the packaged examples: probe assets, suites, targets, and policy.
+    #[cfg(feature = "precision-f64")]
+    Fixtures {
+        /// Renderer executable the generated targets pin.
+        #[arg(long, value_name = "FILE")]
+        renderer: PathBuf,
+        /// Explicit profile/data directory.
+        #[arg(long, value_name = "DIR")]
+        data_dir: PathBuf,
+        /// New bundle directory; must not exist.
+        #[arg(long, value_name = "DIR")]
+        out: PathBuf,
+        /// Prepared local natural image.
+        #[arg(long, value_name = "FILE", conflicts_with = "download_natural")]
+        natural_input: Option<PathBuf>,
+        /// Download the pinned natural source instead of reading a local file.
+        #[arg(long)]
+        download_natural: bool,
+    },
+    /// Read declared sample points from an image or a retained stage capture.
+    #[cfg(feature = "precision-f64")]
+    Sample {
+        #[command(flatten)]
+        args: spektrafilm_cli::lab::cli::MeasureSampleArgs,
+    },
+    /// Re-resolve a recorded record and report identity differences.
+    #[cfg(feature = "precision-f64")]
+    Verify {
+        #[command(flatten)]
+        args: spektrafilm_cli::lab::cli::MeasureVerifyArgs,
+    },
+    /// Spectral diagnostics.
+    #[cfg(feature = "precision-f64")]
+    Spectral {
+        #[command(subcommand)]
+        command: spektrafilm_cli::lab::cli::SpectralCommand,
+    },
+    /// The development loop for a film profile.
+    #[cfg(feature = "precision-f64")]
+    Experiment {
+        #[command(subcommand)]
+        command: spektrafilm_cli::lab::cli::ExperimentCommand,
+    },
+    /// Fit profile and look parameters against reference patch data.
+    #[cfg(feature = "precision-f64")]
+    Fit(spektrafilm_cli::fit::FitArgs),
+    /// A lab endpoint that belongs to `spektrafilm-lab`.
+    #[cfg(feature = "precision-f64")]
+    #[command(external_subcommand)]
+    External(Vec<String>),
 }
 
 fn main() -> Result<()> {
@@ -129,6 +217,10 @@ fn main() -> Result<()> {
         "Workflow route; supported values: {}",
         spektrafilm_core::params::sources::supported_routes().join(", ")
     );
+    #[cfg(feature = "precision-f64")]
+    let argv = research::normalize_legacy_argv();
+    #[cfg(not(feature = "precision-f64"))]
+    let argv: Vec<std::ffi::OsString> = std::env::args_os().collect();
     let matches = Cli::command()
         .name(name.as_str())
         .version(version.as_str())
@@ -137,7 +229,7 @@ fn main() -> Result<()> {
                 arg.help(route_help.clone()).long_help(route_help.clone())
             })
         })
-        .get_matches();
+        .get_matches_from(argv);
     let cli = Cli::from_arg_matches(&matches)?;
     let (_, command_matches) = matches.subcommand().expect("required subcommand");
     let debug = matches.subcommand_name() == Some("process") && command_matches.get_flag("debug");
@@ -149,6 +241,24 @@ fn main() -> Result<()> {
         )
         .with_writer(std::io::stderr)
         .init();
+
+    #[cfg(feature = "precision-f64")]
+    if matches!(
+        &cli.command,
+        Commands::Target { .. }
+            | Commands::Run { .. }
+            | Commands::Measure { .. }
+            | Commands::Compare { .. }
+            | Commands::Fixtures { .. }
+            | Commands::Sample { .. }
+            | Commands::Verify { .. }
+            | Commands::Spectral { .. }
+            | Commands::Experiment { .. }
+            | Commands::Fit(_)
+            | Commands::External(_)
+    ) {
+        std::process::exit(research::run(cli.command, command_matches));
+    }
 
     match cli.command {
         Commands::Process(args) => {
@@ -204,6 +314,8 @@ fn main() -> Result<()> {
             println!("{}", serde_json::to_string_pretty(&inspect(&input)?)?);
         }
         Commands::Preset { command } => preset::run(command, command_matches)?,
+        #[cfg(feature = "precision-f64")]
+        _ => unreachable!("research commands are dispatched before the product surface"),
     }
     Ok(())
 }

@@ -1,6 +1,6 @@
 # Research machine interface
 
-The research binaries are `spektrafilm-lab` and `spektrafilm-experiment`. The lab quantifies delivered images, compares two quantified images, and reports. `spektrafilm-experiment` renders a declaration into retained evidence.
+The research surface ships in two binaries: `spektrafilm-lab`, and the f64 reference build `spektrafilm-f64`. The lab quantifies delivered images, compares two quantified images, and reports. The research commands of `spektrafilm-f64` render a declaration into retained evidence beside the exporter commands of the same build.
 
 They share one document family and one machine-output contract.
 
@@ -15,11 +15,11 @@ Normal image editing and delivery do not need either binary. They compute and pu
 
 ## Authority
 
-- Owning modules: the `spektrafilm-lab` and `spektrafilm-experiment` binaries and their command plumbing. The evaluation library they orchestrate stays renderer-independent and depends only on the shared mathematics crate.
+- Owning modules: the `spektrafilm-lab` binary and the research commands of the `spektrafilm-f64` build, with their command plumbing. The evaluation library they orchestrate stays renderer-independent and depends only on the shared mathematics crate.
 - Consumes: the renderer's public CLI and machine-readable output for ordinary image runs, the shared parameter resolver, shared core observer for dedicated research, shared metric implementations, shared document loader, and [native observation bundle format](native-observations.md).
 - MUST NOT own: rendering mathematics, a second parameter registry, a second metric implementation, a second record format, or a second chain-entry mechanism.
 
-In this document, **the research binaries** means `spektrafilm-lab` and `spektrafilm-experiment`. A rule that names only one endpoint applies to the binary that owns it.
+In this document, **the research binaries** means `spektrafilm-lab` and the research commands of `spektrafilm-f64`. A rule that names only one endpoint applies to the binary that owns it. The exporter commands that share the `spektrafilm-f64` build are outside this document's surface.
 
 ## Unix endpoint model
 
@@ -54,9 +54,11 @@ The supported command families have distinct endpoint roles:
 | Binary | Owns |
 |---|---|
 | `spektrafilm-lab` | `schema`, `validate`, `regions grid`, `sample`, `compare images`, `compare runs`, `compare readings`, `compare pairs`, `inspect`, `report comparison`, `verify` |
-| `spektrafilm-experiment` | `target`, `fixtures`, `run suite`, `run image`, `measure run`, `experiment run`, `experiment export`, `spectral evaluate`, `fit` |
+| `spektrafilm-f64` | `target`, `fixtures`, `run suite`, `run image`, `measure run`, `experiment run`, `experiment export`, `spectral evaluate`, `fit` |
 
 An endpoint MUST NOT be accepted by the binary that does not own it. A rejected invocation MUST return `argument_syntax` and name the owning binary. The binaries MUST NOT forward a command to each other, because a forwarded command would hide the dependency that this table makes explicit.
+
+The `inspect` that this table assigns to the lab projects a retained comparison; the `inspect` that inspects one delivered image is an exporter command outside this surface.
 
 A record stays readable after the endpoint that wrote it changes binary. Record compatibility is bound to the kind and its schema version, not to an executable name.
 
@@ -64,7 +66,7 @@ The parent names `run`, `measure`, and `compare` group leaf endpoints. A parent 
 
 The canonical research pipe is:
 ```text
-declaration → spektrafilm-experiment → images and retained evidence → spektrafilm-lab sample|compare → inspect/report comparison
+declaration → spektrafilm-f64 → images and retained evidence → spektrafilm-lab sample|compare → inspect/report comparison
 ```
 
 Each edge is replaceable by a file, a retained directory, or an external tool. A research binary MUST NOT collapse this pipe into a command that renders, samples, scores, selects a candidate, and publishes a report as one hidden operation.
@@ -95,17 +97,17 @@ spektrafilm-lab report comparison --comparison DIRECTORY --out DIRECTORY
 spektrafilm-lab regions grid --id ID --rows N --columns N --origin X,Y --patch-size WxH --gap X,Y [--sample WxH] [--space SPACE] [--role ROLE] [--measurements FAMILY,...] --out FILE
 ```
 ```text
-spektrafilm-experiment --help
-spektrafilm-experiment --version
-spektrafilm-experiment target --renderer FILE --data-dir DIRECTORY --backend cpu|gpu --out FILE
-spektrafilm-experiment run suite --suite FILE --target FILE --out DIRECTORY [RUN OPTIONS]
-spektrafilm-experiment run image --input FILE --configuration FILE --target FILE --out DIRECTORY [RUN OPTIONS]
-spektrafilm-experiment measure run --stimuli FILE --enter BOUNDARY --out DIRECTORY [CHAIN OPTIONS]
-spektrafilm-experiment fixtures --renderer FILE --data-dir DIRECTORY --out DIRECTORY [--natural-input FILE | --download-natural]
-spektrafilm-experiment experiment run --experiment FILE --out DIRECTORY [CHAIN OPTIONS] [--output-format FORMAT] [--force]
-spektrafilm-experiment experiment export INPUT --out DIRECTORY [--stage ID ...] [--force]
-spektrafilm-experiment spectral evaluate --spectra FILE {--preset NAME ... | --profile FILE} [--set PATH=VALUE|FILE ...] [--data-dir DIRECTORY] --out DIRECTORY
-spektrafilm-experiment fit [FIT OPTIONS]
+spektrafilm-f64 --help
+spektrafilm-f64 --version
+spektrafilm-f64 target --renderer FILE --data-dir DIRECTORY --backend cpu|gpu --out FILE
+spektrafilm-f64 run suite --suite FILE --target FILE --out DIRECTORY [RUN OPTIONS]
+spektrafilm-f64 run image --input FILE --configuration FILE --target FILE --out DIRECTORY [RUN OPTIONS]
+spektrafilm-f64 measure run --stimuli FILE --enter BOUNDARY --out DIRECTORY [CHAIN OPTIONS]
+spektrafilm-f64 fixtures --renderer FILE --data-dir DIRECTORY --out DIRECTORY [--natural-input FILE | --download-natural]
+spektrafilm-f64 experiment run --experiment FILE --out DIRECTORY [CHAIN OPTIONS] [--output-format FORMAT] [--force]
+spektrafilm-f64 experiment export INPUT --out DIRECTORY [--stage ID ...] [--force]
+spektrafilm-f64 spectral evaluate --spectra FILE {--preset NAME ... | --profile FILE} [--set PATH=VALUE|FILE ...] [--data-dir DIRECTORY] --out DIRECTORY
+spektrafilm-f64 fit [FIT OPTIONS]
 ```
 
 `IMAGE COMPARISON OPTIONS` are defined by the [`compare images` section](../lab/spec.md#compare-images) of the lab product specification.
@@ -155,7 +157,7 @@ The command family names are semantic, not workflow steps. `measure run` publish
 - The protocol uses 60 pixels per degree, scales `[1,0.4,0.16]`, flat-mean grain residual, high-pass radius 4, border 1, Hann spectrum, and six hotspots of minimum area 151. These settings MUST be retained in the generated suite, not hidden evaluator state.
 - Case configuration MUST remain authoritative for crop, resize, and simulation parameters; target overrides MUST keep their existing applicability. The generated suite MUST be retained within the run without writing into the source repository.
 - `--preparation` MUST contain `original` with `path` and `sha256`, and a nonempty `operations` array of descriptive strings. The original path MUST resolve relative to that file and enter retained dependencies.
-- `spektrafilm-experiment` MUST record but MUST NOT execute these operations. Suite cases MAY contain the same optional `preparation` object.
+- `spektrafilm-f64` MUST record but MUST NOT execute these operations. Suite cases MAY contain the same optional `preparation` object.
 - The actual prepared input hash MUST remain authoritative.
 - `compare images` MUST quantify the two delivered image sets the [lab product specification](../lab/spec.md#compare-images) declares. It MUST NOT load a run, a suite, a target, or a configuration.
 - Each case MUST retain the measurements, regions, automatic regions, review artifacts, and difference maps of its one pair. The pair identity MUST be `baseline/candidate` wherever a region readout or a finding names it.
@@ -292,7 +294,7 @@ The `spectra` entry uses the same front half as [spectral evaluation](spectral-e
 
 Readings are defined only for a point-wise chain: no operation in the measured range mixes samples, measures the whole frame, resizes it, or draws stochastic values.
 
-An operation lies inside the measured range when it executes and can change a requested reading. Both are decided by the stage the operation first changes, which `spektrafilm-experiment` MUST establish by measurement rather than by the flag's name:
+An operation lies inside the measured range when it executes and can change a requested reading. Both are decided by the stage the operation first changes, which `spektrafilm-f64` MUST establish by measurement rather than by the flag's name:
 
 | Operation | First stage it changes |
 |---|---|
@@ -345,14 +347,14 @@ The document MUST declare the wavelength grid or the band it covers, the per-sam
 
 ### `measure run`
 ```text
-spektrafilm-experiment measure run --stimuli PATH --enter BOUNDARY [--read STAGE ...] [--dry-run] [CHAIN OPTIONS] --out DIRECTORY
+spektrafilm-f64 measure run --stimuli PATH --enter BOUNDARY [--read STAGE ...] [--dry-run] [CHAIN OPTIONS] --out DIRECTORY
 ```
 
 - `--stimuli` declares a [stimulus document](#stimulus-document).
 - CHAIN OPTIONS are the parameter surface of `process`: `--preset`, `--film`, `--paper`, `--set`, `--route`, `--scan-output`, and `--data-dir`. The command MUST resolve them with the shared resolver.
 - It MUST NOT accept a stored parameter document as the chain declaration.
 - `--read` selects stages from the existing tap vocabulary. Omitting `--read` MUST read every available stage.
-- The command MUST execute the core-owned pipeline path of the resolved chain with the common core observer. `spektrafilm-experiment` owns requested readings, observer configuration, and publication under the [native observation contract](native-observations.md).
+- The command MUST execute the core-owned pipeline path of the resolved chain with the common core observer. `spektrafilm-f64` owns requested readings, observer configuration, and publication under the [native observation contract](native-observations.md).
 - It MUST NOT request process capture, walk stages beside an executed run, or reconstruct pipeline mathematics. The record MUST retain the owning replayable measurement invocation and observer configuration, not fabricated process argv.
 - The command MUST NOT write image output.
 - `--dry-run` MUST resolve the chain, evaluate the point-wise requirement, and write the identity record only. It MUST NOT execute the chain, write `readings.csv`, or publish a reading.
@@ -605,7 +607,7 @@ The command MUST compute per-sample deltas and group summaries through the share
 
 The `fixtures` command MUST accept this grammar without a new selector or configuration language:
 ```text
-spektrafilm-experiment fixtures --renderer FILE --data-dir DIRECTORY --out DIRECTORY [--natural-input FILE | --download-natural]
+spektrafilm-f64 fixtures --renderer FILE --data-dir DIRECTORY --out DIRECTORY [--natural-input FILE | --download-natural]
 ```
 
 `--natural-input` and `--download-natural` MUST be mutually exclusive. The generator MUST preserve the existing pinned natural-source validation and attribution rules.
@@ -682,7 +684,7 @@ Existing natural-source provenance MUST remain intact. A change to authored stan
 - Ordinary suite and single-image runs, including preflight, expose no optional native capture or implicit replacement. New rows explicitly retain absence, and sampling/inspection/reporting never rerender or fabricate exposure, normalization, or native-stage readings.
 - Dedicated experiment and measurement records retain the owning replayable invocation and actual observer configuration; existing supported `sample --from-evidence` and `sample --from-run` inputs remain readable without restoring a process capture option.
 - `experiment export INPUT --out DIRECTORY` consumes a native observation bundle and never treats a `.sfstage` resume state or debug text as scientific observations.
-- `spektrafilm-lab` MUST reject every endpoint the [command ownership table](#command-ownership) assigns to `spektrafilm-experiment`, and `spektrafilm-experiment` MUST reject every lab endpoint. Each rejection MUST return `argument_syntax` and name the owning binary.
+- `spektrafilm-lab` MUST reject every endpoint the [command ownership table](#command-ownership) assigns to `spektrafilm-f64`, and `spektrafilm-f64` MUST reject every lab endpoint. Each rejection MUST return `argument_syntax` and name the owning binary.
 - `spektrafilm-lab report comparison` MUST succeed on a host with no renderer executable and no graphics device.
 - A `compare images` comparison MUST carry one case per declared pair, source blocks of `kind: images`, and no run, target, suite, or command record.
 - Two identical images MUST produce a comparison whose available deltas are zero and whose unavailable rows carry a reason.

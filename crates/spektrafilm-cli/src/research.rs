@@ -1,108 +1,18 @@
-//! `spektrafilm-experiment`: the research renderer at f64 reference precision.
+//! The research command surface of the f64 reference build.
+//!
+//! These endpoints execute a declaration and publish retained evidence. They
+//! are experimental: they MAY change or disappear between revisions, so they
+//! ship with the f64 binary rather than with the stable exporter commands.
 
 use anyhow::Result;
-use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
+use clap::ArgMatches;
 use spektrafilm_benchmark::{local_input, runner, target};
 use spektrafilm_cli::lab::cli::{
-    CompareCommand, EvaluationRunArgs, ExperimentCommand, MeasureCommand, RunCommand, RunImageArgs,
-    RunSuiteArgs, SpectralCommand,
+    CompareCommand, EvaluationRunArgs, MeasureCommand, RunCommand, RunImageArgs, RunSuiteArgs,
+    SpectralCommand,
 };
 
-#[derive(Parser)]
-#[command(
-    name = "spektrafilm-experiment",
-    about = "SpektraFilm research renderer: execute a declaration and publish retained evidence at f64 reference precision",
-    // Version must identify the instrument implementation and the document
-    // versions it reads and writes, so the instrument's own version is not the
-    // only number a caller can rely on.
-    version = concat!(env!("CARGO_PKG_VERSION"), " (research documents schema_version 1)"),
-    after_help = "Generate packaged examples with `spektrafilm-experiment fixtures --renderer RENDERER --data-dir DATA --out BUNDLE`, then consume a generated suite with `spektrafilm-experiment run suite --suite BUNDLE/complete.json --target BUNDLE/baseline.json --out RUN`."
-)]
-struct LabCli {
-    #[command(subcommand)]
-    command: LabCommands,
-}
-
-#[derive(Subcommand)]
-// Clap subcommands are built once at startup, outside hot paths.
-#[allow(clippy::large_enum_variant)]
-enum LabCommands {
-    /// Pin a renderer executable in an existing target document.
-    Target {
-        /// Renderer executable.
-        #[arg(long, value_name = "FILE")]
-        renderer: std::path::PathBuf,
-        /// Explicit profile/data directory.
-        #[arg(long, value_name = "DIR")]
-        data_dir: std::path::PathBuf,
-        /// Requested compute backend; availability is checked during rendering.
-        #[arg(long, value_name = "BACKEND", value_parser = ["cpu", "gpu"])]
-        backend: String,
-        /// New target JSON file; must not exist.
-        #[arg(long, value_name = "FILE")]
-        out: std::path::PathBuf,
-    },
-    /// Execute an image-domain endpoint, or accept the deprecated flat run alias.
-    Run {
-        #[command(subcommand)]
-        command: RunCommand,
-    },
-    /// Execute one declared chain measurement.
-    Measure {
-        #[command(subcommand)]
-        command: MeasureCommand,
-    },
-    /// Compare retained records through one explicit endpoint, or accept the deprecated flat alias.
-    Compare {
-        #[command(subcommand)]
-        command: CompareCommand,
-    },
-    /// Generate the packaged examples: probe assets, suites, targets, and policy.
-    ///
-    /// Consume a generated suite with `spektrafilm-lab run suite --suite BUNDLE/complete.json --target BUNDLE/baseline.json --out RUN`.
-    Fixtures {
-        /// Renderer executable the generated targets pin.
-        #[arg(long, value_name = "FILE")]
-        renderer: std::path::PathBuf,
-        /// Explicit profile/data directory.
-        #[arg(long, value_name = "DIR")]
-        data_dir: std::path::PathBuf,
-        /// New bundle directory; must not exist.
-        #[arg(long, value_name = "DIR")]
-        out: std::path::PathBuf,
-        /// Prepared local natural image.
-        #[arg(long, value_name = "FILE", conflicts_with = "download_natural")]
-        natural_input: Option<std::path::PathBuf>,
-        /// Download the pinned natural source instead of reading a local file.
-        #[arg(long)]
-        download_natural: bool,
-    },
-    /// Read declared sample points from an image or a retained stage capture.
-    Sample {
-        #[command(flatten)]
-        args: spektrafilm_cli::lab::cli::MeasureSampleArgs,
-    },
-    /// Re-resolve a recorded record and report identity differences.
-    Verify {
-        #[command(flatten)]
-        args: spektrafilm_cli::lab::cli::MeasureVerifyArgs,
-    },
-    /// Spectral diagnostics.
-    Spectral {
-        #[command(subcommand)]
-        command: SpectralCommand,
-    },
-    /// The development loop for a film profile.
-    Experiment {
-        #[command(subcommand)]
-        command: ExperimentCommand,
-    },
-    /// Fit profile and look parameters against reference patch data.
-    Fit(spektrafilm_cli::fit::FitArgs),
-    /// A lab endpoint that belongs to `spektrafilm-lab`.
-    #[command(external_subcommand)]
-    External(Vec<String>),
-}
+use crate::Commands;
 
 fn emit(value: &serde_json::Value) {
     println!("{}", serde_json::to_string_pretty(value).unwrap());
@@ -112,39 +22,40 @@ fn emit(value: &serde_json::Value) {
 type BenchError = spektrafilm_benchmark::Error;
 
 /// The command name a result object carries.
-fn command_name(command: &LabCommands) -> &'static str {
+fn command_name(command: &Commands) -> &'static str {
     match command {
-        LabCommands::Target { .. } => "target",
-        LabCommands::Run { .. } => "run",
-        LabCommands::Measure { .. } => "measure",
-        LabCommands::Compare { .. } => "compare",
-        LabCommands::Fixtures { .. } => "fixtures",
-        LabCommands::Sample { .. } => "sample",
-        LabCommands::Verify { .. } => "verify",
-        LabCommands::Spectral { .. } => "spectral",
-        LabCommands::Experiment { .. } => "experiment",
-        LabCommands::Fit(_) => "fit",
-        LabCommands::External(_) => "unknown",
+        Commands::Target { .. } => "target",
+        Commands::Run { .. } => "run",
+        Commands::Measure { .. } => "measure",
+        Commands::Compare { .. } => "compare",
+        Commands::Fixtures { .. } => "fixtures",
+        Commands::Sample { .. } => "sample",
+        Commands::Verify { .. } => "verify",
+        Commands::Spectral { .. } => "spectral",
+        Commands::Experiment { .. } => "experiment",
+        Commands::Fit(_) => "fit",
+        Commands::External(_) => "unknown",
+        _ => "unknown",
     }
 }
 
 fn execute(
-    command: LabCommands,
+    command: Commands,
     matches: &clap::ArgMatches,
 ) -> Result<(serde_json::Value, i32), BenchError> {
     match command {
-        LabCommands::Target {
+        Commands::Target {
             renderer,
             data_dir,
             backend,
             out,
         } => Ok((target::create(&renderer, &data_dir, &backend, &out)?, 0)),
-        LabCommands::Run { command } => match command {
+        Commands::Run { command } => match command {
             RunCommand::Suite(args) => execute_run_suite(args),
             RunCommand::Image(args) => execute_run_image(args),
             RunCommand::Flat(args) => execute_run_legacy(*args, matches),
         },
-        LabCommands::Measure { command } => match command {
+        Commands::Measure { command } => match command {
             MeasureCommand::Run(args) => {
                 let (value, status) =
                     spektrafilm_cli::lab::measure::run::run_with_result(&args, matches)
@@ -152,7 +63,7 @@ fn execute(
                 Ok((value, status))
             }
         },
-        LabCommands::Compare { command } => match command {
+        Commands::Compare { command } => match command {
             CompareCommand::Readings(args) => {
                 let measurement = spektrafilm_cli::lab::cli::MeasureCompareArgs {
                     baseline: args.baseline,
@@ -176,7 +87,7 @@ fn execute(
                 "the flat compare alias is removed; run `spektrafilm-lab compare runs|images|pairs`",
             )),
         },
-        LabCommands::Fixtures {
+        Commands::Fixtures {
             renderer,
             data_dir,
             out,
@@ -192,18 +103,18 @@ fn execute(
             )?,
             0,
         )),
-        LabCommands::Sample { args } => {
+        Commands::Sample { args } => {
             let (value, status) = spektrafilm_cli::lab::measure::sample::sample_with_result(&args)
                 .map_err(|error| BenchError::with_message("operation_failed", error))?;
             Ok((value, status))
         }
-        LabCommands::Verify { args } => {
+        Commands::Verify { args } => {
             let (value, status) =
                 spektrafilm_cli::lab::measure::verify::verify_with_result(&args, matches)
                     .map_err(|error| BenchError::with_message("operation_failed", error))?;
             Ok((value, status))
         }
-        LabCommands::Spectral { command } => match command {
+        Commands::Spectral { command } => match command {
             SpectralCommand::Evaluate(args) => {
                 let (value, status) =
                     spektrafilm_cli::lab::evaluate::run_with_result(&args, matches)
@@ -211,16 +122,17 @@ fn execute(
                 Ok((value, status))
             }
         },
-        LabCommands::Experiment { command } => {
+        Commands::Experiment { command } => {
             spektrafilm_cli::lab::experiment::dispatch_with_result(&command)
                 .map_err(|error| BenchError::with_message("operation_failed", error))
         }
-        LabCommands::External(_) => unreachable!("handled before dispatch"),
-        LabCommands::Fit(args) => {
+        Commands::External(_) => unreachable!("handled before dispatch"),
+        Commands::Fit(args) => {
             let (value, status) = spektrafilm_cli::fit::cmd_fit_with_result(&args, matches)
                 .map_err(|error| BenchError::with_message("operation_failed", error))?;
             Ok((value, status))
         }
+        _ => unreachable!("the product surface is dispatched before the research surface"),
     }
 }
 
@@ -261,6 +173,53 @@ fn execute_run_image(args: RunImageArgs) -> Result<(serde_json::Value, i32), Ben
             &args.out,
             &[],
         )
+    }
+}
+
+/// Run one research endpoint and report its exit status.
+///
+/// The chain options a subcommand flattens live in that subcommand's own
+/// matches, so the data-directory resolution reads them from the deepest
+/// subcommand rather than from the top level.
+pub fn run(command: Commands, matches: &ArgMatches) -> i32 {
+    if let Commands::External(args) = &command {
+        let name = args.first().map(String::as_str).unwrap_or("<unknown>");
+        match moved(name) {
+            Some(replacement) => eprintln!(
+                "argument_syntax: `{name}` belongs to spektrafilm-lab; run `{replacement}`"
+            ),
+            None => eprintln!("argument_syntax: unknown endpoint `{name}`"),
+        }
+        return 2;
+    }
+    let name = command_name(&command);
+    let mut subcommand = matches.clone();
+    while let Some((_, nested)) = subcommand.subcommand() {
+        subcommand = nested.clone();
+    }
+    match execute(command, &subcommand) {
+        Ok((value, status)) => {
+            emit(&value);
+            status
+        }
+        Err(error) => {
+            eprintln!("{error}");
+            emit(
+                &serde_json::json!({"schema_version":1,"command":name,"execution_status":"failed","errors":[error.to_value()]}),
+            );
+            exit_status_for(&error)
+        }
+    }
+}
+
+/// The exit status one command result reports. A rejected invocation is an
+/// argument syntax error and must not share the exit status of a failure to
+/// execute: the error code is the discriminator.
+fn exit_status_for(error: &BenchError) -> i32 {
+    if error.code == "argument_syntax" {
+        2
+    } else {
+        1
     }
 }
 
@@ -380,121 +339,41 @@ fn execute_run_legacy(
         dry_run: args.dry_run,
     })
 }
-fn normalize_legacy_argv() -> Vec<std::ffi::OsString> {
+
+/// The deprecated flat `run` alias: `run --stimuli` and `run --suite` insert
+/// their canonical leaf before clap sees the arguments.
+pub fn normalize_legacy_argv() -> Vec<std::ffi::OsString> {
     let mut args: Vec<_> = std::env::args_os().collect();
-    if args.len() >= 3 {
-        let alias = match (args[1].to_str(), args[2].to_str()) {
-            (Some("run"), Some(value)) => !matches!(
-                value,
-                "suite" | "image" | "flat" | "help" | "-h" | "--help" | "-V" | "--version"
-            ),
-            (Some("compare"), Some(value)) => !matches!(
-                value,
-                "runs"
-                    | "readings"
-                    | "pairs"
-                    | "images"
-                    | "flat"
-                    | "help"
-                    | "-h"
-                    | "--help"
-                    | "-V"
-                    | "--version"
-            ),
-            _ => false,
-        };
-        if alias {
-            args.insert(2, std::ffi::OsString::from("flat"));
-        }
+    if args.len() >= 3
+        && args[1].to_str() == Some("run")
+        && !matches!(
+            args[2].to_str(),
+            Some("suite" | "image" | "flat" | "help" | "-h" | "--help" | "-V" | "--version")
+        )
+    {
+        args.insert(2, std::ffi::OsString::from("flat"));
     }
     args
 }
-
-/// Lab endpoints, with the binary that owns them.
-fn moved(name: &str) -> Option<String> {
-    const MOVED: &[&str] = &["schema", "validate", "regions", "inspect", "report"];
+/// The lab endpoints, with the binary that owns them.
+pub fn moved(name: &str) -> Option<String> {
+    const MOVED: &[&str] = &["schema", "validate", "regions", "report"];
     MOVED
         .contains(&name)
         .then(|| format!("spektrafilm-lab {name} ..."))
 }
 
-fn run() -> i32 {
-    let matches = LabCli::command().get_matches_from(normalize_legacy_argv());
-    let Ok(cli) = LabCli::from_arg_matches(&matches) else {
-        eprintln!("argument syntax error: the command could not be parsed");
-        return 2;
-    };
-    if let LabCommands::External(args) = &cli.command {
-        let name = args.first().map(String::as_str).unwrap_or("<unknown>");
-        match moved(name) {
-            Some(replacement) => eprintln!(
-                "argument_syntax: `{name}` belongs to spektrafilm-lab; run `{replacement}`"
-            ),
-            None => eprintln!("argument_syntax: unknown endpoint `{name}`"),
-        }
-        return 2;
-    }
-    let name = command_name(&cli.command);
-    // The chain options a subcommand flattens live in that subcommand's own
-    // matches, so the data-directory resolution reads them from there rather
-    // than from the top level. A grouped command (`spectral evaluate`) nests
-    // one level deeper, so the descent follows every subcommand hop.
-    let mut subcommand = matches.subcommand().map(|(_, sub)| sub.to_owned());
-    while let Some(current) = subcommand.as_ref() {
-        match current.subcommand() {
-            Some((_, nested)) => subcommand = Some(nested.to_owned()),
-            None => break,
-        }
-    }
-    let subcommand = subcommand.unwrap_or_default();
-    match execute(cli.command, &subcommand) {
-        Ok((value, status)) => {
-            emit(&value);
-            status
-        }
-        Err(error) => {
-            eprintln!("{error}");
-            emit(
-                &serde_json::json!({"schema_version":1,"command":name,"execution_status":"failed","errors":[error.to_value()]}),
-            );
-            exit_status_for(&error)
-        }
-    }
-}
-
-/// The exit status one command result reports. A rejected invocation is an
-/// argument syntax error and must not share the exit status of a failure to
-/// execute: the error code is the discriminator, so the mapping is stated once
-/// here rather than repeated at every construction site.
-fn exit_status_for(error: &BenchError) -> i32 {
-    if error.code == "argument_syntax" {
-        2
-    } else {
-        1
-    }
-}
-
-fn main() {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
-        )
-        .with_writer(std::io::stderr)
-        .init();
-
-    std::process::exit(run())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Cli;
+    use clap::Parser;
 
     #[test]
     fn canonical_run_subcommands_keep_endpoint_options_separate() {
         assert!(
-            LabCli::try_parse_from([
-                "lab",
+            Cli::try_parse_from([
+                "spektrafilm-f64",
                 "run",
                 "suite",
                 "--suite",
@@ -507,8 +386,8 @@ mod tests {
             .is_ok()
         );
         assert!(
-            LabCli::try_parse_from([
-                "lab",
+            Cli::try_parse_from([
+                "spektrafilm-f64",
                 "run",
                 "image",
                 "--input",
@@ -525,8 +404,8 @@ mod tests {
             .is_ok()
         );
         assert!(
-            LabCli::try_parse_from([
-                "lab",
+            Cli::try_parse_from([
+                "spektrafilm-f64",
                 "run",
                 "suite",
                 "--suite",
@@ -563,7 +442,7 @@ mod tests {
     #[test]
     fn fixtures_selectors_are_mutually_exclusive() {
         let prefix = [
-            "lab",
+            "spektrafilm-f64",
             "fixtures",
             "--renderer",
             "renderer",
@@ -573,7 +452,7 @@ mod tests {
             "bundle",
         ];
         assert!(
-            LabCli::try_parse_from(prefix.into_iter().chain([
+            Cli::try_parse_from(prefix.into_iter().chain([
                 "--natural-input",
                 "image.png",
                 "--download-natural"
@@ -581,9 +460,8 @@ mod tests {
             .is_err()
         );
         assert!(
-            LabCli::try_parse_from(prefix.into_iter().chain(["--natural-input", "image.png"]))
-                .is_ok()
+            Cli::try_parse_from(prefix.into_iter().chain(["--natural-input", "image.png"])).is_ok()
         );
-        assert!(LabCli::try_parse_from(prefix.into_iter().chain(["--download-natural"])).is_ok());
+        assert!(Cli::try_parse_from(prefix.into_iter().chain(["--download-natural"])).is_ok());
     }
 }

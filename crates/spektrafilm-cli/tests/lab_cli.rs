@@ -54,7 +54,7 @@ impl Fixture {
     }
 
     fn run(&self, args: &[&str]) -> Output {
-        Command::new(env!("CARGO_BIN_EXE_spektrafilm-experiment"))
+        Command::new(env!("CARGO_BIN_EXE_spektrafilm-f64"))
             .args(args)
             .env("RUST_LOG", "off")
             .env("SPEKTRAFILM_DATA_DIR", &self.data)
@@ -439,7 +439,7 @@ impl MeasureFixture {
     }
 
     fn lab(&self, args: &[&str]) -> Output {
-        self.command(env!("CARGO_BIN_EXE_spektrafilm-experiment"), args)
+        self.command(env!("CARGO_BIN_EXE_spektrafilm-f64"), args)
     }
 
     fn command(&self, binary: &str, args: &[&str]) -> Output {
@@ -465,7 +465,7 @@ impl MeasureFixture {
 
     /// Run the lab binary with one environment entry declared.
     fn lab_with_env(&self, args: &[&str], env: &[(&str, &str)]) -> Output {
-        self.command_env(env!("CARGO_BIN_EXE_spektrafilm-experiment"), args, env)
+        self.command_env(env!("CARGO_BIN_EXE_spektrafilm-f64"), args, env)
     }
 
     /// Measure the declared scene RGB through the real chain.

@@ -52,7 +52,7 @@ impl Fixture {
     }
     #[cfg(feature = "precision-f64")]
     fn run_lab(&self, args: &[&str]) -> Output {
-        Command::new(env!("CARGO_BIN_EXE_spektrafilm-experiment"))
+        Command::new(env!("CARGO_BIN_EXE_spektrafilm-f64"))
             .args(args)
             .env("RUST_LOG", "off")
             .env("SPEKTRAFILM_DATA_DIR", &self.data)

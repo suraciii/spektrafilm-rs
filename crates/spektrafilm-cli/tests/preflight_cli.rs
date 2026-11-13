@@ -72,7 +72,7 @@ printf '{"film_profile":"film","print_profile":"paper","parameters":{"random_see
 }
 
 fn invoke(root: &Path, out: &str, dry: bool, selection: &[&str], code: i32) -> Value {
-    let mut command = Command::new(env!("CARGO_BIN_EXE_spektrafilm-experiment"));
+    let mut command = Command::new(env!("CARGO_BIN_EXE_spektrafilm-f64"));
     command
         .arg("run")
         .arg("suite")
@@ -278,7 +278,7 @@ fn ordinary_preflight_rejects_retired_capture_without_creating_outputs() {
     let mut suite = read(&root.join("suite.json"));
     suite["cases"][0]["configuration"] = json!({"set":["settings.preview_mode=true"]});
     common::dump(&root.join("suite.json"), &suite).unwrap();
-    let output = Command::new(env!("CARGO_BIN_EXE_spektrafilm-experiment"))
+    let output = Command::new(env!("CARGO_BIN_EXE_spektrafilm-f64"))
         .arg("run")
         .arg("suite")
         .arg("--suite")

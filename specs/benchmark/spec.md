@@ -236,7 +236,7 @@ Source attribution and redistribution restrictions MUST accompany external refer
 21. Generate and validate a pinned target independently of fixtures. Reject an existing output and a changed executable identity.
 22. Open a report location for a case, seed, pair, and region offline. Reload and use browser history on desktop and narrow layouts; activate detail controls by keyboard and expose invalid locations clearly.
 23. Run a multi-seed suite and compare it while capturing stderr. Identify every started and completed case-seed item and end with completed and failed counts and total elapsed time.
-24. Generate a prepared review page through the benchmark viewer's own command with Chinese captions, a declared default pair, multiple images per set, and distinct grid and explicit-region sets. This viewer contract is independent of `spektrafilm-lab` and `spektrafilm-experiment`.
+24. Generate a prepared review page through the benchmark viewer's own command with Chinese captions, a declared default pair, multiple images per set, and distinct grid and explicit-region sets. This viewer contract is independent of `spektrafilm-lab` and `spektrafilm-f64`.
 25. Run `regions grid` with a finite declaration and validate the resulting standalone regions document. Reuse it as sampling geometry without a review manifest.
 26. Reject a sample that does not fit, a coordinate-space mismatch, and an unsafe destination.
 27. Render an offline report from a retained comparison through `spektrafilm-lab report comparison`. The lab report MUST NOT accept a prepared-image manifest or record a manifest source kind.
