@@ -177,6 +177,8 @@ This control remains separate from `halation_strength`, `halation_amount`, `boos
 - `film_render.light_leak.width_mm`, `spread_mm`, and `texture_scale_mm` MUST be lengths in millimetres on the film and MUST convert through the working pixel pitch.
 - The aperture geometry MUST therefore keep its physical size across crop, resize, and film format.
 - A zero `exposure_ev` MUST be an exact bypass, and an inactive leak MUST leave every stored leaf unused.
+- The leak MUST be treated as a spatial effect.
+- The leak field MUST NOT depend on how the device chunks the frame across dispatches.
 - The leak MUST belong to the film stage. A frozen film record MUST NOT gain a second leak when a continuation runs the remaining stages.
 - Both execution routes MUST evaluate the same leak field for the same geometry, pitch, seed, and parameters.
 

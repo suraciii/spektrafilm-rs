@@ -156,6 +156,9 @@ fn apply_debug_constraints(params: &mut RuntimeParams) {
         params.film_render.halation.scatter_core_um = [0.0, 0.0, 0.0];
         params.film_render.halation.scatter_tail_um = [0.0, 0.0, 0.0];
         params.film_render.halation.halation_first_sigma_um = [0.0, 0.0, 0.0];
+        // The leak is a spatial effect; kill it at the active flag so an
+        // inactive leak leaves every stored leaf unused.
+        params.film_render.light_leak.active = false;
         params.film_render.dir_couplers.diffusion_size_um = 0.0;
         params.film_render.grain.blur = 0.0;
         params.film_render.grain.blur_dye_clouds_um = 0.0;
@@ -659,6 +662,33 @@ mod tests {
         assert!(
             !d.film_render.halation.active,
             "spatial-off overrides preview's halation-preserving behaviour"
+        );
+    }
+
+    #[test]
+    fn spatial_deactivation_disables_the_light_leak() {
+        let film = film_profile("x", "negative", "still", "weak");
+        let print = blank_profile();
+        for lut_mode in [false, true] {
+            let mut params = RuntimeParams::default();
+            params.film_render.light_leak.active = true;
+            params.debug.lut_mode = lut_mode;
+            params.debug.deactivate_spatial_effects = true;
+
+            let d = digest_params(params, &film, &print, None, true);
+            assert!(
+                !d.film_render.light_leak.active,
+                "the leak is spatial; deactivate_spatial_effects (lut_mode={lut_mode}) disables it"
+            );
+        }
+        let mut params = RuntimeParams::default();
+        params.film_render.light_leak.active = true;
+        params.debug.lut_mode = true;
+
+        let d = digest_params(params, &film, &print, None, true);
+        assert!(
+            !d.film_render.light_leak.active,
+            "lut_mode promotes spatial deactivation"
         );
     }
 

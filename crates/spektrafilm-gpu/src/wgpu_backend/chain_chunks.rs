@@ -9,6 +9,7 @@ pub(super) struct PointwisePass {
     uniform: wgpu::Buffer,
     bindings: Vec<usize>,
     dimensions: bool,
+    chunk_origin: bool,
     label: String,
 }
 impl PointwisePass {
@@ -21,25 +22,32 @@ impl PointwisePass {
                 mapped_at_creation: false,
             });
             encoder.copy_buffer_to_buffer(&self.uniform, 0, &params, 0, self.uniform.size());
-            let geometry = [chunk.count, 1];
+            let height = [chunk.count, 1];
+            let origin = u32::try_from(chunk.first)
+                .map_err(|_| format!("{}: chunk origin exceeds u32", self.label))?;
+            let first = [chunk.count, origin];
+            let geometry: &[u32] = if self.dimensions {
+                &height
+            } else if self.chunk_origin {
+                &first
+            } else {
+                &height[..1]
+            };
+            let bytes = (geometry.len() * 4) as u64;
+            if self.uniform.size() < bytes {
+                return Err(format!(
+                    "{}: uniform is smaller than its geometry",
+                    self.label
+                ));
+            }
             let patch = backend
                 .device
                 .create_buffer_init(&wgpu::util::BufferInitDescriptor {
                     label: Some("pointwise_geometry"),
-                    contents: bytemuck::cast_slice(if self.dimensions {
-                        &geometry[..]
-                    } else {
-                        &geometry[..1]
-                    }),
+                    contents: bytemuck::cast_slice(geometry),
                     usage: wgpu::BufferUsages::COPY_SRC,
                 });
-            encoder.copy_buffer_to_buffer(
-                &patch,
-                0,
-                &params,
-                0,
-                if self.dimensions { 8 } else { 4 },
-            );
+            encoder.copy_buffer_to_buffer(&patch, 0, &params, 0, bytes);
             let mut bases = [0u32; 16];
             for (index, view) in chunk.views.iter().enumerate() {
                 bases[index + 1] = view.base;
@@ -82,6 +90,14 @@ impl PointwisePass {
             dispatch_linear(&mut pass, chunk.count);
             Ok(())
         })
+    }
+    /// Patches each chunk's uniform with the chunk's first logical item in
+    /// word 1, next to the count in word 0. Shaders that derive global
+    /// coordinates from the chunk-local index need it; the data bindings
+    /// already rebase their indices through the pointwise bases.
+    pub(super) fn with_chunk_origin(mut self) -> Self {
+        self.chunk_origin = true;
+        self
     }
 }
 impl WgpuBackend {
@@ -136,6 +152,7 @@ impl WgpuBackend {
             uniform: uniform[0].buffer.clone(),
             bindings: (1..buffers.len()).collect(),
             dimensions,
+            chunk_origin: false,
             label: label.into(),
         })
     }
