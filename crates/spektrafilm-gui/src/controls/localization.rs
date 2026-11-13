@@ -475,6 +475,7 @@ fn key(label: &str) -> Option<&'static str> {
         "Absolute size (px)" => Some("controls.grain.absolute_size_px"),
         "Roughness" => Some("controls.grain.roughness"),
         "Push" => Some("controls.grain.push"),
+        "Color variation" => Some("controls.grain.color_variation"),
         "35mm" => Some("controls.grain.format_35mm"),
         "Medium format" => Some("controls.grain.format_medium"),
         "Large format" => Some("controls.grain.format_large"),
@@ -679,7 +680,7 @@ fn key(label: &str) -> Option<&'static str> {
         "Explicit grain size in output pixels; used while automatic size is off." => {
             Some("controls.grain.absolute_size_px_help")
         }
-        "Exposure grain shape; 50 keeps the reference value-noise shape." => {
+        "Exposure grain shape; 50 keeps the reference gradient-noise shape." => {
             Some("controls.grain.roughness_help")
         }
         "Exposure grain amplitude in the shadows." => Some("controls.grain.exposure_shadows_help"),
@@ -691,6 +692,9 @@ fn key(label: &str) -> Option<&'static str> {
         }
         "Additional Exposure grain amplitude added to the resolved zone amounts." => {
             Some("controls.grain.push_help")
+        }
+        "Per-channel grain decorrelation; zero keeps the grain monochrome." => {
+            Some("controls.grain.color_variation_help")
         }
         "General" => Some("surfaces.settings.general"),
         "Geometry: crop toggle, center, size, upscale factor" => {

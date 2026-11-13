@@ -14,7 +14,7 @@ The reconstruction does not claim pixel parity with Exposure X7 or its presets. 
 
 `film_render.grain.exposure` MUST contain the independent engine's controls. Controls belonging to other engines MUST NOT change this model. All scalar values MUST be finite.
 
-`strength` MUST range from 0 to 100 and default to 100. Values are percentages of the reconstructed grain amplitude.
+`strength` MUST range from 0 to 150 and default to 100. Values are percentages of the reconstructed grain amplitude.
 
 `size` MUST range from 0.25 to 4.5 and default to 1. It is a relative multiplier for automatic size.
 
@@ -30,9 +30,19 @@ The reconstruction does not claim pixel parity with Exposure X7 or its presets. 
 
 `push` MUST range from 0 to 3 and default to 0. It is expressed in Exposure push units, not exposure stops.
 
+`color_variation` MUST range from 0 to 100 and default to 20. That default is the reconstructed Regular Grain 100 percent value. It controls per-channel grain decorrelation.
+
+Zero MUST reproduce the frozen monochrome scalar field exactly. Nonzero values MUST run a second noise generator (seed offset `0x1f`). It adds three raw chromatic fields, one per channel.
+
+The per-zone amplitude is `0.4 * colorvar` for shadow and midtone and `0.8 * colorvar` for highlight. The law is recovered from the Exposure X7 binary.
+
 The midtone and highlight thresholds are engine constants. The midtone threshold MUST be `0.424672424793243` and the highlight threshold MUST be `0.849344849586487`.
 
-Color Variation is not part of this contract. The engine MUST NOT expose an inert Color Variation control or consume that key. A future change MAY add per-channel variation only after a separate model definition and evidence.
+The Rec.709 appearance luma is an authored SpektraFilm choice. The frozen scalar reference does not establish vendor channel weights. The three channel fields MUST read consecutive gradient-table slots at the same lattice corner.
+
+`color_variation = 0` MUST leave the frozen scalar displacement applied uniformly to RGB. Larger values MUST add per-channel chroma terms from the second generator (seed offset `0x1f`). The per-zone amplitude is `0.4 * colorvar` for shadow and midtone and `0.8 * colorvar` for highlight.
+
+The pixel-format flags MUST rotate only the byte offset of each channel (RGBA vs BGRA), not the gain weights.
 
 ## Grain law
 
@@ -55,6 +65,8 @@ size_high = max(1, x)
 
 `render_scale` MUST be 1 for the final delivered raster. A preview MAY use the full-to-preview ratio on a reduced raster; it MUST NOT claim full-render equivalence.
 
+The scalar field MUST use `1 / size_low` as the x frequency and `1 / size_high` as the y frequency, and MUST clamp to `±|size_low|`. The x coordinate scales by `2^octave` per octave; the y coordinate is not scaled per octave.
+
 The per-zone amplitude MUST use:
 
 ```text
@@ -73,9 +85,15 @@ Roughness MUST also shape the grain value with the reconstructed S curve. Roughn
 
 The display luma MUST use the fixed appearance coefficients `[0.2126, 0.7152, 0.0722]` on encoded RGB. These coefficients are an authored SpektraFilm choice; the frozen reconstruction does not establish vendor channel weights.
 
-The zone weights MUST be the adjacent smoothstep differences over the intervals `[-0.5, 0]`, `[0, midtone]`, `[midtone, highlight]`, and `[highlight, 1.5]`. The completed luminance displacement MUST be added uniformly to each RGB channel and clamped to the encoded range. This channel application is an authored adaptation, not a vendor channel-parity claim.
+The zone weights MUST be the adjacent smoothstep differences over the intervals `[-0.5, 0]`, `[0, midtone]`, `[midtone, highlight]`, and `[highlight, 1.5]`. The completed luminance displacement forms the achromatic base added uniformly to each RGB channel.
 
-The random field MUST use the reconstructed minstd permutation and value-noise tables. The same input, seed, parameters, dimensions, and executor MUST produce the same realization.
+Each channel MAY add a Color Variation chroma term from the second generator (seed offset `0x1f`). The base field is frequency-gained and S-curved. The three chroma fields are raw, not S-curved.
+
+The chroma fields carry per-zone amplitude `k1 = 0.4 * colorvar` for shadow and midtone and `k2 = 0.8 * colorvar` for highlight. The color delta per channel is `field_c * color_gain * frequency_gain`. Here `color_gain = (w_sh*amp_sh + w_md*amp_md)*k1 + w_hi*amp_hi*k2`.
+
+Each channel MUST be clamped to the encoded range. The pixel-format flags rotate only the byte offset of each channel, not the gain weights.
+
+The random field MUST use the reconstructed minstd permutation and gradient-noise tables. The three spectral tables MUST share one phase draw and one shuffle index per entry, with T1 and T2 identical and T3 carrying the same components swapped at half amplitude. The same input, seed, parameters, dimensions, and executor MUST produce the same realization.
 
 The seed is the shared `random_seed`; Exposure's additional run counter MUST NOT introduce a second phase input. The shared 64-bit seed MUST be reduced to the reference's nonnegative 31-bit domain by taking its low 31 bits and clamping to `0x7ffffffe`; reference vectors MUST use a seed in that domain.
 

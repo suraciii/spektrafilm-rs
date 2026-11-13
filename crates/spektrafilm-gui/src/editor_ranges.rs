@@ -107,6 +107,7 @@ pub static ALL_PATHS: &[&str] = &[
     "film_render.grain.exposure.midtones",
     "film_render.grain.exposure.highlights",
     "film_render.grain.exposure.push",
+    "film_render.grain.exposure.color_variation",
     "film_render.dir_couplers.amount",
     "film_render.dir_couplers.inhibition_samelayer",
     "film_render.dir_couplers.inhibition_interlayer",
@@ -315,7 +316,7 @@ pub fn editor_range(path: &str) -> Option<EditorRange> {
         "film_render.grain.fotufilm.fog_density" => Some((0.0, 0.3, 0.005, 3)),
 
         // Film grain Exposure
-        "film_render.grain.exposure.strength" => Some((0.0, 100.0, 1.0, 1)),
+        "film_render.grain.exposure.strength" => Some((0.0, 150.0, 1.0, 1)),
         "film_render.grain.exposure.size" => Some((0.25, 4.5, 0.05, 2)),
         "film_render.grain.exposure.absolute_size_px" => Some((0.5, 64.0, 0.1, 2)),
         "film_render.grain.exposure.roughness" => Some((0.0, 100.0, 1.0, 1)),
@@ -323,6 +324,7 @@ pub fn editor_range(path: &str) -> Option<EditorRange> {
         "film_render.grain.exposure.midtones" => Some((0.0, 100.0, 1.0, 1)),
         "film_render.grain.exposure.highlights" => Some((0.0, 100.0, 1.0, 1)),
         "film_render.grain.exposure.push" => Some((0.0, 3.0, 0.05, 2)),
+        "film_render.grain.exposure.color_variation" => Some((0.0, 100.0, 1.0, 1)),
 
         // DIR couplers
         "film_render.dir_couplers.amount" => Some((0.0, 10.0, 0.05, 2)),

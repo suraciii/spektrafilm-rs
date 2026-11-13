@@ -239,7 +239,7 @@ pub(crate) fn leaf_numeric_bounds(path: &str) -> Option<(f64, Option<f64>)> {
         | "film_render.grain.procedural_resolution_factor" => Some((0.0, Some(100.0))),
         "film_render.grain.procedural_resolution_type" => Some((0.0, Some(1.0))),
         "film_render.grain.procedural_timer" => Some((0.0, Some(1.0))),
-        "film_render.grain.exposure.strength" => Some((0.0, Some(100.0))),
+        "film_render.grain.exposure.strength" => Some((0.0, Some(150.0))),
         "film_render.grain.exposure.size" => Some((0.25, Some(4.5))),
         "film_render.grain.exposure.absolute_size_px" => Some((0.5, Some(64.0))),
         "film_render.grain.exposure.roughness"
@@ -247,6 +247,7 @@ pub(crate) fn leaf_numeric_bounds(path: &str) -> Option<(f64, Option<f64>)> {
         | "film_render.grain.exposure.midtones"
         | "film_render.grain.exposure.highlights" => Some((0.0, Some(100.0))),
         "film_render.grain.exposure.push" => Some((0.0, Some(3.0))),
+        "film_render.grain.exposure.color_variation" => Some((0.0, Some(100.0))),
         "film_render.grain.dye_support_um" | "film_render.grain.dye_event_area_um2" => {
             Some((0.0, None))
         }

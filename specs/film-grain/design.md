@@ -7,7 +7,7 @@
 - Profile resolution happens before rendering: named Procedural profiles provide defaults, and `custom` applies explicit overrides. Validation rejects unknown profiles, non-finite values, and out-of-range controls.
 - Spektra owns the density-domain sampler.
 - Procedural owns the encoded-RGB procedural model.
-- Exposure owns the reconstructed post-scan encoded-RGB value-noise appearance model.
+- Exposure owns the reconstructed post-scan encoded-RGB gradient-noise appearance model.
 - Neither engine calls the other or shares an approximation layer.
 - Fotufilm Film owns the fitted-population residual that core applies at its own declared film-development boundary.
 - Exposure shares the post-scan boundary, not the Procedural algorithm or controls.

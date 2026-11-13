@@ -1569,6 +1569,10 @@ const LABELS: &[(&str, &str)] = &[
     ("film_render.grain.exposure.midtones", "Midtones"),
     ("film_render.grain.exposure.highlights", "Highlights"),
     ("film_render.grain.exposure.push", "Push"),
+    (
+        "film_render.grain.exposure.color_variation",
+        "Color variation",
+    ),
     ("film_render.grain.uniformity", "uniformity"),
     ("film_render.grain.procedural_amount", "Amount"),
     ("film_render.grain.procedural_chroma", "Chroma"),

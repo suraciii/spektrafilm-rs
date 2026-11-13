@@ -24,6 +24,7 @@ pub(in crate::wgpu_backend) fn exposure_workspace_bytes(
     backend: &WgpuBackend,
     width: u32,
     height: u32,
+    params: &ExposureGrainGpuParams,
 ) -> Result<u64, String> {
     let n = width
         .checked_mul(height)
@@ -34,7 +35,12 @@ pub(in crate::wgpu_backend) fn exposure_workspace_bytes(
     let limit = super::super::bounded::storage_binding_limit(backend)?;
     let page = (limit / 12).min(u64::from(n)).max(1);
     let pages = u64::from(n).div_ceil(page);
-    let tables = (SPECTRAL_LEN * 3 + PERMUTATION_LEN * 2) as u64 * 4 + 5 * 4;
+    let generators = if params.color_variation > 0.0 {
+        2u64
+    } else {
+        1u64
+    };
+    let tables = generators * (SPECTRAL_LEN * 3 + PERMUTATION_LEN * 2) as u64 * 4 + 5 * 4;
     let rasters = u64::from(n) * 12 + page * 12 * 3;
     let uniforms = pages * 256;
     rasters
@@ -54,6 +60,7 @@ fn validate(params: &ExposureGrainGpuParams) -> Result<(), String> {
         params.midtones,
         params.highlights,
         params.push,
+        params.color_variation,
         params.render_scale,
     ]
     .iter()
@@ -103,12 +110,30 @@ impl WgpuBackend {
             params.midtones,
             params.highlights,
             params.push,
+            params.color_variation,
             params.render_scale,
             img.width,
             img.height,
         );
         let tables =
             ExposureTables::new(params.seed, coefficients.size_low, coefficients.size_high);
+        let color_tables = (coefficients.colorvar > 0.0).then(|| {
+            ExposureTables::new(
+                params.seed.wrapping_add(0x1f),
+                coefficients.size_low,
+                coefficients.size_high,
+            )
+        });
+        let empty_f32: &[f32] = &[];
+        let empty_u32: &[u32] = &[];
+        let (c_t1, c_t2, c_t3) = match &color_tables {
+            Some(c) => (&c.t1[..], &c.t2[..], &c.t3[..]),
+            None => (empty_f32, empty_f32, empty_f32),
+        };
+        let (c_perm, c_perm2) = match &color_tables {
+            Some(c) => (&c.perm[..], &c.perm2[..]),
+            None => (empty_u32, empty_u32),
+        };
         if tables.weights.len() != 5 {
             return Err("grain_exposure: expected five octave weights".into());
         }
@@ -122,11 +147,16 @@ impl WgpuBackend {
         if page_pixels == 0 {
             return Err("grain_exposure: device storage limit cannot hold one pixel".into());
         }
-        let t1 = GpuBuffer::storage_ro(bytemuck::cast_slice(&tables.t1));
-        let t2 = GpuBuffer::storage_ro(bytemuck::cast_slice(&tables.t2));
-        let t3 = GpuBuffer::storage_ro(bytemuck::cast_slice(&tables.t3));
-        let perm = GpuBuffer::storage_ro(bytemuck::cast_slice(&tables.perm));
-        let perm2 = GpuBuffer::storage_ro(bytemuck::cast_slice(&tables.perm2));
+        let t1_full: Vec<f32> = tables.t1.iter().chain(c_t1).copied().collect();
+        let t2_full: Vec<f32> = tables.t2.iter().chain(c_t2).copied().collect();
+        let t3_full: Vec<f32> = tables.t3.iter().chain(c_t3).copied().collect();
+        let perm_full: Vec<u32> = tables.perm.iter().chain(c_perm).copied().collect();
+        let perm2_full: Vec<u32> = tables.perm2.iter().chain(c_perm2).copied().collect();
+        let t1 = GpuBuffer::storage_ro(bytemuck::cast_slice(&t1_full));
+        let t2 = GpuBuffer::storage_ro(bytemuck::cast_slice(&t2_full));
+        let t3 = GpuBuffer::storage_ro(bytemuck::cast_slice(&t3_full));
+        let perm = GpuBuffer::storage_ro(bytemuck::cast_slice(&perm_full));
+        let perm2 = GpuBuffer::storage_ro(bytemuck::cast_slice(&perm2_full));
         let weights = GpuBuffer::storage_ro(bytemuck::cast_slice(&tables.weights));
         let mut output = Vec::with_capacity(input.len());
         for (page_index, source_slice) in input.chunks(page_pixels * 3).enumerate() {
@@ -143,9 +173,9 @@ impl WgpuBackend {
                 ],
                 shape: [
                     coefficients.roughness_effective,
-                    coefficients.size_low,
                     coefficients.size_high,
-                    0.0,
+                    coefficients.colorvar,
+                    coefficients.size_low,
                 ],
                 page: [(page_index * page_pixels) as u32, 0, 0, 0],
             };
@@ -268,11 +298,29 @@ pub(in crate::wgpu_backend) fn build_grain_exposure_state(
         params.midtones,
         params.highlights,
         params.push,
+        params.color_variation,
         params.render_scale,
         width,
         height,
     );
     let tables = ExposureTables::new(params.seed, coefficients.size_low, coefficients.size_high);
+    let color_tables = (coefficients.colorvar > 0.0).then(|| {
+        ExposureTables::new(
+            params.seed.wrapping_add(0x1f),
+            coefficients.size_low,
+            coefficients.size_high,
+        )
+    });
+    let empty_f32: &[f32] = &[];
+    let empty_u32: &[u32] = &[];
+    let (c_t1, c_t2, c_t3) = match &color_tables {
+        Some(c) => (&c.t1[..], &c.t2[..], &c.t3[..]),
+        None => (empty_f32, empty_f32, empty_f32),
+    };
+    let (c_perm, c_perm2) = match &color_tables {
+        Some(c) => (&c.perm[..], &c.perm2[..]),
+        None => (empty_u32, empty_u32),
+    };
     if tables.weights.len() != 5 {
         return Err("grain_exposure: expected five octave weights".into());
     }
@@ -285,11 +333,16 @@ pub(in crate::wgpu_backend) fn build_grain_exposure_state(
                 usage: wgpu::BufferUsages::STORAGE,
             })
     };
-    let t1 = table_buffer("grain_exposure_t1", bytemuck::cast_slice(&tables.t1));
-    let t2 = table_buffer("grain_exposure_t2", bytemuck::cast_slice(&tables.t2));
-    let t3 = table_buffer("grain_exposure_t3", bytemuck::cast_slice(&tables.t3));
-    let perm = table_buffer("grain_exposure_perm", bytemuck::cast_slice(&tables.perm));
-    let perm2 = table_buffer("grain_exposure_perm2", bytemuck::cast_slice(&tables.perm2));
+    let t1_full: Vec<f32> = tables.t1.iter().chain(c_t1).copied().collect();
+    let t2_full: Vec<f32> = tables.t2.iter().chain(c_t2).copied().collect();
+    let t3_full: Vec<f32> = tables.t3.iter().chain(c_t3).copied().collect();
+    let perm_full: Vec<u32> = tables.perm.iter().chain(c_perm).copied().collect();
+    let perm2_full: Vec<u32> = tables.perm2.iter().chain(c_perm2).copied().collect();
+    let t1 = table_buffer("grain_exposure_t1", bytemuck::cast_slice(&t1_full));
+    let t2 = table_buffer("grain_exposure_t2", bytemuck::cast_slice(&t2_full));
+    let t3 = table_buffer("grain_exposure_t3", bytemuck::cast_slice(&t3_full));
+    let perm = table_buffer("grain_exposure_perm", bytemuck::cast_slice(&perm_full));
+    let perm2 = table_buffer("grain_exposure_perm2", bytemuck::cast_slice(&perm2_full));
     let weights = table_buffer(
         "grain_exposure_weights",
         bytemuck::cast_slice(&tables.weights),
@@ -349,9 +402,9 @@ pub(in crate::wgpu_backend) fn build_grain_exposure_state(
                 ],
                 shape: [
                     coefficients.roughness_effective,
-                    coefficients.size_low,
                     coefficients.size_high,
-                    0.0,
+                    coefficients.colorvar,
+                    coefficients.size_low,
                 ],
                 page: [first, 0, 0, 0],
             },
@@ -414,35 +467,43 @@ mod tests {
                 })
                 .collect(),
         );
-        let cpu_params = ExposureGrainParams {
-            auto_size: false,
-            absolute_size_px: 2.0,
-            seed: 7,
-            ..Default::default()
-        };
-        let gpu_params = ExposureGrainGpuParams {
-            strength: cpu_params.strength,
-            size: cpu_params.size,
-            auto_size: cpu_params.auto_size,
-            format_mm: cpu_params.format.short_edge_mm(),
-            absolute_size_px: cpu_params.absolute_size_px,
-            roughness: cpu_params.roughness,
-            shadows: cpu_params.shadows,
-            midtones: cpu_params.midtones,
-            highlights: cpu_params.highlights,
-            push: cpu_params.push,
-            seed: cpu_params.seed,
-            render_scale: cpu_params.render_scale,
-        };
-        let expected = apply_cpu(&image, cpu_params);
-        let actual = backend.grain_exposure_gpu(&image, &gpu_params).unwrap();
-        for (index, (&actual, &expected)) in actual.data.iter().zip(&expected.data).enumerate() {
-            let actual = to_f32(actual);
-            let expected = to_f32(expected);
-            assert!(
-                (actual - expected).abs() < 3e-5,
-                "sample {index}: {actual} != {expected}"
-            );
+        // Exercise both the monochrome scalar path (colorvar 0, CPU `noise`) and
+        // the chroma path (colorvar 60, `noise_rgb`), so the CPU mono branch stays
+        // parity-tested against the device's always-`noise_rgb` evaluation.
+        for color_variation in [0.0f32, 60.0] {
+            let cpu_params = ExposureGrainParams {
+                auto_size: false,
+                absolute_size_px: 0.5,
+                color_variation,
+                seed: 7,
+                ..Default::default()
+            };
+            let gpu_params = ExposureGrainGpuParams {
+                strength: cpu_params.strength,
+                size: cpu_params.size,
+                auto_size: cpu_params.auto_size,
+                format_mm: cpu_params.format.short_edge_mm(),
+                absolute_size_px: cpu_params.absolute_size_px,
+                roughness: cpu_params.roughness,
+                shadows: cpu_params.shadows,
+                midtones: cpu_params.midtones,
+                highlights: cpu_params.highlights,
+                push: cpu_params.push,
+                color_variation: cpu_params.color_variation,
+                seed: cpu_params.seed,
+                render_scale: cpu_params.render_scale,
+            };
+            let expected = apply_cpu(&image, cpu_params);
+            let actual = backend.grain_exposure_gpu(&image, &gpu_params).unwrap();
+            for (index, (&actual, &expected)) in actual.data.iter().zip(&expected.data).enumerate()
+            {
+                let actual = to_f32(actual);
+                let expected = to_f32(expected);
+                assert!(
+                    (actual - expected).abs() < 3e-5,
+                    "colorvar {color_variation} sample {index}: {actual} != {expected}"
+                );
+            }
         }
     }
 
@@ -461,6 +522,7 @@ mod tests {
             midtones: 70.0,
             highlights: 30.0,
             push: 0.0,
+            color_variation: 50.0,
             seed: 11,
             render_scale: 1.0,
         };
