@@ -672,7 +672,7 @@ impl Pipeline {
         // host fence.
         // Output transfer (pipe architecture, S4): encode the native
         // destination when the caller requested encoding and the
-        // Procedural-grain pass hasn't already emitted encoded samples, or
+        // Post-scan grain pass hasn't already emitted encoded samples, or
         // restore linear when it has and no encoding was requested. This
         // moved the former post-readback host encode/decode onto the device.
         let grain_post_scan_active = scan && self.grain_emits_encoded();
@@ -696,7 +696,7 @@ impl Pipeline {
             } else {
                 None
             };
-        // CMYK runs after the encoded grain domain when Procedural grain is
+        // CMYK runs after the encoded grain domain when post-scan grain is
         // active, even for a linear output; the final decode is appended
         // after CMYK to match the CPU scanner order exactly.
         let cmyk_encoded = grain_post_scan_active || self.params.io.output_cctf_encoding;

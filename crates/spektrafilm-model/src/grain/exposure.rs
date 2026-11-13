@@ -134,7 +134,8 @@ pub fn apply_cpu(input: &ImageBuf, mut params: ExposureGrainParams) -> ImageBuf 
             let y = (index / width) as f32;
             let rgb = [to_f32(pixel[0]), to_f32(pixel[1]), to_f32(pixel[2])];
             let luma = 0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2];
-            let [shadow, middle, highlight] = zone_weights(luma, 0.424_672_4, 0.849_344_8);
+            let [shadow, middle, highlight] =
+                zone_weights(luma, 0.424_672_424_793_243, 0.849_344_849_586_487);
             let displacement = shadow * coefficients.shadow_amplitude
                 + middle * coefficients.midtone_amplitude
                 + highlight * coefficients.highlight_amplitude;
@@ -155,8 +156,17 @@ mod tests {
 
     #[test]
     fn zone_weights_partition_display_luma() {
-        for luma in [0.0, 0.2, 0.424_672_4, 0.6, 0.849_344_8, 1.0] {
-            let sum: f32 = zone_weights(luma, 0.424_672_4, 0.849_344_8).iter().sum();
+        for luma in [
+            0.0,
+            0.2,
+            0.424_672_424_793_243,
+            0.6,
+            0.849_344_849_586_487,
+            1.0,
+        ] {
+            let sum: f32 = zone_weights(luma, 0.424_672_424_793_243, 0.849_344_849_586_487)
+                .iter()
+                .sum();
             assert!((sum - 1.0).abs() < 2e-3);
         }
     }

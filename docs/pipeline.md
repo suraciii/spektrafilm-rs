@@ -9,7 +9,7 @@ The print-and-scan chain follows this order: RGB → film dye density → enlarg
 1. **Prepare film exposure.** Hanatos2025 provides RGB→raw spectral upsampling with its full sensitivity adaptation. That adaptation includes camera UV/IR band-pass filters with reference-illuminant normalization and spectral Gaussian blur.
 2. **Develop film density.** The chain uses density-curve interpolation to obtain developed film dye density. Film processing includes halation, DIR couplers, and grain. See [grain](grain.md) for the grain engines.
 3. **Expose and develop print paper.** The enlarger illuminant carries the film dye-density result into the print-paper stage. The chain performs full 81-wavelength film/print/scanner spectral integration.
-4. **Read and adjust the positive.** Scanner optics and eligible print viewing glare precede Tone & Color. Output gamut processing, unsharp masking, transfer encoding, Procedural grain, optional CMYK ink style, and Simulation blend follow it.
+4. **Read and adjust the positive.** Scanner optics and eligible print viewing glare precede Tone & Color. Output gamut processing, unsharp masking, transfer encoding, Procedural or Exposure Grain, optional CMYK ink style, and Simulation blend follow it.
 
 See [scanning](scanning.md) for scan polarity and negative conversion.
 

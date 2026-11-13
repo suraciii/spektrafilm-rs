@@ -109,13 +109,18 @@ impl WgpuBackend {
         );
         let tables =
             ExposureTables::new(params.seed, coefficients.size_low, coefficients.size_high);
+        if tables.weights.len() != 5 {
+            return Err("grain_exposure: expected five octave weights".into());
+        }
         let input: Vec<f32> = img.data.iter().map(|value| to_f32(*value)).collect();
-        let pages = self.allocate_image_pages(img.width, img.height, "grain_exposure_input")?;
-        for page in &pages {
-            let first = page.first_pixel as usize * 3;
-            let end = first + page.n_pixels as usize * 3;
-            self.queue
-                .write_buffer(&page.buffer, 0, bytemuck::cast_slice(&input[first..end]));
+        let count = u64::from(img.width) * u64::from(img.height);
+        if count > u64::from(u32::MAX) {
+            return Err("grain_exposure: image exceeds device pixel indexing".into());
+        }
+        let page_pixels =
+            (super::super::bounded::storage_binding_limit(self)? / 12).min(count) as usize;
+        if page_pixels == 0 {
+            return Err("grain_exposure: device storage limit cannot hold one pixel".into());
         }
         let t1 = GpuBuffer::storage_ro(bytemuck::cast_slice(&tables.t1));
         let t2 = GpuBuffer::storage_ro(bytemuck::cast_slice(&tables.t2));
@@ -124,13 +129,12 @@ impl WgpuBackend {
         let perm2 = GpuBuffer::storage_ro(bytemuck::cast_slice(&tables.perm2));
         let weights = GpuBuffer::storage_ro(bytemuck::cast_slice(&tables.weights));
         let mut output = Vec::with_capacity(input.len());
-        for page in pages {
-            let first = page.first_pixel as usize * 3;
-            let end = first + page.n_pixels as usize * 3;
-            let source = GpuBuffer::storage_ro(bytemuck::cast_slice(&input[first..end]));
-            let destination = GpuBuffer::storage_rw(&vec![0u8; page.n_pixels as usize * 12]);
+        for (page_index, source_slice) in input.chunks(page_pixels * 3).enumerate() {
+            let n_pixels = (source_slice.len() / 3) as u32;
+            let source = GpuBuffer::storage_ro(bytemuck::cast_slice(source_slice));
+            let destination = GpuBuffer::storage_rw(&vec![0u8; n_pixels as usize * 12]);
             let uniform = ShaderParams {
-                dims: [img.width, img.height, page.n_pixels, 0],
+                dims: [img.width, img.height, n_pixels, 0],
                 coeff: [
                     coefficients.shadow_amplitude,
                     coefficients.midtone_amplitude,
@@ -143,7 +147,7 @@ impl WgpuBackend {
                     coefficients.size_high,
                     0.0,
                 ],
-                page: [page.first_pixel, 0, 0, 0],
+                page: [(page_index * page_pixels) as u32, 0, 0, 0],
             };
             let params_binding = GpuBuffer::uniform(bytemuck::bytes_of(&uniform));
             let bindings = [
@@ -161,7 +165,7 @@ impl WgpuBackend {
                 .dispatch_compute(
                     include_str!("exposure.wgsl"),
                     &bindings,
-                    page.n_pixels,
+                    n_pixels,
                     8,
                     "grain_exposure",
                 )?
@@ -269,6 +273,9 @@ pub(in crate::wgpu_backend) fn build_grain_exposure_state(
         height,
     );
     let tables = ExposureTables::new(params.seed, coefficients.size_low, coefficients.size_high);
+    if tables.weights.len() != 5 {
+        return Err("grain_exposure: expected five octave weights".into());
+    }
     let table_buffer = |label: &str, bytes: &[u8]| {
         backend
             .device

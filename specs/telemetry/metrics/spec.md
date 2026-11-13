@@ -122,7 +122,7 @@ These measurements answer where an operation spent time and whether work crossed
 - `worker_wait` measures worker dispatch to worker start; it is a host scheduling observation and MUST NOT be called GPU queue wait. Input snapshot copies belong to `input_prepare`.
 - Post-publication output hashing and machine-result assembly belong to `result_prepare` and remain inside invocation duration.
 - `simulation` encloses the Runtime processing call, including metering, geometry, scan preparation, the executed film chain, and output post-scan handling. Input loading and Runtime construction belong to separate phases.
-- A GUI image load completed before render acceptance MUST NOT be charged again to Preview or Scan. Stage observations identify `metering`, `geometry`, `filming_expose`, `filming_develop`, `converting`, `grain_spektra`, `grain_procedural`, `grain_dye_field`, `grain_fotufilm`, `printing`, `scanning`, `negative_to_positive`, and `post_scan` when separately observable.
+- A GUI image load completed before render acceptance MUST NOT be charged again to Preview or Scan. Stage observations identify `metering`, `geometry`, `filming_expose`, `filming_develop`, `converting`, `grain_spektra`, `grain_procedural`, `grain_exposure`, `grain_exposure_cpu`, `grain_dye_field`, `grain_fotufilm`, `printing`, `scanning`, `negative_to_positive`, and `post_scan` when separately observable.
 - Historical reports MAY retain the `color_reference` stage name; current execution MUST NOT invent that removed preparation stage. A fused chain MUST report its batch rather than invent independent host stage durations for passes within it.
 - `file_write` includes native pixel conversion, encoding/compression, and metadata work when the writer does not expose them separately. A separately observed `metadata` duration is a child of `file_write`; it MUST NOT be added to that inclusive duration.
 - A nonfatal metadata warning MUST remain a warning on a successful pixel write. `publication` ends after the destination has been published or publication has failed.
@@ -191,7 +191,7 @@ Omitted pass nodes do not make aggregate timing incomplete. Missing timestamps c
 
 Query-pool or per-command exhaustion MUST report `query_capacity` as an unavailable reason. Missing historical `groups` defaults to an empty array, which does not prove that no passes executed.
 
-GPU stages are `other`, `spectral_prepare`, `gamut_prepare`, `input`, `metering`, `geometry`, `film_expose`, `halation`, `film_develop`, `dir`, `grain_spektra`, `grain_procedural`, `dye_formation`, `dye_readout`, `fotufilm_formation`, `fotufilm_statistics`, `fotufilm_readout`, `print_expose`, `print_develop`, `glare`, `scan`, `negative_to_positive`, `unsharp`, `gamut`, `output`, `saving`, and `display`.
+GPU stages are `other`, `spectral_prepare`, `gamut_prepare`, `input`, `metering`, `geometry`, `film_expose`, `halation`, `film_develop`, `dir`, `grain_spektra`, `grain_procedural`, `grain_exposure`, `dye_formation`, `dye_readout`, `fotufilm_formation`, `fotufilm_statistics`, `fotufilm_readout`, `print_expose`, `print_develop`, `glare`, `scan`, `negative_to_positive`, `unsharp`, `gamut`, `output`, `saving`, and `display`.
 
 Pass kinds are `other`, `pointwise`, `gather`, `scatter`, `copy`, `filter`, `reduction`, `prefix_sum`, `spectral`, `formation`, and `readout`. Purpose is `image`, `calibration`, or `telemetry`.
 
