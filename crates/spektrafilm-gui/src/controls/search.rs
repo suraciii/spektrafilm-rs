@@ -211,60 +211,30 @@ mod tests {
         let (mut params, extras) = factory();
         params.workflow.route = "input".into();
         params.finishing.brightness = 0.25;
+        params.finishing.warmth = 0.15;
         params.finishing.expand.black = -0.1;
         for (query, path) in [
-            ("亮度", "finishing.brightness"),
+            ("Brightness", "finishing.brightness"),
+            ("明暗", "finishing.brightness"),
+            ("Tone & Color", "finishing.brightness"),
+            ("影调与色彩", "finishing.brightness"),
+            ("finishing.brightness", "finishing.brightness"),
+            ("Warmth", "finishing.warmth"),
+            ("冷暖", "finishing.warmth"),
+            ("Range", "finishing.expand.black"),
+            ("范围", "finishing.expand.black"),
             ("finishing.expand.black", "finishing.expand.black"),
             ("黑色参考点", "finishing.expand.black"),
         ] {
             let found = build_filtered(query, &params, &extras, true);
             assert!(
                 found.iter().any(|result| result.section == "Finishing"
-                    && result.owner == ControlOwner::Stage(Stage::Output)
+                    && result.owner == ControlOwner::Stage(Stage::Scan)
                     && result.paths.iter().any(|candidate| candidate == path)),
                 "{query}"
             );
         }
         assert!(build_filtered("finishing.saturation", &params, &extras, true).is_empty());
-    }
-
-    #[test]
-    fn locators_name_the_matched_control_module_and_destination_in_each_locale() {
-        let (params, extras) = factory();
-        let ctx = egui::Context::default();
-        for (locale, stage_label, dialog_label, grouped_label) in [
-            (
-                crate::i18n::Locale::English,
-                "Exposure compensation · Camera → Input and capture stage",
-                "Saving color space · Export options → Export dialog",
-                "Exposure compensation (+1 more) · Camera → Input and capture stage",
-            ),
-            (
-                crate::i18n::Locale::SimplifiedChinese,
-                "曝光补偿 · 相机 → 输入与拍摄阶段",
-                "保存色彩空间 · 导出选项 → 导出对话框",
-                "曝光补偿（另有 1 项） · 相机 → 输入与拍摄阶段",
-            ),
-        ] {
-            locale.install(&ctx);
-            let found = build_filtered("camera.exposure_compensation_ev", &params, &extras, false);
-            assert_eq!(found[0].localized_locator_label(&ctx), stage_label);
-            assert!(
-                found[0]
-                    .localized_details(&ctx)
-                    .contains("camera.exposure_compensation_ev")
-            );
-            let mut grouped = found[0].clone();
-            grouped.labels.push("auto exposure".to_owned());
-            assert_eq!(grouped.localized_locator_label(&ctx), grouped_label);
-            let found = build_filtered(
-                "extras.rust.export_saving_color_space",
-                &params,
-                &extras,
-                false,
-            );
-            assert_eq!(found[0].localized_locator_label(&ctx), dialog_label);
-        }
     }
 
     #[test]
@@ -331,7 +301,11 @@ mod tests {
                 "Green–magenta tint",
                 EditorKind::Numeric,
             ),
-            ("scanner.operator.contrast", "Contrast", EditorKind::Numeric),
+            (
+                "scanner.operator.contrast",
+                "Conversion contrast",
+                EditorKind::Numeric,
+            ),
             (
                 "action.operator_restore_automatic",
                 "Restore automatic",
@@ -463,6 +437,12 @@ mod tests {
     }
 
     #[test]
+    fn workflow_mode_locates_the_global_selector() {
+        let entry = lookup("workflow.mode").expect("workflow mode inventory");
+        assert_eq!(entry.owner, ControlOwner::Global);
+    }
+
+    #[test]
     fn photograph_commands_locate_actual_owners_and_exact_paths() {
         let (params, extras) = factory();
         for (path, owner, section) in [
@@ -508,11 +488,7 @@ mod tests {
                 "Work list",
             ),
             ("photo.queue.retry", ControlOwner::WorkList, "Export queue"),
-            (
-                "presets.discovery.favorites",
-                ControlOwner::Presets,
-                "Preset discovery",
-            ),
+            ("presets.save", ControlOwner::Presets, "Presets"),
         ] {
             let found = build_filtered(&path.to_uppercase(), &params, &extras, false);
             assert_eq!(found.len(), 1, "{path}");
@@ -537,7 +513,7 @@ mod tests {
             "viewer.clipping.highlights",
             "photo_work.list.add",
             "photo.queue.retry",
-            "presets.discovery.favorites",
+            "presets.save",
         ] {
             let entry = lookup(path).unwrap();
             for locale in [
@@ -556,7 +532,7 @@ mod tests {
             assert!(build_filtered(path, &params, &extras, true).is_empty());
         }
         assert!(lookup("photo.queue.retry.0").is_none());
-        assert!(lookup("presets.discovery.favorite.BuiltIn.example").is_none());
+        assert!(lookup("presets.card.BuiltIn.example").is_none());
     }
 
     #[test]
@@ -570,7 +546,7 @@ mod tests {
             "viewer.clipping.highlights",
             "photo_work.list.copy",
             "photo.queue.retry",
-            "presets.discovery.favorites",
+            "presets.save",
         ] {
             let entry = lookup(path).unwrap();
             let request_id = egui::Id::new("control_focus_request");

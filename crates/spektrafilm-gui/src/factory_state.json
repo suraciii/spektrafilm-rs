@@ -252,6 +252,7 @@
   },
   "scanner": {
     "scan_output": "direct_scan",
+    "white_reference": "clear_film_base",
     "conversion_style": "standard",
     "operator": {
       "exposure_ev": 0.0,
@@ -327,7 +328,7 @@
     "output_interpolation": "spline36"
   },
   "rust": {
-    "version": 7,
+    "version": 8,
     "runtime": {
       "finishing": {
         "brightness": 0.0,

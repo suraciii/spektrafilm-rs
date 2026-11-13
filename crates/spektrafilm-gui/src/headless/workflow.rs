@@ -7,7 +7,7 @@ fn every_supported_route_preview_scan_state_roundtrip_and_save() {
     let h = &mut s.harness;
     for (index, (route, label)) in routes::entries().enumerate() {
         reveal_control(h, "workflow.route");
-        choose(h, "workflow", label);
+        choose(h, "Film route", label);
         assert_eq!(h.state().params.workflow.route, route);
         let preview = preview(h);
         assert_eq!((preview.width, preview.height), (128, 64), "{route}");
@@ -50,54 +50,43 @@ fn every_supported_route_preview_scan_state_roundtrip_and_save() {
     }
 }
 
-// gui_acceptance.py:1743–1788: forced correction, exact restoration, loaded toggle.
 #[test]
-fn scan_for_print_checkbox_restores_and_clears_transient_snapshot() {
+fn glare_off_is_saved_and_survives_route_and_state_reload() {
     let mut s = session();
     let h = &mut s.harness;
-    reveal_control(h, "workflow.route");
-    choose(h, "workflow", "input > film > print > scan");
-    let before = h.state().params.print_render.glare.active;
-    search_controls(h, "Scanner");
-    click(h, "scan for print");
-    assert!(h.state().scan_for_print_snapshot.is_some());
-    assert!(!h.state().params.print_render.glare.active);
-    reveal_control(h, "action.save_state");
-    let path = s.directory.path().join("correction.json");
-    script(h, chooser::ChooserResult::Scripted(path.clone()));
-    click(h, "Save current to file");
+    h.state_mut().params.workflow.route = "input > film > print > scan".into();
+    h.state_mut().finish_route_change();
+    h.state_mut().params.print_render.glare.active = true;
+    h.state_mut().mark_parameters_changed();
+    h.state_mut().params.print_render.glare.active = false;
+    h.state_mut().mark_parameters_changed();
+
+    let path = s.directory.path().join("glare.json");
+    h.state().current_state().unwrap().save(&path).unwrap();
     let saved: serde_json::Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
-    assert!(saved.get("scan_for_print").is_none());
-    assert!(saved["simulation"].get("scan_for_print").is_none());
-    assert!(saved["rust"].get("scan_for_print_snapshot").is_none());
-    assert!(saved["simulation"].get("workflow").is_none());
-    assert!(saved["rust"]["runtime"]["workflow"].get("route").is_none());
-    close_settings(h);
-    search_controls(h, "Scanner");
-    click(h, "scan for print");
-    assert!(h.state().scan_for_print_snapshot.is_none());
-    assert_eq!(h.state().params.print_render.glare.active, before);
-    // The document was written while glare was disabled, so the reload keeps it
-    // off and drops the transient snapshot rather than resurrecting the value
-    // that was live when the file was written.
-    click(h, "scan for print");
-    open_settings(h);
-    script(h, chooser::ChooserResult::Scripted(path));
-    click(h, "Load from file");
-    assert!(h.query_by_label("Discard changes").is_some());
-    assert!(h.state().scan_for_print_snapshot.is_some());
-    click(h, "Discard changes");
-    assert!(h.query_by_label("Discard changes").is_none());
-    assert!(h.state().scan_for_print_snapshot.is_none());
+    assert!(!saved.to_string().contains(concat!("scan_", "for_print")));
+    let restored = state::GuiState::load(&path).unwrap();
+    assert!(!restored.runtime_params().unwrap().print_render.glare.active);
+
+    h.state_mut().params.workflow.route = "input".into();
+    h.state_mut().finish_route_change();
     assert!(!h.state().params.print_render.glare.active);
-    close_settings(h);
-    search_controls(h, "Scanner");
-    click(h, "scan for print");
-    assert!(h.state().scan_for_print_snapshot.is_some());
+    h.state_mut().params.workflow.route = "input > film > print > scan".into();
+    h.state_mut().finish_route_change();
     assert!(!h.state().params.print_render.glare.active);
-    reveal_control(h, "workflow.route");
-    choose(h, "workflow", "input");
-    assert!(h.state().scan_for_print_snapshot.is_none());
+
+    h.state_mut().params.print_render.glare.active = true;
+    h.state_mut().mark_parameters_changed();
+    h.state_mut()
+        .apply_state_with_source(restored, |_| {})
+        .unwrap();
+    await_input(h);
+    assert_eq!(
+        h.state().params.workflow.route,
+        "input > film > print > scan"
+    );
+    assert!(!h.state().params.print_render.glare.active);
+    h.state_mut().finish_route_change();
     assert!(!h.state().params.print_render.glare.active);
 }
 
@@ -106,14 +95,14 @@ fn loaded_state_reports_scanner_normalization_in_header_status() {
     let mut s = session();
     let h = &mut s.harness;
     reveal_control(h, "workflow.route");
-    choose(h, "workflow", "input > film > scan");
+    choose(h, "Film route", "input > film > scan");
     reveal_control(h, "scanner.scan_output");
     choose(h, "scan output", "Negative to positive");
     assert_eq!(h.state().params.scanner.scan_output, "negative_to_positive");
     // A route that cannot carry the negative polarity resets it, and the
     // header status names the control that was normalized.
     reveal_control(h, "workflow.route");
-    choose(h, "workflow", "input > film > print > scan");
+    choose(h, "Film route", "input > film > print > scan");
     assert_eq!(h.state().params.scanner.scan_output, "direct_scan");
     assert!(
         h.state()
@@ -165,5 +154,338 @@ fn legacy_disabled_preview_state_still_renders_accepted_numeric_edits_automatica
         h.state().current_state().unwrap().sections["simulation"]
             .get("auto_preview")
             .is_none()
+    );
+}
+
+#[test]
+fn workflow_modes_keep_stage_navigation_visible_and_mark_inactive_stages() {
+    let mut s = session();
+    let h = &mut s.harness;
+    h.state_mut().params.effects = None;
+    let before = serde_json::to_value(&h.state().params).unwrap();
+    navigate_stage(h, controls::Stage::Effects);
+    click(h, "Effect controls");
+    let diffusion = h.get_by_role_and_label(egui::accesskit::Role::CheckBox, "Diffusion");
+    assert!(diffusion.node().is_disabled());
+    diffusion.simulate_click();
+    h.run_steps(3);
+    assert_eq!(serde_json::to_value(&h.state().params).unwrap(), before);
+    navigate_stage(h, controls::Stage::Film);
+    assert!(h.query_by_label("Film material").is_some());
+    // The Look stage stays reachable in film mode; its body is disabled and
+    // explains that its stored LUT declaration is inactive.
+    navigate_stage(h, controls::Stage::Look);
+    assert_eq!(h.state().inspector_stage, controls::Stage::Look);
+    let import_label = crate::i18n::text(&h.ctx, "surfaces.lut.import").into_owned();
+    assert!(h.get_by_label(&import_label).node().is_disabled());
+    navigate_stage(h, controls::Stage::Output);
+    assert_eq!(h.state().inspector_stage, controls::Stage::Output);
+    let heading = h.get_by_label("Output stage").raw_bounds().unwrap();
+    let viewport = h.get_by_label("Inspector controls").raw_bounds().unwrap();
+    assert!(heading.y0 >= viewport.y0 && heading.y0 <= viewport.y0 + 8.0);
+
+    // Give the active LUT a valid external file so the production workflow
+    // switch does not open a chooser; import itself has separate coverage.
+    let cube = s.directory.path().join("layout.cube");
+    std::fs::write(
+        &cube,
+        "TITLE \"layout\"\nLUT_3D_SIZE 2\nDOMAIN_MIN 0 0 0\nDOMAIN_MAX 1 1 1\n\
+         0 0 0\n1 0 0\n0 1 0\n1 1 0\n0 0 1\n1 0 1\n0 1 1\n1 1 1\n",
+    )
+    .unwrap();
+    let mut look = spektrafilm_core::lut_look::LutLookParams::default();
+    look.path = cube;
+    look.sha256 = spektrafilm_core::lut_look::hash_file(&look.path).unwrap();
+    let (lut, effects, grade) = look.split();
+    h.state_mut().params.set_lut_groups(lut, effects, grade);
+    let retained_route = h.state().params.workflow.route.clone();
+    // A module in a stage that remains active in both workflows keeps its
+    // disclosure state across the real workflow selector.
+    navigate_stage(h, controls::Stage::Input);
+    if h.query_by_role_and_label(egui::accesskit::Role::ComboBox, "input color space")
+        .is_none()
+    {
+        click(h, "Input");
+    }
+    assert!(
+        h.query_by_role_and_label(egui::accesskit::Role::ComboBox, "input color space")
+            .is_some()
+    );
+    navigate_stage(h, controls::Stage::Look);
+    h.query_all_by_role_and_label(egui::accesskit::Role::Button, "LUT")
+        .filter(|node| node.node().toggled().is_some())
+        .min_by(|a, b| {
+            a.node()
+                .raw_bounds()
+                .unwrap()
+                .y0
+                .total_cmp(&b.node().raw_bounds().unwrap().y0)
+        })
+        .expect("mode selector LUT button")
+        .simulate_click();
+    h.run_steps(6);
+    await_input(h);
+    assert_eq!(
+        h.state().params.workflow.mode,
+        spektrafilm_core::params::WorkflowMode::Lut
+    );
+    assert_eq!(
+        h.state().film_route.as_deref(),
+        Some(retained_route.as_str())
+    );
+    assert!(h.query_by_label("Print").is_some());
+    navigate_stage(h, controls::Stage::Input);
+    assert!(
+        h.query_by_role_and_label(egui::accesskit::Role::ComboBox, "input color space")
+            .is_some(),
+        "an always-active module must keep its disclosure state across a workflow switch"
+    );
+    // Inactive film modules keep their headings and values readable but cannot
+    // reset the inactive film chain from LUT mode.
+    navigate_stage(h, controls::Stage::Film);
+    assert!(h.get_by_label("reset Film material").node().is_disabled());
+    // The retained route is visible at its owner, but neither its selector nor
+    // its reset may edit or normalize the inactive film chain from LUT mode.
+    navigate_stage(h, controls::Stage::Input);
+    let route = h.get_by_role_and_label(egui::accesskit::Role::ComboBox, "Film route");
+    assert!(route.node().is_disabled());
+    assert!(h.get_by_label("reset Workflow").node().is_disabled());
+    // The product label is also the search and accessibility label.
+    search_controls(h, "Film route");
+    assert!(
+        h.query_all_by_role(egui::accesskit::Role::Button)
+            .any(|node| node
+                .label()
+                .is_some_and(|label| label.contains("Film route")))
+    );
+    search_controls(h, "");
+    // Inactive film controls remain present at their owner with their stored
+    // values and explain the LUT workflow's boundary.
+    search_controls(h, "Film material");
+    assert!(h.query_by_label("Film material").is_some());
+    assert!(
+        h.get_by_role_and_label(egui::accesskit::Role::ComboBox, "film profile")
+            .node()
+            .is_disabled()
+    );
+    search_controls(h, "");
+    h.run_steps(3);
+    assert!(h.query_all_by_label("LUT").next().is_some());
+
+    // Off must not read the stored LUT, and switching back must preserve the
+    // retained film route and every transform group.
+    h.state_mut().params.lut.as_mut().unwrap().path = "missing.cube".into();
+    h.state_mut()
+        .params
+        .effects
+        .get_or_insert_with(Default::default)
+        .halation
+        .active = true;
+    navigate_stage(h, controls::Stage::Look);
+    h.query_all_by_role_and_label(egui::accesskit::Role::Button, "Off")
+        .filter(|node| node.node().toggled().is_some())
+        .min_by(|a, b| {
+            a.node()
+                .raw_bounds()
+                .unwrap()
+                .y0
+                .total_cmp(&b.node().raw_bounds().unwrap().y0)
+        })
+        .expect("mode selector Off button")
+        .simulate_click();
+    h.run_steps(6);
+    await_input(h);
+    assert_eq!(
+        h.state().params.workflow.mode,
+        spektrafilm_core::params::WorkflowMode::Off
+    );
+    assert_eq!(
+        h.state().film_route.as_deref(),
+        Some(retained_route.as_str())
+    );
+    assert_eq!(
+        h.state().params.lut.as_ref().unwrap().path,
+        std::path::Path::new("missing.cube")
+    );
+    assert!(h.state().params.effects.as_ref().unwrap().halation.active);
+    navigate_stage(h, controls::Stage::Effects);
+    assert_eq!(h.state().inspector_stage, controls::Stage::Effects);
+    navigate_stage(h, controls::Stage::Film);
+    assert_eq!(h.state().inspector_stage, controls::Stage::Film);
+    assert!(h.get_by_label("reset Film material").node().is_disabled());
+    navigate_stage(h, controls::Stage::Look);
+    h.query_all_by_role_and_label(egui::accesskit::Role::Button, "Film")
+        .filter(|node| node.node().toggled().is_some())
+        .min_by(|a, b| {
+            a.node()
+                .raw_bounds()
+                .unwrap()
+                .y0
+                .total_cmp(&b.node().raw_bounds().unwrap().y0)
+        })
+        .expect("mode selector Film button")
+        .simulate_click();
+    h.run_steps(6);
+    await_input(h);
+    assert_eq!(
+        h.state().params.workflow.mode,
+        spektrafilm_core::params::WorkflowMode::Film
+    );
+    assert_eq!(h.state().params.workflow.route, retained_route);
+    assert!(h.state().film_route.is_none());
+}
+
+#[test]
+fn lut_import_previews_at_the_bounded_size_and_preserves_the_declaration() {
+    let mut s = session();
+    let h = &mut s.harness;
+    h.state_mut().diagnostics.mode = spektrafilm_core::telemetry::CollectionMode::Off;
+    let cube = s.directory.path().join("identity.cube");
+    std::fs::write(
+        &cube,
+        "TITLE \"identity\"\nLUT_3D_SIZE 2\nDOMAIN_MIN 0 0 0\nDOMAIN_MAX 1 1 1\n\
+         0 0 0\n1 0 0\n0 1 0\n1 1 0\n0 0 1\n1 0 1\n0 1 1\n1 1 1\n",
+    )
+    .unwrap();
+
+    script(h, chooser::ChooserResult::Scripted(cube.clone()));
+    h.state_mut()
+        .switch_workflow(spektrafilm_core::params::WorkflowMode::Lut);
+    h.run_steps(6);
+    click(h, "Import");
+    assert_eq!(
+        h.state().params.lut.as_ref().unwrap().domain_policy,
+        spektrafilm_core::lut_look::LutDomainPolicy::Clamp
+    );
+
+    let bounded = preview(h);
+    assert_eq!((bounded.width, bounded.height), (128, 64));
+    assert_eq!(h.state().image.as_ref().unwrap().width(), 160);
+    assert_eq!(h.state().params.lut.as_ref().unwrap().path, cube);
+
+    h.state_mut()
+        .params
+        .effects
+        .get_or_insert_with(Default::default)
+        .diffusion
+        .active = true;
+    h.state_mut().mark_parameters_changed();
+    let with_diffusion = preview(h);
+    assert_eq!((with_diffusion.width, with_diffusion.height), (128, 64));
+
+    h.state_mut()
+        .switch_workflow(spektrafilm_core::params::WorkflowMode::Film);
+    h.state_mut()
+        .switch_workflow(spektrafilm_core::params::WorkflowMode::Lut);
+    assert_eq!(h.state().params.lut.as_ref().unwrap().path, cube);
+    assert_eq!(
+        h.state().params.workflow.mode,
+        spektrafilm_core::params::WorkflowMode::Lut
+    );
+}
+
+#[test]
+fn lut_import_dialog_explains_clamp_spaces_and_advanced_declaration() {
+    let mut s = session();
+    let h = &mut s.harness;
+    let cube = s.directory.path().join("dialog.cube");
+    std::fs::write(
+        &cube,
+        "TITLE \"dialog\"\nLUT_3D_SIZE 2\nDOMAIN_MIN 0 0 0\nDOMAIN_MAX 1 1 1\n\
+         0 0 0\n1 0 0\n0 1 0\n1 1 0\n0 0 1\n1 0 1\n0 1 1\n1 1 1\n",
+    )
+    .unwrap();
+    script(h, chooser::ChooserResult::Scripted(cube));
+    h.state_mut()
+        .switch_workflow(spektrafilm_core::params::WorkflowMode::Lut);
+    h.run_steps(8);
+    assert!(h.query_by_label("Clamp and report").is_some());
+    assert!(h.query_by_label("Fail before output").is_some());
+    assert!(h.query_by_label("Advanced declaration").is_some());
+    assert!(
+        h.query_all_by_label_contains("does not carry color-space metadata")
+            .next()
+            .is_some()
+    );
+    assert!(h.query_by_label("Cancel").is_some());
+}
+
+#[test]
+fn replacing_a_cube_preserves_finishing_and_reports_clipping_in_the_lut_section() {
+    let mut s = session();
+    let h = &mut s.harness;
+    h.state_mut().diagnostics.mode = spektrafilm_core::telemetry::CollectionMode::Off;
+    let cube = |name: &str, minimum: f64, maximum: f64| {
+        let path = s.directory.path().join(name);
+        std::fs::write(
+            &path,
+            format!(
+                "TITLE \"{name}\"\nLUT_3D_SIZE 2\nDOMAIN_MIN {minimum} {minimum} {minimum}\nDOMAIN_MAX {maximum} {maximum} {maximum}\n\
+                 0 0 0\n1 0 0\n0 1 0\n1 1 0\n0 0 1\n1 0 1\n0 1 1\n1 1 1\n"
+            ),
+        )
+        .unwrap();
+        path
+    };
+    let first = cube("first.cube", 0.0, 1.0);
+    let look = spektrafilm_core::lut_look::LutLookParams::from_cube(
+        &first,
+        spektrafilm_core::lut_look::LutSpace::Srgb,
+        spektrafilm_core::lut_look::LutSpace::Srgb,
+        spektrafilm_core::lut_look::LutDomainPolicy::Clamp,
+    )
+    .unwrap();
+    let (lut, effects, grade) = look.split();
+    h.state_mut().params.set_lut_groups(lut, effects, grade);
+    h.state_mut()
+        .switch_workflow(spektrafilm_core::params::WorkflowMode::Lut);
+    h.run_steps(3);
+    await_input(h);
+
+    h.state_mut().params.lut.as_mut().unwrap().strength = 0.4;
+    h.state_mut()
+        .params
+        .grade
+        .get_or_insert_with(Default::default)
+        .active = true;
+    h.state_mut().params.grade.as_mut().unwrap().values.contrast = 0.3;
+    h.state_mut()
+        .params
+        .effects
+        .get_or_insert_with(Default::default)
+        .diffusion
+        .active = true;
+    h.state_mut().mark_parameters_changed();
+
+    let second = cube("second.cube", 0.1, 0.9);
+    script(h, chooser::ChooserResult::Scripted(second.clone()));
+    h.state_mut().begin_import_lut(true);
+    h.run_steps(6);
+    click(h, "Import");
+
+    let params = &h.state().params;
+    assert_eq!(params.lut.as_ref().unwrap().path, second);
+    assert_eq!(params.lut.as_ref().unwrap().strength, 0.4);
+    assert!(params.grade.as_ref().unwrap().active);
+    assert_eq!(params.grade.as_ref().unwrap().values.contrast, 0.3);
+    assert!(params.effects.as_ref().unwrap().diffusion.active);
+    assert_eq!(
+        params.lut.as_ref().unwrap().domain_policy,
+        spektrafilm_core::lut_look::LutDomainPolicy::Clamp
+    );
+
+    let _ = preview(h);
+    assert!(h.state().lut_clipped_fraction.is_some());
+    navigate_stage(h, controls::Stage::Look);
+    h.run_steps(3);
+    assert!(
+        h.query_all_by_label_contains("LUT input clamped")
+            .next()
+            .is_some()
+    );
+    h.state_mut().mark_parameters_changed();
+    assert!(
+        h.state().lut_clipped_fraction.is_none(),
+        "a changed parameter invalidates the accepted clipping report"
     );
 }

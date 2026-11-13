@@ -123,9 +123,18 @@ pub fn resolve_continuation(
             }
         }
         let mut candidate = params.clone();
-        match &preset.parameters {
-            presets::PresetParameters::Look(look) => look.apply_to(&mut candidate),
-            presets::PresetParameters::Section(_) => candidate = preset.overlay_section(&params)?,
+        match preset.parameters.as_ref() {
+            Some(presets::PresetParameters::Look(look)) => look.apply_to(&mut candidate),
+            Some(presets::PresetParameters::Effects(effects)) => {
+                candidate.workflow.mode = crate::lut_look::WorkflowMode::Off;
+                candidate.workflow.route = "input".into();
+                candidate.io.scan_film = false;
+                candidate.effects = Some(effects.clone());
+            }
+            Some(presets::PresetParameters::Section(_)) => {
+                candidate = preset.overlay_section(&params)?
+            }
+            None => return Err("LUT presets cannot continue a stage artifact".into()),
         }
         // Presets own only their documented leaves. Use the shared overlay to
         // map preset-specific names and preserve derived runtime-only fields.
@@ -147,7 +156,10 @@ pub fn resolve_continuation(
             ParameterEdits::from_value(payload)?,
             origin,
             &mut params,
-            matches!(preset.parameters, presets::PresetParameters::Section(_)),
+            matches!(
+                preset.parameters.as_ref(),
+                Some(presets::PresetParameters::Section(_))
+            ),
         )?;
     }
     for selection in request.feature_profiles {
@@ -187,8 +199,17 @@ pub fn resolve_continuation(
             true,
         )?;
     }
-    if let Some(name) = request.film {
-        validate_frozen_profile(name, &header.film, data_dir, "film")?;
+    match request.film {
+        Some(FilmSelection::Name(name)) => {
+            validate_frozen_profile(name, &header.film, data_dir, "film")?;
+        }
+        Some(FilmSelection::Path(path)) => {
+            return Err(format!(
+                "profile path {} cannot resume completed material; select the film by name",
+                path.display()
+            ));
+        }
+        None => {}
     }
     if let Some(name) = request.paper {
         if header.state == MaterialKind::Print {

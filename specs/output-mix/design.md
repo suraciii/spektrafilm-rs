@@ -38,7 +38,7 @@ The scanner optical cutover remains independently owned by [Film chain](../film-
 
 Remove the standalone Output lightness parameter and its operation across runtime, discovery, GUI, shaders and serialization. Preserve existing chroma/gamut algorithms, scanner conversion and optional named appearances. Do not add a hidden compensation curve or rewrite a retired triplet into preflash, chemistry, or another control.
 
-All final RGB paths, including the `input` workflow, resident execution and final diagnostic collection, use one composition boundary after the existing output tail. Eligible processed branches include [common finishing](../finishing/design.md#color-and-order) before that tail; the source branch excludes it.
+All Film-mode final RGB paths, including the `input` route, resident execution, and final diagnostic collection, use one composition boundary after the existing output tail. LUT and Off bypass it exactly. Eligible processed branches include [Tone & Color](../finishing/design.md#color-and-order) before that tail; the source branch excludes it.
 
 Prepare the source before simulated camera metering/exposure. Reuse input orientation, requested rotation, crop and resize geometry; viewer downsampling and display-ICC conversion are not valid source branches.
 
@@ -58,7 +58,7 @@ Use the same rule for all admitted backends rather than silently forcing amount 
 
 ## Persistence and delivery
 
-The [preset contract](../presets/spec.md) owns version policy and migration; [CLI parameters](../cli/spec.md) owns sparse composition and discovery. Complete GUI state stores the added group under the [GUI state compatibility contract](../presets/spec.md#gui-state-compatibility). Older complete looks and complete state/recipe documents gain only an absent output-mix default of 1.
+The [preset contract](../presets/spec.md) owns version policy and migration; [CLI parameters](../cli/spec.md) owns sparse composition and discovery. Complete GUI state stores the added group under the [GUI state compatibility contract](../presets/spec.md#gui-state-compatibility). Older complete presets and complete state/recipe documents gain only an absent output-mix default of 1.
 
 No Film or Print response fields or cyan shift are materialized.
 
@@ -78,7 +78,7 @@ Use the [product acceptance matrix](spec.md#acceptance) and [benchmark contract]
 
 Preflash evidence records the derived `F0`, main exposure, total material exposure, print density and output under fixed scan settings. Check both main and flash filter isolation, gain conventions, zero flash, and constant-field behavior. Compare photographic-paper highlight/detail tradeoffs on real profiles and images; do not use a toy logarithm to claim those outcomes.
 
-Existing developer exhaustion is not required to match a withdrawn digital compressor. Common finishing saturation follows its [independent contract](../finishing/spec.md#controls).
+Existing developer exhaustion is not required to match a withdrawn digital compressor. Tone & Color saturation follows its [independent contract](../finishing/spec.md#controls).
 
 Mix evidence records both same-geometry branches, selected output transfer, exact endpoints and intermediate linear arithmetic. Exercise negative and super-white samples, negative capture, RAW, output encoding on/off, immutable Export, retained Save, and missing-source diagnostics. Validate LUT complete-bake behavior separately from segmented rejection and spatial-neutralization limits.
 

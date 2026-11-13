@@ -35,14 +35,13 @@ pub(crate) struct App {
     pub(crate) film_dev_times: Vec<f64>,
     pub(crate) print_dev_times: Vec<f64>,
     pub(crate) params: RuntimeParams,
+    /// Film route retained while the LUT workflow owns the visible route.
+    pub(crate) film_route: Option<String>,
     pub(crate) gui_state: state::GuiState,
     pub(crate) material_baseline: Option<(PathBuf, String, Option<Arc<serde_json::Value>>)>,
     /// Cached polarity of the selected scan profile, keyed by data directory and stock.
     pub(crate) scan_medium_polarity: Option<(PathBuf, String, bool)>,
     pub(crate) full_scan_requested: bool,
-    /// Original print-glare switch captured while Scan-for-print is active.
-    /// This transient workflow state is deliberately excluded from persistence.
-    pub(crate) scan_for_print_snapshot: Option<bool>,
     /// Temporary automatic-baseline display. Never enters saved parameters.
     pub(crate) operator_compare: bool,
     /// Temporary finishing-only baseline; mutually exclusive with operator comparison.
@@ -66,6 +65,11 @@ pub(crate) struct App {
     pub(crate) source_metadata: Option<ImageMetadata>,
     pub(crate) export_options: ExportOptions,
     pub(crate) export_dialog: ExportDialog,
+    pub(crate) lut_import: Option<super::lut::LutImportDraft>,
+    pub(crate) lut_export: Option<super::lut::LutExportDraft>,
+    /// Clipped fraction from the latest accepted LUT-mode render. Transient;
+    /// cleared when parameters or input change.
+    pub(crate) lut_clipped_fraction: Option<f64>,
     pub(crate) input_epoch: u64,
     /// Latest accepted floating output, shared with background viewing workers.
     pub(crate) output_image: Option<Arc<ImageBuf>>,
@@ -79,6 +83,11 @@ pub(crate) struct App {
     pub(crate) settings_open: bool,
     pub(crate) only_modified: bool,
     pub(crate) pending_stage: Option<controls::Stage>,
+    /// Stage heading nearest the inspector viewport top; presentation only.
+    pub(crate) inspector_stage: controls::Stage,
+    /// Stage-jump destination while the controls scroll area eases toward it.
+    /// Keeps the stage cue on the destination instead of the traversed stages.
+    pub(crate) stage_jump_target: Option<controls::Stage>,
     pub(crate) settings_return_focus: Option<egui::Id>,
     pub(crate) export_return_focus: Option<egui::Id>,
     pub(crate) output_color_space: String,
@@ -215,8 +224,11 @@ impl App {
             // route, an unsupported combination) must fall back to the factory
             // state with a visible reason instead of failing at construction.
             let params = state.runtime_params()?;
-            let film = profile::load_profile_by_name(&data_dir, state.film())?;
-            spektrafilm_core::validate_scan_output(&params, &film).map_err(anyhow::Error::msg)?;
+            if params.workflow.mode.is_film() {
+                let film = profile::load_profile_by_name(&data_dir, state.film())?;
+                spektrafilm_core::validate_scan_output(&params, &film)
+                    .map_err(anyhow::Error::msg)?;
+            }
             Ok(state)
         })
         .unwrap_or_else(|error| {
@@ -225,7 +237,12 @@ impl App {
         });
         let film_name = gui_state.film().to_owned();
         let print_name = gui_state.paper().to_owned();
-        let film_profile = profile::load_profile_by_name(&data_dir, &film_name).ok();
+        let film_mode = gui_state
+            .runtime_params()
+            .is_ok_and(|params| params.workflow.mode.is_film());
+        let film_profile = film_mode
+            .then(|| profile::load_profile_by_name(&data_dir, &film_name).ok())
+            .flatten();
         let film_reference_illuminant = film_profile
             .as_ref()
             .map(|profile| profile.info.reference_illuminant.clone())
@@ -234,22 +251,37 @@ impl App {
             .as_ref()
             .map(scan_medium)
             .unwrap_or(controls::ScanMedium::None);
+        let film_route = gui_state.sections["rust"]["film_route"]
+            .as_str()
+            .map(str::to_owned);
         let mut params = gui_state
             .runtime_params()
             .expect("validated GUI factory state");
-        params.film_render.grain.monochrome =
-            film_profile.as_ref().is_some_and(|film| film.is_bw());
-        normalize_scanner_selections(&mut params, film_medium);
+        if film_mode {
+            params.film_render.grain.monochrome =
+                film_profile.as_ref().is_some_and(|film| film.is_bw());
+            normalize_scanner_selections(&mut params, film_medium);
+        }
         let film_dev_times = film_profile
             .as_ref()
             .map(|f| f.data.development_time.clone())
             .unwrap_or_default();
-        let print_dev_times = profile_dev_times(&data_dir, &print_name);
+        let print_dev_times = if film_mode {
+            profile_dev_times(&data_dir, &print_name)
+        } else {
+            Vec::new()
+        };
         let export_options = ExportOptions::from_state(&gui_state.sections);
         let mut presets = presets::Browser::new(
             &gui_state.sections,
             spektrafilm_core::presets::PresetLibrary::new(config_directory.join("presets")),
         );
+        // Automatic startup restores layout only: an applied identity embedded
+        // in startup defaults must not label unrelated controls, including when
+        // the browser carrier is absent or unreadable.
+        if !explicit_state {
+            presets.state.applied = None;
+        }
         match presets::BrowserState::restore(
             &gui_state.sections,
             explicit_state,
@@ -308,11 +340,11 @@ impl App {
             film_dev_times,
             print_dev_times,
             params,
+            film_route,
             gui_state,
             material_baseline: None,
             full_scan_requested: false,
             scan_medium_polarity: None,
-            scan_for_print_snapshot: None,
             operator_compare: false,
             finishing_compare: false,
             displayed_comparison: None,
@@ -330,6 +362,9 @@ impl App {
             source_metadata: None,
             export_options,
             export_dialog: ExportDialog::default(),
+            lut_import: None,
+            lut_export: None,
+            lut_clipped_fraction: None,
             input_epoch: 0,
             output_image: None,
             output_retained: None,
@@ -341,6 +376,8 @@ impl App {
             settings_open: false,
             only_modified: false,
             pending_stage: None,
+            inspector_stage: controls::Stage::Input,
+            stage_jump_target: None,
             settings_return_focus: None,
             export_return_focus: None,
             output_color_space: "sRGB".into(),
@@ -490,6 +527,11 @@ impl App {
             extras["rust"] = serde_json::json!({"version": state::CURRENT_STATE_VERSION});
         }
         extras["rust"]["viewer"] = self.viewer.persistent_state();
+        if let Some(route) = &self.film_route {
+            extras["rust"]["film_route"] = serde_json::json!(route);
+        } else if let Some(rust) = extras["rust"].as_object_mut() {
+            rust.remove("film_route");
+        }
         if let Some(rust) = extras["rust"].as_object_mut() {
             rust.remove("histogram");
             rust.remove("analysis");
@@ -500,6 +542,7 @@ impl App {
     }
 
     pub(crate) fn mark_parameters_changed(&mut self) {
+        self.lut_clipped_fraction = None;
         self.parameter_revision = self.parameter_revision.wrapping_add(1);
         self.dirty = true;
     }
@@ -511,33 +554,47 @@ impl App {
 
     fn validate_state(&self, state: state::GuiState) -> Result<StateApplication> {
         let mut params = state.runtime_params()?;
-        let film = profile::load_profile_by_name(&self.data_dir, state.film())?;
-        let print = profile::load_profile_by_name(&self.data_dir, state.paper())?;
-        if !film.is_film() || !film.is_filming() {
-            return Err(crate::app::Message::new("app.state.invalid_film_profile")
-                .arg("profile", state.film())
-                .into());
+        let film_mode = params.workflow.mode.is_film();
+        let (film, print) = if film_mode {
+            let film = profile::load_profile_by_name(&self.data_dir, state.film())?;
+            let print = profile::load_profile_by_name(&self.data_dir, state.paper())?;
+            if !film.is_film() || !film.is_filming() {
+                return Err(crate::app::Message::new("app.state.invalid_film_profile")
+                    .arg("profile", state.film())
+                    .into());
+            }
+            if !print.is_print_stock() {
+                return Err(crate::app::Message::new("app.state.invalid_print_profile")
+                    .arg("profile", state.paper())
+                    .into());
+            }
+            (film, print)
+        } else {
+            let film = spektrafilm_core::process_params::lut_placeholder_profile()
+                .map_err(anyhow::Error::msg)?;
+            (film.clone(), film)
+        };
+        if film_mode {
+            params.film_render.grain.monochrome = film.is_bw();
+            spektrafilm_core::validate_scan_output(&params, &film).map_err(anyhow::Error::msg)?;
         }
-        if !print.is_print_stock() {
-            return Err(crate::app::Message::new("app.state.invalid_print_profile")
-                .arg("profile", state.paper())
-                .into());
-        }
-        params.film_render.grain.monochrome = film.is_bw();
-        spektrafilm_core::validate_scan_output(&params, &film).map_err(anyhow::Error::msg)?;
         if self.image_path.as_deref().is_some_and(image_io::is_raw) {
             params.io.input_color_space = "ACES2065-1".into();
             params.io.input_cctf_decoding = false;
         }
         let film_medium = scan_medium(&film);
-        let before_scanner = params.scanner.clone();
-        normalize_scanner_selections(&mut params, film_medium);
-        let normalization = App::scanner_normalization_detail(
-            &before_scanner,
-            &params.scanner,
-            film_medium,
-            &params.workflow.route,
-        );
+        let normalization = if film_mode {
+            let before_scanner = params.scanner.clone();
+            normalize_scanner_selections(&mut params, film_medium);
+            App::scanner_normalization_detail(
+                &before_scanner,
+                &params.scanner,
+                film_medium,
+                &params.workflow.route,
+            )
+        } else {
+            None
+        };
         Ok(StateApplication {
             state,
             params,
@@ -634,9 +691,15 @@ impl App {
         self.film_dev_times = film.data.development_time;
         self.print_dev_times = print.data.development_time;
         self.viewer.settings = display::DisplaySettings::from_json(&state.sections["display"]);
+        self.film_route = state.sections["rust"]["film_route"]
+            .as_str()
+            .map(str::to_owned);
         self.params = params;
         self.export_options = ExportOptions::from_state(&state.sections);
         self.export_dialog = ExportDialog::default();
+        self.lut_import = None;
+        self.lut_export = None;
+        self.lut_clipped_fraction = None;
         self.presets = presets::Browser::new(
             &state.sections,
             spektrafilm_core::presets::PresetLibrary::new(
@@ -648,7 +711,6 @@ impl App {
         );
         self.browser_state_changed_at = Some(Instant::now());
         self.gui_state = state;
-        self.scan_for_print_snapshot = None;
         self.dirty = true;
         self.dirty_since = Some(Instant::now());
 
@@ -761,6 +823,27 @@ impl App {
                     eprintln!("{}", self.status);
                 }
             }
+        }
+    }
+}
+
+impl App {
+    pub(crate) fn sync_display_controls(&mut self) {
+        let display = self.viewer.settings.to_json();
+        let mut changed = false;
+        for key in [
+            "use_display_transform",
+            "gray_18_canvas",
+            "white_padding",
+            "output_interpolation",
+        ] {
+            if self.gui_state.sections["display"][key] != display[key] {
+                self.gui_state.sections["display"][key] = display[key].clone();
+                changed = true;
+            }
+        }
+        if changed {
+            self.search_index.reset();
         }
     }
 }

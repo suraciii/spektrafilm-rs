@@ -1,7 +1,7 @@
 use anyhow::Result;
 use clap::{ArgMatches, Args, Subcommand, ValueEnum};
 use serde_json::json;
-use spektrafilm_core::presets::{PresetGroup, PresetLibrary, PresetSelection};
+use spektrafilm_core::presets::{PresetGroup, PresetKind, PresetLibrary, PresetSelection};
 use std::path::PathBuf;
 
 #[derive(Subcommand)]
@@ -101,15 +101,48 @@ pub fn run(command: PresetCommand, matches: &ArgMatches) -> Result<()> {
                             .unwrap_or_else(|| entry.name.clone())
                     );
                 }
-                let kind = if entry.preset.is_some() {
-                    Some("look")
-                } else {
-                    None
-                };
+                let kind = entry
+                    .preset
+                    .as_ref()
+                    .and_then(|preset| preset.kind().ok())
+                    .map(|kind| match kind {
+                        PresetKind::Look => "look",
+                        PresetKind::Lut => "lut",
+                        PresetKind::Effects => "effects",
+                        PresetKind::Section(_) => "section",
+                    });
                 let mut record = json!({"name": entry.name, "kind": kind, "group": entry.group});
                 if kind == Some("look") {
                     record["film_profile"] = json!(entry.film_profile);
                     record["print_profile"] = json!(entry.print_profile);
+                }
+                if kind == Some("lut")
+                    && let Some(lut) = entry
+                        .preset
+                        .as_ref()
+                        .and_then(|preset| preset.lut_parameters())
+                {
+                    record["lut_path"] = json!(lut.path);
+                    record["lut_sha256"] = json!(lut.sha256);
+                    record["lut_file_exists"] = json!(lut.path.is_file());
+                }
+                if kind == Some("effects")
+                    && let Some(effects) = entry
+                        .preset
+                        .as_ref()
+                        .and_then(|preset| preset.effects_parameters())
+                {
+                    let mut active = Vec::new();
+                    if effects.diffusion.active {
+                        active.push("diffusion");
+                    }
+                    if effects.halation.active {
+                        active.push("halation");
+                    }
+                    if effects.grain.active {
+                        active.push("grain");
+                    }
+                    record["active_effects"] = json!(active);
                 }
                 if let Some(path) = entry.path {
                     record["path"] = json!(path);
@@ -140,13 +173,23 @@ pub fn run(command: PresetCommand, matches: &ArgMatches) -> Result<()> {
             let selected = select(&library, &args.selector)?;
             let preset = selected.preset;
             preset.validate().map_err(anyhow::Error::msg)?;
-            let data = crate::select_data_dir(args.data_dir, matches)?;
-            preset
-                .resolve(
-                    &data.path,
-                    &spektrafilm_core::params::RuntimeParams::default(),
-                )
-                .map_err(anyhow::Error::msg)?;
+            if preset.lut.is_some() {
+                preset
+                    .resolve_lut_detailed(&spektrafilm_core::params::RuntimeParams::default())
+                    .map_err(anyhow::Error::msg)?;
+            } else if preset.effects_parameters().is_some() {
+                preset
+                    .resolve_effects_detailed(&spektrafilm_core::params::RuntimeParams::default())
+                    .map_err(anyhow::Error::msg)?;
+            } else {
+                let data = crate::select_data_dir(args.data_dir, matches)?;
+                preset
+                    .resolve(
+                        &data.path,
+                        &spektrafilm_core::params::RuntimeParams::default(),
+                    )
+                    .map_err(anyhow::Error::msg)?;
+            }
             match args.format {
                 ShowFormat::Toml => println!("{}", preset.to_toml().map_err(anyhow::Error::msg)?),
                 ShowFormat::Json => println!("{}", preset.to_json().map_err(anyhow::Error::msg)?),

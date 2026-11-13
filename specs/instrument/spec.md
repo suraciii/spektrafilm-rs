@@ -568,10 +568,10 @@ spektrafilm-lab fixtures --renderer FILE --data-dir DIRECTORY --out DIRECTORY [-
 
 `--natural-input` and `--download-natural` MUST be mutually exclusive. The generator MUST preserve the existing pinned natural-source validation and attribution rules.
 
-- Every invocation MUST generate the existing probe assets, suites, targets, exploratory policy, and provenance. It MUST also generate `look.toml`, `color-tone.json`, and `appearance.json`.
-- `look.toml` MUST use the renderer's portable preset schema. The two JSON files MUST contain the existing standalone `configuration` object, not a new document envelope.
+- Every invocation MUST generate the existing probe assets, suites, targets, exploratory policy, and provenance. It MUST also generate `preset.toml`, `color-tone.json`, and `appearance.json`.
+- `preset.toml` MUST use the renderer's portable preset schema. The two JSON files MUST contain the existing standalone `configuration` object, not a new document envelope.
 - The [standard configuration product contract](../benchmark/standard-configurations/spec.md) defines their rendering purposes and suite coverage.
-- Both configurations MUST reference `look.toml` through `presets: ["look.toml"]`. They MUST use existing `route`, `set_files`, and `set` carriers.
+- Both configurations MUST reference `preset.toml` through `presets: ["preset.toml"]`. They MUST use existing `route`, `set_files`, and `set` carriers.
 - Their paths MUST resolve relative to the containing configuration file. Generated suite cases MUST carry the equivalent configuration objects because the suite schema has no configuration include field.
 
 Both configuration objects MUST set `route` to `input > film > print > scan` and `set_files` to an empty array. Their ordered `set` arrays MUST begin with these shared assignments:
@@ -592,9 +592,9 @@ Both configuration objects MUST set `route` to `input > film > print > scan` and
 ```
 
 - `color-tone.json` MUST append `debug.deactivate_spatial_effects=true`, `debug.deactivate_stochastic_effects=true`, and `film_render.grain.active=false`. `appearance.json` MUST append `debug.deactivate_spatial_effects=false` and `debug.deactivate_stochastic_effects=false`.
-- Neither object MAY add `film` or `paper` selections that compete with the exported look. The generator MUST use the renderer's resolution to validate the effective settings; standalone shape validation is not proof of supported renderer parameters.
-- The generator MUST obtain the look through the selected renderer's public `preset show built-in:Kodak Gold 200 --format toml --data-dir DIRECTORY` command. It MUST capture child output and diagnostics separately.
-- It MUST NOT copy a preset from the checkout or resolve a bare user-library name. Preset export or validation failure MUST fail generation without selecting a substitute look.
+- Neither object MAY add `film` or `paper` selections that compete with the exported preset. The generator MUST use the renderer's resolution to validate the effective settings; standalone shape validation is not proof of supported renderer parameters.
+- The generator MUST obtain the preset through the selected renderer's public `preset show built-in:Kodak Gold 200 --format toml --data-dir DIRECTORY` command. It MUST capture child output and diagnostics separately.
+- It MUST NOT copy a preset from the checkout or resolve a bare user-library name. Preset export or validation failure MUST fail generation without selecting a substitute preset.
 - Profile references MUST permit intentional runtime profile revisions rather than require baseline content hashes.
 
 The generator MUST validate both configuration documents and all generated suites and targets before publishing success. `provenance.json` MUST record the standard configuration revision `standard-print-scan-v1`, selected built-in preset selector, renderer SHA-256, and relative paths and SHA-256 values for the three new files:
@@ -604,7 +604,7 @@ The generator MUST validate both configuration documents and all generated suite
   "preset_selector": "built-in:Kodak Gold 200",
   "renderer": {"path": "ABSOLUTE_RENDERER_PATH", "sha256": "RENDERER_SHA256"},
   "files": [
-    {"path": "look.toml", "sha256": "LOOK_SHA256"},
+    {"path": "preset.toml", "sha256": "PRESET_SHA256"},
     {"path": "color-tone.json", "sha256": "COLOR_TONE_SHA256"},
     {"path": "appearance.json", "sha256": "APPEARANCE_SHA256"}
   ]
@@ -613,7 +613,7 @@ The generator MUST validate both configuration documents and all generated suite
 
 Existing natural-source provenance MUST remain intact. A change to authored standard settings or appearance-case coverage MUST update this revision; runtime dependency hashes remain authoritative for file identity.
 
-- The successful stdout result MUST include `schema_version`, `command: fixtures`, `execution_status: completed`, the output directory as `artifact`, the existing `suites` list, `preset: look.toml`, and `configurations` with `color_tone: color-tone.json` and `appearance: appearance.json`. Returned file paths MUST be relative to `artifact`.
+- The successful stdout result MUST include `schema_version`, `command: fixtures`, `execution_status: completed`, the output directory as `artifact`, the existing `suites` list, `preset: preset.toml`, and `configurations` with `color_tone: color-tone.json` and `appearance: appearance.json`. Returned file paths MUST be relative to `artifact`.
 - Failure MUST use the existing structured error and exit-status contract. A partial directory without a successful final provenance record MUST NOT count as a generated bundle.
 - The generator MUST refuse any existing destination. It MUST NOT invoke rendering or device discovery.
 - It MUST NOT create runs, comparisons, or calibrated policy evidence. Generated baseline and candidate target files remain examples, not completed baseline or candidate runs.

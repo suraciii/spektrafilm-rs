@@ -119,16 +119,17 @@ impl App {
         let mut accepted = Vec::with_capacity(submissions.len());
         for mut submission in submissions {
             submission.options.normalize();
-            let destination = submission
+            submission
                 .options
                 .format
-                .output_path(&submission.destination);
-            let filename = destination.file_name().ok_or_else(|| {
+                .validate_path(&submission.destination)?;
+            let filename = submission.destination.file_name().ok_or_else(|| {
                 anyhow::Error::new(Message::new("photo.queue.invalid_destination"))
             })?;
-            // Canonicalize the parent, not the final filename: publication replaces
-            // the selected directory entry, never follows a final symlink.
-            let parent = normalized_destination(destination.parent().unwrap_or(Path::new(".")))?;
+            // Freeze the accepted parent, but replace the selected directory entry
+            // rather than follow a symlink at the final filename.
+            let parent =
+                normalized_destination(submission.destination.parent().unwrap_or(Path::new(".")))?;
             submission.destination = parent.join(filename);
             let key = normalized_destination(&submission.destination)?;
             if !destinations.insert(key.clone()) {
@@ -437,7 +438,7 @@ mod tests {
         let (mut app, directory, ctx) = app();
         let path = directory.path().join("duplicate.png");
         let first = submission(&app, path.clone());
-        let second = submission(&app, directory.path().join("./duplicate.other"));
+        let second = submission(&app, directory.path().join("./duplicate.png"));
         assert!(
             app.enqueue_exports(&ctx, vec![first, second], false)
                 .is_err()
@@ -455,6 +456,81 @@ mod tests {
         drain(&mut app, &ctx);
         assert_eq!(app.export_queue.entries[0].state, QueueState::Completed);
         assert!(image_io::load(&path).is_ok());
+    }
+
+    #[test]
+    fn incompatible_batch_destination_rejects_without_rewriting_or_replacing() {
+        let (mut app, directory, ctx) = app();
+        let exact = directory.path().join("selected.jpg");
+        let renamed = directory.path().join("selected.png");
+        let valid = directory.path().join("other.png");
+        std::fs::write(&exact, b"selected sentinel").unwrap();
+        std::fs::write(&renamed, b"other sentinel").unwrap();
+        let items = vec![
+            submission(&app, valid.clone()),
+            submission(&app, exact.clone()),
+        ];
+        assert!(app.enqueue_exports(&ctx, items, true).is_err());
+        assert!(app.export_queue.entries.is_empty());
+        assert!(app.export_job.is_none());
+        assert!(!valid.exists());
+        assert_eq!(std::fs::read(exact).unwrap(), b"selected sentinel");
+        assert_eq!(std::fs::read(renamed).unwrap(), b"other sentinel");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn queued_parent_symlink_retarget_does_not_redirect_publication() {
+        let (mut app, directory, ctx) = app();
+        let accepted_parent = directory.path().join("accepted");
+        let unrelated_parent = directory.path().join("unrelated");
+        std::fs::create_dir(&accepted_parent).unwrap();
+        std::fs::create_dir(&unrelated_parent).unwrap();
+        let selected = accepted_parent.join("selected.png");
+        let unrelated = unrelated_parent.join("selected.png");
+        std::fs::write(&selected, b"accepted replacement sentinel").unwrap();
+        std::fs::write(&unrelated, b"unconfirmed replacement sentinel").unwrap();
+        let linked = accepted_parent.join("linked.png");
+        let linked_target = directory.path().join("unrelated-target.bin");
+        std::fs::write(&linked_target, b"final symlink target sentinel").unwrap();
+        std::os::unix::fs::symlink(&linked_target, &linked).unwrap();
+        let link = directory.path().join("output");
+        std::os::unix::fs::symlink(&accepted_parent, &link).unwrap();
+        let blocker = directory.path().join("blocker.png");
+        let items = vec![
+            submission(&app, blocker.clone()),
+            submission(&app, link.join("selected.png")),
+            submission(&app, link.join("linked.png")),
+        ];
+        let (staged, ready) = std::sync::mpsc::channel();
+        let pause = Arc::new(crate::export_job::ExportPause {
+            staged,
+            released: (parking_lot::Mutex::new(false), parking_lot::Condvar::new()),
+            cancelled: (parking_lot::Mutex::new(false), parking_lot::Condvar::new()),
+        });
+        app.export_queue.next_pause = Some(pause.clone());
+        app.enqueue_exports(&ctx, items, true).unwrap();
+        ready.recv_timeout(crate::headless::WAIT_DEADLINE).unwrap();
+        std::fs::remove_file(&link).unwrap();
+        std::os::unix::fs::symlink(&unrelated_parent, &link).unwrap();
+        pause.release();
+        drain(&mut app, &ctx);
+        assert_eq!(app.export_queue.entries[1].state, QueueState::Completed);
+        assert_eq!(
+            std::fs::read(&unrelated).unwrap(),
+            b"unconfirmed replacement sentinel"
+        );
+        let expected = image_io::load(&blocker).unwrap().image;
+        let actual = image_io::load(&selected).unwrap().image;
+        assert_eq!((actual.width, actual.height), (24, 8));
+        assert_eq!(actual.data, expected.data);
+        assert_eq!(
+            std::fs::read(&linked_target).unwrap(),
+            b"final symlink target sentinel"
+        );
+        let published = std::fs::symlink_metadata(&linked).unwrap();
+        assert!(published.is_file());
+        assert_eq!(image_io::load(&linked).unwrap().image.data, expected.data);
     }
 
     #[test]

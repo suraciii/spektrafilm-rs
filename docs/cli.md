@@ -112,9 +112,32 @@ The [CLI parameter contract](../specs/cli/spec.md) defines parameter editing.
     --saving-color-space 'ProPhoto RGB' --saving-cctf-encoding true --data-dir data
 ```
 
+### Camera light leak
+
+`film_render.light_leak` adds stray light to the film exposure. Enable it with `film_render.light_leak.active=true`, then set `film_render.light_leak.exposure_ev` in stops over the film's mid-density exposure. Lengths are millimetres on the film and follow the working pixel pitch. The falloff is compact, so the leak stays near its aperture; a strong leak burns out to the film's white.
+
+```bash
+spektrafilm describe --module film_render.light_leak
+```
+
+```bash
+# A warm corner leak on a 35 mm frame
+./target/release/spektrafilm process input.png -o leak.tif \
+    --set film_render.light_leak.active=true \
+    --set film_render.light_leak.exposure_ev=2.5 \
+    --set film_render.light_leak.position=0.02 \
+    --set film_render.light_leak.width_mm=10 \
+    --set film_render.light_leak.spread_mm=6 \
+    --set 'film_render.light_leak.leak_spectrum=[1.0,0.4,0.15]'
+```
+
+### Tone & Color
+
 ### Common finishing
 
-Finishing adjusts the completed positive before output gamut processing and the final output mix. It does not replace negative-conversion operator correction. It is inactive for input-only, material output, and preserved-negative scans; stored values remain intact and are still validated.
+Tone & Color adjusts the completed positive before output gamut processing and the final output mix. It does not replace negative-conversion operator correction. It is inactive for input-only, material output, and preserved-negative scans; stored values remain intact and are still validated.
+
+The GUI places these controls under **Scan → Tone & Color**. Canonical CLI paths remain `finishing.*`; the presentation change does not add scanner aliases or change document versions.
 
 ```bash
 spektrafilm describe --module finishing
@@ -125,10 +148,10 @@ spektrafilm process input.png -o output.tif --backend cpu \
     --set 'finishing.expand.enabled=true,finishing.expand.black=0.02,finishing.expand.white=0.98'
 ```
 
-The four daily controls are normalized to `-1..=1`, with zero neutral. Expand defaults to disabled and retains its fixed-sRGB encoded input references when disabled. Each reference must be in `-0.25..=1.25`, and white must exceed black by at least `1/1024`, even when Expand is disabled. Enabling Expand hard-clips at its references, including the default `0` and `1`; clipped differences are lost for that render and later controls cannot recover them. Sparse edits change only named leaves. Complete preset looks use schema 7 and replace finishing; legacy complete looks restore neutral finishing, while legacy sections preserve omission. Complete recipes use `spektrafilm-rs-params-7` and carry the complete `finishing` group; older recipes migrate to neutral finishing.
+The four daily controls are normalized to `-1..=1`, with zero neutral. Expand defaults to disabled and retains its fixed-sRGB encoded input references when disabled. Each reference must be in `-0.25..=1.25`, and white must exceed black by at least `1/1024`, even when Expand is disabled. Enabling Expand hard-clips at its references, including the default `0` and `1`; clipped differences are lost for that render and later controls cannot recover them. Sparse edits change only named leaves. Complete preset looks use schema 7 and replace tone and color adjustments; legacy complete looks restore neutral values, while legacy sections preserve omission. Complete recipes use `spektrafilm-rs-params-8`; legacy documents migrate the removed `lut_look` group once and retain their canonical `lut`, `effects`, and `grade` groups. Complete Film recipes carry the complete `finishing` group, while omitted inactive groups stay omitted.
 
 
-`--dry-run` prints effective runtime controls, writer options, profile names, and the requested backend policy.
+`--dry-run` prints effective runtime controls, writer options, and the requested backend policy. It also prints profile names and film-stage controls in Film mode, the LUT declaration and inactive film stages in LUT mode, or the active Effects and inactive film and LUT stages in Off mode.
 Omit `--output` when checking parameters without choosing a destination. The report keeps `output.path` as `null`; `output.format` is also `null` unless `--format` is supplied. A normal process invocation still requires a destination.
 Without a format, container-specific defaults such as bit depth and compression remain `null`. Supply `--format` to validate codec-specific options such as JPEG quality or compression.
 
@@ -142,6 +165,12 @@ Without a format, container-specific defaults such as bit depth and compression 
 It checks the input path and supported file kind.
 Image decoding and compute-adapter availability remain unchecked.
 Saving color flags control writer conversion independently of scanner `io.output_color_space` and `io.output_cctf_encoding`.
+
+Use `--lut` to run one external `.cube` as the LUT workflow. The command reads the cube title, domain, shaper, and hash; input and output spaces default to display-encoded sRGB, and the domain policy defaults to clamp. A `.cube` file carries no color-space metadata, so confirm those spaces when the source declares something else. `--set lut.input_space=...`, `--set lut.output_space=...`, and `--set lut.domain_policy=fail` change the declaration. `--set workflow.mode=off` selects Off without a LUT or grade; use `--set effects.diffusion.active=true` and the other canonical `effects.*` or `grade.*` leaves to author it. The retired `lut_look` group is migrated in complete legacy documents but is rejected as a new sparse edit. `--lut` conflicts with preset selection, `--film`, `--paper`, route selection, `--scan-film`, and feature profiles. An explicit `workflow.mode=film` edit with `--lut` fails instead of selecting a workflow silently. A LUT or Effects preset selects its own mode; mixing either with a film look or section preset is rejected.
+
+```bash
+./target/release/spektrafilm process input.png -o out.tif     --lut look.cube --input-color-space sRGB --input-cctf-decoding true     --dry-run --dry-run-format text --data-dir data
+```
 
 Canonical values use the same validation rules in complete parameters, sparse edits, presets, GUI state, recipes, LUT requests, and direct runtime updates. Disabled features still require valid stored values. For example, disabled chemistry accepts `developer_exhaustion=0.5` but rejects `2.0`; a later override cannot conceal the invalid source. Rejection does not rewrite the source or replace an existing output.
 
@@ -171,9 +200,11 @@ Both size components are fractions of the source's long edge.
 Bounds and rounding follow the upstream NumPy slice convention, including negative-index slicing when a crop exceeds the short edge.
 Empty crops and nonpositive/nonfinite resize factors return errors before output is written.
 
-Auto-exposure meters an antialiased nearest-neighbor preview of the complete source before crop and resize.
-Encoded preview samples are decoded for f64 luminance measurement.
-The resulting exposure scales source samples before geometry and filming decode, matching Python's order.
+Auto-exposure reconstructs film raw from an antialiased nearest-neighbor preview of the complete source before crop and resize.
+Encoded preview samples are decoded as part of the same sensitivity path used by the real exposure.
+The metering pattern brings the preview's mean raw channel value to the reference exposure target.
+The resulting scalar is applied to film raw after the RGB→raw conversion, before camera optics; encoded input samples are not pre-scaled.
+Cropping and resizing therefore cannot shift the metered exposure.
 Cropping preserves the source film pixel pitch.
 Resizing divides it by the requested factor.
 Lens blur, halation, and DIR consume that retained pitch on CPU and supported resident GPU paths.

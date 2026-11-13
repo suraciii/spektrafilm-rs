@@ -8,13 +8,13 @@ Dye MUST form convincing color-film grain by conditioning a stochastic dye field
 
 For monochrome profiles, Dye supplies a single-record BW effective model. Its availability MUST NOT be presented as calibrated silver-material fidelity.
 
-Subject shape, tone, color, and fine detail MUST pass through the same field formation and readout as the grain realization. A larger canvas, a softer source, post-encoded noise, or a separate clean-detail path does not establish success.
+Subject shape, tone, color, and fine detail MUST pass through the same field realization and readout as the grain realization. A larger canvas, a softer source, post-encoded noise, or a separate clean-detail path does not establish success.
 
 ## Image-forming contract
 
 Dye MUST consume the developed record-density target `t` at the film-density boundary and produce a realized density `D` with `E[D] = t` exactly.
 
-The realization MUST be a band-limited correlated field whose relative amplitude follows a granularity curve derived from development statistics. The amplitude MUST vanish at clear base and at saturation of the record.
+The realization MUST be a coordinate-addressed value-noise field whose relative amplitude follows a granularity curve derived from development statistics. The amplitude MUST vanish at clear base and at saturation of the record.
 
 The field MUST be realized on the film lattice and read out through the requested output geometry. Cropping, preview scaling, tiling, and stage splitting MUST NOT change the realization of a film coordinate.
 
@@ -24,7 +24,7 @@ The film, print, and scan chain owns grain polarity and color. Dye MUST NOT forc
 
 ## Supported product boundary
 
-Dye supports color and monochrome filming profiles only when the loaded profile declares the material and workflow conditions required by the film-chain contract. The implementation MUST use the caller's resolved film geometry and MUST NOT add a second stock-name or format whitelist. Printing materials MUST NOT be admitted as filming stocks.
+Dye supports color and monochrome filming profiles only when the loaded profile declares the material and route conditions required by the film-chain contract. The implementation MUST use the caller's resolved film geometry and MUST NOT add a second stock-name or format whitelist. Printing materials MUST NOT be admitted as filming stocks.
 
 The product resolver MUST reject an unsupported material, chemistry, route, or missing profile data before output publication. It MUST report the unsupported condition and the reason. Availability of a profile is not proof of stock calibration, optical-readout acceptance, or photographic acceptance.
 
@@ -37,15 +37,15 @@ Changing film geometry MUST preserve requested output raster dimensions while ch
 | Control | Key | Range | Default | Meaning |
 |---|---|---|---|---|
 | Grain strength | `film_render.grain.dye_strength` | `[0, 4]` | `1.0` | Relative amplitude of the stochastic field and count deviation |
-| Grain scale | `film_render.grain.dye_scale` | `[0.5, 4]` | `1.0` | Relative correlation length and band limit in film coordinates |
+| Grain scale | `film_render.grain.dye_scale` | `[0.5, 4]` | `1.0` | Relative value-noise cell size in film coordinates |
 
 `film_render.grain.active` owns the enable switch. No other Dye value is a public control.
 
-Grain strength MUST scale the correlated field's standard deviation and the event count's standard deviation by the same factor. It MUST preserve `E[D] = t`, the derived density taper, and the per-record ratio. It is a relative look control, not a certified optical RMS target or material calibration.
+Grain strength MUST scale the correlated field's standard deviation and the event count's standard deviation by the same factor. It MUST preserve `E[D] = t`, the derived density taper, and the per-record ratio. It is a relative strength control, not a certified optical RMS target or material calibration.
 
 Grain strength `0` MUST return the target density at the Dye boundary with no random field and no residual count noise. `1` MUST leave the delivered law unchanged. Values outside the declared range MUST fail before rendering.
 
-Grain scale MUST multiply the field's correlation lengths and band limit in film coordinates. It MUST NOT change the target density, event area, per-record ratio, or readout geometry.
+Grain scale MUST multiply the value-noise octave sizes in film coordinates. It MUST NOT change the target density, event area, per-record ratio, or readout geometry.
 
 It is not a crystal diameter, scanner blur, output-pixel size, or magnification. `1` MUST leave the delivered field unchanged. Values outside the declared range MUST fail before rendering.
 
@@ -53,7 +53,7 @@ An omitted strength or scale key MUST resolve to `1.0`.
 
 ### Resolved law inputs
 
-Dye's remaining law parameters are engine-derived constants: the per-record relative ratio, record coupling, the delivered correlation lengths, the delivered band limit, the delivered event area, the fog baseline, saturation density, and development uniformity.
+Dye's remaining law parameters are engine-derived constants: the per-record relative ratio, record coupling, the delivered value-noise octave sizes, the delivered event area, the fog baseline, saturation density, and development uniformity.
 
 The per-record ratio and record coupling are advanced candidates, not public controls. They MUST NOT be exposed until each has a validated direction, range, and interaction with grain strength. Their current delivered values remain engine constants.
 
@@ -72,7 +72,7 @@ These candidates MUST remain internal or unexposed until a separate contract and
 - **Distribution width or roughness:** an internal spectrum-shape parameter. It is not `uniformity` and not an event-contribution width.
 - **Tone-zone weights:** record-density zones are not final-image shadows and highlights. A creative control would need its own definition.
 - **Fog grain:** a model or stock parameter, not a public knob.
-- **Event area, support, numerical grid, octave details, high-pass, Dmax, uniformity, and sublayer scales:** internal law, calibration, or numerical values, not ordinary appearance controls.
+- **Event area, value-noise octave sizes, octave details, Dmax, uniformity, fog baseline, and the per-record ratio:** internal law, calibration, or numerical values, not ordinary appearance controls.
 - **Film format, scanner blur, and sharpening:** owned by their modules; they do not replace texture scale.
 
 The expectation diagnostic replaces every draw by its conditional mean and MUST remain a diagnostic. It MUST NOT change the user's recipe or become a production bypass.
@@ -106,16 +106,16 @@ Acceptance is gated. A later gate MUST NOT compensate for an earlier gate that f
 5. **Optical measurement:** Run the independent spectral measurement oracle with a declared receiver, aperture, density definition, wavelength range, provenance, footprint, and viewing condition.
 6. **Photographic validation:** Use lossless outputs and a declared reference set containing portraits, smooth fields, dark and bright regions, saturated colors, fine detail, and a color chart. Record the intended viewing size and the limits of the comparison.
 
-### Look-control acceptance
+### Strength-control acceptance
 
 - **Defaults:** An omitted or `1.0` strength and scale MUST produce the delivered field bit for bit on each executor.
 - **Zero strength:** Strength `0` MUST return the target density at the Dye boundary. A final encoded comparison MUST state its downstream route and settings.
 - **Amplitude:** At fixed seed, geometry, and output footprints, strengths `0.5`, `1`, and `2` MUST produce monotonically increasing realized standard deviation while the mean stays at the target within the declared tolerance.
 - **Scale:** At fixed seed, geometry, and output footprints, scales `0.5`, `1`, and `2` MUST produce monotonically coarser texture under a declared spectral or adjacent-sample statistic.
-- **Handoff:** The CPU and device MUST receive the same mapped field amplitude, event area, and correlation scale. A scale and pitch whose Gaussian exceeds the supported device tap radius MUST fail before allocation; the kernel MUST NOT be truncated.
+- **Handoff:** The CPU and device MUST receive the same mapped field amplitude, event area, and correlation scale. A scale that cannot form finite positive octave sizes MUST fail before allocation.
 - **Validity:** Every output MUST be finite. The acceptance record MUST report the tested stock, route, executor, target mean, channel bias, and spatial statistic.
 
-Scale acceptance MUST state that correlation length is in film coordinates and that the statistic is not a crystal-size estimate.
+Scale acceptance MUST state that value-noise cell size is in film coordinates and that the statistic is not a crystal-size estimate.
 
 Numerical proof and photographic proof are separate. A local synthetic probe, one seed, one crop, one stock, a software adapter, or a visually similar output MUST NOT be presented as universal algorithm or stock acceptance.
 

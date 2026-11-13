@@ -152,12 +152,10 @@ impl App {
                 ),
             );
         }
-        let out_path = options.format.output_path(chosen_path);
-        if out_path != chosen_path && out_path.exists() {
-            self.status = crate::app::Message::new("operations.export_exists")
-                .arg("path", out_path.display());
+        if let Err(error) = options.format.validate_path(chosen_path) {
+            self.status = error;
             self.last_export_error = Some(self.status.clone());
-            operation.issue(IssueCategory::Publication, IssueBoundary::Operation);
+            operation.issue(IssueCategory::Configuration, IssueBoundary::Operation);
             self.diagnostics.finish(operation, Outcome::Failed);
             return;
         }
@@ -184,7 +182,7 @@ impl App {
         // retained render applies it on the device and the host reference
         // applies it before its own stages.
         let rotation_quarter_turns = self.input_rotation.rem_euclid(4) as u32;
-        self.remember_dialog("export", &out_path);
+        self.remember_dialog("export", chosen_path);
         self.launch_export(
             ctx,
             crate::app::export_queue::QueueSubmission {
@@ -198,7 +196,7 @@ impl App {
                 snapshot,
                 metadata: self.source_metadata.clone(),
                 options,
-                destination: out_path,
+                destination: chosen_path.to_path_buf(),
             },
             true,
             None,

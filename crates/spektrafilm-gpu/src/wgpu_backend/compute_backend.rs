@@ -343,6 +343,13 @@ impl ComputeBackend for WgpuBackend {
     ) -> Result<Option<ImageBuf>, String> {
         self.grain_procedural_gpu(img, params).map(Some)
     }
+    fn grain_exposure(
+        &self,
+        img: &ImageBuf,
+        params: &spektrafilm_backend::ExposureGrainGpuParams,
+    ) -> Result<Option<ImageBuf>, String> {
+        self.grain_exposure_gpu(img, params).map(Some)
+    }
     fn fotufilm_grain(
         &self,
         img: &ImageBuf,
@@ -592,6 +599,43 @@ impl ComputeBackend for WgpuBackend {
             },
             "print_spectral",
         )
+    }
+
+    fn lut3d_look(
+        &self,
+        img: &ImageBuf,
+        original: &ImageBuf,
+        params: &spektrafilm_backend::Lut3dLookGpuParams<'_>,
+    ) -> Result<Option<ImageBuf>, String> {
+        let (backend, _batch) = self.observed_batch("lut3d_look");
+        backend.lut3d_look_gpu(img, original, params).map(Some)
+    }
+
+    fn lut_halation(
+        &self,
+        img: &ImageBuf,
+        params: &spektrafilm_backend::LutHalationGpuParams,
+    ) -> Result<Option<ImageBuf>, String> {
+        let (backend, _batch) = self.observed_batch("lut_halation");
+        backend.lut_halation_gpu(img, params).map(Some)
+    }
+
+    fn lut_grain(
+        &self,
+        img: &ImageBuf,
+        params: &spektrafilm_backend::LutGrainGpuParams,
+    ) -> Result<Option<ImageBuf>, String> {
+        let (backend, _batch) = self.observed_batch("lut_grain");
+        backend.lut_grain_gpu(img, params).map(Some)
+    }
+
+    fn output_gamut_compress(
+        &self,
+        img: &ImageBuf,
+        params: &spektrafilm_backend::GamutGpuParams<'_>,
+    ) -> Result<Option<ImageBuf>, String> {
+        let (backend, _batch) = self.observed_batch("output_gamut_compress");
+        backend.gamut_compress_gpu(img, params).map(Some)
     }
 
     fn optical_diffusion(
@@ -1055,10 +1099,9 @@ impl ComputeBackend for WgpuBackend {
         self.viewer_polaroid_gpu(i, c)
     }
 
-    /// The viewer's capped raster on the device: one bilinear tap per output
-    /// pixel over the exact source rectangle the host maps it to, reading the
-    /// source image read-only. The host still owns the destination size, so a
-    /// backend cannot disagree with the viewer about how many pixels it keeps.
+    /// Area-average the source cells covered by each pixel of the viewer's
+    /// capped raster, reading the source image without modifying it. The host
+    /// owns the destination size, so the backend uses the same geometry.
     fn viewer_resample(
         &self,
         image: &ImageBuf,
@@ -1205,12 +1248,10 @@ impl ComputeBackend for WgpuBackend {
         self.viewer_icc_samples_gpu(rgb, params).map(Some)
     }
 
-    /// The viewer's magnified full-source composition on the device: one
-    /// separable interpolation tap set per visible viewport pixel over the
-    /// full-resolution source, then the display transform and the ICC
-    /// pipeline when the request carries them. The host supplies the geometry
-    /// and the resolved transforms, so the device evaluates the same
-    /// per-pixel arithmetic the host composition does.
+    /// Compose the full-resolution source on the device, transforming each
+    /// source tap before interpolation or area averaging. Non-nearest
+    /// minification uses the viewport pixel's complete source footprint;
+    /// native-size and magnified views use the selected interpolation kernel.
     fn viewer_full_source(
         &self,
         image: &ImageBuf,
@@ -1271,6 +1312,7 @@ impl ComputeBackend for WgpuBackend {
             icc_off0: i32,
             icc_off1: i32,
             icc_off2: i32,
+            source_footprint: [f32; 2],
         }
         let columns = pack_matrix_columns(&params.matrix);
         let icc_matrix = params.icc_matrix_fixed14;
@@ -1309,6 +1351,7 @@ impl ComputeBackend for WgpuBackend {
             icc_off0: icc_offset[0],
             icc_off1: icc_offset[1],
             icc_off2: icc_offset[2],
+            source_footprint: params.source_footprint,
         };
         let source_f32 = scalars_to_f32(&image.data);
         let icc_first: Vec<i32> = params
@@ -1369,6 +1412,14 @@ impl ComputeBackend for WgpuBackend {
         meta: &spektrafilm_backend::RetainedImageMeta,
     ) -> Result<spektrafilm_backend::DeviceImage, String> {
         self.upload_retained(image, meta)
+    }
+
+    fn retain_viewer_clipping_source(
+        &self,
+        image: &ImageBuf,
+        meta: &spektrafilm_backend::RetainedImageMeta,
+    ) -> Result<spektrafilm_backend::DeviceImage, String> {
+        self.retain_clipping_source_gpu(image, meta)
     }
 
     fn image_payload<'a>(

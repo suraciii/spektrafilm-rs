@@ -6,8 +6,10 @@ use clap::{ArgMatches, ValueEnum};
 use serde_json::json;
 use spektrafilm_core::ScannerProvenance;
 use spektrafilm_core::image_io::{self, BitDepth, Compression, JpegSubsampling, SaveOptions};
+use spektrafilm_core::lut_look::{LutDomainPolicy, LutLookParams, LutSpace};
 use spektrafilm_core::params::Tap;
 use spektrafilm_core::params_builder::resize_for_preview;
+use spektrafilm_core::presets::{Preset, Provenance};
 use spektrafilm_core::profile;
 use spektrafilm_core::runtime::{DigestMode, Runtime};
 use spektrafilm_math::image::ImageBuf;
@@ -68,6 +70,15 @@ pub struct ProcessArgs {
     /// Exact preset name or .toml/.json file; repeat to compose looks and sections.
     #[arg(long, action = clap::ArgAction::Append, help_heading = "Look and workflow")]
     pub(crate) preset: Vec<String>,
+    /// Use one .cube as the LUT look; reads its title, domain, shaper, and hash.
+    /// Declared input/output spaces default to sRGB and the domain policy to clamp.
+    #[arg(
+        long,
+        value_name = "CUBE",
+        conflicts_with_all = ["preset", "film", "paper", "route", "scan_film", "feature_profiles"],
+        help_heading = "Look and workflow"
+    )]
+    pub(crate) lut: Option<PathBuf>,
     /// Scan film directly, skipping printing; conflicts with --route.
     #[arg(long, conflicts_with = "route", help_heading = "Look and workflow")]
     pub(crate) scan_film: bool,
@@ -166,6 +177,7 @@ impl Default for ProcessArgs {
             film: None,
             paper: None,
             preset: Vec::new(),
+            lut: None,
             scan_film: false,
             timings: false,
             diagnostics: None,
@@ -588,6 +600,7 @@ fn run_with_capture(
             .filter(|selector| selector.ends_with(".toml") || selector.ends_with(".json"))
             .map(Path::new),
     );
+    protected.extend(args.lut.as_deref());
     protected.extend(
         args.sources
             .iter()
@@ -733,13 +746,27 @@ fn cmd_process(
     }
     invocation.boundary(IssueCategory::Configuration, IssueBoundary::RuntimePrepare);
     let library = spektrafilm_core::presets::PresetLibrary::default();
-    let presets = selectors
+    let mut presets = selectors
         .iter()
         .map(|selector| preset::select(&library, selector).map(|selected| selected.preset))
         .collect::<Result<Vec<_>>>()?;
+    if let Some(path) = args.lut.as_deref() {
+        let look =
+            LutLookParams::from_cube(path, LutSpace::Srgb, LutSpace::Srgb, LutDomainPolicy::Clamp)
+                .map_err(anyhow::Error::msg)?;
+        presets.push(Preset::capture_lut(
+            "--lut",
+            look,
+            Provenance {
+                implementation_version: env!("CARGO_PKG_VERSION").into(),
+                model_version: "spektrafilm".into(),
+                scanner: None,
+            },
+        ));
+    }
     let resolved = spektrafilm_core::process_params::resolve(
         spektrafilm_core::process_params::ProcessParamsRequest {
-            film: film_name,
+            film: film_name.map(spektrafilm_core::process_params::FilmSelection::Name),
             paper: paper_name,
             presets: &presets,
             params_file,
@@ -831,13 +858,40 @@ fn cmd_process(
         spektrafilm_math::colorspace::resolve(saving_space)
             .map_err(|e| anyhow::anyhow!("unsupported saving color space {saving_space:?}: {e}"))?;
     }
+    let transform_mode = !params.workflow.mode.is_film();
+    let lut_mode = params.workflow.mode.is_lut();
     // Validate configuration without creating a compute device for dry runs.
-    spektrafilm_core::stages::grain_dye::validate_supported(&film, &params)
-        .map_err(anyhow::Error::msg)?;
-    let grain_dye_active = spektrafilm_core::stages::grain_dye::active(&params);
-    let grain_fotufilm = spektrafilm_core::stages::grain_fotufilm::configuration_report(&params);
+    // Transform modes never enter a spectral film or print stage, so the Dye
+    // condition is not applicable and its placeholder carrier must not gate it.
+    if !transform_mode {
+        spektrafilm_core::stages::grain_dye::validate_supported(&film, &params)
+            .map_err(anyhow::Error::msg)?;
+    }
+    let grain_dye_active = !transform_mode && spektrafilm_core::stages::grain_dye::active(&params);
+    let mut grain_fotufilm =
+        spektrafilm_core::stages::grain_fotufilm::configuration_report(&params);
+    if transform_mode {
+        grain_fotufilm["active"] = json!(false);
+        grain_fotufilm["note"] = json!("Film mode is inactive");
+        grain_fotufilm["prepared"] = json!(false);
+    }
     if dry_run {
-        let grain_dye = spektrafilm_core::stages::grain_dye::configuration_report(&film, &params);
+        if lut_mode {
+            params
+                .lut_render_params()
+                .ok_or_else(|| anyhow::anyhow!("LUT mode has no LUT declaration"))?
+                .load()
+                .map_err(|error| anyhow::anyhow!("LUT look validation failed: {error}"))?;
+        }
+        let mut grain_dye =
+            spektrafilm_core::stages::grain_dye::configuration_report(&film, &params);
+        if transform_mode {
+            grain_dye["active"] = json!(false);
+            grain_dye["note"] = json!("Film mode is inactive");
+            grain_dye["channel_correlation"]["effective"] = json!(null);
+            grain_dye["channel_correlation"]["status"] = json!("inactive");
+            grain_dye["channel_correlation"]["reason"] = json!("Film mode is inactive");
+        }
         let backend_env = std::env::var("SPEKTRAFILM_BACKEND").ok();
         let output_format = plan.as_ref().map(|plan| plan.format.name());
         let output_bit_depth = plan
@@ -911,16 +965,22 @@ fn cmd_process(
             "rule": scan_profile.readout_rule(),
         });
         let feature_profile_report = serde_json::to_value(&resolved.feature_profiles)?;
+        let workflow_report = json!({
+            "mode": params.workflow.mode.name(),
+            "route": params.workflow.mode.is_film().then_some(&params.workflow.route),
+            "film_stages": if transform_mode { "inactive" } else { "active" },
+        });
         let report = json!({
             "feature_profiles": feature_profile_report,
             "data": {
                 "path": data.path,
                 "source": data.source,
             },
-            "film_profile": resolved.film_name,
-            "print_profile": resolved.print_name,
-            "capture_illuminant": capture_illuminant,
-            "readout_illuminant": readout_illuminant,
+            "workflow": workflow_report,
+            "film_profile": (!transform_mode).then_some(resolved.film_name),
+            "print_profile": (!transform_mode).then_some(resolved.print_name),
+            "capture_illuminant": (!transform_mode).then_some(capture_illuminant),
+            "readout_illuminant": (!transform_mode).then_some(readout_illuminant),
             "parameters": params,
             "scanner_provenance": ScannerProvenance::from_params(&params),
             "film_grain_dye": grain_dye,
@@ -1095,7 +1155,7 @@ fn cmd_process(
         },
     )?;
     let (working_width, working_height) = match preview_max_size {
-        Some(max_size) if !params.scanner.requires_full_frame() => {
+        Some(max_size) if !params.requires_full_frame() => {
             spektrafilm_core::resizing::preview_dimensions(input_width, input_height, max_size)
         }
         _ => (input_width, input_height),
@@ -1124,13 +1184,12 @@ fn cmd_process(
                 backend.as_ref(),
                 prepare_context,
             )
-            .map_err(|e| {
-                anyhow::anyhow!(
-                    "spectral pipeline construction failed: {e} — the simplified no-LUT fallback \
-                     was removed; check that the profiles/data directory contains the spectral \
-                     LUTs (looked under {})",
-                    data_dir.display()
-                )
+            .map_err(|error| {
+                anyhow::anyhow!(runtime_prepare_error(
+                    &error.to_string(),
+                    data_dir,
+                    transform_mode
+                ))
             })
         },
     )?;
@@ -1222,7 +1281,10 @@ fn cmd_process(
                             );
                         }
                         let image = match preview_max_size {
-                            Some(max_size) if !runtime.params().scanner.requires_full_frame() => {
+                            Some(max_size)
+                                if !runtime.params().scanner.requires_full_frame()
+                                    && runtime.params().workflow.mode.is_film() =>
+                            {
                                 host_preview
                                     .get_or_insert_with(|| resize_for_preview(image, max_size))
                                     .clone()
@@ -1260,7 +1322,8 @@ fn cmd_process(
                                 )
                                 .map_err(|e| anyhow::anyhow!("pipeline taps: {e}"))?
                         };
-                        let host = if runtime.params().scanner.requires_full_frame()
+                        let host = if (runtime.params().requires_full_frame()
+                            || !runtime.params().workflow.mode.is_film())
                             && collect.is_none_or(|tap| tap == Tap::RgbOut)
                             && let Some(max_size) = preview_max_size
                         {
@@ -1305,6 +1368,14 @@ fn cmd_process(
         eprintln!("Pipeline simulation: {} ms", t.elapsed().as_millis());
         r
     };
+    if let Some(fraction) = runtime.lut_clipped_fraction()
+        && fraction > 0.0
+    {
+        eprintln!(
+            "LUT domain clamp: {:.6}% of evaluated pixels clipped",
+            fraction * 100.0
+        );
+    }
     let plan = plan.context("internal error: missing output plan for rendering")?;
     let output = output.context("internal error: missing output path for rendering")?;
     // `result` is the host materialization when the render produced one;
@@ -1467,6 +1538,18 @@ fn raw_options(workflow: &WorkflowOptions) -> spektrafilm_raw::RawOptions {
     }
 }
 
+fn runtime_prepare_error(error: &str, data_dir: &Path, transform_mode: bool) -> String {
+    if transform_mode {
+        return format!("LUT or Off workflow preparation failed: {error}");
+    }
+    format!(
+        "spectral pipeline construction failed: {error} — the simplified no-LUT fallback \
+         was removed; check that the profiles/data directory contains the spectral LUTs \
+         (looked under {})",
+        data_dir.display()
+    )
+}
+
 fn validate_raw_options(options: &spektrafilm_raw::RawOptions) -> Result<()> {
     options.validate().map_err(anyhow::Error::from)
 }
@@ -1492,4 +1575,31 @@ fn apply_channel_swap(profile: &mut profile::Profile, selection: &str) -> Result
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod runtime_prepare_error_tests {
+    use super::runtime_prepare_error;
+    use std::path::Path;
+
+    #[test]
+    fn lut_preparation_does_not_name_spectral_profile_fallbacks() {
+        let message = runtime_prepare_error(
+            "reading LUT /tmp/look.cube: No such file or directory",
+            Path::new("/data"),
+            true,
+        );
+        assert_eq!(
+            message,
+            "LUT or Off workflow preparation failed: reading LUT /tmp/look.cube: No such file or directory"
+        );
+        assert!(!message.contains("spectral"));
+    }
+
+    #[test]
+    fn film_preparation_keeps_the_spectral_remedy() {
+        let message = runtime_prepare_error("missing profile", Path::new("/data"), false);
+        assert!(message.contains("spectral pipeline construction failed"));
+        assert!(message.contains("(looked under /data)"));
+    }
 }

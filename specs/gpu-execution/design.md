@@ -28,7 +28,7 @@ Gamut validation MUST check controls and destination compatibility without const
 
 Numerical calibration grids, spectral lookup generation, full-source statistics, spatial field formation, stochastic population preparation, and image-sized intermediate construction MUST have GPU implementations. CPU-generated image or grain data MUST NOT be relabeled as cached preparation to satisfy GPU coverage. A cache hit does not prove where its content was computed.
 
-CPU and GPU preparation MUST derive the same calibrated model. Scanner preparation MUST retain the owning spectral grid and clear-film white reference. The negative-density inverse MUST retain profile-derived monotone density-to-log-exposure knots, finite endpoint slopes, and per-record independence under the [film-chain design](../film-chain/design.md).
+CPU and GPU preparation MUST derive the same calibrated model. Scanner preparation MUST retain the owning spectral grid and selected white reference (`clear_film_base` or `readout_illuminant`). The negative-density inverse MUST retain profile-derived monotone density-to-log-exposure knots, finite endpoint slopes, and per-record independence under the [film-chain design](../film-chain/design.md).
 
 Finishing preparation and its reuse follow [Finishing preparation and execution](../finishing/design.md#preparation-and-execution) for both backends.
 
@@ -41,6 +41,23 @@ Runtime construction MUST pass the selected backend into pipeline calibration an
 CPU-selected construction MUST retain the CPU reference preparation.
 
 Native RAW unpacking MUST expose the sensor samples and metadata needed by the selected decoding algorithm. GPU numerical processing MUST retain that algorithm's supported sensor modes, demosaicing, corrections, orientation, white balance, and color assignment. Moving only the final ACES transform to GPU MUST NOT count as GPU RAW processing.
+
+### X-Trans demosaicing
+
+GPU X-Trans MUST use parallel three-pass Markesteijn interpolation with separate
+direction planes and a shared homogeneity threshold. The CPU reference keeps
+LibRaw's integer implementation; the GPU follows darktable's float/YUV variant.
+These variants do not have a universal pixel-identity contract.
+
+Every spatial refinement MUST read a completed source plane. Bounded windows
+MUST preserve global CFA phase, include the full dependency halo, and commit
+disjoint cores from the unchanged source sensor plane. Global image edges use
+normalized linear CFA interpolation, with bounded measured-color support when
+a clipped corner lacks a color.
+
+Image arithmetic MUST stay on the selected device. The host MAY construct
+window extents and read bounded validity status. Explicit GPU selection MUST
+propagate resource, cancellation, and device errors without a CPU decode retry.
 
 ## Device residency
 
@@ -95,7 +112,9 @@ A full-source reduction MUST retain the specified source population before crop 
 
 Retained RGB images carry full dimensions and absolute pixel-indexed device pages. Upload and final materialization traverse those pages; intermediate extraction and output assembly copy page intersections on the device. `SPEKTRAFILM_GPU_BINDING_LIMIT_BYTES` MAY lower the physical binding limit to exercise the same paging route.
 
-Full-source exposure metering gathers reflected source support from those pages, streams bounded f32 vertical blocks one preview row at a time, and preserves vertical-then-horizontal tap order and the reference 256-pixel preview cap. The complete preview luminance grid feeds the existing global pattern reduction; only the final f32 EV returns to the host.
+Full-source exposure metering gathers reflected source support from those pages, streams bounded f32 vertical blocks one preview row at a time, and preserves vertical-then-horizontal tap order and the reference 256-pixel preview cap.
+
+The preview grid is converted to the film-raw field with the same prepared front-pass table and adaptation matrix as the render, then feeds the existing global pattern reduction; Mallett uses its raw-channel-mean row instead. Only the final f32 EV returns to the host.
 
 The preview grid and fixed reduction coefficients remain the metering minimum working set.
 
@@ -129,7 +148,7 @@ The operation MUST NOT insert a CPU fence or restart on CPU. A user MAY explicit
 
 Gaussian blur has no CPU fallback exception for small sigma or wide support on a selected GPU operation. It MUST preserve the reference kernel on the device or fail explicitly. A reduction node, for example metering, MAY return only bounded control results and validation flags to host orchestration; its image-dependent interpretation remains on the device.
 
-A missing GPU implementation or a required CPU intermediate is an execution limitation, not a reason to select another photographic route or hide CPU arithmetic in a fence. Workflow and output-gamut selection MUST retain the accepted controls. A supported configuration MUST gain a complete GPU implementation to satisfy acceptance.
+A missing GPU implementation or a required CPU intermediate is an execution limitation, not a reason to select another photographic route or hide CPU arithmetic in a fence. Film route and output-gamut selection MUST retain the accepted controls. A supported configuration MUST gain a complete GPU implementation to satisfy acceptance.
 
 ## Numerical alignment
 
@@ -232,9 +251,7 @@ Partial resource retirement MUST NOT mark a complete image batch ready.
 
 Gaussian gathering and scattering MUST address target-channel samples on the device without changing sample bits. Copy-only or binding-incompatible storage MAY use bounded contiguous device copies for adaptation, but host commands MUST NOT be generated for individual pixels or filter taps.
 
-Gaussian transport MUST preserve the reference support, endpoint policy, and axis order. Recursive filter state MUST continue through forward and backward page boundaries without restarting. Above sigma 8, CPU and device both use the reflected unit-sum box cascade with the same width selection.
-
-Its frozen kernel error against the truncated Gaussian is 1.68e-3 at sigma 8, 3.33e-4 at 32, and 7.10e-5 at 147 of unit kernel mass. No smaller-sigma branch changes.
+Gaussian transport MUST preserve reference support, endpoint policy, and axis order; recursive state MUST cross forward and backward page boundaries without restarting. At and above sigma 3, native-f64 execution MUST use IIR; execution without binary64 MUST reject sigma >= 8 rather than substitute an approximation. FIR remains the below-3 path.
 
 Gaussian page planning SHOULD balance serial coordinate work against independent lines. A complete supported raster that fits binding, coordinate, and line-state limits SHOULD remain one page.
 
@@ -244,7 +261,17 @@ Scratch reuse MUST preserve dependent reads and writes in queue order. Mutable s
 
 Source working pages MAY supply an equal-geometry tail after their final source read. Reuse MUST preserve live inputs and each pass's required source and destination separation.
 
-Spektra raster storage windows preserve the original flattened pixel identity for fast statistics. Sequential MT19937 retains each plane's generator across windows and completes the complete-source Poisson walk before the binomial walk; a storage boundary never reseeds a plane. Multiplicative grain USM reduces complete-source mass before applying normalization.
+Spektra raster storage windows preserve the original flattened pixel identity for fast statistics. Sequential MT19937 retains each plane's generator across windows and completes the complete-source Poisson walk before the binomial walk; a storage boundary never reseeds a plane.
+
+Spektra's GPU realization is a declared draw-identity-independent PCG32 realization under the paragraph above. It uses a PCG32 stream addressed only by the request seed and global `(pixel, channel, sublayer)` identity. CPU Spektra retains the original sequential MT19937 realization; there is no GPU sampler selector.
+
+It preserves the reference Poisson/binomial branches in f32. Micro-structure uses a PCG32 lognormal clump field; it does not continue a sequential MT particle state.
+
+Storage windows, workgroup size, crop traversal, and queue order MUST NOT reseed it. It is GPU resident only; CPU execution uses the original MT19937 realization instead.
+
+Its acceptance evidence MUST include reproducibility across storage windows, distribution moments, local variance/spectrum, and multi-seed statistics. Global mean/std alone is insufficient.
+
+Multiplicative grain USM reduces complete-source mass before applying normalization.
 
 Procedural grain gathers its original-coordinate conditioning samples on the device, retains the original dimensions in the resolution model, and carries tap accumulation rather than shortening support when a spatial footprint exceeds a binding. Image, layer, Poisson-seed, and mass-reduction transports are physically paged; no complete-source raster or complete layer stack MUST fit one physical GPU buffer.
 

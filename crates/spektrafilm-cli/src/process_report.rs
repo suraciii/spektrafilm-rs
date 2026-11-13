@@ -67,6 +67,37 @@ fn record(label: &str, fields: &Value) {
     }
 }
 
+fn print_effects(params: &Value) {
+    let effects = &params["effects"];
+    for (name, group) in [
+        ("diffusion", &effects["diffusion"]),
+        ("halation", &effects["halation"]),
+        ("grain", &effects["grain"]),
+    ] {
+        let active = group["active"].as_bool().unwrap_or(false);
+        println!(
+            "  effects.{name}: {}",
+            if active { "active" } else { "inactive" }
+        );
+    }
+}
+
+fn print_grade(params: &Value) {
+    let grade = &params["grade"];
+    let active = grade["active"].as_bool().unwrap_or(false);
+    println!(
+        "  lut grade: {}",
+        if active { "active" } else { "inactive" }
+    );
+    if active {
+        for name in ["brightness", "contrast", "warmth", "saturation"] {
+            if let Some(field) = grade.get(name) {
+                println!("    {name}: {}", value(field));
+            }
+        }
+    }
+}
+
 pub(crate) fn print_text(report: &Value) {
     println!("INPUT");
     println!("  kind: {}", value(&report["input"]["kind"]));
@@ -90,49 +121,93 @@ pub(crate) fn print_text(report: &Value) {
         record("RAW LOADING", &report["input"]["raw_loading"]);
     }
     record("DATA", &report["data"]);
-    println!("LOOK AND WORKFLOW");
-    println!("  film: {}", value(&report["film_profile"]));
-    println!("  print: {}", value(&report["print_profile"]));
     let params = &report["parameters"];
-    println!("  route: {}", value(&params["workflow"]["route"]));
-    println!(
-        "  scan output: {}",
-        value(&params["scanner"]["scan_output"])
-    );
+    let mode = report["workflow"]["mode"].as_str().unwrap_or("film");
+    let film_mode = mode == "film";
+    println!("LOOK AND WORKFLOW");
+    match mode {
+        "lut" => {
+            let lut = &params["lut"];
+            println!("  mode: lut");
+            println!("  lut: {}", value(&lut["path"]));
+            if lut["title"].as_str().is_some_and(|title| !title.is_empty()) {
+                println!("  title: {}", value(&lut["title"]));
+            }
+            println!("  input space: {}", value(&lut["input_space"]));
+            println!("  output space: {}", value(&lut["output_space"]));
+            println!(
+                "  domain: {} .. {}",
+                value(&lut["domain_min"]),
+                value(&lut["domain_max"])
+            );
+            println!("  domain policy: {}", value(&lut["domain_policy"]));
+            println!("  shaper: {}", value(&lut["shaper"]));
+            println!("  strength: {}", value(&lut["strength"]));
+            println!("  sha256: {}", value(&lut["sha256"]));
+            print_effects(params);
+            print_grade(params);
+            println!(
+                "  film stages: {}",
+                value(&report["workflow"]["film_stages"])
+            );
+        }
+        "off" => {
+            println!("  mode: off");
+            print_effects(params);
+            println!("  lut: inactive");
+            println!("  lut grade: inactive");
+            println!(
+                "  film stages: {}",
+                value(&report["workflow"]["film_stages"])
+            );
+        }
+        _ => {
+            println!("  mode: film");
+            println!("  film: {}", value(&report["film_profile"]));
+            println!("  print: {}", value(&report["print_profile"]));
+            println!("  route: {}", value(&params["workflow"]["route"]));
+            println!(
+                "  scan output: {}",
+                value(&params["scanner"]["scan_output"])
+            );
+        }
+    }
     println!("  seed: {}", value(&report["seed"]));
     if !report["seed_source"].is_null() {
         println!("  seed source: {}", value(&report["seed_source"]));
     }
-    record("CAPTURE ILLUMINANT", &report["capture_illuminant"]);
-    record("READOUT ILLUMINANT", &report["readout_illuminant"]);
-    record("SCANNER", &params["scanner"]);
-    record("SCANNER PROVENANCE", &report["scanner_provenance"]);
-    println!(
-        "  camera exposure: {} EV",
-        value(&params["camera"]["exposure_compensation_ev"])
-    );
-    println!(
-        "  auto exposure: {}",
-        value(&params["camera"]["auto_exposure"])
-    );
-    println!(
-        "  full-source long edge: {} mm",
-        value(&params["camera"]["film_format_mm"])
-    );
-    record(
-        "GRAIN (effective controls; conditions from describe --module film_render.grain)",
-        &params["film_render"]["grain"],
-    );
-    record("GRAIN DYE ROUTING", &report["film_grain_dye"]);
-    if params["film_render"]["grain"]["engine"] == "fotufilm" {
-        record(
-            "FOTUFILM FILM (authored effective appearance, not stock calibration)",
-            &params["film_render"]["grain"]["fotufilm"],
+    if film_mode {
+        record("CAPTURE ILLUMINANT", &report["capture_illuminant"]);
+        record("READOUT ILLUMINANT", &report["readout_illuminant"]);
+        record("SCANNER", &params["scanner"]);
+        record("SCANNER PROVENANCE", &report["scanner_provenance"]);
+        println!(
+            "  camera exposure: {} EV",
+            value(&params["camera"]["exposure_compensation_ev"])
+        );
+        println!(
+            "  auto exposure: {}",
+            value(&params["camera"]["auto_exposure"])
+        );
+        println!(
+            "  full-source long edge: {} mm",
+            value(&params["camera"]["film_format_mm"])
         );
         record(
-            "FOTUFILM FILM PROVENANCE AND READOUT",
-            &report["film_grain_fotufilm"],
+            "GRAIN (effective controls; conditions from describe --module film_render.grain)",
+            &params["film_render"]["grain"],
         );
+        record("GRAIN DYE ROUTING", &report["film_grain_dye"]);
+        if params["film_render"]["grain"]["engine"] == "fotufilm" {
+            record(
+                "FOTUFILM FILM (authored effective appearance, not stock calibration)",
+                &params["film_render"]["grain"]["fotufilm"],
+            );
+            record(
+                "FOTUFILM FILM PROVENANCE AND READOUT",
+                &report["film_grain_fotufilm"],
+            );
+        }
     }
     record(
         "BACKEND (requested, not device availability)",

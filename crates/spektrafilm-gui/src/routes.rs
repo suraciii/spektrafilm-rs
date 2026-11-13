@@ -23,10 +23,22 @@ pub(crate) mod vocabulary {
     /// whether the samples are encoded or linear.
     pub(crate) const CCTF: &str = "color component transfer function";
 
-    /// How the scanner surface is sequenced: the physical light source, the
-    /// output polarity, then the readout optics and digital sharpening.
-    pub(crate) const SCANNER_SEQUENCE: &str = "Scanner sequence: scan output polarity, then \
-         readout optics and digital sharpening.";
+    /// How the scanner surface is sequenced: the physical light source and
+    /// white reference, the output polarity, then the readout optics and
+    /// digital sharpening.
+    pub(crate) const SCANNER_SEQUENCE: &str = "Scanner sequence: white reference, scan output \
+         polarity, then readout optics and digital sharpening.";
+
+    /// `white reference`: the scan calibration reference.
+    pub(crate) const WHITE_REFERENCE: &str = "white reference";
+
+    pub(crate) const WHITE_REFERENCE_HELP: &str = "Select the reference the scanner divides by \
+         and adapts from. Clear film base is the default calibrated readout: a clear area of the \
+         scanned medium reads as output white. Readout illuminant opts out to the fixed readout \
+         light and reproduces upstream experimental 28bf883 scanner normalization.";
+
+    pub(crate) const WHITE_REFERENCE_CLEAR_FILM_BASE: &str = "Clear film base";
+    pub(crate) const WHITE_REFERENCE_READOUT_ILLUMINANT: &str = "Readout illuminant";
 
     /// `conversion style`: the named positive-conversion tone of the
     /// negative-to-positive interpretation.
@@ -65,6 +77,12 @@ pub(crate) mod vocabulary {
     /// The direct physical description of one exact route value, describing
     /// the process sequence the image takes. The descriptions are the constants
     /// below, so the selector table and any other reader share one wording.
+    /// The route reaches a photographic print stage, so the stored paper
+    /// reference contributes to the displayed result.
+    pub(crate) fn route_includes_print(value: &str) -> bool {
+        value.split(" > ").any(|stage| stage == "print")
+    }
+
     pub(crate) fn route_description(value: &str) -> &'static str {
         match value {
             "input" => INPUT,
@@ -104,27 +122,27 @@ pub(crate) struct RouteChoice {
 pub(crate) const CHOICES: [RouteChoice; 6] = [
     RouteChoice {
         value: "input",
-        label: "input",
+        label: "Color-manage input",
     },
     RouteChoice {
         value: "input > film > scan",
-        label: "input > film > scan",
+        label: "Expose film, scan film",
     },
     RouteChoice {
         value: "input > film > print > scan",
-        label: "input > film > print > scan",
+        label: "Expose film, print, scan",
     },
     RouteChoice {
         value: "input > convert-film > print > scan",
-        label: "input > convert-film > print > scan",
+        label: "Convert negative, print, scan",
     },
     RouteChoice {
         value: "input > convert-film > scan-minus-base",
-        label: "input > convert-film > scan-minus-base",
+        label: "Convert negative, scan (no base)",
     },
     RouteChoice {
         value: "input > convert-film > scan",
-        label: "input > convert-film > scan",
+        label: "Convert negative, scan",
     },
 ];
 
@@ -177,10 +195,29 @@ mod tests {
     }
 
     #[test]
+    fn only_print_routes_make_the_stored_paper_active() {
+        for route in [
+            "input > film > print > scan",
+            "input > convert-film > print > scan",
+        ] {
+            assert!(vocabulary::route_includes_print(route), "{route}");
+        }
+        for route in [
+            "input",
+            "input > film > scan",
+            "input > convert-film > scan",
+            "input > convert-film > scan-minus-base",
+        ] {
+            assert!(!vocabulary::route_includes_print(route), "{route}");
+        }
+    }
+
+    #[test]
     fn the_scanner_sequence_line_groups_the_controls_it_explains() {
         // The explanatory line is explanatory only: it names the groups without
         // renaming a runtime concept or adding a second control taxonomy.
         for group in [
+            "white reference",
             "scan output polarity",
             "readout optics",
             "digital sharpening",

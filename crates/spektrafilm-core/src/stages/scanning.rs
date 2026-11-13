@@ -449,8 +449,16 @@ fn scan_with_capture(
         gamut,
         scan_context,
         output_space,
-        profile.is_paper() || profile.is_positive(),
+        scanned_medium_is_positive(profile),
     )
+}
+
+/// A scanned paper or film print is a positive readout; a camera negative is
+/// not. Print films (e.g. VISION 2383) are negative-working materials but the
+/// print itself is the positive image, so common finishing applies after the
+/// print scan.
+fn scanned_medium_is_positive(profile: &Profile) -> bool {
+    profile.is_paper() || profile.is_positive() || profile.is_print_stock()
 }
 
 /// The post-capture tail shared by the full scan and a pre-captured readout:
@@ -557,14 +565,13 @@ fn finish_tail(
     // Grain consumes native display-encoded RGB, with no internal transfer
     // or primaries conversion. The scanned image supplies its output space.
     let grain_procedural_active = params.film_render.grain.active
-        && matches!(
-            params.film_render.grain.engine,
-            crate::params::grain::GrainEngine::Procedural
-        );
+        && params.film_render.grain.engine == crate::params::grain::GrainEngine::Procedural;
+    let grain_exposure_active = params.film_render.grain.exposure_active();
+    let grain_post_scan_active = params.film_render.grain.post_scan_active();
     // CMYK ink style is optional finishing, not a route: it applies to
     // any scanned base workflow after the scanner-domain effects.
     let cmyk_active = params.cmyk.active && params.cmyk.strength > 0.0;
-    let encoded_domain = params.io.output_cctf_encoding || grain_procedural_active;
+    let encoded_domain = params.io.output_cctf_encoding || grain_post_scan_active;
     if encoded_domain {
         let _encoding = super::StageObservation::cpu(
             backend,
@@ -606,6 +613,32 @@ fn finish_tail(
             }
         };
     }
+    if grain_exposure_active {
+        let grain_observation = super::StageObservation::new(backend, "grain_exposure");
+        let backend = grain_observation.backend(backend);
+        let grain = params
+            .film_render
+            .grain
+            .resolved_grain_exposure(params.random_seed);
+        let gpu_params = params
+            .film_render
+            .grain
+            .gpu_params_exposure(params.random_seed);
+        rgb = match backend.grain_exposure(&rgb, &gpu_params)? {
+            Some(image) => image,
+            None if backend.is_gpu() => {
+                return Err("grain_exposure: selected GPU has no device operation".into());
+            }
+            None => {
+                let _cpu = super::StageObservation::cpu(
+                    backend,
+                    "grain_exposure_cpu",
+                    spektrafilm_backend::telemetry::CpuReason::ExposureGrainUnsupported,
+                );
+                spektrafilm_model::grain::exposure::apply_cpu(&rgb, grain)
+            }
+        };
+    }
     // CMYK ink style is the final post-scan appearance, after scanner-domain
     // grain. A linear export uses the helper's finite transfer round-trip and
     // remains linear at the API boundary.
@@ -619,7 +652,7 @@ fn finish_tail(
     }
     // Linear exports retain the same grain realization as encoded exports.
     // Decode only the transfer; the stored same-space matrix ran above once.
-    if grain_procedural_active && !params.io.output_cctf_encoding {
+    if grain_post_scan_active && !params.io.output_cctf_encoding {
         let _encoding = super::StageObservation::cpu(
             backend,
             "output_transfer",
@@ -650,7 +683,7 @@ pub fn finish_capture(
         backend,
         gamut,
         &prepared.scan,
-        profile.is_paper() || profile.is_positive(),
+        scanned_medium_is_positive(profile),
     )
 }
 
@@ -823,6 +856,31 @@ mod tests {
         rgb.data.iter().map(|v| to_f64(*v)).collect()
     }
 
+    #[test]
+    fn polymax_scan_counts_silver_once_and_normalizes_paper_white() {
+        let source =
+            crate::profile::load_profile_by_name(&data_dir(), "kodak_polymax_fine_art").unwrap();
+        let mut paper = crate::profile::resolve_for_render(source, None);
+        let params = params();
+        let white = scan(&[0.; 3], &paper, &style::STANDARD, &params);
+        let density = [0., 0.25, 1., 2.];
+        let values: Vec<f64> = density.iter().flat_map(|d| [*d; 3]).collect();
+        let output = scan(&values, &paper, &style::STANDARD, &params);
+        for (rgb, d) in output.as_chunks::<3>().0.iter().zip(density) {
+            for channel in 0..3 {
+                assert!((rgb[channel] / white[channel] - 10.0f64.powf(-d)).abs() < 2e-6);
+            }
+        }
+        paper.data.base_density.fill(0.5);
+        let changed_base = scan(&values, &paper, &style::STANDARD, &params);
+        for (a, b) in output.iter().zip(changed_base) {
+            assert!(
+                (a - b).abs() < 2e-6,
+                "paper-white-relative output changed: {a} {b}"
+            );
+        }
+    }
+
     /// Neutral scan model self-checks, mirroring the research reference
     /// implementation (`k64-neutral-scan-v2`): a clear film reads the output
     /// white, so the base tint is removed rather than baked in. The residual
@@ -846,6 +904,32 @@ mod tests {
         }
     }
 
+    #[test]
+    fn readout_light_white_reference_matches_upstream_experimental_scan() {
+        let data = data_dir();
+        let paper = crate::profile::load_profile_by_name(&data, "kodak_portra_endura").unwrap();
+        let mut params = params();
+        params.scanner.white_reference =
+            crate::params::SCAN_WHITE_REFERENCE_READOUT_ILLUMINANT.into();
+        params.io.output_cctf_encoding = true;
+        let encoded = scan(
+            &[0.14570, 0.09163, 0.05642],
+            &paper,
+            &style::STANDARD,
+            &params,
+        );
+        // Upstream 28bf883 scanner output for the same flat print density.
+        // The remaining sub-2e-5 difference is its output gamut compression,
+        // which this direct scanner probe leaves identity.
+        let upstream = [0.77649408, 0.81077026, 0.84082886];
+        for (actual, expected) in encoded.iter().zip(upstream) {
+            assert!(
+                (actual - expected).abs() < 5e-5,
+                "upstream scan mismatch: {encoded:?} vs {upstream:?}"
+            );
+        }
+    }
+
     /// The readout light is a product constant selected by the material
     /// category, not a runtime knob.
     #[test]
@@ -857,6 +941,17 @@ mod tests {
         assert_eq!(negative.readout_illuminant(), "D50");
         assert_eq!(cine_print.readout_illuminant(), "BB5800");
         assert_eq!(bw_print.readout_illuminant(), "D50");
+    }
+
+    #[test]
+    fn print_film_is_a_positive_readout_but_camera_negative_is_not() {
+        let data = crate::test_support::data_dir();
+        let print = crate::profile::load_profile_by_name(&data, "kodak_2383").unwrap();
+        let camera = crate::profile::load_profile_by_name(&data, "kodak_vision3_250d").unwrap();
+        assert!(print.is_print_stock());
+        assert!(!print.is_positive());
+        assert!(scanned_medium_is_positive(&print));
+        assert!(!scanned_medium_is_positive(&camera));
     }
 
     #[test]
@@ -1232,7 +1327,7 @@ mod prepared_capture_tests {
                 &backend,
                 &gamut,
                 &color.scan,
-                profile.is_paper() || profile.is_positive(),
+                scanned_medium_is_positive(&profile),
             )
             .unwrap();
             let full = process(

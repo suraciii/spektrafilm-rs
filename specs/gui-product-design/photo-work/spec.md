@@ -4,7 +4,7 @@
 
 This target extends [GUI product design](../spec.md). It owns Original/Modified inspection, photograph adjustment records, and multi-photograph work.
 
-[GUI workflow](../../gui-workflow/spec.md) owns edits, history, and render identity. [Presets](../../presets/spec.md) owns reusable looks. [Photo export](../../photo-export/spec.md) owns rendering and file publication.
+[GUI workflow](../../gui-workflow/spec.md) owns edits, history, and render identity. [Presets](../../presets/spec.md) owns reusable presets. [Photo export](../../photo-export/spec.md) owns rendering and file publication.
 
 ## Original / Modified
 
@@ -62,7 +62,7 @@ Removing an entry MUST NOT delete its source, record, or exported files. Single-
 
 ### Copy adjustments
 
-Copy MUST require explicit scope and destination selection. It MUST disclose the controls replaced. Existing look, section, feature-profile, and operator-correction scopes remain authoritative.
+Copy MUST require explicit scope and destination selection. It MUST disclose the controls replaced. Existing preset, section, feature-profile, and operator-correction scopes remain authoritative.
 
 Copy MUST preserve destination source interpretation, RAW settings, geometry, source calibration, and delivery settings. Automatic frame setup MUST use each destination, not copied prepared values. Each destination MUST commit atomically or remain unchanged, with an individual outcome.
 
@@ -81,6 +81,8 @@ stateDiagram-v2
 ```
 
 Submission MUST capture each entry independently of later edits or removal. Pending RAW changes MUST remain distinct from the accepted decode being exported. Duplicate destinations MUST be resolved before submission; replacement of existing files MUST require an explicit choice.
+
+A queued destination MUST capture its resolved parent path at submission and preserve its selected filename. Publication MUST replace the final directory entry rather than follow a symlink at that filename.
 
 The queue MUST expose per-entry outcomes and cancellation. Live export operation status stays in the [header](../../gui-workflow/spec.md#labels-and-surfaces), separate from viewer rendering. A failed entry MUST NOT stop unrelated work.
 

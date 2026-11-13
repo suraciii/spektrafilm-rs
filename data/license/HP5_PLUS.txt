@@ -1,0 +1,30 @@
+ILFORD HP5 PLUS — source notice
+
+The profile and built-in look reconstruct coordinate data from:
+ILFORD HP5 PLUS Technical Information, November 2018 (6 pages),
+page 5 characteristic curve and page 1 wedge spectrogram.
+
+The technical sheet is published by Harman technology Limited / ILFORD.
+Copyright in the original technical material remains with its rights holder.
+No manufacturer permission to redistribute the technical sheet, artwork,
+or derived profile is claimed.
+
+New contributions in this repository — coordinate extraction, curve
+reconstruction, profile preparation, tests and documentation — are released
+under CC BY-SA 4.0:
+https://creativecommons.org/licenses/by-sa/4.0/
+
+The spectral ordinate is printed only as "Sensitivity" with 0.5/1.0 ticks.
+This implementation treats it as linear normalized sensitivity with zero at
+the frame bottom; that is an explicit interpretation, not a statement printed
+by Harman. Both linear and log readings can be anchored to the same ticks.
+The p1 curve is a 2850 K tungsten wedge response with no equal-energy
+correction; it is not equal-energy film sensitivity.
+
+The 380-355 nm and 660-780 nm tails in the profile are endpoint-slope
+extrapolations clamped at 1e-12, not measured. `densitometer=diffuse_visual`
+and `antihalation=weak` are conservative metadata assumptions.
+
+No physical film, scanner, grain, halation or color-accuracy calibration is
+claimed. This is an internal research profile, not a manufacturer-endorsed
+reproduction.

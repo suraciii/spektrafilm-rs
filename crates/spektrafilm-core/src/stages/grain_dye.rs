@@ -5,75 +5,60 @@
 //! readout to the requested output geometry — on the device through
 //! `dye_field` when the backend has one and the request is
 //! device-representable, otherwise with the CPU realization
-//! ([`spektrafilm_model::grain::dye::apply`]); scanner interpretation and
-//! encoding stay with their owners.
+//! ([`spektrafilm_model::grain::dye::texture::apply`]); scanner
+//! interpretation and encoding stay with their owners.
 //!
 //! Film coordinates come from the profile and the geometry: a crop selects
-//! the readout region only, so field cells keep their global film positions
-//! and overlapping reads agree.
+//! the readout region only, so the field keeps its global film positions and
+//! overlapping reads agree.
 use crate::WorkflowRoute;
 
-use rayon::prelude::*;
 use spektrafilm_math::image::ImageBuf;
-use spektrafilm_model::grain::dye::{self, DyeGrainParams, ReadoutGrid};
+use spektrafilm_model::grain::dye::{DyeGrainParams, ReadoutGrid, diagnostic_env, texture};
 
 use crate::params::RuntimeParams;
 use crate::params::grain::GrainEngine;
 use crate::profile::Profile;
 
-/// Relative granularity reference of `kodak_portra_800`. A channel at this
-/// preset keeps the configured `dye_event_area_um2`; this reference does not
-/// certify an absolute material event area or optical RMS.
-const GRANULARITY_REFERENCE: f64 = 6.0;
 /// Reference route: the film exposes the print paper, which is scanned.
 const PRINT_ROUTE: &str = "input > film > print > scan";
 /// Diagnostic route: the developed film is scanned directly.
 const FILM_SCAN_ROUTE: &str = "input > film > scan";
-/// Diagnostic pitch override, in micrometers. Production uses
-/// `support_um / 2`; numerical certification may ask for a finer globally
-/// fixed pitch (the model rejects a coarser one). It never changes the
-/// recipe.
+/// Retired field-pitch override. The continuous law samples the source
+/// lattice and has no independent cell pitch, so a request must fail loudly
+/// rather than silently rendering with different numerics.
 const CELL_UM_ENV: &str = "SPEKTRAFILM_GRAIN_DYE_CELL_UM";
 /// Diagnostic expected-value render: every Poisson count is replaced by its
 /// conditional mean. It never changes the recipe.
 const EXPECTATION_ENV: &str = "SPEKTRAFILM_GRAIN_DYE_EXPECTATION";
-/// Exact formed-cell optical response experiment.
-/// The exact-cell optical response experiment was retired with the cell field: the
-/// engine now has one continuous law whose readout is a density resample, so there is
-/// no per-cell optical integral left to drive. A request for the old mode must fail
-/// loudly rather than silently rendering without it.
+/// Retired exact-cell optical response experiment.
 const CELL_SPECTRAL_ENV: &str = "SPEKTRAFILM_GRAIN_DYE_CELL_SPECTRAL";
+/// Retired host-only mass-law experiment.
+const MASS_LAW_ENV: &str = "SPEKTRAFILM_GRAIN_DYE_MASS_LAW";
 
-pub fn validate_cell_spectral(params: &RuntimeParams) -> Result<bool, String> {
+/// Reject diagnostics that belonged to the retired cell field instead of
+/// silently changing their meaning.
+fn validate_retired_diagnostics(params: &RuntimeParams) -> Result<(), String> {
     if !active(params) {
-        return Ok(false);
+        return Ok(());
     }
-    match spektrafilm_model::grain::dye::diagnostic_env(CELL_SPECTRAL_ENV) {
-        Err(std::env::VarError::NotPresent) => Ok(false),
-        _ => Err(format!(
-            "{CELL_SPECTRAL_ENV} was retired with the exact-cell Dye field; the engine's \
-             continuous law has no per-cell optical response"
-        )),
+    for name in [CELL_UM_ENV, CELL_SPECTRAL_ENV, MASS_LAW_ENV] {
+        if diagnostic_env(name).is_ok() {
+            return Err(format!(
+                "{name} was retired with the exact-cell Dye field; the engine's continuous \
+                 law has no cell pitch, per-cell optical response, or host-only mass law"
+            ));
+        }
     }
+    Ok(())
 }
 
-/// Whether the resident chain can execute the field and its optical readout.
+/// Whether the resident chain can execute the field and its readout.
 /// Geometry comes from [`resident_readout_plan_for_dims`]; the chain adopts
-/// its field raster, collapses aperture exposure before paper development,
-/// and extracts any enclosing-lattice crop after downstream spatial optics.
+/// its field raster and extracts any enclosing-lattice crop after downstream
+/// spatial optics.
 pub fn resident_fence_supported(film: &Profile, params: &RuntimeParams) -> bool {
-    if !active(params) {
-        return false;
-    }
-    if validate_supported(film, params).is_err() {
-        return false;
-    }
-    if host_field_reason(true).is_none() {
-        return true;
-    }
-    // A host-only law can use the assembled density fence only when no
-    // optical interleave or raster switch is required.
-    !params.io.crop && params.io.upscale_factor == 1.0
+    active(params) && validate_supported(film, params).is_ok()
 }
 
 /// Integer rectangle, in source pixels or in the extended output grid.
@@ -207,31 +192,6 @@ pub fn crop_output_on_backend(
     Ok(crop_output(image, rect))
 }
 
-/// Return linear cell response to log exposure without adding another floor.
-pub fn log_response_on_backend(
-    mut image: ImageBuf,
-    backend: &dyn spektrafilm_backend::ComputeBackend,
-) -> Result<ImageBuf, String> {
-    if backend.is_gpu() {
-        match backend.dye_log10(&image) {
-            Some(result) => return result,
-            None if backend.explicit_gpu_request() => {
-                return Err(format!(
-                    "explicit GPU request cannot convert film grain Dye response to log exposure: {} has no device logarithm path",
-                    backend.name()
-                ));
-            }
-            None => {}
-        }
-    }
-    image.data.par_iter_mut().for_each(|value| {
-        *value = spektrafilm_math::precision::from_f64(
-            spektrafilm_math::precision::to_f64(*value).log10(),
-        );
-    });
-    Ok(image)
-}
-
 /// Whether an active Dye field must run.
 ///
 /// Preview mode, LUT mode and stochastic deactivation already clear
@@ -251,7 +211,7 @@ pub fn configuration_report(film: &Profile, params: &RuntimeParams) -> serde_jso
         film,
         film,
     )
-    .or_else(|| (!active).then(|| "Dye field formation is inactive".to_owned()));
+    .or_else(|| (!active).then(|| "Dye is inactive".to_owned()));
     serde_json::json!({
         "active": active,
         "effective_backend": null,
@@ -290,7 +250,7 @@ pub fn resolve_record(
 /// condition: color or monochrome filming stocks and film-scan or print routes
 /// (spec §Supported product boundary).
 pub fn validate_supported(film: &Profile, params: &RuntimeParams) -> Result<(), String> {
-    validate_cell_spectral(params)?;
+    validate_retired_diagnostics(params)?;
     resolve_record(film, params)?;
     if !active(params) {
         return Ok(());
@@ -383,8 +343,8 @@ pub fn geometry_for_dims(
 /// Resolved readout of one Dye field from the full developed source.
 ///
 /// The per-stage route, the resident device field and the resident host fence
-/// all read this one result, so the field lattice, the deferred crop and the
-/// aperture collapse cannot drift between routes.
+/// all read this one result, so the field lattice and the deferred crop cannot
+/// drift between routes.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ReadoutPlan {
     pub geometry: Geometry,
@@ -401,8 +361,7 @@ pub struct ReadoutPlan {
 /// optics need film around the requested crop: enlarger diffusion before the
 /// print, or scanner blur, unsharp masking, and print-viewing glare after it.
 /// The field then reads a proven enclosing full-film lattice and the caller
-/// extracts the requested rectangle after those stages. The aperture probe
-/// instead reads a finer lattice of the requested region.
+/// extracts the requested rectangle after those stages.
 pub fn readout_plan(
     source_width: u32,
     source_height: u32,
@@ -447,73 +406,19 @@ pub fn full_route_spatial_context(params: &RuntimeParams) -> bool {
     print_spatial_context(params) || scanner_spatial_context(params)
 }
 
-/// Relative per-channel event-area scale `k_c = (G_c / 6)^2` resolved from
-/// `rms_granularity` (design §Resolved parameter contract).
+/// Resolve the Dye look inputs from the resolved film profile and the
+/// runtime controls.
 ///
-/// This is a relative Dye strength scale, not a certified optical RMS target.
-/// Measured readout RMS also depends on density, support, and the receiver.
-/// Non-positive or non-finite values retain the reference-scale fallback;
-/// disabling grain uses `active`, not a zero preset. This is the only
-/// per-channel strength input.
-fn channel_event_scale(rms_granularity: [f64; 3]) -> [f64; 3] {
-    rms_granularity.map(|granularity| {
-        if !granularity.is_finite() || granularity <= 0.0 {
-            return 1.0;
-        }
-        let ratio = granularity / GRANULARITY_REFERENCE;
-        ratio * ratio
-    })
-}
-
-/// Resolve the Dye model inputs from the resolved film profile and the
-/// runtime controls. `resolve` owns the profile-derived inputs (layer
-/// maxima, composite curves, layer curves, film polarity) so every caller
-/// — render, expectation diagnostic, certification — feeds the model the
-/// same data.
+/// The profile-derived density curves and geometry are consumed by the
+/// upstream film chain that forms the density target. Repeating them here
+/// would duplicate work the continuous law does not read.
 pub fn resolve(film: &Profile, params: &RuntimeParams) -> Result<DyeGrainParams, String> {
     validate_supported(film, params)?;
     let grain = &params.film_render.grain;
-    let monochrome = film.is_bw();
-    let curves = crate::chain_prep::FilmCurves::prepare(film);
-    let layer_curves = film.density_curves_layers_f64();
-    if layer_curves.is_empty() || curves.normalized.is_empty() {
-        return Err(format!(
-            "film grain Dye: film profile '{}' has no density curves \
-             (density_curves / density_curves_layers), so the field cannot be \
-             resolved",
-            film.info.stock.as_deref().unwrap_or("<unnamed>")
-        ));
-    }
-    let layer_max = spektrafilm_model::density_curves::density_max_layers_f64(&layer_curves);
-    let support_um = grain.dye_support_um as f64;
     Ok(DyeGrainParams {
-        monochrome,
+        monochrome: film.is_bw(),
         dye_strength: grain.dye_strength,
         dye_scale: grain.dye_scale,
-        support_um,
-        cell_um: cell_um_override(),
-        event_area_um2: grain.dye_event_area_um2,
-        channel_correlation: grain.channel_correlation,
-        channel_scale: channel_event_scale(if monochrome {
-            [grain.rms_granularity[0]; 3]
-        } else {
-            grain.rms_granularity
-        }),
-        particle_scale_sublayers: grain.particle_scale_sublayers,
-        density_min: if monochrome {
-            [grain.density_min[0]; 3]
-        } else {
-            grain.density_min
-        },
-        uniformity: if monochrome {
-            [grain.uniformity[0]; 3]
-        } else {
-            grain.uniformity
-        },
-        layer_max,
-        composite_curves: curves.normalized.clone(),
-        layer_curves,
-        positive_film: film.is_positive(),
         seed: params.random_seed,
         expectation: expectation_requested(),
     })
@@ -522,12 +427,11 @@ pub fn resolve(film: &Profile, params: &RuntimeParams) -> Result<DyeGrainParams,
 /// Read the requested film region out of the full developed source.
 ///
 /// The field resolves on the device whenever the backend has one and the
-/// request is device-representable (`device_params`): the same resolved
-/// model tables, formation taps and readout grid go to the backend's
-/// `dye_field`. A request the device cannot realize — the experimental
-/// mass-law selector, or a backend without a device field path — resolves
-/// the field on the CPU with the published reason, and an explicit GPU
-/// request fails by name instead of demoting silently.
+/// request is device-representable (`device_params`): the same mapped look
+/// values and readout grid go to the backend's `dye_field`. A backend
+/// without a device field path resolves the field on the CPU with the
+/// published reason, and an explicit GPU request fails by name instead of
+/// demoting silently.
 pub fn readout(
     source: &ImageBuf,
     film: &Profile,
@@ -536,12 +440,6 @@ pub fn readout(
     grid: ReadoutGrid,
     backend: &dyn spektrafilm_backend::ComputeBackend,
 ) -> Result<ImageBuf, String> {
-    if resolve_record(film, params)?.is_some() {
-        return Err(
-            "scalar record law requires exact-cell optical readout, not density-only stage collection"
-                .into(),
-        );
-    }
     let resolved = resolve(film, params)?;
     if backend.is_gpu() {
         match device_params(&resolved, source_pitch_um, grid) {
@@ -554,7 +452,8 @@ pub fn readout(
                     origin_um = ?grid.origin_um,
                     output_pitch_um = ?grid.pitch_um,
                     output = format_args!("{}x{}", grid.width, grid.height),
-                    support_um = resolved.support_um,
+                    dye_strength = resolved.dye_strength,
+                    dye_scale = resolved.dye_scale,
                     expectation = resolved.expectation,
                     "film grain Dye: field readout on GPU"
                 );
@@ -607,14 +506,14 @@ fn cpu_field(
     );
     // The Dye grain law: the record density is built from a correlated, band-limited
     // field whose amplitude follows the derived granularity curve. The engine's law
-    // constants come from ClumpParams::delivered; the recipe's strength and scale map
+    // constants come from DyeLawParams::delivered; the recipe's strength and scale map
     // onto them in `law_params`, and the mean is preserved exactly: E[D] = t for every
     // strength. The device receives the same mapped law, so both executors realize it.
     let params = law_params(resolved);
-    spektrafilm_model::grain::dye::texture::apply(
+    texture::apply(
         source,
         source_pitch_um,
-        &spektrafilm_model::grain::dye::texture::ReadoutGeometry {
+        &texture::ReadoutGeometry {
             origin_um: grid.origin_um,
             pitch_um: grid.pitch_um,
             width: grid.width,
@@ -624,75 +523,18 @@ fn cpu_field(
     )
 }
 
-/// Read linear route response with the same formed field and exact cell overlaps.
-/// The typed device response runs between formation and fractional integration;
-/// the closure is used only by the independent CPU reference.
-// Source, film conditioning, readout geometry, and paired device/CPU responses
-// remain explicit inputs to this low-level readout boundary.
-#[allow(clippy::too_many_arguments)]
-pub fn readout_with_response(
-    source: &ImageBuf,
-    film: &Profile,
-    params: &RuntimeParams,
-    source_pitch_um: f64,
-    grid: ReadoutGrid,
-    backend: &dyn spektrafilm_backend::ComputeBackend,
-    device_response: &spektrafilm_backend::DyeResponseGpuParams<'_>,
-    response: impl Fn(&ImageBuf, &dyn spektrafilm_backend::ComputeBackend) -> Result<ImageBuf, String>
-    + Sync,
-) -> Result<ImageBuf, String> {
-    let resolved = resolve(film, params)?;
-    if resolved.dye_strength != 1.0 || resolved.dye_scale != 1.0 {
-        return Err(
-            "film grain Dye: the exact-cell optical response path realizes the capacity model \
-             and does not implement grain strength or grain scale; use the density-only field \
-             or the default look values"
-                .into(),
-        );
-    }
-    if backend.is_gpu() {
-        match device_params(&resolved, source_pitch_um, grid) {
-            Ok(device) => {
-                let observation = super::StageObservation::new(backend, "grain_dye_field");
-                let observed = observation.backend(backend);
-                match observed.dye_field_with_response(source, &device, device_response) {
-                    Some(result) => return result,
-                    None if backend.explicit_gpu_request() => {
-                        return Err(format!(
-                            "explicit GPU request cannot run film grain Dye exact-cell response: {} has no device response path",
-                            backend.name()
-                        ));
-                    }
-                    None => {}
-                }
-            }
-            Err(reason) if backend.explicit_gpu_request() => return Err(reason),
-            Err(_) => {}
-        }
-    }
-    let observation = super::StageObservation::cpu(
-        backend,
-        "grain_dye_field",
-        spektrafilm_backend::telemetry::CpuReason::DyeGrainFieldCpu,
-    );
-    let backend = observation.backend(backend);
-    dye::apply_with_response(source, source_pitch_um, grid, &resolved, |cells| {
-        response(cells, backend)
-    })
-}
-
 /// The delivered law with the recipe's two effective Dye look controls
 /// applied. This is the one mapping both executors consume.
 ///
 /// The look strength scales the correlated field's amplitude and the event
-/// count's standard deviation together: the field amplitude scales `white`
-/// and `base`, while the event mass `q` enters the count variance as its
-/// square root, so `q` scales by the square. The per-record ratio and the
-/// derived density taper are untouched. A zero strength is the deterministic
-/// limit: the law replaces every draw by its conditional mean, so no random
-/// grain or residual count noise remains.
-fn law_params(resolved: &DyeGrainParams) -> spektrafilm_model::grain::dye::texture::ClumpParams {
-    let mut params = spektrafilm_model::grain::dye::texture::ClumpParams::delivered();
+/// count's standard deviation together: the field amplitude scales `white`,
+/// while the event mass `q` enters the count variance as its square root, so
+/// `q` scales by the square. The per-record ratio and the derived density
+/// taper are untouched. A zero strength is the deterministic limit: the law
+/// replaces every draw by its conditional mean, so no random grain or
+/// residual count noise remains.
+fn law_params(resolved: &DyeGrainParams) -> texture::DyeLawParams {
+    let mut params = texture::DyeLawParams::delivered();
     let strength = resolved.dye_strength;
     let mut zero = strength == 0.0;
     if strength > 0.0 {
@@ -701,7 +543,6 @@ fn law_params(resolved: &DyeGrainParams) -> spektrafilm_model::grain::dye::textu
         // request resolves to the deterministic limit on both.
         let q = params.q * strength * strength;
         if q >= f64::from(f32::MIN_POSITIVE) {
-            params.base *= strength;
             params.white *= strength;
             params.q = q;
         } else {
@@ -715,15 +556,9 @@ fn law_params(resolved: &DyeGrainParams) -> spektrafilm_model::grain::dye::textu
     params
 }
 
-/// Device parameters for one readout of the resolved model: the channel
-/// tables and formation taps the device evaluates against, and the output
-/// grid.
-///
-/// This is the host→device mapping of the Dye field — the resident chain
-/// and the per-stage readout share it — so the device cannot drift from the
-/// CPU model's conditioning. The experimental mass-law selector has no
-/// device count law and is rejected by name; expectation mode and the
-/// field-pitch override are part of the production law and map through.
+/// Device parameters for one readout: the mapped look values and the output
+/// grid. The host and device read the same law constants; this record only
+/// carries the recipe-dependent values.
 fn device_params(
     resolved: &DyeGrainParams,
     source_pitch_um: f64,
@@ -808,19 +643,11 @@ pub fn resident_readout_plan_for_dims(
 /// The device/host decision the per-stage readout and the capability output
 /// share; the resident chain assembly decides through
 /// [`resident_device_params`], which rejects the same requests by name. The
-/// device realizes the fixed-mass conditional Poisson count law at any
-/// readout geometry, including exact-cell response, aperture, expectation,
-/// and field-pitch diagnostics. The experimental mass-law selector remains
-/// host-only.
+/// device realizes the continuous conditional count law at any readout
+/// geometry, including expectation mode and non-default look controls.
 fn host_field_reason(gpu_backend: bool) -> Option<String> {
     if !gpu_backend {
         return Some("the selected backend has no device field path".to_owned());
-    }
-    if dye::check_device_mass_law().is_err() {
-        return Some(
-            "the experimental SPEKTRAFILM_GRAIN_DYE_MASS_LAW mass law has no device field path"
-                .to_owned(),
-        );
     }
     None
 }
@@ -865,15 +692,8 @@ pub fn effective_backend_note(film: &Profile, params: &RuntimeParams, gpu_backen
     format!("film grain Dye: {executor}, {route}")
 }
 
-fn cell_um_override() -> Option<f64> {
-    spektrafilm_model::grain::dye::diagnostic_env(CELL_UM_ENV)
-        .ok()
-        .and_then(|value| value.parse::<f64>().ok())
-        .filter(|value| value.is_finite() && *value > 0.0)
-}
-
 fn expectation_requested() -> bool {
-    spektrafilm_model::grain::dye::diagnostic_env(EXPECTATION_ENV).is_ok_and(|value| value == "1")
+    diagnostic_env(EXPECTATION_ENV).is_ok_and(|value| value == "1")
 }
 
 #[cfg(test)]
@@ -903,6 +723,23 @@ mod tests {
         }
     }
 
+    fn correlation(a: &[f64], b: &[f64]) -> f64 {
+        let n = a.len().min(b.len()) as f64;
+        let ma = a.iter().sum::<f64>() / n;
+        let mb = b.iter().sum::<f64>() / n;
+        let mut cov = 0.0;
+        let mut va = 0.0;
+        let mut vb = 0.0;
+        for (x, y) in a.iter().zip(b) {
+            let dx = x - ma;
+            let dy = y - mb;
+            cov += dx * dy;
+            va += dx * dx;
+            vb += dy * dy;
+        }
+        cov / (va * vb).sqrt().max(1e-12)
+    }
+
     fn max_abs_diff(a: &ImageBuf, b: &ImageBuf) -> f64 {
         assert_eq!(a.data.len(), b.data.len());
         a.data
@@ -926,27 +763,13 @@ mod tests {
         max
     }
 
-    fn block_average_linear(fine: &ImageBuf, factor: u32) -> ImageBuf {
-        let mut coarse = ImageBuf::new(fine.width / factor, fine.height / factor);
-        for y in 0..coarse.height {
-            for x in 0..coarse.width {
-                let mut sum = [0.0; 3];
-                for dy in 0..factor {
-                    for dx in 0..factor {
-                        let pixel = fine.get(x * factor + dx, y * factor + dy);
-                        for c in 0..3 {
-                            sum[c] += pixel[c] as f64;
-                        }
-                    }
-                }
-                coarse.set(
-                    x,
-                    y,
-                    sum.map(|value| from_f64(value / (factor * factor) as f64)),
-                );
-            }
+    fn readout_geometry(grid: ReadoutGrid) -> texture::ReadoutGeometry {
+        texture::ReadoutGeometry {
+            origin_um: grid.origin_um,
+            pitch_um: grid.pitch_um,
+            width: grid.width,
+            height: grid.height,
         }
-        coarse
     }
 
     /// Smooth CMY density target both reads can integrate.
@@ -997,7 +820,7 @@ mod tests {
                 .dye_field(&source, &device)
                 .expect("device field path")
                 .expect("device field runs");
-            let mut law = spektrafilm_model::grain::dye::texture::ClumpParams::delivered();
+            let mut law = spektrafilm_model::grain::dye::texture::DyeLawParams::delivered();
             law.seed = resolved.seed;
             let cpu = spektrafilm_model::grain::dye::texture::apply(
                 &source,
@@ -1036,6 +859,13 @@ mod tests {
             assert!(
                 (ratio - 1.0).abs() <= 0.15,
                 "amplitude at lambda {label}: device is {ratio:.3} of the host"
+            );
+            let gpu_values: Vec<f64> = gpu.data.chunks(3).map(|p| p[1] as f64).collect();
+            let cpu_values: Vec<f64> = cpu.data.chunks(3).map(|p| p[1] as f64).collect();
+            let corr = correlation(&gpu_values, &cpu_values);
+            assert!(
+                corr > 0.98,
+                "the device and host must draw the same field at lambda {label}: correlation {corr:.4}"
             );
         }
     }
@@ -1107,44 +937,39 @@ mod tests {
                 height: 131,
             },
         ];
-        for cell in [None, Some(resolved.support_um / 4.0)] {
-            resolved.cell_um = cell;
-            for grid in grids {
-                let device = device_params(&resolved, 2.0, grid).unwrap();
-                let gpu_out =
-                    spektrafilm_backend::ComputeBackend::dye_field(&*backend, &source, &device)
-                        .expect("the backend exposes a device field path")
-                        .expect("the device field runs");
-                // The reference is the engine's law, not the retired capacity
-                // field: the device must reproduce the host model exactly in
-                // expectation, for every readout grid.
-                let mut reference =
-                    spektrafilm_model::grain::dye::texture::ClumpParams::delivered();
-                reference.expectation = resolved.expectation;
-                reference.seed = resolved.seed;
-                let cpu_out = spektrafilm_model::grain::dye::texture::apply(
-                    &source,
-                    2.0,
-                    &spektrafilm_model::grain::dye::texture::ReadoutGeometry {
-                        origin_um: grid.origin_um,
-                        pitch_um: grid.pitch_um,
-                        width: grid.width,
-                        height: grid.height,
-                    },
-                    &reference,
-                )
-                .unwrap();
-                assert_eq!(
-                    (gpu_out.width, gpu_out.height),
-                    (cpu_out.width, cpu_out.height)
-                );
-                let worst = max_abs_diff(&gpu_out, &cpu_out);
-                eprintln!(
-                    "Dye expectation on {}: cell {cell:?}, grid {grid:?}, max {worst:.2e}",
-                    backend.name()
-                );
-                assert!(worst <= 1e-4, "device vs CPU expectation error {worst:.2e}");
-            }
+        for grid in grids {
+            let device = device_params(&resolved, 2.0, grid).unwrap();
+            let gpu_out =
+                spektrafilm_backend::ComputeBackend::dye_field(&*backend, &source, &device)
+                    .expect("the backend exposes a device field path")
+                    .expect("the device field runs");
+            // The reference is the engine's law: the device must reproduce the
+            // host model exactly in expectation, for every readout grid.
+            let mut reference = texture::DyeLawParams::delivered();
+            reference.expectation = resolved.expectation;
+            reference.seed = resolved.seed;
+            let cpu_out = texture::apply(
+                &source,
+                2.0,
+                &texture::ReadoutGeometry {
+                    origin_um: grid.origin_um,
+                    pitch_um: grid.pitch_um,
+                    width: grid.width,
+                    height: grid.height,
+                },
+                &reference,
+            )
+            .unwrap();
+            assert_eq!(
+                (gpu_out.width, gpu_out.height),
+                (cpu_out.width, cpu_out.height)
+            );
+            let worst = max_abs_diff(&gpu_out, &cpu_out);
+            eprintln!(
+                "Dye expectation on {}: grid {grid:?}, max {worst:.2e}",
+                backend.name()
+            );
+            assert!(worst <= 1e-4, "device vs CPU expectation error {worst:.2e}");
         }
     }
 
@@ -1268,83 +1093,6 @@ mod tests {
     }
 
     #[test]
-    fn cell_spectral_matches_independent_aligned_print_and_scan_reading() {
-        let film = load("kodak_portra_800");
-        let print = load("kodak_portra_endura");
-        let backend = spektrafilm_backend::cpu_backend::CpuBackend;
-        let source = density_target(16, 12);
-        let mut params = supported_params();
-        params.random_seed = 19273;
-        params.io.output_cctf_encoding = true;
-        let mut model = resolve(&film, &params).unwrap();
-        model.cell_um = Some(model.support_um / 2.0);
-        let cell = model.cell_um.unwrap();
-        let fine_grid = ReadoutGrid {
-            origin_um: [0.0; 2],
-            pitch_um: [cell; 2],
-            width: 32,
-            height: 24,
-        };
-        let coarse_grid = ReadoutGrid {
-            origin_um: [0.0; 2],
-            pitch_um: [4.0 * cell; 2],
-            width: 8,
-            height: 6,
-        };
-        let formed_cells = dye::apply(&source, cell * 2.0, fine_grid, &model).unwrap();
-        let gamut = crate::gamut_compression::OutputGamutCompress::identity();
-        let illuminant =
-            crate::spectral_service::select_illuminant_f64(&print.info.reference_illuminant);
-        for preflash in [[0.0; 3], [0.01, 0.02, 0.03]] {
-            let expose = |cells: &ImageBuf| {
-                super::super::printing::expose_linear_calibrated(
-                    cells,
-                    &film,
-                    &print,
-                    &params,
-                    &backend,
-                    &illuminant,
-                    0.7,
-                    preflash,
-                )
-            };
-            let fine = expose(&formed_cells).unwrap();
-            let expected = block_average_linear(&fine, 4);
-            let actual =
-                dye::apply_with_response(&source, cell * 2.0, coarse_grid, &model, expose).unwrap();
-            assert!(max_abs_diff(&actual, &expected) < read_tolerance());
-        }
-        params.io.scan_film = true;
-        params.workflow.route = FILM_SCAN_ROUTE.into();
-        for mode in ["direct_scan", "negative_to_positive"] {
-            params.scanner.scan_output = mode.into();
-            let capture = |cells: &ImageBuf| {
-                super::super::scanning::capture_linear(cells, &film, &params, &backend)
-            };
-            let fine_capture = capture(&formed_cells).unwrap();
-            let expected = block_average_linear(&fine_capture, 4);
-            let actual =
-                dye::apply_with_response(&source, cell * 2.0, coarse_grid, &model, capture)
-                    .unwrap();
-            assert!(max_abs_diff(&actual, &expected) < read_tolerance());
-            let finish = |rgb| {
-                super::super::scanning::finish_capture(rgb, &film, &params, &backend, &gamut)
-                    .unwrap()
-            };
-            assert!(max_abs_diff(&finish(actual.clone()), &finish(expected)) < read_tolerance());
-            let crop_grid = ReadoutGrid {
-                origin_um: [8.0 * cell, 4.0 * cell],
-                width: 4,
-                height: 3,
-                ..coarse_grid
-            };
-            let cropped =
-                dye::apply_with_response(&source, cell * 2.0, crop_grid, &model, capture).unwrap();
-            assert!(max_abs_diff_at(&actual, &cropped, 2, 1) < read_tolerance());
-        }
-    }
-
-    #[test]
     fn unsupported_conditions_fail_with_actionable_errors() {
         let film = load("kodak_portra_800");
         let params = supported_params();
@@ -1362,13 +1110,19 @@ mod tests {
             crate::params_builder::apply_film_specifics(&mut stock_params, &other);
             let resolved = resolve(&other, &stock_params).unwrap();
             let source = ImageBuf::from_data(2, 2, vec![from_f64(0.2); 12]);
-            let grid = ReadoutGrid {
-                origin_um: [-0.25, 0.75],
-                pitch_um: [2.125, 1.375],
-                width: 2,
-                height: 2,
-            };
-            let actual = dye::apply(&source, 2.0, grid, &resolved).unwrap();
+            let law = law_params(&resolved);
+            let actual = texture::apply(
+                &source,
+                2.0,
+                &texture::ReadoutGeometry {
+                    origin_um: [-0.25, 0.75],
+                    pitch_um: [2.125, 1.375],
+                    width: 2,
+                    height: 2,
+                },
+                &law,
+            )
+            .unwrap();
             for pixel in actual.pixels() {
                 assert_eq!(pixel[0], pixel[1], "{stock} time {time}");
                 assert_eq!(pixel[0], pixel[2], "{stock} time {time}");
@@ -1395,35 +1149,25 @@ mod tests {
                 stock_params.workflow.route = route.into();
                 stock_params.io.scan_film = scan_film;
                 stock_params.scanner.scan_output = scan_output.into();
-                let resolved = resolve(&other, &stock_params).unwrap();
-                if stock == "kodak_vision3_500t" {
-                    assert_eq!(
-                        resolved.channel_scale,
-                        [2.25, (13.0_f64 / 6.0).powi(2), 25.0]
-                    );
-                }
+                resolve(&other, &stock_params).unwrap();
             }
         }
 
-        // Positive color filming stocks use the same field with the polarity
-        // carried into the composite lookup axis.
+        // Positive color filming stocks use the same field; polarity is
+        // carried by the upstream film-density curve direction.
         for stock in ["fujifilm_provia_100f", "fujifilm_velvia_100"] {
             let other = load(stock);
             let mut stock_params = params.clone();
             stock_params.workflow.route = PRINT_ROUTE.into();
             stock_params.io.scan_film = false;
             validate_supported(&other, &stock_params).unwrap();
-            let resolved = resolve(&other, &stock_params).unwrap();
-            assert!(
-                resolved.positive_film,
-                "{stock} must resolve positive polarity"
-            );
+            resolve(&other, &stock_params).unwrap();
 
             stock_params.workflow.route = FILM_SCAN_ROUTE.into();
             stock_params.io.scan_film = true;
             stock_params.scanner.scan_output = "direct_scan".into();
             validate_supported(&other, &stock_params).unwrap();
-            assert!(resolve(&other, &stock_params).unwrap().positive_film);
+            resolve(&other, &stock_params).unwrap();
         }
         // Print stocks share `type = "negative"` and `use = "still"` but are
         // not filming emulsions.
@@ -1456,10 +1200,7 @@ mod tests {
             format.camera.film_format_mm = mm;
             format.validate().unwrap();
             validate_supported(&film, &format).unwrap();
-            let resolved = resolve(&film, &format).unwrap();
-            assert_eq!(resolved.support_um, 3.5);
-            assert_eq!(resolved.event_area_um2, 1.28);
-            assert_eq!(resolved.cell_um, None);
+            resolve(&film, &format).unwrap();
         }
 
         // The diagnostic film-scan route runs for both scan outputs.
@@ -1494,54 +1235,6 @@ mod tests {
         inactive.film_render.grain.active = false;
         inactive.workflow.route = "input".into();
         assert!(validate_supported(&film, &inactive).is_ok());
-    }
-
-    #[test]
-    fn zero_capacity_components_preserve_the_expected_density() {
-        for stock in ["kodak_doublex", "kodak_portra_800"] {
-            let mut film = crate::profile::resolve_for_render(load(stock), None);
-            film.data.density_curves_model = None;
-            film.data.log_exposure = vec![0.0, 1.0];
-            film.data.density_curves = vec![vec![0.0; 3], vec![1.0; 3]];
-            film.data.density_curves_layers = vec![
-                vec![vec![0.0; 3]; 3],
-                vec![vec![0.0; 3], vec![0.25; 3], vec![0.75; 3]],
-            ];
-            let mut params = supported_params();
-            crate::params_builder::apply_film_specifics(&mut params, &film);
-            let mut resolved = resolve(&film, &params).unwrap();
-            resolved.expectation = true;
-            let source = ImageBuf::from_data(2, 2, vec![from_f64(0.4); 12]);
-            let grid = ReadoutGrid {
-                origin_um: [0.0; 2],
-                pitch_um: [2.0; 2],
-                width: 2,
-                height: 2,
-            };
-            let output = dye::apply(&source, 2.0, grid, &resolved).unwrap();
-            for value in output.data {
-                assert!((value as f64 - 0.4).abs() < read_tolerance(), "{stock}");
-            }
-        }
-    }
-
-    #[test]
-    fn stock_granularity_alone_sets_the_channel_scale() {
-        // The reference preset keeps the configured event area.
-        assert_eq!(channel_event_scale([6.0; 3]), [1.0; 3]);
-        // Square law: a quarter of the granularity is a sixteenth of the area.
-        assert_eq!(channel_event_scale([1.5, 3.0, 12.0]), [0.0625, 0.25, 4.0]);
-        // Unset granularity resolves to the reference scale.
-        assert_eq!(channel_event_scale([0.0, f64::NAN, 6.0]), [1.0; 3]);
-
-        // Only the granularity preset separates the channels.
-        let film = load("kodak_portra_800");
-        let mut params = supported_params();
-        params.film_render.grain.rms_granularity = [6.0, 6.0, 12.0];
-        params.film_render.grain.dye_event_area_um2 = 1.28;
-        let resolved = resolve(&film, &params).unwrap();
-        assert_eq!(resolved.channel_scale, [1.0, 1.0, 4.0]);
-        assert_eq!(resolved.event_area_um2, 1.28);
     }
 
     #[test]
@@ -1640,9 +1333,9 @@ mod tests {
         assert_eq!(grid.pitch_um, [1.25; 2]);
         assert_eq!((keep.x, keep.y, keep.width, keep.height), (2, 2, 8, 8));
         let film = load("kodak_portra_800");
-        let resolved = resolve(&film, &params).unwrap();
-        let full = dye::apply(&source, 2.0, grid, &resolved).unwrap();
-        let crop = dye::apply(&source, 2.0, requested.grid(), &resolved).unwrap();
+        let law = law_params(&resolve(&film, &params).unwrap());
+        let full = texture::apply(&source, 2.0, &readout_geometry(grid), &law).unwrap();
+        let crop = texture::apply(&source, 2.0, &readout_geometry(requested.grid()), &law).unwrap();
         assert!(max_abs_diff_at(&full, &crop, keep.x, keep.y) <= read_tolerance());
     }
 
@@ -1650,78 +1343,38 @@ mod tests {
     fn crop_read_agrees_with_the_full_frame() {
         let film = load("kodak_portra_800");
         let params = supported_params();
-        let resolved = resolve(&film, &params).unwrap();
+        let law = law_params(&resolve(&film, &params).unwrap());
         // Fractional source-to-field footprints, across two output bands.
         let pitch = 3.1;
         let source = density_target(96, 160);
-        let full = dye::apply(
+        let full = texture::apply(
             &source,
             pitch,
-            ReadoutGrid {
+            &readout_geometry(ReadoutGrid {
                 origin_um: [0.0; 2],
                 pitch_um: [pitch; 2],
                 width: 96,
                 height: 160,
-            },
-            &resolved,
+            }),
+            &law,
         )
         .unwrap();
-        let crop = dye::apply(
+        let crop = texture::apply(
             &source,
             pitch,
-            ReadoutGrid {
+            &readout_geometry(ReadoutGrid {
                 origin_um: [16.0 * pitch, 40.0 * pitch],
                 pitch_um: [pitch; 2],
                 width: 32,
                 height: 48,
-            },
-            &resolved,
+            }),
+            &law,
         )
         .unwrap();
         let diff = max_abs_diff_at(&full, &crop, 16, 40);
         assert!(
             diff <= read_tolerance(),
             "crop read diverged from the full frame by {diff}"
-        );
-    }
-
-    #[test]
-    fn dye_support_is_independent_of_the_event_area() {
-        let film = load("kodak_portra_800");
-        let params = supported_params();
-        let pitch = 3.5;
-        let grid = ReadoutGrid {
-            origin_um: [0.0; 2],
-            pitch_um: [pitch; 2],
-            width: 64,
-            height: 48,
-        };
-        let source = density_target(64, 48);
-        let coarser = resolve(&film, &params).unwrap();
-
-        // Expected-value render: the support is fixed, only the statistics
-        // scale with the event area.
-        let mut expected_a = coarser.clone();
-        expected_a.expectation = true;
-        let mut expected_b = expected_a.clone();
-        expected_b.event_area_um2 = expected_a.event_area_um2 * 10.0;
-        let a = dye::apply(&source, pitch, grid, &expected_a).unwrap();
-        let b = dye::apply(&source, pitch, grid, &expected_b).unwrap();
-        let mean_diff = max_abs_diff(&a, &b);
-        assert!(
-            mean_diff <= 1e-5,
-            "the dye support must not follow the event area (diff {mean_diff})"
-        );
-
-        // Realized field: the same support, different statistical strength.
-        let mut realized_b = coarser.clone();
-        realized_b.event_area_um2 *= 10.0;
-        let ra = dye::apply(&source, pitch, grid, &coarser).unwrap();
-        let rb = dye::apply(&source, pitch, grid, &realized_b).unwrap();
-        let noise_diff = max_abs_diff(&ra, &rb);
-        assert!(
-            noise_diff > 1e-4,
-            "event area must control statistical strength (diff {noise_diff})"
         );
     }
 
@@ -1769,7 +1422,7 @@ mod tests {
         for mm in [24.0, 65.0, 120.0] {
             let mut params = supported_params();
             params.camera.film_format_mm = mm;
-            let model = resolve(&film, &params).unwrap();
+            let law = law_params(&resolve(&film, &params).unwrap());
             // A bounded film window of a larger source, with a nonzero origin.
             let q = crate::resizing::pixel_size_um(mm, 12000, 8000);
             let full = ReadoutGrid {
@@ -1778,14 +1431,14 @@ mod tests {
                 width: 16,
                 height: 8,
             };
-            let all = dye::apply(&target, q, full, &model).unwrap();
+            let all = texture::apply(&target, q, &readout_geometry(full), &law).unwrap();
             for x in [0, 8] {
                 let tile = ReadoutGrid {
                     origin_um: [(10 + x) as f64 * q, 8.0 * q],
                     width: 8,
                     ..full
                 };
-                let part = dye::apply(&target, q, tile, &model).unwrap();
+                let part = texture::apply(&target, q, &readout_geometry(tile), &law).unwrap();
                 assert!(max_abs_diff_at(&all, &part, x, 0) <= read_tolerance());
             }
             let crop = ReadoutGrid {
@@ -1794,7 +1447,7 @@ mod tests {
                 height: 4,
                 ..full
             };
-            let part = dye::apply(&target, q, crop, &model).unwrap();
+            let part = texture::apply(&target, q, &readout_geometry(crop), &law).unwrap();
             assert!(max_abs_diff_at(&all, &part, 3, 2) <= read_tolerance());
         }
     }
@@ -1802,7 +1455,7 @@ mod tests {
     /// target, with no random field and no residual count noise.
     #[test]
     fn zero_dye_strength_returns_the_target() {
-        use spektrafilm_model::grain::dye::texture::{ClumpParams, ReadoutGeometry, apply};
+        use spektrafilm_model::grain::dye::texture::{DyeLawParams, ReadoutGeometry, apply};
         let film = load("kodak_portra_400");
         let mut params = supported_params();
         params.film_render.grain.dye_strength = 0.0;
@@ -1855,7 +1508,7 @@ mod tests {
         let expected = apply(&target, 50_000.0, &coarse, &expectation).unwrap();
         assert!(max_abs_diff(&out, &expected) <= 1e-5);
 
-        let delivered = ClumpParams::delivered();
+        let delivered = DyeLawParams::delivered();
         assert_eq!(delivered.strength, [1.0, 1.0, 1.18]);
     }
 

@@ -1,0 +1,25 @@
+Kodak Tri-X 400 / 400TX source-curve reconstruction
+
+Copyright (c) 2026 SpektraFilm contributors (coordinate extraction, numerical
+reconstruction, and authored builtin preset).
+New contributions: Creative Commons Attribution-ShareAlike 4.0 International.
+https://creativecommons.org/licenses/by-sa/4.0/
+https://creativecommons.org/licenses/by-sa/4.0/legalcode
+
+Original Kodak technical material remains the property of its rights holder.
+Source: KODAK PROFESSIONAL TRI-X 320 and 400 Films, F-4017, October 2021,
+page 8 (35mm T-MAX six-minute characteristic and threshold sensitivities).
+https://kodakprofessional.com/sites/default/files/wysiwyg/film/f4017_trix_320400.pdf
+The manufacturer PDF and complete SVG artwork are not redistributed.
+A license on new contributions does not grant rights in the Kodak publication.
+
+Jan Lohse's pinned digitization was used for independent cross-check only;
+its dictionaries are not copied into the source arrays:
+https://github.com/JanLohse/spectral_film_lut/blob/6307a98f3cf4f2d7b6d09bab82fbf6f64356ccfe/src/spectral_film_lut/bw_negative_film/kodak_trix_400.py
+His unreferenced grain-versus-density arrays were not adopted.
+
+Numerical RGB adaptation uses existing SpektraFilm/Colour Science calibration
+code, CIE 2017 test reflectances and BabelColor Average validation patches.
+It is not measured Tri-X photograph calibration. Neutral silver/base, spectral
+tails and an aggregate density record are explicit model assumptions.
+See ../../docs/trix400.md for process and limits.

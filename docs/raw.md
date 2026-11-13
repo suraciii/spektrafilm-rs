@@ -75,7 +75,7 @@ relative to the repository root, where this command runs. Leave both optional
 selection variables unset for the full eight-combination acceptance run.
 
 Native X-Trans decoding uses LibRaw's unchanged three-pass arithmetic with
-ordered tile rows, matching device execution. LibRaw 0.22.2's OpenMP top-row
+ordered tile rows. LibRaw 0.22.2's OpenMP top-row
 loop otherwise races candidate green-bound reads against the previous row's
 RGB writeback. For each X-Trans native processing call only, the bridge scopes
 the calling OpenMP task's thread count to one and restores its prior setting
@@ -92,6 +92,14 @@ follows LibRaw 0.22.2's native default: Bayer AHD, Fuji Bayer PPG, irregular or
 four-colour VNG, three-pass Markesteijn X-Trans, or no interpolation for
 already-coloured samples. VNG includes native linear interpolation; linear is
 not substituted for a sensor whose native default is another algorithm.
+
+X-Trans uses darktable's parallel three-pass Markesteijn structure. It keeps
+separate direction planes, completes the shared threshold before voting, and
+uses normalized linear interpolation at the image border. A clipped corner
+with no neighboring sample of a missing color uses bounded measured-color
+support. This differs from LibRaw's integer Markesteijn/Lab implementation, so
+CPU and GPU X-Trans pixels can differ. White balance, color interpretation,
+orientation, and lens settings keep the same meaning.
 
 The device stages include black subtraction, the measured saturation-level
 reduction and scale-factor resolution, missing-zero correction when requested
@@ -130,13 +138,12 @@ already queued may finish; cancellation does not interrupt a driver wait.
 
 Large RAW planes use bounded four-channel integer pages. Global maximum and
 automatic-WB reductions complete before any scaled demosaic window is committed.
-Bayer windows preserve their full dependency halo and global CFA phase;
-X-Trans retains native tile/refinement order. Output geometry and Lensfun use
+Bayer and X-Trans windows preserve their full dependency halo and global CFA
+phase. X-Trans windows read the unchanged sensor plane and commit separate cores. Output geometry and Lensfun use
 device-generated sparse gather requests against retained pages. Only bounded
 footprint/cursor metadata is read by the host, never per-pixel correction maps.
 `SPEKTRAFILM_GPU_BINDING_LIMIT_BYTES` can force smaller image windows for seam
-regressions; the fixed native X-Trans tile scratch remains a separately checked
-minimum working set.
+regressions. X-Trans limits window size by its eight-direction working buffers.
 
 Floating-point DNG unpack explicitly disables LibRaw's optional
 `CONVERTFLOAT_TO_INT` operation. The GPU reproduces its float-to-ushort

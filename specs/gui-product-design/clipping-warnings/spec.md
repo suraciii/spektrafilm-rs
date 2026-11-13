@@ -62,9 +62,11 @@ Each switch MUST expose a localized accessible name, requested selected state, v
 
 Viewer warning input MUST NOT intercept editing in search, text, numeric fields, or an active modal.
 
+Pointer activation MUST belong to an unobscured switch, not a window or editor covering its rectangle. Activating a search locator MUST only focus the switch. The locator's activation key MUST NOT start isolation or change the requested overlay.
+
 ## Preferences
 
-Both warning choices MUST default to off without saved application preferences. Requested black and white choices MUST persist independently of photographic records, look presets, startup photographic controls, and adjustment history.
+Both warning choices MUST default to off without saved application preferences. Requested black and white choices MUST persist independently of photographic records, presets, startup photographic controls, and adjustment history.
 
 Loading a photograph, state, or preset and using adjustment Undo or Redo MUST NOT replace the requested warning choices.
 

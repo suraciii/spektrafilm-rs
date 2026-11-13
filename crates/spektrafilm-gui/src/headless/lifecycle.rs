@@ -165,7 +165,7 @@ fn on_exit_joins_active_render_and_discards_queued_results() {
     let mut s = session();
     let h = &mut s.harness;
     reveal_control(h, "workflow.route");
-    choose(h, "workflow", "input");
+    choose(h, "Film route", "input");
     let baseline = preview(h);
     let ctx = h.ctx.clone();
     let active = h.state().render_worker.active.clone();

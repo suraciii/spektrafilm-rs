@@ -38,8 +38,7 @@ fn a_failed_preset_preserves_the_entire_application_transaction() {
         group: PresetGroup::BuiltIn,
         name: "Remembered".into(),
     });
-    app.params.print_render.glare.active = true;
-    app.toggle_scan_for_print();
+    app.params.print_render.glare.active = false;
     app.dirty_since = Some(std::time::Instant::now());
     {
         let name = "Missing profile";
@@ -53,12 +52,10 @@ fn a_failed_preset_preserves_the_entire_application_transaction() {
         let before = serde_json::to_value(&app.params).unwrap();
         let state = app.current_state().unwrap().sections;
         let browser = app.presets.state.clone();
-        let preferences = app.presets.preferences.clone();
         let film = app.film_name.clone();
         let print = app.print_name.clone();
         let film_times = app.film_dev_times.clone();
         let print_times = app.print_dev_times.clone();
-        let snapshot = app.scan_for_print_snapshot;
         let revision = app.parameter_revision;
         let epoch = app.calibration_epoch;
         let dirty = app.dirty;
@@ -72,12 +69,10 @@ fn a_failed_preset_preserves_the_entire_application_transaction() {
         assert_eq!(serde_json::to_value(&app.params).unwrap(), before);
         assert_eq!(app.current_state().unwrap().sections, state);
         assert_eq!(app.presets.state, browser);
-        assert_eq!(app.presets.preferences, preferences);
         assert_eq!(app.film_name, film);
         assert_eq!(app.print_name, print);
         assert_eq!(app.film_dev_times, film_times);
         assert_eq!(app.print_dev_times, print_times);
-        assert_eq!(app.scan_for_print_snapshot, snapshot);
         assert_eq!(app.parameter_revision, revision);
         assert_eq!(app.calibration_epoch, epoch);
         assert_eq!(app.dirty, dirty);
@@ -129,10 +124,14 @@ fn ordinary_restart_restores_browser_only_and_explicit_state_wins() {
     );
     assert_eq!(restarted.film_name, startup.film());
     assert_eq!(restarted.print_name, startup.paper());
-    assert_eq!(restarted.presets.state, remembered);
+    assert_eq!(restarted.presets.state.width, remembered.width);
+    assert_eq!(restarted.presets.state.expanded, remembered.expanded);
+    assert!(
+        restarted.presets.state.applied.is_none(),
+        "the global carrier restores layout only"
+    );
     assert!(!restarted.dirty);
     assert_eq!(restarted.parameter_revision, 0);
-    assert!(restarted.scan_for_print_snapshot.is_none());
     assert_eq!(
         marker(
             remembered.applied.as_ref().unwrap(),
@@ -171,7 +170,14 @@ fn ordinary_restart_restores_browser_only_and_explicit_state_wins() {
     );
     restarted.apply_state(explicit.clone()).unwrap();
     restarted.persist_browser_state(true);
-    assert_eq!(reopen(None).presets.state, explicit_app.presets.state);
+    assert_eq!(
+        reopen(None).presets.state,
+        BrowserState {
+            width: explicit_app.presets.state.width,
+            expanded: explicit_app.presets.state.expanded,
+            applied: None,
+        }
+    );
     restarted.apply_state(state::GuiState::factory()).unwrap();
     restarted.persist_browser_state(true);
     assert_eq!(reopen(None).presets.state, BrowserState::default());
@@ -274,7 +280,6 @@ fn scanner_transitions_reset_the_scan_polarity() {
     app.params.workflow.route = "input > convert-film > scan".into();
     app.finish_route_change();
     app.params.scanner.scan_output = "negative_to_positive".into();
-    app.toggle_scan_for_print();
     app.select_film_profile("kodak_ektachrome_100".into());
     assert_eq!(app.film_medium, crate::controls::ScanMedium::Slide);
     assert_eq!(app.params.scanner.scan_output, "direct_scan");
@@ -819,7 +824,7 @@ fn look_application_preserves_existing_explicit_ownership_and_legacy_camera_omis
         app.params.render_preparation_state().explicit_section_paths,
         ownership.explicit_section_paths
     );
-    if let spektrafilm_core::presets::PresetParameters::Look(look) = &mut preset.parameters {
+    if let Some(spektrafilm_core::presets::PresetParameters::Look(look)) = &mut preset.parameters {
         look.camera = None;
     }
     preset.name = "Legacy camera omission".into();
@@ -835,4 +840,175 @@ fn look_application_preserves_existing_explicit_ownership_and_legacy_camera_omis
         ownership.explicit_section_paths
     );
     std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn automatic_startup_ignores_embedded_applied_identity_but_explicit_state_keeps_it() {
+    let mut extras = state::GuiState::factory().sections;
+    extras["rust"]["presets"] = serde_json::json!({
+        "width": 300.0,
+        "expanded": false,
+        "applied": {"group": PresetGroup::User, "name": "Remembered"},
+    });
+    let missing = std::env::temp_dir().join(format!(
+        "spektrafilm-missing-browser-carrier-{}",
+        std::process::id()
+    ));
+    let automatic = BrowserState::restore(&extras, false, &missing).unwrap();
+    assert_eq!(automatic.width, 300.0);
+    assert!(!automatic.expanded);
+    assert!(
+        automatic.applied.is_none(),
+        "automatic startup restores layout only"
+    );
+    let explicit = BrowserState::restore(&extras, true, &missing).unwrap();
+    assert_eq!(
+        explicit
+            .applied
+            .as_ref()
+            .map(|applied| applied.name.as_str()),
+        Some("Remembered")
+    );
+}
+
+#[test]
+fn proposed_copy_names_fit_the_preset_name_limit() {
+    let base = format!("{} copy", "x".repeat(60));
+    let name = available_name(&base, &[]);
+    assert!(
+        spektrafilm_core::presets::validate_name(&name).is_ok(),
+        "proposed name must already be valid: {name:?}"
+    );
+    assert!(name.chars().count() <= 64);
+}
+
+#[test]
+fn keyboard_order_crosses_preset_group_boundaries() {
+    let entries: Vec<LibraryEntry> = [
+        (PresetGroup::BuiltIn, "Alpha"),
+        (PresetGroup::User, "Mine"),
+        (PresetGroup::BuiltIn, "Zulu"),
+    ]
+    .into_iter()
+    .map(|(group, name)| LibraryEntry {
+        group,
+        name: name.into(),
+        film_profile: None,
+        print_profile: None,
+        path: None,
+        fault: None,
+        preset: None,
+    })
+    .collect();
+    assert_eq!(
+        super::render::presentation_order(&[0, 1, 2], &entries),
+        vec![0, 2, 1],
+        "arrow navigation follows the rendered groups, not library scan order"
+    );
+}
+
+#[test]
+fn effects_preset_switches_to_off_and_preserves_stored_transform_groups() {
+    let (mut app, _directory) = test_app("effects-preset");
+    let mut effects = spektrafilm_core::lut_look::EffectsParams::default();
+    effects.grain.active = true;
+    effects.grain.amount = 0.2;
+    let preset = Preset::capture_effects("Grain only", effects.clone(), provenance());
+    app.presets
+        .library
+        .save_new(&preset, &app.data_dir)
+        .unwrap();
+    app.presets.refresh();
+    app.params.workflow.mode = spektrafilm_core::params::WorkflowMode::Film;
+    app.params.workflow.route = "input > film > scan".into();
+    app.params.io.scan_film = true;
+    app.params.lut = Some(spektrafilm_core::params::LutParams {
+        path: "missing.cube".into(),
+        sha256: "a".repeat(64),
+        ..Default::default()
+    });
+    app.params.grade = Some(spektrafilm_core::params::GradeParams {
+        active: true,
+        ..Default::default()
+    });
+    app.load_preset(PresetGroup::User, "Grain only");
+    assert_eq!(
+        app.params.workflow.mode,
+        spektrafilm_core::params::WorkflowMode::Off
+    );
+    assert_eq!(app.params.workflow.route, "input");
+    assert!(!app.params.io.scan_film);
+    assert_eq!(app.params.effects.as_ref(), Some(&effects));
+    assert_eq!(app.film_route.as_deref(), Some("input > film > scan"));
+    assert!(app.params.lut.is_some());
+    assert!(app.params.grade.as_ref().is_some_and(|grade| grade.active));
+    assert!(app.presets.state.applied.is_some());
+
+    app.switch_workflow(spektrafilm_core::params::WorkflowMode::Film);
+    assert_eq!(
+        app.params.workflow.mode,
+        spektrafilm_core::params::WorkflowMode::Film
+    );
+    assert_eq!(app.params.workflow.route, "input > film > scan");
+    assert_eq!(app.params.effects.as_ref(), Some(&effects));
+    assert!(app.presets.state.applied.is_none());
+
+    app.params.workflow.mode = spektrafilm_core::params::WorkflowMode::Off;
+    app.save_preset_as();
+    let dialog = app.presets.name_dialog.as_ref().unwrap();
+    let NameAction::Save(preset) = &dialog.action else {
+        panic!("expected save action");
+    };
+    assert_eq!(preset.kind(), Ok(PresetKind::Effects));
+}
+
+#[test]
+fn lut_preset_switches_workflow_and_manual_switch_restores_film_route() {
+    let (mut app, directory) = test_app("lut-preset");
+    let lut_path = directory.join("identity.cube");
+    std::fs::write(
+        &lut_path,
+        "TITLE \"identity\"\nLUT_3D_SIZE 2\nDOMAIN_MIN 0 0 0\nDOMAIN_MAX 1 1 1\n\
+         0 0 0\n0 0 1\n0 1 0\n0 1 1\n1 0 0\n1 0 1\n1 1 0\n1 1 1\n",
+    )
+    .unwrap();
+    let mut lut = spektrafilm_core::lut_look::LutLookParams::default();
+    lut.path = lut_path;
+    lut.sha256 = spektrafilm_core::lut_look::hash_file(&lut.path).unwrap();
+    let preset = Preset::capture_lut("Identity LUT", lut.clone(), provenance());
+    app.presets
+        .library
+        .save_new(&preset, &app.data_dir)
+        .unwrap();
+    app.presets.refresh();
+    app.params.workflow.mode = spektrafilm_core::params::WorkflowMode::Film;
+    app.params.workflow.route = "input > film > scan".into();
+    app.params.io.scan_film = true;
+    app.load_preset(PresetGroup::User, "Identity LUT");
+    assert_eq!(
+        app.params.workflow.mode,
+        spektrafilm_core::params::WorkflowMode::Lut
+    );
+    assert_eq!(app.params.workflow.route, "input");
+    assert!(!app.params.io.scan_film);
+    assert_eq!(app.params.lut_render_params(), Some(lut.clone()));
+    assert_eq!(app.film_route.as_deref(), Some("input > film > scan"));
+    assert!(app.presets.state.applied.is_some());
+
+    app.switch_workflow(spektrafilm_core::params::WorkflowMode::Film);
+    assert_eq!(
+        app.params.workflow.mode,
+        spektrafilm_core::params::WorkflowMode::Film
+    );
+    assert_eq!(app.params.workflow.route, "input > film > scan");
+    assert_eq!(app.params.lut_render_params(), Some(lut.clone()));
+    assert!(app.presets.state.applied.is_none());
+
+    app.switch_workflow(spektrafilm_core::params::WorkflowMode::Lut);
+    app.save_preset_as();
+    let dialog = app.presets.name_dialog.as_ref().unwrap();
+    let NameAction::Save(preset) = &dialog.action else {
+        panic!("expected save action");
+    };
+    assert_eq!(preset.kind(), Ok(PresetKind::Lut));
 }

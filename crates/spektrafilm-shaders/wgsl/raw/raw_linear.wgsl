@@ -36,12 +36,28 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_workgroups) 
             weights[c] += weight;
         }
     }
+    // A clipped X-Trans corner can contain only green in the 3x3 support.
+    // Fill only missing classes from measured sites in a bounded wider support.
+    if(frame.cfa_rows==6u && frame.cfa_columns==6u && settings.stage!=0u){
+        for(var c=0u;c<3u;c++){
+            if(c==f || weights[c]!=0u){continue;}
+            for(var dy=-5;dy<=5;dy++){for(var dx=-5;dx<=5;dx++){
+                let yy=y+dy;let xx=x+dx;
+                if(yy<0 || xx<0 || yy>=i32(frame.height) || xx>=i32(frame.width)){continue;}
+                if(dm_color(yy,xx)==c){sums[c]+=image[(u32(yy)*frame.width+u32(xx))*4u+c];weights[c]++;}
+            }}
+        }
+    }
     for (var c=0u; c<settings.colors; c++) {
         if (c == f) { continue; }
         if (settings.stage == 0u) {
             var multiplier = 0u;
             if (weights[c] != 0u) { multiplier = 256u / weights[c]; }
-            image[p*4u+c] = (sums[c]*multiplier)>>8u;
+            // X-Trans uses a normalized linear seed for the VNG border,
+            // rather than Bayer's native fixed-point reciprocal truncation.
+            if(frame.cfa_rows==6u && frame.cfa_columns==6u && weights[c]!=0u){
+                image[p*4u+c] = sums[c]/weights[c];
+            } else { image[p*4u+c] = (sums[c]*multiplier)>>8u; }
         } else if (weights[c] != 0u) {
             image[p*4u+c] = sums[c]/weights[c];
         }

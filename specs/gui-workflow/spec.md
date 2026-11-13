@@ -5,7 +5,13 @@ The [GUI presentation specification](../gui-presentation/spec.md) owns visual hi
 
 ## Contract
 
-- The GUI exposes controls for input, film, print, scanner, output, advanced color, and configuration.
+- The GUI exposes controls for input, film, print, scanner, LUT, effects, output, advanced color, and configuration.
+- The global Film / LUT / Off selector MUST follow [Render modes](../render-mode/spec.md). It is not a stage and is not part of the stage jump strip.
+- The LUT stage MUST follow the [LUT workflow](../lut-workflow/spec.md), and its transform controls MUST follow the [LUT transform](../lut-transform/spec.md#ui-and-cli). LUT mode retains stored film, print, and scanner controls without executing their stages.
+- The Effects stage owns Diffusion, Halation, and Grain. It is active in LUT and Off and inactive in Film.
+- The header's mode summary is read-only and MAY locate the global selector. It MUST NOT provide a second mode editor.
+- The seven stage headings remain reachable in every mode. An inactive stage body and its module reset actions MUST be disabled and collapsed by default while its heading, stored values, and applicability reason remain readable.
+- The preset browser MUST include Film, LUT, and Effects presets. Applying a preset selects the mode its kind requires.
 - Preview renders a bounded disposable image. Scan renders the original working resolution.
 - Both use the current runtime controls.
   `standard` negative-to-positive preview MUST prepare and finish the complete working frame before display reduction; its full-frame requirements follow the [scan preview contract](../film-chain/lab-scan/spec.md#exact-preview-and-prepared-baseline).
@@ -19,13 +25,15 @@ The [GUI presentation specification](../gui-presentation/spec.md) owns visual hi
 - The Scanner controls show exactly the controls that
 [Scan medium and scanner controls](../film-chain/spec.md#scan-medium-and-scanner-controls) assign to the scanned medium. For a negative film profile on the direct `input > film > scan` route or the real negative-capture `input > convert-film > scan` route, they offer `direct_scan` and `negative_to_positive`. Labels MUST follow the [scan output naming contract](../film-chain/spec.md#scan-output-naming-acceptance).
 
-Every route shows lens blur and unsharp mask; the readout illuminant is not a control. Conversion control display names MUST follow the [conversion control naming contract](../film-chain/spec.md#conversion-control-naming-acceptance). Eligible `standard` negative scans MUST expose operator correction and its restore, copy/paste and held automatic-comparison actions under the [operator contract](../film-chain/lab-scan/spec.md#operator-correction).
+Every route shows the white-reference selector, lens blur, and unsharp mask; the readout illuminant is not a control. The white-reference selector chooses clear-film-base calibration by default or the upstream-aligned readout-illuminant normalization.
 
-Negative conversion MUST place `scanner.operator` in a collapsible specialized correction group. Its labels and help MUST identify exposure-domain units and distinguish it from common finishing; it MUST NOT be renamed or migrated into finishing.
+Conversion control display names MUST follow the [conversion control naming contract](../film-chain/spec.md#conversion-control-naming-acceptance). Eligible `standard` negative scans MUST expose operator correction and its restore, copy/paste and held automatic-comparison actions under the [operator contract](../film-chain/lab-scan/spec.md#operator-correction).
+
+Negative conversion MUST place `scanner.operator` in a collapsible specialized correction group. Its labels and help MUST identify exposure-domain units and distinguish it from Tone & Color. Its values MUST NOT be renamed or migrated into the `finishing` group.
 
 Operator edits use the workspace's adjustment history, not a second local Undo/Redo owner. Comparison MUST leave retained Save pixels and correction parameters unchanged. It activates only while the primary mouse button holds its control or focused Space is held; secondary and middle presses MUST NOT start comparison or invalidate the accepted render.
 
-A route or film profile change that makes the selected mode ineligible resets it to `direct_scan` and clears ineligible scanner controls. It MUST preserve common finishing values under [finishing editing](../finishing/spec.md#editing-and-comparison).
+A route or film profile change that makes the selected scan output mode ineligible resets it to `direct_scan` and clears ineligible scanner controls. It MUST preserve tone and color values under [adjustment editing](../finishing/spec.md#editing-and-comparison).
 - Imported states and presets MUST reject the removed mode as defined by [Scanner language](../film-chain/spec.md#scanner-language). A rejected import MUST NOT replace accepted parameters or the retained image.
 - Numeric parameter fields use text editing and the default text cursor. Each original wheel event over a field changes its value by the declared step.
 - Smoothed scroll residue MUST NOT repeat that change in later frames. Invalid or incomplete text MUST NOT enter runtime parameters.
@@ -37,8 +45,8 @@ A route or film profile change that makes the selected mode ineligible resets it
 - Failed adjustment preparation MUST retain the last valid runtime and completed image.
 - Returning to the last accepted settings MUST remain usable without discarding compatible preparation.
 - The retained image MUST report its own identity rather than appear to represent the rejected request.
-- Base workflow selection and optional CMYK ink style controls MUST follow the [CMYK ink style enablement contract](../cmyk-style/spec.md#enablement).
-- The workflow selector MUST offer exactly the routes the workflow validator supports.
+- Film route selection and optional CMYK ink style controls MUST follow the [CMYK ink style enablement contract](../cmyk-style/spec.md#enablement).
+- The film route selector MUST offer exactly the routes the route validator supports.
 - Input and capture → Camera exposes `camera.capture_illuminant` as a single optional text or selector control that writes the canonical runtime leaf. Its semantics, inheritance, and validation follow the [capture illuminant contract](../image-input/spec.md#capture-illuminant).
 - An unset value MUST be selectable and MUST display the inherited value — the selected film profile's `reference_illuminant` — as the effective value, so the control never hides which light the render assumes. The control MUST NOT offer a value the shared illuminant validator rejects and MUST NOT derive a value from image content or RAW metadata.
 - It MUST be labeled with the product concept, for example `Capture illuminant`, and MUST be distinguished from the enlarger illuminant in Print → Enlarger and the imported-capture scan illuminant in Input and capture → Convert. The product readout illuminant remains fixed.
@@ -50,6 +58,8 @@ A route or film profile change that makes the selected mode ineligible resets it
 ## Result identity and delivery guidance
 
 The viewer status strip above the canvas MUST be the single owner of retained-result identity. It MUST identify the retained result's operation, pixel dimensions, and whether it matches current adjustments. A pending operation MUST NOT hide that identity or imply that the retained result is current.
+
+Preset candidate thumbnails are read-only auxiliary results under [current-photograph thumbnails](../presets/spec.md#current-photograph-thumbnails), not retained viewer output or input to Save or Export. Accepted preset controls MAY be identified immediately, but the viewer MUST NOT report that its retained image reflects them until the corresponding image exists and is accepted.
 
 ```mermaid
 flowchart LR
@@ -63,17 +73,27 @@ A Preview MUST disclose that detail effects can differ from Scan under the exist
 
 Before Save publication, the GUI MUST identify the retained dimensions and disclose any mismatch with current adjustments. Saving a stale result MUST require an explicit choice to continue. Canceling that choice MUST leave controls and output unchanged.
 
+The persistent Save action MUST present the retained operation and pixel dimensions in a concise summary derived from the status strip's identity. This summary MUST NOT become a second identity owner or replace the mismatch confirmation. Selecting Original or Paper back MUST NOT hide the retained identity that Save will write.
+
+The Save action's accessible description MUST expose the same retained summary. With no retained result, the action MUST use a concise empty-state caption.
+
 Save MUST NOT silently render current adjustments.
 
 Export MUST be the primary file-delivery entry. Its submission surface MUST identify the accepted source, output dimensions, and delivery settings. This guidance MUST NOT merge Save and Export or change their [pixel contracts](../photo-export/spec.md).
 
+A native Save or Export destination confirmation MUST identify the exact publication path. After confirmation, the GUI MUST NOT append, remove, or replace an extension or directory component. Any extension completion MUST be visible and confirmed in the chooser.
+
+An incompatible confirmed destination MUST fail without publication rather than being renamed silently. These rules apply to ordinary filename entry and full-path or location-bar entry. Overwrite protection MUST apply to the exact confirmed path.
+
 ## Material controls and output composition
 
-Control placement follows [Stage and surface ownership](#stage-and-surface-ownership). Material behavior follows [Output mix and material controls](../output-mix/spec.md#user-operation). Apart from [common finishing](../finishing/spec.md#controls), the inspector MUST NOT add Digital response panels, a Reproduction section, saturation or color-density groups, or tonal-mask controls.
+Control placement follows [Stage and surface ownership](#stage-and-surface-ownership). Material behavior follows [Output mix and material controls](../output-mix/spec.md#user-operation). Apart from [tone and color adjustments](../finishing/spec.md#controls), the inspector MUST NOT add Digital response panels, a Reproduction section, saturation or color-density groups, or tonal-mask controls.
 
 Inspector stages organize access to controls; they do not change pipeline execution order or serialized preset ownership.
 
 Print MUST expose print exposure mode, print exposure, Magenta and Yellow shifts, and preflash exposure with its independent Magenta and Yellow filter shifts. Print exposure mode MUST follow [Print exposure mode](../film-chain/spec.md#print-exposure-mode). Calibrated cyan remains part of the neutral filter pack without a new Cyan shift control.
+
+The tracking choice already implied by the selected print exposure mode MUST be disabled and explained; the GUI MUST NOT expose a silently ineffective tracking choice.
 
 Preflash MUST retain its existing units, defaults, bounds, and preset ownership under [Preflash](../output-mix/spec.md#preflash). Zero preflash exposure MUST disable flash without clearing its filters. A route without print exposure and development MUST identify these controls as inactive and retain their values.
 
@@ -83,17 +103,17 @@ Help MUST NOT promise fixed white or midgray, improved detail at every setting, 
 
 Film and Print MUST retain their existing chemistry and development controls. Developer exhaustion MUST keep its model-specific development meaning and capability conditions. It MUST NOT be renamed as a generic highlight or high-dynamic-range control.
 
-Profile and route feedback MUST identify unsupported or inactive controls without clearing stored values or fabricating model support. Film-development controls are inactive when converting a real captured negative; print-development controls remain available only on admitted printing routes. The `input` workflow MUST mark material and Scanner controls inapplicable.
+Profile and route feedback MUST identify unsupported or inactive controls without clearing stored values or fabricating model support. Film-development controls are inactive when converting a real captured negative; print-development controls remain available only on admitted printing routes. The `input` route MUST mark material and Scanner controls inapplicable.
 
 Material edits MUST use existing scanner calibration and inverse reconstruction semantics. The GUI MUST NOT promise creative-reference isolation or add separate baseline and effective reference controls. Module resets follow [Section reset](#section-reset).
 
-Serialized section payloads retain their core ownership under [Preset design](../presets/design.md#sections). The independent Finishing section MUST NOT restore withdrawn digital-response sections.
+Serialized section payloads retain their core ownership under [Preset design](../presets/design.md#sections). The independent `finishing` section MUST NOT restore withdrawn digital-response sections.
 
-Output MUST expose Simulation blend as the full-result/prepared-source blend under [Output mix](../output-mix/spec.md#output-mix). Existing output gamut algorithm and chroma-knee controls remain available without duplicate editable copies. Output MUST NOT expose standalone lightness compression, an Output response section or preset, or a separate output-processing switch for the `input` workflow.
+Output MUST expose Simulation blend as the full-result/prepared-source blend under [Output mix](../output-mix/spec.md#output-mix). Existing output gamut algorithm and chroma-knee controls remain available without duplicate editable copies. Output MUST NOT expose standalone lightness compression, an Output response section or preset, or a separate output-processing switch for the `input` route.
 
-Output MUST expose a Finishing module with the controls and collapsible Range group defined by [common finishing](../finishing/spec.md#controls). It MUST explain inactive conditions and retain stored values under [applicability](../finishing/spec.md#scope-and-applicability).
+Scan MUST expose a Tone & Color module with the controls and collapsible Range group defined by [tone and color adjustments](../finishing/spec.md#controls). It MUST explain inactive conditions, including LUT and Off modes, and retain stored values under [applicability](../finishing/spec.md#scope-and-applicability).
 
-Finishing reset, transient module comparison, and editing behavior MUST follow [finishing editing and comparison](../finishing/spec.md#editing-and-comparison). Comparison MUST NOT bypass unrelated stages or change retained output, parameters, or adjustment history.
+Tone & Color reset, transient module comparison, and editing behavior MUST follow [adjustment editing and comparison](../finishing/spec.md#editing-and-comparison). Comparison MUST NOT bypass unrelated stages or change retained output, parameters, or adjustment history.
 
 A negative-capture source MUST state that zero Simulation blend returns the prepared negative, not a positive interpretation. Input/Output viewing remains independent from rendered effect amount.
 
@@ -111,9 +131,9 @@ The window has three regions and one header.
 - The adjustment inspector occupies the right region. It owns photographic parameter editors, stage headings and their jump strip, and control search.
 - The adjustment inspector MUST NOT contain image-analysis controls or plots.
 - Application settings and Export own their separate editors under [Stage and surface ownership](#stage-and-surface-ownership).
-- The preset browser occupies the left region and is collapsible. Its width and expanded state follow [the preset browser design](../presets/design.md).
-- The window header spans the three regions. It owns Open image, Undo, Redo, application settings, and independent Export actions.
-- It shows the accepted source, current film profile, print profile, and physical workflow as read-only context. Status ownership follows [Labels and surfaces](#labels-and-surfaces).
+- The preset browser occupies the left region and is collapsible. Its width and expanded state follow [the preset browser boundary](../presets/design.md#boundaries); browser interaction and state follow [Presets](../presets/spec.md#browser-interaction) and [browser state ownership](../presets/design.md#browser-state-ownership).
+- The window header spans the three regions and owns Open image, Undo, Redo, application settings, and independent image-export actions. The Film stage's **Export film simulation as .cube…** action belongs to Film.
+- It shows the accepted source, the active render mode, and the current film and print profiles in Film mode, LUT context in LUT mode, or Effects preset in Off mode as read-only context. Status ownership follows [Labels and surfaces](#labels-and-surfaces).
 - Scan and Save remain reachable from a persistent action area without opening an inspector module.
 
 A region is a layout slot, not a mutually exclusive page. A control belongs to exactly one surface under [Labels and surfaces](#labels-and-surfaces). A dialog MAY edit only the values assigned to it.
@@ -138,7 +158,7 @@ Scan MUST expose `print_render.glare` in a module labeled Print viewing glare. I
 
 Preflash and Enlarger diffusion remain separate Print modules for exposure and optics.
 
-The existing grain selector MUST retain its stable engine names and preset section. It MUST identify Spektra, Dye, and Fotufilm Film as material grain and Procedural as post-scan grain appearance. Selecting Procedural MUST describe its Film Resolution control as part of that appearance algorithm, not as scanner lens resolution.
+The existing grain selector MUST retain its stable engine names and preset section. It MUST identify Spektra, Dye, and Fotufilm Film as material grain and Procedural and Exposure Grain as post-scan grain appearance. Selecting Procedural MUST describe its Film Resolution control as part of that appearance algorithm, not as scanner lens resolution.
 
 No duplicate grain selector or automatic engine conversion is required.
 
@@ -146,7 +166,7 @@ No duplicate grain selector or automatic engine conversion is required.
 
 Ordinary Grain browsing MUST place Enable grain and Engine first. It MUST show the selected engine's effective grain controls. Turning grain off MUST hide grain-only numerical controls without clearing their requests.
 
-Dye MUST expose Grain strength and Grain scale as its only numerical grain editors. Grain strength 0 MUST remove random grain, including residual count noise; 1 MUST keep the delivered look. Grain scale MUST be described as a film-coordinate texture scale, not a crystal diameter or scanner blur, and MUST NOT be described as an output-pixel size.
+Dye MUST expose Grain strength and Grain scale as its only numerical grain editors. Grain strength 0 MUST remove random grain, including residual count noise; 1 MUST keep the delivered rendering. Grain scale MUST be described as a film-coordinate texture scale, not a crystal diameter or scanner blur, and MUST NOT be described as an output-pixel size.
 
 RMS granularity, channel correlation, density minimum, uniformity, and particle scale sublayers MUST remain stored recipe values without Dye grain editors; loads and saves MUST keep them unchanged. The GUI MUST NOT present them as effective Dye grain controls.
 
@@ -166,6 +186,8 @@ Spektra MUST hide Dye-only RMS strength. Composite and sublayer controls MUST fo
 
 Missing profile layer data MUST NOT imply a composite fallback while sublayers are requested. An unsupported request MUST retain an explicit reason and the control that permits an explicit correction.
 
+Exposure Grain MUST expose strength, size, automatic size, format, absolute size, roughness, shadows, midtones, highlights, and push. Automatic size MUST hide absolute size while active. Exposure Grain MUST NOT expose Color Variation.
+
 Fotufilm Film MUST preserve the constrained sublayer-share editor and read-only fourth remainder. An unsupported material selection MUST state its reason without changing the requested material or engine.
 
 Search, Only modified, and canonical locators MUST reveal hidden stored controls at their existing owners. Inactive matches MUST retain readable values and their actual applicability reasons.
@@ -179,17 +201,41 @@ Each module has one editing owner. The inspector MUST contain these stages and m
 
 | Owner | Modules and controls |
 | --- | --- |
-| Input and capture | Workflow selector; input color space and decoding; RAW white balance, temperature, tint, lens correction, and reprocess action; crop, upscale, and source rotation; Camera exposure, metering, film format, color filter, and capture illuminant; Camera diffusion; input gamut compression; spectral reconstruction and its applicable adaptation controls; Convert imported-capture scan illuminant, exposure, base estimation, calibration, channel swaps, and calibration actions. |
-| Film | Film material selector and its development-time family; Chemistry; Film base; Halation; Couplers; Grain selector, shared material-grain parameters, and every engine-specific parameter group. |
+| Input and capture | Film route selector (inactive in LUT and Off); input color space and decoding; RAW white balance, temperature, tint, lens correction, and reprocess action; crop, upscale, and source rotation; Camera exposure, metering, film format, color filter, and capture illuminant; Camera diffusion; input gamut compression; spectral reconstruction and its applicable adaptation controls; Convert imported-capture scan illuminant, exposure, base estimation, calibration, channel swaps, and calibration actions. Spectral camera, conversion, gamut, and reconstruction controls are inactive in LUT and Off. |
+| Film | Film material selector and its development-time family; Chemistry; Film base; Halation; Light leak; Couplers; Grain selector, shared material-grain parameters, and every engine-specific parameter group. |
 | Print | Print material selector and its development-time family; Enlarger exposure mode, exposure, exposure tracking, M/Y shifts, and illuminant; Preflash; Enlarger diffusion; print Chemistry and independent density-curve gamma; Print base. |
-| Scan | Fixed product readout illuminant information; eligible scan output and conversion-style controls; specialized negative-conversion correction, restore, copy/paste and held automatic comparison; lens blur, unsharp mask; Print viewing glare. |
-| Output | Finishing and its collapsible Range group; output color space and encoding where exposed by their contracts; output gamut processing; CMYK ink style; Simulation blend; retained Save color and encoding settings. |
-| Application settings | General: interface language, preview limits, and rendering preferences that are not photographic controls; GUI parameters: startup state save/load/default actions; Display: display transform, ICC selection, canvas, padding, and interpolation; Diagnostics: observation and report actions. Language preference ownership follows [GUI product language](../gui-language/spec.md#selection-and-persistence), not photographic state. |
+| Scan | Fixed product readout illuminant information; eligible scan output and conversion-style controls; specialized negative-conversion correction, restore, copy/paste and held automatic comparison; lens blur, unsharp mask; Print viewing glare; Tone & Color and its collapsible Range group. |
+| LUT | LUT file import, replace, and reveal; LUT declaration and strength; LUT Grade and its held comparison. Film, Print, and Scan stages remain stored but inactive. |
+| Effects | Diffusion; Halation; Grain. The stage is active in LUT and Off and inactive in Film. |
+| Output | Output color space and encoding where exposed by their contracts; output gamut processing; CMYK ink style and Simulation blend, inactive in LUT and Off; retained Save color and encoding settings. |
+| Application settings | General: interface language, preview limits, and rendering preferences that are not photographic controls; State and startup: startup state save/load/default actions; Display: display transform, ICC selection, canvas, padding, and interpolation; Diagnostics: observation and report actions. Language preference ownership follows [GUI product language](../gui-language/spec.md#selection-and-persistence), not photographic state. |
 | Export dialog | Independent full-resolution export backend, format, depth, saving color and encoding, applicable codec/compression options, destination selection, and export submission. |
 | Viewer footer | Original/Modified/Paper back selection; zoom, fit, reveal, crossfade, and read-only zoom state; [black and white endpoint warnings](../gui-product-design/clipping-warnings/spec.md#controls); optional image-analysis visibility. |
-| Preset browser | Look selection, browser search, library refresh/reveal, and look-preset management. |
+| Preset browser | Film, LUT, and Effects preset selection; browser search; library refresh/reveal; preset management. |
+
+A persistent **Mode** selector sits above the stage list and offers Film, LUT, and Off. It is not a stage and MUST NOT appear in the stage jump strip.
+
+Film owns the Grain module. The Effects stage owns Diffusion, Halation, and Grain as independent transform effects.
+
+The Grain module keeps the five-engine selector and all engine-specific controls in one location. It MUST label Spektra, Dye, and Fotufilm Film as material grain and Procedural and Exposure Grain as post-scan appearance.
+
+The Grain module MUST NOT be presented as a global effects module or shared with the Effects stage.
+
+Film Halation, Camera diffusion, Enlarger diffusion, and Print viewing glare remain at their physical stage owners. They MUST NOT be combined into one Bloom or Glow module.
+
+The Film stage MUST expose **Export film simulation as .cube…**. The LUT stage MUST expose **Import LUT…**, **New LUT from cube…**, and **Replace LUT…** under [LUT workflow](../lut-workflow/spec.md).
+
+Export MUST write a `.cube` file and MUST NOT import it, apply it, create a preset, or switch mode. It MUST NOT execute spectral film stages inside LUT mode.
+
+The film Tone & Color group remains owned by Scan and becomes inactive in LUT and Off with its stored values. The LUT stage's LUT Grade is a separate LUT payload; neither is a second editable copy of the other.
 
 Rotation is a source operation and MUST NOT be offered as viewer-only pan or zoom. A read-only summary or action that locates its owner MAY appear elsewhere; a second editable copy MUST NOT.
+
+An expanded Camera module MUST keep exposure compensation and automatic exposure directly visible. Film Format, Frame Long Edge, metering method, color filter, and capture illuminant MUST belong to a nested **Capture setup** group within Camera.
+
+Capture setup MUST start collapsed in a fresh disclosure session. This grouping MUST NOT change Camera ownership, parameter identity, or the Camera module reset scope.
+
+Search, Only modified, and canonical locators MUST reveal Capture setup and its actual control without committing an edit.
 
 The stage jump strip MUST reveal and scroll to one heading in the continuous inspector. It MUST preserve the control-search query and Only modified filter.
 
@@ -198,6 +244,31 @@ It MUST NOT close other stages or change any parameter. A heading toggle MUST af
 Open state and scroll position MUST survive ordinary edits, render completion, and route changes.
 
 The [preset section table](../presets/design.md#sections) remains authoritative for serialized section payloads and their primary module anchors. A visual module is not a new serialized section. Moving Print viewing glare to Scan or splitting Preflash from Enlarger MUST NOT migrate their canonical leaves or expand a preset's scope.
+
+### Print viewing glare control
+
+`print_render.glare.active` MUST have exactly one GUI editor: the switch in Scan / Print viewing glare. The GUI MUST NOT retain the retired `Scan for print` mode, a transient override, or a snapshot.
+
+The module MUST expose the switch on every route with print readout, including when the effect is off or its amount is zero. A user-disabled effect MUST NOT be presented as inapplicable. Route inapplicability is limited to routes without print readout; global stochastic disablement is a status, not a second switch.
+
+A route without print readout MUST state that reason once and retain stored values.
+
+Scan MAY report the effective state and locate the switch, but MUST NOT expose a second editable copy. `print_render.glare.*` remains a normal document parameter across Undo/Redo, state save/load, presets, recipes, reports, and thumbnails. Transient GUI state MUST NOT override it.
+
+### Tone and color access
+
+Scan organizes the [scan workflow](../../CONTEXT.md#language), not only optical capture. Tone & Color MUST remain a separate module from Scanner and its specialized negative-conversion correction. Output MUST NOT retain a second editor or an empty Finishing module.
+
+Module names and related messages MUST follow [GUI product language](../gui-language/spec.md#color-and-output-labels). The controls' independent payload scope follows [Preset design](../presets/design.md#sections), regardless of their Scan placement.
+
+Acceptance MUST exercise these user operations through the production inspector:
+
+1. Reach Tone & Color from Scan on positive-film, converted-negative, and photographic-paper routes without a negative-conversion prerequisite for positive media.
+2. Find its controls by English and Simplified Chinese names and canonical `finishing.*` paths in either interface language. Search and Only modified reveal the same owner without editing values or changing the route.
+3. Switch to preserved-negative polarity or the film-free input route. Stored values remain readable with an inactive reason and return unchanged when an eligible route is restored.
+4. Edit and reset the module without changing scanner controls, negative-conversion correction, Print viewing glare, or output settings. Undo and Redo restore the adjustment and its explicit ownership without expanding its scope.
+5. Hold and release module comparison on retained Preview and Scan results. Retained Save, independent Export, accepted geometry, and history retain the behavior defined by [editing and comparison](../finishing/spec.md#editing-and-comparison).
+
 
 ## Complete control access
 
@@ -212,6 +283,8 @@ The GUI MUST expose a searchable control index that can locate each inventory en
 Calibration baselines, prepared values, no-op leaves, removed parameters, and internal state MUST NOT be promoted to creative controls. The inventory MUST distinguish such exclusions from supported controls that have not yet been connected. A missing editor for a supported control is a defect, not an exclusion.
 
 Halation MUST expose `active`, `scatter_amount`, `scatter_spatial_scale`, `halation_amount`, `halation_spatial_scale`, `source_compression`, `boost_ev`, `protect_ev`, `boost_range`, `scatter_core_um`, `scatter_tail_um`, `scatter_tail_weight`, `halation_strength`, `halation_first_sigma_um`, `halation_n_bounces`, `halation_bounce_decay`, and `halation_renormalize` under `film_render.halation`. Each editable RGB component MUST remain available. Its feature-profile selector follows [Feature profiles](../feature-profiles/spec.md#halation-profile-family); it MUST NOT add a persisted Halation profile identity or replace the individual controls.
+
+Light leak MUST expose `active`, `exposure_ev`, `position`, `width_mm`, `spread_mm`, `angle_deg`, `leak_spectrum`, `texture_amount`, and `texture_scale_mm` under `film_render.light_leak`. Each editable RGB component MUST remain available.
 
 `boost_ev`, `boost_range`, and `protect_ev` are the highlight-reconstruction option of Halation: they remain stored but apply only while Halation is enabled, and `boost_range` and `protect_ev` further require a nonzero boost.
 
@@ -233,9 +306,13 @@ Changing an admitted full route to `input` and back MUST retain valid inactive s
 
 An inactive optional subfeature MUST NOT mark its whole module inactive. A module-level notice appears only when every dependent control in that module is inactive; the module's own enable switch is not evidence of its inactivity.
 
-A route or material change MUST preserve inactive values except for normalizations explicitly required by the owning contract and [material defaults](../presets/spec.md#material-defaults). The header MUST report route and scanner normalizations.
+A route or material change MUST preserve inactive values except for normalizations explicitly required by the owning contract and [material defaults](../presets/spec.md#material-defaults). The header MUST report route and scanner normalizations in Film mode.
 
-`settings.print_exposure_ev_tracking` belongs to Print → Enlarger because it controls exposure behavior. Its `settings` wire group MUST NOT move it to application preferences or remove its existing look ownership.
+A mode change MUST preserve every stored control group. In LUT mode the header reports the LUT file identity and the applied LUT preset when present. In Off mode it reports the Effects preset.
+
+Neither mode reports a film route summary.
+
+`settings.print_exposure_ev_tracking` belongs to Print → Enlarger because it controls exposure behavior. Its `settings` wire group MUST NOT move it to application preferences or remove its existing preset ownership.
 
 Inherited optional values MUST show both their inherited state and effective value. Entering an explicit value and returning to inheritance MUST remain distinct operations. Development-time controls MUST use the selected material's actual family rather than invented common time choices.
 
@@ -245,11 +322,13 @@ Modules expose resets under [Section reset](#section-reset). Control coverage ac
 
 A visible module reset MUST restore exactly that module's editable canonical paths to their reset baseline. A module reset MUST NOT reset another module because modules can share one serialized preset section.
 
-Finishing reset MUST affect only the controls owned by Finishing, including Range. Row reset MUST affect only its own control.
+While the film route is inactive in LUT and Off, its selector MUST display the retained route and MUST disable the route reset. Resetting the live film route would normalize scanner controls outside the inactive route.
+
+Tone & Color reset MUST affect only its own controls, including Range. Individual tone and color adjustment reversal MUST use adjustment Undo; Tone & Color MUST NOT present row reset actions.
 
 In particular, Preflash reset MUST leave main Enlarger exposure and filtration unchanged, and Print viewing glare reset MUST leave Print chemistry unchanged. A material module reset MUST also restore its material selection and development time.
 
-If a material reset keeps the selected stock unchanged, it MUST NOT reapply material defaults or normalize unrelated workflow and scanner controls.
+If a material reset keeps the selected stock unchanged, it MUST NOT reapply material defaults or normalize unrelated film route and scanner controls.
 
 The reset baseline starts from a fresh factory projection and includes runtime-only editable leaves with their types and optional states. For modules other than material selection, only [stock-derived leaves](../presets/spec.md#material-defaults) use the currently selected film's defaults.
 
@@ -261,7 +340,7 @@ Reset MUST preserve the value and optional state of preparation metadata outside
 
 The row marker, module marker, Only modified filter, and reset action MUST use the same baseline and comparison under [GUI presentation](../gui-presentation/design.md#factory-projection-and-modified-state).
 
-The reset action MUST name its scope and baseline. Reset and Revert to applied preset MUST remain separate actions.
+The reset action MUST name its scope and baseline. Reapplying a preset through the browser is distinct from module reset under [browser interaction](../presets/spec.md#browser-interaction).
 
 A module reset MUST NOT change a preset file or startup default. It is one reversible edit; normal validation MUST complete before it changes accepted controls.
 
@@ -269,15 +348,15 @@ Application settings sections General and Display each offer one grouped reset o
 
 ## Edit history
 
-Undo and Redo apply to accepted adjustments for the current source: direct parameter edits, workflow and material selection, feature-profile and look-preset application, and module reset. Each action includes its required dependent normalizations. A rejected edit creates no history entry.
+Undo and Redo apply to accepted adjustments for the current source: direct parameter edits, mode and material selection, feature-profile and preset application, and module reset. Each action includes its required dependent normalizations. A rejected edit creates no history entry.
 
-Accepted finishing edits and resets MUST use the same adjustment history. Transient finishing comparison MUST NOT create a history entry.
+Accepted tone and color edits and resets MUST use the same adjustment history. Transient module comparison MUST NOT create a history entry.
 
 One slider drag is one history entry, even if intermediate valid values schedule previews. A completed numeric text edit is one entry. One original wheel event over a numeric field is one entry.
 
 Incomplete or invalid text MUST NOT change accepted values or history. Escape MUST cancel the current uncommitted edit. Canceling an active drag MUST restore its pre-gesture values without an undo entry.
 
-Undo MUST restore the preceding accepted values, profile selections, workflow, explicit-leaf ownership, applied-preset marker, and affected transient rendering state. Redo MUST restore the recorded successor, not reapply a possibly changed preset file or recompute stock defaults. A new accepted edit after Undo MUST discard the redo branch.
+Undo MUST restore the preceding accepted values, profile selections, render mode, film route, explicit-leaf ownership, applied-preset marker, and affected transient rendering state. Redo MUST restore the recorded successor, not reapply a possibly changed preset file or recompute stock defaults. A new accepted edit after Undo MUST discard the redo branch.
 
 Reset-baseline and preset-modified indicators MUST be recomputed against their own baselines.
 
@@ -351,6 +430,8 @@ Opening a source, changing a display profile, and interacting with the viewer MU
 
 Cache availability MUST NOT change supported profiles or displayed pixel values. Missing, invalid, stale, or unwritable caches MUST NOT prevent the viewer from preparing the correct transform.
 
+Capped display rasters and non-nearest full-source reductions MUST average the covered source-pixel areas. Full-source nearest sampling MUST retain its explicit nearest-neighbor behavior. Native-size and magnified full-source views MUST keep the selected interpolation kernel.
+
 The viewer MUST expose [image analysis](../gui-product-design/image-analysis/spec.md) as an optional workspace below the photograph. That capability owns analysis subjects, regions, display preferences, availability, and read-only measurement behavior.
 
 The viewer MUST expose [black and white endpoint warnings](../gui-product-design/clipping-warnings/spec.md) independently of the analysis workspace. That capability owns native endpoint interpretation, warning presentation, temporary inspection, and independent presentation preferences.
@@ -366,7 +447,7 @@ The explicitly armed [Select area tool](../gui-product-design/image-analysis/spe
 - The wheel and pinch zoom at the pointer.
 - A primary-button drag pans the view.
 - A Shift or secondary-button drag selects a rectangle. Its release zooms so the selection fills the viewer and its center lands at the viewer center.
-- One click zooms one step at the pointer.
+- An unmodified primary-button click without a drag MUST NOT change zoom or pan. In particular, clicking the photograph to leave an editor MUST NOT alter the retained view.
 - A double click resets the view to the fit zoom and the centered pan.
 
 A gesture that arrives while a composition runs MUST keep the last completed frame until the current frame is ready.
@@ -386,7 +467,7 @@ The validator MUST require exactly three indices in `0..2` that form a permutati
 
 The GUI MUST NOT present a selector that offers one choice. A parameter that no control can change and that no pipeline stage reads MUST NOT own a GUI section under the [preset section rule](../presets/design.md).
 
-Every parameter carried by a look or section preset MUST have one visible GUI control or named action that writes the canonical runtime leaf; inactive conditions retain the value and explain why editing is disabled. GUI controls and canonical CLI `--set` paths MUST share the same type, validator, units, and conditions.
+Every parameter carried by a complete or section preset MUST have one visible GUI control or named action that writes the canonical runtime leaf; inactive conditions retain the value and explain why editing is disabled. GUI controls and canonical CLI `--set` paths MUST share the same type, validator, units, and conditions.
 
 Calibration baselines, derived values, and internal state are not preset-owned controls.
 
@@ -406,7 +487,7 @@ Only modified is an independent, reversible view filter against the reset baseli
 
 Turning it off MUST restore the ordinary inventory. A preset's modified marker MUST NOT be used as the filter predicate.
 
-Preset browser search is a separate operation owned by [Presets](../presets/spec.md). Neither query MAY alter the other surface's filter or selection.
+Preset browser search is a separate operation owned by [Presets](../presets/spec.md). It MUST NOT alter the control-search filter or selection.
 
 ## Labels and surfaces
 

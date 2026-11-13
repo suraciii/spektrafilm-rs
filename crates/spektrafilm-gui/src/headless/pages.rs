@@ -1,5 +1,23 @@
 use super::*;
 
+#[test]
+fn finishing_opens_by_default_and_search_preserves_manual_disclosure() {
+    let mut s = session();
+    let h = &mut s.harness;
+    navigate_stage(h, controls::Stage::Scan);
+    assert!(h.query_by_label("Brightness").is_some());
+    click(h, "Tone & Color");
+    assert!(h.query_by_label("Brightness").is_none());
+    let before = h.state().params.clone();
+    let revision = h.state().parameter_revision;
+    search_controls(h, "Brightness");
+    assert!(h.query_by_label("Brightness").is_some());
+    search_controls(h, "");
+    assert!(h.query_by_label("Brightness").is_none());
+    assert_eq!(h.state().params, before);
+    assert_eq!(h.state().parameter_revision, revision);
+}
+
 fn edit_control(h: &mut Harness<'_, App>, path: &str, label: &str, text: &str) {
     reveal_control(h, path);
     edit(h, label, text);
@@ -22,7 +40,7 @@ fn toggle_control(h: &mut Harness<'_, App>, path: &str, label: &str) {
 }
 
 fn set_route(h: &mut Harness<'_, App>, route: &str) {
-    choose_control(h, "workflow.route", "workflow", route);
+    choose_control(h, "workflow.route", "Film route", route);
     assert_eq!(h.state().params.workflow.route, route);
 }
 
@@ -67,7 +85,7 @@ fn edit_calibration(h: &mut Harness<'_, App>, text: &str) {
 
 /// Exercise the production Settings state writer and loader, not a runtime-only
 /// serialization roundtrip. Dialog navigation must not change accepted values.
-/// Saving GUI parameters is not saving the photograph record: reloading must
+/// Saving state is not saving the photograph record: reloading must
 /// preserve the current adjustment until the user explicitly discards it.
 fn save_mutate_and_reload(
     s: &mut Session,
@@ -78,7 +96,7 @@ fn save_mutate_and_reload(
     let path = s.directory.path().join(file_name);
     open_settings(&mut s.harness);
     if s.harness.query_by_label("Save current to file").is_none() {
-        click(&mut s.harness, "GUI parameters");
+        click(&mut s.harness, "State and startup");
     }
     script(
         &mut s.harness,
@@ -98,7 +116,7 @@ fn save_mutate_and_reload(
     let revision = s.harness.state().parameter_revision;
     open_settings(&mut s.harness);
     if s.harness.query_by_label("Load from file").is_none() {
-        click(&mut s.harness, "GUI parameters");
+        click(&mut s.harness, "State and startup");
     }
     script(&mut s.harness, chooser::ChooserResult::Scripted(path));
     click(&mut s.harness, "Load from file");
@@ -119,7 +137,7 @@ fn material_edits_refresh_automatic_preview_and_scan() {
     let mut previous = preview(h);
     for (path, label, value) in [
         ("film_render.base.scale", "scale", "1.7"),
-        ("film_render.chemistry.gamma_factor", "gamma factor", "1.5"),
+        ("film_render.chemistry.gamma_factor", "Morph gamma", "1.5"),
     ] {
         edit_control(h, path, label, value);
         let automatic = preview(h);
@@ -275,7 +293,7 @@ fn film_chemistry_material_and_capture_controls_accept_edits_and_persist() {
     edit_control(
         h,
         "film_render.chemistry.gamma_factor",
-        "gamma factor",
+        "Morph gamma",
         "1.25",
     );
     edit_control(
@@ -346,7 +364,7 @@ fn print_chemistry_base_glare_and_diffusion_controls_accept_edits_and_persist() 
     edit_control(
         h,
         "print_render.density_curves_morph.gamma_factor",
-        "gamma factor",
+        "Morph gamma",
         "1.5",
     );
     edit_control(
@@ -384,15 +402,17 @@ fn print_chemistry_base_glare_and_diffusion_controls_accept_edits_and_persist() 
     );
 
     let base_active = h.state().params.print_render.base.active;
-    toggle_control(h, "print_render.base.active", "Enable print base");
     edit_control(h, "print_render.base.scale", "scale", "1.25");
     edit_control(h, "print_render.base.cyan", "cyan", "0.75");
+    toggle_control(h, "print_render.base.active", "Enable print base");
     assert_eq!(h.state().params.print_render.base.active, !base_active);
     assert_eq!(h.state().params.print_render.base.scale, 1.25);
     assert_eq!(h.state().params.print_render.base.cyan, 0.75);
+    toggle_control(h, "print_render.base.active", "Enable print base");
+    assert_eq!(h.state().params.print_render.base.active, base_active);
 
     let glare_active = h.state().params.print_render.glare.active;
-    toggle_control(h, "print_render.glare.active", "Enable print glare");
+    toggle_control(h, "print_render.glare.active", "Simulate viewing glare");
     edit_control(h, "print_render.glare.percent", "percent", "0.25");
     edit_control(h, "print_render.glare.roughness", "roughness", "0.5");
     assert_eq!(h.state().params.print_render.glare.active, !glare_active);
@@ -440,6 +460,39 @@ fn print_chemistry_base_glare_and_diffusion_controls_accept_edits_and_persist() 
         edit_control(h, "print_render.base.scale", "scale", "0.5");
         assert_eq!(h.state().params.print_render.base.scale, 0.5);
     });
+}
+
+#[test]
+fn disabled_glare_is_not_an_inactive_module_banner() {
+    let mut s = session();
+    let h = &mut s.harness;
+    set_route(h, "input > film > print > scan");
+    reveal_control(h, "print_render.glare.active");
+    let reason = controls::localized(&h.ctx, "print readout scan operation required");
+    let banner = format!("Inactive controls · {reason} · stored values retained");
+    assert_eq!(
+        h.query_all_by_label(banner.as_str()).count(),
+        0,
+        "the applicable module must not start inactive"
+    );
+
+    if h.state().params.print_render.glare.active {
+        toggle_control(h, "print_render.glare.active", "Simulate viewing glare");
+    }
+    assert!(!h.state().params.print_render.glare.active);
+    assert_eq!(
+        h.query_all_by_label(banner.as_str()).count(),
+        0,
+        "a user-disabled effect is Off, not Inactive"
+    );
+
+    set_route(h, "input > film > scan");
+    reveal_control(h, "print_render.glare.active");
+    assert_eq!(
+        h.query_all_by_label(banner.as_str()).count(),
+        1,
+        "a route without print readout states the inapplicable reason"
+    );
 }
 
 #[test]
@@ -663,7 +716,7 @@ fn film_format_specs_change_only_physical_scale_and_preserve_custom_values() {
             expected,
             "{name} must not change crop or effects"
         );
-        assert!(h.query_by_label("Frame Long Edge").is_none());
+        assert!(h.query_by_label("Frame Long Edge").is_some());
     }
     click(h, "Undo");
     assert_eq!(h.state().params.camera.film_format_mm, 56.0);
@@ -872,6 +925,11 @@ fn ordinary_grain_controls_follow_engine_and_enable_without_losing_values() {
     assert_eq!(h.state().params.film_render.grain, disabled);
     assert!(h.query_by_label("Grain strength").is_none());
     assert!(h.query_by_label("Grain scale").is_none());
+    assert!(
+        h.query_by_label("Film-coordinate dye grain field · Default engine · Experimental")
+            .is_some(),
+        "the selected engine domain must remain readable while grain is off"
+    );
     assert!(
         h.query_by_role_and_label(egui::accesskit::Role::ComboBox, "Engine")
             .is_some()
@@ -1259,7 +1317,7 @@ fn hidden_grain_modified_locators_and_whole_reset_are_complete_scoped_and_revers
 }
 
 #[test]
-fn control_search_by_label_module_and_path_never_changes_parameters_or_saved_sections() {
+fn control_search_and_scan_tone_access_preserve_canonical_state() {
     let mut s = session();
     let h = &mut s.harness;
     let params = h.state().params.clone();
@@ -1278,6 +1336,61 @@ fn control_search_by_label_module_and_path_never_changes_parameters_or_saved_sec
     search_controls(h, "");
     assert_eq!(h.state().params, params);
     assert_eq!(h.state().gui_state.sections, sections);
+
+    set_route(h, "input > film > print > scan");
+    navigate_stage(h, controls::Stage::Scan);
+    let scan_heading = h.get_by_label("Scan stage").raw_bounds().unwrap();
+    let output_heading = h.get_by_label("Output stage").raw_bounds().unwrap();
+    let module = h.get_by_label("Tone & Color").raw_bounds().unwrap();
+    assert!(scan_heading.y0 < module.y0 && module.y0 < output_heading.y0);
+    assert_eq!(h.query_all_by_label("Tone & Color").count(), 1);
+    assert!(h.query_by_label("Brightness").is_some());
+    let scanner = h.state().params.scanner.clone();
+    edit(h, "Brightness", "0.35");
+    assert_eq!(h.state().params.finishing.brightness, 0.35);
+    assert_eq!(h.state().params.scanner, scanner);
+    assert_eq!(
+        h.state().params.workflow.route,
+        "input > film > print > scan"
+    );
+    reveal_control(h, "finishing.brightness");
+    assert_eq!(h.query_all_by_label("Brightness").count(), 1);
+    assert_eq!(h.state().params.finishing.brightness, 0.35);
+    click(h, "Undo");
+    assert_eq!(h.state().params.finishing.brightness, 0.0);
+    click(h, "Redo");
+    assert_eq!(h.state().params.finishing.brightness, 0.35);
+
+    set_route(h, "input > film > scan");
+    let slide = profile::load_profile_by_name(&data_dir(), "kodak_ektachrome_100").unwrap();
+    select_film(h, slide.info.name.as_deref().unwrap());
+    assert_eq!(h.state().params.scanner.scan_output, "direct_scan");
+    reveal_control(h, "finishing.brightness");
+    assert!(!h.get_by_label("Brightness").node().is_disabled());
+    edit(h, "Brightness", "0.5");
+    assert_eq!(h.state().params.finishing.brightness, 0.5);
+    assert_eq!(h.state().params.scanner.scan_output, "direct_scan");
+}
+
+#[test]
+fn scanner_white_reference_defaults_to_clear_film_base_and_can_opt_out() {
+    let mut s = session();
+    let h = &mut s.harness;
+    assert_eq!(
+        h.state().params.scanner.white_reference,
+        spektrafilm_core::params::SCAN_WHITE_REFERENCE_CLEAR_FILM_BASE
+    );
+    search_controls(h, "Scanner");
+    choose(h, "white reference", "Readout illuminant");
+    assert_eq!(
+        h.state().params.scanner.white_reference,
+        spektrafilm_core::params::SCAN_WHITE_REFERENCE_READOUT_ILLUMINANT
+    );
+    choose(h, "white reference", "Clear film base");
+    assert_eq!(
+        h.state().params.scanner.white_reference,
+        spektrafilm_core::params::SCAN_WHITE_REFERENCE_CLEAR_FILM_BASE
+    );
 }
 
 #[test]

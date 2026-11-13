@@ -94,15 +94,17 @@ pub(crate) fn apply_runtime_constraints(params: &mut RuntimeParams) {
 }
 
 fn apply_preview_constraints(params: &mut RuntimeParams) {
-    if params.settings.preview_mode && !params.scanner.requires_full_frame() {
-        // Preview keeps the per-pixel Procedural scanner grain path and the
-        // Fotufilm Film population model, whose contract evaluates the same
-        // model on the declared reduced-resolution source. Spektra remains a
-        // density-domain stochastic effect and Dye owns an explicit grain-free
-        // preview contract.
+    if params.settings.preview_mode && !params.requires_full_frame() {
+        // Preview keeps the post-scan Procedural and Exposure appearance
+        // paths and the Fotufilm Film population model, whose contract
+        // evaluates the same model on the declared reduced-resolution source.
+        // Spektra remains a density-domain stochastic effect and Dye owns an
+        // explicit grain-free preview contract.
         if !matches!(
             params.film_render.grain.engine,
-            crate::params::GrainEngine::Procedural | crate::params::GrainEngine::Fotufilm
+            crate::params::GrainEngine::Procedural
+                | crate::params::GrainEngine::Fotufilm
+                | crate::params::GrainEngine::Exposure
         ) {
             params.film_render.grain.active = false;
         }
@@ -154,6 +156,9 @@ fn apply_debug_constraints(params: &mut RuntimeParams) {
         params.film_render.halation.scatter_core_um = [0.0, 0.0, 0.0];
         params.film_render.halation.scatter_tail_um = [0.0, 0.0, 0.0];
         params.film_render.halation.halation_first_sigma_um = [0.0, 0.0, 0.0];
+        // The leak is a spatial effect; kill it at the active flag so an
+        // inactive leak leaves every stored leaf unused.
+        params.film_render.light_leak.active = false;
         params.film_render.dir_couplers.diffusion_size_um = 0.0;
         params.film_render.grain.blur = 0.0;
         params.film_render.grain.blur_dye_clouds_um = 0.0;
@@ -211,20 +216,20 @@ pub(crate) fn apply_database_neutral_print_filters_protected(
     }
     let print_stock = print.info.stock.as_deref().unwrap_or("");
     let film_stock = film.info.stock.as_deref().unwrap_or("");
-    if let Some([c, m, y]) =
-        database.and_then(|db| db.lookup(print_stock, &params.enlarger.illuminant, film_stock))
-    {
-        let protected = authored_filter_axes(protection);
-        if !protected[0] {
-            params.enlarger.c_filter_neutral = c as f32;
-        }
-        if !protected[1] {
-            params.enlarger.m_filter_neutral = m as f32;
-        }
-        if !protected[2] {
-            params.enlarger.y_filter_neutral = y as f32;
-        }
-    }
+    let controls = [
+        params.enlarger.c_filter_neutral as f64,
+        params.enlarger.m_filter_neutral as f64,
+        params.enlarger.y_filter_neutral as f64,
+    ];
+    let [c, m, y] = crate::neutral_filters::resolve_baseline(
+        controls,
+        authored_filter_axes(protection),
+        print.is_bw() && print.is_paper(),
+        database.and_then(|db| db.lookup(print_stock, &params.enlarger.illuminant, film_stock)),
+    );
+    params.enlarger.c_filter_neutral = c as f32;
+    params.enlarger.m_filter_neutral = m as f32;
+    params.enlarger.y_filter_neutral = y as f32;
     params
 }
 
@@ -661,6 +666,33 @@ mod tests {
     }
 
     #[test]
+    fn spatial_deactivation_disables_the_light_leak() {
+        let film = film_profile("x", "negative", "still", "weak");
+        let print = blank_profile();
+        for lut_mode in [false, true] {
+            let mut params = RuntimeParams::default();
+            params.film_render.light_leak.active = true;
+            params.debug.lut_mode = lut_mode;
+            params.debug.deactivate_spatial_effects = true;
+
+            let d = digest_params(params, &film, &print, None, true);
+            assert!(
+                !d.film_render.light_leak.active,
+                "the leak is spatial; deactivate_spatial_effects (lut_mode={lut_mode}) disables it"
+            );
+        }
+        let mut params = RuntimeParams::default();
+        params.film_render.light_leak.active = true;
+        params.debug.lut_mode = true;
+
+        let d = digest_params(params, &film, &print, None, true);
+        assert!(
+            !d.film_render.light_leak.active,
+            "lut_mode promotes spatial deactivation"
+        );
+    }
+
+    #[test]
     fn halation_preset_seeds_from_use_and_antihalation() {
         let film = film_profile("some_cine_stock", "negative", "cine", "no");
         let print = blank_profile();
@@ -909,6 +941,40 @@ mod tests {
         assert_eq!(bw_params.film_render.grain.rms_granularity, [14.0; 3]);
         assert_eq!(bw_params.film_render.grain.uniformity, [0.6; 3]);
         assert_eq!(bw_params.film_render.grain.density_min, [0.01; 3]);
+    }
+
+    #[test]
+    fn polymax_neutral_baseline_preserves_authored_filters_and_manual_policy() {
+        let data = crate::test_support::data_dir();
+        let film = crate::profile::load_profile_by_name(&data, "kodak_doublex").unwrap();
+        let paper = crate::profile::load_profile_by_name(&data, "kodak_polymax_fine_art").unwrap();
+        for enabled in [true, false] {
+            let mut params = RuntimeParams::default();
+            params.settings.neutral_print_filters_from_database = enabled;
+            params.enlarger.c_filter_neutral = 17.;
+            params.enlarger.m_filter_neutral = 23.;
+            params.enlarger.y_filter_neutral = 91.;
+            params.neutral_print_filters_protected = Some([false, true, false]);
+            let expected = if enabled {
+                [0., 23., 0.]
+            } else {
+                [17., 23., 91.]
+            };
+            let cold =
+                crate::pipeline_calibration::NeutralInputs::new(&film, &paper, &params, true)
+                    .build(Some(&data))
+                    .unwrap();
+            assert_eq!(cold, expected.map(f64::from));
+            let digested = apply_database_neutral_print_filters(params, &film, &paper, None);
+            assert_eq!(
+                [
+                    digested.enlarger.c_filter_neutral,
+                    digested.enlarger.m_filter_neutral,
+                    digested.enlarger.y_filter_neutral
+                ],
+                expected
+            );
+        }
     }
 
     #[test]

@@ -305,6 +305,41 @@ impl Pipeline {
         let print_exposure_scale = self.params.enlarger.print_exposure as f64;
         let print_norm_factor = self.print_exposure_factor();
 
+        // Camera light leak in the resident chain — stray light that reached
+        // the record during exposure. Built only when the stage is active, and
+        // evaluated on the same aperture and pixel lengths the host stage
+        // resolves, so both executors share one field.
+        let light_leak = if expose && self.params.film_render.light_leak.active {
+            let leak = &self.params.film_render.light_leak;
+            let model = leak.to_model();
+            if model.exposure_ev != 0.0 {
+                let geometry = spektrafilm_model::light_leak::light_leak_geometry(
+                    input.width(),
+                    input.height(),
+                    pix_um,
+                    &model,
+                );
+                Some(spektrafilm_backend::LightLeakGpuParams {
+                    width: input.width(),
+                    height: input.height(),
+                    center: geometry.center,
+                    direction: geometry.direction,
+                    half_px: geometry.half_px,
+                    spread_px: geometry.spread_px,
+                    texture_scale_px: geometry.texture_scale_px,
+                    texture_amount: model.texture_amount,
+                    seed: spektrafilm_model::light_leak::fold_seed(self.params.random_seed),
+                    scale: (crate::chain_prep::mid_density_reference_exposure(&self.film)
+                        * 2.0f64.powf(model.exposure_ev as f64)) as f32,
+                    spectrum: model.leak_spectrum,
+                })
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
         // Halation in the resident chain — only built when the halation
         // stage is active. Preserve channel-specific profile controls.
         let halation = if expose && self.params.film_render.halation.active {
@@ -478,14 +513,22 @@ impl Pipeline {
         };
         let grain_procedural = if scan
             && self.params.film_render.grain.active
-            && matches!(
-                self.params.film_render.grain.engine,
-                crate::params::grain::GrainEngine::Procedural
-            ) {
+            && self.params.film_render.grain.engine == crate::params::grain::GrainEngine::Procedural
+        {
             Some(self.params.film_render.grain.gpu_params(
                 self.params.random_seed,
                 self.params.debug.deactivate_spatial_effects,
             ))
+        } else {
+            None
+        };
+        let grain_exposure = if scan && self.params.film_render.grain.exposure_active() {
+            Some(
+                self.params
+                    .film_render
+                    .grain
+                    .gpu_params_exposure(self.params.random_seed),
+            )
         } else {
             None
         };
@@ -569,7 +612,6 @@ impl Pipeline {
                 &self.film,
                 &self.params.film_render.grain,
                 film_curves_norm,
-                self.params.settings.use_fast_stats,
                 self.params.random_seed,
                 pixel_size_um,
             )?)
@@ -665,22 +707,22 @@ impl Pipeline {
         // host fence.
         // Output transfer (pipe architecture, S4): encode the native
         // destination when the caller requested encoding and the
-        // Procedural-grain pass hasn't already emitted encoded samples, or
+        // Post-scan grain pass hasn't already emitted encoded samples, or
         // restore linear when it has and no encoding was requested. This
         // moved the former post-readback host encode/decode onto the device.
-        let grain_procedural_active = scan && self.grain_emits_encoded();
+        let grain_post_scan_active = scan && self.grain_emits_encoded();
         let cctf_kind = spektrafilm_backend::cctf_kind(scan_output_space.cctf);
         let identity_f32: [[f32; 3]; 3] = std::array::from_fn(|i| {
             std::array::from_fn(|j| scan_output_space.rgb_to_rgb_identity()[i][j] as f32)
         });
         let output_transfer =
-            if scan && !grain_procedural_active && self.params.io.output_cctf_encoding {
+            if scan && !grain_post_scan_active && self.params.io.output_cctf_encoding {
                 Some(spektrafilm_backend::OutputTransferGpuParams {
                     decode: false,
                     cctf_kind,
                     matrix: identity_f32,
                 })
-            } else if grain_procedural_active && !self.params.io.output_cctf_encoding {
+            } else if grain_post_scan_active && !self.params.io.output_cctf_encoding {
                 Some(spektrafilm_backend::OutputTransferGpuParams {
                     decode: true,
                     cctf_kind,
@@ -689,10 +731,10 @@ impl Pipeline {
             } else {
                 None
             };
-        // CMYK runs after the encoded grain domain when Procedural grain is
+        // CMYK runs after the encoded grain domain when post-scan grain is
         // active, even for a linear output; the final decode is appended
         // after CMYK to match the CPU scanner order exactly.
-        let cmyk_encoded = grain_procedural_active || self.params.io.output_cctf_encoding;
+        let cmyk_encoded = grain_post_scan_active || self.params.io.output_cctf_encoding;
         let cmyk = if scan && self.params.cmyk.active && self.params.cmyk.strength > 0.0 {
             let (to_lab, from_lab) =
                 crate::cmyk::CmykTransform::new(scan_output_space).gpu_matrices();
@@ -799,6 +841,7 @@ impl Pipeline {
             scan_output_space,
             scan_film,
             halation,
+            light_leak,
             dir_couplers,
             glare,
             scan_profile: if scan
@@ -829,6 +872,7 @@ impl Pipeline {
             },
             unsharp,
             grain_procedural,
+            grain_exposure,
             camera_lens_blur_px,
             camera_diffusion: camera_diffusion.as_ref().map(|resolved| {
                 spektrafilm_backend::OpticalDiffusionGpuParams {
@@ -933,14 +977,10 @@ impl Pipeline {
         Ok(result)
     }
 
-    /// Whether the Procedural-grain pass emits encoded samples on the
-    /// resident chain (it encodes before grain; the pipe-tail transfer
-    /// decodes afterwards when the caller requested linear output).
+    /// Whether a post-scan grain pass emits encoded samples on the resident
+    /// chain (it encodes before grain; the pipe-tail transfer decodes
+    /// afterwards when the caller requested linear output).
     fn grain_emits_encoded(&self) -> bool {
-        self.params.film_render.grain.active
-            && matches!(
-                self.params.film_render.grain.engine,
-                crate::params::grain::GrainEngine::Procedural
-            )
+        self.params.film_render.grain.post_scan_active()
     }
 }

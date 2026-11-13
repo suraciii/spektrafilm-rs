@@ -389,7 +389,7 @@ pub(crate) fn unit_suffix(path: &str) -> Option<&'static str> {
         .and_then(|unit| unit.as_deref())
         // A composite unit such as `[px (sigma), dimensionless (amount)]`
         // describes a whole tuple and is not shown per component.
-        .filter(|unit| !unit.starts_with('['))
+        .filter(|unit| !unit.starts_with('[') && *unit != "dimensionless")
 }
 
 fn format_value(value: f64, integral: bool, decimals: usize) -> String {
@@ -452,6 +452,28 @@ pub(crate) fn numeric<T: egui::emath::Numeric>(
     )
 }
 
+fn unit_width(ui: &egui::Ui, unit: Option<&str>) -> f32 {
+    let Some(unit) = unit else {
+        return theme::WIDTH_UNIT;
+    };
+    let text = crate::controls::localized(ui.ctx(), unit);
+    ui.fonts(|fonts| {
+        text.split_whitespace()
+            .map(|word| {
+                fonts
+                    .layout_no_wrap(
+                        word.to_owned(),
+                        egui::FontId::proportional(theme::SIZE_UNIT),
+                        egui::Color32::WHITE,
+                    )
+                    .size()
+                    .x
+                    + 1.0
+            })
+            .fold(theme::WIDTH_UNIT, f32::max)
+    })
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn numeric_marked<T: egui::emath::Numeric>(
     ui: &mut Ui,
@@ -468,7 +490,7 @@ pub(crate) fn numeric_marked<T: egui::emath::Numeric>(
 ) -> bool {
     let mut changed = false;
     ui.horizontal(|ui| {
-        let editor_width = theme::WIDTH_VALUE + theme::WIDTH_UNIT + ui.spacing().item_spacing.x;
+        let editor_width = theme::WIDTH_VALUE + unit_width(ui, unit) + ui.spacing().item_spacing.x;
         let label_width =
             (ui.available_width() - editor_width - ui.spacing().item_spacing.x).max(40.0);
         let label_response = ui
@@ -755,7 +777,7 @@ where
     ui.horizontal(|ui| {
         if let Some(unit) = unit {
             ui.add_sized(
-                [theme::WIDTH_UNIT, theme::HEIGHT_CONTROL],
+                [unit_width(ui, Some(unit)), theme::HEIGHT_CONTROL],
                 egui::Label::new(
                     egui::RichText::new(crate::controls::localized(ui.ctx(), unit))
                         .color(theme::FG_MUTED)
@@ -1025,6 +1047,15 @@ fn collect_wheel_events(ui: &Ui, response: &egui::Response, pending: &mut VecDeq
 #[cfg(test)]
 mod tests {
     use super::{SliderScale, numeric_field, parse_value, slider_scale};
+
+    #[test]
+    fn dimensionless_units_are_not_presented_as_suffixes() {
+        assert_eq!(super::unit_suffix("output_mix.amount"), None);
+        assert_eq!(
+            super::unit_suffix("camera.exposure_compensation_ev"),
+            Some("EV")
+        );
+    }
 
     #[test]
     fn rows_reserve_units_before_right_aligned_values_without_hiding_long_text() {

@@ -11,6 +11,139 @@ fn provenance() -> Provenance {
     }
 }
 
+/// The Portra 400 look must keep the experimental-branch stock grain values,
+/// not the older main particle-area model. This is the parameter half of the
+/// reference pair in `stages::filming` (the prepared-population test).
+#[test]
+fn kodak_portra_400_spektra_matches_experimental_stock() {
+    let preset = builtin_presets()
+        .into_iter()
+        .find(|preset| preset.name == "Kodak Portra 400")
+        .expect("Kodak Portra 400 built-in required");
+    let resolved = preset
+        .resolve(&data(), &RuntimeParams::default())
+        .expect("Kodak Portra 400 must resolve");
+    let grain = &resolved.params.film_render.grain;
+    assert_eq!(grain.engine, crate::params::GrainEngine::Spektra);
+    assert_eq!(grain.rms_granularity, [4.5, 4.5, 4.5]);
+    assert_eq!(grain.particle_scale_sublayers, [1.0, 0.4, 0.25]);
+    assert_eq!(grain.density_min, [0.03, 0.03, 0.03]);
+    assert_eq!(grain.uniformity, [0.97, 0.97, 0.97]);
+    assert_eq!(grain.blur, 0.89);
+    assert_eq!(grain.mult_usm_sigma, 0.7);
+    assert_eq!(grain.mult_usm_amount, 1.5);
+    assert_eq!(grain.blur_dye_clouds_um, 2.0);
+}
+
+/// Product rule: every built-in look must expose material grain and halation.
+/// Dye grain uses zero RMS as a reference-scale fallback, so `active` is authoritative.
+#[test]
+fn builtin_presets_enable_material_grain_and_halation() {
+    for preset in builtin_presets() {
+        let resolved = preset
+            .resolve(&data(), &RuntimeParams::default())
+            .unwrap_or_else(|error| panic!("{}: {error}", preset.name));
+        assert!(
+            resolved.params.film_render.grain.active,
+            "{} must enable grain",
+            preset.name
+        );
+        assert!(
+            resolved.params.film_render.halation.active,
+            "{} must enable halation",
+            preset.name
+        );
+    }
+}
+
+#[test]
+fn expansion_presets_resolve_expected_profiles_and_material() {
+    let expected = [
+        (
+            "Ilford Delta 3200",
+            "ilford_delta_3200",
+            "kodak_polymax_fine_art",
+        ),
+        (
+            "Ilford FP4 Plus",
+            "ilford_fp4_plus",
+            "kodak_polymax_fine_art",
+        ),
+        (
+            "Kodak Portra 800 Push +1",
+            "kodak_portra_800_push1",
+            "kodak_portra_endura",
+        ),
+        (
+            "Kodak Tri-X Reversal 7266",
+            "kodak_trix",
+            "kodak_polymax_fine_art",
+        ),
+    ];
+    let library = builtin_presets();
+    for (name, film, print) in expected {
+        let matches: Vec<_> = library
+            .iter()
+            .filter(|preset| preset.name == name)
+            .collect();
+        assert_eq!(matches.len(), 1, "{name} must have exactly one built-in");
+        let resolved = matches[0]
+            .resolve(&data(), &RuntimeParams::default())
+            .unwrap_or_else(|error| panic!("{name}: {error}"));
+        assert_eq!(resolved.film_name, film, "{name}");
+        assert_eq!(resolved.print_name, print, "{name}");
+        assert!(resolved.params.film_render.grain.active, "{name}");
+        assert!(resolved.params.film_render.halation.active, "{name}");
+    }
+}
+
+/// CineStill's single built-in keeps the grain/halation values fitted to
+/// public lab scans (commit f337148e), not the retired Night 280um look.
+#[test]
+fn cinestill_800t_is_one_scan_fitted_look() {
+    let library = builtin_presets();
+    let matches: Vec<_> = library
+        .iter()
+        .filter(|preset| preset.name == "CineStill 800T")
+        .collect();
+    assert_eq!(matches.len(), 1);
+    assert!(
+        !library.iter().any(|preset| {
+            preset.name.contains("Night 280um") || preset.name.contains("Cs41 (experimental)")
+        }),
+        "the old CineStill selector names must not survive the merge"
+    );
+
+    let resolved = matches[0]
+        .resolve(&data(), &RuntimeParams::default())
+        .unwrap();
+    let params = crate::params_builder::digest_params(
+        resolved.params,
+        &resolved.film,
+        &resolved.print,
+        None,
+        false,
+    );
+    assert_eq!(resolved.film_name, "cinestill_800t_cs41_approx");
+    assert!(params.film_render.grain.active);
+    assert_eq!(params.film_render.grain.rms_granularity, [13.1, 19.2, 24.4]);
+    assert_eq!(
+        params.film_render.grain.particle_scale_sublayers,
+        [4.0, 0.15, 0.03]
+    );
+    assert!(params.film_render.halation.active);
+    assert_eq!(
+        params.film_render.halation.halation_first_sigma_um,
+        [160.; 3]
+    );
+    assert_eq!(params.film_render.halation.halation_n_bounces, 3);
+    assert_eq!(params.film_render.halation.halation_bounce_decay, 0.5);
+    assert_eq!(
+        params.film_render.halation.halation_strength,
+        [0.15, 0.045, 0.005]
+    );
+}
+
 #[test]
 fn finishing_look_migration_and_sparse_sections_preserve_ownership() {
     let look = builtin_presets().remove(0);
@@ -847,7 +980,49 @@ fn look_resolution_keeps_a_declared_film_scan_route_and_its_scan_mode() {
         let resolved = preset.resolve(&data(), &current).unwrap();
         assert_eq!(resolved.params.scanner.scan_output, expected_mode);
         assert_eq!(resolved.params.workflow.route, "input > film > scan");
+        assert!(resolved.params.io.scan_film);
     }
+}
+
+#[test]
+fn a_direct_negative_look_uses_the_print_default_over_a_declared_film_scan_route() {
+    let mut current = RuntimeParams::default();
+    current.workflow.route = "input > film > scan".into();
+    current.io.scan_film = true;
+    current.scanner.scan_output = "direct_scan".into();
+    let preset = Preset::capture(
+        "Print look",
+        "kodak_portra_400",
+        "kodak_portra_endura",
+        &current,
+        provenance(),
+    );
+    let resolved = preset.resolve(&data(), &current).unwrap();
+    assert_eq!(
+        resolved.params.workflow.route,
+        "input > film > print > scan"
+    );
+    assert!(!resolved.params.io.scan_film);
+    assert_eq!(resolved.params.scanner.scan_output, "direct_scan");
+}
+
+#[test]
+fn a_positive_look_selects_the_film_scan_default() {
+    let mut current = RuntimeParams::default();
+    current.workflow.route = "input > film > print > scan".into();
+    current.io.scan_film = false;
+    current.scanner.scan_output = "direct_scan".into();
+    let preset = Preset::capture(
+        "Positive look",
+        "kodak_ektachrome_100",
+        "kodak_portra_endura",
+        &current,
+        provenance(),
+    );
+    let resolved = preset.resolve(&data(), &current).unwrap();
+    assert_eq!(resolved.params.workflow.route, "input > film > scan");
+    assert!(resolved.params.io.scan_film);
+    assert_eq!(resolved.params.scanner.scan_output, "direct_scan");
 }
 
 #[test]
@@ -965,7 +1140,13 @@ fn look_and_section_documents_reject_active_invalid_chemistry() {
 /// dropped because look documents carry only the look settings subset, and
 /// `cmyk` is dropped because the caller supplies the legacy spelling.
 fn legacy_cmyk_look(version: u32, parameters: serde_json::Map<String, Value>) -> Value {
-    let mut value = serde_json::to_value(builtin_presets().remove(0)).unwrap();
+    // Keep the legacy fixture on a negative look: built-in ordering changes
+    // over time, and a positive preset would resolve to direct film scan.
+    let preset = builtin_presets()
+        .into_iter()
+        .find(|preset| preset.name == "American Reminiscence")
+        .expect("negative built-in preset fixture");
+    let mut value = serde_json::to_value(preset).unwrap();
     let object = value.as_object_mut().unwrap();
     object.insert("schema_version".into(), version.into());
     let mut look = serde_json::Map::new();
@@ -1353,4 +1534,983 @@ fn historical_sparse_grain_presets_write_canonical_and_match_actual_values() {
             assert!(section_matches(&preset, &applied).unwrap());
         }
     }
+}
+
+#[test]
+fn trix400_builtin_is_one_source_print_look_and_preserves_photo_context() {
+    let library = builtin_presets();
+    let matches: Vec<_> = library
+        .iter()
+        .filter(|p| p.name == "Kodak Tri-X 400")
+        .collect();
+    assert_eq!(matches.len(), 1);
+    let preset = matches[0];
+    let mut current = RuntimeParams::default();
+    current.camera.exposure_compensation_ev = 1.25;
+    current.camera.auto_exposure = false;
+    current.camera.film_format_mm = 60.;
+    current.io.crop = true;
+    current.io.crop_size = [0.7, 0.8];
+    for carrier in [
+        Preset::from_json_str(&preset.to_json().unwrap()).unwrap(),
+        Preset::from_toml_str(&preset.to_toml().unwrap()).unwrap(),
+    ] {
+        let resolved = carrier.resolve(&data(), &current).unwrap();
+        assert_eq!(resolved.film_name, "kodak_trix_400");
+        assert_eq!(resolved.print_name, "kodak_polymax_fine_art");
+        let p = crate::params_builder::digest_params(
+            resolved.params,
+            &resolved.film,
+            &resolved.print,
+            None,
+            false,
+        );
+        assert_eq!(p.workflow.route, "input > film > print > scan");
+        assert_eq!(p.scanner.scan_output, "direct_scan");
+        assert_eq!(p.camera.exposure_compensation_ev, 1.25);
+        assert!(!p.camera.auto_exposure);
+        assert_eq!(p.camera.film_format_mm, 60.);
+        assert_eq!(p.io.crop_size, current.io.crop_size);
+        assert!(p.film_render.grain.active && p.film_render.halation.active);
+        assert_eq!(p.film_render.grain.rms_granularity, [17.; 3]);
+        assert_eq!(p.film_render.halation.scatter_amount, 0.15);
+        assert_eq!(p.film_render.halation.halation_amount, 0.15);
+        assert_eq!(p.film_render.halation.halation_strength, [0.05, 0.015, 0.]);
+        assert!(!p.film_render.dir_couplers.active && !p.print_render.glare.active);
+        assert_eq!(p.enlarger.illuminant, "T");
+        assert_eq!(
+            [
+                p.enlarger.c_filter_neutral,
+                p.enlarger.m_filter_neutral,
+                p.enlarger.y_filter_neutral
+            ],
+            [0.; 3]
+        );
+        assert_eq!(p.finishing, crate::params::FinishingParams::default());
+    }
+    current.workflow.route = "input > film > scan".into();
+    let resolved = preset.resolve(&data(), &current).unwrap();
+    // A print look must not leave a direct-scan negative on a caller film-scan route.
+    assert_eq!(
+        resolved.params.workflow.route,
+        "input > film > print > scan"
+    );
+    assert!(!resolved.params.io.scan_film);
+    assert_eq!(resolved.params.scanner.scan_output, "direct_scan");
+}
+
+#[test]
+fn acros100ii_builtin_is_one_source_print_look_and_preserves_photo_context() {
+    let library = builtin_presets();
+    let matches: Vec<_> = library
+        .iter()
+        .filter(|p| p.name == "Fujifilm Acros 100 II")
+        .collect();
+    assert_eq!(matches.len(), 1);
+    let preset = matches[0];
+    let mut current = RuntimeParams::default();
+    current.camera.exposure_compensation_ev = 1.25;
+    current.camera.auto_exposure = false;
+    current.camera.film_format_mm = 60.;
+    current.io.crop = true;
+    current.io.crop_size = [0.7, 0.8];
+    for carrier in [
+        Preset::from_json_str(&preset.to_json().unwrap()).unwrap(),
+        Preset::from_toml_str(&preset.to_toml().unwrap()).unwrap(),
+    ] {
+        let resolved = carrier.resolve(&data(), &current).unwrap();
+        assert_eq!(resolved.film_name, "fujifilm_acros_100_ii");
+        assert_eq!(resolved.print_name, "kodak_polymax_fine_art");
+        let p = crate::params_builder::digest_params(
+            resolved.params,
+            &resolved.film,
+            &resolved.print,
+            None,
+            false,
+        );
+        assert_eq!(p.workflow.route, "input > film > print > scan");
+        assert_eq!(p.scanner.scan_output, "direct_scan");
+        assert_eq!(p.camera.exposure_compensation_ev, 1.25);
+        assert!(!p.camera.auto_exposure);
+        assert_eq!(p.camera.film_format_mm, 60.);
+        assert_eq!(p.io.crop_size, current.io.crop_size);
+        assert!(p.film_render.grain.active && p.film_render.halation.active);
+        assert_eq!(p.film_render.grain.rms_granularity, [7.; 3]);
+        assert_eq!(p.film_render.grain.mult_usm_amount, 0.);
+        assert!(!p.film_render.dir_couplers.active);
+        assert_eq!(p.enlarger.illuminant, "T");
+        assert_eq!(p.finishing, crate::params::FinishingParams::default());
+        assert!(!p.settings.use_cat16);
+    }
+    current.workflow.route = "input > film > scan".into();
+    let resolved = preset.resolve(&data(), &current).unwrap();
+    // A negative print look must not leave a direct-scan negative on a caller
+    // film-scan route.
+    assert_eq!(
+        resolved.params.workflow.route,
+        "input > film > print > scan"
+    );
+    assert!(!resolved.params.io.scan_film);
+    assert_eq!(resolved.params.scanner.scan_output, "direct_scan");
+}
+
+#[test]
+fn tmax100_builtin_is_one_source_print_look_and_preserves_photo_context() {
+    let library = builtin_presets();
+    let matches: Vec<_> = library
+        .iter()
+        .filter(|p| p.name == "Kodak T-MAX 100")
+        .collect();
+    assert_eq!(matches.len(), 1);
+    let preset = matches[0];
+    let mut current = RuntimeParams::default();
+    current.camera.exposure_compensation_ev = 1.25;
+    current.camera.auto_exposure = false;
+    current.camera.film_format_mm = 60.;
+    current.io.crop = true;
+    current.io.crop_size = [0.7, 0.8];
+    for carrier in [
+        Preset::from_json_str(&preset.to_json().unwrap()).unwrap(),
+        Preset::from_toml_str(&preset.to_toml().unwrap()).unwrap(),
+    ] {
+        let resolved = carrier.resolve(&data(), &current).unwrap();
+        assert_eq!(resolved.film_name, "kodak_tmax_100");
+        assert_eq!(resolved.print_name, "kodak_polymax_fine_art");
+        let p = crate::params_builder::digest_params(
+            resolved.params,
+            &resolved.film,
+            &resolved.print,
+            None,
+            false,
+        );
+        assert_eq!(p.workflow.route, "input > film > print > scan");
+        assert_eq!(p.scanner.scan_output, "direct_scan");
+        assert_eq!(p.camera.exposure_compensation_ev, 1.25);
+        assert!(!p.camera.auto_exposure);
+        assert_eq!(p.camera.film_format_mm, 60.);
+        assert_eq!(p.io.crop_size, current.io.crop_size);
+        assert!(p.film_render.grain.active && p.film_render.halation.active);
+        assert_eq!(p.film_render.grain.rms_granularity, [9.; 3]);
+        assert_eq!(p.film_render.grain.density_min, [0.03; 3]);
+        assert_eq!(p.film_render.grain.uniformity, [0.97; 3]);
+        assert_eq!(p.film_render.grain.blur, 0.2);
+        assert_eq!(p.film_render.grain.blur_dye_clouds_um, 2.0);
+        assert_eq!(p.film_render.grain.mult_usm_amount, 0.);
+        assert_eq!(p.film_render.halation.halation_first_sigma_um, [65.; 3]);
+        assert_eq!(p.film_render.halation.halation_n_bounces, 3);
+        assert_eq!(p.film_render.halation.scatter_amount, 0.15);
+        assert_eq!(p.film_render.halation.halation_amount, 0.15);
+        assert_eq!(p.film_render.halation.halation_strength, [0.05, 0.015, 0.]);
+        assert_eq!(p.scanner.unsharp_mask, [0., 0.]);
+        assert_eq!(p.scanner.lens_blur, 0.);
+        assert!(!p.film_render.dir_couplers.active);
+        assert_eq!(p.enlarger.illuminant, "T");
+        assert_eq!(p.finishing, crate::params::FinishingParams::default());
+        assert!(!p.settings.use_cat16);
+    }
+    current.workflow.route = "input > film > scan".into();
+    let resolved = preset.resolve(&data(), &current).unwrap();
+    // A negative print look must not leave a direct-scan negative on a caller
+    // film-scan route.
+    assert_eq!(
+        resolved.params.workflow.route,
+        "input > film > print > scan"
+    );
+    assert!(!resolved.params.io.scan_film);
+    assert_eq!(resolved.params.scanner.scan_output, "direct_scan");
+}
+
+#[test]
+fn doublex_builtin_is_one_source_print_look_and_uses_d96_nearest_curve() {
+    let library = builtin_presets();
+    let matches: Vec<_> = library
+        .iter()
+        .filter(|p| p.name == "Kodak Double-X 5222")
+        .collect();
+    assert_eq!(matches.len(), 1);
+    let preset = matches[0];
+    let mut current = RuntimeParams::default();
+    current.camera.exposure_compensation_ev = 1.25;
+    current.camera.auto_exposure = false;
+    current.camera.film_format_mm = 60.;
+    current.io.crop = true;
+    current.io.crop_size = [0.7, 0.8];
+    for carrier in [
+        Preset::from_json_str(&preset.to_json().unwrap()).unwrap(),
+        Preset::from_toml_str(&preset.to_toml().unwrap()).unwrap(),
+    ] {
+        let resolved = carrier.resolve(&data(), &current).unwrap();
+        assert_eq!(resolved.film_name, "kodak_doublex");
+        assert_eq!(resolved.print_name, "kodak_polymax_fine_art");
+        let p = crate::params_builder::digest_params(
+            resolved.params,
+            &resolved.film,
+            &resolved.print,
+            None,
+            false,
+        );
+        assert_eq!(p.workflow.route, "input > film > print > scan");
+        assert_eq!(p.scanner.scan_output, "direct_scan");
+        assert_eq!(p.camera.exposure_compensation_ev, 1.25);
+        assert!(!p.camera.auto_exposure);
+        assert_eq!(p.camera.film_format_mm, 60.);
+        assert_eq!(p.io.crop_size, current.io.crop_size);
+        assert!(p.film_render.grain.active && p.film_render.halation.active);
+        assert_eq!(p.film_render.development_time, Some(6.5));
+        assert_eq!(p.film_render.grain.rms_granularity, [14.; 3]);
+        assert_eq!(p.film_render.grain.mult_usm_amount, 0.);
+        assert_eq!(p.film_render.halation.halation_strength, [0.05, 0.015, 0.]);
+        assert_eq!(p.scanner.unsharp_mask, [0., 0.]);
+        assert_eq!(p.scanner.lens_blur, 0.);
+        assert!(!p.film_render.dir_couplers.active);
+        assert_eq!(p.enlarger.illuminant, "T");
+        assert_eq!(p.finishing, crate::params::FinishingParams::default());
+        assert!(!p.settings.use_cat16);
+    }
+    current.workflow.route = "input > film > scan".into();
+    let resolved = preset.resolve(&data(), &current).unwrap();
+    assert_eq!(
+        resolved.params.workflow.route,
+        "input > film > print > scan"
+    );
+    assert!(!resolved.params.io.scan_film);
+    assert_eq!(resolved.params.scanner.scan_output, "direct_scan");
+}
+
+#[test]
+fn hp5_builtin_is_one_source_print_look_and_preserves_photo_context() {
+    let library = builtin_presets();
+    let matches: Vec<_> = library
+        .iter()
+        .filter(|p| p.name == "Ilford HP5 Plus 400")
+        .collect();
+    assert_eq!(matches.len(), 1);
+    let preset = matches[0];
+    let mut current = RuntimeParams::default();
+    current.camera.exposure_compensation_ev = 1.25;
+    current.camera.auto_exposure = false;
+    current.camera.film_format_mm = 60.;
+    current.io.crop = true;
+    current.io.crop_size = [0.7, 0.8];
+    for carrier in [
+        Preset::from_json_str(&preset.to_json().unwrap()).unwrap(),
+        Preset::from_toml_str(&preset.to_toml().unwrap()).unwrap(),
+    ] {
+        let resolved = carrier.resolve(&data(), &current).unwrap();
+        assert_eq!(resolved.film_name, "ilford_hp5_plus");
+        assert_eq!(resolved.print_name, "kodak_polymax_fine_art");
+        let p = crate::params_builder::digest_params(
+            resolved.params,
+            &resolved.film,
+            &resolved.print,
+            None,
+            false,
+        );
+        assert_eq!(p.workflow.route, "input > film > print > scan");
+        assert_eq!(p.scanner.scan_output, "direct_scan");
+        assert_eq!(p.camera.exposure_compensation_ev, 1.25);
+        assert!(!p.camera.auto_exposure);
+        assert_eq!(p.camera.film_format_mm, 60.);
+        assert_eq!(p.io.crop_size, current.io.crop_size);
+        assert!(p.film_render.grain.active && p.film_render.halation.active);
+        assert_eq!(p.film_render.grain.rms_granularity, [18.; 3]);
+        assert_eq!(p.film_render.grain.density_min, [0.03; 3]);
+        assert_eq!(p.film_render.grain.uniformity, [0.97; 3]);
+        assert_eq!(p.film_render.grain.blur, 0.2);
+        assert_eq!(p.film_render.grain.blur_dye_clouds_um, 2.0);
+        assert_eq!(p.film_render.grain.mult_usm_amount, 0.);
+        assert_eq!(p.film_render.halation.halation_first_sigma_um, [65.; 3]);
+        assert_eq!(p.film_render.halation.halation_n_bounces, 3);
+        assert_eq!(p.film_render.halation.scatter_amount, 0.15);
+        assert_eq!(p.film_render.halation.halation_amount, 0.15);
+        assert_eq!(p.film_render.halation.halation_strength, [0.05, 0.015, 0.]);
+        assert_eq!(p.scanner.unsharp_mask, [0., 0.]);
+        assert_eq!(p.scanner.lens_blur, 0.);
+        assert!(!p.film_render.dir_couplers.active);
+        assert_eq!(p.enlarger.illuminant, "T");
+        assert_eq!(p.finishing, crate::params::FinishingParams::default());
+        assert!(!p.settings.use_cat16);
+    }
+    current.workflow.route = "input > film > scan".into();
+    let resolved = preset.resolve(&data(), &current).unwrap();
+    // A negative print look must not leave a direct-scan negative on a caller
+    // film-scan route.
+    assert_eq!(
+        resolved.params.workflow.route,
+        "input > film > print > scan"
+    );
+    assert!(!resolved.params.io.scan_film);
+    assert_eq!(resolved.params.scanner.scan_output, "direct_scan");
+}
+
+#[test]
+fn vision3_250d_builtin_accepts_film_print_stock_and_preserves_context() {
+    let library = builtin_presets();
+    let matches: Vec<_> = library
+        .iter()
+        .filter(|p| p.name == "Kodak Vision3 250D")
+        .collect();
+    assert_eq!(matches.len(), 1);
+    let preset = matches[0];
+    let mut current = RuntimeParams::default();
+    current.camera.exposure_compensation_ev = 1.25;
+    current.camera.auto_exposure = false;
+    current.camera.film_format_mm = 60.;
+    current.io.crop = true;
+    current.io.crop_size = [0.7, 0.8];
+    for carrier in [
+        Preset::from_json_str(&preset.to_json().unwrap()).unwrap(),
+        Preset::from_toml_str(&preset.to_toml().unwrap()).unwrap(),
+    ] {
+        let resolved = carrier.resolve(&data(), &current).unwrap();
+        assert_eq!(resolved.film_name, "kodak_vision3_250d");
+        assert_eq!(resolved.print_name, "kodak_2383");
+        let p = crate::params_builder::digest_params(
+            resolved.params,
+            &resolved.film,
+            &resolved.print,
+            None,
+            false,
+        );
+        assert_eq!(p.workflow.route, "input > film > print > scan");
+        assert_eq!(p.scanner.scan_output, "direct_scan");
+        assert_eq!(p.camera.exposure_compensation_ev, 1.25);
+        assert!(!p.camera.auto_exposure);
+        assert_eq!(p.camera.film_format_mm, 60.);
+        assert_eq!(p.io.crop_size, current.io.crop_size);
+        assert!(p.film_render.grain.active && p.film_render.halation.active);
+        assert_eq!(p.film_render.grain.rms_granularity, [10., 11., 18.]);
+        assert_eq!(p.finishing, crate::params::FinishingParams::default());
+    }
+    current.workflow.route = "input > film > scan".into();
+    let resolved = preset.resolve(&data(), &current).unwrap();
+    assert_eq!(
+        resolved.params.workflow.route,
+        "input > film > print > scan"
+    );
+    assert!(!resolved.params.io.scan_film);
+    assert_eq!(resolved.params.scanner.scan_output, "direct_scan");
+}
+
+#[test]
+fn vision3_500t_builtin_accepts_film_print_stock_and_preserves_context() {
+    let library = builtin_presets();
+    let matches: Vec<_> = library
+        .iter()
+        .filter(|p| p.name == "Kodak Vision3 500T")
+        .collect();
+    assert_eq!(matches.len(), 1);
+    let preset = matches[0];
+    let mut current = RuntimeParams::default();
+    current.camera.exposure_compensation_ev = 1.25;
+    current.camera.auto_exposure = false;
+    current.camera.film_format_mm = 60.;
+    current.io.crop = true;
+    current.io.crop_size = [0.7, 0.8];
+    for carrier in [
+        Preset::from_json_str(&preset.to_json().unwrap()).unwrap(),
+        Preset::from_toml_str(&preset.to_toml().unwrap()).unwrap(),
+    ] {
+        let resolved = carrier.resolve(&data(), &current).unwrap();
+        assert_eq!(resolved.film_name, "kodak_vision3_500t");
+        assert_eq!(resolved.print_name, "kodak_2383");
+        let p = crate::params_builder::digest_params(
+            resolved.params,
+            &resolved.film,
+            &resolved.print,
+            None,
+            false,
+        );
+        assert_eq!(p.workflow.route, "input > film > print > scan");
+        assert_eq!(p.scanner.scan_output, "direct_scan");
+        assert_eq!(p.camera.exposure_compensation_ev, 1.25);
+        assert!(!p.camera.auto_exposure);
+        assert_eq!(p.camera.film_format_mm, 60.);
+        assert_eq!(p.io.crop_size, current.io.crop_size);
+        assert!(p.film_render.grain.active && p.film_render.halation.active);
+        assert_eq!(p.film_render.grain.rms_granularity, [9., 13., 30.]);
+        assert_eq!(p.film_render.grain.density_min, [0.12, 0.10, 0.35]);
+        assert_eq!(p.film_render.grain.uniformity, [0.93, 0.97, 0.99]);
+        assert_eq!(p.finishing, crate::params::FinishingParams::default());
+    }
+    current.workflow.route = "input > film > scan".into();
+    let resolved = preset.resolve(&data(), &current).unwrap();
+    assert_eq!(
+        resolved.params.workflow.route,
+        "input > film > print > scan"
+    );
+    assert!(!resolved.params.io.scan_film);
+    assert_eq!(resolved.params.scanner.scan_output, "direct_scan");
+}
+
+#[test]
+fn vision3_50d_builtin_accepts_film_print_stock_and_preserves_context() {
+    let library = builtin_presets();
+    let matches: Vec<_> = library
+        .iter()
+        .filter(|p| p.name == "Kodak Vision3 50D")
+        .collect();
+    assert_eq!(matches.len(), 1);
+    let preset = matches[0];
+    let mut current = RuntimeParams::default();
+    current.camera.exposure_compensation_ev = -0.75;
+    current.camera.auto_exposure = false;
+    current.camera.film_format_mm = 60.;
+    current.io.crop = true;
+    current.io.crop_size = [0.6, 0.85];
+    for carrier in [
+        Preset::from_json_str(&preset.to_json().unwrap()).unwrap(),
+        Preset::from_toml_str(&preset.to_toml().unwrap()).unwrap(),
+    ] {
+        let resolved = carrier.resolve(&data(), &current).unwrap();
+        assert_eq!(resolved.film_name, "kodak_vision3_50d");
+        assert_eq!(resolved.print_name, "kodak_2383");
+        let p = crate::params_builder::digest_params(
+            resolved.params,
+            &resolved.film,
+            &resolved.print,
+            None,
+            false,
+        );
+        assert_eq!(p.workflow.route, "input > film > print > scan");
+        assert_eq!(p.scanner.scan_output, "direct_scan");
+        assert_eq!(p.camera.exposure_compensation_ev, -0.75);
+        assert!(!p.camera.auto_exposure);
+        assert_eq!(p.camera.film_format_mm, 60.);
+        assert_eq!(p.io.crop_size, current.io.crop_size);
+        assert!(p.film_render.grain.active && p.film_render.halation.active);
+        assert_eq!(p.film_render.grain.rms_granularity, [7., 7., 12.]);
+        assert_eq!(p.film_render.grain.uniformity, [0.97, 0.95, 0.97]);
+        assert_eq!(p.film_render.grain.density_min, [0.03, 0.03, 0.03]);
+        assert_eq!(p.finishing, crate::params::FinishingParams::default());
+    }
+    current.workflow.route = "input > film > scan".into();
+    let resolved = preset.resolve(&data(), &current).unwrap();
+    assert_eq!(
+        resolved.params.workflow.route,
+        "input > film > print > scan"
+    );
+    assert!(!resolved.params.io.scan_film);
+    assert_eq!(resolved.params.scanner.scan_output, "direct_scan");
+}
+
+#[test]
+fn verita_200d_builtin_accepts_film_print_stock_and_preserves_context() {
+    let library = builtin_presets();
+    let matches: Vec<_> = library
+        .iter()
+        .filter(|p| p.name == "Kodak Verita 200D")
+        .collect();
+    assert_eq!(matches.len(), 1);
+    let preset = matches[0];
+    let mut current = RuntimeParams::default();
+    current.camera.exposure_compensation_ev = 0.5;
+    current.camera.auto_exposure = false;
+    current.camera.film_format_mm = 65.;
+    current.io.crop = true;
+    current.io.crop_size = [0.65, 0.8];
+    for carrier in [
+        Preset::from_json_str(&preset.to_json().unwrap()).unwrap(),
+        Preset::from_toml_str(&preset.to_toml().unwrap()).unwrap(),
+    ] {
+        let resolved = carrier.resolve(&data(), &current).unwrap();
+        assert_eq!(resolved.film_name, "kodak_verita_200d");
+        assert_eq!(resolved.print_name, "kodak_2383");
+        let p = crate::params_builder::digest_params(
+            resolved.params,
+            &resolved.film,
+            &resolved.print,
+            None,
+            false,
+        );
+        assert_eq!(p.workflow.route, "input > film > print > scan");
+        assert_eq!(p.scanner.scan_output, "direct_scan");
+        assert_eq!(p.camera.exposure_compensation_ev, 0.5);
+        assert!(!p.camera.auto_exposure);
+        assert_eq!(p.camera.film_format_mm, 65.);
+        assert_eq!(p.io.crop_size, current.io.crop_size);
+        assert!(p.film_render.grain.active && p.film_render.halation.active);
+        assert_eq!(p.film_render.grain.rms_granularity, [4.5, 4.5, 4.5]);
+        assert_eq!(p.film_render.grain.uniformity, [0.97, 0.97, 0.97]);
+        assert_eq!(p.film_render.grain.density_min, [0.03, 0.03, 0.03]);
+        assert_eq!(p.finishing, crate::params::FinishingParams::default());
+    }
+    current.workflow.route = "input > film > scan".into();
+    let resolved = preset.resolve(&data(), &current).unwrap();
+    assert_eq!(
+        resolved.params.workflow.route,
+        "input > film > print > scan"
+    );
+    assert!(!resolved.params.io.scan_film);
+    assert_eq!(resolved.params.scanner.scan_output, "direct_scan");
+}
+
+#[test]
+fn vision3_200t_builtin_accepts_film_print_stock_and_preserves_context() {
+    let library = builtin_presets();
+    let matches: Vec<_> = library
+        .iter()
+        .filter(|p| p.name == "Kodak Vision3 200T")
+        .collect();
+    assert_eq!(matches.len(), 1);
+    let preset = matches[0];
+    let mut current = RuntimeParams::default();
+    current.camera.exposure_compensation_ev = 1.0;
+    current.camera.auto_exposure = false;
+    current.camera.film_format_mm = 35.;
+    current.io.crop = true;
+    current.io.crop_size = [0.75, 0.9];
+    for carrier in [
+        Preset::from_json_str(&preset.to_json().unwrap()).unwrap(),
+        Preset::from_toml_str(&preset.to_toml().unwrap()).unwrap(),
+    ] {
+        let resolved = carrier.resolve(&data(), &current).unwrap();
+        assert_eq!(resolved.film_name, "kodak_vision3_200t");
+        assert_eq!(resolved.print_name, "kodak_2383");
+        let p = crate::params_builder::digest_params(
+            resolved.params,
+            &resolved.film,
+            &resolved.print,
+            None,
+            false,
+        );
+        assert_eq!(p.workflow.route, "input > film > print > scan");
+        assert_eq!(p.scanner.scan_output, "direct_scan");
+        assert_eq!(p.camera.exposure_compensation_ev, 1.0);
+        assert!(!p.camera.auto_exposure);
+        assert_eq!(p.camera.film_format_mm, 35.);
+        assert_eq!(p.io.crop_size, current.io.crop_size);
+        assert!(p.film_render.grain.active && p.film_render.halation.active);
+        assert_eq!(p.film_render.grain.rms_granularity, [7., 8., 17.]);
+        assert_eq!(p.film_render.grain.density_min, [0.03, 0.03, 0.12]);
+        assert_eq!(p.film_render.grain.uniformity, [0.97, 0.97, 0.97]);
+        assert_eq!(p.finishing, crate::params::FinishingParams::default());
+    }
+    current.workflow.route = "input > film > scan".into();
+    let resolved = preset.resolve(&data(), &current).unwrap();
+    assert_eq!(
+        resolved.params.workflow.route,
+        "input > film > print > scan"
+    );
+    assert!(!resolved.params.io.scan_film);
+    assert_eq!(resolved.params.scanner.scan_output, "direct_scan");
+}
+
+#[test]
+fn astia100f_builtin_preserves_context_and_resolves_native_positive() {
+    let library = builtin_presets();
+    let matches: Vec<_> = library
+        .iter()
+        .filter(|p| p.name == "Fujifilm Astia 100F")
+        .collect();
+    assert_eq!(matches.len(), 1);
+    let preset = matches[0];
+    let mut current = RuntimeParams::default();
+    current.camera.exposure_compensation_ev = 1.25;
+    current.camera.auto_exposure = false;
+    current.camera.film_format_mm = 60.;
+    current.io.crop = true;
+    current.io.crop_size = [0.7, 0.8];
+    current.scanner.scan_output = "negative_to_positive".into();
+    current.settings.use_cat16 = true;
+    for carrier in [
+        Preset::from_json_str(&preset.to_json().unwrap()).unwrap(),
+        Preset::from_toml_str(&preset.to_toml().unwrap()).unwrap(),
+    ] {
+        for route in [
+            "input > film > print > scan",
+            "input > film > scan",
+            "input > convert-film > scan",
+        ] {
+            current.workflow.route = route.into();
+            let resolved = carrier.resolve(&data(), &current).unwrap();
+            assert_eq!(resolved.film_name, "fujifilm_astia_100f");
+            assert!(resolved.film.is_positive());
+            let p = crate::params_builder::digest_params(
+                resolved.params,
+                &resolved.film,
+                &resolved.print,
+                None,
+                false,
+            );
+            assert_eq!(
+                p.workflow.route,
+                if route.contains("convert-film") {
+                    route
+                } else {
+                    "input > film > scan"
+                }
+            );
+            assert_eq!(p.scanner.scan_output, "direct_scan");
+            assert_eq!(p.camera.exposure_compensation_ev, 1.25);
+            assert!(!p.camera.auto_exposure);
+            assert_eq!(p.camera.film_format_mm, 60.);
+            assert_eq!(p.io.crop_size, current.io.crop_size);
+            assert!(
+                p.film_render.grain.active
+                    && p.film_render.halation.active
+                    && !p.film_render.dir_couplers.active
+                    && !p.film_render.chemistry.active
+            );
+            assert!(
+                p.settings.apply_hanatos2025_adaptation_surface
+                    && p.settings.apply_hanatos2025_adaptation_window
+            );
+            assert_eq!(p.film_render.grain.rms_granularity, [7.; 3]);
+            assert_eq!(p.film_render.grain.mult_usm_amount, 0.);
+            assert_eq!(p.film_render.halation.halation_amount, 0.2);
+            assert!(!p.settings.use_cat16);
+            assert_eq!(p.scanner.unsharp_mask, [0., 0.]);
+            assert_eq!(p.finishing, crate::params::FinishingParams::default());
+        }
+    }
+}
+
+#[test]
+fn agfa100_builtin_preserves_context_and_resolves_native_positive() {
+    let library = builtin_presets();
+    let matches: Vec<_> = library
+        .iter()
+        .filter(|p| p.name == "Agfachrome RSX II 100")
+        .collect();
+    assert_eq!(matches.len(), 1);
+    let preset = matches[0];
+    let mut current = RuntimeParams::default();
+    current.camera.exposure_compensation_ev = 1.25;
+    current.camera.auto_exposure = false;
+    current.camera.film_format_mm = 60.;
+    current.io.crop = true;
+    current.io.crop_size = [0.7, 0.8];
+    current.scanner.scan_output = "negative_to_positive".into();
+    current.settings.use_cat16 = true;
+    for carrier in [
+        Preset::from_json_str(&preset.to_json().unwrap()).unwrap(),
+        Preset::from_toml_str(&preset.to_toml().unwrap()).unwrap(),
+    ] {
+        for route in [
+            "input > film > print > scan",
+            "input > film > scan",
+            "input > convert-film > scan",
+        ] {
+            current.workflow.route = route.into();
+            let resolved = carrier.resolve(&data(), &current).unwrap();
+            assert_eq!(resolved.film_name, "agfachrome_rsx_ii_100");
+            assert!(resolved.film.is_positive());
+            assert_eq!(resolved.print_name, "fujifilm_crystal_archive_typeii");
+            let p = crate::params_builder::digest_params(
+                resolved.params,
+                &resolved.film,
+                &resolved.print,
+                None,
+                false,
+            );
+            assert_eq!(
+                p.workflow.route,
+                if route.contains("convert-film") {
+                    route
+                } else {
+                    "input > film > scan"
+                }
+            );
+            assert_eq!(p.scanner.scan_output, "direct_scan");
+            assert_eq!(p.camera.exposure_compensation_ev, 1.25);
+            assert!(!p.camera.auto_exposure);
+            assert_eq!(p.camera.film_format_mm, 60.);
+            assert_eq!(p.io.crop_size, current.io.crop_size);
+            assert!(p.film_render.grain.active && p.film_render.halation.active);
+            assert_eq!(p.film_render.grain.rms_granularity, [11.78; 3]);
+            assert_eq!(p.film_render.grain.mult_usm_amount, 0.);
+            assert_eq!(p.film_render.halation.scatter_amount, 0.2);
+            assert_eq!(p.film_render.halation.halation_amount, 0.15);
+            assert!(!p.settings.use_cat16);
+            assert_eq!(p.scanner.unsharp_mask, [0., 0.]);
+            assert_eq!(p.finishing, crate::params::FinishingParams::default());
+        }
+    }
+}
+
+#[test]
+fn xp2_builtin_is_one_source_dye_look_and_preserves_photo_context() {
+    let library = builtin_presets();
+    let matches: Vec<_> = library
+        .iter()
+        .filter(|p| p.name == "Ilford XP2 Super 400")
+        .collect();
+    assert_eq!(matches.len(), 1);
+    let preset = matches[0];
+    let mut current = RuntimeParams::default();
+    current.camera.exposure_compensation_ev = -0.5;
+    current.camera.auto_exposure = false;
+    current.camera.film_format_mm = 60.;
+    current.io.crop = true;
+    current.io.crop_size = [0.75, 0.8];
+    for carrier in [
+        Preset::from_json_str(&preset.to_json().unwrap()).unwrap(),
+        Preset::from_toml_str(&preset.to_toml().unwrap()).unwrap(),
+    ] {
+        let resolved = carrier.resolve(&data(), &current).unwrap();
+        assert_eq!(resolved.film_name, "ilford_xp2_super_400");
+        assert_eq!(resolved.print_name, "kodak_polymax_fine_art");
+        let p = crate::params_builder::digest_params(
+            resolved.params,
+            &resolved.film,
+            &resolved.print,
+            None,
+            false,
+        );
+        assert_eq!(p.workflow.route, "input > film > print > scan");
+        assert_eq!(p.scanner.scan_output, "direct_scan");
+        assert_eq!(p.camera.exposure_compensation_ev, -0.5);
+        assert!(!p.camera.auto_exposure);
+        assert_eq!(p.camera.film_format_mm, 60.);
+        assert_eq!(p.io.crop_size, current.io.crop_size);
+        assert!(p.film_render.grain.active && p.film_render.halation.active);
+        assert_eq!(p.film_render.grain.engine, crate::params::GrainEngine::Dye);
+        assert_eq!(p.film_render.grain.rms_granularity, [0.; 3]);
+        assert_eq!(p.film_render.grain.dye_strength, 1.0);
+        assert_eq!(p.film_render.grain.dye_scale, 1.0);
+        assert_eq!(p.film_render.grain.density_min, [0.03; 3]);
+        assert_eq!(p.film_render.grain.uniformity, [0.97; 3]);
+        assert_eq!(p.film_render.halation.halation_first_sigma_um, [65.; 3]);
+        assert_eq!(p.film_render.halation.halation_n_bounces, 3);
+        assert_eq!(p.film_render.halation.scatter_amount, 0.10);
+        assert_eq!(p.film_render.halation.halation_amount, 0.10);
+        assert_eq!(p.film_render.halation.halation_strength, [0.03, 0.01, 0.]);
+        assert_eq!(p.scanner.unsharp_mask, [0., 0.]);
+        assert_eq!(p.scanner.lens_blur, 0.);
+        assert!(!p.film_render.dir_couplers.active);
+        assert_eq!(p.enlarger.illuminant, "T");
+        assert_eq!(p.finishing, crate::params::FinishingParams::default());
+        assert!(!p.settings.use_cat16);
+    }
+}
+
+#[test]
+fn rollei80s_builtin_is_one_source_spektra_look_and_preserves_photo_context() {
+    let library = builtin_presets();
+    let matches: Vec<_> = library
+        .iter()
+        .filter(|p| p.name == "Rollei Retro 80S 35mm (Neofin Blau)")
+        .collect();
+    assert_eq!(matches.len(), 1);
+    let preset = matches[0];
+    let mut current = RuntimeParams::default();
+    current.camera.exposure_compensation_ev = -0.5;
+    current.camera.auto_exposure = false;
+    current.camera.film_format_mm = 60.;
+    current.io.crop = true;
+    current.io.crop_size = [0.75, 0.8];
+    for carrier in [
+        Preset::from_json_str(&preset.to_json().unwrap()).unwrap(),
+        Preset::from_toml_str(&preset.to_toml().unwrap()).unwrap(),
+    ] {
+        let resolved = carrier.resolve(&data(), &current).unwrap();
+        assert_eq!(resolved.film_name, "rollei_retro_80s_35mm_neofin_blau");
+        assert_eq!(resolved.print_name, "kodak_polymax_fine_art");
+        let p = crate::params_builder::digest_params(
+            resolved.params,
+            &resolved.film,
+            &resolved.print,
+            None,
+            false,
+        );
+        assert_eq!(p.workflow.route, "input > film > print > scan");
+        assert_eq!(p.scanner.scan_output, "direct_scan");
+        assert_eq!(p.camera.exposure_compensation_ev, -0.5);
+        assert!(!p.camera.auto_exposure);
+        assert_eq!(p.camera.film_format_mm, 60.);
+        assert_eq!(p.io.crop_size, current.io.crop_size);
+        assert!(p.film_render.grain.active && p.film_render.halation.active);
+        assert_eq!(
+            p.film_render.grain.engine,
+            crate::params::GrainEngine::Spektra
+        );
+        assert_eq!(p.film_render.grain.rms_granularity, [14.; 3]);
+        assert_eq!(p.film_render.grain.density_min, [0.03; 3]);
+        assert_eq!(p.film_render.grain.uniformity, [0.97; 3]);
+        assert_eq!(p.film_render.halation.halation_first_sigma_um, [65.; 3]);
+        assert_eq!(p.film_render.halation.halation_n_bounces, 3);
+        assert_eq!(p.film_render.halation.scatter_amount, 0.10);
+        assert_eq!(p.film_render.halation.halation_amount, 0.10);
+        assert_eq!(p.film_render.halation.halation_strength, [0.03, 0.01, 0.]);
+        assert_eq!(p.scanner.unsharp_mask, [0., 0.]);
+        assert_eq!(p.scanner.lens_blur, 0.);
+        assert!(!p.film_render.dir_couplers.active);
+        assert_eq!(p.enlarger.illuminant, "T");
+        assert_eq!(p.finishing, crate::params::FinishingParams::default());
+        assert!(!p.settings.use_cat16);
+    }
+}
+
+#[test]
+fn effects_preset_roundtrips_and_resolves_without_lut_or_profiles() {
+    let effects = crate::lut_look::EffectsParams {
+        diffusion: crate::params::DiffusionFilterParams {
+            active: true,
+            strength: 0.4,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let preset = Preset::capture_effects("Transform", effects.clone(), provenance());
+    assert_eq!(preset.kind(), Ok(PresetKind::Effects));
+    assert_eq!(preset.schema_version, EFFECTS_PRESET_SCHEMA_VERSION);
+    assert!(preset.lut.is_none());
+    assert!(preset.film_profile.is_none());
+    assert!(preset.print_profile.is_none());
+
+    let root: Value = serde_json::from_str(&preset.to_json().unwrap()).unwrap();
+    assert!(root.get("effects").is_some());
+    assert!(root.get("lut").is_none());
+    assert!(root.get("grade").is_none());
+    let reparsed = Preset::from_json_str(&preset.to_json().unwrap()).unwrap();
+    assert_eq!(reparsed.effects_parameters(), Some(&effects));
+
+    let mut current = RuntimeParams::default();
+    current.workflow.route = "input > film > scan".into();
+    current.io.scan_film = true;
+    current.lut = Some(crate::lut_look::LutParams {
+        path: "missing.cube".into(),
+        sha256: "not-a-hash".into(),
+        ..Default::default()
+    });
+    let resolved = preset.resolve_effects_detailed(&current).unwrap();
+    assert_eq!(
+        resolved.params.workflow.mode,
+        crate::lut_look::WorkflowMode::Off
+    );
+    assert_eq!(resolved.params.workflow.route, "input");
+    assert!(!resolved.params.io.scan_film);
+    assert_eq!(resolved.params.effects, Some(effects));
+    assert_eq!(resolved.params.lut, current.lut);
+}
+
+#[test]
+fn effects_preset_rejects_lut_grade_and_current_profile_fields() {
+    let base = serde_json::json!({
+        "schema_version": EFFECTS_PRESET_SCHEMA_VERSION,
+        "name": "Transform",
+        "effects": crate::lut_look::EffectsParams::default(),
+        "provenance": provenance(),
+    });
+    assert!(Preset::from_value(base.clone()).is_ok());
+    for field in ["lut", "grade"] {
+        let mut value = base.clone();
+        value[field] = serde_json::json!({});
+        assert!(Preset::from_value(value).is_err(), "{field}");
+    }
+    let mut value = base.clone();
+    value["film_profile"] = serde_json::json!({"stock": "kodak_portra_400"});
+    assert!(Preset::from_value(value).is_err());
+    let mut missing = base;
+    missing.as_object_mut().unwrap().remove("effects");
+    assert!(Preset::from_value(missing).is_err());
+}
+
+#[test]
+fn lut_preset_roundtrips_and_resolves_without_film_profiles() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("identity.cube");
+    std::fs::write(
+        &path,
+        "TITLE \"identity\"\nLUT_3D_SIZE 2\nDOMAIN_MIN 0 0 0\nDOMAIN_MAX 1 1 1\n\
+         0 0 0\n0 0 1\n0 1 0\n0 1 1\n1 0 0\n1 0 1\n1 1 0\n1 1 1\n",
+    )
+    .unwrap();
+    let mut lut = crate::lut_look::LutLookParams::default();
+    lut.path = path;
+    lut.sha256 = crate::lut_look::hash_file(&lut.path).unwrap();
+    let preset = Preset::capture_lut("Imported LUT", lut.clone(), provenance());
+    assert_eq!(preset.kind(), Ok(PresetKind::Lut));
+    assert_eq!(preset.schema_version, LUT_PRESET_SCHEMA_VERSION);
+    assert!(preset.film_profile.is_none());
+    assert!(preset.print_profile.is_none());
+    assert!(preset.parameters.is_none());
+
+    let text = preset.to_toml().unwrap();
+    let root: Value = serde_json::from_str(&preset.to_json().unwrap()).unwrap();
+    assert!(root["lut"].get("effects").is_none());
+    assert!(root.get("effects").is_some());
+    assert!(root.get("grade").is_some());
+    let reparsed = Preset::from_toml_str(&text).unwrap();
+    assert_eq!(reparsed.lut, Some(lut.clone()));
+
+    let mut disabled = lut.clone();
+    disabled.grade_active = false;
+    disabled.grade.brightness = 0.3;
+    let disabled = Preset::capture_lut("Imported LUT", disabled, provenance());
+    let disabled_root: Value = serde_json::from_str(&disabled.to_json().unwrap()).unwrap();
+    assert_eq!(disabled_root["grade"]["active"], false);
+    assert_eq!(disabled_root["grade"]["brightness"], 0.3);
+    let disabled_reparsed = Preset::from_json_str(&disabled.to_json().unwrap()).unwrap();
+    let disabled_lut = disabled_reparsed.lut.unwrap();
+    assert!(!disabled_lut.grade_active);
+    assert_eq!(disabled_lut.grade.brightness, 0.3);
+
+    let resolved = preset
+        .resolve_lut_detailed(&RuntimeParams::default())
+        .unwrap();
+    assert_eq!(
+        resolved.params.workflow.mode,
+        crate::lut_look::WorkflowMode::Lut
+    );
+    assert_eq!(resolved.params.workflow.route, "input");
+    assert!(!resolved.params.io.scan_film);
+    assert_eq!(resolved.params.lut_render_params(), Some(lut));
+}
+
+#[test]
+fn root_lut_without_optional_groups_starts_effects_and_grade_disabled() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("identity.cube");
+    std::fs::write(
+        &path,
+        "LUT_3D_SIZE 2\nDOMAIN_MIN 0 0 0\nDOMAIN_MAX 1 1 1\n\
+         0 0 0\n0 0 1\n0 1 0\n0 1 1\n1 0 0\n1 0 1\n1 1 0\n1 1 1\n",
+    )
+    .unwrap();
+    let hash = crate::lut_look::hash_file(&path).unwrap();
+    let document = serde_json::json!({
+        "schema_version": LUT_PRESET_SCHEMA_VERSION,
+        "name": "Minimal LUT",
+        "provenance": {
+            "implementation_version": "0.1.2",
+            "model_version": "0.3.4"
+        },
+        "lut": {
+            "path": path.display().to_string(),
+            "sha256": hash,
+            "input_space": "sRGB",
+            "output_space": "sRGB",
+            "domain_min": [0.0, 0.0, 0.0],
+            "domain_max": [1.0, 1.0, 1.0],
+            "domain_policy": "fail",
+            "shaper": "none",
+            "strength": 1.0
+        }
+    });
+    let preset = Preset::from_json_str(&document.to_string()).unwrap();
+    let lut = preset.lut.unwrap();
+    assert!(!lut.grade_active);
+    assert!(!lut.halation.active);
+    assert!(!lut.diffusion.active);
+    assert!(!lut.grain.active);
+}
+
+#[test]
+fn lut_preset_missing_file_fails_before_application() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("gone.cube");
+    let lut = crate::lut_look::LutLookParams {
+        path,
+        sha256: "0".repeat(64),
+        ..crate::lut_look::LutLookParams::default()
+    };
+    let preset = Preset::capture_lut("Missing LUT", lut, provenance());
+    assert!(
+        preset
+            .resolve_lut_detailed(&RuntimeParams::default())
+            .is_err()
+    );
+    assert!(Preset::from_toml_str(&preset.to_toml().unwrap()).is_ok());
 }

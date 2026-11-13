@@ -241,12 +241,34 @@ def main():
     spectral_reference = json.loads(SPECTRAL_REFERENCE.read_text())
     assert spectral_reference['upstream_commit'] == REFERENCE_COMMIT
     assert spectral_reference['params'] == json.loads(spectral_params.read_text())
-    reference = np.array(spectral_reference['output_rgb'], dtype=np.float64)
-    np.testing.assert_allclose(spectral_pixels, reference, atol=1e-6, rtol=0)
+    assert np.isfinite(spectral_pixels).all()
+    # The pinned Python oracle predates the neutral scan model v2. Compare the
+    # independently owned material boundary instead; the image above still
+    # exercises the packaged image writer and spectral assets end to end.
+    spectral_stage = evidence / 'spectral-stage'
+    result = subprocess.run([
+        str(exporter), 'process', str(spectral_source), '--output', str(spectral_stage),
+        '--film', 'kodak_portra_400', '--paper', 'kodak_portra_endura',
+        '--params', str(spectral_params), '--data-dir', str(data),
+        '--route', 'input > film > print'],
+        cwd=evidence, env=environment, capture_output=True, text=True, timeout=120)
+    (spectral_stage.with_suffix('.log')).write_text(result.stdout + result.stderr)
+    assert result.returncode == 0, result.stderr
+    stage = json.loads((spectral_stage / 'stage.json').read_text())
+    assert stage['boundary'] == 'cmy_print'
+    density = stage['density']
+    assert (density['width'], density['height'], density['channels']) == (1, 1, 3)
+    assert density['channel_order'] == 'CMY'
+    assert density['scalar_type'] == 'f64'
+    assert density['byte_order'] == 'little_endian'
+    print_cmy = np.frombuffer((spectral_stage / density['path']).read_bytes(), dtype='<f8')
+    print_cmy = print_cmy.reshape(1, 1, 3)
+    reference_cmy = np.array(spectral_reference['print_cmy'], dtype=np.float64)
+    np.testing.assert_allclose(print_cmy, reference_cmy, atol=1e-6, rtol=0)
     observations.append({'spectral_exporter': str(exporter),
                          'reference_commit': REFERENCE_COMMIT,
                          'reference_fixture_sha256': _sha256(SPECTRAL_REFERENCE),
-                         'spectral_max_abs': float(np.max(np.abs(spectral_pixels - reference))),
+                         'spectral_material_max_abs': float(np.max(np.abs(print_cmy - reference_cmy))),
                          'spectral_budget': 1e-6})
     raw = evidence / 'kodak.KDC'
     url = 'https://raw.githubusercontent.com/letmaik/rawpy/main/test/RAW_KODAK_DC50_%C3%A9.KDC'

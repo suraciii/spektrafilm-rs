@@ -298,6 +298,7 @@ impl Message {
             R::LegacyGroupObject => "validation.legacy_group_object",
             R::LegacyConflict => "validation.legacy_conflict",
             R::LegacyRouteConflict => "validation.legacy_route_conflict",
+            R::LutLook => "validation.lut_look",
             R::LegacyLamp => "validation.legacy_lamp",
             R::ObjectRequired => "validation.object_required",
             R::LegacyExposureConflict => "validation.legacy_exposure_conflict",

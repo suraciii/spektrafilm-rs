@@ -9,6 +9,8 @@ pub(super) enum Condition {
     Grain,
     Spektra,
     Procedural,
+    Exposure,
+    AutoSize,
     Dye,
     Retained,
     DensityMinimum(Option<usize>),
@@ -19,6 +21,7 @@ pub(super) enum Condition {
     Spatial,
     Diffusion(bool),
     Halation,
+    LightLeak,
     Boost,
     LutModeOff,
     Glare,
@@ -71,6 +74,8 @@ impl Condition {
             Self::Grain => "film_render.grain.active = true; stochastic effects enabled",
             Self::Spektra => "film_render.grain.engine = spektra",
             Self::Procedural => "film_render.grain.engine = procedural",
+            Self::Exposure => "film_render.grain.engine = exposure",
+            Self::AutoSize => "film_render.grain.exposure.auto_size = false",
             Self::Dye => "film_render.grain.engine = dye; supported stock, format and route",
             Self::Retained => "retained legacy Dye value; the delivered Dye law does not read it",
             Self::DensityMinimum(_) => {
@@ -94,6 +99,7 @@ impl Condition {
                 "enlarger.diffusion_filter.active = true; strength and spatial_scale positive"
             }
             Self::Halation => "film_render.halation.active = true",
+            Self::LightLeak => "film_render.light_leak.active = true",
             Self::Boost => "film_render.halation.boost_ev != 0",
             Self::LutModeOff => "debug.lut_mode = false",
             Self::Glare => {
@@ -166,6 +172,8 @@ impl Condition {
             Self::Grain => g.active && !p.debug.deactivate_stochastic_effects,
             Self::Spektra => g.engine == GrainEngine::Spektra,
             Self::Procedural => g.engine == GrainEngine::Procedural,
+            Self::Exposure => g.engine == GrainEngine::Exposure,
+            Self::AutoSize => !g.exposure.auto_size,
             Self::Dye => g.engine == GrainEngine::Dye,
             Self::DensityMinimum(component) => {
                 (Self::density_min_lut(p)
@@ -199,6 +207,7 @@ impl Condition {
                 d.active && d.strength > 0.0 && d.spatial_scale > 0.0
             }
             Self::Halation => p.film_render.halation.active,
+            Self::LightLeak => p.film_render.light_leak.active,
             Self::Boost => p.film_render.halation.boost_ev != 0.0,
             Self::LutModeOff => !p.debug.lut_mode,
             Self::Glare => {
@@ -263,7 +272,7 @@ impl Condition {
             }
             Self::GrainOperation => {
                 let route = p.workflow.route_enum();
-                if g.engine == GrainEngine::Procedural {
+                if g.engine.is_post_scan() {
                     route.executes_scan(&p.taps)
                 } else {
                     route.executes_film_development(&p.taps)
@@ -327,6 +336,11 @@ fn grain_conditions(path: &str, component: Option<usize>) -> [Option<Condition>;
     out[0] = Some(Grain);
     if path.starts_with("film_render.grain.fotufilm.") {
         out[1] = Some(Fotufilm);
+    } else if path.starts_with("film_render.grain.exposure.") {
+        out[1] = Some(Exposure);
+        if path.ends_with(".absolute_size_px") {
+            out[2] = Some(AutoSize);
+        }
     } else if path.contains(".procedural_") {
         out[1] = Some(Procedural);
         if path.ends_with(".procedural_film_type") {
@@ -499,6 +513,11 @@ pub(super) fn conditions(path: &str) -> Vec<Condition> {
         } else if !path.ends_with(".active") {
             out.extend([Halation, Spatial]);
         }
+    } else if path.starts_with("film_render.light_leak.") {
+        out.push(FilmExposure);
+        if !path.ends_with(".active") {
+            out.extend([LightLeak, Spatial]);
+        }
     } else if path.starts_with("film_render.dir_couplers.") {
         out.push(FilmDevelopment);
         if !path.ends_with(".active") {
@@ -613,6 +632,11 @@ pub fn inactive_reason_with_materials(
     film: Option<&Profile>,
     print: Option<&Profile>,
 ) -> Option<String> {
+    if path == "action.neutralize_filters" && print.is_some_and(Profile::is_bw) {
+        return Some(
+            "Black-and-white print contrast cannot be calibrated by color neutralization.".into(),
+        );
+    }
     if path.starts_with("film_render.grain.") {
         let reason = grain_inactive_reason(path, params, film, None);
         if reason.is_some() {
@@ -622,7 +646,10 @@ pub fn inactive_reason_with_materials(
             return None;
         }
         if film.is_none()
-            && params.film_render.grain.engine != GrainEngine::Procedural
+            && !matches!(
+                params.film_render.grain.engine,
+                GrainEngine::Procedural | GrainEngine::Exposure
+            )
             && !path.ends_with(".active")
             && !path.ends_with(".engine")
         {
@@ -1644,5 +1671,51 @@ mod tests {
                 "{path}"
             );
         }
+    }
+
+    #[test]
+    fn light_leak_leaves_depend_on_the_switch_and_spatial_effects() {
+        let material = film(true, true);
+        let reason = |path: &str, params: &RuntimeParams| {
+            inactive_reason(path, params, &material, &material)
+        };
+        let mut params = RuntimeParams::default();
+        let leaves = [
+            "film_render.light_leak.exposure_ev",
+            "film_render.light_leak.width_mm",
+        ];
+
+        // The switch owns the module; the leaves need the switch.
+        assert_eq!(reason("film_render.light_leak.active", &params), None);
+        for path in leaves {
+            assert_eq!(
+                reason(path, &params).as_deref(),
+                Some(Condition::LightLeak.description()),
+                "{path}"
+            );
+        }
+
+        params.film_render.light_leak.active = true;
+        for path in leaves {
+            assert_eq!(reason(path, &params), None, "{path}");
+        }
+
+        // The leak is spatial.
+        params.debug.deactivate_spatial_effects = true;
+        for path in leaves {
+            assert_eq!(
+                reason(path, &params).as_deref(),
+                Some(Condition::Spatial.description()),
+                "{path}"
+            );
+        }
+
+        // Film-exposure routes only.
+        params.debug.deactivate_spatial_effects = false;
+        params.workflow.route = "input > convert-film > print > scan".into();
+        assert_eq!(
+            reason("film_render.light_leak.active", &params).as_deref(),
+            Some(Condition::FilmExposure.description())
+        );
     }
 }

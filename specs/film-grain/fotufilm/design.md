@@ -64,7 +64,7 @@ Amount and record layer amounts MUST scale only sampled residuals.
 
 ## Geometry and runtime
 
-The film long-edge convention, source crop rounding and output dimension rounding remain the existing contracts. The fourth engine MUST develop the full source before requested output resampling. Core MUST conservatively area-resample the developed source density targets to the requested output lattice; subject variation is a declared piecewise-constant reconstruction, not finer source information.
+The film long-edge convention, source crop rounding and output dimension rounding remain the existing contracts. Fotufilm Film MUST develop the full source before requested output resampling. Core MUST conservatively area-resample the developed source density targets to the requested output lattice; subject variation is a declared piecewise-constant reconstruction, not finer source information.
 
 Grain-free bypass MUST retain existing ordering exactly.
 

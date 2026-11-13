@@ -12,5 +12,9 @@
 - FIR MUST run vertical then horizontal; IIR MUST run horizontal then vertical.
 - Multiplicative unsharp masking MUST preserve the epsilon-clamped numerator, f32 power/product boundaries, and NumPy per-channel pairwise mass sums.
 - Device paging MUST preserve true image endpoints, recursive state, sampler state, and complete-image mass. It MUST NOT restart the stochastic field or renormalize individual pages.
+- The GPU realization MUST own one PCG32 stream per `(pixel, channel, sublayer)`. It MUST derive the stream only from the request seed and global pixel identity, and use the reference Poisson/binomial branches in f32.
+- Storage windows, workgroup size, and crop traversal MUST NOT redefine a stream.
+- GPU micro-structure MUST use a PCG32 lognormal clump field addressed by global pixel identity.
+- CPU execution MUST use the original sequential MT19937 realization; there is no cross-backend sampling selector.
 - A device without the required f64 arithmetic MUST fail under [numerical alignment](../../gpu-execution/design.md#numerical-alignment). GPU execution MUST NOT use CPU image-stage work.
 - Spektra stock defaults MUST use `data/presets/grain_spektra.toml`. Dye MUST retain its independent `data/presets/grain.toml` defaults and relative RMS interpretation.

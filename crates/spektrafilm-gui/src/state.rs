@@ -15,7 +15,7 @@ use validation::{normalize_grain_section, validate_state_parameters};
 /// Version 7 adds the look-owned finishing group to the runtime extension.
 /// Earlier states without it retain neutral finishing; versions 1–5 without
 /// a grain engine migrate to their historical Spektra intent.
-pub(crate) const CURRENT_STATE_VERSION: u64 = 7;
+pub(crate) const CURRENT_STATE_VERSION: u64 = 8;
 
 /// Enlarger controls the upstream GUI also exposes under `simulation`
 /// aliases, as `(simulation key, enlarger key)`. Both directions of the
@@ -209,6 +209,28 @@ impl GuiState {
                 serde_json::to_value(spektrafilm_core::params::FinishingParams::default())?,
             );
         }
+        if version == Some(CURRENT_STATE_VERSION)
+            && value.pointer("/rust/runtime/lut_look").is_some()
+        {
+            bail!("lut_look is retired; use lut, effects, and grade");
+        }
+        if matches!(version, Some(1..=7))
+            && let Some(runtime) = value
+                .pointer_mut("/rust/runtime")
+                .and_then(Value::as_object_mut)
+            && let Some(legacy) = runtime.remove("lut_look")
+            && !legacy.is_null()
+        {
+            let look: spektrafilm_core::params::LutLookParams = serde_json::from_value(legacy)?;
+            let (lut, effects, grade) = look.split();
+            runtime.entry("lut").or_insert(serde_json::to_value(lut)?);
+            runtime
+                .entry("effects")
+                .or_insert(serde_json::to_value(effects)?);
+            runtime
+                .entry("grade")
+                .or_insert(serde_json::to_value(grade)?);
+        }
         validate_state_parameters(&mut value, version)?;
         // Engine-specific imports belong to the runtime extension. The shared
         // upstream mirror retains only its own controls when canonicalized.
@@ -317,7 +339,12 @@ impl GuiState {
                 }
             }
         }
-        for key in ["scan_output", "conversion_style", "operator"] {
+        for key in [
+            "scan_output",
+            "white_reference",
+            "conversion_style",
+            "operator",
+        ] {
             if normalized["scanner"].get(key).is_none()
                 && let Some(selection) = value["rust"]["runtime"]["scanner"].get(key)
             {
@@ -383,7 +410,7 @@ impl GuiState {
     /// call this once; [`Self::runtime_params`] is a pure projection that no
     /// longer re-validates.
     pub fn validate(&self) -> Result<()> {
-        validate_state_parameters(&mut self.sections.clone(), None)
+        validate_state_parameters(&mut self.sections.clone(), Some(CURRENT_STATE_VERSION))
     }
     pub fn film(&self) -> &str {
         self.sections["simulation"]["film_stock"]

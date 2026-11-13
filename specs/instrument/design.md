@@ -168,15 +168,15 @@ The single-image CLI adapter MUST build the existing suite and case representati
 ### Standard configuration ownership
 
 - The [standard configurations](../benchmark/standard-configurations/spec.md) extend fixture generation instead of adding a new preset kind. A special film profile would mix test conditions with material data.
-- A look preset alone cannot own source interpretation, route, geometry, or seed populations. Existing configuration and suite documents own those settings.
+- A preset alone cannot own source interpretation, route, geometry, or seed populations. Existing configuration and suite documents own those settings.
 
 The fixture generator MUST use one construction rule for each standard rendering purpose. It MUST write standalone configurations and embed equivalent values into suite cases from that rule. It MUST NOT maintain separate handwritten defaults for local-image and suite execution.
 
-The renderer's preset export and parameter resolver remain authoritative for look fields, defaults, and profile compatibility. The instrument MUST NOT reconstruct the preset schema or scrape a human listing. Effect-specific probes MUST apply explicit existing parameter overlays after the exported look.
+The renderer's preset export and parameter resolver remain authoritative for preset fields, defaults, and profile compatibility. The instrument MUST NOT reconstruct the preset schema or scrape a human listing. Effect-specific probes MUST apply explicit existing parameter overlays after the exported preset.
 
 Generation MUST complete validation before publishing its final provenance record. Renderer export output MUST remain a file dependency rather than hidden generator state. Run orchestration, comparison, and report generation MUST consume the generated documents without a special standard-mode path.
 
-Preset export captures the selected renderer's look at generation time. Reusing that file separates an algorithm revision from a bundled-look revision. Existing run identity MUST still include the renderer and selected data; a fixed preset file does not freeze material data or promise historical parameter-language compatibility.
+Preset export captures the selected renderer's preset at generation time. Reusing that file separates an algorithm revision from a bundled-preset revision. Existing run identity MUST still include the renderer and selected data; a fixed preset file does not freeze material data or promise historical parameter-language compatibility.
 
 
 ## Component responsibilities

@@ -128,7 +128,11 @@ impl WgpuBackend {
                 // samples, while density and particle fields remain binary32.
                 let clump_image = mul(pixels, 24)?;
                 let layer_image = mul(image, layers)?;
-                let chunk = (window_limit / mul(12, layers.max(2))?).min(pixels);
+                let chunk = u64::from(super::super::grain::spektra::transport_chunk(
+                    window_limit,
+                    u32::try_from(pixels).map_err(|_| "Spektra grain pixel indexing overflows")?,
+                    gp.layer_count,
+                ));
                 if chunk == 0 {
                     return Err("Spektra layer window cannot hold one pixel".into());
                 }
@@ -155,11 +159,19 @@ impl WgpuBackend {
                 }
                 if gp.usm_sigma > 0.0 && gp.usm_amount > 0.0 {
                     bytes = add(bytes, add(mul(image, 3)?, gaussian)?)?;
-                    // One six-f32 mass pair, eight six-f32 accumulators, and
-                    // one retained left-child pair per recursion depth.
+                    // Exact-tree frontier/parent pages, bounded partials and
+                    // split-leaf carry belong to the reduction owner.
                     bytes = add(
                         bytes,
-                        add(24 + 192, mul(u64::from(pixels.ilog2() + 1), 24)?)?,
+                        add(
+                            24,
+                            super::super::grain::spektra::mass_workspace_bytes(
+                                u32::try_from(pixels)
+                                    .map_err(|_| "Spektra mass pixel indexing overflows")?,
+                                u32::try_from(window / 12)
+                                    .map_err(|_| "Spektra mass window indexing overflows")?,
+                            )?,
+                        )?,
                     )?;
                 }
                 // Every retained chunk uniform is below 2 KiB; include all
@@ -171,23 +183,9 @@ impl WgpuBackend {
                         16 * 2048,
                     )?,
                 )?;
-                if gp.mt19937_regime || gp.micro_sigma > 0.05 {
-                    if gp.mt19937_regime {
-                        let planes = mul(layers, if gp.monochrome { 1 } else { 3 })?;
-                        bytes = add(bytes, mul(planes, add(mul(pixels, 8)?, 2520 + 1024)?)?)?;
-                    } else {
-                        // Fast particle draws do not advance NumPy's generator;
-                        // clumps still retain a fresh MT state and its uniform.
-                        bytes = add(bytes, 2520 + 1024)?;
-                    }
-                    let mt_chunk = (limit / 24)
-                        .min(u64::from(super::super::grain::mt19937::CHUNK_ELEMENTS))
-                        .max(1);
-                    // Density/field/seed windows plus HWC binary64 clumps.
-                    bytes = add(bytes, mul(mt_chunk, 56)?)?;
-                }
                 bytes
             }
+            "grain_exposure" => super::super::grain::exposure_workspace_bytes(self, width, height)?,
             "grain_procedural" => {
                 // The procedural owner validates its resolution support. Four
                 // full rasters and eight capped sample/filter windows coexist.
@@ -205,6 +203,7 @@ impl WgpuBackend {
             | "convert_inverse_solver"
             | "front_transform"
             | "log_exposure"
+            | "light_leak"
             | "film_density"
             | "print_lut_roundtrip"
             | "print_spectral"

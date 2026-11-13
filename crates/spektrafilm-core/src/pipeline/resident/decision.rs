@@ -35,8 +35,8 @@ impl Pipeline {
     pub(super) fn resident_decision(&self) -> ResidentDecision {
         let mut reasons = Vec::new();
         if !matches!(
-            self.params.workflow.route.as_str(),
-            "input > film > scan" | "input > film > print > scan"
+            self.params.workflow.route_enum(),
+            crate::WorkflowRoute::FilmScan | crate::WorkflowRoute::FilmPrintScan
         ) && !self.params.workflow.route_enum().is_convert_film()
         {
             reasons.push(ResidentFallbackReason::WorkflowRoute);

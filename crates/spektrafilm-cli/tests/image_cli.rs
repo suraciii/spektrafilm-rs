@@ -36,14 +36,12 @@ impl Fixture {
             .arg("process")
             .arg(self.0.join("input.png"))
             .arg("--output")
-            .arg(self.0.join(output))
-            .args([
-                "--film",
-                "kodak_portra_400",
-                "--backend",
-                "cpu",
-                "--data-dir",
-            ])
+            .arg(self.0.join(output));
+        if !extra.contains(&"--lut") {
+            command.args(["--film", "kodak_portra_400"]);
+        }
+        command
+            .args(["--backend", "cpu", "--data-dir"])
             .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data"))
             .args(extra)
             .env("RUST_LOG", "off")
@@ -59,7 +57,8 @@ impl Fixture {
     fn run_without_output(&self, extra: &[&str]) -> Output {
         let mut command = Command::new(env!("CARGO_BIN_EXE_spektrafilm"));
         command.arg("process").arg(self.0.join("input.png"));
-        let has_film = extra.windows(2).any(|pair| pair.first() == Some(&"--film"))
+        let has_film = extra.contains(&"--lut")
+            || extra.windows(2).any(|pair| pair.first() == Some(&"--film"))
             || extra
                 .windows(2)
                 .any(|pair| pair == ["--engine", "fotufilm"]);
@@ -517,6 +516,46 @@ fn fotufilm_dry_run_reports_authored_controls_without_selecting_an_executor() {
     );
     assert_eq!(report["film_grain_dye"]["active"], false);
     assert!(!f.0.join("output.tif").exists());
+}
+
+#[test]
+fn exposure_dry_run_and_render_accept_authored_controls() {
+    const CONTROLS: &str = "film_render.grain.engine=exposure,film_render.grain.exposure.strength=73,film_render.grain.exposure.size=2.5,film_render.grain.exposure.auto_size=false,film_render.grain.exposure.format=medium_format,film_render.grain.exposure.absolute_size_px=3.5,film_render.grain.exposure.roughness=64,film_render.grain.exposure.shadows=41,film_render.grain.exposure.midtones=62,film_render.grain.exposure.highlights=24,film_render.grain.exposure.push=1.25";
+    let f = Fixture::new();
+    let common = [
+        "--input-color-space",
+        "sRGB",
+        "--input-cctf-decoding",
+        "true",
+        "--route",
+        "input > film > scan",
+        "--set",
+        CONTROLS,
+    ];
+    let mut dry_run = common.to_vec();
+    dry_run.push("--dry-run");
+    let report = f.report(&dry_run);
+    let grain = &report["parameters"]["film_render"]["grain"];
+    assert_eq!(grain["engine"], "exposure");
+    assert_eq!(grain["exposure"]["strength"], 73.0);
+    assert_eq!(grain["exposure"]["size"], 2.5);
+    assert_eq!(grain["exposure"]["auto_size"], false);
+    assert_eq!(grain["exposure"]["format"], "medium_format");
+    assert_eq!(grain["exposure"]["absolute_size_px"], 3.5);
+    assert_eq!(grain["exposure"]["roughness"], 64.0);
+    assert_eq!(grain["exposure"]["shadows"], 41.0);
+    assert_eq!(grain["exposure"]["midtones"], 62.0);
+    assert_eq!(grain["exposure"]["highlights"], 24.0);
+    assert_eq!(grain["exposure"]["push"], 1.25);
+    assert!(!f.0.join("output.tif").exists());
+
+    let result = f.run("output.tif", &common);
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    assert!(f.0.join("output.tif").exists());
 }
 
 #[test]
@@ -1029,4 +1068,99 @@ fn standard_alias_renders_identically_and_emits_only_the_canonical_style() {
         "standard"
     );
     assert_eq!(report["scanner_provenance"]["model"], "lab_scan_v1");
+}
+
+#[test]
+fn lut_option_reads_the_cube_declaration_and_reports_lut_mode() {
+    let f = Fixture::new();
+    let cube = f.0.join("look.cube");
+    std::fs::write(
+        &cube,
+        "TITLE \"CLI Look\"\nLUT_3D_SIZE 2\nDOMAIN_MIN 0 0 0\nDOMAIN_MAX 1 1 1\n\
+         0 0 0\n1 0 0\n0 1 0\n1 1 0\n0 0 1\n1 0 1\n0 1 1\n1 1 1\n",
+    )
+    .unwrap();
+    let cube_arg = cube.to_str().unwrap();
+    let declaration = [
+        "--input-color-space",
+        "sRGB",
+        "--input-cctf-decoding",
+        "true",
+        "--lut",
+        cube_arg,
+    ];
+    let report = f.report_without_output(&[declaration.as_slice(), &["--dry-run"]].concat());
+    assert_eq!(report["workflow"]["mode"], "lut");
+    assert_eq!(report["workflow"]["film_stages"], "inactive");
+    assert!(report["film_profile"].is_null());
+    assert_eq!(report["parameters"]["lut"]["title"], "CLI Look");
+    assert_eq!(report["parameters"]["lut"]["path"], cube_arg);
+    assert_eq!(report["parameters"]["lut"]["input_space"], "sRGB");
+    assert_eq!(report["parameters"]["lut"]["output_space"], "sRGB");
+    assert_eq!(report["parameters"]["lut"]["domain_policy"], "clamp");
+    assert_eq!(report["film_grain_dye"]["active"], false);
+
+    let overridden = f.report_without_output(
+        &[
+            declaration.as_slice(),
+            &[
+                "--set",
+                "lut.strength=0.5,lut.domain_policy=fail",
+                "--dry-run",
+            ],
+        ]
+        .concat(),
+    );
+    assert_eq!(overridden["parameters"]["lut"]["strength"], 0.5);
+    assert_eq!(overridden["parameters"]["lut"]["domain_policy"], "fail");
+
+    let text = f.run_without_output(
+        &[
+            declaration.as_slice(),
+            &["--dry-run", "--dry-run-format", "text"],
+        ]
+        .concat(),
+    );
+    assert!(
+        text.status.success(),
+        "{}",
+        String::from_utf8_lossy(&text.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&text.stdout);
+    assert!(stdout.contains("  mode: lut"), "{stdout}");
+    assert!(stdout.contains("  lut: "), "{stdout}");
+    assert!(stdout.contains("  domain policy: clamp"), "{stdout}");
+    assert!(stdout.contains("  film stages: inactive"), "{stdout}");
+    assert!(!stdout.contains("GRAIN"), "{stdout}");
+
+    let render = f.run("lut.tif", &declaration);
+    assert!(
+        render.status.success(),
+        "{}",
+        String::from_utf8_lossy(&render.stderr)
+    );
+    assert!(f.0.join("lut.tif").is_file());
+
+    let conflict =
+        f.run_without_output(&["--lut", cube_arg, "--film", "kodak_portra_400", "--dry-run"]);
+    assert!(!conflict.status.success());
+    assert!(
+        String::from_utf8_lossy(&conflict.stderr).contains("cannot be used with"),
+        "{}",
+        String::from_utf8_lossy(&conflict.stderr)
+    );
+
+    let mixed = f.run_without_output(
+        &[
+            declaration.as_slice(),
+            &["--set", "workflow.mode=film", "--dry-run"],
+        ]
+        .concat(),
+    );
+    assert!(!mixed.status.success());
+    assert!(
+        String::from_utf8_lossy(&mixed.stderr).contains("workflow.mode"),
+        "{}",
+        String::from_utf8_lossy(&mixed.stderr)
+    );
 }

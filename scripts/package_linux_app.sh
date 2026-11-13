@@ -207,7 +207,7 @@ done
 ((database_files > 0)) || fail "no Lensfun XML files in $lensfun_database"
 
 cp LICENSE "$DIST_DIR/share/licenses/spektrafilm-GPL-3.0.txt"
-for gui_asset_notice in NotoSansSC-OFL.txt NotoSansSC-NOTICE.txt PRESET_REFERENCE_LICENSE.txt; do
+for gui_asset_notice in NotoSansSC-OFL.txt NotoSansSC-NOTICE.txt; do
     [[ -s "crates/spektrafilm-gui/assets/$gui_asset_notice" ]] || fail "GUI asset notice missing: $gui_asset_notice"
     cp "crates/spektrafilm-gui/assets/$gui_asset_notice" "$DIST_DIR/share/licenses/$gui_asset_notice"
 done

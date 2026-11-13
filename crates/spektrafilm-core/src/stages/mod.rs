@@ -222,6 +222,105 @@ mod integration_tests {
     }
 
     #[test]
+    fn grain_exposure_uses_scan_encoding_and_preserves_linear_export() {
+        use crate::params::grain::GrainEngine;
+        use spektrafilm_math::colorspace;
+        let dir = data_dir();
+        let film = profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();
+        let paper = profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap();
+        let backend = spektrafilm_backend::cpu_backend::CpuBackend;
+        let image = ImageBuf::from_data(
+            8,
+            6,
+            (0..8 * 6 * 3)
+                .map(|i| from_f64(0.12 + (i % 29) as f64 / 40.0))
+                .collect(),
+        );
+        for space_name in ["sRGB", "Display P3"] {
+            let space = colorspace::resolve(space_name).unwrap();
+            for scan_film in [false, true] {
+                let mut params = RuntimeParams::default();
+                params.camera.auto_exposure = false;
+                params.film_render.halation.active = false;
+                params.film_render.dir_couplers.active = false;
+                params.print_render.glare.active = false;
+                params.film_render.grain.active = false;
+                params.io.scan_film = scan_film;
+                params.io.output_color_space = space_name.into();
+                params.random_seed = 5489;
+                let render = |p: RuntimeParams| {
+                    Pipeline::new(film.clone(), paper.clone(), p)
+                        .process(image.clone(), &backend)
+                        .unwrap()
+                };
+                let encoded_base = render(params.clone());
+                params.film_render.grain.active = true;
+                params.film_render.grain.engine = GrainEngine::Exposure;
+                let grain = params
+                    .film_render
+                    .grain
+                    .resolved_grain_exposure(params.random_seed);
+                let expected = spektrafilm_model::grain::exposure::apply_cpu(&encoded_base, grain);
+                params.io.output_cctf_encoding = true;
+                let encoded = render(params.clone());
+                params.io.output_cctf_encoding = false;
+                let linear = render(params.clone());
+                for ((&actual, &reference), &linear_value) in
+                    encoded.data.iter().zip(&expected.data).zip(&linear.data)
+                {
+                    assert!(
+                        (actual as f64 - reference as f64).abs() < 1e-6,
+                        "{space_name} {scan_film}: Exposure Grain must consume native encoded scan RGB"
+                    );
+                    let decoded = colorspace::cctf_decode(actual as f64, space.cctf);
+                    assert!(
+                        (linear_value as f64 - decoded).abs() < 1e-6,
+                        "{space_name} {scan_film}: linear export changes Exposure grain realization"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn exposure_strength_zero_is_an_exact_bypass_on_cpu() {
+        use crate::params::grain::GrainEngine;
+        let dir = data_dir();
+        let film = profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();
+        let print = profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap();
+        let backend = spektrafilm_backend::cpu_backend::CpuBackend;
+        let image = ImageBuf::from_data(
+            8,
+            6,
+            (0..8 * 6 * 3)
+                .map(|i| from_f64(0.12 + (i % 29) as f64 / 40.0))
+                .collect(),
+        );
+        let mut inactive = RuntimeParams::default();
+        inactive.camera.auto_exposure = false;
+        inactive.film_render.halation.active = false;
+        inactive.film_render.dir_couplers.active = false;
+        inactive.print_render.glare.active = false;
+        inactive.film_render.grain.active = false;
+        inactive.random_seed = 5489;
+        let render = |p: RuntimeParams| {
+            Pipeline::new(film.clone(), print.clone(), p)
+                .process(image.clone(), &backend)
+                .unwrap()
+        };
+        for encoded in [false, true] {
+            let mut zero = inactive.clone();
+            zero.io.output_cctf_encoding = encoded;
+            let mut off = inactive.clone();
+            off.io.output_cctf_encoding = encoded;
+            zero.film_render.grain.active = true;
+            zero.film_render.grain.engine = GrainEngine::Exposure;
+            zero.film_render.grain.exposure.strength = 0.0;
+            assert_eq!(render(zero).data, render(off).data);
+        }
+    }
+
+    #[test]
     fn negative_to_positive_reverses_negative_polarity_on_cpu_path() {
         let dir = data_dir();
         let film = profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();

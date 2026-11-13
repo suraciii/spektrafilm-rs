@@ -2,7 +2,7 @@
 use super::row_modified;
 use super::{ControlFilter, filter_matches};
 use crate::editor_ranges;
-use crate::numeric::{numeric, numeric_field, numeric_marked};
+use crate::numeric::{numeric_field, numeric_marked};
 use crate::theme;
 use egui::Ui;
 use serde_json::{Map, Value};
@@ -18,12 +18,13 @@ pub(crate) enum Icon {
     Export,
     Reset,
     Close,
-    Add,
     Image,
     Help,
     Aperture,
     ChevronLeft,
+    ChevronRight,
     Scan,
+    Analysis,
     Save,
     Layers,
     Transitions,
@@ -125,10 +126,6 @@ pub(crate) fn paint_icon(
             line([-5.0, -5.0], [5.0, 5.0]);
             line([5.0, -5.0], [-5.0, 5.0]);
         }
-        Icon::Add => {
-            line([-6.0, 0.0], [6.0, 0.0]);
-            line([0.0, -6.0], [0.0, 6.0]);
-        }
         Icon::Image => {
             painter.rect_stroke(
                 egui::Rect::from_center_size(center, egui::vec2(14.0, 12.0)),
@@ -185,6 +182,13 @@ pub(crate) fn paint_icon(
             }
         }
         Icon::ChevronLeft => path(&[[2.0, -4.0], [-2.0, 0.0], [2.0, 4.0]]),
+        Icon::ChevronRight => path(&[[-2.0, -4.0], [2.0, 0.0], [-2.0, 4.0]]),
+        Icon::Analysis => {
+            for x in [-5.0, 0.0, 5.0] {
+                line([x, 1.5], [x, 7.0]);
+            }
+            line([-7.0, 7.0], [7.0, 7.0]);
+        }
         Icon::Scan => {
             for points in [
                 [[-3.0, -6.0], [-6.0, -6.0], [-6.0, -3.0]],
@@ -314,39 +318,6 @@ pub(crate) fn param_numeric<T: egui::emath::Numeric>(
         *value = previous;
         changed = false;
     }
-    if changed {
-        super::record_edited_path(ui.ctx(), path);
-    }
-    changed
-}
-
-/// `param_numeric` whose effective maximum is additionally capped at
-/// `max_cap`; the sublayer-share editor keeps the authored total at one.
-pub(crate) fn param_numeric_capped<T: egui::emath::Numeric>(
-    ui: &mut Ui,
-    label: &str,
-    value: &mut T,
-    path: &str,
-    max_cap: f64,
-    tooltip: &str,
-) -> bool {
-    if !super::row_path_matches(ui.ctx(), path) {
-        return false;
-    }
-    let _identity = super::row_identity(ui.ctx(), path);
-    let (min, max, step, decimals) = editor_range_for(path);
-    let changed = numeric(
-        ui,
-        label,
-        value,
-        min,
-        max.min(max_cap),
-        step,
-        decimals,
-        tooltip,
-        crate::numeric::unit_suffix(path),
-        false,
-    );
     if changed {
         super::record_edited_path(ui.ctx(), path);
     }
@@ -665,49 +636,6 @@ fn index_identifier(index: usize) -> &'static str {
     ["0", "1", "2", "3", "4", "5"][index]
 }
 
-pub(crate) fn fotufilm_sublayer_shares(
-    ui: &mut Ui,
-    shares: &mut [f64; 4],
-    filter: &mut ControlFilter<'_>,
-) -> bool {
-    if filter_matches(filter, "sublayer shares") {
-        ui.label(super::localized(ui.ctx(), "Sublayer shares")).on_hover_text(super::localized(ui.ctx(), "Edit the first three shares; the fourth is the remaining share so the authored total stays one. All four shares must be positive."));
-    }
-    let mut changed = false;
-    for index in 0..3 {
-        if !filter_matches(filter, ["sublayer 1", "sublayer 2", "sublayer 3"][index]) {
-            continue;
-        }
-        let other_sum: f64 = shares[..3]
-            .iter()
-            .enumerate()
-            .filter(|(i, _)| *i != index)
-            .map(|(_, share)| *share)
-            .sum();
-        let maximum = 1.0 - other_sum - 1e-9;
-        let edited = param_numeric_capped(
-            ui,
-            ["Sublayer 1", "Sublayer 2", "Sublayer 3"][index],
-            &mut shares[index],
-            "film_render.grain.fotufilm.sublayer_shares",
-            maximum,
-            "Authored share; transfers weight to or from sublayer 4.",
-        );
-        if edited {
-            shares[3] = 1.0 - shares[..3].iter().sum::<f64>();
-            changed = true;
-        }
-    }
-    if filter_matches(filter, "sublayer 4 (remainder)") {
-        ui.label(crate::tr!(
-            ui.ctx(),
-            "controls.grain.remainder_value",
-            value = format!("{:.6}", shares[3])
-        ));
-    }
-    changed
-}
-
 /// A boolean parameter row's editor: a switch.
 ///
 /// Built on a focusable button so pointer and keyboard operability come from
@@ -826,19 +754,23 @@ pub(crate) fn toggle_row(
 pub(crate) fn module_reset(ui: &mut Ui, section: &str) -> egui::Response {
     let response = ui
         .add(
-            egui::Button::new(
-                egui::RichText::new(crate::i18n::text(ui.ctx(), "surfaces.state.reset"))
-                    .color(theme::FG_SECONDARY)
-                    .size(theme::SIZE_UNIT),
-            )
-            .frame(false)
-            .min_size(egui::vec2(theme::SPACE_4 * 3.0, theme::SPACE_3 * 2.0)),
+            egui::Button::new("")
+                .frame(false)
+                .min_size(egui::vec2(theme::HEIGHT_CONTROL, theme::HEIGHT_CONTROL)),
         )
         .on_hover_text(crate::tr!(
             ui.ctx(),
             "surfaces.section.restore",
             section = super::localized(ui.ctx(), section)
         ));
+    // The icon keeps the repeated module actions quiet while the accessible
+    // name and description still identify the section and its factory baseline.
+    paint_icon(
+        ui.painter(),
+        response.rect,
+        Icon::Reset,
+        ui.style().interact(&response).text_color(),
+    );
     // Name the action after its section, so one reset is addressable among
     // the sections on a page, and carry the factory-baseline sentence as the
     // node's description.
@@ -1082,7 +1014,24 @@ pub(crate) fn choice_tip_options<'a>(
         .unwrap_or_else(|| value.as_str())
         .to_owned();
     let prev = value.clone();
-    let stacked = label == "workflow";
+    let selected_text = if translate_options {
+        crate::controls::localized(ui.ctx(), &selected_label)
+    } else {
+        std::borrow::Cow::Borrowed(selected_label.as_str())
+    };
+    let selected_width = ui.fonts(|fonts| {
+        fonts
+            .layout_no_wrap(
+                selected_text.to_string(),
+                egui::FontId::proportional(theme::SIZE_LABEL),
+                theme::FG,
+            )
+            .size()
+            .x
+    });
+    // A long selected value gets the full row instead of a truncated field;
+    // the closed control must name its state without hover.
+    let stacked = label == "Film route" || selected_width > theme::WIDTH_COMBO_MAX - 36.0;
     let row = |ui: &mut Ui| {
         row_label(ui, label, experimental)
             .on_hover_text(crate::controls::localized(ui.ctx(), tooltip));
@@ -1096,11 +1045,7 @@ pub(crate) fn choice_tip_options<'a>(
             ui.add_space((ui.available_width() - width).max(0.0));
         }
         let response = egui::ComboBox::from_id_salt(label)
-            .selected_text(if translate_options {
-                crate::controls::localized(ui.ctx(), &selected_label)
-            } else {
-                std::borrow::Cow::Borrowed(selected_label.as_str())
-            })
+            .selected_text(selected_text.clone())
             .width(width)
             .wrap_mode(egui::TextWrapMode::Truncate)
             .show_ui(ui, |ui| {
@@ -1275,11 +1220,10 @@ fn tuple_marked<T: egui::emath::Numeric, const N: usize>(
                                 Some(identifier_response.id),
                             );
                             let field_id = ui.make_persistent_id(("numeric-field", (label, index)));
-                            let accessible_label = crate::tr!(
-                                ui.ctx(),
-                                "controls.component.name",
-                                label = super::localized(ui.ctx(), label),
-                                component = super::localized(ui.ctx(), identifier)
+                            let accessible_label = super::component_name(
+                                crate::i18n::locale(ui.ctx()),
+                                super::localized(ui.ctx(), label),
+                                super::localized(ui.ctx(), identifier),
                             );
                             ui.ctx().accesskit_node_builder(field_id, |node| {
                                 node.set_label(accessible_label.as_ref());
@@ -1388,7 +1332,7 @@ mod layout_tests {
     fn painter_actions_keep_button_names_and_keyboard_activation() {
         use egui_kittest::{Harness, kittest::Queryable};
 
-        const ACTIONS: [(&str, Icon); 11] = [
+        const ACTIONS: [(&str, Icon); 10] = [
             ("Open image", Icon::Open),
             ("Undo adjustment", Icon::Undo),
             ("Redo adjustment", Icon::Redo),
@@ -1396,7 +1340,6 @@ mod layout_tests {
             ("Export image", Icon::Export),
             ("Reset module", Icon::Reset),
             ("Close dialog", Icon::Close),
-            ("Add preset", Icon::Add),
             ("Show image", Icon::Image),
             ("Help", Icon::Help),
             ("Aperture", Icon::Aperture),

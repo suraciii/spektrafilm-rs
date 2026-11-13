@@ -2,7 +2,7 @@
 
 ## Boundary
 
-Feature profiles are a selection layer over existing runtime parameter groups. They are not a runtime stage, a serialized parameter group, or a replacement for look and section presets.
+Feature profiles are a selection layer over existing runtime parameter groups. They are not a runtime stage, a serialized parameter group, or a replacement for preset and section documents.
 
 The feature profile resolver owns family identifiers, built-in catalog entries, scope extraction, exact value application, `custom` matching, and selector validation. The existing parameter model owns field types, numeric ranges, serialization, and execution semantics. The preset resolver owns preset documents and profile references.
 
@@ -12,9 +12,9 @@ The current catalog covers Procedural grain and Halation. Dye has no feature-pro
 
 ## Options considered
 
-### Extend look presets with a feature selector
+### Extend presets with a feature selector
 
-This would reuse the existing library and save custom combinations. It would also make a feature selection carry profile identity into a document that currently stores resolved leaves, expand migration, and blur the boundary between a stock profile, a look, and a feature. It is rejected.
+This would reuse the existing library and save custom combinations. It would also make a feature selection carry profile identity into a document that currently stores resolved leaves, expand migration, and blur the boundary between a stock profile, a preset, and a feature. It is rejected.
 
 ### Add a generic arbitrary feature-profile registry
 
@@ -74,12 +74,12 @@ Halation derives `custom` by exact comparison and leaves its scoped values uncha
 
 1. A family resolver accepts only its own names. `35mm250` is valid for `grain.procedural`, and `still_strong` is valid for `halation`.
 2. Every catalog entry resolves to finite values accepted by the existing runtime validation rules.
-3. Application is scope-exact. It cannot write `active`, engine, mode, film type, route, workflow, seed, or another family.
+3. Application is scope-exact. It cannot write `active`, engine, render mode, film type, film route, seed, or another family.
 4. Application is transactional. Resolve and validate a candidate copy before committing it to active state.
 5. Reapplying the same named profile is idempotent for its scope and has no effect on unrelated controls.
 6. `custom` never invents values. It preserves the current scoped values.
-7. Feature profile values are explicit runtime values after application. Look capture and section capture serialize those values through existing carriers.
-8. No runtime path MAY infer a feature profile name from a film stock, look name, or serialized values except for a family-defined `custom` projection.
+7. Feature profile values are explicit runtime values after application. Preset capture and section capture serialize those values through existing carriers.
+8. No runtime path MAY infer a feature profile name from a film stock, preset name, or serialized values except for a family-defined `custom` projection.
 
 ## Family details
 
@@ -124,7 +124,7 @@ The GUI control writes through the same typed resolver as the CLI. It MUST valid
 
 ## Persistence
 
-Feature-profile selection is not serialized as a new top-level or nested field. A saved look or section contains resolved runtime leaves under its existing schema. A document MUST NOT require a catalog entry because it stores leaves rather than feature-profile names.
+Feature-profile selection is not serialized as a new top-level or nested field. A saved preset or section contains resolved runtime leaves under its existing schema. A document MUST NOT require a catalog entry because it stores leaves rather than feature-profile names.
 
 The existing Procedural `procedural_profile` wire behavior remains authoritative for that engine. Halation documents continue to carry their resolved arrays. Catalog changes require an explicit product revision and MUST NOT silently reinterpret stored resolved values.
 
@@ -135,7 +135,7 @@ The implementation MUST add focused tests for:
 - family-local name validation and catalog counts;
 - every Procedural row resolving to the existing dispatch values;
 - every Halation row resolving to its exact arrays;
-- scope isolation with sentinels for active, engine, mode, film type, route, workflow, seed, film format, and unrelated controls;
+- scope isolation with sentinels for active, engine, render mode, film type, film route, seed, film format, and unrelated controls;
 - `custom` matching and non-matching behavior for Halation, with no tolerance;
 - CLI option composition, repeated-family precedence, malformed values, dry-run reporting, and direct-leaf override;
 - round-trip through existing preset and parameter carriers without a feature-profile field.

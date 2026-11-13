@@ -1,0 +1,11 @@
+{
+  "stock": "ilford_delta_3200",
+  "name": "Ilford Delta 3200 Professional",
+  "primary_url": "https://github.com/noahhaasis/negs/blob/26c903be9064b4fbfd46a8396620ba7e1e9bc1df/data/profiles/ilford_delta_3200.json",
+  "primary_sha256": "b83c32d1dffd9770cc94a8eeaa47a8cf23a9a2d4550a295416c74dd4461c4773",
+  "primary_revision": "Negs origin/main 26c903b; adapted from Fotufilm profile commit 96623ba (CC BY-SA 4.0)",
+  "process": "Ilford Delta 3200 TI; DD-X development family 7/9/12/16 min, default 9 min; converted to one-channel B&W profile.",
+  "adaptation": "Fotufilm profile imported from Negs; four-sublayer grain decomposition removed because Spektra supports at most three sublayers; composite silver curve retained. No pixel/effect calibration is implied.",
+  "license": "Fotufilm/MUAStudio Inc. profile adapted by Negs; CC BY-SA 4.0; see data/license/FOTUFILM_PROFILES.txt",
+  "adapted_sha256": "735a9b48c876d0fed44e42e994a8a9d2d2b398825ceb1f3cd2d37df8d218da1d"
+}

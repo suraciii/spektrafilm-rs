@@ -13,7 +13,7 @@ The panel MUST support these photographic judgments without declaring an image c
 | Histogram | Where are the image's tones concentrated? | Shadow, midtone, and highlight distribution; endpoint accumulation; optional channel differences. |
 | Waveform | Which part of the picture contains those tones? | Horizontal picture position against tone, with density showing how frequently values occur at that position. |
 | Waveform / RGB parade | Where and at which tone levels do channels differ? | Three spatial distributions with matching coordinates and scales, so the same subject can be compared across channels. |
-| Vectorscope | How did the look change the image's colors? | Hue direction, chroma, and population density, with fixed references for comparing the same subject before and after simulation. |
+| Vectorscope | How did the render change the image's colors? | Hue direction, chroma, and population density, with fixed references for comparing the same subject before and after simulation. |
 
 Image analysis is an information layer, not an editing surface. It MUST remain secondary to the photograph and parameter work.
 
@@ -81,7 +81,9 @@ Markers MUST remain distinguishable from distribution traces and reference guide
 
 Linked inspection MUST NOT change the population, selection, plot scale, or photographic adjustments. It MUST NOT consume clicks, drags, scrolling, or keyboard commands owned by other viewer operations.
 
-A focusable keyboard pixel-inspection cursor MUST provide the same sample values and plot markers. Moving that cursor MUST NOT commit a selection or move the system pointer.
+A focusable Pixel cursor control in the analysis toolbar MUST provide keyboard pixel inspection with the same sample values and plot markers as pointer inspection. Arrow keys MUST move the cursor while the control has focus. The control MUST show active and keyboard-focus states and expose accessible help including arrow-key movement.
+
+Moving the cursor MUST NOT commit a selection or move the system pointer. An idle instruction or cursor-entry control MUST NOT overlay the photograph or add a second instruction row.
 
 | Inspection condition | Required response |
 | --- | --- |
@@ -111,7 +113,9 @@ Histogram MUST offer Tone and RGB views. Tone MUST be the default and MUST use a
 
 The value axis MUST run from dark to light, left to right. Its bounded range and the meaning of relative pixel frequency MUST remain available through accessible help and inspection readouts, not permanent explanatory labels.
 
-Histogram MUST NOT reserve an axis-label row or show permanent `0`, `0.5`, and `1` value labels. Exact value intervals MUST remain available through cursor inspection.
+Histogram MUST remain shape-first: it MUST NOT reserve an axis-label row, show permanent numeric axis labels such as `0`, `0.5`, and `1`, draw a vertical grid, or show a permanent legend. Exact bin intervals and population shares MUST remain available through pointer and keyboard inspection.
+
+The Histogram answers distribution, endpoint accumulation, and channel-difference questions; exact values are available on demand, while permanent numeric ticks are not actionable in this read-only view.
 
 Histogram MUST use fixed logarithmic frequency presentation under the [scale definition](design.md#histogram). It MUST NOT expose a Linear/Logarithmic selector or a permanent Logarithmic label.
 
@@ -213,7 +217,7 @@ The expanded workspace MUST use the available width below the photograph. It MUS
 
 ### Toolbar
 
-While the shelf is expanded, its toolbar MUST contain only controls that change the inspection question, signal, population, plot window, or workspace visibility.
+While the shelf is expanded, its toolbar MUST contain only controls that change the inspection question, inspection method, signal, population, plot window, or workspace visibility.
 
 | Control | When visible | Choices or action |
 | --- | --- | --- |
@@ -222,11 +226,14 @@ While the shelf is expanded, its toolbar MUST contain only controls that change 
 | Waveform display | Waveform | Tone, RGB overlay, or RGB parade. |
 | Channel visibility | Histogram RGB or Waveform RGB overlay | Independently show or hide R, G, and B, with textual identity and selected state. |
 | Chroma zoom | Vectorscope | Change the plot window while identifying the selected zoom. |
+| Pixel cursor | An accepted photographic subject supports pixel inspection and area selection is not armed | Focus the compact control and use arrow keys to inspect photograph pixels under [Linked pixel inspection](#linked-pixel-inspection). |
 | Select area | An accepted photographic subject supports selection | Arm the temporary area-selection tool. |
 | Full image | A committed Selection exists | Clear the selection under [Area inspection](#area-inspection). |
 | Close | Always | Close the analysis workspace. |
 
-Histogram MUST be the initial mode without a saved preference. Vectorscope MUST NOT require an Advanced group or a separate enable flag. The closed selector MUST name the selected mode.
+Histogram MUST be the initial mode without a saved preference. Vectorscope MUST NOT require an Advanced group or a separate enable flag.
+
+The closed selector MUST name the selected mode and show a visible chevron or equivalent menu affordance consistent with the signal selectors. Its menu MUST list modes only; mode help MUST be available on demand rather than as menu descriptions.
 
 RGB parade MUST remain a Waveform display choice, not a separate analysis mode. Its three channel plots MUST retain their labels without showing redundant channel-visibility controls.
 
@@ -246,19 +253,25 @@ Readouts MUST NOT intercept plot pointer or keyboard inspection. They MUST leave
 
 Active sample coordinates, values, and membership or off-scale indications MUST remain visible without scrolling or leaving the viewer inspection cursor. Excess notices MUST remain scrollable inside the assigned plot region without resizing it. Focused plot inspection MUST keep arrow keys for sampling and provide Page Up and Page Down for notice scrolling.
 
-Nonzero out-of-range, invalid, unavailable, pending, and stale observations MUST remain disclosed under [Result identity and availability](#result-identity-and-availability). These states MUST NOT be hidden in help merely to make the panel smaller.
+Nonzero below- or above-range RGB observations MUST be indicated by a small non-text marker at the corresponding value edge in Histogram and Waveform/RGB parade views, not persistent `Below/Above RGB range: N` sentences. Vectorscope has no corresponding RGB value edge, so its counts remain available on demand.
+
+The marker MUST indicate the presence of observations without obscuring data or reserving an information row.
+
+Exact below and above counts MUST be available in the plot's accessible description or through an on-demand tooltip or inspection readout. Zero range observations MUST NOT produce a marker.
+
+Invalid, unavailable, pending, and stale observations MUST remain disclosed under [Result identity and availability](#result-identity-and-availability). These states MUST NOT be hidden in help merely to make the panel smaller.
 
 ### Height and interaction
 
-The height preference MUST describe the entire shelf, including controls, plot, borders, and padding. Default height, resize limits, and the photograph reserve MUST follow the [native layout baseline](../../gui-presentation/spec.md#native-layout-baseline).
+The height preference MUST describe the entire shelf, including controls, plot, borders, and padding. The default total shelf height MUST be 152, and resize limits and the photograph reserve MUST follow the [native layout baseline](../../gui-presentation/spec.md#native-layout-baseline).
 
 Allocation MUST reserve the viewer status, viewer footer, and useful photograph area before assigning analysis height. It MUST NOT limit the plot and then append toolbar or information height outside that limit.
 
-Dragging the photograph/analysis divider MUST resize the shelf. The divider MUST expose a resize cursor and visible keyboard focus. Keyboard operation MUST provide equivalent resizing and bounds.
+Dragging the photograph/analysis divider MUST resize the shelf. The divider MUST expose a resize cursor, visible keyboard focus, and a non-text drag grip that is visible at rest and emphasized on hover or focus. Keyboard operation MUST provide equivalent resizing and bounds.
 
 A drag MUST account for its complete displacement from the press position. Under a height constraint, an upward resize MUST NOT reduce the requested height. A downward resize MUST start from the displayed height for both pointer and keyboard input.
 
-Double-clicking the divider MUST restore the default requested height. Keyboard operation MUST provide an equivalent reset without opening a settings surface.
+Double-clicking the divider or pressing Home while it is focused MUST restore the default requested height without opening a settings surface.
 
 A smaller window MUST reduce effective shelf height only while the native minimum remains available. If the photograph reserve and minimum shelf cannot both fit, the workspace MUST enter temporary collapse instead of rendering a smaller shelf.
 
@@ -294,7 +307,7 @@ The following choices MUST persist as application presentation preferences:
 - RGB visibility.
 - Vectorscope chroma zoom.
 
-Selections, inspection cursors, computed distributions, and pending work MUST remain transient. These values MUST NOT enter photograph records, look presets, runtime parameters, or export metadata.
+Selections, inspection cursors, computed distributions, and pending work MUST remain transient. These values MUST NOT enter photograph records, presets, runtime parameters, or export metadata.
 
 Presentation changes MUST NOT create adjustment history or mark a photograph as having unsaved adjustments. Existing saved readout visibility MUST retain its meaning without exposing a second legacy panel.
 
@@ -318,17 +331,17 @@ This capability MUST NOT introduce the following surfaces:
 
 ## Acceptance
 
-Acceptance MUST exercise the native GUI with an accepted photograph, not use an HTML layout as implementation evidence.
+Acceptance MUST exercise the native GUI with an accepted photograph, not use an HTML layout as implementation evidence. The ordinary expanded-workspace scenarios MUST be exercised at 1460 × 980 and 1100 × 800 in both English and Simplified Chinese.
 
 | Scenario | Required observable result |
 | --- | --- |
-| Open analysis with no saved preferences | The compact Histogram Tone shelf uses the native default height and fixed logarithmic presentation; no settings, scale, scope, explanation, or empty readout row appears. |
-| Inspect at 1100 × 760 and 1460 × 980 in English and Simplified Chinese | Applicable controls fit one toolbar row with normal text sizes; the photograph remains dominant and viewer, Scan, Save, and Export actions remain reachable. |
-| Switch analysis modes and Waveform displays | All three modes are direct choices; RGB parade stays within Waveform; returning to a mode preserves its relevant display preferences. |
-| Switch Tone, RGB, RGB overlay, RGB parade, and Vectorscope | Only relevant signal, channel, or chroma controls appear; histogram axes are quiet, while waveform numeric guides and vectorscope geometry remain readable. |
+| Open analysis with no saved preferences | The compact Histogram Tone shelf uses the 152 default total height and fixed logarithmic presentation; no settings, scale, scope, explanation, or empty readout row appears. |
+| Inspect at 1100 × 800 and 1460 × 980 in English and Simplified Chinese | Applicable controls, including Pixel cursor, fit one toolbar row with normal text sizes; the mode selector has a visible chevron or equivalent, the divider grip is visible at rest and emphasized on hover or focus, no idle cursor instruction overlays the photograph, and the photograph remains dominant with viewer, Scan, Save, and Export actions reachable. |
+| Switch analysis modes and Waveform displays | All three modes are direct choices in a mode-only menu with help on demand and no descriptions; RGB parade stays within Waveform; returning to a mode preserves its relevant display preferences. |
+| Switch Tone, RGB, RGB overlay, RGB parade, and Vectorscope | Only relevant signal, channel, or chroma controls appear; Histogram has no permanent numeric axis labels, vertical grid, legend, or logarithmic label, while waveform 0/0.5/1 numeric guides and vectorscope geometry remain readable. |
 | Select an area, clear it, then encounter an unavailable selection | The outline and action state identify the selection; Full image appears only when a selection exists; unavailable coverage is not silently replaced or intersected. |
-| Inspect a plot or photograph with pointer and keyboard, then leave | Matching markers and exact readouts appear and clear without changing statistics, plot size, or photograph size. |
-| Resize by divider and keyboard; reset; shrink and restore within the expanded budget | Total shelf allocation stays within the native budget, controls remain reachable, and window constraints do not replace requested height or alter photographic edits. |
+| Inspect a plot or photograph with pointer and keyboard, then leave | Focusing the toolbar Pixel cursor and using arrow keys provides the same sample values and matching markers as photograph hover, with visible focus and active state and accessible movement help; plot inspection exposes exact histogram intervals and shares. Readouts and markers clear as specified without changing statistics, plot size, or photograph size, and no idle cursor instruction overlays the photograph. |
+| Resize by divider and keyboard; reset; shrink and restore within the expanded budget | A non-text grip appears on divider hover or focus alongside the resize cursor and keyboard focus; double-click and Home restore the 152 default. Total shelf allocation stays within the native budget, controls remain reachable, and window constraints do not replace requested height or alter photographic edits. |
 | Resize while a larger requested height is constrained by the window | Upward input does not reduce the saved request; downward pointer and keyboard input shrink the visible shelf immediately; gradual drags retain their full displacement. |
 | Shrink below the minimum expanded budget, then restore to and above its boundary | The shelf, divider, and toolbar disappear rather than compress below the minimum; the footer action explains the constraint; requested expansion and height restore when space permits. |
 | Collapse for insufficient space during selection, inspection, or pending work | Unfinished selection and inspection clear, analysis demand stops, and focus moves out of removed controls; the committed selection and display choices remain available on reopening. |
@@ -336,13 +349,14 @@ Acceptance MUST exercise the native GUI with an accepted photograph, not use an 
 | Open, resize, close, and restore analysis in Fit mode | The fitted scale follows the new canvas while preserving the existing zoom multiplier and pan. |
 | Repeat in explicit 100% and 200% modes with a panned photograph | Actual source-to-device pixel scale and pan remain unchanged; no automatic Fit occurs, even during temporary collapse and restoration. |
 | Compare Original and Modified at the same region | Counts, exact frequencies, and shared normalization remain comparable; logarithmic peak heights are not presented as frequency ratios. |
-| Encounter pending, stale, missing, invalid, out-of-range, or failed analysis | Actual result identity and meaningful exceptions remain visible without claiming that an earlier result matches the new request or blocking image delivery. |
+| Encounter nonzero below- or above-range observations | A small non-text value-edge marker indicates their presence in Histogram and Waveform/RGB parade views without a persistent range sentence or reserved row; Vectorscope keeps the exact counts on demand. Exact below and above counts are available in the plot's accessible description or on demand. No marker appears when both counts are zero. |
+| Encounter pending, stale, missing, invalid, or failed analysis | Actual result identity and meaningful exceptions remain visible without claiming that an earlier result matches the new request or blocking image delivery. |
 | Hide every RGB channel | The panel requests a channel rather than claiming that the photograph or valid population is absent. |
 | Restore legacy linear, plot-height, parade, and waveform preferences | Removed choices do not reappear; valid mode and signal choices retain their meaning; saving emits only the current preference model. |
 | Close analysis, including during selection or pending work | Photograph space is restored, analysis demand stops, and normal viewer gestures resume without creating an adjustment-history entry. |
 
 ## Implementation status
 
-The native GUI implements the compact toolbar, fixed logarithmic Histogram, conditional plot information, divider resizing, space-constrained collapse and restoration, and preference cutover described in the [GUI guide](../../../docs/gui.md#image-analysis).
+The native GUI implementation MUST follow the compact toolbar, fixed logarithmic Histogram, conditional plot information, divider resizing, space-constrained collapse and restoration, and preference cutover described above and in the [GUI guide](../../../docs/gui.md#image-analysis).
 
 Native acceptance MUST exercise the scenarios above. Headless geometry and state regressions MUST NOT substitute for native interaction or cross-platform acceptance.

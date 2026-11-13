@@ -8,7 +8,7 @@ This specification defines the photo-first desktop workspace and its user flows.
 
 The GUI MUST reduce navigation and editing effort without removing supported photographic controls. It MUST NOT replace independent parameters with a generic effect-strength slider. Folding a module MUST change its presentation only.
 
-This target replaces the MAIN, FILM, PRINT, ADVANCED, and CONFIG page navigation with a stage inspector and separate application settings. It does not change the film pipeline, canonical parameter paths, preset schemas, validation, or Save and Export pixel semantics.
+This target replaces the MAIN, FILM, PRINT, ADVANCED, and CONFIG page navigation with a stage inspector and separate application settings. It preserves existing Film-mode spectral behavior, validation, and Save and Export pixel semantics. Render-mode dispatch, LUT and Effects carriers, and their preset schemas follow [Render modes](../render-mode/spec.md), [LUT workflow](../lut-workflow/spec.md), and [Presets](../presets/spec.md).
 
 ## Capability map
 
@@ -16,16 +16,16 @@ The GUI MUST support this photographic work without requiring a second basic/exp
 
 ```mermaid
 flowchart LR
-    O[Open photograph] --> L[Choose a look]
-    L --> E[Refine adjustments]
-    E --> C[Compare A and B]
+    O[Open photograph] --> S[Choose a preset or mode]
+    S --> E[Refine adjustments]
+    E --> C[Compare presets and adjustments]
     C --> D[Inspect and deliver]
     E --> R[Save photograph adjustments]
     R --> W[Continue across photographs]
     W --> Q[Queue exports]
 ```
 
-[Result identity](../gui-workflow/spec.md#result-identity-and-delivery-guidance) owns confidence in the displayed and delivered image. [Visual hierarchy](../gui-presentation/spec.md#visual-hierarchy) owns control density. [Preset discovery aids](../presets/spec.md#preset-discovery-aids) owns reference thumbnails, favorites, and recently used looks.
+[Result identity](../gui-workflow/spec.md#result-identity-and-delivery-guidance) owns confidence in the displayed and delivered image. [Visual hierarchy](../gui-presentation/spec.md#visual-hierarchy) owns control density. [Preset browser interaction](../presets/spec.md#browser-interaction) and [current-photograph thumbnails](../presets/spec.md#current-photograph-thumbnails) own preset discovery and candidate images.
 
 [Photograph work](photo-work/spec.md) owns Original/Modified inspection, adjustment records, and multi-photograph work.
 
@@ -33,7 +33,7 @@ flowchart LR
 
 [Black and white endpoint warnings](clipping-warnings/spec.md) own native endpoint overlays and temporary isolated inspection in the viewer.
 
-[Common finishing](../finishing/spec.md) owns the shared positive-image adjustments. Its inspector placement follows [stage and surface ownership](../gui-workflow/spec.md#stage-and-surface-ownership).
+[Tone & Color](../finishing/spec.md) owns the shared positive-image adjustments. Its inspector placement follows [stage and surface ownership](../gui-workflow/spec.md#stage-and-surface-ownership).
 
 These are target capabilities, not a statement of implementation. Delivery schedules and research candidates are not product contracts.
 
@@ -41,7 +41,7 @@ These are target capabilities, not a statement of implementation. Delivery sched
 
 The workspace MUST keep three regions: a collapsible preset browser on the left, the retained-image viewer in the center, and the adjustment inspector on the right. The image MUST remain visible while a person chooses a preset or edits a photographic parameter.
 
-The header MUST expose Open image, Undo, Redo, application settings, and independent Export. It MUST identify the current source, material pair, and physical workflow. Material and workflow summaries outside the inspector MUST be read-only.
+The header MUST expose Open image, Undo, Redo, application settings, and independent Export. It MUST identify the current source, mode, and the Film material pair, LUT context, or Effects context appropriate to that mode. Those summaries outside the inspector MUST be read-only.
 
 Status ownership follows [Labels and surfaces](../gui-workflow/spec.md#labels-and-surfaces).
 
@@ -49,7 +49,13 @@ Preview MUST update automatically under the [workflow contract](../gui-workflow/
 
 Delivery emphasis follows [Result identity and delivery guidance](../gui-workflow/spec.md#result-identity-and-delivery-guidance).
 
-The inspector MUST present Input and capture, Film, Print, Scan, and Output in that order. A stage jump strip MUST reveal and scroll to the corresponding heading in the same inspector. It MUST NOT switch between mutually exclusive pages.
+The inspector MUST present Input and capture, Film, Print, Scan, LUT, Effects, and Output in that order. A persistent Mode selector above the stages offers Film, LUT, and Off; it is not a stage.
+
+A stage jump strip MUST reveal and scroll to the corresponding heading in the same inspector. It MUST NOT switch between mutually exclusive pages and MUST NOT include the Mode selector.
+
+The seven stage headings MUST remain reachable in every mode. An inactive stage MUST keep its heading visible with an explanation, MUST retain its stored values, and MUST present its body disabled and collapsed by default.
+
+In LUT and Off modes, Film, Print, and Scan remain inspectable in the stored film chain. In Film mode, the LUT and Effects stages remain reachable while inactive. In Off mode, the LUT stage is inactive and the Effects stage is active.
 
 Several stages and modules MUST be able to remain open together.
 
@@ -63,26 +69,30 @@ Neither surface MUST become a destination for photographic controls merely becau
 
 ## User flows
 
-### Open and establish the workflow
+### Open and establish the mode
 
 1. Open image MUST accept the supported RGB and RAW formats through their existing import paths. A supported drop MUST enter the same import operation.
-2. A successful import MUST show the accepted source and its current workflow. Failure MUST preserve the accepted image and controls and report the error.
-3. A person MUST be able to choose a complete look from the left browser or choose materials directly in their stages. Choosing a preset MUST NOT be required to edit a photograph.
+2. A successful import MUST show the accepted source and its current mode. Failure MUST preserve the accepted image and controls and report the error.
+3. A person MUST be able to choose a preset from the left browser or choose materials directly in their stages. Choosing a preset MUST NOT be required to edit a photograph.
 4. The person can adjust exposure in Input and capture before opening other modules.
 
 RAW decoding and reprocessing MUST remain distinguishable from simulated camera exposure. Changing a RAW setting MUST NOT imply that an accepted source has already been decoded with that setting. The reprocess action and its pending or failed state MUST be explicit.
 
-### Choose a look or a material
+### Choose a preset, mode, or material
 
-A look preset selects the material pair and its owned controls under [Presets](../presets/spec.md#apply). The browser MUST support search and distinguish applied, modified, and missing states. Built-in presets remain read-only.
+A Film preset selects the material pair and its owned controls under [Presets](../presets/spec.md#apply). A LUT preset selects LUT mode. An Effects preset selects Off mode.
 
-Choosing a film alone MUST retain the selected print material. Choosing a print material alone MUST retain the selected film. Workflow defaulting and scanner normalization MUST follow the existing [material-selection rules](../presets/spec.md#workflow-defaulting), not the browser prototype's behavior.
+The browser MUST support search and distinguish applied, modified, and missing states.
+
+Built-in presets remain read-only. Compact cards and their accessible material descriptions follow [browser interaction](../presets/spec.md#browser-interaction).
+
+Choosing a film alone MUST retain the selected print material. Choosing a print material alone MUST retain the selected film. Film route defaulting and scanner normalization MUST follow the existing [material-selection rules](../presets/spec.md#film-route-defaulting), not the browser prototype's behavior.
 
 The header MUST identify any resulting route or scanner normalization.
 
 A material selector MUST list only materials accepted for its role. Development-time choices MUST come from the selected material's family. A material without a selectable family MUST show its effective state without a one-choice selector.
 
-A feature profile and a look preset MUST remain distinct operations. A feature profile MUST NOT change materials, route, enable state, or unrelated controls. Multi-photograph copying scopes follow [Photograph work](photo-work/spec.md#copy-adjustments).
+A feature profile and a preset MUST remain distinct operations. A feature profile MUST NOT change materials, mode, enable state, or unrelated controls. Multi-photograph copying scopes follow [Photograph work](photo-work/spec.md#copy-adjustments).
 
 ### Refine the photograph
 
@@ -118,11 +128,21 @@ The [stage and surface table](../gui-workflow/spec.md#stage-and-surface-ownershi
 
 Closed module headings MUST name their contents with physical terms and expose their modified and inactive states without color alone. Enabling a module MUST NOT be required to discover its contents. Inactive values MUST remain readable.
 
-Default disclosure MUST put the source workflow and camera exposure within reach before detailed material controls. Other modules MAY start collapsed. Folding one module MUST NOT close another.
+A collapsed module MUST confine its content summary and applicability state to its heading and help. It MUST NOT render a multi-line summary or applicability notice beneath its heading.
+
+Expanding the module MUST show the actual applicability reason without requiring hover. A summary that duplicates visible controls MUST NOT remain above the expanded controls.
+
+Default disclosure MUST put the film route, camera exposure, and daily tone and color adjustments within reach before detailed material and delivery controls. Film route and Camera modules MUST start expanded in a fresh disclosure session. Tone & Color MUST start expanded.
+
+With default disclosure, the Scan jump MUST reveal Tone & Color without requiring a second module expansion. Other modules MAY start collapsed. Folding one module MUST NOT close another.
 
 A parameter edit, preview completion, or route change MUST NOT collapse the user's open modules or reset the inspector scroll position.
 
-Halation MUST be a named Film module, not a hidden generic effect. It MUST retain the feature-profile action, scatter and back-reflection controls, source response, all editable RGB components, bounce controls, and normalization. A profile is a scoped starting configuration, not a substitute for these controls.
+Film Halation MUST be a named Film module, not a hidden generic effect. It MUST retain the feature-profile action, scatter and back-reflection controls, source response, all editable RGB components, bounce controls, and normalization.
+
+The Effects stage Halation MUST remain a separate transform effect. A profile is a scoped starting configuration, not a substitute for these controls.
+
+Grain MUST be a named Film module beside Halation. It MUST keep the five engine choices in one editing location, distinguish material grain from Procedural and Exposure Grain post-scan appearance, and MUST NOT be presented as a global effect or shared with the Effects stage. The Effects stage's Grain belongs to the transform pipeline and remains independent.
 
 Preflash MUST be a named Print module beside the main enlarger exposure controls. Exposure, Yellow shift, and Magenta shift MUST all be available. Zero exposure disables flash and retains the filter values.
 
@@ -150,7 +170,7 @@ Closing a dialog MUST return focus to its invoking control. Labels and state cue
 
 ## Non-goals
 
-This specification does not introduce new film algorithms, artistic macro parameters, parameter aliases, basic/expert modes, a second preset library, live current-photograph preset thumbnails, media cataloging, or a new GUI framework. It does not restore retired output-lightness or draft digital-response controls. Favorites and multi-photograph work follow the owners in the [capability map](#capability-map).
+This specification does not introduce new film algorithms, artistic macro parameters, parameter aliases, basic/expert modes, a second preset library, media cataloging, or a new GUI framework. It does not restore retired output-lightness or draft digital-response controls. Preset thumbnails and multi-photograph work follow the owners in the [capability map](#capability-map).
 
 The HTML design reference is not an engine implementation. Its sample values, parameter count, browser storage, image assets, and disabled engine actions are not native product contracts. Native acceptance MUST use actual source images, production controls, and real render and writer operations.
 
@@ -159,9 +179,15 @@ The HTML design reference is not an engine implementation. Its sample values, pa
 | Scenario | Required observable result |
 | --- | --- |
 | Open RGB or RAW; attempt an invalid import | The supported input reaches its real import path; failure preserves the accepted source and controls. |
-| Choose a look, change exposure, undo | The look applies atomically; its modified state follows owned controls; undo restores the previous edit without rewriting the preset file. |
+| Choose a preset, change exposure, undo | The preset applies atomically; its modified state follows owned controls; undo restores the previous edit without rewriting the preset file. |
 | Change only the film | The print selection remains; route defaulting and scanner normalization follow their owners and are reported. |
 | Expand several modules; edit and wait for preview | Open state, scroll, and numeric focus remain usable; the image remains visible. |
+| Use fresh disclosure and jump to Scan | Tone & Color is already expanded; its four daily controls have no row resets and no mid-word unit wrapping. |
+| Collapse an inactive module, then expand it | The closed heading retains a compact non-color state without a notice below it; the expanded module shows the actual reason without hover and does not repeat its content summary above the controls. |
+| Expand Camera and locate `camera.capture_illuminant` | Both exposure controls remain directly visible; Capture setup starts closed, the locator reveals the actual control without an edit, and Camera reset still covers the complete module. |
+| Select a long film or print material name | The complete selected identity remains readable without widening the inspector or truncating the selector. |
+| Click the photograph to leave a numeric editor | Editor focus changes without changing zoom, pan, the source, or accepted adjustments. |
+| Confirm Save and Export destinations through ordinary filename and native full-path entry | The published path and extension exactly match each confirmation; Save's explicit extension selects the actual container and overwrite checks use the confirmed path. |
 | Search a folded or inactive control by label or canonical path | The correct owner is revealed with its current value and applicability reason; no second editor or parameter change appears. |
 | Search an Export or display option | The result opens that dialog or setting; unrelated dialogs are not filtered by the inspector query. |
 | Use Only modified, reset a module, then undo | Filtering uses the reset baseline; reset changes only the module's owned scope; undo restores values and edit provenance. |

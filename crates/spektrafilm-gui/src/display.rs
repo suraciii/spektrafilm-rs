@@ -5,14 +5,29 @@ use serde_json::Value;
 mod colortransform;
 mod decorations;
 mod full_transform;
+mod geometry;
 mod raster;
 mod viewer;
 mod worker;
 
 pub(crate) use colortransform::output_display_raster_retained;
+
+/// The display profile a viewer raster actually consumes: an explicit choice,
+/// or the platform-discovered profile when none is selected.
+pub(crate) fn effective_display_profile() -> Option<std::path::PathBuf> {
+    #[cfg(windows)]
+    {
+        colortransform::discover_display_profile().ok().flatten()
+    }
+    #[cfg(not(windows))]
+    {
+        None
+    }
+}
 pub use colortransform::{input_display_raster_with, output_display_raster_with};
 pub use raster::{DisplayRaster, Interpolation};
 pub use viewer::Viewer;
+pub(crate) use viewer::ViewerAnalysisInput;
 #[cfg(test)]
 pub(crate) use viewer::ViewerObservation;
 

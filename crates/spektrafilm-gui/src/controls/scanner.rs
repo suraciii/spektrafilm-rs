@@ -5,6 +5,22 @@ use serde_json::Value;
 use spektrafilm_core::params::ScanOperatorParams;
 use std::path::Path;
 
+/// The tracking choice already implied by the print exposure mode.
+fn print_tracking_redundancy(
+    tracking: PrintExposureEvTracking,
+    mode: PrintExposureMode,
+) -> Option<&'static str> {
+    match (tracking, mode) {
+        (PrintExposureEvTracking::Always, PrintExposureMode::Auto) => Some(
+            "In auto mode, Always is equivalent to Follow exposure mode; this choice is disabled.",
+        ),
+        (PrintExposureEvTracking::FollowMode, PrintExposureMode::Manual) => Some(
+            "In manual mode, Follow exposure mode is equivalent to Never; this choice is disabled.",
+        ),
+        _ => None,
+    }
+}
+
 /// Session-only clipboard and held comparison; App owns all adjustment history.
 #[derive(Clone, Default)]
 struct OperatorEditor {
@@ -42,7 +58,7 @@ fn operator_controls(
             "finished exposure",
             "warmth",
             "green–magenta tint",
-            "contrast",
+            "Conversion contrast",
             "restore automatic",
             "copy operator correction",
             "paste operator correction",
@@ -76,8 +92,8 @@ fn operator_controls(
                 "scanner.operator.tint_ev",
                 "Mean red/blue minus green exposure difference in EV. Positive values add magenta; negative values add green.");
         }
-        if filter_matches(filter, "Contrast") {
-            param_numeric(ui, "Contrast", &mut operator.contrast,
+        if filter_matches(filter, "Conversion contrast") {
+            param_numeric(ui, "Conversion contrast", &mut operator.contrast,
                 "scanner.operator.contrast",
                 "Common exposure contrast around the fixed reference exposure. Above 1 is harder; below 1 is softer. Channel differences and automatic setup are unchanged.");
         }
@@ -199,18 +215,19 @@ pub(crate) fn sections(
     }
     if section == "Camera" {
         ui.scope(|ui| {
-            let capture_active = crate::ui::control_inactive_reason(ui.ctx(), "camera.capture_illuminant", params).is_none();
-            if !capture_active {
-                ui.label(localized(ui.ctx(), "Capture illuminant inactive on this route; stored values are retained."));
-            }
+            let capture_active = crate::controls::control_inactive_reason(ui.ctx(), "camera.capture_illuminant", params).is_none();
             if filter_matches(filter, "exposure compensation ev") {
                 flags.runtime_changed |= applicable_control(ui, params, "camera.exposure_compensation_ev", |ui, params| param_numeric(ui, "exposure compensation ev", &mut params.camera.exposure_compensation_ev, "camera.exposure_compensation_ev", "Add a bias to the auto-exposure of the camera."));
             }
             if filter_matches(filter, "auto exposure") {
                 flags.runtime_changed |= applicable_control(ui, params, "camera.auto_exposure", |ui, params| toggle(ui, "auto exposure", &mut params.camera.auto_exposure, "Use the auto-exposure feature of the virtual camera."));
             }
+            section_header(ui, filter, "Capture setup", |ui, filter| {
+            if !capture_active {
+                ui.label(localized(ui.ctx(), "Capture illuminant inactive on this route; stored values are retained."));
+            }
             if filter_matches(filter, "Film Format") {
-                flags.runtime_changed |= film_format(ui, &mut params.camera.film_format_mm);
+                flags.runtime_changed |= film_format(ui, &mut params.camera.film_format_mm, filter.active());
             }
             if filter_matches(filter, "auto exposure method") {
                 flags.runtime_changed |= applicable_control(ui, params, "camera.auto_exposure_method", |ui, params| choice_tip(ui, "auto exposure method", &mut params.camera.auto_exposure_method, &["center_weighted", "matrix", "multi_zone", "partial", "highlight_weighted", "median", "average"], "Metering method used by the virtual camera's auto-exposure."));
@@ -235,11 +252,12 @@ pub(crate) fn sections(
                     );
                 });
             }
+            });
         });
     }
     if section == "Enlarger" {
         let print_active =
-            crate::ui::control_inactive_reason(ui.ctx(), "enlarger.print_exposure", params)
+            crate::controls::control_inactive_reason(ui.ctx(), "enlarger.print_exposure", params)
                 .is_none();
         if !print_active {
             ui.label(localized(
@@ -267,7 +285,8 @@ pub(crate) fn sections(
                 flags.runtime_changed |= choice_tip_experimental(ui, "print illuminant", &mut params.enlarger.illuminant, &["TH-KG3", "TH-KG3-L", "K75P", "T", "D50", "D55", "D65", "A", "BB3200", "BB5000", "LED-B3", "LED-B5", "LED-RGB1", "LED-V2", "FL2"], "Print illuminant to simulate. Default is the bundled TH-KG3.");
             }
             if filter_matches(filter, "print exposure ev tracking") {
-                flags.runtime_changed |= enum_choice(
+                let mode = params.enlarger.print_exposure_mode;
+                flags.runtime_changed |= enum_choice_with_disabled(
                     ui,
                     "print exposure ev tracking",
                     &mut params.settings.print_exposure_ev_tracking,
@@ -276,8 +295,18 @@ pub(crate) fn sections(
                         (PrintExposureEvTracking::Never, "never"),
                         (PrintExposureEvTracking::Always, "always"),
                     ],
-                    "How the print exposure follows camera exposure compensation. follow_mode tracks it in auto mode and does not track it in manual; never disables tracking in auto; always applies the relative compensation factor in manual.",
+                    "How the print exposure follows camera exposure compensation. follow_mode tracks it in auto mode and does not track it in manual; never disables tracking in auto; always applies the relative compensation factor in manual. The choice equivalent to the current mode is disabled.",
+                    |tracking| print_tracking_redundancy(*tracking, mode),
                 );
+                if let Some(reason) =
+                    print_tracking_redundancy(params.settings.print_exposure_ev_tracking, mode)
+                {
+                    ui.label(
+                        egui::RichText::new(localized(ui.ctx(), reason))
+                            .small()
+                            .color(theme::FG_MUTED),
+                    );
+                }
             }
         });
     }
@@ -286,7 +315,7 @@ pub(crate) fn sections(
     }
     if section == "Scanner" {
         ui.scope(|ui| {
-            let scan_active = crate::ui::control_inactive_reason(ui.ctx(), "scanner.scan_output", params).is_none();
+            let scan_active = crate::controls::control_inactive_reason(ui.ctx(), "scanner.scan_output", params).is_none();
             let medium = if scan_active { film_medium.for_route(&params.workflow.route) } else { ScanMedium::None };
             let positive_route = scan_active && medium.positive_output_eligible(&params.workflow.route);
             let medium_label = match medium {
@@ -311,6 +340,25 @@ pub(crate) fn sections(
                 ui.label(localized(ui.ctx(), "Scanner inactive on this route; stored values are retained."));
             }
             ui.add_enabled_ui(medium != ScanMedium::None, |ui| {
+            if filter_matches(filter, vocabulary::WHITE_REFERENCE) {
+                flags.runtime_changed |= choice_tip_entries(
+                    ui,
+                    vocabulary::WHITE_REFERENCE,
+                    &mut params.scanner.white_reference,
+                    [
+                        (
+                            spektrafilm_core::params::SCAN_WHITE_REFERENCE_CLEAR_FILM_BASE,
+                            vocabulary::WHITE_REFERENCE_CLEAR_FILM_BASE,
+                        ),
+                        (
+                            spektrafilm_core::params::SCAN_WHITE_REFERENCE_READOUT_ILLUMINANT,
+                            vocabulary::WHITE_REFERENCE_READOUT_ILLUMINANT,
+                        ),
+                    ]
+                    .into_iter(),
+                    vocabulary::WHITE_REFERENCE_HELP,
+                );
+            }
             if filter_matches(filter, vocabulary::SCAN_OUTPUT)
                 && ui.add_enabled_ui(positive_route, |ui| choice_tip_entries(
                     ui,
@@ -486,7 +534,7 @@ pub(crate) fn sections(
         } else {
             "enlarger.diffusion_filter.active"
         };
-        let inactive = crate::ui::control_inactive_reason(ui.ctx(), path, params);
+        let inactive = crate::controls::control_inactive_reason(ui.ctx(), path, params);
         if let Some(reason) = &inactive {
             ui.label(localized(ui.ctx(), reason));
         }
@@ -505,7 +553,7 @@ pub(crate) fn sections(
 }
 
 /// Names are film specifications; values remain exposed-image long edges.
-fn film_format<T: egui::emath::Numeric>(ui: &mut Ui, value: &mut T) -> bool {
+fn film_format<T: egui::emath::Numeric>(ui: &mut Ui, value: &mut T, reveal_edge: bool) -> bool {
     const PATH: &str = "camera.film_format_mm";
     const FORMATS: [(&str, f64); 3] = [("35mm", 36.0), ("120", 56.0), ("4×5", 127.0)];
     const HELP: &str = "Sets the physical film scale for grain and other film effects. Does not crop, resize, or change the image's aspect ratio. 35mm uses a 36 mm frame long edge; 120 uses a representative 56 mm; 4×5 uses 127 mm.";
@@ -516,6 +564,19 @@ fn film_format<T: egui::emath::Numeric>(ui: &mut Ui, value: &mut T) -> bool {
     let current = value.to_f64();
     let preset = FORMATS.iter().position(|(_, mm)| *mm == current);
     let id = ui.make_persistent_id("film-format-custom");
+    let reveal_id = ui.make_persistent_id("film-format-located-edge");
+    if ui
+        .ctx()
+        .data(|data| data.get_temp::<(String, String)>(egui::Id::new("control_focus_request")))
+        .is_some_and(|(section, target)| section == "Camera" && target == PATH)
+    {
+        ui.ctx().data_mut(|data| data.insert_temp(reveal_id, true));
+    }
+    let located_edge = ui
+        .ctx()
+        .data(|data| data.get_temp::<bool>(reveal_id))
+        .unwrap_or(false);
+    let mut picked_format = false;
     let mut custom =
         ui.ctx().data(|data| data.get_temp::<f64>(id)) == Some(current) || preset.is_none();
     let mut selected = preset;
@@ -543,6 +604,7 @@ fn film_format<T: egui::emath::Numeric>(ui: &mut Ui, value: &mut T) -> bool {
                             .clicked()
                         {
                             selected = Some(index);
+                            picked_format = true;
                             custom = false;
                         }
                     }
@@ -554,6 +616,7 @@ fn film_format<T: egui::emath::Numeric>(ui: &mut Ui, value: &mut T) -> bool {
                         .clicked()
                     {
                         custom = true;
+                        picked_format = true;
                     }
                 })
                 .response
@@ -571,10 +634,13 @@ fn film_format<T: egui::emath::Numeric>(ui: &mut Ui, value: &mut T) -> bool {
             changed = true;
         }
     }
-    if custom {
+    if custom || reveal_edge || (located_edge && !picked_format) {
         changed |= param_numeric(ui, "Frame Long Edge", value, PATH, HELP);
     }
     ui.ctx().data_mut(|data| {
+        if picked_format {
+            data.remove::<bool>(reveal_id);
+        }
         if custom {
             data.insert_temp(id, value.to_f64());
         } else {
@@ -603,8 +669,9 @@ fn preflash_controls(
     ) {
         return;
     }
-    let active = crate::ui::control_inactive_reason(ui.ctx(), "enlarger.preflash_exposure", params)
-        .is_none();
+    let active =
+        crate::controls::control_inactive_reason(ui.ctx(), "enlarger.preflash_exposure", params)
+            .is_none();
     if !active {
         ui.label(localized(
             ui.ctx(),
@@ -622,4 +689,32 @@ fn preflash_controls(
             flags.runtime_changed |= param_numeric(ui, "preflash m filter shift", &mut params.enlarger.preflash_m_filter_shift, "enlarger.preflash_m_filter_shift", "Independent preflash Magenta shift around the calibrated neutral filter pack, in Kodak CC units.");
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn print_tracking_redundancy_matches_mode_equivalence() {
+        assert!(
+            print_tracking_redundancy(PrintExposureEvTracking::Always, PrintExposureMode::Auto)
+                .is_some()
+        );
+        assert!(
+            print_tracking_redundancy(
+                PrintExposureEvTracking::FollowMode,
+                PrintExposureMode::Manual
+            )
+            .is_some()
+        );
+        for (tracking, mode) in [
+            (PrintExposureEvTracking::Never, PrintExposureMode::Auto),
+            (PrintExposureEvTracking::Never, PrintExposureMode::Manual),
+            (PrintExposureEvTracking::Always, PrintExposureMode::Manual),
+            (PrintExposureEvTracking::FollowMode, PrintExposureMode::Auto),
+        ] {
+            assert!(print_tracking_redundancy(tracking, mode).is_none());
+        }
+    }
 }

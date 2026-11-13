@@ -2,7 +2,7 @@
 
 ![banner](docs/card.jpg)
 
-SpektraFilm simulates analog color film and the print-and-scan chain spectrally. A digital image exposes a film stock, the developed record is enlarged onto photographic paper, and a scanner reads the result. Film, paper, enlarger light and scanner response are integrated over 81 wavelengths, so a stock, a paper, or a light source changes the image through its spectral profile rather than through a color preset. Bundled profiles carry measured or fitted spectral data; the CineStill 800T Cs41 material is an experimental fit, see [scanning](docs/scanning.md).
+SpektraFilm simulates analog color film and the print-and-scan chain spectrally. A digital image exposes a film stock, the developed record is enlarged onto photographic paper, and a scanner reads the result. Film, paper, enlarger light and scanner response are integrated over 81 wavelengths, so a stock, a paper, or a light source changes the image through its spectral profile rather than through a color preset. Bundled profiles carry measured or fitted spectral data; the CineStill 800T material is an experimental fit, see [scanning](docs/scanning.md).
 
 This is a Rust port of [andreavolpato/spektrafilm](https://github.com/andreavolpato/spektrafilm), forked from [turbasvin/spektrafilm-rs](https://github.com/turbasvin/spektrafilm-rs), the original Rust port. The desktop GUI renders at the build's native precision; GPU execution is f32 WGPU with faithful CPU stages where a GPU implementation would change the result. The separate `spektrafilm-f64` CLI remains the CPU f64 reference. Numeric agreement is judged against per-scenario budgets, not universal bit identity; see [parity and backends](docs/parity.md).
 
@@ -12,7 +12,7 @@ This is a Rust port of [andreavolpato/spektrafilm](https://github.com/andreavolp
 - **Convert a negative.** Interpret a real negative or a simulated one as a positive with the calibrated density reading. See [scanning](docs/scanning.md).
 - **Preview and export interactively.** One session keeps Preview, full-resolution Scan, Save and the independent Export dialog together, with state save and restore. See [the GUI guide](docs/gui.md).
 - **Process in batch.** `spektrafilm` is the fast f32 processor and `spektrafilm-f64` is the CPU reference exporter; both keep floating samples in float TIFF/EXR, copy source EXIF/IPTC/XMP to non-EXR output, and write color tags or ICC profiles. See [the CLI guide](docs/cli.md).
-- **Choose a grain engine.** Spektra, Procedural (Dehancer-derived), Dye and Fotufilm Film are selectable, each with its own controls and defaults. See [grain engines](docs/grain.md).
+- **Choose a grain engine.** Spektra, Procedural (Dehancer-derived), Dye, Fotufilm Film and Exposure Grain are selectable, each with its own controls and defaults. See [grain engines](docs/grain.md).
 - **Deliver LUTs for a camera.** Bake deterministic bundles for Panasonic V-Log with CUBE, 3DL, Hald, OCIO and QA artifacts. See [LUT delivery](docs/luts.md).
 - **Review retained comparisons.** Use `spektrafilm-lab report comparison --comparison DIRECTORY --out DIRECTORY` for an offline report. Prepared-image visual review is benchmark-owned and is not a lab document or input.
 - **Review a small set of photos.** Use `spektrafilm-bench report photos --manifest FILE --out DIRECTORY` for an offline visual report with authored ROIs and explicit comparison pairs. It shows no measurements, no scores, and no baseline, candidate, or reference judgment. See [the appearance benchmark](docs/benchmark.md#review-a-small-set-of-photos).
@@ -44,6 +44,21 @@ Render a film stock onto a print paper:
 ```bash
 ./target/release/spektrafilm-f64 process input.ORF -o out.png \
     --backend cpu --film kodak_gold_200 --paper kodak_portra_endura --data-dir data
+```
+
+Apply one external LUT as the LUT workflow:
+
+```bash
+./target/release/spektrafilm process input.png -o out.tif --lut look.cube \
+    --input-color-space sRGB --input-cctf-decoding true --data-dir data
+```
+
+Run the Effects stage without a film, print, LUT, or LUT Grade:
+
+```bash
+./target/release/spektrafilm process input.png -o out.tif \
+    --set 'workflow.mode=off,effects.grain.active=true' \
+    --input-color-space sRGB --input-cctf-decoding true --data-dir data
 ```
 
 Start the desktop GUI, optionally on an image:

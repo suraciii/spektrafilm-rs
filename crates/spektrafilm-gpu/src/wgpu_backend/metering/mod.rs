@@ -1,5 +1,6 @@
-//! Full-source preview, luminance measurement, and EV interpretation on device.
-//! Only one preview row's vertical samples are live, split into bounded blocks.
+//! Full-source preview, display-luminance or film-raw field measurement, and
+//! EV interpretation on device. Only one preview row's vertical samples are
+//! live, split into bounded blocks.
 use super::bounded::{chunk_elements, storage_binding_limit};
 use super::film_chain::device_image::BufferPayload;
 use super::*;
@@ -26,6 +27,16 @@ struct MeterParams {
     pad: u32,
     pad2: u32,
     tail: [u32; 4],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+struct RawParams {
+    lut_size: u32,
+    _pad0: u32,
+    _pad1: u32,
+    _pad2: u32,
+    cols: [[f32; 4]; 3],
 }
 
 #[repr(C)]
@@ -228,6 +239,41 @@ fn build_meter_state_with_limit(
     let accumulated = buffer("meter_horizontal_sum", u64::from(horizontal_block) * 12);
     let luminance = buffer("meter_luminance", luminance_bytes);
     let result = buffer("meter_ev", 4);
+    let raw_lut = if let Some(raw) = params.raw_tc_lut.as_ref() {
+        if raw.table.values.backend_id() != backend.backend_id() {
+            return Err("metering TC table belongs to another device".into());
+        }
+        let table = raw
+            .table
+            .values
+            .as_any()
+            .downcast_ref::<super::preparation::PreparationTable>()
+            .ok_or("metering TC table has an invalid device payload")?;
+        Some((&table.buffer, raw))
+    } else {
+        None
+    };
+    let raw_uniform = raw_lut.as_ref().map(|(_, raw)| {
+        let cols = std::array::from_fn(|column| {
+            let mut values = [0.0f32; 4];
+            for (value, row) in values.iter_mut().zip(&raw.rgb_to_xyz_adapted) {
+                *value = row[column] as f32;
+            }
+            values
+        });
+        let p = RawParams {
+            lut_size: raw.lut_size,
+            _pad0: 0,
+            _pad1: 0,
+            _pad2: 0,
+            cols,
+        };
+        device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("meter_raw_params"),
+            contents: bytemuck::bytes_of(&p),
+            usage: wgpu::BufferUsages::UNIFORM,
+        })
+    });
     // Gather only copies source values on device. Accumulation is a separate
     // ordered loop, so page order cannot change floating-point summation.
     for row in 0..rows {
@@ -336,30 +382,91 @@ fn build_meter_state_with_limit(
                     "meter_horizontal_accumulate",
                 );
             }
-            encode_chunk(
-                backend,
-                &mut encoder,
-                &uniform,
-                concat!(
-                    include_str!("../../../../spektrafilm-shaders/wgsl/cctf_lib.wgsl"),
-                    include_str!("../../../../spektrafilm-shaders/wgsl/meter_lib.wgsl"),
-                    include_str!("luminance.wgsl")
-                ),
-                MeterChunk {
-                    row,
-                    first,
-                    count,
-                    tap_first: 0,
-                    tap_count: 0,
-                    page_first: 0,
-                    page_len: 0,
-                    axis: 0,
-                },
-                &accumulated,
-                &luminance,
+            let chunk = MeterChunk {
+                row,
+                first,
                 count,
-                "meter_luminance",
-            );
+                tap_first: 0,
+                tap_count: 0,
+                page_first: 0,
+                page_len: 0,
+                axis: 0,
+            };
+            if let (Some((lut, _)), Some(raw_uniform)) = (&raw_lut, &raw_uniform) {
+                let pipeline = backend.cached_pipeline(
+                    concat!(
+                        include_str!("../../../../spektrafilm-shaders/wgsl/cctf_lib.wgsl"),
+                        include_str!("../../../../spektrafilm-shaders/wgsl/meter_lib.wgsl"),
+                        include_str!("raw_luminance.wgsl")
+                    ),
+                    &[
+                        wgpu::BufferBindingType::Uniform,
+                        wgpu::BufferBindingType::Uniform,
+                        wgpu::BufferBindingType::Storage { read_only: true },
+                        wgpu::BufferBindingType::Storage { read_only: false },
+                        wgpu::BufferBindingType::Storage { read_only: true },
+                        wgpu::BufferBindingType::Uniform,
+                    ],
+                );
+                let chunk = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("meter_chunk"),
+                    contents: bytemuck::bytes_of(&chunk),
+                    usage: wgpu::BufferUsages::UNIFORM,
+                });
+                let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("meter_raw_luminance"),
+                    layout: &pipeline.layout,
+                    entries: &[
+                        wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: uniform.as_entire_binding(),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 1,
+                            resource: chunk.as_entire_binding(),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 2,
+                            resource: accumulated.as_entire_binding(),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 3,
+                            resource: luminance.as_entire_binding(),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 4,
+                            resource: lut.as_entire_binding(),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 5,
+                            resource: raw_uniform.as_entire_binding(),
+                        },
+                    ],
+                });
+                let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                    label: Some("meter_raw_luminance"),
+                    timestamp_writes: None,
+                });
+                pass.set_pipeline(&pipeline.pipeline);
+                pass.set_bind_group(0, &group, &[]);
+                dispatch_linear(&mut pass, count);
+            } else {
+                encode_chunk(
+                    backend,
+                    &mut encoder,
+                    &uniform,
+                    concat!(
+                        include_str!("../../../../spektrafilm-shaders/wgsl/cctf_lib.wgsl"),
+                        include_str!("../../../../spektrafilm-shaders/wgsl/meter_lib.wgsl"),
+                        include_str!("luminance.wgsl")
+                    ),
+                    chunk,
+                    &accumulated,
+                    &luminance,
+                    count,
+                    "meter_luminance",
+                );
+            }
         }
         backend.check_cancelled()?;
         backend.submit_commands(Some(encoder.finish()))?;

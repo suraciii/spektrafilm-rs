@@ -29,6 +29,49 @@ impl<'a> FilmCurves<'a> {
     }
 }
 
+/// Exposure that produces mid density on a film, averaged over its records.
+///
+/// Stray light is measured against a material constant instead of against the
+/// frame's own brightness. The crossing nearest the middle of the exposure axis
+/// is used, which keeps the reference meaningful for a reversal material whose
+/// density falls with exposure.
+pub(crate) fn mid_density_reference_exposure(film: &Profile) -> f64 {
+    let curves = FilmCurves::prepare(film);
+    let normalized = &curves.normalized;
+    let log_exposure = film.data.log_exposure.as_slice();
+    if normalized.len() != log_exposure.len() || normalized.is_empty() {
+        return 1.0;
+    }
+    let middle = normalized.len() / 2;
+    let mut sum = 0.0;
+    let mut records = 0.0;
+    for c in 0..3 {
+        let max = normalized
+            .iter()
+            .map(|row| row[c])
+            .fold(f64::NEG_INFINITY, f64::max);
+        if !max.is_finite() || max <= 0.0 {
+            continue;
+        }
+        let target = max * 0.5;
+        let crossings = normalized
+            .iter()
+            .position(|row| row[c] >= target)
+            .into_iter()
+            .chain(normalized.iter().rposition(|row| row[c] >= target));
+        let crossing = crossings.min_by_key(|index| index.abs_diff(middle));
+        if let Some(index) = crossing {
+            sum += log_exposure[index];
+            records += 1.0;
+        }
+    }
+    if records > 0.0 {
+        10.0f64.powf(sum / records)
+    } else {
+        1.0
+    }
+}
+
 pub(crate) struct PrintCurves<'a> {
     pub log_exposure: &'a [f64],
     pub density: Vec<[f64; 3]>,
@@ -93,11 +136,13 @@ pub(crate) fn dir_matrix(dir: &crate::params::couplers::DirCouplersParams) -> [[
 /// calibration derived from it, the chromatic adaptation to the output white,
 /// and the output XYZ→RGB matrix.
 ///
-/// Neutral scan model v2: the white reference is the clear film (base)
-/// reading under the lamp, not the lamp itself. Dividing the capture by the
-/// base reading keeps the lamp's spectral shape in play — exactly how a real
-/// scanner's white calibration behaves — and adapting from the base white to
-/// the output white removes the film-base tint.
+/// Neutral scan model v2 defaults to the clear film (base) reading under the
+/// lamp as the white reference, not the lamp itself. Dividing the capture by
+/// the base reading keeps the lamp's spectral shape in play — exactly how a
+/// real scanner's white calibration behaves — and adapting from the base white
+/// to the output white removes the film-base tint. The explicit
+/// `readout_illuminant` mode instead normalizes by the lamp and adapts from the
+/// lamp white, reproducing upstream experimental `28bf883`.
 #[derive(Debug, Clone)]
 pub struct ScanColorContext {
     /// Effective readout illuminant, f64 per wavelength: the product constant
@@ -109,14 +154,17 @@ pub struct ScanColorContext {
     /// Clear-film XYZ reading under the lamp (`∫ 10^-D_base·L·CMF`) — the
     /// scanner's white calibration reference.
     pub base_xyz: [f64; 3],
-    /// `base_xyz[1]` — the scalar every scan kernel divides the capture by.
+    /// Selected white-reference Y — the scalar every scan kernel divides the
+    /// capture by. It is the clear-film reading under the default mode and
+    /// the readout-light Y under `readout_illuminant`.
     pub normalization: f64,
     /// Readout-light XYZ integrated against the CMFs; the
     /// glare offset colour source.
     pub lamp_xyz: [f64; 3],
-    /// Clear-film white (Y = 1) the chromatic adaptation starts from.
+    /// Selected white reference (Y = 1) the chromatic adaptation starts from:
+    /// clear-film white by default, readout-light white when opted out.
     pub base_white: [f64; 3],
-    /// Chromatic adaptation from the clear-film white to the output white.
+    /// Chromatic adaptation from the selected white reference to the output white.
     pub adapt: [[f64; 3]; 3],
     /// Output colour space XYZ→RGB matrix.
     pub base_xyz_to_rgb: [[f64; 3]; 3],
@@ -133,6 +181,7 @@ impl ScanColorContext {
         channel_density: &[[f64; 3]],
         base_density: &[f64],
         output_color_space: &str,
+        white_reference: &str,
     ) -> Self {
         let n_wl = lamp
             .len()
@@ -141,25 +190,37 @@ impl ScanColorContext {
             .min(N_WAVELENGTHS);
 
         let mut base_xyz = [0.0f64; 3];
+        // The clear-base reading follows the kernel's mask: a non-finite
+        // lamp, dye, or base sample is excluded.
         let mut lamp_xyz = [0.0f64; 3];
+        // The upstream-compatible reference integrates the whole finite lamp,
+        // including wavelengths where the profile's dye data is missing. The
+        // readout-illuminant mode must reproduce the upstream normalization,
+        // which does not mask those rows.
+        let mut all_lamp_xyz = [0.0f64; 3];
         // The wavelength index aligns lamp, dye, base density, and
         // color-matching samples. A row the kernels would mask — a
         // non-finite lamp, dye, or base sample (NaN·0 is NaN, then masked
-        // to zero) — is excluded from the white reference too, so the
-        // clear-film reading the normalization divides by is exactly the
+        // to zero) — is excluded from the clear-film white reference too, so
+        // the reading the default normalization divides by is exactly the
         // kernel's.
         #[allow(clippy::needless_range_loop)]
         for i in 0..n_wl {
             let dye = channel_density[i];
-            if !lamp[i].is_finite()
-                || !base_density[i].is_finite()
+            if !lamp[i].is_finite() {
+                continue;
+            }
+            let lamp = lamp[i];
+            all_lamp_xyz[0] += lamp * spectral::CMF_X_F64[i];
+            all_lamp_xyz[1] += lamp * spectral::CMF_Y_F64[i];
+            all_lamp_xyz[2] += lamp * spectral::CMF_Z_F64[i];
+            if !base_density[i].is_finite()
                 || !dye[0].is_finite()
                 || !dye[1].is_finite()
                 || !dye[2].is_finite()
             {
                 continue;
             }
-            let lamp = lamp[i];
             let base_transmission = 10.0f64.powf(-base_density[i]);
             base_xyz[0] += base_transmission * lamp * spectral::CMF_X_F64[i];
             base_xyz[1] += base_transmission * lamp * spectral::CMF_Y_F64[i];
@@ -168,15 +229,27 @@ impl ScanColorContext {
             lamp_xyz[1] += lamp * spectral::CMF_Y_F64[i];
             lamp_xyz[2] += lamp * spectral::CMF_Z_F64[i];
         }
-        let normalization = base_xyz[1];
+        let readout_illuminant =
+            white_reference == crate::params::SCAN_WHITE_REFERENCE_READOUT_ILLUMINANT;
+        let reference_xyz = if readout_illuminant {
+            all_lamp_xyz
+        } else {
+            base_xyz
+        };
+        let lamp_xyz = if readout_illuminant {
+            all_lamp_xyz
+        } else {
+            lamp_xyz
+        };
+        let normalization = reference_xyz[1];
         assert!(
             normalization.is_finite() && normalization > 0.0,
-            "clear-film scan reference must be positive"
+            "scan white reference must be positive"
         );
         let base_white = [
-            base_xyz[0] / normalization,
+            reference_xyz[0] / normalization,
             1.0f64,
-            base_xyz[2] / normalization,
+            reference_xyz[2] / normalization,
         ];
 
         let output_space = colorspace::resolve(output_color_space)
@@ -224,6 +297,7 @@ impl PreparedChain {
             &channel_density(profile),
             &base_density,
             &params.io.output_color_space,
+            &params.scanner.white_reference,
         );
         let mut scan_xyz_to_rgb = [[0.0f64; 3]; 3];
         // Matrix multiplication indexes both operands by row and column.

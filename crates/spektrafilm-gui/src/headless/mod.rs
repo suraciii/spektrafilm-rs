@@ -13,11 +13,15 @@ mod lifecycle;
 mod operator;
 mod pages;
 mod panels;
+mod polymax;
 mod raw;
 mod result;
+mod rollei80s;
+mod trix400;
 mod viewer;
 mod workflow;
 mod worklist;
+mod xp2;
 
 struct Session {
     harness: Harness<'static, App>,
@@ -195,6 +199,7 @@ pub(crate) fn default_startup(config_root: &Path, work: &Path) -> Harness<'stati
 /// Inspect the report returned by the real App worker, not a reconstructed
 /// execution snapshot. Device rendering and its transfers must share the
 /// operation's phase tree.
+#[cfg(feature = "gui-raw")]
 fn assert_retained_gpu_report(
     app: &App,
     path: &Path,
@@ -360,6 +365,7 @@ fn navigate_stage(h: &mut Harness<'_, App>, stage: controls::Stage) {
     close_settings(h);
     search_controls(h, "");
     h.query_all_by_role_and_label(egui::accesskit::Role::Button, stage.label())
+        .filter(|node| node.node().toggled().is_none())
         .min_by(|a, b| {
             a.node()
                 .raw_bounds()
@@ -369,7 +375,31 @@ fn navigate_stage(h: &mut Harness<'_, App>, stage: controls::Stage) {
         })
         .expect("persistent stage jump")
         .simulate_click();
-    h.run_steps(3);
+    // The jump keeps its destination cue while the scroll area eases toward
+    // the heading. Verify the cue immediately, then wait only until the
+    // heading reaches the viewport top.
+    h.run_steps(1);
+    assert_eq!(
+        h.state().inspector_stage,
+        stage,
+        "stage jump must keep the destination cue"
+    );
+    let heading_label = format!("{} stage", stage.label());
+    for _ in 0..24 {
+        let aligned = h
+            .query_by_label(&heading_label)
+            .and_then(|node| node.raw_bounds())
+            .zip(
+                h.query_by_label("Inspector controls")
+                    .and_then(|node| node.raw_bounds()),
+            )
+            .is_some_and(|(heading, viewport)| (heading.y0 - viewport.y0).abs() <= 8.0);
+        if aligned {
+            return;
+        }
+        h.run_steps(1);
+    }
+    panic!("stage jump did not settle at {heading_label}");
 }
 
 fn open_export(h: &mut Harness<'_, App>) {
@@ -514,12 +544,16 @@ fn import_file(h: &mut Harness<'_, App>, _raw: bool) {
 fn choose(h: &mut Harness<'_, App>, label: &str, option: &str) {
     await_input(h);
     scroll_controls_into_view(h, label);
+    // Acceptance selects canonical values (routes and feature-profile names)
+    // while the visible option carries the product-language display label.
+    let option_label =
+        crate::controls::localized_for(crate::i18n::locale(&h.ctx), option).into_owned();
     h.get_by_role_and_label(egui::accesskit::Role::ComboBox, label)
         .focus();
     h.run_steps(3);
     h.press_key(egui::Key::Space);
     h.run_steps(3);
-    h.get_by_role_and_label(egui::accesskit::Role::Button, option)
+    h.get_by_role_and_label(egui::accesskit::Role::Button, option_label.as_str())
         .click();
     h.run_steps(3);
     await_input(h);
@@ -773,7 +807,7 @@ fn scanner_ui_real_preview_scan_persistence_save_and_export() {
     let mut s = session();
     let h = &mut s.harness;
     reveal_control(h, "workflow.route");
-    choose(h, "workflow", "input > film > scan");
+    choose(h, "Film route", "input > film > scan");
     assert_eq!(h.state().params.workflow.route, "input > film > scan");
     reveal_control(h, "extras.simulation.film_stock");
     let profile = profile::load_profile_by_name(&data_dir(), "kodak_portra_400").unwrap();
@@ -783,7 +817,7 @@ fn scanner_ui_real_preview_scan_persistence_save_and_export() {
     // Selecting a stock intentionally resets its workflow; choose the eligible
     // scanner route after that production profile-selection behavior.
     reveal_control(h, "workflow.route");
-    choose(h, "workflow", "input > film > scan");
+    choose(h, "Film route", "input > film > scan");
     search_controls(h, "Scanner");
     choose(h, "scan output", "Preserve medium polarity");
     assert!(
@@ -950,21 +984,19 @@ fn scanner_ui_real_preview_scan_persistence_save_and_export() {
     .unwrap();
     assert_png(&export_path, &expected_export);
     assert_eq!(h.state().params.scanner.scan_output, "negative_to_positive");
-    // Extension correction must never silently overwrite an existing file.
+    // A mismatched confirmed path fails; no extension correction is attempted.
     let before = std::fs::read(&export_path).unwrap();
+    let rejected = s.directory.path().join("full.wrong-extension");
     let options = h.state().export_options.clone();
-    h.state_mut().start_export_to_path(
-        &ctx,
-        options,
-        &s.directory.path().join("full.wrong-extension"),
-    );
+    h.state_mut().start_export_to_path(&ctx, options, &rejected);
     assert!(h.state().export_job.is_none());
     assert!(
         h.state()
             .status
             .to_string()
-            .starts_with("Export destination already exists:")
+            .contains("full.wrong-extension")
     );
+    assert!(!rejected.exists());
     assert_eq!(std::fs::read(&export_path).unwrap(), before);
     h.state_mut()
         .apply_state_with_source(accepted.clone(), |_| {})
@@ -1018,7 +1050,7 @@ fn scanner_ui_real_preview_scan_persistence_save_and_export() {
     assert_eq!(restored.film_name, "kodak_portra_400");
     eframe::App::on_exit(&mut restored, None);
     reveal_control(h, "workflow.route");
-    choose(h, "workflow", "input");
+    choose(h, "Film route", "input");
     assert_eq!(h.state().params.scanner.scan_output, "direct_scan");
 }
 
@@ -1028,14 +1060,14 @@ fn fotufilm_engine_selection_reaches_the_native_app_runtime() {
     let mut s = session();
     let h = &mut s.harness;
     reveal_control(h, "workflow.route");
-    choose(h, "workflow", "input > film > scan");
+    choose(h, "Film route", "input > film > scan");
     reveal_control(h, "extras.simulation.film_stock");
     let profile = profile::load_profile_by_name(&data_dir(), "kodak_portra_400").unwrap();
     let profile_label = profile.info.name.as_deref().unwrap_or("kodak_portra_400");
     choose(h, "film profile", profile_label);
     // Selecting a stock intentionally resets its workflow.
     reveal_control(h, "workflow.route");
-    choose(h, "workflow", "input > film > scan");
+    choose(h, "Film route", "input > film > scan");
     search_controls(h, "Grain");
     if !h.state().params.film_render.grain.active {
         click(h, "Enable grain");
@@ -1066,7 +1098,7 @@ fn fotufilm_engine_selection_reaches_the_native_app_runtime() {
 fn real_worker_accepts_only_latest_request_and_current_revision() {
     let mut s = session();
     let h = &mut s.harness;
-    choose(h, "workflow", "input");
+    choose(h, "Film route", "input");
     let baseline = preview(h);
     let ctx = h.ctx.clone();
     // Hold the worker's existing start marker while UI events change the
@@ -1075,7 +1107,7 @@ fn real_worker_accepts_only_latest_request_and_current_revision() {
     let start_guard = active.lock();
     h.state_mut().dispatch_render(&ctx);
     let stale_revision = h.state().render_job.as_ref().unwrap().parameter_revision;
-    choose(h, "workflow", "input > film > scan");
+    choose(h, "Film route", "input > film > scan");
     assert!(h.state().parameter_revision > stale_revision);
     drop(start_guard);
     preview(h);
@@ -1295,11 +1327,33 @@ mod layout_snapshots {
     }
 }
 
-/// A session whose data directory is a symlink farm over the repository data
-/// plus a real `scan-styles/` the test authors. Nothing ships a style, so an
-/// end-to-end style check needs a directory the test controls; symlinks keep
-/// the heavy `luts`/`profiles` payloads shared instead of copied, and no test
-/// ever writes into the repository data dir.
+/// Share one repository data entry into the test's temporary data directory.
+/// Unix keeps the heavy `luts`/`profiles` payloads shared with symlinks;
+/// Windows has no unprivileged equivalent, so the one style session copies the
+/// 60 MB payload instead of requiring developer-mode symlink rights.
+#[cfg(unix)]
+fn share_data_entry(source: &std::path::Path, target: std::path::PathBuf) {
+    std::os::unix::fs::symlink(source, target).unwrap();
+}
+
+#[cfg(windows)]
+fn share_data_entry(source: &std::path::Path, target: std::path::PathBuf) {
+    if source.is_dir() {
+        std::fs::create_dir_all(&target).unwrap();
+        for entry in std::fs::read_dir(source).unwrap() {
+            let entry = entry.unwrap();
+            share_data_entry(&entry.path(), target.join(entry.file_name()));
+        }
+    } else {
+        std::fs::copy(source, target).unwrap();
+    }
+}
+
+/// A session whose data directory shares the repository data plus a real
+/// `scan-styles/` the test authors. Nothing ships a style, so an end-to-end
+/// style check needs a directory the test controls; sharing keeps the heavy
+/// `luts`/`profiles` payloads out of the test's write path, and no test ever
+/// writes into the repository data dir.
 fn style_session(styles: &[(&str, &str)]) -> Session {
     let directory = tempfile::tempdir().unwrap();
     let data = directory.path().join("data");
@@ -1310,7 +1364,7 @@ fn style_session(styles: &[(&str, &str)]) -> Session {
         if name == "scan-styles" {
             continue;
         }
-        std::os::unix::fs::symlink(entry.path(), data.join(name)).unwrap();
+        share_data_entry(&entry.path(), data.join(name));
     }
     for (name, body) in styles {
         std::fs::write(data.join("scan-styles").join(format!("{name}.json")), body).unwrap();
@@ -1362,7 +1416,7 @@ fn conversion_style_combo_offers_installed_styles_and_renders_them() {
     let profile = profile::load_profile_by_name(&data_dir(), "kodak_portra_400").unwrap();
     choose(h, "film profile", profile.info.name.as_deref().unwrap());
     reveal_control(h, "workflow.route");
-    choose(h, "workflow", "input > film > scan");
+    choose(h, "Film route", "input > film > scan");
     search_controls(h, "Scanner");
     choose(h, "scan output", "Negative to positive");
     // The selector lists exactly what the data directory carries: the
@@ -1405,7 +1459,7 @@ fn scanner_state_rejection_uses_the_neutral_scan_model() {
     let profile = profile::load_profile_by_name(&data_dir(), "kodak_portra_400").unwrap();
     choose(h, "film profile", profile.info.name.as_deref().unwrap());
     reveal_control(h, "workflow.route");
-    choose(h, "workflow", "input > film > scan");
+    choose(h, "Film route", "input > film > scan");
     search_controls(h, "Scanner");
     // The readout light is a product constant; it is not a control on any
     // route. The retired-control checks run on the direct scan this route
@@ -1519,9 +1573,9 @@ fn scanner_state_rejection_uses_the_neutral_scan_model() {
     .unwrap();
     assert_png(&export_path, &expected);
     reveal_control(h, "workflow.route");
-    choose(h, "workflow", "input");
+    choose(h, "Film route", "input");
     assert_eq!(h.state().params.scanner.scan_output, "direct_scan");
-    choose(h, "workflow", "input > film > scan");
+    choose(h, "Film route", "input > film > scan");
     search_controls(h, "Scanner");
     choose(h, "scan output", "Negative to positive");
     reveal_control(h, "extras.simulation.film_stock");
@@ -1571,3 +1625,25 @@ fn american_reminiscence_browser_restores_virtual_exposure_and_render() {
         assert!((*a as f64 - *b as f64).abs() < 1e-6);
     }
 }
+
+mod astia100f;
+
+mod agfa100;
+
+mod acros100ii;
+
+mod tmax100;
+
+mod doublex;
+
+mod hp5;
+
+mod vision3_250d;
+
+mod vision3_500t;
+
+mod vision3_50d;
+
+mod verita_200d;
+
+mod vision3_200t;

@@ -215,15 +215,13 @@ impl Pipeline {
         }
         let (mut cur, mut pixel_size_um, ae_ev) = if inject == Tap::RgbIn && cp > ip {
             crate::stages::grain_dye::validate_supported(&self.film, &self.params)?;
-            let image = self.expose_full_input(image, backend, capture.as_deref_mut())?;
+            let (image, ae_ev) = self.expose_full_input(image, backend, capture.as_deref_mut())?;
             let (working, pitch) = self.rescale_working(&image, backend)?;
             let working = match working {
                 std::borrow::Cow::Owned(working) => working,
                 std::borrow::Cow::Borrowed(_) => image,
             };
-            // The exposure multiply already ran, so the stage sees EV 0 —
-            // matching upstream's prepared-input contract.
-            (working, pitch, 0.0)
+            (working, pitch, ae_ev)
         } else {
             let (pitch, ae_ev) = physical_context.unwrap_or_else(|| {
                 (

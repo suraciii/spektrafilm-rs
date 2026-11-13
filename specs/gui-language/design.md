@@ -38,7 +38,9 @@ Renaming the visible Session group to General MUST migrate its callers and locat
 
 Visible-label substitution at the paint boundary is insufficient: text also drives existing search, accessibility, edit signals, and cached messages. A second translated control tree is rejected because it would duplicate editing, validation, and reset behavior. Both locales MUST render the same controls and invoke the same actions through stable identities.
 
-Finishing and negative-conversion operator labels MUST retain distinct semantic identities and units under [GUI product language](spec.md#color-and-output-labels). Localization MUST NOT map their controls or actions to one another.
+Tone & Color and negative-conversion operator labels MUST retain distinct semantic identities and units under [GUI product language](spec.md#color-and-output-labels). Localization MUST NOT map their controls or actions to one another.
+
+The Tone & Color presentation MUST reuse the existing adjustment and action identities. Its heading, search entry, accessibility text, and cached operation messages MUST resolve the selected language through the same catalog ownership.
 
 ## Message resources
 
@@ -66,7 +68,7 @@ The preference belongs in the existing per-user configuration directory, outside
 
 A missing preference selects System. Invalid or unreadable data MUST NOT prevent startup or overwrite the invalid file merely by reading it; the GUI MUST remain usable under System and expose the preference problem in localized guidance or diagnostics. An explicit user selection MAY replace that preference through the writer.
 
-Language selection MUST update presentation independently of preference publication. A write failure MUST report non-persistence without reverting the current run's display. Neither core RuntimeParams nor GUI photographic-state projection, parameter digests, look presets, render requests, or worker cache keys MAY acquire a language field.
+Language selection MUST update presentation independently of preference publication. A write failure MUST report non-persistence without reverting the current run's display. Neither core RuntimeParams nor GUI photographic-state projection, parameter digests, presets, render requests, or worker cache keys MAY acquire a language field.
 
 No CLI parameter or legacy GUI-state extension is introduced by this design.
 

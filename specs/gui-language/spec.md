@@ -18,7 +18,7 @@ The GUI MUST support English and Simplified Chinese. English labels in this spec
 
 The language selector MUST reside in **Settings → General**, or **设置 → 通用** in Simplified Chinese. Its label MUST always be **语言 / Language**. Its options MUST remain recognizable in either language: **跟随系统 / System**, **简体中文**, and **English**.
 
-General replaces the visible Session settings group; it retains that group's existing controls and scopes. GUI parameters, Display, Diagnostics, and independent Export keep their distinct owners. This change does not add an appearance setting or move photographic controls into Settings.
+General replaces the visible Session settings group; it retains that group's existing controls and scopes. State and startup, Display, Diagnostics, and independent Export keep their distinct owners. This change does not add an appearance setting or move photographic controls into Settings.
 
 The initial preference MUST be System. System MUST resolve the operating system's ordered interface-language preferences to a supported language at startup. Explicit Simplified Chinese script tags, including `zh-Hans`, and Chinese region tags for mainland China or Singapore without a conflicting script MUST resolve to Simplified Chinese.
 
@@ -46,6 +46,8 @@ Both languages MUST cover all application-owned workspace, inspector, viewer, pr
 
 Brand, material, and product names; film specification codes such as `35mm`, `120`, and `4×5`; standard color-space and illuminant names; file-format names; mathematical symbols; and unit tokens MUST retain their identity. User-authored preset names, descriptions, and paths MUST NOT be translated. Built-in descriptive text MUST be localized without renaming the underlying preset or profile.
 
+Preset card labels and thumbnail states MUST be concise, localized, and accessible. Explanatory help is disclosed on demand rather than as a default per-card paragraph; material identities remain available in accessible descriptions under [browser interaction](../presets/spec.md#browser-interaction).
+
 Recognized parameter choices MAY have translated display names, but their stored enum values MUST remain exact.
 
 Application errors MUST provide a localized explanation and any known recovery action without hiding the failing path, rejected value, or technical detail. Unmodified third-party and operating-system error text MAY appear as diagnostic detail. The application MUST NOT guess a translated failure category from arbitrary error prose.
@@ -64,10 +66,15 @@ The Simplified Chinese presentation MUST use these core terms consistently. The 
 | Only modified | 仅显示已修改 |
 | Input and capture | 输入与拍摄 |
 | Film / Print / Output | 胶片 / 印相 / 输出 |
-| Finishing / Range | 成片 / 范围 |
+| Film route | 胶片路线 |
+| Mode / Film / LUT / Off | 模式 / 胶片 / LUT / 关闭 |
+| Effects | 效果 |
+| Tone & Color / Range | 影调与色彩 / 范围 |
 | Brightness / Contrast | 明暗 / 反差 |
+| Conversion contrast / Conversion exposure compensation | 转换反差 / 转换曝光补偿 |
 | Warmth / Saturation | 冷暖 / 彩度 |
 | Film Format / Custom | 胶片规格 / 自定义 |
+| Capture setup | 拍摄设置 |
 | Frame Long Edge | 画面长边 |
 | reset <module> · help: Restore <module> to the factory state | 重置<模块> · 提示：将<模块>恢复为出厂状态 |
 | history: Reset <module> to factory | 历史：将<模块>恢复出厂值 |
@@ -123,7 +130,7 @@ The GUI MUST use these terms with the meanings defined by [`CONTEXT.md`](../../C
 - `scan sensor` means the colorimetric spectral response used to acquire transmitted or reflected light from a scanned medium.
 - `scan capture` means RGB readings acquired by the scan sensor.
 - `scanned density` means density derived from one channel of a scan capture relative to that channel's clear reference.
-- `clear film base` means the unexposed base of the scanned medium, which reads as the output white reference of a scan.
+- `clear film base` means the unexposed base of the scanned medium, which is the default output white reference of a scan. The explicit readout-illuminant white-reference mode opts out of that calibration.
 - `negative conversion` means interpretation of a developed negative as a positive image.
 - `exposure reconstruction` means negative conversion that estimates relative exposure through the selected film response.
 - `digital output` means the color space, transfer encoding, geometry, and file representation used to deliver an image.
@@ -147,11 +154,13 @@ The GUI MUST display:
 |---|---|
 | `scanner.scan_output = direct_scan` | `Preserve medium polarity` |
 | `scanner.scan_output = negative_to_positive` | `Negative to positive` |
+| `scanner.white_reference = clear_film_base` | `Clear film base` |
+| `scanner.white_reference = readout_illuminant` | `Readout illuminant` |
 | `scanner.lens_blur` | `Lens blur (readout optics)` |
 | `scanner.unsharp_mask` | `Unsharp mask (digital sharpening)` |
 | `film_render.convert.scan_illuminant` | `Scan illuminant` in Input and capture → Convert |
 
-The GUI MUST NOT offer a scanner light control. The readout illuminant is a product constant selected by the material category.
+The GUI MUST NOT offer a scanner light control. The readout illuminant is a product constant selected by the material category. The white-reference selector chooses the normalization and chromatic-adaptation reference; it MUST NOT be presented as a readout-light selector.
 
 The Convert scan-illuminant help MUST identify the light used to acquire an imported RGB negative. It MUST distinguish that declaration from the fixed product readout illuminant and the Camera capture illuminant. Conversion-style choices MUST follow the [lab scan style-name contract](../film-chain/lab-scan/spec.md#tone-and-style-names).
 
@@ -176,15 +185,27 @@ The GUI MUST call the terminal modeled appearance `CMYK ink style`. Its help MUS
 
 The GUI MUST keep `Simulation blend` as the name of the full-result/prepared-source mix. It MUST NOT rename it to opacity, intensity, saturation, or strength.
 
-The GUI MUST keep `Print viewing glare`, `Lens blur (readout optics)`, `Unsharp mask (digital sharpening)`, material grain, and Procedural post-scan grain distinct. Similar visual effects MUST NOT share a label that implies the same physical stage.
+The GUI MUST keep `Print viewing glare`, `Lens blur (readout optics)`, `Unsharp mask (digital sharpening)`, material grain, and Procedural or Exposure Grain post-scan grain distinct. Similar visual effects MUST NOT share a label that implies the same physical stage.
 
-Finishing labels MUST follow [common finishing controls](../finishing/spec.md#controls). Brightness MUST NOT imply exposure-value units; the specialized negative-conversion operator MUST retain its own exposure-domain meaning and units.
+Tone & Color labels MUST follow [tone and color controls](../finishing/spec.md#controls). Brightness MUST NOT imply exposure-value units; the specialized negative-conversion operator MUST retain its own exposure-domain meaning and units.
 
-The unified Grain selector MUST retain the names Spektra, Dye, and Procedural. Its choice descriptions MUST identify Spektra and Dye as material grain and Procedural as post-scan grain appearance. Procedural help MUST identify Film Resolution as part of that appearance algorithm, not scanner lens resolution.
+Module headings, search destinations, accessibility labels, reset and comparison actions, help, inactive reasons, and operation status MUST use the same product name. They MUST NOT present this module as Finishing or Common finishing.
 
-Camera diffusion and Enlarger diffusion MUST retain their distinct optical owners. Halation MUST remain a film-domain effect. Preflash exposure and its independent Magenta and Yellow filter shifts MUST remain printing controls.
+Canonical paths, serialized identifiers, and model provenance MUST remain unchanged when displayed as technical information under [wire and compatibility](../finishing/design.md#wire-and-compatibility).
+
+The film Grain selector MUST retain the names Spektra, Dye, and Procedural. Its choice descriptions MUST identify Spektra and Dye as material grain and Procedural as post-scan grain appearance. Procedural help MUST identify Film Resolution as part of that appearance algorithm, not scanner lens resolution.
+
+The Effects stage Grain MUST be a separate transform control. Its labels MUST NOT imply material grain or a film grain engine.
+
+Camera diffusion, Enlarger diffusion, and film Halation MUST retain their physical owners. Effects-stage Diffusion and Halation MUST be identified as transform appearance effects, not film density or a second physical stage. Preflash exposure and its independent Magenta and Yellow filter shifts MUST remain printing controls.
 
 Print viewing glare help MUST identify readout stray light, not preflash or a change in material density. Visible placement follows [stage and surface ownership](../gui-workflow/spec.md#stage-and-surface-ownership), not serialized section names.
+
+The switch MUST say `Simulate viewing glare` or its localized equivalent, not the retired `Scan for print` label. Help MUST describe readout stray light lifting shadows and reducing contrast, and MUST state that it does not change print exposure, chemistry, or developed density.
+
+Module status MUST distinguish On, Off, and No effect at zero amount. Off and zero amount MUST NOT be labeled Inactive; Inactive is reserved for a route without print readout. A global stochastic disablement is a status, not Inactive and not a second switch.
+
+Percent help MUST state that 0 disables the effect and the default is 0.03 (3%).
 
 ## Viewer language
 
@@ -209,7 +230,7 @@ The viewer MUST distinguish:
 - exact zoom percentages: source-pixel-to-device-pixel scale;
 - `select`: the Shift or secondary-button drag rectangle that zooms to its region on release.
 
-Viewer hints MUST name the gestures in this vocabulary: click zooms at the pointer, primary-button drag pans, Shift or secondary-button drag selects, and double click fits. A hint MUST NOT claim an effect on saved or exported pixels.
+Viewer hints MUST name the gestures in this vocabulary: the wheel or pinch zooms at the pointer, primary-button drag pans, Shift or secondary-button drag selects, and double click resets the fitted and centered view. A hint MUST NOT describe an unmodified primary-button click as a zoom gesture. A hint MUST NOT claim an effect on saved or exported pixels.
 
 ## Image-analysis language
 
@@ -225,6 +246,7 @@ The panel MUST use these labels under [image analysis](../gui-product-design/ima
 | Tone | 明暗 |
 | Full image / Selection | 全图 / 选区 |
 | Select area | 选择区域 |
+| Pixel cursor | 像素光标 |
 | Analyzing | 正在分析 |
 | Outside selection | 选区外 |
 | Pixel sample | 像素取样 |
@@ -252,7 +274,7 @@ Actions MUST use one stable verb and one explicit target:
 | `Scan` or `SCAN` | Render the original working resolution using current runtime controls. |
 | `Save…` or `SAVE` | Write retained output without rerendering. |
 | `Export file…` | Start independent export rendering and writing. |
-| `Save preset…` | Capture the current look in a preset. |
+| `Save preset…` | Open the name dialog to save the current Film, LUT, or Effects preset as a new user copy or explicitly replace an eligible user preset under [saving and replacing](../presets/spec.md#saving-and-replacing). |
 | `Save current to file` | Write GUI state to a selected state file. |
 | `Load from file` | Load GUI state from a selected state file. |
 | `Save current as default` | Replace the startup GUI state. |
@@ -267,9 +289,11 @@ Undo and Redo wording MUST follow [edit history](../gui-workflow/spec.md#edit-hi
 
 ## Header and status language
 
-The header MUST show the selected film, selected print material, and exact workflow route. Status ownership follows [Labels and surfaces](../gui-workflow/spec.md#labels-and-surfaces). The exact route string remains available because it identifies the physical sequence and is required for diagnostics.
+The header MUST identify the active render mode. In Film mode it MUST show the selected film, selected print material, and exact film route. In LUT and Off modes it MUST show the active LUT or Effects context defined by [Labels and surfaces](../gui-workflow/spec.md#labels-and-surfaces).
 
-The header MAY add a direct physical description beside the exact route. The description MUST translate the route without inventing a look category. For example, `Film → print → scan` MAY describe `input > film > print > scan`; `Film print look` MUST NOT replace it.
+The exact route string remains available in Film mode because it identifies the physical sequence and is required for diagnostics.
+
+The header MAY add a direct physical description beside the exact route. The description MUST translate the route without inventing a rendering category. For example, `Film → print → scan` MAY describe `input > film > print > scan`; `Film print rendering` MUST NOT replace it.
 
 Normal success status MUST describe the accepted operation and its dimensions or target. Backend and precision detail belongs in Diagnostics unless it explains an actionable limitation. A diagnostic label such as `f64 reference` MUST NOT be the only normal success message.
 
@@ -285,7 +309,9 @@ Reset-baseline comparison follows [presentation design](../gui-presentation/desi
 
 A module reset MUST name its module and the reset baseline in its action label, accessible help, and history description under the core-term table. A grouped settings reset MUST name its settings section instead of a photographic module.
 
-The inspector stage names MUST be `Input and capture`, `Film`, `Print`, `Scan`, and `Output`. A stage jump MUST identify the heading it reaches, not a page it replaces. `Settings` and `Export` MUST name dialogs rather than additional stages.
+The inspector stage names MUST be `Input and capture`, `Film`, `Print`, `Scan`, `LUT`, `Effects`, and `Output`. The persistent mode selector is not a stage.
+
+A stage jump MUST identify the heading it reaches, not a page it replaces. `Settings` and `Export` MUST name dialogs rather than additional stages.
 
 The interface MUST NOT use MAIN, FILM, PRINT, ADVANCED, or CONFIG as page labels.
 
@@ -316,7 +342,7 @@ Help text MUST NOT:
 - promise recovery of information absent from the source;
 - call a modeled convention measured or physical;
 - call a viewer decoration a saved material;
-- call a scanner sensor a look preset;
+- call a scanner sensor a selectable preset;
 - use a former implementation name as a product concept;
 - use color as the only state cue.
 

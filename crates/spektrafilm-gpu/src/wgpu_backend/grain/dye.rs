@@ -1,6 +1,6 @@
 //! The Dye grain field on the device.
 //!
-//! The engine's law is a continuous, band-limited field sampled on the film lattice;
+//! The engine's law is a coordinate-addressed value-noise field sampled on the film lattice;
 //! `dye_law` implements it and `dye_law_paged` transports it through pages. This module
 //! keeps the entry points the rest of the backend calls.
 
@@ -23,29 +23,37 @@ impl WgpuBackend {
         height: u32,
         params: &DyeGpuParams,
     ) -> Result<(), String> {
+        if !(params.source_pitch_um.is_finite() && params.source_pitch_um > 0.0) {
+            return Err("film grain Dye: the source pitch must be positive".into());
+        }
+        if !(params.length_scale.is_finite() && params.length_scale > 0.0) {
+            return Err("film grain Dye: the correlation-length scale must be positive".into());
+        }
         crate::wgpu_backend::grain::dye_law_paged::law_workspace_bytes(
             self,
             width,
             height,
-            params.source_pitch_um,
-            params.length_scale,
+            params.grid.width,
+            params.grid.height,
         )
         .map(|_| ())
     }
 
-    /// Band window plus published pages, the only memory the law adds.
+    /// Band window, published pages, and retained per-piece readout buffers.
     pub(in crate::wgpu_backend) fn dye_workspace_bytes(
         &self,
-        width: u32,
-        height: u32,
-        params: &DyeGpuParams,
+        source_width: u32,
+        source_height: u32,
+        grid_width: u32,
+        grid_height: u32,
+        _params: &DyeGpuParams,
     ) -> Result<u64, String> {
         crate::wgpu_backend::grain::dye_law_paged::law_workspace_bytes(
             self,
-            width,
-            height,
-            params.source_pitch_um,
-            params.length_scale,
+            source_width,
+            source_height,
+            grid_width,
+            grid_height,
         )
     }
 

@@ -3,7 +3,7 @@ use crate::runtime::DigestMode;
 use crate::test_support::data_dir;
 fn request(sources: &[String]) -> ProcessParamsRequest<'_> {
     ProcessParamsRequest {
-        film: Some("kodak_portra_400"),
+        film: Some(FilmSelection::Name("kodak_portra_400")),
         paper: None,
         presets: &[],
         params_file: None,
@@ -20,6 +20,34 @@ fn request(sources: &[String]) -> ProcessParamsRequest<'_> {
     }
 }
 #[test]
+fn standalone_profile_path_resolves_through_the_shared_pipeline() {
+    let path = data_dir().join("profiles/kodak_portra_400.json");
+    let result = resolve(
+        ProcessParamsRequest {
+            film: Some(FilmSelection::Path(&path)),
+            paper: None,
+            presets: &[],
+            params_file: None,
+            sources: &[],
+            feature_profiles: &[],
+            route: Some("input > film"),
+            scan_film: false,
+            scan_output: None,
+            input_is_raw: false,
+            input_color_space: None,
+            input_cctf_decoding: None,
+            require_input_declaration: false,
+            digest_mode: DigestMode::ApplyStockSpecifics,
+        },
+        &data_dir(),
+    )
+    .unwrap();
+    assert_eq!(result.film.info.stock.as_deref(), Some("kodak_portra_400"));
+    assert_eq!(result.params.workflow.route, "input > film");
+    assert!(result.print_name.is_empty());
+}
+
+#[test]
 fn legacy_resolution_matches_original_digest() {
     let sources = [];
     let result = resolve(request(&sources), &data_dir()).unwrap();
@@ -35,6 +63,26 @@ fn legacy_resolution_matches_original_digest() {
         serde_json::to_value(result.params).unwrap(),
         serde_json::to_value(original).unwrap()
     );
+}
+
+#[test]
+fn profile_path_retains_the_internal_scan_override() {
+    let path = data_dir().join("profiles/ilford_hp5_plus.json");
+    let mut by_path = request(&[]);
+    by_path.film = Some(FilmSelection::Path(&path));
+    by_path.route = Some("input > film > print > scan");
+    by_path.scan_film = true;
+    let by_path = resolve(by_path, &data_dir()).unwrap();
+
+    let mut by_name = request(&[]);
+    by_name.film = Some(FilmSelection::Name("ilford_hp5_plus"));
+    by_name.route = Some("input > film > print > scan");
+    by_name.scan_film = true;
+    let by_name = resolve(by_name, &data_dir()).unwrap();
+
+    assert!(by_path.params.io.scan_film);
+    assert_eq!(by_path.print_name, by_name.print_name);
+    assert_eq!(by_path.print_name, "ilford_hp5_plus");
 }
 
 #[test]
@@ -120,7 +168,7 @@ fn monochrome_reports_match_runtime_for_legacy_and_added_sources() {
     let print_profile = serde_json::to_value(&print).unwrap();
     for sources in [vec![], vec!["camera.auto_exposure=false".into()]] {
         let mut req = request(&sources);
-        req.film = Some("kodak_doublex");
+        req.film = Some(FilmSelection::Name("kodak_doublex"));
         req.paper = Some("kodak_portra_endura");
         req.params_file = Some(&path);
         req.digest_mode = DigestMode::PreserveUserEdits;
@@ -450,7 +498,7 @@ fn unlisted_stock_uses_class_defaults_but_preserves_restored_authored_values() {
     ));
     let sources = vec!["film_render.grain.engine=dye".into()];
     let mut bare = request(&sources);
-    bare.film = Some("fujifilm_velvia_50");
+    bare.film = Some(FilmSelection::Name("fujifilm_velvia_50"));
     bare.scan_film = true;
     let bare = resolve(bare, &data_dir()).unwrap();
     let table: toml::Value =
@@ -466,7 +514,7 @@ fn unlisted_stock_uses_class_defaults_but_preserves_restored_authored_values() {
         class_rms
     );
     let mut unsourced = request(&[]);
-    unsourced.film = Some("fujifilm_velvia_50");
+    unsourced.film = Some(FilmSelection::Name("fujifilm_velvia_50"));
     unsourced.scan_film = true;
     let unsourced = resolve(unsourced, &data_dir()).unwrap();
     assert_eq!(
@@ -484,7 +532,7 @@ fn unlisted_stock_uses_class_defaults_but_preserves_restored_authored_values() {
         std::fs::write(&path, document).unwrap();
         let mut req = request(&sources);
         req.params_file = Some(&path);
-        req.film = Some("fujifilm_velvia_50");
+        req.film = Some(FilmSelection::Name("fujifilm_velvia_50"));
         req.scan_film = true;
         req.digest_mode = DigestMode::PreserveUserEdits;
         let resolved = resolve(req, &data_dir()).unwrap();
@@ -503,7 +551,7 @@ fn legacy_missing_stock_grain_values_survive_without_new_explicit_ownership() {
     for sources in [vec![], vec!["camera.auto_exposure=false".to_owned()]] {
         let mut req = request(&sources);
         req.params_file = Some(&path);
-        req.film = Some("fujifilm_velvia_50");
+        req.film = Some(FilmSelection::Name("fujifilm_velvia_50"));
         req.scan_film = true;
         let resolved = resolve(req, &data_dir()).unwrap();
         let grain = &resolved.params.film_render.grain;
@@ -699,7 +747,7 @@ fn added_sources_accept_vision3_printing_film_target() {
         "kodak_vision3_500t",
     ] {
         let mut req = request(&sources);
-        req.film = Some(name);
+        req.film = Some(FilmSelection::Name(name));
         let resolved = resolve(req, &data_dir()).unwrap();
         assert_eq!(resolved.print_name, "kodak_2383");
         assert!(resolved.print.is_film());
@@ -707,7 +755,7 @@ fn added_sources_accept_vision3_printing_film_target() {
         assert!(!resolved.params.camera.auto_exposure);
 
         let mut req = request(&sources);
-        req.film = Some(name);
+        req.film = Some(FilmSelection::Name(name));
         req.scan_film = true;
         let scanned = resolve(req, &data_dir()).unwrap();
         assert_eq!(scanned.print_name, name);

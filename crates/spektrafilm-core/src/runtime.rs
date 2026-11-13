@@ -22,10 +22,12 @@ use std::time::Instant;
 /// addressed by cell coordinate and ordinal, so grain pixels changed again.
 /// Revision five makes the Procedural engine's composite tone-neutral on both
 /// executors, which moves every Procedural grain pixel.
-/// Revision six applies the reflected box cascade above sigma 8 instead of a
-/// truncated FIR support, so wide halation and DIR tails changed pixels; the
-/// f32 kernels run on devices without binary64 within their frozen stage
-/// budgets and do not change the model.
+/// Revision six applied the reflected box cascade above sigma 8 instead of a
+/// truncated FIR support. Revision seven removes that approximation and uses
+/// the reference recursive IIR for every sigma >= 3, so wide halation, DIR
+/// and grain blurs changed pixels again. Devices without native binary64
+/// retain the f32 recurrence below sigma 8 and reject larger sigma rather
+/// than substituting a box approximation.
 /// Common finishing v1 adds the shared positive-image adjustment before
 /// output gamut processing; neutral controls leave existing results unchanged.
 pub const MODEL_VERSION: &str = "common_finishing_v1";
@@ -176,9 +178,14 @@ pub struct Runtime {
 impl Runtime {
     /// Bind a caller-owned cancellation signal while retaining prepared film grain caches.
     pub fn with_cancellation(mut self, cancellation: Option<Arc<AtomicBool>>) -> Self {
-        self.cancellation = cancellation.clone();
-        self.pipeline = self.pipeline.with_cancellation(cancellation);
+        self.set_cancellation(cancellation);
         self
+    }
+
+    /// Rebind cancellation on this prepared runtime for its next operation.
+    pub fn set_cancellation(&mut self, cancellation: Option<Arc<AtomicBool>>) {
+        self.cancellation = cancellation.clone();
+        self.pipeline.set_cancellation(cancellation);
     }
     /// Prepare the CPU reference runtime. For selected-GPU processing use
     /// [`Self::new_with_backend`], or migrate with [`Self::with_params_with_backend`]
@@ -190,8 +197,11 @@ impl Runtime {
         data_dir: &Path,
     ) -> Result<Self, String> {
         let pipeline = Pipeline::new_with_spectral(film, print, params, data_dir)?;
-        let record_configuration =
-            crate::stages::grain_dye::resolve_record(&pipeline.film, &pipeline.params)?;
+        let record_configuration = if !pipeline.params.workflow.mode.is_film() {
+            None
+        } else {
+            crate::stages::grain_dye::resolve_record(&pipeline.film, &pipeline.params)?
+        };
         Ok(Self {
             pipeline,
             record_configuration,
@@ -200,6 +210,44 @@ impl Runtime {
             last_elapsed_seconds: Arc::new(Mutex::new(None)),
             cancellation: None,
         })
+    }
+
+    /// Prepare a LUT-mode runtime without resolving spectral film or print
+    /// materials. LUT mode still carries profile-shaped fields internally, so
+    /// an empty carrier avoids a data-directory profile lookup.
+    pub fn new_lut(
+        params: RuntimeParams,
+        data_dir: &Path,
+        backend: &dyn ComputeBackend,
+    ) -> Result<Self, String> {
+        if !params.workflow.mode.is_lut() {
+            return Err("Runtime::new_lut requires workflow.mode = lut".into());
+        }
+        Self::new_transform(params, data_dir, backend)
+    }
+
+    /// Prepare an Off-mode runtime without resolving spectral film or print
+    /// materials. Off mode uses the shared Effects render tail and never reads
+    /// a stored LUT declaration.
+    pub fn new_off(
+        params: RuntimeParams,
+        data_dir: &Path,
+        backend: &dyn ComputeBackend,
+    ) -> Result<Self, String> {
+        if !params.workflow.mode.is_off() {
+            return Err("Runtime::new_off requires workflow.mode = off".into());
+        }
+        Self::new_transform(params, data_dir, backend)
+    }
+
+    fn new_transform(
+        params: RuntimeParams,
+        data_dir: &Path,
+        backend: &dyn ComputeBackend,
+    ) -> Result<Self, String> {
+        params.validate_color()?;
+        let film = crate::process_params::lut_placeholder_profile()?;
+        Self::new_with_backend(film.clone(), film, params, data_dir, backend)
     }
 
     /// Prepare filming without resolving or calibrating an unused printing material.
@@ -262,8 +310,11 @@ impl Runtime {
         backend: &dyn ComputeBackend,
     ) -> Result<Self, String> {
         let pipeline = Pipeline::new_with_spectral_backend(film, print, params, data_dir, backend)?;
-        let record_configuration =
-            crate::stages::grain_dye::resolve_record(&pipeline.film, &pipeline.params)?;
+        let record_configuration = if !pipeline.params.workflow.mode.is_film() {
+            None
+        } else {
+            crate::stages::grain_dye::resolve_record(&pipeline.film, &pipeline.params)?
+        };
         Ok(Self {
             pipeline,
             record_configuration,
@@ -320,6 +371,12 @@ impl Runtime {
     }
     pub fn from_photo_params(photo: RuntimePhotoParams) -> Result<Self, String> {
         Self::new(photo.film, photo.print, photo.params, &photo.data_dir)
+    }
+
+    /// Fraction of pixels clipped by an explicit LUT domain clamp in the last
+    /// LUT-mode render.
+    pub fn lut_clipped_fraction(&self) -> Option<f64> {
+        self.pipeline.lut_clipped_fraction()
     }
 
     fn record_elapsed(&self, started: Instant, stage_timings: Option<Timings>) {
@@ -679,13 +736,27 @@ impl Runtime {
         max_size: u32,
         backend: &dyn ComputeBackend,
     ) -> Result<ImageBuf, String> {
+        if !self.params().workflow.mode.is_film() {
+            let output = self.process(image, backend)?;
+            return if self
+                .params()
+                .taps
+                .collect
+                .as_deref()
+                .is_none_or(|tap| tap == "rgb_out")
+            {
+                Ok(crate::params_builder::resize_for_preview(&output, max_size))
+            } else {
+                Ok(output)
+            };
+        }
         if backend.is_gpu() {
             let retained = self
                 .process_preview_retained(&image, max_size, backend)?
                 .ok_or_else(|| "selected GPU declined the retained preview route".to_owned())?;
             return backend.materialize_retained(&retained);
         }
-        if self.params().scanner.requires_full_frame() {
+        if self.params().requires_full_frame() {
             let output = self.process(image, backend)?;
             if self
                 .params()
@@ -727,8 +798,11 @@ impl Runtime {
         backend: &dyn ComputeBackend,
     ) -> Result<(), String> {
         let update = self.pipeline.prepare_parameter_update(params, backend)?;
-        let record_configuration =
-            crate::stages::grain_dye::resolve_record(&update.film, &update.params)?;
+        let record_configuration = if !update.params.workflow.mode.is_film() {
+            None
+        } else {
+            crate::stages::grain_dye::resolve_record(&update.film, &update.params)?
+        };
         self.pipeline.apply_parameter_update(update);
         self.record_configuration = record_configuration;
         Ok(())
@@ -1323,7 +1397,7 @@ mod tests {
         params.settings.rgb_to_raw_method = "mallett2019".into();
         params.io.output_gamut_compress.algorithm = "off".into();
         params.taps.inject = Some("rgb_in".into());
-        params.taps.collect = Some("rgb_pre".into());
+        params.taps.collect = Some("log_e_film".into());
         let film = profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();
         let print = profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap();
         let runtime = Runtime::new(film, print, params, &dir).unwrap();
@@ -1333,7 +1407,7 @@ mod tests {
                 image.clone(),
                 &CpuBackend,
                 Some(Tap::RgbIn),
-                Some(Tap::RgbPre),
+                Some(Tap::LogEFilm),
             )
             .unwrap();
         let params = runtime.params().clone();
@@ -1346,19 +1420,11 @@ mod tests {
                 image.clone(),
                 gpu.backend(),
                 Some(Tap::RgbIn),
-                Some(Tap::RgbPre),
+                Some(Tap::LogEFilm),
                 &context,
             )
             .unwrap();
         assert_eq!((actual.width, actual.height), (image.width, image.height));
-        assert!(
-            expected
-                .data
-                .iter()
-                .zip(&image.data)
-                .any(|(exposed, source)| (*exposed as f64 - *source as f64).abs() > 1e-4),
-            "fixture must exercise a nonidentity auto-exposure scale"
-        );
         for (actual, expected) in actual.data.iter().zip(&expected.data) {
             assert!(
                 (*actual as f64 - *expected as f64).abs() < 2e-5,

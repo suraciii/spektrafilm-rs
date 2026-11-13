@@ -332,6 +332,14 @@ fn canonical_colorspace_stage_passes_privacy_validation_without_opening_stage_na
 }
 
 #[test]
+fn lut_look_stage_passes_privacy_validation() {
+    let mut report = collected_report();
+    report.stages[0].name = "lut_look".into();
+    report.coverage.stage_totals[0].name = "lut_look".into();
+    report.validate().unwrap();
+}
+
+#[test]
 fn high_level_omissions_distinguish_complete_unknown_and_invalid_coverage() {
     let mut report = collected_report();
     assert_eq!(report.coverage.omitted_high_level_observations, Some(0));
@@ -1098,46 +1106,6 @@ fn saving_configuration_matches_tiff_default_and_exr_half_storage() {
 }
 
 #[test]
-fn grain_configuration_describes_effective_sampler_branches() {
-    use spektrafilm_core::{params, profile, telemetry::RenderConfiguration};
-    let profile: profile::Profile = serde_json::from_value(serde_json::json!({
-        "metadata": {}, "info": {}, "data": {}
-    }))
-    .unwrap();
-    let mut params = params::RuntimeParams::default();
-    params.film_render.grain.engine = params::GrainEngine::Spektra;
-    params.film_render.grain.rms_granularity = [6.0, 8.0, 10.0];
-    params.settings.use_fast_stats = true;
-    assert!(
-        RenderConfiguration::from_runtime(&params, &profile, &profile)
-            .grain
-            .spektra_fast_statistics_sampler
-    );
-    params.settings.use_fast_stats = false;
-    assert!(
-        !RenderConfiguration::from_runtime(&params, &profile, &profile)
-            .grain
-            .spektra_fast_statistics_sampler
-    );
-    params.settings.use_fast_stats = true;
-    params.film_render.grain.engine = params::GrainEngine::Procedural;
-    params.settings.rgb_to_raw_method = "mallett2019".to_owned();
-    let grain = RenderConfiguration::from_runtime(&params, &profile, &profile).grain;
-    // The upsampler selects the front pass, not the grain engine: an active
-    // Procedural grain stays active under mallett2019 exactly as under
-    // hanatos2025.
-    assert!(grain.active);
-    assert!(!grain.spektra_fast_statistics_sampler);
-    params.film_render.grain.engine = params::GrainEngine::Spektra;
-    params.film_render.grain.active = false;
-    assert!(
-        !RenderConfiguration::from_runtime(&params, &profile, &profile)
-            .grain
-            .spektra_fast_statistics_sampler
-    );
-}
-
-#[test]
 fn dye_grain_configuration_reports_engine_and_field_mode() {
     use spektrafilm_core::{params, profile, telemetry};
     let profile: profile::Profile = serde_json::from_value(serde_json::json!({
@@ -1147,12 +1115,10 @@ fn dye_grain_configuration_reports_engine_and_field_mode() {
     let mut params = params::RuntimeParams::default();
     params.film_render.grain.engine = params::GrainEngine::Dye;
     params.film_render.grain.dye_support_um = 8.0;
-    params.settings.use_fast_stats = true;
     let grain = telemetry::RenderConfiguration::from_runtime(&params, &profile, &profile).grain;
     assert!(grain.active);
     assert_eq!(grain.engine, telemetry::GrainEngine::Dye);
     assert_eq!(grain.mode, telemetry::GrainMode::DyeField);
-    assert!(!grain.spektra_fast_statistics_sampler);
 }
 
 #[cfg(unix)]

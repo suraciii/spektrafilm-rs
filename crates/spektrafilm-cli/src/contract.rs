@@ -10,7 +10,7 @@ use std::path::Path;
 
 pub const IMPLEMENTATION: &str = "spektrafilm-rs";
 pub const ADAPTER_VERSION: &str = "spektrafilm-rs-adapter-1";
-pub const PARAMETER_SCHEMA_VERSION: &str = "spektrafilm-rs-params-7";
+pub const PARAMETER_SCHEMA_VERSION: &str = "spektrafilm-rs-params-8";
 const LEGACY_PARAMETER_SCHEMA_VERSIONS: &[&str] = &[
     "spektrafilm-rs-params-1",
     "spektrafilm-rs-params-2",
@@ -18,6 +18,7 @@ const LEGACY_PARAMETER_SCHEMA_VERSIONS: &[&str] = &[
     "spektrafilm-rs-params-4",
     "spektrafilm-rs-params-5",
     "spektrafilm-rs-params-6",
+    "spektrafilm-rs-params-7",
 ];
 pub const FORK_REFERENCE: &str = "suraciii/spektrafilm-rs";
 pub const FINISHED_JPEG_QUALITY: u8 = 85;
@@ -102,8 +103,16 @@ pub fn read_recipe(path: &Path) -> Result<RenderRecipe> {
     validate_output(&recipe.output)?;
     let mut parameters = canonical_parameters(recipe.parameters.clone())?;
     if LEGACY_PARAMETER_SCHEMA_VERSIONS.contains(&recipe.schema_version.as_str()) {
-        if parameters.get("finishing").is_some() {
-            bail!("legacy recipe parameters.finishing is unknown; use {PARAMETER_SCHEMA_VERSION}");
+        let params7 = recipe.schema_version == "spektrafilm-rs-params-7";
+        if params7 {
+            spektrafilm_core::params::FinishingParams::require_complete(
+                parameters.get("finishing").unwrap_or(&Value::Null),
+            )
+            .map_err(anyhow::Error::msg)?;
+        } else {
+            if parameters.get("finishing").is_some() {
+                bail!("legacy recipe parameters.finishing is unknown; use spektrafilm-rs-params-7");
+            }
         }
         if recipe.schema_version != "spektrafilm-rs-params-6" {
             // Params 5 already rejected the older retired-field spellings.
@@ -125,17 +134,28 @@ pub fn read_recipe(path: &Path) -> Result<RenderRecipe> {
             spektrafilm_core::params::sources::normalize_legacy_scan_readout(&mut parameters, true)
                 .map_err(anyhow::Error::msg)?;
         }
-        parameters["finishing"] =
-            serde_json::to_value(spektrafilm_core::params::FinishingParams::default())?;
+        if !params7 {
+            parameters["finishing"] =
+                serde_json::to_value(spektrafilm_core::params::FinishingParams::default())?;
+        }
+        let mut params = normalize_parameters(parameters.clone())?;
+        params.migrate_legacy_lut_look();
+        params.validate().map_err(anyhow::Error::msg)?;
+        recipe.parameters = serde_json::to_value(&params)?;
     } else {
+        if parameters.get("lut_look").is_some() {
+            bail!("parameters.lut_look is retired; use lut, effects, and grade");
+        }
         spektrafilm_core::params::FinishingParams::require_complete(
             parameters.get("finishing").unwrap_or(&Value::Null),
         )
         .map_err(anyhow::Error::msg)?;
+        let params = normalize_parameters(parameters.clone())?;
+        recipe.parameters = serde_json::to_value(&params)?;
     }
-    let params = normalize_parameters(parameters.clone())?;
-    recipe.parameters = serde_json::to_value(&params)?;
     recipe.schema_version = PARAMETER_SCHEMA_VERSION.into();
+    let params: RuntimeParams = serde_json::from_value(recipe.parameters.clone())
+        .context("normalized recipe parameters do not match RuntimeParams")?;
     if let Some(provenance) = &recipe.scanner_provenance {
         let expected = serde_json::to_value(ScannerProvenance::from_params(&params))?;
         if provenance != &expected {
@@ -437,7 +457,9 @@ mod tests {
         for version in versions {
             for retired in [None, Some(Value::Null), Some(json!([0.95, 1.0, 1.6]))] {
                 let mut parameters = serde_json::to_value(RuntimeParams::default()).unwrap();
-                if LEGACY_PARAMETER_SCHEMA_VERSIONS.contains(&version) {
+                if LEGACY_PARAMETER_SCHEMA_VERSIONS.contains(&version)
+                    && version != "spektrafilm-rs-params-7"
+                {
                     parameters.as_object_mut().unwrap().remove("finishing");
                 }
                 if let Some(value) = &retired {

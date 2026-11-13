@@ -81,6 +81,37 @@ impl Pipeline {
         inject: Option<Tap>,
         collect: Option<Tap>,
     ) -> Result<Option<DeviceImage>, String> {
+        if !self.params.workflow.mode.is_film() {
+            if !backend.is_gpu() {
+                return Ok(None);
+            }
+            if inject.is_some() || collect.is_some() {
+                return Err(
+                    "LUT and Off modes expose only the rgb_in and rgb_out boundaries".into(),
+                );
+            }
+            let mut host = image.clone();
+            if request.rotation_quarter_turns != 0 {
+                host = host.rotated_quarter_turns(request.rotation_quarter_turns as i32);
+            }
+            let mut out = self.process_full(host, backend, None, None)?;
+            if let Some(max_size) = request.preview_max_size {
+                out = crate::params_builder::resize_for_preview(&out, max_size);
+            }
+            let meta = spektrafilm_backend::RetainedImageMeta {
+                width: out.width,
+                height: out.height,
+                domain: if self.params.io.output_cctf_encoding {
+                    spektrafilm_backend::SampleDomain::Encoded
+                } else {
+                    spektrafilm_backend::SampleDomain::Linear
+                },
+                precision: spektrafilm_backend::Precision::host(),
+                space: spektrafilm_math::colorspace::resolve(&self.params.io.output_color_space)?,
+                pixel_pitch_um: None,
+            };
+            return backend.retain_image(&out, &meta).map(Some);
+        }
         if !backend.is_gpu() {
             return Ok(None);
         }
@@ -137,6 +168,34 @@ impl Pipeline {
         inject: Option<Tap>,
         collect: Option<Tap>,
     ) -> Result<DeviceImage, String> {
+        if !self.params.workflow.mode.is_film() {
+            if inject.is_some() || collect.is_some() {
+                return Err(
+                    "LUT and Off modes expose only the rgb_in and rgb_out boundaries".into(),
+                );
+            }
+            let mut host = image.to_host(backend)?;
+            if request.rotation_quarter_turns != 0 {
+                host = host.rotated_quarter_turns(request.rotation_quarter_turns as i32);
+            }
+            let mut out = self.process_full(host, backend, None, None)?;
+            if let Some(max_size) = request.preview_max_size {
+                out = crate::params_builder::resize_for_preview(&out, max_size);
+            }
+            let meta = spektrafilm_backend::RetainedImageMeta {
+                width: out.width,
+                height: out.height,
+                domain: if self.params.io.output_cctf_encoding {
+                    spektrafilm_backend::SampleDomain::Encoded
+                } else {
+                    spektrafilm_backend::SampleDomain::Linear
+                },
+                precision: spektrafilm_backend::Precision::host(),
+                space: spektrafilm_math::colorspace::resolve(&self.params.io.output_color_space)?,
+                pixel_pitch_um: image.pixel_pitch_um(),
+            };
+            return backend.retain_image(&out, &meta);
+        }
         if !backend.is_gpu() || !image.is_retained() {
             return self.fail("device input requires its selected GPU backend");
         }
@@ -232,7 +291,7 @@ impl Pipeline {
         inject: Tap,
         collect: Tap,
     ) -> Result<Option<DeviceImage>, String> {
-        let defer_preview = self.params.scanner.requires_full_frame();
+        let defer_preview = self.params.requires_full_frame();
         let working_preview = if defer_preview {
             None
         } else {
@@ -308,29 +367,16 @@ impl Pipeline {
         // geometried working image. Cloning retains immutable sample ownership.
         let mix_input = carrier.clone();
 
-        // 1. Meter the full source, then apply the scale to the uploaded
-        //    samples. Both operate before any geometry, which is the reference
-        //    order: `expose_full_input` scales the encoded image and
-        //    `rescale_working` runs afterwards. The input-only route runs no
-        //    camera, so it has no exposure to apply, and a convert-film
-        //    route's image is already a scanner capture, which
-        //    `expose_full_input` returns unchanged.
-        if inject == Tap::RgbIn
-            && route != WorkflowRoute::Input
-            && !route.is_convert_film()
-            && self.params.camera.auto_exposure
-        {
-            let ae_ev = self.meter_retained(&carrier, backend)?;
-            carrier = match backend.scale_retained(&carrier, 2.0f64.powf(ae_ev) as f32)? {
-                Some(scaled) => scaled,
-                None => {
-                    return self.declines_or_fails(
-                        backend,
-                        "the selected backend cannot scale a retained image exposure",
-                    );
-                }
+        // 1. Meter the full source before geometry. The resident front pass
+        //    decodes the carrier, so its folded exposure scale is applied in
+        //    linear RGB before `rgb_to_raw`; scaling the encoded carrier here
+        //    would be a different transfer-domain operation.
+        let ae_ev =
+            if inject == Tap::RgbIn && route.exposes_film() && self.params.camera.auto_exposure {
+                self.meter_retained(&carrier, backend)?
+            } else {
+                0.0
             };
-        }
 
         // 2. Working geometry on the device. Dye and Fotufilm develop the full
         //    source: their field readout owns the crop and the output lattice,
@@ -478,8 +524,9 @@ impl Pipeline {
             }
             result
         } else {
-            // Auto-exposure already ran above. Convert-film instead starts
-            // at the scanner inverse solve, with no RGB-to-raw front pass.
+            // Auto-exposure is folded into the front pass below. Convert-film
+            // instead starts at the scanner inverse solve, with no RGB-to-raw
+            // front pass.
             if inject.position() <= Tap::RgbPre.position()
                 && self.tc_lut().is_none()
                 && self.mallett_core().is_none()
@@ -494,7 +541,7 @@ impl Pipeline {
                 &carrier,
                 backend,
                 working_pitch,
-                0.0,
+                ae_ev,
                 if inject == Tap::RgbIn {
                     Tap::RgbPre
                 } else {
@@ -726,26 +773,18 @@ impl Pipeline {
         carrier: &DeviceImage,
         backend: &dyn ComputeBackend,
     ) -> Result<f64, String> {
-        let space = spektrafilm_math::colorspace::resolve(&self.params.io.input_color_space)
-            .expect("validated input color space");
-        let device = backend.meter_autoexposure_retained(
-            carrier,
-            &spektrafilm_backend::MeterAutoexposureParams {
-                width: carrier.width(),
-                height: carrier.height(),
-                max_size: crate::stages::filming::MAX_SIZE as u32,
-                y_row: space.matrix_rgb_to_xyz[1],
-                cctf_kind: self
-                    .params
-                    .io
-                    .input_cctf_decoding
-                    .then(|| spektrafilm_backend::cctf_kind(space.cctf)),
-                method: self.params.camera.auto_exposure_method.clone(),
-                mid_grey: crate::stages::filming::MID_GREY,
-            },
-        )?;
+        let params = self.device_meter_params(carrier.width(), carrier.height());
+        let device = backend.meter_autoexposure_retained(carrier, &params)?;
         match device {
-            Some(ev) => Ok(ev),
+            Some(ev) => {
+                tracing::info!(
+                    target: "spektrafilm_core::stages::filming",
+                    ev,
+                    raw = params.raw_tc_lut.is_some() || self.mallett_core().is_some(),
+                    "autoexposure_device_retained"
+                );
+                Ok(ev)
+            }
             None => self.fail(
                 "the selected backend cannot execute full-source auto-exposure metering on a \
                  retained image",

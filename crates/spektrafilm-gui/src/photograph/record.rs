@@ -26,6 +26,8 @@ pub(crate) struct PhotographSettings {
     pub(crate) special: serde_json::Value,
     pub(crate) raw: serde_json::Value,
     pub(crate) rotation: i32,
+    #[serde(default)]
+    pub(crate) film_route: Option<String>,
     #[serde(deserialize_with = "deserialize_applied")]
     pub(crate) applied: Option<crate::presets::AppliedPreset>,
 }
@@ -491,6 +493,23 @@ pub(crate) fn dependencies(
     data_dir: &Path,
 ) -> Result<Vec<Dependency>> {
     let result = (|| -> Result<Vec<Dependency>> {
+        if settings.params.workflow.mode == spektrafilm_core::params::WorkflowMode::Lut {
+            let mut params = settings.params.clone();
+            params.restore_render_preparation_state(&settings.preparation);
+            let lut = params
+                .lut_render_params()
+                .ok_or_else(|| anyhow::anyhow!("LUT mode has no declaration"))?;
+            lut.load().map_err(anyhow::Error::msg)?;
+            let path = absolute(&lut.path)?;
+            let sha256 = digest(&path)?;
+            return Ok(vec![Dependency {
+                path,
+                sha256: Some(sha256),
+            }]);
+        }
+        if settings.params.workflow.mode == spektrafilm_core::params::WorkflowMode::Off {
+            return Ok(Vec::new());
+        }
         let mut paths = BTreeSet::new();
         for stock in [&settings.film, &settings.print] {
             ensure!(
@@ -683,6 +702,7 @@ mod tests {
             special: gui.sections["special"].clone(),
             raw: gui.sections["load_raw"].clone(),
             rotation: 1,
+            film_route: Some("input > film".into()),
             applied: None,
         };
         (dir, data, source, settings)

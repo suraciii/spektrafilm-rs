@@ -1,0 +1,28 @@
+FUJICHROME ASTIA 100F Professional [RAP100F] source approximation
+
+Manufacturer source: Fuji Photo Film Co., Ltd., AF3-149E (EIGI-03.11-HB),
+November 2003, page 8. E-6/CR-56, daylight characteristic curves and effective
+sensitivity; separated-light spectral dye density.
+https://125px.com/docs/film/fuji/astia_100f_datasheet.pdf
+PDF SHA256 a3ed5826d934743b91d750a7ce6c79041c8b3ba0b1afc05ff3cf0b8d175e0809
+
+Source data and trademark remain the property of their respective holders.
+The original PDF and SVG page are not included in the product repository.
+Public availability is not an open redistribution grant. No manufacturer
+permission for redistribution of digitized curves has been established by
+this technical work. Assess the rights in source coordinates and derived
+parameters separately before public distribution. This notice is attribution,
+not a claim of legal clearance or manufacturer endorsement.
+
+New coordinate-extraction and reconstruction contributions:
+Copyright (c) 2026 SpektraFilm contributors, CC BY-SA 4.0.
+https://creativecommons.org/licenses/by-sa/4.0/
+This contribution license does not relicense manufacturer material.
+
+Status A instrument-table transcription: Jan Lohse, spectral_film_lut,
+commit 6307a98f3cf4f2d7b6d09bab82fbf6f64356ccfe, densiometry.py.
+MIT license: see JAN_LOHSE_MIT.txt. No other stock's material data are used.
+
+This approximation has inferred clear-film absorption and spectral tails.
+It does not identify MCCL/HTILE, real grain, halation, or a scanner response.
+See docs/astia100f.md for reconstruction assumptions and accuracy limits.

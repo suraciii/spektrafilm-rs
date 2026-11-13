@@ -59,7 +59,9 @@ def generate(repo, out_dir):
 
     apply(params, overrides)
     pixels = np.full((1, 1, 3), 0.184, dtype=np.float32)
-    result = SimulationPipeline(digest_params(params)).process(pixels)
+    pipeline = SimulationPipeline(digest_params(params))
+    result = pipeline.process(pixels)
+    print_cmy = pipeline.process(pixels, collect='cmy_print')
     module_sources = {}
     for name, module in tuple(sys.modules.items()):
         if name == 'spektrafilm' or name.startswith('spektrafilm.'):
@@ -72,7 +74,8 @@ def generate(repo, out_dir):
     reference = {'upstream_commit': UPSTREAM, 'film': 'kodak_portra_400',
                  'paper': 'kodak_portra_endura', 'params': overrides,
                  'input_dtype': str(pixels.dtype), 'input_rgb': pixels.tolist(),
-                 'output_dtype': str(result.dtype), 'output_rgb': result.tolist()}
+                 'output_dtype': str(result.dtype), 'output_rgb': result.tolist(),
+                 'print_dtype': str(print_cmy.dtype), 'print_cmy': print_cmy.tolist()}
     out_dir.mkdir(parents=True, exist_ok=True)
     save_json(out_dir / 'spectral.json', reference)
     data_root = repo / 'src' / 'spektrafilm' / 'data'
@@ -88,7 +91,7 @@ def generate(repo, out_dir):
         'upstream_commit': UPSTREAM,
         'generation_command': shlex.join([sys.executable, *sys.argv]),
         'python_version': sys.version, 'numpy_version': np.__version__,
-        'oracle': 'SimulationPipeline(digest_params(init_params with package spectral overrides)).process(float32 input)',
+        'oracle': 'SimulationPipeline(digest_params(init_params with package spectral overrides)).process(float32 input) for rgb_out and cmy_print',
         'source_sha256': module_sources,
         'scenario_source_sha256': sha(smoke),
         'generator_sha256': sha(Path(__file__)),

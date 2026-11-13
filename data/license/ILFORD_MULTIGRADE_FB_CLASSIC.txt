@@ -1,0 +1,37 @@
+ILFORD MULTIGRADE FB CLASSIC Glossy — source notice
+
+The profile and source record reconstruct coordinate data from:
+HARMAN/ILFORD, MULTIGRADE FB CLASSIC Technical Information, October 2013,
+page 2 (filter 2 / grade 2 characteristic curve).
+
+The technical sheet is published by HARMAN technology Limited / ILFORD.
+Copyright in the original technical material remains with its rights holder.
+No manufacturer permission to redistribute the technical sheet, artwork or
+derived profile is claimed.
+
+New contributions in this repository — coordinate extraction, curve
+reconstruction, profile preparation, tests and documentation — are released
+under CC BY-SA 4.0:
+https://creativecommons.org/licenses/by-sa/4.0/
+
+The plotted curve is a representative manufacturer drawing, not a measurement
+of a particular box. The plotted D-min proxy is treated as 0.0; the D-max
+endpoint (about 2.0814) is a graph endpoint, not a measured Dmax. The x-axis is
+not calibrated to absolute lux-seconds: the filter-2 curve reaches density 0.6
+at source x about 0.735 while ISO P230 implies log10(1000/230)=0.638. ISO P230
+is retained as metadata, not used as the profile exposure origin.
+
+Page 1 of the technical sheet has only a "Relative Sensitivity" ordinate with
+no numeric scale and is not grade-specific. The profile therefore uses a flat
+0.0 log-sensitivity placeholder. It is not a measured spectral sensitivity and
+does not predict coloured light or variable-contrast filtration.
+
+No measured base spectrum, fluorescence, surface BRDF, batch variation,
+densitometer, scanner target or matched physical print is available. This is a
+fixed filter-2/grade-2 source-curve approximation, not a complete MULTIGRADE
+model.
+
+Source identity and conditions:
+../profile_sources/ilford_multigrade_fb_classic_glossy_g2.json
+Generation, usage and limitations:
+../../docs/fbclassic.md

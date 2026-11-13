@@ -1,8 +1,8 @@
 //! Bounded reference Gaussian with raw-u32 GPU gather/scatter. Physical image
 //! pages and layer offsets are byte-addressed on the host; kernels see only
-//! aligned, capped views and packed target-channel samples. Both sample widths
-//! retain f64 kernels and recursive state; f32 stores narrow at upstream's
-//! original tap/pass boundaries rather than at device-page seams.
+//! aligned, capped views and packed target-channel samples. With native f64,
+//! both sample widths retain f64 kernels and recursive state; without it, f32
+//! arithmetic is limited to sigma < 8 and larger sigma is rejected.
 use super::*;
 use crate::wgpu_backend::paged::ImagePage;
 
@@ -40,7 +40,7 @@ fn workspace_bytes_for_samples(
         .checked_mul(u64::from(height))
         .and_then(|n| n.checked_mul(3 * sample_bytes))
         .ok_or("Gaussian workspace geometry overflows")?;
-    // The box halo can exceed the image itself, up to the binding limit.
+    // Pages are capped by both the binding limit and the fixed value budget.
     let page = limit.min(u64::from(MAX_PAGE_VALUES) * sample_bytes);
     // Input, output, adapter, line state, three kernels and retained uniforms.
     Ok(page * 4 + 3 * 152 + u64::from(MAX_COMMANDS_PER_SUBMIT) * 3 * 96)
@@ -62,11 +62,8 @@ fn page_capacity(
                 Ok(minimum.max(
                     gaussian_kernel_f64(s)?.1.len() as u64 * if arithmetic_f64 { 8 } else { 4 },
                 ))
-            } else if s < 8.0 {
-                Ok(minimum.max(if arithmetic_f64 { 24 } else { 12 }))
             } else {
-                let width = spektrafilm_math::gaussian::gaussian_box_width(s);
-                Ok(minimum.max((width as u64).saturating_mul(sample_bytes)))
+                Ok(minimum.max(if arithmetic_f64 { 24 } else { 12 }))
             }
         })?;
     if limit < minimum {
@@ -336,7 +333,6 @@ struct Direction {
     destination_offset: u64,
     channel: u32,
     vertical: bool,
-    box_filter: bool,
     kernel: wgpu::Buffer,
     pages: Vec<Page>,
 }
@@ -348,7 +344,6 @@ pub(super) struct BoundedBlur {
     sample_bytes: u64,
     arithmetic_f64: bool,
     pipeline: CachedPipelineRef,
-    box_pipeline: CachedPipelineRef,
     copy_pipeline: CachedPipelineRef,
     input: wgpu::Buffer,
     output: wgpu::Buffer,
@@ -520,6 +515,7 @@ impl BoundedBlur {
         if sample_bytes == 8 && !arithmetic_f64 {
             return Err("binary64 Gaussian requires native shader f64 arithmetic".into());
         }
+        require_f64_for_large_sigma(arithmetic_f64, sigma)?;
         if width == 0 || height == 0 {
             return Err("Gaussian blur dimensions must be nonzero".into());
         }
@@ -599,14 +595,6 @@ impl BoundedBlur {
             },
             &LAYOUT,
         );
-        let box_pipeline = backend.cached_pipeline(
-            if sample_bytes == 8 {
-                include_str!("blur_bounded_box_f64.wgsl")
-            } else {
-                include_str!("blur_bounded_box_f32.wgsl")
-            },
-            &LAYOUT,
-        );
         let copy_pipeline =
             backend.cached_pipeline(include_str!("blur_bounded_copy.wgsl"), &COPY_LAYOUT);
         let mut directions = Vec::new();
@@ -623,19 +611,13 @@ impl BoundedBlur {
                 ));
                 continue;
             }
-            let box_filter = s >= 8.0;
             let fir = s < 3.0;
-            let (radius, weights) = if box_filter {
-                let width = spektrafilm_math::gaussian::gaussian_box_width(s);
-                let radius = u32::try_from(width / 2)
-                    .map_err(|_| "Gaussian box radius exceeds device coordinate range")?;
-                (radius, vec![1.0 / width as f64])
-            } else if fir {
+            let (radius, weights) = if fir {
                 gaussian_kernel_f64(s)?
             } else {
                 (0, vec![0.0])
             };
-            let coefficients = if fir || box_filter {
+            let coefficients = if fir {
                 (0.0, 0.0, 0.0, 0.0)
             } else {
                 iir_coefficients_f64(s)
@@ -651,7 +633,7 @@ impl BoundedBlur {
             {
                 return Err("Gaussian IIR coefficients exceed the device scalar range".into());
             }
-            let kernel_bytes: Vec<u8> = if arithmetic_f64 && !box_filter {
+            let kernel_bytes: Vec<u8> = if arithmetic_f64 {
                 bytemuck::cast_slice(&weights).to_vec()
             } else {
                 let weights: Vec<f32> = weights.iter().map(|&v| v as f32).collect();
@@ -664,12 +646,8 @@ impl BoundedBlur {
                     contents: &kernel_bytes,
                     usage: wgpu::BufferUsages::STORAGE,
                 });
-            for pass in 0..if box_filter { 6 } else { 2 } {
-                let vertical = if box_filter {
-                    pass >= 3
-                } else {
-                    (pass == 0) == fir
-                };
+            for pass in 0..2 {
+                let vertical = (pass == 0) == fir;
                 let (src, dst, src_offset, dst_offset) = if pass == 0 {
                     (&source, &intermediate, source_offset, 0)
                 } else if pass % 2 == 1 {
@@ -679,9 +657,12 @@ impl BoundedBlur {
                 };
                 let length = if vertical { height } else { width };
                 let line_count = if vertical { width } else { height };
-                let halo = 2 * radius;
                 let capacity = (page_bytes / sample_bytes) as u32;
                 let max_lines = (page_bytes / 24) as u32;
+                // FIR needs a halo of kernel taps around each page. IIR has no
+                // finite support, so its recursive state spans page boundaries
+                // instead of transferring a halo.
+                let halo = 2 * radius;
                 // Fill the page from the available independent lines before
                 // splitting coordinates. This keeps full-fit rasters together
                 // and avoids tiny serial chunks when a raster has few lines.
@@ -700,13 +681,7 @@ impl BoundedBlur {
                 while line < line_count {
                     backend.check_cancelled()?;
                     let batch = lines.min(line_count - line);
-                    for mode in if box_filter {
-                        3..4
-                    } else if fir {
-                        0..1
-                    } else {
-                        1..3
-                    } {
+                    for mode in if fir { 0..1 } else { 1..3 } {
                         let page_count = length.div_ceil(count);
                         for ordinal in 0..page_count {
                             let first = if mode == 2 {
@@ -743,7 +718,6 @@ impl BoundedBlur {
                     destination_offset: dst_offset,
                     channel,
                     vertical,
-                    box_filter,
                     kernel: kernel.clone(),
                     pages,
                 });
@@ -756,7 +730,6 @@ impl BoundedBlur {
             sample_bytes,
             arithmetic_f64,
             pipeline,
-            box_pipeline,
             copy_pipeline,
             input,
             output,
@@ -893,7 +866,7 @@ impl BoundedBlur {
         }
         let backend = submission.backend;
         let p32 = Params32::from(p);
-        let params = if self.arithmetic_f64 && !direction.box_filter {
+        let params = if self.arithmetic_f64 {
             bytemuck::bytes_of(&p)
         } else {
             bytemuck::bytes_of(&p32)
@@ -920,12 +893,7 @@ impl BoundedBlur {
             .device
             .create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("gaussian_page_group"),
-                layout: &if direction.box_filter {
-                    &self.box_pipeline
-                } else {
-                    &self.pipeline
-                }
-                .layout,
+                layout: &self.pipeline.layout,
                 entries: &entries,
             });
         {
@@ -935,22 +903,9 @@ impl BoundedBlur {
                     label: Some("gaussian_bounded_line"),
                     timestamp_writes: None,
                 });
-            pass.set_pipeline(
-                &if direction.box_filter {
-                    &self.box_pipeline
-                } else {
-                    &self.pipeline
-                }
-                .pipeline,
-            );
+            pass.set_pipeline(&self.pipeline.pipeline);
             pass.set_bind_group(0, &group, &[]);
-            if direction.box_filter && self.sample_bytes == 4 {
-                let groups = (p.count.div_ceil(4) * p.lines).div_ceil(64);
-                let (x, y) = dispatch_grid(groups);
-                pass.dispatch_workgroups(x, y, 1);
-            } else {
-                pass.dispatch_workgroups(p.lines.div_ceil(64), 1, 1);
-            }
+            pass.dispatch_workgroups(p.lines.div_ceil(64), 1, 1);
         }
         submission.command()?;
         let rect = if direction.vertical {
@@ -1196,17 +1151,12 @@ mod logic_tests {
         for (sample_bytes, arithmetic_f64, fir_minimum, iir_minimum) in
             [(4, false, 76, 12), (4, true, 152, 24), (8, true, 152, 24)]
         {
-            let box_minimum =
-                spektrafilm_math::gaussian::gaussian_box_width(8.0) as u64 * sample_bytes;
             for (sigma, minimum) in [
                 ([0.0, -1.0, 0.0], sample_bytes),
                 ([2.99, 0.0, 0.0], fir_minimum),
                 ([3.0, 0.0, 0.0], iir_minimum),
-                ([8.0, 0.0, 0.0], box_minimum),
-                (
-                    [2.99, 3.0, 8.0],
-                    fir_minimum.max(iir_minimum).max(box_minimum),
-                ),
+                ([8.0, 0.0, 0.0], iir_minimum),
+                ([2.99, 3.0, 8.0], fir_minimum.max(iir_minimum)),
             ] {
                 let bytes = 3 * sample_bytes;
                 assert!(
@@ -1404,131 +1354,8 @@ mod tests {
         compare(&gpu, 39, 1, [3.0, 4.0, 7.9], 24);
     }
 
-    /// Compare the optimized box kernel with the original ordered-window
-    /// kernel on identical packed inputs, not with a shared CPU approximation.
     #[test]
-    fn vector_boxes_preserve_ordered_window_bits_and_support() {
-        let gpu = crate::test_support::adapter();
-        let original = gpu.cached_pipeline(include_str!("blur_bounded_f32.wgsl"), &LAYOUT);
-        let vector = gpu.cached_pipeline(include_str!("blur_bounded_box_f32.wgsl"), &LAYOUT);
-        let lines = 6usize;
-        for count in [1usize, 3, 7, 31, 33, 129] {
-            for radius in [0usize, 9, 47, 141] {
-                for axis_major in [0u32, 1] {
-                    let span = count + 2 * radius;
-                    let mut values = vec![0.0f32; span * lines];
-                    for j in 0..span {
-                        for line in 0..lines {
-                            let value = match line {
-                                0 => ((j * 37 + 11) % 103) as f32 / 51.0 - 1.0,
-                                1 if j == radius => f32::NAN,
-                                2 if j == radius => f32::INFINITY,
-                                2 if j == radius + 7 => f32::NEG_INFINITY,
-                                3 => {
-                                    if j % 4 < 2 {
-                                        f32::MAX * 0.75
-                                    } else {
-                                        -f32::MAX * 0.75
-                                    }
-                                }
-                                4 if j == 0 => 16777216.0,
-                                5 => {
-                                    if j % 2 == 0 {
-                                        -0.0
-                                    } else {
-                                        0.0
-                                    }
-                                }
-                                _ => 1.0,
-                            };
-                            let index = if axis_major == 0 {
-                                line * span + j
-                            } else {
-                                j * lines + line
-                            };
-                            values[index] = value;
-                        }
-                    }
-                    let source = gpu
-                        .device
-                        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                            label: Some("box_order_input"),
-                            contents: bytemuck::cast_slice(&values),
-                            usage: wgpu::BufferUsages::STORAGE,
-                        });
-                    let params = Params32 {
-                        count: count as u32,
-                        lines: lines as u32,
-                        stride: 1,
-                        channel: 0,
-                        radius: radius as u32,
-                        mode: 3,
-                        initialize: 1,
-                        axis_major,
-                        a: 0.0,
-                        b1: 0.0,
-                        b2: 0.0,
-                        b3: 0.0,
-                    };
-                    let uniform = super::super::super::raster::uniform(&gpu, &params);
-                    let kernel = gpu
-                        .device
-                        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                            label: Some("box_order_weight"),
-                            contents: bytemuck::cast_slice(&[1.0 / (2 * radius + 1) as f32]),
-                            usage: wgpu::BufferUsages::STORAGE,
-                        });
-                    let state = transport(&gpu, "box_order_state", lines as u64 * 12, true);
-                    let bytes = (count * lines * 4) as u64;
-                    let a = transport(&gpu, "box_order_original", bytes, true);
-                    let b = transport(&gpu, "box_order_vector", bytes, true);
-                    let readback = gpu.device.create_buffer(&wgpu::BufferDescriptor {
-                        label: Some("box_order_readback"),
-                        size: bytes * 2,
-                        usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-                        mapped_at_creation: false,
-                    });
-                    let mut commands = super::super::super::raster::RasterCommands::default();
-                    // Both kernels use 64-thread workgroups, not the generic
-                    // RasterCommands 256-thread linear dispatch convention.
-                    commands.dispatch(
-                        &original,
-                        &[&uniform, &source, &a, &kernel, &state],
-                        (lines as u32).div_ceil(64),
-                        true,
-                        &gpu,
-                    );
-                    let threads = count.div_ceil(4) * lines;
-                    commands.dispatch(
-                        &vector,
-                        &[&uniform, &source, &b, &kernel, &state],
-                        (threads as u32).div_ceil(64),
-                        true,
-                        &gpu,
-                    );
-                    commands.copy(&a, 0, &readback, 0, bytes);
-                    commands.copy(&b, 0, &readback, bytes, bytes);
-                    commands.submit(&gpu).unwrap();
-                    let result = gpu.read_mapped_f32(&readback, bytes * 2).unwrap();
-                    let (expected, actual) = result.split_at(count * lines);
-                    for (i, (&want, &got)) in expected.iter().zip(actual).enumerate() {
-                        if want.is_nan() {
-                            assert!(got.is_nan());
-                        } else {
-                            assert_eq!(
-                                got.to_bits(),
-                                want.to_bits(),
-                                "count={count} radius={radius} axis={axis_major} sample={i}"
-                            );
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    #[test]
-    fn vector_boxes_preserve_bits_across_page_layouts() {
+    fn paged_iir_large_sigma_preserves_bits_across_page_layouts() {
         let gpu = crate::test_support::adapter();
         let mut baseline: Option<Vec<f32>> = None;
         for limit in [512, 1024, 2048] {
@@ -1546,9 +1373,10 @@ mod tests {
     }
 
     #[test]
-    fn paged_boxes_reflect_endpoints_and_page_seams() {
+    fn paged_iir_large_sigma_reflects_endpoints_and_page_seams() {
         let gpu = crate::test_support::adapter();
         compare(&gpu, 71, 67, [8.0, 20.0, 32.0], 512);
+        compare(&gpu, 71, 67, [8.0, 20.0, 147.0], 512);
         compare(&gpu, 1, 39, [8.0, 20.0, 32.0], 512);
         compare(&gpu, 39, 1, [8.0, 20.0, 32.0], 512);
     }

@@ -6,6 +6,8 @@
 
 It MUST NOT define another parameter schema, preset resolver, or render pipeline.
 
+[Preset browser interaction](../presets/spec.md#browser-interaction) owns discovery and save behavior. [Thumbnail execution](../presets/design.md#thumbnail-execution), [browser state ownership](../presets/design.md#browser-state-ownership), and the [implementation boundary](../presets/design.md#implementation-boundary) own its execution, state, and cutover.
+
 ## Workspace composition
 
 The native application MUST compose the existing preset browser, viewer, and control panel into the three-region workspace. It MUST reuse the existing toolkit and [presentation components](../gui-presentation/design.md).
@@ -72,11 +74,13 @@ Search MUST inspect control descriptions without invoking editor mutations, mate
 
 Normal disclosure state and query-induced disclosure MUST be separate. Clearing a query MUST remove only the query-induced expansion. Only modified MUST read the same reset-baseline comparison as row markers, not a separately maintained dirty flag.
 
-Search text, temporary result selection, and adjustment history remain session-local. Browser metadata and any persisted layout values retain their existing GUI-state ownership. Inspector organization MUST NOT leak into look presets, runtime recipes, CLI parameter documents, or Python-compatible GUI sections.
+Search text, temporary result selection, and adjustment history remain session-local. Browser preferences and applied identity follow [browser state ownership](../presets/design.md#browser-state-ownership). Inspector organization MUST NOT leak into presets, runtime recipes, CLI parameter documents, or Python-compatible GUI sections.
 
 ## Retained output and delivery
 
 The viewer MUST continue to use its existing presentation and composition workers. A material edit MUST NOT directly filter, recolor, or swap the displayed image to simulate a result. Until an accepted render completes, the application keeps the last accepted frame and identifies it as not current when appropriate.
+
+Preset candidate thumbnails are read-only auxiliary results under [thumbnail execution](../presets/design.md#thumbnail-execution). They MUST NOT replace the viewer's retained output or become input to Save or Export.
 
 Preview, Scan, Save, and Export MUST retain their existing operation boundaries. Export draft controls MUST NOT mutate the live render configuration. Submitting Export captures one validated immutable request.
 

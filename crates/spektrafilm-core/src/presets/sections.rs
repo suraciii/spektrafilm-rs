@@ -5,6 +5,7 @@ pub enum Section {
     Film,
     Grain,
     Halation,
+    LightLeak,
     Couplers,
     Base,
     Convert,
@@ -22,12 +23,15 @@ pub enum Section {
 #[serde(tag = "kind", content = "section", rename_all = "snake_case")]
 pub enum PresetKind {
     Look,
+    Lut,
+    Effects,
     Section(Section),
 }
 pub const SECTIONS: &[Section] = &[
     Section::Film,
     Section::Grain,
     Section::Halation,
+    Section::LightLeak,
     Section::Couplers,
     Section::Base,
     Section::Convert,
@@ -47,6 +51,7 @@ impl Section {
             Self::Film => "film",
             Self::Grain => "grain",
             Self::Halation => "halation",
+            Self::LightLeak => "light leak",
             Self::Couplers => "couplers",
             Self::Base => "base",
             Self::Convert => "convert",
@@ -70,6 +75,7 @@ impl Section {
             ],
             Self::Grain => &["film_render.grain"],
             Self::Halation => &["film_render.halation"],
+            Self::LightLeak => &["film_render.light_leak"],
             Self::Couplers => &["film_render.dir_couplers"],
             Self::Base => &["film_render.base"],
             Self::Convert => &["film_render.convert"],
@@ -186,7 +192,7 @@ pub fn section_matches_detailed(
     let PresetKind::Section(_) = preset.kind_detailed()? else {
         return Ok(false);
     };
-    let PresetParameters::Section(payload) = &preset.parameters else {
+    let Some(PresetParameters::Section(payload)) = preset.parameters.as_ref() else {
         unreachable!()
     };
     params.validate_values_detailed()?;

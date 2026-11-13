@@ -2,7 +2,7 @@
 //! from a serialization traversal of `RuntimeParams`, vocabularies and bounds
 //! from `params::validation`, and defaults from the serialized default value.
 use serde::Serializer;
-use serde::ser::{Impossible, SerializeSeq, SerializeStruct, SerializeTuple};
+use serde::ser::{Impossible, SerializeMap, SerializeSeq, SerializeStruct, SerializeTuple};
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::sync::OnceLock;
@@ -17,8 +17,12 @@ fn types() -> &'static BTreeMap<String, String> {
     static TYPES: OnceLock<BTreeMap<String, String>> = OnceLock::new();
     TYPES.get_or_init(|| {
         let mut out = BTreeMap::new();
+        let mut params = super::super::RuntimeParams::default();
+        params.lut = Some(crate::params::LutParams::default());
+        params.effects = Some(crate::params::EffectsParams::default());
+        params.grade = Some(crate::params::GradeParams::default());
         serde::Serialize::serialize(
-            &super::super::RuntimeParams::default(),
+            &params,
             &mut Recorder {
                 path: String::new(),
                 out: &mut out,
@@ -113,6 +117,30 @@ macro_rules! seq_impl {
 seq_impl!(SerializeSeq, serialize_element);
 seq_impl!(SerializeTuple, serialize_element);
 
+struct MapRec<'a, 'b> {
+    rec: &'a mut Recorder<'b>,
+    key: Option<String>,
+}
+impl<'a, 'b> SerializeMap for MapRec<'a, 'b> {
+    type Ok = ();
+    type Error = RecError;
+    fn serialize_key<T: serde::Serialize + ?Sized>(&mut self, key: &T) -> Result<(), RecError> {
+        let value = serde_json::to_value(key).map_err(serde::ser::Error::custom)?;
+        self.key = value.as_str().map(str::to_owned);
+        Ok(())
+    }
+    fn serialize_value<T: serde::Serialize + ?Sized>(&mut self, value: &T) -> Result<(), RecError> {
+        let key = self
+            .key
+            .take()
+            .ok_or_else(|| serde::ser::Error::custom("map value without key"))?;
+        self.rec.descend(&key, value)
+    }
+    fn end(self) -> Result<(), RecError> {
+        Ok(())
+    }
+}
+
 struct StructRec<'a, 'b> {
     rec: &'a mut Recorder<'b>,
 }
@@ -138,7 +166,7 @@ impl<'a, 'b> Serializer for &'a mut Recorder<'b> {
     type SerializeTuple = SeqRec<'a, 'b>;
     type SerializeTupleStruct = Impossible<(), RecError>;
     type SerializeTupleVariant = Impossible<(), RecError>;
-    type SerializeMap = Impossible<(), RecError>;
+    type SerializeMap = MapRec<'a, 'b>;
     type SerializeStruct = StructRec<'a, 'b>;
     type SerializeStructVariant = Impossible<(), RecError>;
 
@@ -266,7 +294,10 @@ impl<'a, 'b> Serializer for &'a mut Recorder<'b> {
         ))
     }
     fn serialize_map(self, _: Option<usize>) -> Result<Self::SerializeMap, RecError> {
-        Err(serde::ser::Error::custom("maps are not parameter groups"))
+        Ok(MapRec {
+            rec: self,
+            key: None,
+        })
     }
     fn serialize_struct(
         self,
@@ -347,6 +378,10 @@ fn unit(path: &str) -> Option<&'static str> {
         } else {
             "dimensionless"
         })
+    } else if path == "film_render.grain.exposure.absolute_size_px" {
+        Some("px")
+    } else if path.starts_with("film_render.grain.exposure.") {
+        Some("dimensionless")
     } else if path.ends_with("_ev") {
         Some("EV")
     } else if path.ends_with("_um2") {
@@ -381,11 +416,23 @@ fn conditions(path: &str) -> Vec<String> {
             super::super::finishing::EXPAND_MIN_SPAN
         ));
     }
+    if path == "workflow.mode" {
+        out.push("film: film chain, Scan Tone & Color, Output mix, and CMYK active; lut, effects, and grade inactive".into());
+        out.push(
+            "lut: lut, effects, and grade active; film chain, Output mix, and CMYK inactive".into(),
+        );
+        out.push("off: effects and output color management active; film chain, lut, grade, Output mix, and CMYK inactive".into());
+    }
     if path == "camera.film_format_mm" {
         out.push("finite and strictly positive; exposed full-source long edge, not roll width or film-stock designation".into());
     }
     if path == "scanner.scan_output" {
         out.push("negative_to_positive requires a negative film profile and direct input > film > scan or input > convert-film > scan route; every grain engine is accepted".into());
+    }
+    if path == "scanner.white_reference" {
+        out.push(
+            "clear_film_base is the default white calibration; readout_illuminant opts out to the fixed readout light and reproduces upstream experimental 28bf883 scanner normalization".into(),
+        );
     }
     if path == "scanner.conversion_style" {
         out.push(
@@ -460,12 +507,42 @@ fn description(path: &str) -> Option<&'static str> {
         path if path.ends_with(".developer_exhaustion") => Some(
             "Model-specific material development control; requires enabled chemistry, actual development and a supported fitted density-curve model. Does not provide universal highlight compression.",
         ),
+        "scanner.white_reference" => Some(
+            "White reference of the spectral scan. clear_film_base divides by the clear film base and adapts from it; readout_illuminant opts out and uses the fixed readout light, matching upstream experimental 28bf883.",
+        ),
         "scanner.lens_blur" => Some(
             "Optical softness in linear scanner readout before interpretation, corrections, gamut processing and digital sharpening.",
         ),
         "film_render.convert.scan_illuminant" => Some(
             "Illumination of the imported RGB acquisition; used only by convert-film inversion, independent of the product readout light.",
         ),
+        "film_render.light_leak.active" => Some(
+            "Enable the camera light leak: stray light that reached the film record during exposure through a seal gap, a door hinge, or a failed light trap.",
+        ),
+        "film_render.light_leak.exposure_ev" => Some(
+            "Aperture strength in stops over the film's own mid-density reference exposure; zero is an exact bypass. Stray light is absolute and does not scale with scene brightness.",
+        ),
+        "film_render.light_leak.position" => Some(
+            "Aperture center position around the frame perimeter, 0 to 1, measured clockwise from the top-left corner.",
+        ),
+        "film_render.light_leak.width_mm" => {
+            Some("Aperture width along the frame perimeter, in millimetres on the film.")
+        }
+        "film_render.light_leak.spread_mm" => Some(
+            "Inward e-folding length of the leak in millimetres on the film; the falloff is compact, so a seal leak stays near the gap.",
+        ),
+        "film_render.light_leak.angle_deg" => {
+            Some("Aperture tilt relative to the perimeter tangent, in degrees.")
+        }
+        "film_render.light_leak.leak_spectrum" => Some(
+            "Stray-light exposure ratio per record, in cyan, magenta, yellow order; the rendered colour is each material's own dye response. The default is the common warm path: light that crossed the base and lost blue, so the rim reads orange-red while a strong leak burns its core to white. A red-only ratio (green and blue equal) gives the red rim that some measured leaks show.",
+        ),
+        "film_render.light_leak.texture_amount" => {
+            Some("Strength of the seeded streak structure over the smooth falloff, 0 to 1.")
+        }
+        "film_render.light_leak.texture_scale_mm" => {
+            Some("Spatial scale of the seeded streak structure, in millimetres on the film.")
+        }
         "scanner.conversion_style" => Some(
             "Named stylization of the negative-to-positive tone: standard is the built-in frozen tone; any other name applies the declared per-channel tone triple from data/scan-styles/<name>.json. A style never runs the frame setup.",
         ),
@@ -490,6 +567,9 @@ fn description(path: &str) -> Option<&'static str> {
         ),
         path if path.starts_with("film_render.grain.fotufilm.") => Some(
             "Fotufilm Film effective-appearance population control; authored metadata, not a measured stock claim.",
+        ),
+        path if path.starts_with("film_render.grain.exposure.") => Some(
+            "Reconstructed Exposure Grain post-scan appearance control; not material formation and not a pixel-parity claim.",
         ),
         "io.input_color_space" => Some(
             "Color primaries of source raster samples before simulation; not scanner output or saving conversion.",
@@ -541,6 +621,46 @@ fn description(path: &str) -> Option<&'static str> {
         ),
         "film_render.grain.rms_granularity" => Some(
             "RMS granularity is distinct from Procedural Amount: Spektra derives statistical particle area from the film density curves; Dye uses relative strength G to scale per-channel event area, not a certified optical RMS target.",
+        ),
+        "workflow.mode" => Some(
+            "Exclusive render workflow: film runs the spectral chain; lut runs one imported external cube; off runs only Effects and output color management.",
+        ),
+        "lut.path" => Some(
+            "External .cube file used by the LUT workflow; the file is not embedded in presets or GUI state.",
+        ),
+        "lut.sha256" => Some(
+            "Lowercase SHA-256 of the external LUT file; a changed or missing file fails validation.",
+        ),
+        "lut.title" => Some("Optional title carried by the .cube metadata."),
+        "lut.input_space" | "lut.output_space" => Some(
+            "Declared LUT transport primaries and transfer; never inferred from the file name or image.",
+        ),
+        "lut.domain_min" | "lut.domain_max" => Some(
+            "Declared per-channel input domain from the .cube header; domains must be finite and strictly ordered.",
+        ),
+        "lut.domain_policy" => Some(
+            "fail stops the render outside the declared domain; clamp limits each channel to the domain edge and reports the clipped fraction. Imports default to clamp.",
+        ),
+        "lut.shaper" => Some(
+            "Declared optional 1D shaper before the 3D lookup; cube_1d requires a matching LUT_1D_SIZE entry.",
+        ),
+        "lut.strength" => Some(
+            "LUT color-transform blend from zero (exact bypass) to one (full declared transform); active effects remain independent.",
+        ),
+        "grade.active" => {
+            Some("Enables the optional post-LUT grade; stored grade values remain when disabled.")
+        }
+        path if path.starts_with("grade.") => {
+            Some("Post-LUT Tone & Color response; independent from film-chain finishing.")
+        }
+        path if path.starts_with("effects.halation.") => Some(
+            "Halation for LUT and Off modes in linear light before the lookup; it does not read film density or a film profile.",
+        ),
+        path if path.starts_with("effects.diffusion.") => Some(
+            "Diffusion for LUT and Off modes in linear light before the lookup; it does not run camera or enlarger stages.",
+        ),
+        path if path.starts_with("effects.grain.") => Some(
+            "Output-encoded appearance grain for LUT and Off modes; it does not use film grain engines.",
         ),
         _ => None,
     }

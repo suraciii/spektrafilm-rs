@@ -1,15 +1,13 @@
 //! Bounded transport around the established integer demosaic kernels.
 //!
 //! Bayer windows commit only cores whose complete dependency graph is present.
-//! X-Trans instead retains native 512-square tile order and scratch state, with
-//! a resumable device bounds scan before the first tile. Neither path invents
+//! X-Trans uses the parallel Markesteijn dependency halo. Neither path invents
 //! CFA phase or image borders at a storage-page boundary.
 use super::paged::RawPlane;
 use super::*;
 
-const READ: wgpu::BufferBindingType = wgpu::BufferBindingType::Storage { read_only: true };
+#[cfg(test)]
 const WRITE: wgpu::BufferBindingType = wgpu::BufferBindingType::Storage { read_only: false };
-const UNIFORM: wgpu::BufferBindingType = wgpu::BufferBindingType::Uniform;
 
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
@@ -121,9 +119,6 @@ impl WgpuBackend {
             subtract_black_map: 0,
             mix_green: 0,
         };
-        if params.demosaic == RawDemosaic::XTrans {
-            return self.raw_xtrans_paged(plane, &frame, cfa, xyz, cbrt, limit, false);
-        }
         // AHD: green(2) -> RGB(1) -> homogeneity(1) -> combine(1).
         // VNG: linear(1) -> gradients/second-neighbour averages(2).
         // PPG: directional green(3) -> green-site chroma(1) -> diagonal chroma(1).
@@ -131,9 +126,17 @@ impl WgpuBackend {
             RawDemosaic::BayerAhd => 5,
             RawDemosaic::Vng => 3,
             RawDemosaic::FujiPpg => 5,
+            RawDemosaic::XTrans => 17,
             _ => unreachable!(),
         };
-        let step = demosaic_step(limit, halo, sensor.cfa_rows, sensor.cfa_columns)?;
+        // Direction arrays carry eight vec4 planes. Bound both storage and
+        // per-submission work; each window commits only its independent core.
+        let window_limit = if params.demosaic == RawDemosaic::XTrans {
+            (limit / 8).min(512 * 512 * 16)
+        } else {
+            limit
+        };
+        let step = demosaic_step(window_limit, halo, sensor.cfa_rows, sensor.cfa_columns)?;
         let output = self.raw_allocate_plane(plane.width, plane.height, "raw_demosaic_pages")?;
         for y in (0..plane.height).step_by(step as usize) {
             for x in (0..plane.width).step_by(step as usize) {
@@ -162,7 +165,7 @@ impl WgpuBackend {
                     bytemuck::bytes_of(&local),
                     wgpu::BufferUsages::UNIFORM,
                 );
-                let (passes, _) = self.raw_demosaic_gpu(
+                let (passes, status) = self.raw_demosaic_gpu(
                     params.demosaic,
                     sensor.colors,
                     &local,
@@ -196,6 +199,9 @@ impl WgpuBackend {
                     y - top,
                 )?;
                 self.raw_submit(encoder)?;
+                if let Some(status) = status {
+                    self.raw_xtrans_check(&status)?;
+                }
             }
         }
         Ok(output)
@@ -214,367 +220,15 @@ impl WgpuBackend {
         }
     }
 
-    // Native tile transport needs the separate kernel bindings and sparse-path control.
-    #[allow(clippy::too_many_arguments)]
-    fn raw_xtrans_paged(
-        &self,
-        plane: RawPlane,
-        frame: &RawFrame,
-        cfa: &RawBuffer,
-        xyz: &RawBuffer,
-        cbrt: &RawBuffer,
-        limit: u64,
-        force_sparse: bool,
-    ) -> Result<RawPlane, String> {
-        if frame.width < 512 || frame.height < 512 {
-            return Err("LibRaw Markesteijn requires width and height of at least 512".into());
-        }
-        if frame.cfa_rows != 6 || frame.cfa_columns != 6 {
-            return Err("LibRaw Markesteijn requires a 6-by-6 X-Trans CFA".into());
-        }
-        // PATT's image offsets are at most two rows/columns; the tile reads
-        // three times those offsets, so a native tile needs six source pixels.
-        const HALO: u32 = 6;
-        let native_bytes = u64::from((512 + 2 * HALO).min(frame.width))
-            * u64::from((512 + 2 * HALO).min(frame.height))
-            * 16;
-        if native_bytes > limit {
-            return Err(format!(
-                "RAW X-Trans native 512-tile image window requires {native_bytes} bytes; limit is {limit}"
-            ));
-        }
-        if let Some(reason) = required_buffer_exceeds_limits(
-            super::demosaic::XTRANS_SCRATCH_BYTES,
-            &self.device.limits(),
-        ) {
-            return Err(format!("RAW X-Trans native tile scratch: {reason}"));
-        }
-        let metadata = RawBuffer::zeros(&self.device, "raw_xtrans_metadata", 147 * 4);
-        let frame_buf = RawBuffer::upload(
-            &self.device,
-            "raw_xtrans_frame",
-            bytemuck::bytes_of(frame),
-            wgpu::BufferUsages::UNIFORM,
-        );
-        let dummy = RawBuffer::zeros(&self.device, "raw_xtrans_metadata_dummy", 16);
-        let mut encoder = self.device.create_command_encoder(&Default::default());
-        // Stage 1 contains metadata only; stage 2 also applies native global
-        // source-bound checks after the (separately resumed) bounds scan.
-        for stage in [1, 2] {
-            let settings = self.demosaic_settings(frame.colors, stage, 0, 0);
-            self.raw_dispatch(
-                XTRANS_PREPARE,
-                &[&frame_buf, &settings, &dummy, cfa, &metadata],
-                &[UNIFORM, UNIFORM, WRITE, READ, WRITE],
-                1,
-                "raw_xtrans_metadata",
-            )
-            .encode(&mut encoder, "raw_xtrans_metadata");
-        }
-        self.raw_submit(encoder)?;
-        self.raw_xtrans_check(&metadata)?;
-        let cursor = RawBuffer::upload(
-            &self.device,
-            "raw_xtrans_cursor",
-            bytemuck::cast_slice(&[2u32, 2, 65535, 0, 0, 0, 0, 0]),
-            wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
-        );
-        let capacity = (limit / 16).min(u64::from(u32::MAX)) as u32;
-        let mut position = [2u32, 2];
-        loop {
-            self.check_cancelled()?;
-            // Actual allhex offsets are signed shorts, even on wide images.
-            // Gather the flat interval rather than assuming spatial locality.
-            let pixel = u64::from(position[1]) * u64::from(frame.width) + u64::from(position[0]);
-            let first = pixel.saturating_sub(32769);
-            let count = u64::from(capacity)
-                .min(u64::from(frame.width) * u64::from(frame.height) - first)
-                as u32;
-            let window = Window {
-                x: first as u32,
-                y: 0,
-                width: count,
-                height: 1,
-            };
-            let image = self.raw_window_buffer(window, "raw_xtrans_bounds_window");
-            let window_buf = RawBuffer::upload(
-                &self.device,
-                "raw_xtrans_bounds_extent",
-                bytemuck::bytes_of(&window),
-                wgpu::BufferUsages::UNIFORM,
-            );
-            let mut encoder = self.device.create_command_encoder(&Default::default());
-            plane.copy_range(&mut encoder, first, count, &image.buffer, 0, false);
-            self.raw_dispatch(
-                XTRANS_BOUNDS,
-                &[&frame_buf, &window_buf, &image, cfa, &metadata, &cursor],
-                &[UNIFORM, UNIFORM, WRITE, READ, WRITE, WRITE],
-                1,
-                "raw_xtrans_bounds",
-            )
-            .encode(&mut encoder, "raw_xtrans_bounds");
-            plane.copy_range(&mut encoder, first, count, &image.buffer, 0, true);
-            self.raw_submit(encoder)?;
-            self.raw_xtrans_check(&metadata)?;
-            let control = self
-                .pipe
-                .readback_buffer_cancellable::<u32>(&cursor.buffer, 32)?;
-            if control[5] != 0 {
-                break;
-            }
-            if position == [control[0], control[1]] {
-                return Err(
-                    "RAW X-Trans bounds cursor cannot fit its native dependency window".into(),
-                );
-            }
-            position = [control[0], control[1]];
-        }
-        // Scratch is intentionally retained across tiles: native padding and
-        // the image's in-place overlap both participate in subsequent tiles.
-        let scratch = RawBuffer::zeros(
-            &self.device,
-            "raw_xtrans_native_scratch",
-            super::demosaic::XTRANS_SCRATCH_BYTES,
-        );
-        for top in (3..frame.height - 19).step_by(496) {
-            for left in (3..frame.width - 19).step_by(496) {
-                self.check_cancelled()?;
-                let x = left.saturating_sub(HALO);
-                let y = top.saturating_sub(HALO);
-                let window = Window {
-                    x,
-                    y,
-                    width: (left + 512 + HALO).min(frame.width) - x,
-                    height: (top + 512 + HALO).min(frame.height) - y,
-                };
-                let image = self.raw_window_buffer(window, "raw_xtrans_native_window");
-                let extent = RawBuffer::upload(
-                    &self.device,
-                    "raw_xtrans_native_extent",
-                    bytemuck::bytes_of(&window),
-                    wgpu::BufferUsages::UNIFORM,
-                );
-                let sparse = force_sparse || frame.width >= 16383;
-                if sparse {
-                    self.raw_xtrans_sparse_predictions(
-                        &plane, frame, &metadata, cfa, &scratch, top, left, limit,
-                    )?;
-                }
-                let settings = self.demosaic_settings(frame.colors, u32::from(sparse), top, left);
-                let mut encoder = self.device.create_command_encoder(&Default::default());
-                plane.copy_window_to(
-                    &mut encoder,
-                    x,
-                    y,
-                    window.width,
-                    window.height,
-                    &image.buffer,
-                )?;
-                self.raw_dispatch(
-                    XTRANS_WINDOW,
-                    &[
-                        &frame_buf, &settings, &image, cfa, &metadata, &scratch, xyz, cbrt, &extent,
-                    ],
-                    &[
-                        UNIFORM, UNIFORM, WRITE, READ, READ, WRITE, READ, READ, UNIFORM,
-                    ],
-                    1,
-                    "raw_xtrans_native_tile",
-                )
-                .encode(&mut encoder, "raw_xtrans_native_tile");
-                plane.copy_window_from(
-                    &mut encoder,
-                    x,
-                    y,
-                    window.width,
-                    window.height,
-                    &image.buffer,
-                    window.width,
-                    0,
-                    0,
-                )?;
-                self.raw_submit(encoder)?;
-            }
-        }
-        // The native final border reads only measured CFA channels, so these
-        // writes commute; gather one-pixel halos and keep only global borders.
-        self.raw_xtrans_border(plane, frame, cfa, limit)
-    }
-
-    // Tile origin, storage limit, and independent prediction bindings stay explicit.
-    #[allow(clippy::too_many_arguments)]
-    fn raw_xtrans_sparse_predictions(
-        &self,
-        plane: &RawPlane,
-        frame: &RawFrame,
-        metadata: &RawBuffer,
-        cfa: &RawBuffer,
-        scratch: &RawBuffer,
-        top: u32,
-        left: u32,
-        limit: u64,
-    ) -> Result<(), String> {
-        let capacity = (limit / (16 * 16)).min(262144) as u32;
-        if capacity == 0 {
-            return Err("RAW X-Trans sparse prediction cannot fit one source group".into());
-        }
-        let frame_buf = RawBuffer::upload(
-            &self.device,
-            "raw_prediction_frame",
-            bytemuck::bytes_of(frame),
-            wgpu::BufferUsages::UNIFORM,
-        );
-        for first in (0..262144u32).step_by(capacity as usize) {
-            self.check_cancelled()?;
-            let count = capacity.min(262144 - first);
-            let indices = RawBuffer::zeros(
-                &self.device,
-                "raw_prediction_requests",
-                u64::from(count) * 16 * 4,
-            );
-            let values = RawBuffer::zeros(
-                &self.device,
-                "raw_prediction_values",
-                u64::from(count) * 16 * 16,
-            );
-            let bounds = RawBuffer::upload(
-                &self.device,
-                "raw_prediction_bounds",
-                bytemuck::cast_slice(&[u32::MAX, 0]),
-                wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
-            );
-            let settings = RawBuffer::upload(
-                &self.device,
-                "raw_prediction_settings",
-                bytemuck::cast_slice(&[top, left, first, count, 0, 0, 0, 0]),
-                wgpu::BufferUsages::UNIFORM,
-            );
-            let mut encoder = self.device.create_command_encoder(&Default::default());
-            self.raw_dispatch(
-                XTRANS_PREDICTIONS,
-                &[
-                    &frame_buf, &settings, metadata, cfa, &indices, &bounds, &values, scratch,
-                ],
-                &[UNIFORM, UNIFORM, READ, READ, WRITE, WRITE, WRITE, WRITE],
-                count,
-                "raw_xtrans_prediction_requests",
-            )
-            .encode(&mut encoder, "raw_xtrans_prediction_requests");
-            self.raw_submit(encoder)?;
-            self.raw_gather_requests_gpu(
-                &indices,
-                &bounds,
-                &values,
-                count * 16,
-                4,
-                plane
-                    .pages
-                    .iter()
-                    .map(|p| (p.first_pixel, p.n_pixels, &p.buffer)),
-            )?;
-            let settings = RawBuffer::upload(
-                &self.device,
-                "raw_prediction_settings",
-                bytemuck::cast_slice(&[top, left, first, count, 1, 0, 0, 0]),
-                wgpu::BufferUsages::UNIFORM,
-            );
-            let mut encoder = self.device.create_command_encoder(&Default::default());
-            self.raw_dispatch(
-                XTRANS_PREDICTIONS,
-                &[
-                    &frame_buf, &settings, metadata, cfa, &indices, &bounds, &values, scratch,
-                ],
-                &[UNIFORM, UNIFORM, READ, READ, WRITE, WRITE, WRITE, WRITE],
-                count,
-                "raw_xtrans_prediction_values",
-            )
-            .encode(&mut encoder, "raw_xtrans_prediction_values");
-            self.raw_submit(encoder)?;
-        }
-        Ok(())
-    }
-
     fn raw_xtrans_check(&self, metadata: &RawBuffer) -> Result<(), String> {
         let values = self
             .pipe
             .readback_buffer_cancellable::<i32>(&metadata.buffer, 147 * 4)?;
         if values[146] != 0 {
-            Err("LibRaw Markesteijn rejected corrupt X-Trans pattern or source bounds".into())
+            Err("Markesteijn rejected an invalid X-Trans CFA pattern".into())
         } else {
             Ok(())
         }
-    }
-
-    fn raw_xtrans_border(
-        &self,
-        plane: RawPlane,
-        frame: &RawFrame,
-        cfa: &RawBuffer,
-        limit: u64,
-    ) -> Result<RawPlane, String> {
-        let side = ((limit / 16) as f64).sqrt().floor() as u32;
-        let step = side - 2;
-        for y in (0..plane.height).step_by(step as usize) {
-            for x in (0..plane.width).step_by(step as usize) {
-                self.check_cancelled()?;
-                let w = step.min(plane.width - x);
-                let h = step.min(plane.height - y);
-                if x >= 8 && y >= 8 && x + w <= plane.width - 8 && y + h <= plane.height - 8 {
-                    continue;
-                }
-                let left = x.saturating_sub(1);
-                let top = y.saturating_sub(1);
-                let window = Window {
-                    x: left,
-                    y: top,
-                    width: (x + w + 1).min(plane.width) - left,
-                    height: (y + h + 1).min(plane.height) - top,
-                };
-                let image = self.raw_window_buffer(window, "raw_xtrans_border_window");
-                let extent = RawBuffer::upload(
-                    &self.device,
-                    "raw_xtrans_border_extent",
-                    bytemuck::bytes_of(&window),
-                    wgpu::BufferUsages::UNIFORM,
-                );
-                let frame_buf = RawBuffer::upload(
-                    &self.device,
-                    "raw_xtrans_border_frame",
-                    bytemuck::bytes_of(frame),
-                    wgpu::BufferUsages::UNIFORM,
-                );
-                let mut encoder = self.device.create_command_encoder(&Default::default());
-                plane.copy_window_to(
-                    &mut encoder,
-                    left,
-                    top,
-                    window.width,
-                    window.height,
-                    &image.buffer,
-                )?;
-                self.raw_dispatch(
-                    XTRANS_BORDER,
-                    &[&frame_buf, &extent, &image, cfa],
-                    &[UNIFORM, UNIFORM, WRITE, READ],
-                    window.width * window.height,
-                    "raw_xtrans_border",
-                )
-                .encode(&mut encoder, "raw_xtrans_border");
-                plane.copy_window_from(
-                    &mut encoder,
-                    x,
-                    y,
-                    w,
-                    h,
-                    &image.buffer,
-                    window.width,
-                    x - left,
-                    y - top,
-                )?;
-                self.raw_submit(encoder)?;
-            }
-        }
-        Ok(plane)
     }
 }
 
@@ -645,28 +299,6 @@ mod logic_tests {
         assert!(covered.iter().all(|&count| count == 1));
     }
 }
-
-const XTRANS_PREPARE: &str = concat!(
-    include_str!("../../../../spektrafilm-shaders/wgsl/raw/raw_common.wgsl"),
-    include_str!("../../../../spektrafilm-shaders/wgsl/raw/raw_xtrans_prepare.wgsl")
-);
-const XTRANS_BOUNDS: &str = concat!(
-    include_str!("../../../../spektrafilm-shaders/wgsl/raw/raw_common.wgsl"),
-    include_str!("../../../../spektrafilm-shaders/wgsl/raw/raw_xtrans_bounds_paged.wgsl")
-);
-const XTRANS_WINDOW: &str = concat!(
-    include_str!("../../../../spektrafilm-shaders/wgsl/raw/raw_common.wgsl"),
-    include_str!("../../../../spektrafilm-shaders/wgsl/raw/raw_xtrans_window.wgsl"),
-    include_str!("../../../../spektrafilm-shaders/wgsl/raw/raw_xtrans.wgsl")
-);
-const XTRANS_BORDER: &str = concat!(
-    include_str!("../../../../spektrafilm-shaders/wgsl/raw/raw_common.wgsl"),
-    include_str!("../../../../spektrafilm-shaders/wgsl/raw/raw_xtrans_border_paged.wgsl")
-);
-const XTRANS_PREDICTIONS: &str = concat!(
-    include_str!("../../../../spektrafilm-shaders/wgsl/raw/raw_common.wgsl"),
-    include_str!("../../../../spektrafilm-shaders/wgsl/raw/raw_xtrans_predictions_paged.wgsl")
-);
 
 #[cfg(test)]
 mod tests {
@@ -763,12 +395,9 @@ mod tests {
         if let Some(status) = status {
             gpu.raw_xtrans_check(&status).unwrap();
         }
-        let tiled = if mode == RawDemosaic::XTrans && size == 512 {
-            gpu.raw_xtrans_paged(plane, &frame, &cfa, &xyz, &cbrt, limit, true)
-        } else {
-            gpu.raw_demosaic_paged_with_limit(&sensor, &params, plane, &cfa, &xyz, &cbrt, limit)
-        }
-        .unwrap();
+        let tiled = gpu
+            .raw_demosaic_paged_with_limit(&sensor, &params, plane, &cfa, &xyz, &cbrt, limit)
+            .unwrap();
         let expected = gpu
             .pipe
             .readback_buffer_as::<u32>(&image.buffer, u64::from(size) * u64::from(size) * 16)
@@ -813,7 +442,75 @@ mod tests {
     }
 
     #[test]
-    fn xtrans_paged_matches_native_multitile_scan_and_overlap() {
+    fn xtrans_cancel_between_windows_keeps_device_reusable() {
+        use std::sync::{
+            Arc,
+            atomic::{AtomicBool, AtomicUsize, Ordering},
+        };
+        let gpu = crate::test_support::adapter();
+        let mut sensor = super::super::tests::synthetic_sensor(128);
+        sensor.cfa = vec![
+            1, 0, 1, 1, 2, 1, 2, 1, 2, 0, 1, 0, 1, 0, 1, 1, 2, 1, 1, 2, 1, 1, 0, 1, 0, 1, 0, 2, 1,
+            2, 1, 2, 1, 1, 0, 1,
+        ];
+        sensor.cfa_rows = 6;
+        sensor.cfa_columns = 6;
+        let mut params = super::super::tests::synthetic_params(&sensor);
+        params.demosaic = RawDemosaic::XTrans;
+        let codes: Vec<u32> = sensor.cfa.iter().map(|v| u32::from(*v)).collect();
+        let cfa = RawBuffer::upload(
+            &gpu.device,
+            "cancel_xtrans_cfa",
+            bytemuck::cast_slice(&codes),
+            wgpu::BufferUsages::STORAGE,
+        );
+        let dummy = RawBuffer::zeros(&gpu.device, "cancel_xtrans_dummy", 16);
+        let signal = Arc::new(AtomicBool::new(false));
+        let count = Arc::new(AtomicUsize::new(0));
+        gpu.pipe.test_on_readback({
+            let signal = signal.clone();
+            let count = count.clone();
+            move || {
+                count.fetch_add(1, Ordering::Relaxed);
+                signal.store(true, Ordering::Relaxed);
+            }
+        });
+        let mut operation = gpu.derived_explicit();
+        operation.pipe = operation.pipe.with_cancellation(Some(signal.clone()));
+        operation.cancellation = Some(signal);
+        let plane = gpu
+            .raw_allocate_plane(128, 128, "cancel_xtrans_source")
+            .unwrap();
+        assert_eq!(
+            operation
+                .raw_demosaic_paged_with_limit(
+                    &sensor,
+                    &params,
+                    plane,
+                    &cfa,
+                    &dummy,
+                    &dummy,
+                    96 * 96 * 128
+                )
+                .err()
+                .unwrap(),
+            "operation cancelled"
+        );
+        assert_eq!(count.load(Ordering::Relaxed), 1);
+        gpu.pipe.test_on_readback(|| {});
+        compare(
+            &gpu,
+            RawDemosaic::XTrans,
+            64,
+            &sensor.cfa,
+            6,
+            6,
+            96 * 96 * 128,
+        );
+    }
+
+    #[test]
+    fn xtrans_paged_matches_parallel_full_frame_at_seams() {
         let gpu = crate::test_support::adapter();
         let pattern = [
             1, 0, 1, 1, 2, 1, 2, 1, 2, 0, 1, 0, 1, 0, 1, 1, 2, 1, 1, 2, 1, 1, 0, 1, 0, 1, 0, 2, 1,
@@ -822,22 +519,29 @@ mod tests {
         compare(
             &gpu,
             RawDemosaic::XTrans,
-            1030,
+            128,
             &pattern,
             6,
             6,
-            8 * 1024 * 1024,
+            96 * 96 * 128,
         );
-        // Same sparse preparation as wide-stride tiles, exercised without a
-        // huge test sensor. Native predictions then consume stage 1 scratch.
+        // Smaller windows exercise CFA alignment and clipped final cores at
+        // every translation of the sensor pattern.
+        for shift in 0..36 {
+            let shifted: Vec<u8> = (0..36)
+                .map(|i| pattern[((i / 6 + shift / 6) % 6) * 6 + (i % 6 + shift % 6) % 6])
+                .collect();
+            compare(&gpu, RawDemosaic::XTrans, 70, &shifted, 6, 6, 64 * 64 * 128);
+        }
+        // A different final partition exercises clipped halos.
         compare(
             &gpu,
             RawDemosaic::XTrans,
-            512,
+            130,
             &pattern,
             6,
             6,
-            8 * 1024 * 1024,
+            96 * 96 * 128,
         );
     }
 }

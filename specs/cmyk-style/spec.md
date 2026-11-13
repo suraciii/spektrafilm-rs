@@ -2,7 +2,7 @@
 
 ## Product model
 
-`CMYK ink style` is an optional modeled appearance for an RGB output. It is not a film stock, a photographic paper, a photographic printing operation, or a base workflow. The `input` workflow treats its source as already rendered RGB and applies input-to-output color management.
+`CMYK ink style` is an optional modeled appearance for an RGB output. It is not a film stock, a photographic paper, a photographic printing operation, or a base route. The `input` route treats its source as already rendered RGB and applies input-to-output color management.
 
 The first style is the fixed `ink` style. It is a self-authored RGB appearance model informed by the CMYK research. It is not an ICC soft proof, a press simulation, a press certification, or a reproduction guarantee for a historical publication.
 
@@ -10,27 +10,28 @@ The product MUST describe this feature as a style simulation. It MUST NOT claim 
 
 ## Enablement
 
-- The GUI MUST expose a `CMYK ink style` checkbox next to the base workflow controls. It MUST be off in the factory state.
-- Enabling or disabling CMYK ink style MUST NOT change the base workflow, film stock, photographic paper, scan polarity, or source exposure.
-- The existing `input` workflow MUST perform source-to-output color management without film simulation, photographic printing, metering, or new film grain.
-- CMYK ink style MUST accept the completed RGB output of every supported base workflow. It MUST NOT require a photographic print stage.
-- The GUI MUST show the resulting base workflow and enabled finishing treatment together before rendering.
+- The GUI MUST expose a `CMYK ink style` checkbox next to the base route controls. It MUST be inactive with an explanation in LUT and Off modes and MUST be off in the factory state.
+- Enabling or disabling CMYK ink style MUST NOT change the base route, film stock, photographic paper, scan polarity, or source exposure.
+- The existing `input` route MUST perform source-to-output color management without film simulation, photographic printing, metering, or new film grain.
+- CMYK ink style MUST accept the completed RGB output of every supported Film-mode base route. It MUST NOT require a photographic print stage.
+- LUT and Off modes retain CMYK ink style values but MUST NOT execute them.
+- The GUI MUST show the resulting base route and enabled finishing treatment together before rendering.
 - A single `Strength` control MUST use the range 0 to 1. Its enabled default MUST be 1.
 - Disabling the treatment MUST retain the selected Strength.
-- Presets and saved GUI state MUST retain the base workflow, enablement, and Strength independently. Preview, Scan, and Export MUST use the same effective finishing settings.
-- The retired route `input > film > scan > magazine` MUST NOT remain a selectable base workflow. A versioned document migration MAY replace it with `input > film > scan` and enable `cmyk`.
+- Presets and saved GUI state MUST retain the base route, enablement, and Strength independently. Preview, Scan, and Export MUST use the same effective finishing settings.
+- The retired route `input > film > scan > magazine` MUST NOT remain a selectable base route. A versioned document migration MAY replace it with `input > film > scan` and enable `cmyk`.
 - A current-schema document or direct current-schema route using the retired route MUST fail with an actionable migration error.
 
 ## Color contract
 
 - The feature MUST accept output-referred RGB with explicit primaries, white point, and transfer state. Linear encoding MUST NOT imply scene-referred exposure.
-- The feature MUST run once after the base workflow and its scanner-domain effects, before output publication:
+- The feature MUST run once after the base route and its scanner-domain effects, before output publication:
 
-  The [film-chain order](../film-chain/spec.md#contract) includes eligible [common finishing](../finishing/design.md#color-and-order) before output gamut processing. CMYK ink style remains downstream of scanner-domain effects and upstream of output mix.
+  The [film-chain order](../film-chain/spec.md#contract) includes eligible [Tone & Color](../finishing/design.md#color-and-order) before output gamut processing. CMYK ink style remains downstream of scanner-domain effects and upstream of output mix.
 
 - Existing material controls run at their eligible exposure and development stages before scanning. They MUST NOT alter CMYK ink style's definition, Strength, or enablement.
 - Overall output mixing follows CMYK ink style in common linear output RGB. Material processing and CMYK ink style MUST each run once.
-- The `input` workflow runs CMYK ink style without film or print development.
+- The `input` route runs CMYK ink style without film or print development.
 - The feature MUST preserve image dimensions and spatial detail positions. It MUST NOT re-run exposure, film development, or grain generation.
 - All pixels MUST use the same color rule. The feature MUST NOT detect faces or use manually selected image regions.
 - The low-chroma behavior MUST NOT be described as guaranteed skin protection.
@@ -87,7 +88,7 @@ Telemetry and stage-evidence schema versions remain unchanged unless their seria
 - Existing documents using the retired route `input > film > scan > magazine` MAY migrate to `input > film > scan` with `cmyk.active = true`. A current-schema document, sparse source, inline assignment, or direct route selector naming the retired route MUST fail and MUST identify the replacement.
 - CLI `--set` and discovery MUST expose only `cmyk.active` and `cmyk.strength`. There MUST be no retired route or field alias.
 - GUI labels and help MUST use `CMYK ink style`. Technical help MUST state that the output remains RGB and is not a press proof or separation.
-- Preset and complete-state migration MUST preserve the base workflow, profile references, unrelated controls, Strength, and enablement. Migration MUST NOT silently alter scan polarity, exposure, film, paper, or output settings.
+- Preset and complete-state migration MUST preserve the base route, profile references, unrelated controls, Strength, and enablement. Migration MUST NOT silently alter scan polarity, exposure, film, paper, or output settings.
 - A legacy field or route MUST NOT be migrated merely because its spelling is recognized; the carrier MUST first prove that its schema version is an approved legacy version.
 
 ## GPU and execution contract
@@ -97,7 +98,7 @@ Telemetry and stage-evidence schema versions remain unchanged unless their seria
 - An explicit GPU request MUST fail before output publication if the complete selected operation, including CMYK ink style, cannot execute on the device. GUI failure MUST retain the last accepted output.
 - Automatic backend selection MAY choose the complete CPU path when no usable GPU is available. It MUST report that selection and reason.
 - It MUST NOT silently change the feature or execute only part of the operation on CPU after GPU selection.
-- The feature MUST NOT add a fourth spectral stage, a fourth `ImageBuf` channel, a new workflow route, or a second implementation in the CLI or GUI.
+- The feature MUST NOT add a fourth spectral stage, a fourth `ImageBuf` channel, a new route, or a second implementation in the CLI or GUI.
 
 ## LUT delivery and provenance
 
@@ -122,7 +123,7 @@ Telemetry and stage-evidence schema versions remain unchanged unless their seria
 - Active Strength 1 matches the frozen `cmyk_ink_v1` reference probes for encoded and linear output states.
 - The transform is finite on neutral, chromatic, boundary, negative-headroom, and super-white probes accepted by the existing image contract.
 - Neutral input remains neutral within the declared numerical budget, and the declared tone response remains monotone over the accepted display interval.
-- The `input` workflow and every supported scan route apply the same terminal RGB transform; the input route has no film or photographic-paper dependence.
+- The `input` route and every supported scan route apply the same terminal RGB transform; the input route has no film or photographic-paper dependence.
 - Preview, Scan, Export, CLI process, resident execution, per-stage execution, and LUT evaluation use one definition and apply it at most once.
 - CPU f64, native f32, and GPU outputs satisfy budgets owned by the GPU execution contract. An explicit GPU request cannot silently use CPU image arithmetic.
 - Legacy field migration is transactional and idempotent. Legacy/new conflicts reject.

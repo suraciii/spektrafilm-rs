@@ -10,6 +10,10 @@ fn native_and_retained_device_outputs_report_comparable_samples() {
     let path = std::env::var_os("SPEKTRAFILM_RAW_PARITY_FIXTURE").expect("set camera RAW fixture");
     let path = std::path::Path::new(&path);
     let gpu = spektrafilm_gpu::test_support::adapter();
+    let context = spektrafilm_backend::telemetry::ObservationContext::new(
+        spektrafilm_backend::telemetry::CollectionMode::Summary,
+    );
+    let observed = gpu.with_observation_context(context.clone()).unwrap();
     let sensor = spektrafilm_raw::unpack(path).unwrap();
     let demosaic = spektrafilm_raw::plan(&sensor, &RawOptions::default())
         .unwrap()
@@ -70,7 +74,7 @@ fn native_and_retained_device_outputs_report_comparable_samples() {
             };
             let native = spektrafilm_raw::load(path, &options).unwrap();
             let retained =
-                spektrafilm_raw::load_retained_with_backend(path, &options, &*gpu).unwrap();
+                spektrafilm_raw::load_retained_with_backend(path, &options, &*observed).unwrap();
             assert!(retained.image.is_retained());
             let actual = gpu.materialize_retained(&retained.image).unwrap();
             assert_eq!(
@@ -82,11 +86,13 @@ fn native_and_retained_device_outputs_report_comparable_samples() {
             assert_eq!(retained.lens_model_identity.is_some(), lens_correction);
             let mut total = 0.0f64;
             let mut maximum = 0.0f64;
+            let mut squared = 0.0f64;
             let mut outliers: Vec<(usize, f64)> = Vec::with_capacity(8);
             for (index, (a, b)) in native.image.data.iter().zip(&actual.data).enumerate() {
                 let difference = (to_f64(*a) - to_f64(*b)).abs();
                 assert!(difference.is_finite());
                 total += difference;
+                squared += difference * difference;
                 maximum = maximum.max(difference);
                 if difference > 0.0
                     && (outliers.len() < 8 || difference > outliers.last().unwrap().1)
@@ -130,7 +136,42 @@ fn native_and_retained_device_outputs_report_comparable_samples() {
                 total / actual.data.len() as f64 <= 0.005,
                 "RAW mean absolute error exceeds 0.005"
             );
-            assert!(maximum <= 0.05, "RAW maximum absolute error exceeds 0.05");
+            if demosaic != spektrafilm_backend::RawDemosaic::XTrans {
+                assert!(maximum <= 0.05, "RAW maximum absolute error exceeds 0.05");
+            } else {
+                // LibRaw's integer/Lab votes are a different implementation
+                // from darktable's float/YUV votes. Check whole-image quality;
+                // the GPU unit suite checks same-algorithm error within 1 LSB.
+                let psnr = -10.0 * (squared / actual.data.len() as f64).log10();
+                eprintln!("X-Trans LibRaw comparison PSNR={psnr:.6} dB (peak=1)");
+                assert!(psnr >= 50.0, "X-Trans image quality regression: {psnr} dB");
+                assert!(
+                    maximum <= 0.1,
+                    "X-Trans algorithm comparison maximum {maximum}"
+                );
+            }
+            if demosaic == spektrafilm_backend::RawDemosaic::XTrans {
+                let direct =
+                    spektrafilm_raw::load_with_backend(path, &options, &*observed).unwrap();
+                assert_eq!(
+                    (direct.image.width, direct.image.height),
+                    (actual.width, actual.height)
+                );
+                assert_eq!(direct.lens_info, native.lens_info);
+                assert_eq!(direct.lens_model_identity, native.lens_model_identity);
+                for (a, b) in direct.image.data.iter().zip(&actual.data) {
+                    assert!(to_f64(*a).is_finite() && (to_f64(*a) - to_f64(*b)).abs() <= 1e-5);
+                }
+                let snapshot = context.snapshot();
+                assert!(snapshot.observations.iter().any(|o| o.name == "raw_sensor"
+                    && o.executor == Some(spektrafilm_backend::telemetry::Executor::Gpu)));
+                assert!(
+                    !snapshot
+                        .observations
+                        .iter()
+                        .any(|o| o.name == "raw_xtrans_decode")
+                );
+            }
         }
     }
 }

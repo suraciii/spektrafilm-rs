@@ -8,17 +8,27 @@ fn expand_preset_library(h: &mut Harness<'_, App>) {
     if h.query_by_label("Search presets").is_none() {
         click(h, "Collapse or expand Presets");
     }
-    scroll_preset_into_view(h, "Refresh");
-    preset_pointer_click(h, "Refresh", egui::PointerButton::Primary);
+    library_action(h, "Refresh presets");
+}
+
+/// Library-wide actions live in the browser header's single menu.
+fn library_action(h: &mut Harness<'_, App>, action: &str) {
+    click(h, "Preset library actions");
+    assert!(
+        h.query_by_label(action).is_some(),
+        "{action} should be available in the library menu"
+    );
+    click(h, action);
 }
 
 /// Scroll the preset browser itself, not the independent control inspector.
 fn scroll_preset_into_view(h: &mut Harness<'_, App>, label: &str) {
     for _ in 0..32 {
         let search = h.get_by_label("Search presets").raw_bounds().unwrap();
-        let filters = h.get_by_label("Recently used").raw_bounds().unwrap();
-        let top = filters.y1 + 8.0;
-        let bottom = h.ctx.screen_rect().bottom() as f64 - 8.0;
+        let top = search.y1 + 8.0;
+        // The browser's scroll area owns the whole column, so its clip reaches
+        // the window bottom; the shared footer is drawn beside it, not over it.
+        let bottom = h.ctx.screen_rect().bottom() as f64 - 2.0;
         let bounds = h.get_by_label(label).raw_bounds().unwrap();
         let delta = if bounds.y0 < top {
             top - bounds.y0 + 12.0
@@ -198,7 +208,19 @@ fn choose_diagnostics_mode(h: &mut Harness<'_, App>, next: &str) {
     h.get_by_role_and_label(egui::accesskit::Role::ComboBox, "Collection mode")
         .simulate_click();
     h.run_steps(3);
-    let options: Vec<_> = h.query_all_by_label(next).collect();
+    let mut options: Vec<_> = h.query_all_by_label(next).collect();
+    if options.len() > 1 {
+        // The persistent mode selector also offers Film, LUT, and Off. The
+        // open diagnostics popup is below it on screen.
+        options.sort_by(|a, b| {
+            a.node()
+                .raw_bounds()
+                .unwrap()
+                .y0
+                .total_cmp(&b.node().raw_bounds().unwrap().y0)
+        });
+        options.remove(0);
+    }
     assert_eq!(options.len(), 1, "diagnostics option {next}");
     options[0].simulate_click();
     h.run_steps(3);
@@ -243,7 +265,7 @@ fn external_look(h: &Harness<'_, App>, name: &str, path: &Path) {
 }
 
 #[test]
-fn preset_save_revert_rename_duplicate_delete_and_import_conflict_use_real_dialogs() {
+fn preset_save_replace_rename_duplicate_delete_and_import_conflict_use_real_dialogs() {
     let mut s = session();
     let h = &mut s.harness;
     expand_preset_library(h);
@@ -266,12 +288,42 @@ fn preset_save_revert_rename_duplicate_delete_and_import_conflict_use_real_dialo
     );
     assert_preset_marker(h, presets::Marker::Applied);
 
+    // A same-name save is an explicit replacement, never an Enter shortcut.
+    click(h, "Save preset…");
+    edit_preset_name(h, "Dialog Look");
+    assert!(
+        h.get_by_label("Save").node().is_disabled(),
+        "collision must disable ordinary Save"
+    );
+    h.press_key(egui::Key::Enter);
+    h.run_steps(3);
+    assert!(
+        h.state().presets.name_dialog.is_some(),
+        "Enter must not replace an existing document"
+    );
+    click(h, "Replace “Dialog Look”");
+    assert!(h.state().presets.name_dialog.is_none());
+    assert_preset_marker(h, presets::Marker::Applied);
+    assert!(original.is_file());
+
+    // A case-variant collision is still the same stored document.
+    click(h, "Save preset…");
+    edit_preset_name(h, "dialog look");
+    assert!(h.get_by_label("Save").node().is_disabled());
+    h.press_key(egui::Key::Enter);
+    h.run_steps(3);
+    assert!(h.state().presets.name_dialog.is_some());
+    click(h, "Replace “dialog look”");
+    assert!(h.state().presets.name_dialog.is_none());
+    assert!(original.is_file());
+    assert!(!library.directory().join("dialog look.toml").exists());
+
     reveal_control(h, "output_mix.amount");
     edit(h, "Simulation blend", "0.25");
     assert!((h.state().params.output_mix.amount - 0.25).abs() < 1e-6);
     let row = preset_row(h, "Dialog Look");
     assert_preset_marker(h, presets::Marker::Modified);
-    click_preset_action(h, &row, "Revert");
+    preset_pointer_click(h, &row, egui::PointerButton::Primary);
     assert_preset_marker(h, presets::Marker::Applied);
     assert!((h.state().params.output_mix.amount - 1.0).abs() < 1e-6);
 
@@ -302,6 +354,17 @@ fn preset_save_revert_rename_duplicate_delete_and_import_conflict_use_real_dialo
             .name,
         "Duplicate Look"
     );
+    // Duplicate conflicts ask for another name; replacement belongs to Save.
+    let renamed_row = preset_row(h, "Renamed Look");
+    click_preset_action(h, &renamed_row, "Duplicate…");
+    edit_preset_name(h, "Duplicate Look");
+    assert!(h.get_by_label("Save").node().is_disabled());
+    assert!(
+        h.query_by_label("Replace “Duplicate Look”").is_none(),
+        "duplicate conflicts must not offer replacement"
+    );
+    click(h, "Cancel");
+
     let row = preset_row(h, "Duplicate Look");
     click_preset_action(h, &row, "Delete…");
     click(h, "Delete");
@@ -310,8 +373,7 @@ fn preset_save_revert_rename_duplicate_delete_and_import_conflict_use_real_dialo
     let external = s.directory.path().join("external-look.toml");
     external_look(h, "Renamed Look", &external);
     script(h, chooser::ChooserResult::Scripted(external.clone()));
-    scroll_preset_into_view(h, "Import");
-    preset_pointer_click(h, "Import", egui::PointerButton::Primary);
+    library_action(h, "Import preset");
     assert!(h.state().presets.name_dialog.is_some());
     edit_preset_name(h, "Imported Copy");
     click(h, "Save");
@@ -343,8 +405,7 @@ fn preset_import_rejects_section_documents_without_writing_or_editing() {
     let before = h.state().params.clone();
     let revision = h.state().parameter_revision;
     script(h, chooser::ChooserResult::Scripted(external.clone()));
-    scroll_preset_into_view(h, "Import");
-    preset_pointer_click(h, "Import", egui::PointerButton::Primary);
+    library_action(h, "Import preset");
     assert!(h.state().status.localized(&h.ctx).contains("look"));
     edit_preset_name(h, "Renamed section");
     click(h, "Save");
@@ -725,22 +786,63 @@ fn cancelled_export_chooser_and_rejected_destination_do_not_commit_draft_prefere
     assert_eq!(h.state().export_options, committed);
 
     let existing = s.directory.path().join("rejected-destination.tiff");
+    let rejected = s.directory.path().join("rejected-destination.wrong");
     let original = b"existing user file";
     std::fs::write(&existing, original).unwrap();
+    std::fs::write(&rejected, b"confirmed path sentinel").unwrap();
     open_export(h);
     choose(h, "Format", "TIFF");
     choose(h, "Bit depth", "32 bit");
-    script(
-        h,
-        chooser::Chooser::chooser_path(&s.directory.path().join("rejected-destination.wrong")),
-    );
+    script(h, chooser::Chooser::chooser_path(&rejected));
     export_action(h, "Export file…");
     assert!(h.state().export_job.is_none());
     assert_eq!(h.state().export_options, committed);
     assert_eq!(std::fs::read(&existing).unwrap(), original);
+    assert_eq!(
+        std::fs::read(&rejected).unwrap(),
+        b"confirmed path sentinel"
+    );
     assert_eq!(h.state().params, params);
     assert_eq!(h.state().can_undo(), could_undo);
     assert_eq!(h.state().can_redo(), could_redo);
+}
+
+#[test]
+fn confirmed_image_names_and_containers_are_not_reinterpreted() {
+    let mut s = session();
+    let h = &mut s.harness;
+    preview(h);
+
+    // This is the chooser result, not the text typed into a native widget.
+    // A name with two suffixes is legal and its final extension selects Save.
+    let save = s.directory.path().join("retained.png.jpg");
+    let other_save = s.directory.path().join("retained.png");
+    std::fs::write(&save, b"save sentinel").unwrap();
+    std::fs::write(&other_save, b"other sentinel").unwrap();
+    script(h, chooser::Chooser::chooser_path(&save));
+    click(h, "SAVE");
+    wait_until(h, |app| app.pending_saves.is_empty());
+    assert!(
+        std::fs::read(&save)
+            .unwrap()
+            .starts_with(&[0xff, 0xd8, 0xff])
+    );
+    assert_eq!(std::fs::read(&other_save).unwrap(), b"other sentinel");
+
+    let export = s.directory.path().join("render.png.png");
+    let other_export = s.directory.path().join("render.png");
+    std::fs::write(&export, b"export sentinel").unwrap();
+    std::fs::write(&other_export, b"other sentinel").unwrap();
+    open_export(h);
+    script(h, chooser::Chooser::chooser_path(&export));
+    export_action(h, "Export file…");
+    wait_until(h, |app| app.export_job.is_none());
+    assert!(
+        std::fs::read(&export)
+            .unwrap()
+            .starts_with(b"\x89PNG\r\n\x1a\n")
+    );
+    assert_eq!(std::fs::read(&other_export).unwrap(), b"other sentinel");
 }
 
 // The export dialog is modal, but a modal window does not block drag-and-drop,

@@ -95,10 +95,12 @@ impl GuiState {
             runtime["enlarger"][enlarger_key] = s["simulation"][simulation_key].clone();
         }
         runtime["workflow"]["route"] = s["simulation"]["route"].clone();
-        runtime["io"]["scan_film"] = json!(matches!(
-            s["simulation"]["route"].as_str(),
-            Some("input > film > scan")
-        ));
+        runtime["io"]["scan_film"] = json!(
+            spektrafilm_core::WorkflowRoute::parse(
+                s["simulation"]["route"].as_str().unwrap_or_default()
+            )
+            .scans_film()
+        );
         copy_fields(
             &mut runtime["io"],
             &s["simulation"],
@@ -109,7 +111,6 @@ impl GuiState {
             ("use_enlarger_lut", json!(true)),
             ("use_scanner_lut", json!(true)),
             ("lut_resolution", json!(17)),
-            ("use_fast_stats", json!(true)),
         ] {
             runtime["settings"][key] = value;
         }

@@ -3,7 +3,8 @@
 //!
 //! Native sensor metadata selects AHD, VNG (including linear preparation), PPG,
 //! Markesteijn X-Trans, or precoloured processing. Numerical stages remain in
-//! their native integer domains until the camera RGB bitmap boundary.
+//! integer transport domains; Markesteijn uses normalized float direction planes
+//! and returns to ushort camera samples before the RGB bitmap boundary.
 //!
 //! The ingress completes float normalization, black removal, missing-site
 //! correction, global maximum and automatic-WB reductions, and scale resolution
@@ -14,7 +15,7 @@
 //!
 //! Full-image bindings are used only when all relevant planes fit. Otherwise
 //! `tiled_sensor`, `tiled_demosaic`, and `tiled_output` preserve full-source
-//! reductions, CFA phase, interpolation halos, native X-Trans scan order, and
+//! reductions, CFA phase, interpolation halos, and
 //! recurrent geometry using bounded pages and device-generated sparse gathers.
 //! The host handles coefficients and fixed-size control/status metadata, not
 //! image arithmetic. Numerical parity remains an exercised acceptance question,
@@ -29,6 +30,7 @@ mod demosaic;
 mod float_normalization;
 mod geometry;
 mod lens;
+mod markesteijn;
 mod paged;
 mod tiled;
 mod tiled_demosaic;
@@ -687,7 +689,8 @@ impl WgpuBackend {
         self.check_cancelled()?;
         let limit = super::bounded::storage_binding_limit(self)?;
         let (output_width, output_height) = sensor.output_dimensions()?;
-        let large = u64::from(sensor.width) * u64::from(sensor.height) * 16 > limit
+        let large = params.demosaic == RawDemosaic::XTrans
+            || u64::from(sensor.width) * u64::from(sensor.height) * 16 > limit
             || sensor.samples.len() as u64 * 4 > limit
             || u64::from(output_width) * u64::from(output_height) * 16 > limit
             || matches!(

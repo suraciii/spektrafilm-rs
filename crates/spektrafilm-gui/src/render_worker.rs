@@ -103,6 +103,7 @@ pub(super) struct RenderResult {
     pub(super) output_cctf_encoding: bool,
     pub(super) source_metadata: Option<ImageMetadata>,
     pub(super) comparison: crate::render::Comparison,
+    pub(super) lut_clipped_fraction: Option<f64>,
 }
 
 /// One immutable raw upload for the accepted input, before metering or geometry.
@@ -315,7 +316,7 @@ impl RenderWorker {
                             };
                             Ok(Some(
                                 if runtime_params.settings.preview_mode
-                                    && !runtime_params.scanner.requires_full_frame()
+                                    && !runtime_params.requires_full_frame()
                                 {
                                     Arc::new(spektrafilm_core::params_builder::resize_for_preview(
                                         &source,
@@ -341,7 +342,7 @@ impl RenderWorker {
                             observation.scope("simulation", ObservationKind::Phase, Purpose::Image);
                         let processed = {
                             let _unit = spektrafilm_core::progress::report("simulation");
-                            if !runtime_params.scanner.requires_full_frame() {
+                            if !runtime_params.requires_full_frame() {
                                 // A cached scan baseline also owns its raw source.
                                 // Release it when leaving the full-frame route.
                                 scan_cache = spektrafilm_core::runtime::ScanFrameCache::default();
@@ -386,7 +387,7 @@ impl RenderWorker {
                                             .preview_mode
                                             .then_some(runtime_params.settings.preview_max_size),
                                     };
-                                    if runtime_params.scanner.requires_full_frame() {
+                                    if runtime_params.requires_full_frame() {
                                         pipeline_template
                                             .process_device_scan_cached_retained_observed(
                                                 &image,
@@ -419,7 +420,7 @@ impl RenderWorker {
                                 Ok(Some(image)) => Ok((None, Some(image))),
                                 Ok(None) => {
                                     let image = host_input.expect("CPU working image prepared");
-                                    if runtime_params.scanner.requires_full_frame() {
+                                    if runtime_params.requires_full_frame() {
                                         pipeline_template.process_scan_cached_observed(
                                             &image,
                                             &mut scan_cache,
@@ -518,6 +519,7 @@ impl RenderWorker {
                         );
                         Ok(RenderResult {
                             comparison: request.snapshot.comparison(),
+                            lut_clipped_fraction: pipeline_template.lut_clipped_fraction(),
                             source_metadata: request.source_metadata,
                             output_color_space: runtime_params.io.output_color_space.clone(),
                             output_cctf_encoding: runtime_params.io.output_cctf_encoding,

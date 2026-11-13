@@ -1,0 +1,11 @@
+{
+  "stock": "kodak_portra_800_push1",
+  "name": "Kodak Portra 800 Push +1",
+  "primary_url": "https://github.com/noahhaasis/negs/blob/26c903be9064b4fbfd46a8396620ba7e1e9bc1df/data/profiles/kodak_portra_800_push1.json",
+  "primary_sha256": "aa2d7b1fa442d5b55989e776bee5fa710974ae799c55c422945e1dfda821a512",
+  "primary_revision": "Negs origin/main 26c903b; SpektraFilm profile by Andrea Volpato, CC BY-SA 4.0",
+  "process": "Kodak Portra 800 exposed +1 stop and developed to Push +1; separate push profile from Andrea Volpato's SpektraFilm data.",
+  "adaptation": "SpektraFilm profile already present in this repository; no profile edit.",
+  "license": "SpektraFilm profile by Andrea Volpato; CC BY-SA 4.0; see data/license/SPEKTRAFILM_LICENSE.txt",
+  "adapted_sha256": "aa2d7b1fa442d5b55989e776bee5fa710974ae799c55c422945e1dfda821a512"
+}

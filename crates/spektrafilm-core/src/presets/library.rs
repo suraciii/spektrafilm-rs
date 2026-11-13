@@ -2,7 +2,7 @@ use super::*;
 use std::path::PathBuf;
 #[cfg(test)]
 use std::sync::atomic::{AtomicU64, Ordering};
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum PresetGroup {
     #[serde(rename = "Built-in")]
     BuiltIn,
@@ -52,6 +52,10 @@ pub enum LibraryErrorReason {
         suggestions: Vec<String>,
     },
     MissingPath,
+    /// The named user document exists but is not a whole look.
+    ExpectedLook {
+        path: PathBuf,
+    },
     Io {
         operation: &'static str,
         path: PathBuf,
@@ -466,8 +470,17 @@ impl PresetLibrary {
     }
     fn validate_write(preset: &Preset, data_dir: &Path) -> Result<(), LibraryError> {
         preset.validate_detailed()?;
-        if matches!(preset.parameters, PresetParameters::Look(_)) {
-            preset.resolve_detailed(data_dir, &RuntimeParams::default())?;
+        match preset.parameters.as_ref() {
+            Some(PresetParameters::Look(_)) => {
+                preset.resolve_detailed(data_dir, &RuntimeParams::default())?;
+            }
+            Some(PresetParameters::Effects(_)) => {
+                preset.resolve_effects_detailed(&RuntimeParams::default())?;
+            }
+            None => {
+                preset.resolve_lut_detailed(&RuntimeParams::default())?;
+            }
+            Some(PresetParameters::Section(_)) => {}
         }
         Ok(())
     }
@@ -581,6 +594,44 @@ impl PresetLibrary {
             preset.to_toml_detailed()?
         } else {
             preset.to_json_detailed()?
+        };
+        atomic_write_detailed(&path, &text)?;
+        Ok(path)
+    }
+    /// Replace one existing user whole-look document with captured values.
+    ///
+    /// The target is resolved and validated under the mutation lock. Its
+    /// canonical name and file stem, author, description, and provenance stay
+    /// authoritative. A section document, an invalid document, or a built-in
+    /// name can never be the replacement target.
+    pub fn replace_look_detailed(
+        &self,
+        preset: &Preset,
+        data_dir: &Path,
+    ) -> Result<PathBuf, LibraryError> {
+        let _lock = self.lock_mutations(false)?;
+        let path = self.user_path(&preset.name)?;
+        let existing = load_file_detailed(&path)?;
+        if !matches!(
+            existing.kind(),
+            Ok(PresetKind::Look | PresetKind::Lut | PresetKind::Effects)
+        ) {
+            let diagnostic = format!("{}: target is not a whole look", path.display());
+            return Err(LibraryError::new(
+                LibraryErrorReason::ExpectedLook { path },
+                diagnostic,
+            ));
+        }
+        let mut replacement = preset.clone();
+        replacement.name = existing.name;
+        replacement.author = existing.author;
+        replacement.description = existing.description;
+        replacement.provenance = existing.provenance;
+        Self::validate_write(&replacement, data_dir)?;
+        let text = if carrier_detailed(&path)? {
+            replacement.to_toml_detailed()?
+        } else {
+            replacement.to_json_detailed()?
         };
         atomic_write_detailed(&path, &text)?;
         Ok(path)
@@ -1364,5 +1415,71 @@ mod tests {
                 .name,
             "Kodak Portra 400"
         );
+    }
+
+    #[test]
+    fn replace_look_keeps_the_canonical_identity_and_target_metadata() {
+        let temp = Temp::new();
+        let library = PresetLibrary::new(temp.0.join("library"));
+        let mut original = grain("Original", Value::from(0.5));
+        original.author = Some("Author".into());
+        original.description = Some("Original description".into());
+        library.save_new(&original, &data()).unwrap();
+        let canonical = library.directory().join("Original.toml");
+        let mut replacement = grain("ORIGINAL", Value::from(0.75));
+        replacement.author = Some("Replacement author".into());
+        replacement.description = Some("Replacement description".into());
+        replacement.provenance = Provenance {
+            implementation_version: "replacement".into(),
+            model_version: "replacement".into(),
+            scanner: None,
+        };
+        let path = library
+            .replace_look_detailed(&replacement, &data())
+            .unwrap();
+        assert_eq!(path, canonical);
+        let stored = load_file(&canonical).unwrap();
+        assert_eq!(stored.name, "Original");
+        assert_eq!(stored.author.as_deref(), Some("Author"));
+        assert_eq!(stored.description.as_deref(), Some("Original description"));
+        assert_eq!(stored.provenance, original.provenance);
+        assert_eq!(
+            stored
+                .look_parameters()
+                .unwrap()
+                .film_render
+                .grain
+                .procedural_amount,
+            Some(0.75)
+        );
+        assert!(!library.directory().join("ORIGINAL.toml").exists());
+    }
+
+    #[test]
+    fn replace_rejects_a_section_target_without_changing_it() {
+        let temp = Temp::new();
+        let library = PresetLibrary::new(temp.0.join("library"));
+        let section = Preset::capture_section(
+            "Section only",
+            Section::OutputMix,
+            &RuntimeParams::default(),
+            Provenance {
+                implementation_version: "test".into(),
+                model_version: "test".into(),
+                scanner: None,
+            },
+        )
+        .unwrap();
+        library.save_new(&section, &data()).unwrap();
+        let path = library.directory().join("Section only.toml");
+        let before = std::fs::read(&path).unwrap();
+        let error = library
+            .replace_look_detailed(&grain("Section only", Value::from(0.4)), &data())
+            .unwrap_err();
+        assert!(matches!(
+            error.reason,
+            LibraryErrorReason::ExpectedLook { path: ref target } if target == &path
+        ));
+        assert_eq!(std::fs::read(&path).unwrap(), before);
     }
 }

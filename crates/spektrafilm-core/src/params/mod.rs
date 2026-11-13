@@ -13,9 +13,15 @@ mod grain_compat;
 pub mod scan_profile;
 pub use grain_compat::normalize_grain_control_names;
 pub mod halation;
+pub mod light_leak;
+mod migrations;
 pub mod sources;
 
 pub(crate) mod validation;
+pub use crate::lut_look::{
+    EffectsParams, GradeParams, LutDomainPolicy, LutGrainParams, LutLookParams, LutParams,
+    LutShaper, LutSpace, WorkflowMode,
+};
 use couplers::DirCouplersParams;
 pub use diffusion::DiffusionFilterParams;
 pub use finishing::{ExpandParams, FinishingParams};
@@ -23,6 +29,7 @@ use glare::GlareParams;
 pub use grain::{FotufilmGrainParams, FotufilmMaterial};
 pub use grain::{GrainEngine, GrainParams};
 pub use halation::HalationParams;
+pub use light_leak::LightLeakParams;
 pub use scan_profile::{ScanCurve, ScanProfileName, ScanProfileParams, ScanProfileTransform};
 pub use validation::{ValidationError, ValidationReason};
 
@@ -200,6 +207,11 @@ impl ScanOperatorParams {
     }
 }
 
+/// White reference mode: divide by the clear film base and adapt from it.
+pub const SCAN_WHITE_REFERENCE_CLEAR_FILM_BASE: &str = "clear_film_base";
+/// White reference mode: divide by the readout light and adapt from it.
+pub const SCAN_WHITE_REFERENCE_READOUT_ILLUMINANT: &str = "readout_illuminant";
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ScannerParams {
@@ -208,6 +220,12 @@ pub struct ScannerParams {
     /// positive image.
     #[serde(default = "default_direct_scan")]
     pub scan_output: String,
+    /// White reference of the spectral scan: the clear film base by default.
+    /// `readout_illuminant` opts out of clear-base white calibration and uses
+    /// the resolved readout light, matching upstream experimental `28bf883`
+    /// scan normalization.
+    #[serde(default = "default_scan_white_reference")]
+    pub white_reference: String,
     /// Named positive-conversion style applied by the negative-to-positive
     /// interpretation: `standard` is the built-in frozen tone; any other
     /// name resolves to `data/scan-styles/<name>.json` (declared
@@ -244,6 +262,7 @@ impl Default for ScannerParams {
     fn default() -> Self {
         Self {
             scan_output: default_direct_scan(),
+            white_reference: default_scan_white_reference(),
             conversion_style: default_conversion_style(),
             experimental_setup: false,
             operator: ScanOperatorParams::default(),
@@ -408,12 +427,15 @@ impl Default for CmykParams {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct WorkflowParams {
+    #[serde(default)]
+    pub mode: WorkflowMode,
     #[serde(default = "default_route")]
     pub route: String,
 }
 impl Default for WorkflowParams {
     fn default() -> Self {
         Self {
+            mode: WorkflowMode::Film,
             route: default_route(),
         }
     }
@@ -438,6 +460,8 @@ pub struct FilmRenderingParams {
     #[serde(default)]
     pub halation: HalationParams,
     #[serde(default)]
+    pub light_leak: LightLeakParams,
+    #[serde(default)]
     pub dir_couplers: DirCouplersParams,
     #[serde(default)]
     pub glare: GlareParams,
@@ -454,6 +478,7 @@ impl Default for FilmRenderingParams {
             chemistry: PrintCurvesMorphParams::default(),
             grain: GrainParams::default(),
             halation: HalationParams::default(),
+            light_leak: LightLeakParams::default(),
             dir_couplers: DirCouplersParams::default(),
             glare: GlareParams::default(),
             base: FilmBaseParams::default(),
@@ -727,8 +752,6 @@ pub struct SettingsParams {
     pub use_scanner_lut: bool,
     #[serde(default = "default_17")]
     pub lut_resolution: u32,
-    #[serde(default)]
-    pub use_fast_stats: bool,
     #[serde(default = "default_640")]
     pub preview_max_size: u32,
     #[serde(default)]
@@ -759,7 +782,6 @@ impl Default for SettingsParams {
             use_enlarger_lut: false,
             use_scanner_lut: false,
             lut_resolution: 17,
-            use_fast_stats: false,
             preview_max_size: 640,
             preview_mode: false,
             neutral_print_filters_from_database: true,
@@ -822,6 +844,67 @@ impl RuntimeParams {
     /// Validate using the same rules while retaining semantic failures for adapters.
     pub fn validate_detailed(&self) -> Result<(), ValidationError> {
         validation::validate_detailed(self)
+    }
+
+    /// Whether the active workflow needs a full-frame scanner pass. LUT and
+    /// Off modes never consume scanner setup, so retained film settings cannot
+    /// select the film scan cache while either is active.
+    pub fn requires_full_frame(&self) -> bool {
+        self.workflow.mode.is_film() && self.scanner.requires_full_frame()
+    }
+
+    /// Split the one pre-render-mode `lut_look` aggregate into the canonical
+    /// groups. New documents and writers already carry the split groups.
+    pub fn migrate_legacy_lut_look(&mut self) {
+        if self.lut_look == LutLookParams::default()
+            && (!self.workflow.mode.is_lut() || self.lut.is_some())
+        {
+            return;
+        }
+        let (lut, effects, grade) = self.lut_look.clone().split();
+        self.lut.get_or_insert(lut);
+        self.effects.get_or_insert(effects);
+        self.grade.get_or_insert(grade);
+        self.lut_look = LutLookParams::default();
+    }
+
+    /// Resolve the renderer's aggregate declaration from the canonical groups,
+    /// falling back to a legacy aggregate only during migration.
+    pub fn lut_render_params(&self) -> Option<LutLookParams> {
+        if self.lut.is_some()
+            || self.effects.is_some()
+            || self.grade.is_some()
+            || self.workflow.mode.is_off()
+        {
+            return Some(LutLookParams::from_groups(
+                self.lut.as_ref().unwrap_or(&LutParams {
+                    path: Default::default(),
+                    sha256: String::new(),
+                    title: String::new(),
+                    input_space: Default::default(),
+                    output_space: Default::default(),
+                    domain_min: [0.0; 3],
+                    domain_max: [1.0; 3],
+                    domain_policy: Default::default(),
+                    shaper: Default::default(),
+                    strength: 1.0,
+                }),
+                self.effects.as_ref(),
+                self.grade.as_ref(),
+            ));
+        }
+        if self.lut_look.path.as_os_str().is_empty() && !self.workflow.mode.is_lut() {
+            None
+        } else {
+            Some(self.lut_look.clone())
+        }
+    }
+
+    pub fn set_lut_groups(&mut self, lut: LutParams, effects: EffectsParams, grade: GradeParams) {
+        self.lut = Some(lut);
+        self.effects = Some(effects);
+        self.grade = Some(grade);
+        self.lut_look = LutLookParams::default();
     }
 
     /// Validate canonical value domains without route or resource checks.
@@ -960,6 +1043,17 @@ pub struct RuntimeParams {
     pub output_mix: OutputMixParams,
     #[serde(default)]
     pub finishing: FinishingParams,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lut: Option<LutParams>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effects: Option<EffectsParams>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grade: Option<GradeParams>,
+    /// Legacy aggregate accepted only from pre-render-mode documents. New
+    /// writers never emit it; the canonical groups are `lut`, `effects`, and
+    /// `grade`.
+    #[serde(default, skip_serializing)]
+    pub lut_look: LutLookParams,
     #[serde(default)]
     pub settings: SettingsParams,
     #[serde(default)]
@@ -1035,6 +1129,10 @@ fn default_65() -> f32 {
 }
 fn default_direct_scan() -> String {
     "direct_scan".into()
+}
+
+fn default_scan_white_reference() -> String {
+    SCAN_WHITE_REFERENCE_CLEAR_FILM_BASE.into()
 }
 
 fn default_unsharp() -> [f64; 2] {
@@ -1117,6 +1215,16 @@ mod tests {
             Some([false, false, true])
         );
         assert!(params.explicit_paths_match(&expected));
+    }
+
+    #[test]
+    fn lut_mode_ignores_retained_full_frame_scanner_setup() {
+        let mut params = RuntimeParams::default();
+        params.scanner.scan_output = "negative_to_positive".into();
+        params.scanner.experimental_setup = true;
+        assert!(params.scanner.requires_full_frame());
+        params.workflow.mode = crate::lut_look::WorkflowMode::Lut;
+        assert!(!params.requires_full_frame());
     }
 
     #[test]
@@ -1582,6 +1690,8 @@ mod tests {
             super::GrainEngine::Spektra,
             super::GrainEngine::Procedural,
             super::GrainEngine::Dye,
+            super::GrainEngine::Fotufilm,
+            super::GrainEngine::Exposure,
         ] {
             params.film_render.grain.engine = engine;
             for mm in [0.0, -1.0, f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
@@ -1623,5 +1733,131 @@ mod tests {
         assert!(edited.cmyk.active);
         assert_eq!(edited.cmyk.strength, 0.5);
         edited.validate().unwrap();
+    }
+
+    #[test]
+    fn render_modes_validate_only_their_active_groups() {
+        use super::{EffectsParams, LutGrainParams, LutParams, WorkflowMode};
+
+        let mut off = RuntimeParams::default();
+        off.workflow.mode = WorkflowMode::Off;
+        off.lut = Some(LutParams {
+            path: std::path::PathBuf::from("missing.cube"),
+            sha256: "not-a-hash".into(),
+            ..LutParams::default()
+        });
+        off.camera.exposure_compensation_ev = f32::NAN;
+        off.film_render.density_curve_gamma = f32::NAN;
+        off.validate().unwrap();
+
+        let mut lut = RuntimeParams::default();
+        lut.workflow.mode = WorkflowMode::Lut;
+        lut.lut = Some(LutParams {
+            path: std::path::PathBuf::from("look.cube"),
+            sha256: "a".repeat(64),
+            ..LutParams::default()
+        });
+        lut.effects = Some(EffectsParams {
+            grain: LutGrainParams {
+                active: false,
+                amount: 2.0,
+                ..LutGrainParams::default()
+            },
+            ..EffectsParams::default()
+        });
+        lut.validate().unwrap();
+        lut.effects.as_mut().unwrap().grain.active = true;
+        assert!(lut.validate().is_err());
+
+        let film = RuntimeParams {
+            effects: Some(EffectsParams {
+                grain: LutGrainParams {
+                    active: true,
+                    amount: 2.0,
+                    ..LutGrainParams::default()
+                },
+                ..EffectsParams::default()
+            }),
+            ..RuntimeParams::default()
+        };
+        film.validate().unwrap();
+    }
+
+    #[test]
+    fn legacy_lut_look_migrates_once_into_canonical_groups() {
+        let legacy = super::LutLookParams {
+            path: "look.cube".into(),
+            sha256: "a".repeat(64),
+            halation: crate::params::HalationParams {
+                active: true,
+                ..crate::params::HalationParams::default()
+            },
+            grade: crate::params::FinishingParams {
+                contrast: 0.3,
+                ..crate::params::FinishingParams::default()
+            },
+            ..super::LutLookParams::default()
+        };
+        let mut params = RuntimeParams {
+            lut_look: legacy.clone(),
+            ..RuntimeParams::default()
+        };
+        params.migrate_legacy_lut_look();
+        assert_eq!(params.lut_render_params(), Some(legacy));
+        assert_eq!(params.lut_look, super::LutLookParams::default());
+        assert!(
+            params
+                .effects
+                .as_ref()
+                .is_some_and(|effects| effects.halation.active)
+        );
+        assert_eq!(
+            params.grade.as_ref().map(|grade| grade.values.contrast),
+            Some(0.3)
+        );
+        let once = params.clone();
+        params.migrate_legacy_lut_look();
+        assert_eq!(params, once);
+    }
+
+    #[test]
+    fn legacy_lut_look_migration_preserves_explicit_groups() {
+        let explicit_effects = super::EffectsParams {
+            halation: crate::params::HalationParams {
+                active: true,
+                ..crate::params::HalationParams::default()
+            },
+            ..super::EffectsParams::default()
+        };
+        let mut params = RuntimeParams {
+            lut: Some(super::LutParams {
+                path: "explicit.cube".into(),
+                ..super::LutParams::default()
+            }),
+            effects: Some(explicit_effects.clone()),
+            grade: Some(super::GradeParams {
+                active: true,
+                values: crate::params::FinishingParams {
+                    contrast: 0.4,
+                    ..crate::params::FinishingParams::default()
+                },
+            }),
+            lut_look: super::LutLookParams {
+                path: "legacy.cube".into(),
+                ..super::LutLookParams::default()
+            },
+            ..RuntimeParams::default()
+        };
+        params.migrate_legacy_lut_look();
+        assert_eq!(
+            params.lut.as_ref().map(|lut| lut.path.as_path()),
+            Some(std::path::Path::new("explicit.cube"))
+        );
+        assert_eq!(params.effects, Some(explicit_effects));
+        assert_eq!(
+            params.grade.as_ref().map(|grade| grade.values.contrast),
+            Some(0.4)
+        );
+        assert_eq!(params.lut_look, super::LutLookParams::default());
     }
 }
