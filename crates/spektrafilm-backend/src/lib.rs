@@ -140,6 +140,16 @@ pub trait ComputeBackend: Send + Sync {
     fn cctf_decode_srgb(&self, img: &ImageBuf) -> Result<ImageBuf, String>;
     fn gaussian_blur(&self, img: &ImageBuf, sigma: f32) -> Result<ImageBuf, String>;
 
+    /// Apply prepared scan-stage appearance to linear RGB on the selected device.
+    /// `None` means this backend does not implement the device stage.
+    fn scan_profile(
+        &self,
+        _img: &ImageBuf,
+        _params: &ScanProfileGpuParams,
+    ) -> Result<Option<ImageBuf>, String> {
+        Ok(None)
+    }
+
     /// Apply prepared common finishing to linear RGB on the selected device.
     /// `None` means this backend does not implement the device stage.
     fn finishing(

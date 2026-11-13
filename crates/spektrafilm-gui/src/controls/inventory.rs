@@ -203,6 +203,11 @@ pub(crate) fn inventory() -> &'static [ControlEntry] {
                 .expect("core module fields")
             {
                 let path = field["path"].as_str().expect("core canonical path");
+                // The resolved transform is authoritative data, not a
+                // user-editable leaf. It is carried in presets but has no editor.
+                if path.starts_with("scanner.scan_profile.transform") {
+                    continue;
+                }
                 // Resolve through the public leaf API rather than introducing
                 // a second schema or inferring a numeric validator from JSON.
                 let validation = sources::describe_field(path).expect("discovered leaf exists");
@@ -1665,6 +1670,7 @@ const LABELS: &[(&str, &str)] = &[
     ("print_render.glare.roughness", "roughness"),
     ("scanner.conversion_style", "conversion style"),
     ("scanner.experimental_setup", "experimental frame setup"),
+    ("scanner.scan_profile.strength", "Scan Profile Strength"),
     ("scanner.lens_blur", "Lens blur (readout optics)"),
     ("scanner.operator.exposure_ev", "Finished exposure"),
     ("scanner.operator.warmth_ev", "Warmth"),

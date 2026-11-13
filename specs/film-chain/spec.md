@@ -8,7 +8,7 @@
 - Optional CMYK ink style MUST satisfy the [CMYK ink style](../cmyk-style/spec.md) contract. It MUST NOT determine base workflow topology.
 - Base workflows include input color management, direct film scanning, photographic printing, and the existing film-conversion routes.
 - The default film path starts with source color and exposure → spectral film exposure and development → film-domain effects (including Spektra, Dye, and Fotufilm Film grain) → the selected base route → scanner interpretation.
-- It continues with [Tone & Color](../finishing/spec.md#scope-and-applicability) → output gamut processing → unsharp masking → transfer encoding → Procedural grain → optional CMYK ink style → output mix → output handoff.
+- It continues with optional [Scan Profile](../scan-profile/spec.md) → [Tone & Color](../finishing/spec.md#scope-and-applicability) → output gamut processing → unsharp masking → transfer encoding → Procedural grain → optional CMYK ink style → output mix → output handoff.
 - [Output mix and material controls](../output-mix/spec.md) owns reuse of existing preflash and chemistry, retirement of Output lightness compression, and overall output mix. It adds no digital material-response layer or scan-reference isolation pass.
 - CMYK ink style remains after all scanner-domain effects; overall output mix follows it before output handoff.
 - Film, photographic paper, spectral, and color profiles are data inputs. A missing or invalid data input consumed by the selected route is an error before output publication.

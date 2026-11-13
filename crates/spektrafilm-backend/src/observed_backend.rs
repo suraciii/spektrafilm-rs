@@ -150,6 +150,13 @@ impl ComputeBackend for ObservedBackend<'_> {
         self.cpu();
         self.backend.cctf_decode_srgb(i)
     }
+    fn scan_profile(
+        &self,
+        image: &ImageBuf,
+        params: &ScanProfileGpuParams,
+    ) -> Result<Option<ImageBuf>, String> {
+        self.backend.scan_profile(image, params)
+    }
     fn finishing(
         &self,
         image: &ImageBuf,

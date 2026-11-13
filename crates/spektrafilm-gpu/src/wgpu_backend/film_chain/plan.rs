@@ -65,6 +65,7 @@ pub(super) enum ChainStep {
     Scan,
     ScannerBlur,
     Glare,
+    ScanProfile,
     Finishing,
     Gamut,
     Unsharp,
@@ -130,6 +131,7 @@ impl ChainStep {
             Self::PrintDensity => GpuStage::PrintDevelop,
             Self::Readout | Self::ScannerLut | Self::Scan | Self::ScannerBlur => GpuStage::Scan,
             Self::Glare => GpuStage::Glare,
+            Self::ScanProfile => GpuStage::Output,
             Self::Gamut => GpuStage::Gamut,
             Self::Unsharp => GpuStage::Unsharp,
             Self::ProceduralGrain => GpuStage::GrainProcedural,
@@ -163,6 +165,7 @@ impl ChainStep {
             Self::Scan => "scan_spectral",
             Self::ScannerBlur => "scanner_lens_blur",
             Self::Glare => "glare",
+            Self::ScanProfile => "scan_profile",
             Self::Finishing => "finishing",
             Self::Gamut => "output_gamut",
             Self::Unsharp => "unsharp_mask",
@@ -251,6 +254,9 @@ pub(super) fn chain_steps(
     }
     if p.glare.is_some() {
         steps.push(Glare);
+    }
+    if p.scan_profile.is_some() {
+        steps.push(ScanProfile);
     }
     if p.finishing.is_some() {
         steps.push(Finishing);

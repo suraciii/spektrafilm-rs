@@ -148,6 +148,7 @@ pub static ALL_PATHS: &[&str] = &[
     "print_render.glare.percent",
     "print_render.glare.roughness",
     "print_render.glare.blur",
+    "scanner.scan_profile.strength",
     "scanner.lens_blur",
     "scanner.unsharp_mask",
     "scanner.operator.exposure_ev",
@@ -361,6 +362,7 @@ pub fn editor_range(path: &str) -> Option<EditorRange> {
         "print_render.glare.blur" => Some((0.0, 10.0, 0.1, 2)),
 
         // Scanner
+        "scanner.scan_profile.strength" => Some((0.0, 1.0, 0.01, 2)),
         "scanner.lens_blur" => Some((0.0, 5.0, 0.05, 2)),
         "scanner.unsharp_mask" => Some((0.0, 1000000.0, 0.05, 2)),
         "scanner.operator.exposure_ev" => Some((-3.0, 3.0, 0.05, 2)),

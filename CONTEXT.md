@@ -47,6 +47,9 @@ _Avoid_: Reference conversion
 **Conversion style**: The named positive rendering of a developed negative. The built-in `standard` combines automatic frame setup with a declared positive tone; a fixed style uses a declared tone without automatic frame setup.
 _Avoid_: Scanner finish, receiver profile, chart fit, calibration
 
+**Scan Profile**: A named, built-in scan-stage appearance applied to a completed positive reading after negative conversion and before Tone and Color. It is a runtime stage, not a feature profile. It changes appearance only. A user-edited transform is `custom`; reusable saves use a look or section preset.
+_Avoid_: Feature profile, scanner profile, scan profile preset
+
 **Automatic frame setup**: The global exposure and color judgment derived from one complete developed frame. It is separate from exposure reconstruction and operator correction, not a calibrated response of a particular scanner.
 _Avoid_: Capture exposure, operator correction, scanner calibration
 

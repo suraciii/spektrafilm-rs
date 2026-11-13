@@ -1310,6 +1310,7 @@ pub(super) fn validate_values_detailed(params: &RuntimeParams) -> Result<(), Val
     )?;
     validate_enum_value_detailed("scanner.scan_output", &params.scanner.scan_output)?;
     params.scanner.operator.validate_detailed()?;
+    params.scanner.scan_profile.validate_detailed()?;
     validate_enum_value_detailed("scanner.conversion_style", &params.scanner.conversion_style)?;
     validate_scalar_detailed(
         "film_render.halation.source_compression",

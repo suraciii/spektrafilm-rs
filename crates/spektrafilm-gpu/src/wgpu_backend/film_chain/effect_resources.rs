@@ -207,6 +207,7 @@ impl WgpuBackend {
             | "print_spectral"
             | "print_density"
             | "scan_spectral"
+            | "scan_profile"
             | "finishing"
             | "output_gamut"
             | "output_transfer"
