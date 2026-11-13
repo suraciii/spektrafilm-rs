@@ -6,7 +6,7 @@
 
 The display worker owns disposable warning computation and publication. The backend owns classification, coverage reduction, and CPU/GPU agreement.
 
-The film pipeline, photographic parameter model, look presets, and file writers MUST NOT consume warning state. Existing image analysis MUST retain its own sample interpretation and demand boundary.
+The film pipeline, photographic parameter model, presets, and file writers MUST NOT consume warning state. Existing image analysis MUST retain its own sample interpretation and demand boundary.
 
 ## Sample boundary
 

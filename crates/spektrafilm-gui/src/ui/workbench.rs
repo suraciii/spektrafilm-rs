@@ -418,9 +418,10 @@ impl App {
                                 {
                                     let lut_name = self
                                         .params
-                                        .lut_look
-                                        .path
-                                        .file_name()
+                                        .lut
+                                        .as_ref()
+                                        .map(|lut| &lut.path)
+                                        .and_then(|path| path.file_name())
                                         .map(|name| name.to_string_lossy().into_owned())
                                         .unwrap_or_else(|| {
                                             crate::i18n::text(ctx, "surfaces.header.no_lut")
@@ -437,6 +438,22 @@ impl App {
                                             .map(|applied| applied.name.clone())
                                             .unwrap_or_else(|| {
                                                 crate::i18n::text(ctx, "surfaces.lut.non_spectral")
+                                                    .into_owned()
+                                            })
+                                    )
+                                } else if self.params.workflow.mode
+                                    == spektrafilm_core::params::WorkflowMode::Off
+                                {
+                                    format!(
+                                        "{} · {}",
+                                        crate::i18n::text(ctx, "surfaces.workflow.off"),
+                                        self.presets
+                                            .state
+                                            .applied
+                                            .as_ref()
+                                            .map(|applied| applied.name.clone())
+                                            .unwrap_or_else(|| {
+                                                crate::i18n::text(ctx, "surfaces.effects.none")
                                                     .into_owned()
                                             })
                                     )

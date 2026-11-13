@@ -2,13 +2,13 @@
 
 ## Ownership and boundary
 
-The [CMYK ink style specification](spec.md) owns the product contract and the `cmyk_ink_v1` color definition. The shared runtime owns one implementation for the `input` workflow and scanned outputs. The GUI and CLI MUST NOT implement separate color transforms.
+The [CMYK ink style specification](spec.md) owns the product contract and the `cmyk_ink_v1` color definition. The shared runtime owns one implementation for the `input` route and scanned outputs. The GUI and CLI MUST NOT implement separate color transforms.
 
 CMYK ink style is a terminal RGB appearance boundary. It runs after all scanner-domain effects, including output gamut processing, unsharp masking, transfer encoding, and post-scan appearance grain, and before output mix and writing. It does not belong to the spectral film or photographic printing stages.
 
 The runtime parameter group is `cmyk`. It contains only `active` and `strength` for this release. No general effect graph, new workflow syntax, press profile, proof profile, or fourth spectral stage is introduced.
 
-The `input` workflow MUST NOT use film, paper, spectral preparation, photographic print filters, metering, or film grain. Profile resolution MAY remain required by existing runtime construction, but changing resolved film or paper profiles MUST NOT change `input` pixels. Input color primaries, white point, and transfer state remain explicit.
+The `input` route MUST NOT use film, paper, spectral preparation, photographic print filters, metering, or film grain. Profile resolution MAY remain required by existing runtime construction, but changing resolved film or paper profiles MUST NOT change `input` pixels. Input color primaries, white point, and transfer state remain explicit.
 
 CMYK is an internal appearance concept. The runtime image buffer and all published output remain three-channel RGB. No CMYK file, separation, plate, press-ready artifact, ICC press workflow, or physical proof is produced.
 
@@ -95,7 +95,9 @@ The visible product name is `CMYK ink style`. Help MUST state that it is a model
 
 The retired Magazine label is not a product name for this feature.
 
-The GUI MUST display the feature next to base workflow controls, retain Strength while disabled, show the `input` route as the film-free workflow, and state that resolved film and print profiles do not affect `input` pixels. It MUST NOT imply that CMYK ink style reverses a negative or selects photographic paper.
+The GUI MUST display the feature next to base route controls, retain Strength while disabled, show the `input` route as the film-free route, and state that resolved film and print profiles do not affect `input` pixels.
+
+The control MUST be inactive in LUT and Off modes without clearing its stored values. It MUST NOT imply that CMYK ink style reverses a negative or selects photographic paper.
 
 ## Acceptance evidence
 

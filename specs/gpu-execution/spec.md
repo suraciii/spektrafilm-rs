@@ -18,10 +18,11 @@ The scope MUST cover these production operations:
 
 - RAW demosaicing, sensor corrections required by the selected decoder, camera orientation, selected white balance, lens correction, and transformation to normalized linear input.
 - Raster input transfer decoding and color interpretation, full-source exposure metering, crop, rotation, resize, antialiasing, and working pixel-pitch propagation.
-- All supported base workflows, including the `input` workflow, film scan, film-print-scan, and every supported convert-film route.
+- All supported base routes, including the `input` route, film scan, film-print-scan, and every supported convert-film route.
+- LUT and Off render modes, including input decoding, transform Effects, external LUT interpolation, optional LUT Grade, and output color management. Off omits the LUT and LUT Grade operations.
 - Both RGB-to-raw methods, selected input and output gamut operations, spectral integration, selected spectral-LUT evaluation, material exposure and development, independently filtered preflash, chemistry, and channel mapping.
 - Camera and enlarger diffusion, highlight boost, per-channel halation, DIR including its exponential tails and non-default coefficients, scanner optics, print viewing glare, and unsharp masking.
-- All five grain engines in their declared domains, including Spektra's resolved layer model and single-curve case, both Procedural modes and resolution models, Dye field readout, Fotufilm population formation and readout, and Exposure Grain's reconstructed post-scan scalar field.
+- All five grain engines in their declared domains, including Spektra's resolved layer model and single-curve case, both Procedural modes and resolution models, Dye field readout, Fotofilm population formation and readout, and Exposure Grain's reconstructed post-scan scalar field. The output-referred Effects grain is also covered.
 - Every readout-illuminant category, direct scan, negative conversion, and scanner optics.
 - Eligible [Tone & Color](../finishing/spec.md#scope-and-applicability), including its fixed color interpretation and RGB-only policy.
 - CMYK ink style, complete-result output mixing, output transfer encoding, and independent saving color and sample conversion.
@@ -30,7 +31,7 @@ The scope MUST cover these production operations:
 
 Existing route restrictions and named preview, diagnostic, spatial, stochastic, or LUT bypass rules remain authoritative. GPU selection MUST NOT add a bypass. Save MUST convert retained output without rerendering simulation or regenerating grain.
 
-Material-stage export and continuation currently remain CPU-only. Selected GPU execution MUST reject those boundaries before numerical processing or publication. This implementation gap does not narrow the complete-workflow target above.
+Material-stage export and continuation currently remain CPU-only. Selected GPU execution MUST reject those boundaries before numerical processing or publication. This implementation gap does not narrow the complete render target above.
 
 Native file reading, container parsing, compressed-sample unpacking, file encoding and compression, metadata handling, hashing, and atomic publication MAY run on the host. A native RAW call that also performs demosaicing, white balance, lens correction, or color conversion MUST NOT be classified entirely as file I/O. Those numerical operations remain in scope.
 
@@ -114,7 +115,7 @@ Acceptance MUST freeze the CPU reference, input and data identities, effective c
 A missing justified budget means that numerical acceptance is incomplete, not passed.
 
 1. Exercise real GUI Preview, Scan, Export, Save, and viewer operations, CLI process and render, RAW ingestion, and pointwise LUT evaluation. Use the existing application entry points and readable published artifacts.
-2. Exercise every supported route, conversion style, grain engine and mode, color-space and gamut family, chemistry branch, spectral-LUT setting, and optical-effect family. Cover relevant combinations, not only isolated kernels.
+2. Exercise every supported render mode, film route, conversion style, grain engine and mode, color-space and gamut family, chemistry branch, spectral-LUT setting, and optical-effect family. Cover relevant combinations, not only isolated kernels.
 3. Spektra, active diffusion, standard full-frame negative-to-positive setup and operator correction, declared fixed per-channel styles, non-default DIR, scanner lens blur, and unsharp masking MUST complete without CPU image arithmetic.
 4. Compare paired CPU native-f32, CPU f64, and hardware-GPU outputs from identical declared inputs. Compare stage-domain samples and complete outputs.
    Include neutral and chromatic wedges, toe and shoulder, extreme headroom, signed inputs where supported, fractional geometry, edges, and photographic scenes.

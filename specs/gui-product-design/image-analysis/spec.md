@@ -13,7 +13,7 @@ The panel MUST support these photographic judgments without declaring an image c
 | Histogram | Where are the image's tones concentrated? | Shadow, midtone, and highlight distribution; endpoint accumulation; optional channel differences. |
 | Waveform | Which part of the picture contains those tones? | Horizontal picture position against tone, with density showing how frequently values occur at that position. |
 | Waveform / RGB parade | Where and at which tone levels do channels differ? | Three spatial distributions with matching coordinates and scales, so the same subject can be compared across channels. |
-| Vectorscope | How did the look change the image's colors? | Hue direction, chroma, and population density, with fixed references for comparing the same subject before and after simulation. |
+| Vectorscope | How did the render change the image's colors? | Hue direction, chroma, and population density, with fixed references for comparing the same subject before and after simulation. |
 
 Image analysis is an information layer, not an editing surface. It MUST remain secondary to the photograph and parameter work.
 
@@ -307,7 +307,7 @@ The following choices MUST persist as application presentation preferences:
 - RGB visibility.
 - Vectorscope chroma zoom.
 
-Selections, inspection cursors, computed distributions, and pending work MUST remain transient. These values MUST NOT enter photograph records, look presets, runtime parameters, or export metadata.
+Selections, inspection cursors, computed distributions, and pending work MUST remain transient. These values MUST NOT enter photograph records, presets, runtime parameters, or export metadata.
 
 Presentation changes MUST NOT create adjustment history or mark a photograph as having unsaved adjustments. Existing saved readout visibility MUST retain its meaning without exposing a second legacy panel.
 

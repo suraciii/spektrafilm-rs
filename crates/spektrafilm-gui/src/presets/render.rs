@@ -89,7 +89,10 @@ impl Browser {
                     .is_none()
                     .then(|| entry.preset.as_ref().and_then(|preset| preset.kind().ok()))
                     .flatten();
-                if !matches!(kind, Some(PresetKind::Look | PresetKind::Lut)) {
+                if !matches!(
+                    kind,
+                    Some(PresetKind::Look | PresetKind::Lut | PresetKind::Effects)
+                ) {
                     return None;
                 }
                 let stock_matches = |stock: &str, profiles: &[crate::profiles::ProfileEntry]| {
@@ -111,9 +114,19 @@ impl Browser {
                             || lut.title.to_lowercase().contains(&query)
                             || lut.path.to_string_lossy().to_lowercase().contains(&query)
                     });
+                let effects_match = entry
+                    .preset
+                    .as_ref()
+                    .and_then(|preset| preset.effects_parameters())
+                    .is_some_and(|effects| {
+                        (effects.diffusion.active && "diffusion".contains(query.as_str()))
+                            || (effects.halation.active && "halation".contains(query.as_str()))
+                            || (effects.grain.active && "grain".contains(query.as_str()))
+                    });
                 (query.is_empty()
                     || entry.name.to_lowercase().contains(&query)
                     || lut_matches
+                    || effects_match
                     || entry
                         .film_profile
                         .as_ref()
@@ -189,8 +202,9 @@ impl App {
                     let save_name = crate::i18n::text(ui.ctx(), "surfaces.presets.save");
                     let save_available = self.params.workflow.mode
                         != spektrafilm_core::params::WorkflowMode::Lut
-                        || (!self.params.lut_look.path.as_os_str().is_empty()
-                            && self.params.lut_look.path.is_file());
+                        || self.params.lut.as_ref().is_some_and(|lut| {
+                            !lut.path.as_os_str().is_empty() && lut.path.is_file()
+                        });
                     let save = ui
                         .add_enabled(
                             save_available,
@@ -475,7 +489,9 @@ impl App {
                                     && entry.preset.as_ref().is_some_and(|preset| {
                                         matches!(
                                             preset.kind(),
-                                            Ok(PresetKind::Look | PresetKind::Lut)
+                                            Ok(PresetKind::Look
+                                                | PresetKind::Lut
+                                                | PresetKind::Effects)
                                         )
                                     })
                             });
@@ -861,6 +877,34 @@ impl App {
                     description.push_str(&format!("LUT: {} ({})", lut.title, lut.path.display()));
                 }
             }
+            if let Some(effects) = entry
+                .preset
+                .as_ref()
+                .and_then(|preset| preset.effects_parameters())
+            {
+                let mut active = Vec::new();
+                for (enabled, label) in [
+                    (effects.diffusion.active, "surfaces.lut.diffusion"),
+                    (effects.halation.active, "surfaces.lut.halation"),
+                    (effects.grain.active, "surfaces.lut.grain"),
+                ] {
+                    if enabled {
+                        active.push(crate::i18n::text(ui.ctx(), label).into_owned());
+                    }
+                }
+                if !description.is_empty() {
+                    description.push_str("; ");
+                }
+                description.push_str(&format!(
+                    "{}: {}",
+                    crate::i18n::text(ui.ctx(), "surfaces.effects.label"),
+                    if active.is_empty() {
+                        crate::i18n::text(ui.ctx(), "surfaces.effects.none_active").into_owned()
+                    } else {
+                        active.join(", ")
+                    }
+                ));
+            }
             for (role, reference, profiles) in [
                 ("Film", &entry.film_profile, &self.films),
                 ("Print", &entry.print_profile, &self.papers),
@@ -992,7 +1036,10 @@ impl App {
         let preset = entry.preset.as_ref()?;
         let mut action = None;
         if entry.group == PresetGroup::User
-            && matches!(preset.kind(), Ok(PresetKind::Look | PresetKind::Lut))
+            && matches!(
+                preset.kind(),
+                Ok(PresetKind::Look | PresetKind::Lut | PresetKind::Effects)
+            )
             && ui
                 .button(crate::i18n::text(ui.ctx(), "surfaces.presets.rename"))
                 .clicked()
@@ -1207,7 +1254,11 @@ impl App {
                         }
                         if matches!(
                             &dialog.action,
-                            NameAction::Save(preset) if matches!(preset.kind(), Ok(PresetKind::Look | PresetKind::Lut))
+                            NameAction::Save(preset)
+                                if matches!(
+                                    preset.kind(),
+                                    Ok(PresetKind::Look | PresetKind::Lut | PresetKind::Effects)
+                                )
                         ) {
                             self.presets.state.applied = Some(AppliedPreset {
                                 group: PresetGroup::User,

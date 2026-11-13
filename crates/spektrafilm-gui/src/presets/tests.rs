@@ -908,6 +908,61 @@ fn keyboard_order_crosses_preset_group_boundaries() {
 }
 
 #[test]
+fn effects_preset_switches_to_off_and_preserves_stored_transform_groups() {
+    let (mut app, _directory) = test_app("effects-preset");
+    let mut effects = spektrafilm_core::lut_look::EffectsParams::default();
+    effects.grain.active = true;
+    effects.grain.amount = 0.2;
+    let preset = Preset::capture_effects("Grain only", effects.clone(), provenance());
+    app.presets
+        .library
+        .save_new(&preset, &app.data_dir)
+        .unwrap();
+    app.presets.refresh();
+    app.params.workflow.mode = spektrafilm_core::params::WorkflowMode::Film;
+    app.params.workflow.route = "input > film > scan".into();
+    app.params.io.scan_film = true;
+    app.params.lut = Some(spektrafilm_core::params::LutParams {
+        path: "missing.cube".into(),
+        sha256: "a".repeat(64),
+        ..Default::default()
+    });
+    app.params.grade = Some(spektrafilm_core::params::GradeParams {
+        active: true,
+        ..Default::default()
+    });
+    app.load_preset(PresetGroup::User, "Grain only");
+    assert_eq!(
+        app.params.workflow.mode,
+        spektrafilm_core::params::WorkflowMode::Off
+    );
+    assert_eq!(app.params.workflow.route, "input");
+    assert!(!app.params.io.scan_film);
+    assert_eq!(app.params.effects.as_ref(), Some(&effects));
+    assert_eq!(app.film_route.as_deref(), Some("input > film > scan"));
+    assert!(app.params.lut.is_some());
+    assert!(app.params.grade.as_ref().is_some_and(|grade| grade.active));
+    assert!(app.presets.state.applied.is_some());
+
+    app.switch_workflow(spektrafilm_core::params::WorkflowMode::Film);
+    assert_eq!(
+        app.params.workflow.mode,
+        spektrafilm_core::params::WorkflowMode::Film
+    );
+    assert_eq!(app.params.workflow.route, "input > film > scan");
+    assert_eq!(app.params.effects.as_ref(), Some(&effects));
+    assert!(app.presets.state.applied.is_none());
+
+    app.params.workflow.mode = spektrafilm_core::params::WorkflowMode::Off;
+    app.save_preset_as();
+    let dialog = app.presets.name_dialog.as_ref().unwrap();
+    let NameAction::Save(preset) = &dialog.action else {
+        panic!("expected save action");
+    };
+    assert_eq!(preset.kind(), Ok(PresetKind::Effects));
+}
+
+#[test]
 fn lut_preset_switches_workflow_and_manual_switch_restores_film_route() {
     let (mut app, directory) = test_app("lut-preset");
     let lut_path = directory.join("identity.cube");
@@ -936,7 +991,7 @@ fn lut_preset_switches_workflow_and_manual_switch_restores_film_route() {
     );
     assert_eq!(app.params.workflow.route, "input");
     assert!(!app.params.io.scan_film);
-    assert_eq!(app.params.lut_look, lut);
+    assert_eq!(app.params.lut_render_params(), Some(lut.clone()));
     assert_eq!(app.film_route.as_deref(), Some("input > film > scan"));
     assert!(app.presets.state.applied.is_some());
 
@@ -946,7 +1001,7 @@ fn lut_preset_switches_workflow_and_manual_switch_restores_film_route() {
         spektrafilm_core::params::WorkflowMode::Film
     );
     assert_eq!(app.params.workflow.route, "input > film > scan");
-    assert_eq!(app.params.lut_look, lut);
+    assert_eq!(app.params.lut_render_params(), Some(lut.clone()));
     assert!(app.presets.state.applied.is_none());
 
     app.switch_workflow(spektrafilm_core::params::WorkflowMode::Lut);

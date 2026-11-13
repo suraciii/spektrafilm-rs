@@ -24,7 +24,7 @@ The film, print, and scan chain owns grain polarity and color. Dye MUST NOT forc
 
 ## Supported product boundary
 
-Dye supports color and monochrome filming profiles only when the loaded profile declares the material and workflow conditions required by the film-chain contract. The implementation MUST use the caller's resolved film geometry and MUST NOT add a second stock-name or format whitelist. Printing materials MUST NOT be admitted as filming stocks.
+Dye supports color and monochrome filming profiles only when the loaded profile declares the material and route conditions required by the film-chain contract. The implementation MUST use the caller's resolved film geometry and MUST NOT add a second stock-name or format whitelist. Printing materials MUST NOT be admitted as filming stocks.
 
 The product resolver MUST reject an unsupported material, chemistry, route, or missing profile data before output publication. It MUST report the unsupported condition and the reason. Availability of a profile is not proof of stock calibration, optical-readout acceptance, or photographic acceptance.
 
@@ -41,7 +41,7 @@ Changing film geometry MUST preserve requested output raster dimensions while ch
 
 `film_render.grain.active` owns the enable switch. No other Dye value is a public control.
 
-Grain strength MUST scale the correlated field's standard deviation and the event count's standard deviation by the same factor. It MUST preserve `E[D] = t`, the derived density taper, and the per-record ratio. It is a relative look control, not a certified optical RMS target or material calibration.
+Grain strength MUST scale the correlated field's standard deviation and the event count's standard deviation by the same factor. It MUST preserve `E[D] = t`, the derived density taper, and the per-record ratio. It is a relative strength control, not a certified optical RMS target or material calibration.
 
 Grain strength `0` MUST return the target density at the Dye boundary with no random field and no residual count noise. `1` MUST leave the delivered law unchanged. Values outside the declared range MUST fail before rendering.
 
@@ -106,7 +106,7 @@ Acceptance is gated. A later gate MUST NOT compensate for an earlier gate that f
 5. **Optical measurement:** Run the independent spectral measurement oracle with a declared receiver, aperture, density definition, wavelength range, provenance, footprint, and viewing condition.
 6. **Photographic validation:** Use lossless outputs and a declared reference set containing portraits, smooth fields, dark and bright regions, saturated colors, fine detail, and a color chart. Record the intended viewing size and the limits of the comparison.
 
-### Look-control acceptance
+### Strength-control acceptance
 
 - **Defaults:** An omitted or `1.0` strength and scale MUST produce the delivered field bit for bit on each executor.
 - **Zero strength:** Strength `0` MUST return the target density at the Dye boundary. A final encoded comparison MUST state its downstream route and settings.

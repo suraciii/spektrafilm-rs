@@ -2064,6 +2064,91 @@ fn describe_text_lists_non_settable_runtime_leaves_and_set_rejects_them() {
 }
 
 #[test]
+fn effects_preset_runs_without_lut_film_or_print_selectors_and_rejects_mixing() {
+    let f = Fixture::new();
+    let effects = spektrafilm_core::lut_look::EffectsParams {
+        diffusion: spektrafilm_core::params::DiffusionFilterParams {
+            active: true,
+            strength: 0.4,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let preset = spektrafilm_core::presets::Preset::capture_effects(
+        "CLI Effects",
+        effects,
+        spektrafilm_core::presets::Provenance {
+            implementation_version: "test".into(),
+            model_version: "test".into(),
+            scanner: None,
+        },
+    );
+    let library = spektrafilm_core::presets::PresetLibrary::new(f.root.join("config/presets"));
+    library.save_new(&preset, &f.data).unwrap();
+
+    let report = f.report(&["--preset", "CLI Effects", "--dry-run"]);
+    assert_eq!(report["parameters"]["workflow"]["mode"], "off");
+    assert!(report["workflow"]["route"].is_null());
+    assert_eq!(report["parameters"]["workflow"]["route"], "input");
+    assert!(report["film_profile"].is_null());
+    assert!(report["parameters"].get("lut").is_none());
+    assert_eq!(report["parameters"]["effects"]["diffusion"]["active"], true);
+    assert!(!report["film_grain_dye"]["active"].as_bool().unwrap());
+
+    let listing = f.run(&["preset", "list", "--source", "user", "--format", "json"]);
+    assert!(listing.status.success());
+    let listing: Value = serde_json::from_slice(&listing.stdout).unwrap();
+    assert_eq!(listing[0]["kind"], "effects");
+    assert_eq!(listing[0]["active_effects"], json!(["diffusion"]));
+
+    let edited = f.report(&[
+        "--preset",
+        "CLI Effects",
+        "--set",
+        "effects.diffusion.strength=0.7",
+        "--dry-run",
+    ]);
+    assert!(
+        (edited["parameters"]["effects"]["diffusion"]["strength"]
+            .as_f64()
+            .unwrap()
+            - 0.7)
+            .abs()
+            < 1e-6
+    );
+
+    let rendered = f.process(&["--preset", "CLI Effects"]);
+    assert!(
+        rendered.status.success(),
+        "{}",
+        String::from_utf8_lossy(&rendered.stderr)
+    );
+    assert!(f.root.join("output.tif").is_file());
+
+    let conflict = f.process(&[
+        "--preset",
+        "CLI Effects",
+        "--film",
+        "kodak_portra_400",
+        "--dry-run",
+    ]);
+    assert!(!conflict.status.success());
+    assert!(String::from_utf8_lossy(&conflict.stderr).contains("LUT or Effects preset conflicts"));
+
+    let off = f.report(&[
+        "--set",
+        "workflow.mode=off",
+        "--set",
+        "lut.path=missing.cube",
+        "--set",
+        "lut.sha256=not-a-hash",
+        "--dry-run",
+    ]);
+    assert_eq!(off["parameters"]["workflow"]["mode"], "off");
+    assert!(off["parameters"]["lut"]["path"] == "missing.cube");
+}
+
+#[test]
 fn lut_preset_runs_without_film_or_print_selectors_and_rejects_mixing() {
     let f = Fixture::new();
     let lut_path = f.root.join("identity.cube");
@@ -2074,7 +2159,7 @@ fn lut_preset_runs_without_film_or_print_selectors_and_rejects_mixing() {
     )
     .unwrap();
     let mut lut = spektrafilm_core::lut_look::LutLookParams::default();
-    let lut_path_arg = format!("lut_look.path={}", lut_path.display());
+    let lut_path_arg = format!("lut.path={}", lut_path.display());
     lut.path = lut_path;
     lut.sha256 = spektrafilm_core::lut_look::hash_file(&lut.path).unwrap();
     let lut_sha = lut.sha256.clone();
@@ -2092,6 +2177,7 @@ fn lut_preset_runs_without_film_or_print_selectors_and_rejects_mixing() {
 
     let report = f.report(&["--preset", "CLI LUT", "--dry-run"]);
     assert_eq!(report["parameters"]["workflow"]["mode"], "lut");
+    assert!(report["workflow"]["route"].is_null());
     assert_eq!(report["parameters"]["workflow"]["route"], "input");
     assert!(!report["parameters"]["io"]["scan_film"].as_bool().unwrap());
 
@@ -2099,10 +2185,10 @@ fn lut_preset_runs_without_film_or_print_selectors_and_rejects_mixing() {
         "--preset",
         "CLI LUT",
         "--set",
-        "lut_look.strength=0.5",
+        "lut.strength=0.5",
         "--dry-run",
     ]);
-    assert_eq!(edited["parameters"]["lut_look"]["strength"], 0.5);
+    assert_eq!(edited["parameters"]["lut"]["strength"], 0.5);
 
     let listing = f.run(&["preset", "list", "--source", "user", "--format", "json"]);
     assert!(listing.status.success());
@@ -2110,12 +2196,7 @@ fn lut_preset_runs_without_film_or_print_selectors_and_rejects_mixing() {
     assert_eq!(listing[0]["kind"], "lut");
     assert_eq!(listing[0]["lut_file_exists"], true);
 
-    let rendered = f.process(&[
-        "--preset",
-        "CLI LUT",
-        "--set",
-        "lut_look.domain_policy=clamp",
-    ]);
+    let rendered = f.process(&["--preset", "CLI LUT", "--set", "lut.domain_policy=clamp"]);
     assert!(
         rendered.status.success(),
         "{}",
@@ -2131,10 +2212,10 @@ fn lut_preset_runs_without_film_or_print_selectors_and_rejects_mixing() {
         "--dry-run",
     ]);
     assert!(!conflict.status.success());
-    assert!(String::from_utf8_lossy(&conflict.stderr).contains("LUT preset conflicts"));
+    assert!(String::from_utf8_lossy(&conflict.stderr).contains("LUT or Effects preset conflicts"));
 
     let path_arg = lut_path_arg;
-    let sha_arg = format!("lut_look.sha256={lut_sha}");
+    let sha_arg = format!("lut.sha256={lut_sha}");
     let declared = f.process(&[
         "--set",
         "workflow.mode=lut",
@@ -2143,7 +2224,7 @@ fn lut_preset_runs_without_film_or_print_selectors_and_rejects_mixing() {
         "--set",
         &sha_arg,
         "--set",
-        "lut_look.domain_policy=clamp",
+        "lut.domain_policy=clamp",
     ]);
     assert!(
         declared.status.success(),

@@ -362,7 +362,7 @@ impl RuntimeCache {
         context: &ObservationContext,
         backend: &dyn spektrafilm_backend::ComputeBackend,
     ) -> Result<&mut Runtime, crate::app::Message> {
-        if snapshot.params.workflow.mode.is_lut() {
+        if !snapshot.params.workflow.mode.is_film() {
             let mut params = snapshot.params.clone();
             params.settings.preview_mode = preview;
             if let Some((cached_params, mut runtime)) = self.lut.take() {
@@ -377,10 +377,14 @@ impl RuntimeCache {
                 self.lut = Some((params, runtime));
                 return Ok(&mut self.lut.as_mut().expect("LUT runtime reinstated").1);
             }
-            let runtime =
-                Runtime::new_lut(params.clone(), &snapshot.data_dir, backend).map_err(|error| {
-                    crate::app::Message::new("operations.runtime_update_error").arg("detail", error)
-                })?;
+            let runtime = if params.workflow.mode.is_lut() {
+                Runtime::new_lut(params.clone(), &snapshot.data_dir, backend)
+            } else {
+                Runtime::new_off(params.clone(), &snapshot.data_dir, backend)
+            }
+            .map_err(|error| {
+                crate::app::Message::new("operations.runtime_update_error").arg("detail", error)
+            })?;
             self.entry = None;
             self.lut = Some((params, runtime));
             return Ok(&mut self.lut.as_mut().expect("LUT runtime cache inserted").1);
@@ -484,10 +488,15 @@ pub(super) fn build_runtime_observed_with_backend(
     let backend = cancellable.as_deref().unwrap_or(backend);
     let prepare = context.scope("runtime_prepare", ObservationKind::Phase, Purpose::Image);
     let result = (|| {
-        if snapshot.params.workflow.mode.is_lut() {
+        if !snapshot.params.workflow.mode.is_film() {
             let mut params = snapshot.params.clone();
             params.settings.preview_mode = preview;
-            return Runtime::new_lut(params, &snapshot.data_dir, backend).map_err(|error| {
+            return if params.workflow.mode.is_lut() {
+                Runtime::new_lut(params, &snapshot.data_dir, backend)
+            } else {
+                Runtime::new_off(params, &snapshot.data_dir, backend)
+            }
+            .map_err(|error| {
                 crate::app::Message::new("operations.runtime_update_error").arg("detail", error)
             });
         }
@@ -749,11 +758,13 @@ mod lut_tests {
         params.io.output_cctf_encoding = true;
         params.settings.preview_mode = false;
         let sha256 = hash_file(&path).unwrap();
-        params.lut_look = LutLookParams {
+        let look = LutLookParams {
             path,
             sha256,
             ..LutLookParams::default()
         };
+        let (lut, effects, grade) = look.split();
+        params.set_lut_groups(lut, effects, grade);
         let state = crate::state::GuiState::from_runtime(
             &params,
             "kodak_portra_400",
@@ -763,7 +774,7 @@ mod lut_tests {
         .unwrap();
         let restored = state.runtime_params().unwrap();
         assert_eq!(restored.workflow.mode, WorkflowMode::Lut);
-        assert_eq!(restored.lut_look, params.lut_look);
+        assert_eq!(restored.lut_render_params(), params.lut_render_params());
 
         let snapshot = RenderSnapshot::new(
             restored,

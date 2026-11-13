@@ -474,6 +474,9 @@ impl PresetLibrary {
             Some(PresetParameters::Look(_)) => {
                 preset.resolve_detailed(data_dir, &RuntimeParams::default())?;
             }
+            Some(PresetParameters::Effects(_)) => {
+                preset.resolve_effects_detailed(&RuntimeParams::default())?;
+            }
             None => {
                 preset.resolve_lut_detailed(&RuntimeParams::default())?;
             }
@@ -609,7 +612,10 @@ impl PresetLibrary {
         let _lock = self.lock_mutations(false)?;
         let path = self.user_path(&preset.name)?;
         let existing = load_file_detailed(&path)?;
-        if !matches!(existing.kind(), Ok(PresetKind::Look | PresetKind::Lut)) {
+        if !matches!(
+            existing.kind(),
+            Ok(PresetKind::Look | PresetKind::Lut | PresetKind::Effects)
+        ) {
             let diagnostic = format!("{}: target is not a whole look", path.display());
             return Err(LibraryError::new(
                 LibraryErrorReason::ExpectedLook { path },

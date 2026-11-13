@@ -10,6 +10,23 @@ impl App {
             .library
             .load_detailed(group, name)
             .and_then(|selected| {
+                if selected.preset.effects_parameters().is_some() {
+                    let resolved = selected.preset.resolve_effects_detailed(&current)?;
+                    if current.workflow.mode == spektrafilm_core::params::WorkflowMode::Film {
+                        self.film_route = Some(current.workflow.route.clone());
+                    }
+                    self.params = resolved.params;
+                    self.presets.state.applied = Some(AppliedPreset {
+                        group,
+                        name: name.to_owned(),
+                    });
+                    self.invalidate_look_render();
+                    self.label_adjustment_message(
+                        crate::app::Message::new("operations.history.apply_named_look")
+                            .arg("name", name),
+                    );
+                    return Ok(());
+                }
                 if selected.preset.lut.is_some() {
                     let resolved = selected.preset.resolve_lut_detailed(&current)?;
                     if current.workflow.mode == spektrafilm_core::params::WorkflowMode::Film {
@@ -70,12 +87,23 @@ impl App {
     }
     pub(crate) fn save_preset_as(&mut self) {
         let preset = if self.params.workflow.mode == spektrafilm_core::params::WorkflowMode::Lut {
-            if let Err(error) = self.params.lut_look.load() {
+            let Some(lut) = self.params.lut_render_params() else {
+                self.status = crate::app::Message::new("surfaces.presets.lut_unavailable")
+                    .arg("detail", "LUT mode has no declaration");
+                return;
+            };
+            if let Err(error) = lut.load() {
                 self.status = crate::app::Message::new("surfaces.presets.lut_unavailable")
                     .arg("detail", error);
                 return;
             }
-            Preset::capture_lut("New preset", self.params.lut_look.clone(), provenance())
+            Preset::capture_lut("New preset", lut, provenance())
+        } else if self.params.workflow.mode == spektrafilm_core::params::WorkflowMode::Off {
+            Preset::capture_effects(
+                "New preset",
+                self.params.effects.clone().unwrap_or_default(),
+                provenance(),
+            )
         } else {
             Preset::capture(
                 "New preset",
@@ -101,7 +129,7 @@ impl App {
         let entry = &self.presets.entries[index];
         match action {
             PresetAction::Load => {
-                if self.params.workflow.mode == spektrafilm_core::params::WorkflowMode::Lut
+                if self.params.workflow.mode != spektrafilm_core::params::WorkflowMode::Film
                     && matches!(
                         entry.preset.as_ref().and_then(|preset| preset.kind().ok()),
                         Some(PresetKind::Section(_))
@@ -217,7 +245,10 @@ impl App {
     ) -> Result<PathBuf, crate::app::Message> {
         let mut preset = spektrafilm_core::presets::load_file_detailed(path)
             .map_err(|error| library_error_message(&error))?;
-        if !matches!(preset.kind(), Ok(PresetKind::Look | PresetKind::Lut)) {
+        if !matches!(
+            preset.kind(),
+            Ok(PresetKind::Look | PresetKind::Lut | PresetKind::Effects)
+        ) {
             return Err(crate::app::Message::new("surfaces.presets.expected_look"));
         }
         if let Some(name) = name {

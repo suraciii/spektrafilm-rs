@@ -263,7 +263,10 @@ impl Thumbnails {
         self.content.clear();
         for entry in entries {
             if let Some(preset) = &entry.preset
-                && matches!(preset.kind(), Ok(PresetKind::Look | PresetKind::Lut))
+                && matches!(
+                    preset.kind(),
+                    Ok(PresetKind::Look | PresetKind::Lut | PresetKind::Effects)
+                )
             {
                 self.content.insert(
                     (entry.group, entry.name.clone()),

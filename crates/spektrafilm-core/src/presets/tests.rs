@@ -2343,6 +2343,71 @@ fn rollei80s_builtin_is_one_source_spektra_look_and_preserves_photo_context() {
 }
 
 #[test]
+fn effects_preset_roundtrips_and_resolves_without_lut_or_profiles() {
+    let effects = crate::lut_look::EffectsParams {
+        diffusion: crate::params::DiffusionFilterParams {
+            active: true,
+            strength: 0.4,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let preset = Preset::capture_effects("Transform", effects.clone(), provenance());
+    assert_eq!(preset.kind(), Ok(PresetKind::Effects));
+    assert_eq!(preset.schema_version, EFFECTS_PRESET_SCHEMA_VERSION);
+    assert!(preset.lut.is_none());
+    assert!(preset.film_profile.is_none());
+    assert!(preset.print_profile.is_none());
+
+    let root: Value = serde_json::from_str(&preset.to_json().unwrap()).unwrap();
+    assert!(root.get("effects").is_some());
+    assert!(root.get("lut").is_none());
+    assert!(root.get("grade").is_none());
+    let reparsed = Preset::from_json_str(&preset.to_json().unwrap()).unwrap();
+    assert_eq!(reparsed.effects_parameters(), Some(&effects));
+
+    let mut current = RuntimeParams::default();
+    current.workflow.route = "input > film > scan".into();
+    current.io.scan_film = true;
+    current.lut = Some(crate::lut_look::LutParams {
+        path: "missing.cube".into(),
+        sha256: "not-a-hash".into(),
+        ..Default::default()
+    });
+    let resolved = preset.resolve_effects_detailed(&current).unwrap();
+    assert_eq!(
+        resolved.params.workflow.mode,
+        crate::lut_look::WorkflowMode::Off
+    );
+    assert_eq!(resolved.params.workflow.route, "input");
+    assert!(!resolved.params.io.scan_film);
+    assert_eq!(resolved.params.effects, Some(effects));
+    assert_eq!(resolved.params.lut, current.lut);
+}
+
+#[test]
+fn effects_preset_rejects_lut_grade_and_current_profile_fields() {
+    let base = serde_json::json!({
+        "schema_version": EFFECTS_PRESET_SCHEMA_VERSION,
+        "name": "Transform",
+        "effects": crate::lut_look::EffectsParams::default(),
+        "provenance": provenance(),
+    });
+    assert!(Preset::from_value(base.clone()).is_ok());
+    for field in ["lut", "grade"] {
+        let mut value = base.clone();
+        value[field] = serde_json::json!({});
+        assert!(Preset::from_value(value).is_err(), "{field}");
+    }
+    let mut value = base.clone();
+    value["film_profile"] = serde_json::json!({"stock": "kodak_portra_400"});
+    assert!(Preset::from_value(value).is_err());
+    let mut missing = base;
+    missing.as_object_mut().unwrap().remove("effects");
+    assert!(Preset::from_value(missing).is_err());
+}
+
+#[test]
 fn lut_preset_roundtrips_and_resolves_without_film_profiles() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("identity.cube");
@@ -2391,7 +2456,7 @@ fn lut_preset_roundtrips_and_resolves_without_film_profiles() {
     );
     assert_eq!(resolved.params.workflow.route, "input");
     assert!(!resolved.params.io.scan_film);
-    assert_eq!(resolved.params.lut_look, lut);
+    assert_eq!(resolved.params.lut_render_params(), Some(lut));
 }
 
 #[test]

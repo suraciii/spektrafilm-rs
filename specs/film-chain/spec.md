@@ -2,11 +2,11 @@
 
 ## Contract
 
-- Existing image-entry `input` and film workflows accept a normalized image, a film profile, and runtime controls. Input processing follows the [CMYK ink style entry-point contract](../cmyk-style/spec.md#enablement).
+- Existing image-entry `input` and film-chain routes accept a normalized image, a film profile, and runtime controls. Input processing follows the [CMYK ink style entry-point contract](../cmyk-style/spec.md#enablement).
 - Completed-material entry follows [Film and print continuation](#film-and-print-continuation) instead; it MUST NOT be interpreted as a new scene image.
 - A route that exposes and develops photographic print material MUST provide a photographic print profile. A film-only continuation MUST NOT acquire a paper dependency.
-- Optional CMYK ink style MUST satisfy the [CMYK ink style](../cmyk-style/spec.md) contract. It MUST NOT determine base workflow topology.
-- Base workflows include input color management, direct film scanning, photographic printing, and the existing film-conversion routes.
+- Optional CMYK ink style MUST satisfy the [CMYK ink style](../cmyk-style/spec.md) contract. It MUST NOT determine base route topology.
+- Base routes include input color management, direct film scanning, photographic printing, and the existing film-conversion routes.
 - The default film path starts with source color and exposure → spectral film exposure and development → film-domain effects (including Spektra, Dye, and Fotufilm Film grain) → the selected base route → scanner interpretation.
 - It continues with [Tone & Color](../finishing/spec.md#scope-and-applicability) → output gamut processing → unsharp masking → transfer encoding → Procedural or Exposure Grain → optional CMYK ink style → output mix → output handoff.
 - [Output mix and material controls](../output-mix/spec.md) owns reuse of existing preflash and chemistry, retirement of Output lightness compression, and overall output mix. It adds no digital material-response layer or scan-reference isolation pass.
@@ -16,7 +16,7 @@
 - A profile's `hanatos2025_adaptation_window_params` and `hanatos2025_adaptation_surface_params` are **conditional fields** of a filming-stage material. A `stage = printing` material — photographic paper and motion-picture print film — does not convert an encoded input to a film exposure, so it carries neither field and MUST NOT be selected as a film.
 - A filming-stage material whose `hanatos2025_adaptation_window_params` is absent runs the RGB-to-exposure conversion **without the sensitivity-adaptation window**. The conversion keeps white balance but models no ultraviolet or infrared cutoff, so that material's spectral response is idealized.
 - The run MUST report the downgrade with the material identity instead of downgrading silently.
-- A filming-stage material that carries `hanatos2025_adaptation_surface_params` runs the log-exposure correction surface when the look enables it. An absent surface field runs no surface correction.
+- A filming-stage material that carries `hanatos2025_adaptation_surface_params` runs the log-exposure correction surface when the setting enables it. An absent surface field runs no surface correction.
 - The selected route preserves the requested color, spatial, optical, and stochastic semantics. A backend MUST NOT silently disable or replace them to remain on a fast path.
 - Execution policy and CPU/GPU algorithm alignment follow [GPU execution](../gpu-execution/spec.md). GPU execution MUST cover the selected chain without replacing its model.
 - The chain preserves floating headroom until a bounded image writer clips and encodes it, except for the optional [Expand](../finishing/spec.md#expand) operation.
@@ -158,7 +158,7 @@ Unsharp mask is digital scan sharpening, not lens resolution. It remains downstr
 - A positive value applies a single per-pixel response to the post-scatter film raw only for the halation blur input. It does not modify the base film raw, film exposure, density, grain, bloom, or scanner readout.
 - The response uses the maximum nonnegative channel value at each pixel and the fixed linear film-raw anchor `1.0`. For a peak at or below the anchor, the response is `source / ((1 - compression) + compression * peak)`; for a peak above the anchor, the response is unchanged.
 - CPU and resident GPU paths MUST prepare this source once and reuse it for every halation bounce. The value is bounded to `0..=0.999999`.
-- It is intended for experimental night-scene looks where secondary bright sources SHOULD contribute more nearly like the brightest source; it MUST NOT be described as stock calibration or a physical trigger threshold.
+- It is intended for experimental night-scene renderings where secondary bright sources SHOULD contribute more nearly like the brightest source; it MUST NOT be described as stock calibration or a physical trigger threshold.
 
 This control remains separate from `halation_strength`, `halation_amount`, `boost_ev`, camera diffusion, and lens/atmospheric bloom. The general GPU execution contract still governs convolution support and CPU/GPU alignment.
 

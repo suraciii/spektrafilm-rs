@@ -10,6 +10,7 @@ use std::sync::LazyLock;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ControlOwner {
     Stage(Stage),
+    Global,
     Settings,
     Export,
     Viewer,
@@ -22,6 +23,7 @@ impl ControlOwner {
     pub(crate) fn label(self) -> &'static str {
         match self {
             Self::Stage(stage) => stage.label(),
+            Self::Global => "Global workflow",
             Self::Settings => "Settings",
             Self::Export => "Export",
             Self::Viewer => "Viewer",
@@ -347,7 +349,9 @@ fn runtime_entry(path: &str, validation: Value) -> ControlEntry {
     let editor = if let Some(reason) = exclusion(path, &validation) {
         EditorKind::Excluded(reason)
     } else if !LABELS.iter().any(|(candidate, _)| *candidate == path)
-        && !path.starts_with("lut_look.")
+        && !path.starts_with("lut.")
+        && !path.starts_with("effects.")
+        && !path.starts_with("grade.")
         && path != "workflow.mode"
     {
         EditorKind::Unconnected
@@ -492,8 +496,12 @@ fn exclusion(path: &str, description: &Value) -> Option<&'static str> {
 
 fn runtime_owner(path: &str) -> (ControlOwner, &'static str) {
     use ControlOwner::Stage as Owner;
-    if path == "workflow.mode" || path.starts_with("lut_look.") {
+    if path == "workflow.mode" {
+        (ControlOwner::Global, "Workflow")
+    } else if path.starts_with("lut.") || path.starts_with("grade.") {
         (Owner(Stage::Look), "LUT look")
+    } else if path.starts_with("effects.") {
+        (Owner(Stage::Effects), "Effects")
     } else if path.starts_with("film_render.grain.") {
         (Owner(Stage::Film), "Grain")
     } else if path.starts_with("film_render.halation.") {

@@ -68,7 +68,7 @@ The preference belongs in the existing per-user configuration directory, outside
 
 A missing preference selects System. Invalid or unreadable data MUST NOT prevent startup or overwrite the invalid file merely by reading it; the GUI MUST remain usable under System and expose the preference problem in localized guidance or diagnostics. An explicit user selection MAY replace that preference through the writer.
 
-Language selection MUST update presentation independently of preference publication. A write failure MUST report non-persistence without reverting the current run's display. Neither core RuntimeParams nor GUI photographic-state projection, parameter digests, look presets, render requests, or worker cache keys MAY acquire a language field.
+Language selection MUST update presentation independently of preference publication. A write failure MUST report non-persistence without reverting the current run's display. Neither core RuntimeParams nor GUI photographic-state projection, parameter digests, presets, render requests, or worker cache keys MAY acquire a language field.
 
 No CLI parameter or legacy GUI-state extension is introduced by this design.
 

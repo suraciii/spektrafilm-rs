@@ -15,7 +15,7 @@ The module reuses, and MUST NOT duplicate:
 
 ## Ownership
 
-The fitted surface belongs to the film profile; the fitted tone belongs to the look. The command writes a profile copy and a sparse parameter overlay. It MUST NOT write into a preset document, because a preset library edit is a user action with its own rules.
+The fitted surface belongs to the film profile; the fitted tone belongs to the film preset. The command writes a profile copy and a sparse parameter overlay. It MUST NOT write into a preset document, because a preset library edit is a user action with its own rules.
 
 ## Forward evaluation
 
@@ -53,7 +53,7 @@ The chain MUST be deterministic for a fixed candidate vector: halation and grain
 ## Failure handling
 
 - Input parsing and validation failures carry the file path and the failing field.
-- A film profile with no `hanatos2025_adaptation_surface_params` fails the `surface` group, because the group's fitted values have nowhere to be written. A profile that carries the field is fittable whether or not the look currently applies the surface.
+- A film profile with no `hanatos2025_adaptation_surface_params` fails the `surface` group, because the group's fitted values have nowhere to be written. A profile that carries the field is fittable whether or not the film preset currently applies the surface.
 - A chain configuration whose output is not the converted negative image fails validation once, before the first evaluation, reusing the existing route and scan-output validation.
 - The command writes no output file unless the fit completes.
 

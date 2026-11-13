@@ -32,7 +32,7 @@ Controlled color and exposure-response cases MUST use this configuration. Their 
 
 ### Full appearance
 
-The full-appearance configuration MUST preserve the exported preset's selected grain, halation, diffusion, and other look controls. It MUST enable spatial and stochastic processing. It MUST use the same manual exposure and output context as the isolated configuration.
+The full-appearance configuration MUST preserve the exported preset's selected grain, halation, diffusion, and other preset controls. It MUST enable spatial and stochastic processing. It MUST use the same manual exposure and output context as the isolated configuration.
 
 A local photograph MUST render at its supplied resolution without preview reduction, automatic crop, or automatic resize. The configuration MUST declare a 35 mm film-format scale. A caller that changes framing, resolution, or film scale MUST retain that change in the case configuration.
 
@@ -40,19 +40,19 @@ The generated full-appearance cases MUST use seeds `[0,42,99]`. A caller MUST se
 
 Full-image color, tone, and FLIP diagnostics MUST remain separate from dedicated flat-field grain and bright-source halation measurements. A textured photograph MUST NOT silently become a flat-field grain probe.
 
-## Default look and output
+## Default preset and output
 
-The initial standard look MUST use the renderer's explicit built-in `Kodak Gold 200` look preset. The preset MUST be exported as a materialized portable file. User-library settings MUST NOT affect its selection.
+The initial standard preset MUST use the renderer's explicit built-in `Kodak Gold 200` preset. The preset MUST be exported as a materialized portable file. User-library settings MUST NOT affect its selection.
 
 Both configurations MUST use `input > film > print > scan`. Output MUST be encoded sRGB. The independent CMYK ink style treatment MUST be disabled.
 
-The scanner MUST use its default lamp and direct scan output. Preview and optional film-chain LUT shortcuts MUST be disabled.
+The scanner MUST use its fixed product readout illuminant and direct scan output. Preview and optional film-chain LUT shortcuts MUST be disabled.
 
-The generator MUST NOT construct a synthetic benchmark film profile. The generated look MUST NOT enter the user's preset library or alter GUI startup settings.
+The generator MUST NOT construct a synthetic benchmark film profile. The generated preset MUST NOT enter the user's preset library or alter GUI startup settings.
 
-The standard look is an end-to-end rendering convention. It MUST NOT claim physical film fidelity or serve as the only coverage for all film stocks, grain engines, and output routes.
+The standard preset is an end-to-end rendering convention. It MUST NOT claim physical film fidelity or serve as the only coverage for all film stocks, grain engines, and output routes.
 
-Changing the selected stock or route MUST create an explicitly authored configuration. Generating arbitrary named looks, selecting a custom preset during generation, and adding a GUI benchmark mode are outside this specification.
+Changing the selected stock or route MUST create an explicitly authored configuration. Generating arbitrary named presets, selecting a custom preset during generation, and adding a GUI benchmark mode are outside this specification.
 
 ## Controlled suites and review coverage
 
@@ -83,7 +83,7 @@ No generated configuration MAY supply universal acceptance thresholds. The exist
 1. Generate the standard files with the real renderer. Validate the exported preset and both configuration documents.
 2. Retain the selected preset identity and successful generator output.
 3. Place a conflicting `Kodak Gold 200` preset in a user library. Generate again into a new directory.
-4. Verify that the exported look still comes from Built-in and that the user library remains unchanged.
+4. Verify that the exported preset still comes from Built-in and that the user library remains unchanged.
 5. Move the generated directory. Run both configurations with a local raster through the real renderer.
 6. Verify that relative dependencies resolve and that full-appearance rendering preserves input dimensions and the declared film scale.
 7. Execute an isolated case twice with the same renderer, data, and configuration. Compare the native output, color, and FLIP measurements.
@@ -93,7 +93,7 @@ No generated configuration MAY supply universal acceptance thresholds. The exist
 11. Run the generated quick and complete suites. Verify the specialized probe settings, distinct appearance cases, and case selection.
 12. Exercise the optional natural-scene branch with its existing pinned provenance.
 13. Compare two renderer targets using one frozen bundle. Verify that both commands consume the same preset bytes.
-14. Preserve data and effective-parameter differences rather than hiding them behind the standard look name.
+14. Preserve data and effective-parameter differences rather than hiding them behind the standard preset name.
 15. Modify or remove a referenced preset file before execution. Reject missing dependencies and preserve changed dependency identity under the existing run rules.
 16. Reject an existing generation destination without altering its contents.
 17. Fail preset export or configuration validation. Return a structured failure and publish no successful generation manifest.

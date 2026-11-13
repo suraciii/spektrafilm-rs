@@ -6,7 +6,7 @@ This capability owns [tone and color adjustments](../../CONTEXT.md#language) aft
 
 ## Scope and applicability
 
-The capability MUST provide one shared adjustment module across the eligible positive readings and LUT look results below.
+The capability MUST provide one shared adjustment response across the eligible positive readings and LUT Grade results below.
 
 | Reading | Applicability |
 | --- | --- |
@@ -14,19 +14,22 @@ The capability MUST provide one shared adjustment module across the eligible pos
 | Negative converted to a positive image | Eligible |
 | Photographic-paper reflection positive | Eligible |
 | Imported-negative or saved-material continuation | Eligible only when its completed reading matches an eligible row |
-| [LUT look output](../lut-look/spec.md) | Eligible after the declared LUT color transform and before output grain |
+| LUT Grade | Eligible after the declared LUT transform and before output grain; owned by the LUT stage |
+| Off mode | Inactive |
+| Film-free `input` route | Inactive |
 | Negative transmission with preserved polarity | Inactive |
 | Negative scan with base subtraction and preserved polarity | Inactive |
 | Material output without a completed positive reading | Inactive |
-| Film-free `input` workflow | Inactive |
 
-Applicability MUST follow the resolved route, scanned medium, delivered polarity, or LUT look boundary. Changing to an inactive route MUST preserve stored adjustment values and explain why they do not execute.
+Applicability MUST follow the resolved mode, route, scanned medium, delivered polarity, or LUT Grade boundary. Changing to an inactive mode or route MUST preserve stored adjustment values and explain why they do not execute.
 
 These adjustments MUST NOT change material formation or scanner interpretation. They MUST NOT add negative conversion or print development to a route that lacks that operation.
 
 The adjustments MUST use fixed, image-independent responses. They MUST NOT measure automatic exposure, white balance, histogram endpoints, or subject masks.
 
-The module operates on the RGB image supplied by [Image input](../image-input/spec.md) or by the [LUT look](../lut-look/spec.md) stage. It MUST NOT change input-alpha handling or introduce alpha compositing. An RGB-only result MUST NOT be presented as proof of alpha preservation.
+The module operates on the RGB image supplied by [Image input](../image-input/spec.md) or the [LUT Grade](../lut-transform/spec.md) boundary. It is inactive in Off mode. It MUST NOT change input-alpha handling or introduce alpha compositing.
+
+An RGB-only result MUST NOT be presented as proof of alpha preservation.
 
 ## Controls
 
@@ -75,15 +78,17 @@ Individual adjustment reversal MUST use the workspace's adjustment Undo. Tone & 
 
 The module MUST provide a transient comparison that bypasses only tone and color adjustments. Comparison MUST preserve stored controls and MUST NOT become a history edit, preset value, or export setting.
 
+Comparison is scoped to its owner: Scan Tone & Color bypasses `finishing`, and LUT Grade bypasses `grade`. There is no global A/B mode, cross-mode split view, or comparison that switches render mode. Candidate preset comparison remains the [preset thumbnail](../presets/spec.md#current-photograph-thumbnails).
+
 Comparison MUST NOT bypass negative interpretation, material effects, output gamut processing, CMYK ink style, or final output mixing. Upstream randomness and accepted input identity MUST remain unchanged during comparison.
 
 [Operator correction](../film-chain/lab-scan/spec.md#operator-correction) remains a distinct negative-conversion operation. Tone and color adjustments MUST NOT reinterpret its stored values or substitute for its exposure-domain controls.
 
 ## Persistence and replay
 
-Tone and color adjustments MUST form one independently scoped, look-owned control group under [Presets](../presets/spec.md).
+In Film mode, tone and color adjustments MUST form one independently scoped, preset-owned control group under [Presets](../presets/spec.md).
 
-In LUT mode, the same response is carried by the LUT look runtime group and MAY be captured by a [LUT preset](../lut-workflow/spec.md#lut-presets); it is not a film look preset section. Applying a complete film look or LUT preset MUST replace the corresponding grade values; applying an unrelated section MUST preserve them.
+In LUT mode, the same response is carried by the `grade` runtime group and MAY be captured by a [LUT preset](../lut-workflow/spec.md#lut-presets); it is not a film preset section. Applying a complete film preset or LUT preset MUST replace the corresponding grade values; applying an unrelated section MUST preserve them.
 
 Film, paper, and route selection MUST preserve these adjustment values. They MUST NOT derive adjustments from stock defaults or silently neutralize inactive stored values.
 

@@ -108,6 +108,7 @@ pub fn run(command: PresetCommand, matches: &ArgMatches) -> Result<()> {
                     .map(|kind| match kind {
                         PresetKind::Look => "look",
                         PresetKind::Lut => "lut",
+                        PresetKind::Effects => "effects",
                         PresetKind::Section(_) => "section",
                     });
                 let mut record = json!({"name": entry.name, "kind": kind, "group": entry.group});
@@ -124,6 +125,24 @@ pub fn run(command: PresetCommand, matches: &ArgMatches) -> Result<()> {
                     record["lut_path"] = json!(lut.path);
                     record["lut_sha256"] = json!(lut.sha256);
                     record["lut_file_exists"] = json!(lut.path.is_file());
+                }
+                if kind == Some("effects")
+                    && let Some(effects) = entry
+                        .preset
+                        .as_ref()
+                        .and_then(|preset| preset.effects_parameters())
+                {
+                    let mut active = Vec::new();
+                    if effects.diffusion.active {
+                        active.push("diffusion");
+                    }
+                    if effects.halation.active {
+                        active.push("halation");
+                    }
+                    if effects.grain.active {
+                        active.push("grain");
+                    }
+                    record["active_effects"] = json!(active);
                 }
                 if let Some(path) = entry.path {
                     record["path"] = json!(path);
@@ -157,6 +176,10 @@ pub fn run(command: PresetCommand, matches: &ArgMatches) -> Result<()> {
             if preset.lut.is_some() {
                 preset
                     .resolve_lut_detailed(&spektrafilm_core::params::RuntimeParams::default())
+                    .map_err(anyhow::Error::msg)?;
+            } else if preset.effects_parameters().is_some() {
+                preset
+                    .resolve_effects_detailed(&spektrafilm_core::params::RuntimeParams::default())
                     .map_err(anyhow::Error::msg)?;
             } else {
                 let data = crate::select_data_dir(args.data_dir, matches)?;

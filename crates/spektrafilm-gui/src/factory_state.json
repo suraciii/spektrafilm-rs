@@ -328,7 +328,7 @@
     "output_interpolation": "spline36"
   },
   "rust": {
-    "version": 7,
+    "version": 8,
     "runtime": {
       "finishing": {
         "brightness": 0.0,

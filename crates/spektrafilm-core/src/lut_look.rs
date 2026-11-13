@@ -28,17 +28,27 @@ pub enum WorkflowMode {
     #[default]
     Film,
     Lut,
+    Off,
 }
 
 impl WorkflowMode {
+    pub const fn is_film(self) -> bool {
+        matches!(self, Self::Film)
+    }
+
     pub const fn is_lut(self) -> bool {
         matches!(self, Self::Lut)
+    }
+
+    pub const fn is_off(self) -> bool {
+        matches!(self, Self::Off)
     }
 
     pub const fn name(self) -> &'static str {
         match self {
             Self::Film => "film",
             Self::Lut => "lut",
+            Self::Off => "off",
         }
     }
 }
@@ -138,6 +148,14 @@ fn default_true() -> bool {
     true
 }
 
+fn default_lut_domain_max() -> [f64; 3] {
+    [1.0; 3]
+}
+
+fn default_lut_strength() -> f64 {
+    1.0
+}
+
 /// Output-referred appearance grain for a LUT look. It is deliberately not a
 /// film grain engine: no density, RMS granularity, or film profile is read.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -187,14 +205,14 @@ impl LutGrainParams {
             ("chroma", self.chroma),
         ] {
             if !value.is_finite() {
-                return Err(format!("lut_look.grain.{name} must be finite"));
+                return Err(format!("effects.grain.{name} must be finite"));
             }
         }
         if !(0.0..=1.0).contains(&self.amount) {
-            return Err("lut_look.grain.amount must be between 0 and 1".into());
+            return Err("effects.grain.amount must be between 0 and 1".into());
         }
         if self.size <= 0.0 {
-            return Err("lut_look.grain.size must be greater than 0".into());
+            return Err("effects.grain.size must be greater than 0".into());
         }
         for (name, value) in [
             ("shadows", self.shadows),
@@ -203,7 +221,7 @@ impl LutGrainParams {
             ("chroma", self.chroma),
         ] {
             if !(0.0..=1.0).contains(&value) {
-                return Err(format!("lut_look.grain.{name} must be between 0 and 1"));
+                return Err(format!("effects.grain.{name} must be between 0 and 1"));
             }
         }
         Ok(())
@@ -230,7 +248,293 @@ where
     serde_json::from_value(value).map_err(serde::de::Error::custom)
 }
 
-/// Stored LUT look declaration. An inactive look is retained in film mode.
+/// Canonical LUT declaration and strength. Effects and LUT Grade live in
+/// independent runtime groups.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LutParams {
+    #[serde(default)]
+    pub path: PathBuf,
+    #[serde(default)]
+    pub sha256: String,
+    #[serde(default)]
+    pub title: String,
+    #[serde(default)]
+    pub input_space: LutSpace,
+    #[serde(default)]
+    pub output_space: LutSpace,
+    #[serde(default)]
+    pub domain_min: [f64; 3],
+    #[serde(default = "default_lut_domain_max")]
+    pub domain_max: [f64; 3],
+    #[serde(default)]
+    pub domain_policy: LutDomainPolicy,
+    #[serde(default)]
+    pub shaper: LutShaper,
+    #[serde(default = "default_lut_strength")]
+    pub strength: f64,
+}
+
+impl Default for LutParams {
+    fn default() -> Self {
+        Self {
+            path: PathBuf::new(),
+            sha256: String::new(),
+            title: String::new(),
+            input_space: LutSpace::Srgb,
+            output_space: LutSpace::Srgb,
+            domain_min: [0.0; 3],
+            domain_max: [1.0; 3],
+            domain_policy: LutDomainPolicy::Fail,
+            shaper: LutShaper::None,
+            strength: 1.0,
+        }
+    }
+}
+
+impl LutParams {
+    pub fn from_cube(
+        path: impl Into<PathBuf>,
+        input_space: LutSpace,
+        output_space: LutSpace,
+        domain_policy: LutDomainPolicy,
+    ) -> Result<Self, String> {
+        let path = path.into();
+        let bytes = std::fs::read(&path)
+            .map_err(|error| format!("reading LUT {}: {error}", path.display()))?;
+        Self::from_cube_bytes(path, &bytes, input_space, output_space, domain_policy)
+    }
+
+    pub fn from_cube_bytes(
+        path: PathBuf,
+        bytes: &[u8],
+        input_space: LutSpace,
+        output_space: LutSpace,
+        domain_policy: LutDomainPolicy,
+    ) -> Result<Self, String> {
+        let document = read_cube_bytes(bytes)
+            .map_err(|error| format!("reading LUT {}: {error}", path.display()))?;
+        let lut = Self {
+            path,
+            sha256: hash_bytes(bytes),
+            title: document.title,
+            input_space,
+            output_space,
+            domain_min: document.domain_min,
+            domain_max: document.domain_max,
+            domain_policy,
+            shaper: if document.shaper.is_some() {
+                LutShaper::Cube1d
+            } else {
+                LutShaper::None
+            },
+            strength: 1.0,
+        };
+        lut.validate(true)?;
+        Ok(lut)
+    }
+
+    pub fn validate(&self, required: bool) -> Result<(), String> {
+        if !required {
+            return Ok(());
+        }
+        if self.path.as_os_str().is_empty() {
+            return Err("lut.path is required in LUT mode".into());
+        }
+        if !is_sha256(&self.sha256) {
+            return Err("lut.sha256 must contain 64 lowercase hexadecimal characters".into());
+        }
+        if self.title.contains(['\r', '\n']) {
+            return Err("lut.title must occupy one line".into());
+        }
+        if !self
+            .path
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("cube"))
+        {
+            return Err("lut.path must name a .cube carrier".into());
+        }
+        if !self.strength.is_finite() || !(0.0..=1.0).contains(&self.strength) {
+            return Err("lut.strength must be finite and between 0 and 1".into());
+        }
+        if self
+            .domain_min
+            .iter()
+            .chain(self.domain_max.iter())
+            .any(|value| !value.is_finite())
+        {
+            return Err("lut domain bounds must be finite".into());
+        }
+        for axis in 0..3 {
+            if self.domain_min[axis] >= self.domain_max[axis] {
+                return Err(format!("lut domain axis {axis} must have min < max"));
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Independent transform effects shared by LUT and Off modes.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EffectsParams {
+    #[serde(
+        default = "inactive_halation",
+        deserialize_with = "deserialize_inactive_halation"
+    )]
+    pub halation: HalationParams,
+    #[serde(default)]
+    pub diffusion: DiffusionFilterParams,
+    #[serde(default)]
+    pub grain: LutGrainParams,
+}
+
+impl Default for EffectsParams {
+    fn default() -> Self {
+        Self {
+            halation: inactive_halation(),
+            diffusion: DiffusionFilterParams::default(),
+            grain: LutGrainParams::default(),
+        }
+    }
+}
+
+impl EffectsParams {
+    pub fn validate(&self) -> Result<(), String> {
+        let halation = &self.halation;
+        if halation.active {
+            for (name, value) in [
+                ("scatter_amount", halation.scatter_amount),
+                ("scatter_spatial_scale", halation.scatter_spatial_scale),
+                ("halation_amount", halation.halation_amount),
+                ("halation_spatial_scale", halation.halation_spatial_scale),
+                ("source_compression", halation.source_compression),
+                ("boost_ev", f64::from(halation.boost_ev)),
+                ("boost_range", f64::from(halation.boost_range)),
+                ("protect_ev", f64::from(halation.protect_ev)),
+                ("halation_bounce_decay", halation.halation_bounce_decay),
+            ] {
+                if !value.is_finite() {
+                    return Err(format!("effects.halation.{name} must be finite"));
+                }
+            }
+            for (name, values) in [
+                ("scatter_core_um", halation.scatter_core_um),
+                ("scatter_tail_um", halation.scatter_tail_um),
+                ("scatter_tail_weight", halation.scatter_tail_weight),
+                ("halation_strength", halation.halation_strength),
+                ("halation_first_sigma_um", halation.halation_first_sigma_um),
+            ] {
+                if values.iter().any(|value| !value.is_finite()) {
+                    return Err(format!("effects.halation.{name} must be finite"));
+                }
+            }
+            if !(0.0..=0.999999).contains(&halation.source_compression) {
+                return Err("effects.halation.source_compression must be in [0, 0.999999]".into());
+            }
+            if halation
+                .halation_strength
+                .iter()
+                .any(|value| !(0.0..=1.0).contains(value))
+            {
+                return Err("effects.halation.halation_strength must be between 0 and 1".into());
+            }
+            if halation
+                .scatter_tail_weight
+                .iter()
+                .any(|value| !(0.0..=1.0).contains(value))
+            {
+                return Err("effects.halation.scatter_tail_weight must be between 0 and 1".into());
+            }
+            if !(0.0..=1.0).contains(&halation.halation_bounce_decay) {
+                return Err(
+                    "effects.halation.halation_bounce_decay must be between 0 and 1".into(),
+                );
+            }
+            for (name, value) in [
+                ("scatter_amount", halation.scatter_amount),
+                ("scatter_spatial_scale", halation.scatter_spatial_scale),
+                ("halation_amount", halation.halation_amount),
+                ("halation_spatial_scale", halation.halation_spatial_scale),
+            ]
+            .into_iter()
+            .chain(
+                halation
+                    .scatter_core_um
+                    .iter()
+                    .copied()
+                    .map(|value| ("scatter_core_um", value)),
+            )
+            .chain(
+                halation
+                    .scatter_tail_um
+                    .iter()
+                    .copied()
+                    .map(|value| ("scatter_tail_um", value)),
+            )
+            .chain(
+                halation
+                    .halation_first_sigma_um
+                    .iter()
+                    .copied()
+                    .map(|value| ("halation_first_sigma_um", value)),
+            ) {
+                if value < 0.0 {
+                    return Err(format!("effects.halation.{name} must not be negative"));
+                }
+            }
+        }
+        if self.diffusion.active {
+            if !spektrafilm_model::diffusion::VALID_FAMILIES
+                .contains(&self.diffusion.filter_family.as_str())
+            {
+                return Err(format!(
+                    "effects.diffusion.filter_family {:?} is unsupported",
+                    self.diffusion.filter_family
+                ));
+            }
+            let diffusion = &self.diffusion;
+            for (name, value) in [
+                ("strength", f64::from(diffusion.strength)),
+                ("spatial_scale", f64::from(diffusion.spatial_scale)),
+                ("halo_warmth", f64::from(diffusion.halo_warmth)),
+                ("core_intensity", f64::from(diffusion.core_intensity)),
+                ("core_size", f64::from(diffusion.core_size)),
+                ("halo_intensity", f64::from(diffusion.halo_intensity)),
+                ("halo_size", f64::from(diffusion.halo_size)),
+                ("bloom_intensity", f64::from(diffusion.bloom_intensity)),
+                ("bloom_size", f64::from(diffusion.bloom_size)),
+            ] {
+                if !value.is_finite() {
+                    return Err(format!("effects.diffusion.{name} must be finite"));
+                }
+            }
+        }
+        if self.grain.active {
+            self.grain.validate()?;
+        }
+        Ok(())
+    }
+}
+
+/// Optional LUT Grade response. The group is absent when the grade is unused.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct GradeParams {
+    pub active: bool,
+    #[serde(flatten)]
+    pub values: FinishingParams,
+}
+
+impl GradeParams {
+    pub fn validate(&self) -> Result<(), String> {
+        self.values.validate()
+    }
+}
+
+/// Stored LUT look declaration. Retained as the internal aggregate consumed by
+/// the renderer and by legacy-document migration.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct LutLookParams {
@@ -246,13 +550,13 @@ pub struct LutLookParams {
     pub output_space: LutSpace,
     #[serde(default)]
     pub domain_min: [f64; 3],
-    #[serde(default)]
+    #[serde(default = "default_lut_domain_max")]
     pub domain_max: [f64; 3],
     #[serde(default)]
     pub domain_policy: LutDomainPolicy,
     #[serde(default)]
     pub shaper: LutShaper,
-    #[serde(default)]
+    #[serde(default = "default_lut_strength")]
     pub strength: f64,
     #[serde(default = "default_true")]
     pub grade_active: bool,
@@ -292,6 +596,58 @@ impl Default for LutLookParams {
 }
 
 impl LutLookParams {
+    pub fn from_groups(
+        lut: &LutParams,
+        effects: Option<&EffectsParams>,
+        grade: Option<&GradeParams>,
+    ) -> Self {
+        Self {
+            path: lut.path.clone(),
+            sha256: lut.sha256.clone(),
+            title: lut.title.clone(),
+            input_space: lut.input_space,
+            output_space: lut.output_space,
+            domain_min: lut.domain_min,
+            domain_max: lut.domain_max,
+            domain_policy: lut.domain_policy,
+            shaper: lut.shaper,
+            strength: lut.strength,
+            grade_active: grade.is_some_and(|grade| grade.active),
+            grade: grade.map_or_else(FinishingParams::default, |grade| grade.values.clone()),
+            halation: effects.map_or_else(inactive_halation, |effects| effects.halation.clone()),
+            diffusion: effects.map_or_else(DiffusionFilterParams::default, |effects| {
+                effects.diffusion.clone()
+            }),
+            grain: effects.map_or_else(LutGrainParams::default, |effects| effects.grain.clone()),
+        }
+    }
+
+    pub fn split(self) -> (LutParams, EffectsParams, GradeParams) {
+        (
+            LutParams {
+                path: self.path,
+                sha256: self.sha256,
+                title: self.title,
+                input_space: self.input_space,
+                output_space: self.output_space,
+                domain_min: self.domain_min,
+                domain_max: self.domain_max,
+                domain_policy: self.domain_policy,
+                shaper: self.shaper,
+                strength: self.strength,
+            },
+            EffectsParams {
+                halation: self.halation,
+                diffusion: self.diffusion,
+                grain: self.grain,
+            },
+            GradeParams {
+                active: self.grade_active,
+                values: self.grade,
+            },
+        )
+    }
+
     /// Build a new look declaration from one external `.cube` carrier.
     ///
     /// The cube supplies its title, domain, and shaper declaration. The caller
@@ -383,111 +739,121 @@ impl LutLookParams {
                 return Err(format!("lut_look domain axis {axis} must have min < max"));
             }
         }
-        self.grade.validate()?;
-        let halation = &self.halation;
-        for (name, value) in [
-            ("scatter_amount", halation.scatter_amount),
-            ("scatter_spatial_scale", halation.scatter_spatial_scale),
-            ("halation_amount", halation.halation_amount),
-            ("halation_spatial_scale", halation.halation_spatial_scale),
-            ("source_compression", halation.source_compression),
-            ("boost_ev", f64::from(halation.boost_ev)),
-            ("boost_range", f64::from(halation.boost_range)),
-            ("protect_ev", f64::from(halation.protect_ev)),
-            ("halation_bounce_decay", halation.halation_bounce_decay),
-        ] {
-            if !value.is_finite() {
-                return Err(format!("lut_look.halation.{name} must be finite"));
+        if self.grade_active {
+            self.grade.validate()?;
+        }
+        if self.halation.active {
+            let halation = &self.halation;
+            for (name, value) in [
+                ("scatter_amount", halation.scatter_amount),
+                ("scatter_spatial_scale", halation.scatter_spatial_scale),
+                ("halation_amount", halation.halation_amount),
+                ("halation_spatial_scale", halation.halation_spatial_scale),
+                ("source_compression", halation.source_compression),
+                ("boost_ev", f64::from(halation.boost_ev)),
+                ("boost_range", f64::from(halation.boost_range)),
+                ("protect_ev", f64::from(halation.protect_ev)),
+                ("halation_bounce_decay", halation.halation_bounce_decay),
+            ] {
+                if !value.is_finite() {
+                    return Err(format!("lut_look.halation.{name} must be finite"));
+                }
             }
-        }
-        for (name, values) in [
-            ("scatter_core_um", halation.scatter_core_um),
-            ("scatter_tail_um", halation.scatter_tail_um),
-            ("scatter_tail_weight", halation.scatter_tail_weight),
-            ("halation_strength", halation.halation_strength),
-            ("halation_first_sigma_um", halation.halation_first_sigma_um),
-        ] {
-            if values.iter().any(|value| !value.is_finite()) {
-                return Err(format!("lut_look.halation.{name} must be finite"));
+            for (name, values) in [
+                ("scatter_core_um", halation.scatter_core_um),
+                ("scatter_tail_um", halation.scatter_tail_um),
+                ("scatter_tail_weight", halation.scatter_tail_weight),
+                ("halation_strength", halation.halation_strength),
+                ("halation_first_sigma_um", halation.halation_first_sigma_um),
+            ] {
+                if values.iter().any(|value| !value.is_finite()) {
+                    return Err(format!("lut_look.halation.{name} must be finite"));
+                }
             }
-        }
-        if !(0.0..=0.999999).contains(&halation.source_compression) {
-            return Err("lut_look.halation.source_compression must be in [0, 0.999999]".into());
-        }
-        if halation
-            .halation_strength
-            .iter()
-            .any(|value| !(0.0..=1.0).contains(value))
-        {
-            return Err("lut_look.halation.halation_strength must be between 0 and 1".into());
-        }
-        if halation
-            .scatter_tail_weight
-            .iter()
-            .any(|value| !(0.0..=1.0).contains(value))
-        {
-            return Err("lut_look.halation.scatter_tail_weight must be between 0 and 1".into());
-        }
-        if !(0.0..=1.0).contains(&halation.halation_bounce_decay) {
-            return Err("lut_look.halation.halation_bounce_decay must be between 0 and 1".into());
-        }
-        for (name, value) in [
-            ("scatter_amount", halation.scatter_amount),
-            ("scatter_spatial_scale", halation.scatter_spatial_scale),
-            ("halation_amount", halation.halation_amount),
-            ("halation_spatial_scale", halation.halation_spatial_scale),
-        ]
-        .into_iter()
-        .chain(
-            halation
-                .scatter_core_um
+            if !(0.0..=0.999999).contains(&halation.source_compression) {
+                return Err("lut_look.halation.source_compression must be in [0, 0.999999]".into());
+            }
+            if halation
+                .halation_strength
                 .iter()
-                .copied()
-                .map(|value| ("scatter_core_um", value)),
-        )
-        .chain(
-            halation
-                .scatter_tail_um
+                .any(|value| !(0.0..=1.0).contains(value))
+            {
+                return Err("lut_look.halation.halation_strength must be between 0 and 1".into());
+            }
+            if halation
+                .scatter_tail_weight
                 .iter()
-                .copied()
-                .map(|value| ("scatter_tail_um", value)),
-        )
-        .chain(
-            halation
-                .halation_first_sigma_um
-                .iter()
-                .copied()
-                .map(|value| ("halation_first_sigma_um", value)),
-        ) {
-            if value < 0.0 {
-                return Err(format!("lut_look.halation.{name} must not be negative"));
+                .any(|value| !(0.0..=1.0).contains(value))
+            {
+                return Err("lut_look.halation.scatter_tail_weight must be between 0 and 1".into());
+            }
+            if !(0.0..=1.0).contains(&halation.halation_bounce_decay) {
+                return Err(
+                    "lut_look.halation.halation_bounce_decay must be between 0 and 1".into(),
+                );
+            }
+            for (name, value) in [
+                ("scatter_amount", halation.scatter_amount),
+                ("scatter_spatial_scale", halation.scatter_spatial_scale),
+                ("halation_amount", halation.halation_amount),
+                ("halation_spatial_scale", halation.halation_spatial_scale),
+            ]
+            .into_iter()
+            .chain(
+                halation
+                    .scatter_core_um
+                    .iter()
+                    .copied()
+                    .map(|value| ("scatter_core_um", value)),
+            )
+            .chain(
+                halation
+                    .scatter_tail_um
+                    .iter()
+                    .copied()
+                    .map(|value| ("scatter_tail_um", value)),
+            )
+            .chain(
+                halation
+                    .halation_first_sigma_um
+                    .iter()
+                    .copied()
+                    .map(|value| ("halation_first_sigma_um", value)),
+            ) {
+                if value < 0.0 {
+                    return Err(format!("lut_look.halation.{name} must not be negative"));
+                }
             }
         }
-        if !spektrafilm_model::diffusion::VALID_FAMILIES
-            .contains(&self.diffusion.filter_family.as_str())
-        {
-            return Err(format!(
-                "lut_look.diffusion.filter_family {:?} is unsupported",
-                self.diffusion.filter_family
-            ));
-        }
-        let diffusion = &self.diffusion;
-        for (name, value) in [
-            ("strength", diffusion.strength),
-            ("spatial_scale", diffusion.spatial_scale),
-            ("halo_warmth", diffusion.halo_warmth),
-            ("core_intensity", diffusion.core_intensity),
-            ("core_size", diffusion.core_size),
-            ("halo_intensity", diffusion.halo_intensity),
-            ("halo_size", diffusion.halo_size),
-            ("bloom_intensity", diffusion.bloom_intensity),
-            ("bloom_size", diffusion.bloom_size),
-        ] {
-            if !value.is_finite() {
-                return Err(format!("lut_look.diffusion.{name} must be finite"));
+        if self.diffusion.active {
+            if !spektrafilm_model::diffusion::VALID_FAMILIES
+                .contains(&self.diffusion.filter_family.as_str())
+            {
+                return Err(format!(
+                    "lut_look.diffusion.filter_family {:?} is unsupported",
+                    self.diffusion.filter_family
+                ));
+            }
+            let diffusion = &self.diffusion;
+            for (name, value) in [
+                ("strength", diffusion.strength),
+                ("spatial_scale", diffusion.spatial_scale),
+                ("halo_warmth", diffusion.halo_warmth),
+                ("core_intensity", diffusion.core_intensity),
+                ("core_size", diffusion.core_size),
+                ("halo_intensity", diffusion.halo_intensity),
+                ("halo_size", diffusion.halo_size),
+                ("bloom_intensity", diffusion.bloom_intensity),
+                ("bloom_size", diffusion.bloom_size),
+            ] {
+                if !value.is_finite() {
+                    return Err(format!("lut_look.diffusion.{name} must be finite"));
+                }
             }
         }
-        self.grain.validate()?;
+        if self.grain.active {
+            self.grain.validate()?;
+        }
         Ok(())
     }
 
@@ -583,7 +949,7 @@ impl LutLookParams {
         let hash = hash_bytes(&bytes);
         if hash != self.sha256.to_ascii_lowercase() {
             return Err(format!(
-                "LUT {}: content hash differs from lut_look.sha256",
+                "LUT {}: content hash differs from lut.sha256",
                 self.path.display()
             ));
         }
@@ -599,13 +965,13 @@ impl LutLookParams {
             (LutShaper::None, false) | (LutShaper::Cube1d, true) => {}
             (LutShaper::None, true) => {
                 return Err(format!(
-                    "LUT {}: file contains a 1D shaper but lut_look.shaper is none",
+                    "LUT {}: file contains a 1D shaper but lut.shaper is none",
                     self.path.display()
                 ));
             }
             (LutShaper::Cube1d, false) => {
                 return Err(format!(
-                    "LUT {}: lut_look.shaper is cube_1d but the file has no LUT_1D_SIZE",
+                    "LUT {}: lut.shaper is cube_1d but the file has no LUT_1D_SIZE",
                     self.path.display()
                 ));
             }
@@ -646,6 +1012,36 @@ pub struct LutLook {
 }
 
 impl LutLook {
+    /// Build the internal render aggregate for Off mode. A strength-zero
+    /// identity transform keeps the shared effect, gamut, encoding, and grain
+    /// tail without reading a LUT file or executing LUT Grade.
+    pub fn off(effects: &EffectsParams) -> Result<Self, String> {
+        effects.validate()?;
+        let linear = LutSpace::SrgbLinear.color_space();
+        let declaration = LutParams {
+            input_space: LutSpace::SrgbLinear,
+            output_space: LutSpace::SrgbLinear,
+            strength: 0.0,
+            ..LutParams::default()
+        };
+        let params = LutLookParams::from_groups(&declaration, Some(effects), None);
+        Ok(Self {
+            document: LutDocument {
+                resolution: 2,
+                table: vec![[0.0, 0.0, 0.0]; 8],
+                shaper: None,
+                domain_min: [0.0; 3],
+                domain_max: [1.0; 3],
+                title: String::new(),
+            },
+            params,
+            input: linear,
+            output: linear,
+            clipped_pixels: AtomicU64::new(0),
+            evaluated_pixels: AtomicU64::new(0),
+        })
+    }
+
     pub fn params(&self) -> &LutLookParams {
         &self.params
     }
@@ -661,7 +1057,7 @@ impl LutLook {
         let hash = hash_file(&self.params.path)?;
         if hash != self.params.sha256.to_ascii_lowercase() {
             return Err(format!(
-                "LUT {}: content hash differs from lut_look.sha256",
+                "LUT {}: content hash differs from lut.sha256",
                 self.params.path.display()
             ));
         }

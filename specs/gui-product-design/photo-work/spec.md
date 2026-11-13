@@ -4,7 +4,7 @@
 
 This target extends [GUI product design](../spec.md). It owns Original/Modified inspection, photograph adjustment records, and multi-photograph work.
 
-[GUI workflow](../../gui-workflow/spec.md) owns edits, history, and render identity. [Presets](../../presets/spec.md) owns reusable looks. [Photo export](../../photo-export/spec.md) owns rendering and file publication.
+[GUI workflow](../../gui-workflow/spec.md) owns edits, history, and render identity. [Presets](../../presets/spec.md) owns reusable presets. [Photo export](../../photo-export/spec.md) owns rendering and file publication.
 
 ## Original / Modified
 
@@ -62,7 +62,7 @@ Removing an entry MUST NOT delete its source, record, or exported files. Single-
 
 ### Copy adjustments
 
-Copy MUST require explicit scope and destination selection. It MUST disclose the controls replaced. Existing look, section, feature-profile, and operator-correction scopes remain authoritative.
+Copy MUST require explicit scope and destination selection. It MUST disclose the controls replaced. Existing preset, section, feature-profile, and operator-correction scopes remain authoritative.
 
 Copy MUST preserve destination source interpretation, RAW settings, geometry, source calibration, and delivery settings. Automatic frame setup MUST use each destination, not copied prepared values. Each destination MUST commit atomically or remain unchanged, with an individual outcome.
 

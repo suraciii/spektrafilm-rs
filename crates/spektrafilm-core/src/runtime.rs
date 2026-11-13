@@ -197,7 +197,7 @@ impl Runtime {
         data_dir: &Path,
     ) -> Result<Self, String> {
         let pipeline = Pipeline::new_with_spectral(film, print, params, data_dir)?;
-        let record_configuration = if pipeline.params.workflow.mode.is_lut() {
+        let record_configuration = if !pipeline.params.workflow.mode.is_film() {
             None
         } else {
             crate::stages::grain_dye::resolve_record(&pipeline.film, &pipeline.params)?
@@ -223,6 +223,28 @@ impl Runtime {
         if !params.workflow.mode.is_lut() {
             return Err("Runtime::new_lut requires workflow.mode = lut".into());
         }
+        Self::new_transform(params, data_dir, backend)
+    }
+
+    /// Prepare an Off-mode runtime without resolving spectral film or print
+    /// materials. Off mode uses the shared Effects render tail and never reads
+    /// a stored LUT declaration.
+    pub fn new_off(
+        params: RuntimeParams,
+        data_dir: &Path,
+        backend: &dyn ComputeBackend,
+    ) -> Result<Self, String> {
+        if !params.workflow.mode.is_off() {
+            return Err("Runtime::new_off requires workflow.mode = off".into());
+        }
+        Self::new_transform(params, data_dir, backend)
+    }
+
+    fn new_transform(
+        params: RuntimeParams,
+        data_dir: &Path,
+        backend: &dyn ComputeBackend,
+    ) -> Result<Self, String> {
         params.validate_color()?;
         let film = crate::process_params::lut_placeholder_profile()?;
         Self::new_with_backend(film.clone(), film, params, data_dir, backend)
@@ -288,7 +310,7 @@ impl Runtime {
         backend: &dyn ComputeBackend,
     ) -> Result<Self, String> {
         let pipeline = Pipeline::new_with_spectral_backend(film, print, params, data_dir, backend)?;
-        let record_configuration = if pipeline.params.workflow.mode.is_lut() {
+        let record_configuration = if !pipeline.params.workflow.mode.is_film() {
             None
         } else {
             crate::stages::grain_dye::resolve_record(&pipeline.film, &pipeline.params)?
@@ -714,7 +736,7 @@ impl Runtime {
         max_size: u32,
         backend: &dyn ComputeBackend,
     ) -> Result<ImageBuf, String> {
-        if self.params().workflow.mode.is_lut() {
+        if !self.params().workflow.mode.is_film() {
             let output = self.process(image, backend)?;
             return if self
                 .params()
@@ -776,7 +798,7 @@ impl Runtime {
         backend: &dyn ComputeBackend,
     ) -> Result<(), String> {
         let update = self.pipeline.prepare_parameter_update(params, backend)?;
-        let record_configuration = if update.params.workflow.mode.is_lut() {
+        let record_configuration = if !update.params.workflow.mode.is_film() {
             None
         } else {
             crate::stages::grain_dye::resolve_record(&update.film, &update.params)?

@@ -208,7 +208,19 @@ fn choose_diagnostics_mode(h: &mut Harness<'_, App>, next: &str) {
     h.get_by_role_and_label(egui::accesskit::Role::ComboBox, "Collection mode")
         .simulate_click();
     h.run_steps(3);
-    let options: Vec<_> = h.query_all_by_label(next).collect();
+    let mut options: Vec<_> = h.query_all_by_label(next).collect();
+    if options.len() > 1 {
+        // The persistent mode selector also offers Film, LUT, and Off. The
+        // open diagnostics popup is below it on screen.
+        options.sort_by(|a, b| {
+            a.node()
+                .raw_bounds()
+                .unwrap()
+                .y0
+                .total_cmp(&b.node().raw_bounds().unwrap().y0)
+        });
+        options.remove(0);
+    }
     assert_eq!(options.len(), 1, "diagnostics option {next}");
     options[0].simulate_click();
     h.run_steps(3);

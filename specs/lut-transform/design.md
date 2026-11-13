@@ -1,4 +1,4 @@
-# LUT look design
+# LUT transform design
 
 The [product contract](spec.md) owns observable LUT mode behavior. This document owns the mode boundary, evaluation order, shared and independent implementations, and invariants.
 
@@ -11,12 +11,13 @@ The [product contract](spec.md) owns observable LUT mode behavior. This document
 | LUT import, external LUT declaration, LUT stage | This capability |
 | Exported-LUT handoff, LUT file references, LUT presets | [LUT workflow](../lut-workflow/spec.md) |
 | Halation, diffusion, and grain parameter models | This capability |
-| Grade response and Oklab evaluation | [Tone and color](../finishing/spec.md) |
+| LUT Grade response and Oklab evaluation | [Tone and color](../finishing/spec.md) |
 | Film grain engines | [Film grain](../film-grain/spec.md) |
 | CPU/GPU evaluation | [GPU execution](../gpu-execution/spec.md) |
 | GUI controls and mode presentation | [GUI workflow](../gui-workflow/spec.md) |
 | CLI syntax and parameter carriers | [CLI](../cli/spec.md) |
-| Film look and section presets | [Presets](../presets/spec.md) |
+| Film and section presets | [Presets](../presets/spec.md) |
+| Film, LUT, and Off selection | [Render modes](../render-mode/spec.md) |
 
 LUT delivery exports a film-chain transform. LUT mode imports an external transform. They MUST share file parsing and interpolation primitives without sharing a runtime contract.
 
@@ -24,12 +25,12 @@ LUT delivery exports a film-chain transform. LUT mode imports an external transf
 
 | Area | Boundary |
 | --- | --- |
-| External LUT parsing | One shared parser reads `.cube` data; LUT look owns its declaration and validation |
-| LUT look parameters | Core runtime parameters own the mode, LUT declaration, effects, and grade |
-| Mode dispatch | The pipeline selects one film or LUT stage graph; no per-stage mode flags |
-| Halation and grain | LUT-specific effect models; shared PSF and noise primitives only |
+| External LUT parsing | One shared parser reads `.cube` data; LUT transform owns its declaration and validation |
+| LUT transform parameters | Core runtime parameters own the `lut`, `effects`, and `grade` groups |
+| Mode dispatch | The pipeline selects one Film, LUT, or Off graph; no per-stage mode flags |
+| Halation and grain | Transform effect models; shared PSF and noise primitives only |
 | Diffusion | Shared optical PSF; placed before the LUT |
-| Grade | Existing finishing response; optional post-LUT stage |
+| LUT Grade | Existing finishing response; optional post-LUT stage |
 | GUI and CLI | Adapters over the same core declaration; no private color transform |
 
 The implementation MUST NOT create a second LUT reader, a second color-space table, or a second finishing response.
@@ -39,12 +40,15 @@ The implementation MUST NOT create a second LUT reader, a second color-space tab
 ```text
 RenderMode
 ├── Film → existing spectral film/print/scan pipeline
-└── Lut  → LUT look pipeline
+├── Lut  → LUT transform pipeline
+└── Off  → Effects and output color management without Film or LUT
 ```
 
 The mode is a top-level dispatch. LUT mode MUST NOT call film exposure, development, print, scan, spectral preparation, or film-grain engines.
 
-Film mode MUST NOT load an external LUT look. A LUT look is not a film profile and MUST NOT populate `film_profile` or `print_profile`.
+Off mode MUST NOT load a LUT file, spectral material, or execute LUT Grade. It executes the Effects stage and output color management.
+
+Film mode MUST NOT load an external LUT transform. A LUT transform is not a film profile and MUST NOT populate `film_profile` or `print_profile`.
 
 Inactive mode values are retained as stored parameters. They are not consumed and MUST NOT cause material preparation.
 
@@ -59,16 +63,28 @@ LUT mode MUST evaluate in this order:
 4. Shaper and LUT input transform.
 5. 3D LUT.
 6. Decode LUT output to linear output RGB.
-7. Optional grade.
+7. Optional LUT Grade.
 8. Existing output gamut processing.
 9. Output encoding.
 10. Grain in output encoding.
 11. Publish output.
 ```
 
+Off mode MUST use the same order with steps 4 through 7 as exact bypasses:
+
+```text
+1. Decode input and convert to linear working RGB.
+2. Diffusion in linear light.
+3. Halation in linear light.
+4. Existing output gamut processing.
+5. Output encoding.
+6. Grain in output encoding.
+7. Publish output.
+```
+
 The order is fixed. No effect reorders around the LUT.
 
-Diffusion models lens scatter; halation models film and base scatter. Diffusion therefore precedes halation.
+Diffusion models lens scatter; halation models a highlight-scatter appearance. Diffusion therefore precedes halation.
 
 Both effects see scene-linear highlights before the LUT compresses them. Grain sees final output encoding, so it is independent of LUT contrast.
 
@@ -115,7 +131,7 @@ A 3D LUT maps a normalized domain to output values. The domain MUST be finite an
 
 `Clamp` is the import default and `Error` is the explicit strict choice. The import surfaces MUST explain both choices before the user accepts the declaration.
 
-If the input exceeds the domain, the LUT look MUST either apply a declared 1D shaper or select an explicit clamp. Silent clipping is a contract violation. An explicit clamp MUST report its clipped fraction through execution reporting.
+If the input exceeds the domain, the LUT transform MUST either apply a declared 1D shaper or select an explicit clamp. Silent clipping is a contract violation. An explicit clamp MUST report its clipped fraction through execution reporting.
 
 The 1D shaper, when present, maps the working input into the 3D domain. It is not a grade and MUST NOT be described as one.
 
@@ -149,10 +165,12 @@ pub enum EffectPlacement {
 | --- | --- | --- | --- | --- |
 | Diffusion | PreLut | Linear scene RGB | Camera diffusion PSF/models | No film or print stage |
 | Halation | PreLut | Linear scene RGB | PSF primitive | Highlight mask, tint, threshold, no film density |
-| Grade | PostLut | Linear output RGB / Oklab | `finishing` | Optional, LUT-independent |
+| LUT Grade | PostLut | Linear output RGB / Oklab | `finishing` | Optional, LUT-independent |
 | Grain | OutputEncoding | Encoded output RGB | Noise/hash primitive | Appearance grain, no film density or RMS |
 
-The table does not permit sharing a parameter object. LUT effects use their own parameter groups.
+The table does not permit sharing a parameter object. Transform effects use their own parameter groups.
+
+Effects are active in LUT and Off. LUT Grade is active only in LUT. Film mode does not execute these groups.
 
 ### Halation
 
@@ -171,15 +189,15 @@ The PSF primitive MAY be shared with film halation. The mask, tint, threshold, a
 
 ### Diffusion
 
-Diffusion MUST reuse the selected optical PSF and model from camera diffusion. It MUST run before the LUT.
+Diffusion MUST reuse the existing optical PSF implementations. It MUST carry its own model selection and MUST NOT read a film profile or camera-diffusion control. It MUST run before the LUT.
 
 The effect MUST be off by default. A LUT that already carries lens character MUST NOT acquire diffusion implicitly.
 
-### Grade
+### LUT Grade
 
-Grade MUST call the existing finishing response on linear output RGB. It MUST preserve its existing neutral bypass and parameter validation.
+LUT Grade MUST call the existing finishing response on linear output RGB. It MUST preserve its existing neutral bypass and parameter validation.
 
-Grade MUST be optional. LUT mode MUST NOT add a second tone curve, a second white balance, or a second output transform around it.
+LUT Grade MUST be optional and active only in LUT mode. Off MUST bypass it without validating its values. LUT mode MUST NOT add a second tone curve, a second white balance, or a second output transform around it.
 
 ### Grain
 
@@ -196,7 +214,7 @@ where `n` is a seeded noise field, `A` is amount, and `w_s`, `w_m`, `w_h` are sh
 
 The default is monochrome grain. Chroma MAY add a second noise field without changing luminance.
 
-The seed and draw order MUST be deterministic. Grain MUST NOT change LUT or grade parameters.
+The seed and draw order MUST be deterministic. Grain MUST NOT change LUT or LUT Grade parameters.
 
 ## Data model
 
@@ -204,26 +222,39 @@ The seed and draw order MUST be deterministic. Grain MUST NOT change LUT or grad
 pub enum RenderMode {
     Film,
     Lut,
+    Off,
 }
 
-pub struct LutLookParams {
-    pub lut: LutSpec,
-    pub effects: LutEffectParams,
-    pub grade: Option<FinishingParams>,
+pub struct LutParams {
+    pub declaration: LutSpec,
 }
 
-pub struct LutEffectParams {
+pub struct EffectsParams {
     pub halation: Option<LutHalationParams>,
-    pub diffusion: Option<DiffusionParams>,
+    pub diffusion: Option<LutDiffusionParams>,
     pub grain: Option<LutGrainParams>,
+}
+
+pub struct GradeParams {
+    pub active: bool,
+    // Existing finishing response values.
+}
+
+pub struct RuntimeParams {
+    pub workflow: WorkflowParams,
+    pub lut: Option<LutParams>,
+    pub effects: Option<EffectsParams>,
+    pub grade: Option<GradeParams>,
 }
 ```
 
-`LutHalationParams` and `LutGrainParams` are distinct from `film_render.halation` and `film_render.grain`. Field names MUST NOT alias film-density controls.
+`LutDiffusionParams`, `LutHalationParams`, and `LutGrainParams` are transform-owned and distinct from the film diffusion, `film_render.halation`, and `film_render.grain` groups. Field names MUST NOT alias film-density controls.
 
-A complete runtime parameter document without a LUT look resolves to film mode. A LUT look is active only when the mode is `Lut` and a LUT declaration is present.
+The runtime groups are `lut`, `effects`, and `grade`. An absent `workflow.mode` resolves to `film`.
 
-A newly imported LUT look starts at strength one with effects and grade disabled.
+A LUT transform is active only when the mode is `Lut` and a LUT declaration is present. Off requires no LUT.
+
+A newly imported LUT starts at strength one with effects and LUT Grade inactive.
 
 ## Validation
 
@@ -233,19 +264,20 @@ Validation MUST occur before image execution and before output publication.
 | --- | --- |
 | `mode = Lut` without a LUT declaration | Reject |
 | `mode = Film` with a stored LUT declaration | Ignore the LUT declaration; do not load it |
-| A LUT look declaration that carries a film or print profile reference | Reject |
-| Missing or invalid domain policy | Reject |
-| Unsupported or malformed carrier | Reject |
-| Missing input or output space | Reject |
-| Unsupported color space | Reject |
-| Domain nonfinite, reversed, or empty | Reject |
-| Input outside domain without shaper or explicit clamp while the LUT is applied | Reject |
-| Missing file or hash mismatch | Reject |
-| Strength outside zero to one | Reject |
-| Nonfinite or out-of-range effect value | Reject |
+| `mode = Off` with a stored LUT declaration | Ignore the LUT declaration; do not load it |
+| A LUT declaration that carries a film or print profile reference | Reject while LUT mode is active |
+| Missing or invalid domain policy | Reject while LUT mode is active |
+| Unsupported or malformed carrier | Reject while LUT mode is active |
+| Missing input or output space | Reject while LUT mode is active |
+| Unsupported color space | Reject while LUT mode is active |
+| Domain nonfinite, reversed, or empty | Reject while LUT mode is active |
+| Input outside domain without shaper or explicit clamp while the LUT is applied | Reject while LUT mode is active |
+| Missing file or hash mismatch | Reject while LUT mode is active |
+| Strength outside zero to one | Reject while LUT mode is active |
+| Nonfinite or out-of-range effect value | Reject in LUT and Off |
 | Effect in the wrong placement | Reject |
 
-LUT mode MUST NOT validate or prepare spectral materials while active. Film mode MUST NOT validate or load a stored LUT look while active.
+LUT mode MUST NOT validate or prepare spectral materials while active. Film and Off modes MUST NOT validate or load a stored LUT transform.
 
 Inactive values remain stored and do not affect the render. Active-mode validation applies only to the active mode and its declaration.
 
@@ -263,13 +295,17 @@ LUT mode MUST use existing image input, output gamut, output encoding, photo exp
 
 ## Persistence and compatibility
 
-Complete parameter documents, GUI state, and render recipes carry the LUT look as runtime parameters. They MUST retain the path, hash, color spaces, domain, domain policy, shaper, strength, effects, and grade.
+Complete parameter documents, GUI state, and render recipes carry the mode plus the `lut`, `effects`, and `grade` groups. They MUST retain the path, hash, color spaces, domain, domain policy, shaper, strength, effects, and LUT Grade.
 
-A LUT file is not embedded in a document. A document carries a reference and hash; a missing or changed file is a validation failure.
+A LUT file is not embedded in a document. A document carries a reference and hash; a missing or changed file is a validation failure while LUT mode is active.
 
-Mode switching preserves inactive values. It MUST NOT reset film controls when entering LUT mode or reset LUT controls when entering film mode.
+Mode switching preserves inactive values. It MUST NOT reset film controls when entering LUT or Off, or reset LUT, Effects, or Grade when entering Film.
 
-This capability's preset boundary is defined by the [LUT workflow](../lut-workflow/spec.md#lut-presets). LUT presets use their own schema version and carry an external LUT file path and hash; film look and section presets retain their existing schema. The LUT look renderer does not read a preset file directly; the preset resolver resolves its declaration into the runtime LUT look.
+This capability's preset boundary is defined by the [LUT workflow](../lut-workflow/spec.md#lut-presets). LUT presets use schema 8 and carry an external LUT file path and hash.
+
+Effects presets use schema 9 and carry Effects without a LUT. Film presets and section presets retain schema 7.
+
+The preset resolver resolves the declaration into runtime parameters. The renderer does not read a preset file directly.
 
 ## Licensing and provenance
 
@@ -283,8 +319,9 @@ Adobe XMP and DCP creative profiles are not LUT carriers in this contract. A use
 
 1. A LUT is pointwise; it carries no spatial effect.
 2. LUT mode never loads film, print, or spectral material.
-3. Film mode never loads an external LUT look.
+3. Film and Off modes never load an external LUT transform.
 4. Effects are independent; disabling one is an exact bypass.
 5. No color space, domain, clamp, or fallback is inferred silently.
 6. The evaluation order is fixed.
 7. Same input, LUT hash, parameters, seed, precision, and backend produce a repeatable result under the compute contract.
+8. Off mode never executes LUT Grade.

@@ -102,7 +102,7 @@ This is a generated persistence format, not a new user-authored configuration la
 The artifact MUST provide the baseline for continuation. Existing preset and `--set` source ordering MUST apply to downstream controls. The resolver MUST validate all explicitly supplied source syntax and values before composition, as for image input.
 
 - A completed-state control or interpretation dependency MUST be immutable; an explicit semantically equal restatement is permitted. A different value MUST fail with the canonical path, the source of the conflicting edit, and guidance to regenerate from the earlier input.
-- This rule also applies to profile changes, legacy parameter files, and upstream edits carried by complete look presets. A later source MUST NOT make an illegal frozen-state mutation acceptable by overriding it again.
+- This rule also applies to profile changes, legacy parameter files, and upstream edits carried by complete presets. A later source MUST NOT make an illegal frozen-state mutation acceptable by overriding it again.
 
 The resolver MUST NOT replay a complete saved parameter snapshot through input preparation and stock initialization. It MUST restore validated completed state and prepare only remaining operations. Frozen interpretation data, recorded provenance, and editable downstream defaults MUST remain distinct even when they refer to the same parameter vocabulary.
 

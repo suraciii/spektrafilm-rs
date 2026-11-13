@@ -13,11 +13,11 @@
 
 ## GUI placement
 
-The Grain module has one GUI owner: the Film stage. It is not a global effects module and MUST NOT be shared with the LUT workflow. The module keeps the five-engine selector and every engine-specific control in one editing location.
+The Film Grain module has one GUI owner: the Film stage. It is not a global effects module and MUST NOT be shared with the Effects stage. The module keeps the five-engine selector and every engine-specific control in one editing location.
 
 The module heading is Grain, not Film grain. Spektra, Dye, and Fotufilm Film MUST be identified as material grain; Procedural and Exposure Grain MUST be identified as post-scan appearance.
 
-The selected engine's domain MUST remain readable without hover. The LUT workflow carries its own grain control and MUST NOT read or edit the Film Grain module.
+The selected engine's domain MUST remain readable without hover. The Effects stage carries its own Grain control, active in LUT and Off. That control MUST NOT read or edit the Film Grain module.
 
 ## Defaults and compatibility
 
@@ -27,7 +27,7 @@ An omitted engine in an unversioned sparse source MUST use the current default. 
 
 GUI state version 6 owns this default cutover. Loading a version 1–5 GUI document that omits the engine MUST preserve its historical Spektra intent as an explicit engine. A current or unversioned GUI document that omits the engine MUST use Dye.
 
-An explicit engine in a state, preset, or recipe MUST remain authoritative. The cutover MUST NOT convert existing explicitly authored looks or insert an engine into a sparse section preset.
+An explicit engine in a state, preset, or recipe MUST remain authoritative. The cutover MUST NOT convert existing explicitly authored presets or insert an engine into a sparse section preset.
 
 This default change does not preserve pixels for an omitted engine in a new sparse source. It MUST NOT imply stock calibration, physical-fidelity acceptance, or equivalence between engines.
 
@@ -66,7 +66,7 @@ Runtime control names MUST identify their engine.
 
 Procedural controls MUST use the `procedural_` prefix.
 
-Dye look controls MUST use `dye_strength` and `dye_scale`.
+Dye strength controls MUST use `dye_strength` and `dye_scale`.
 
 Exposure controls MUST use the `film_render.grain.exposure` object. Its controls identify the engine by object path and stable field names.
 

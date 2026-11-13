@@ -58,34 +58,109 @@ impl LutImportDraft {
 }
 
 impl App {
+    /// Persistent render-mode selector. It lives above the scrollable stage
+    /// list so changing modes never requires scrolling back to a stage.
+    pub(crate) fn mode_selector(&mut self, ui: &mut egui::Ui) {
+        let mut selected = self.params.workflow.mode;
+        ui.horizontal_wrapped(|ui| {
+            ui.label(crate::i18n::text(ui.ctx(), "surfaces.workflow.mode"));
+            for (mode, key) in [
+                (WorkflowMode::Film, "surfaces.workflow.film"),
+                (WorkflowMode::Lut, "surfaces.workflow.lut"),
+                (WorkflowMode::Off, "surfaces.workflow.off"),
+            ] {
+                ui.selectable_value(&mut selected, mode, crate::i18n::text(ui.ctx(), key));
+            }
+        });
+        if selected != self.params.workflow.mode {
+            crate::controls::record_edited_path(ui.ctx(), "workflow.mode");
+            self.switch_workflow(selected);
+        }
+    }
+
     pub(crate) fn switch_workflow(&mut self, mode: WorkflowMode) {
         self.pending_stage = None;
         self.pending_scroll = None;
         if self.params.workflow.mode == mode {
             return;
         }
-        if mode == WorkflowMode::Lut && self.params.lut_look.load().is_err() {
-            self.status = crate::app::Message::new("surfaces.status.lut_import_required");
-            self.begin_import_lut(false);
+        if mode == WorkflowMode::Lut {
+            let usable = self
+                .params
+                .lut_render_params()
+                .is_some_and(|look| look.load().is_ok());
+            if !usable {
+                self.status = crate::app::Message::new("surfaces.status.lut_import_required");
+                self.begin_import_lut(false);
+                return;
+            }
+        }
+        let stored_route =
+            if self.params.workflow.mode == WorkflowMode::Film && mode != WorkflowMode::Film {
+                Some(self.params.workflow.route.clone())
+            } else {
+                self.film_route.clone()
+            };
+        let mut candidate = self.params.clone();
+        candidate.migrate_legacy_lut_look();
+        let reloaded_metadata = if mode == WorkflowMode::Film
+            && (self.film_medium == crate::controls::ScanMedium::None || stored_route.is_none())
+        {
+            let film = match crate::profile::load_profile_by_name(&self.data_dir, &self.film_name) {
+                Ok(film) => film,
+                Err(error) => {
+                    self.status = crate::app::Message::new("surfaces.presets.profile_load")
+                        .message_arg("kind", crate::app::Message::control("film"))
+                        .arg("stock", &self.film_name)
+                        .message_arg("detail", crate::app::Message::profile(&error));
+                    return;
+                }
+            };
+            let print = crate::profile::load_profile_by_name(&self.data_dir, &self.print_name).ok();
+            Some((film, print))
+        } else {
+            None
+        };
+        if mode == WorkflowMode::Film {
+            if let Some(route) = &stored_route {
+                candidate.io.scan_film = spektrafilm_core::WorkflowRoute::parse(route).scans_film();
+                candidate.workflow.route = route.clone();
+            } else if let Some((film, _)) = &reloaded_metadata {
+                candidate.workflow.route = spektrafilm_core::presets::workflow_default(film);
+                candidate.io.scan_film = candidate.workflow.route_enum().scans_film();
+            }
+        } else {
+            candidate.workflow.route = "input".into();
+            candidate.io.scan_film = false;
+        }
+        candidate.workflow.mode = mode;
+        if let Err(error) = candidate.validate() {
+            self.status =
+                crate::app::Message::new("surfaces.status.workflow_error").arg("detail", error);
             return;
         }
-        if mode == WorkflowMode::Lut {
-            self.film_route = Some(self.params.workflow.route.clone());
-        } else if let Some(route) = self.film_route.take() {
-            self.params.io.scan_film = spektrafilm_core::WorkflowRoute::parse(&route).scans_film();
-            self.params.workflow.route = route;
+        self.params = candidate;
+        if let Some((film, print)) = reloaded_metadata {
+            self.film_medium = crate::scan_medium(&film);
+            self.film_reference_illuminant = film.info.reference_illuminant.clone();
+            self.film_dev_times = film.data.development_time.clone();
+            self.print_dev_times = print
+                .map(|print| print.data.development_time)
+                .unwrap_or_default();
+            self.params.film_render.grain.monochrome = film.is_bw();
         }
-        self.params.workflow.mode = mode;
-        if mode == WorkflowMode::Lut {
-            self.params.workflow.route = "input".into();
-            self.params.io.scan_film = false;
-        }
+        self.film_route = if mode == WorkflowMode::Film {
+            None
+        } else {
+            stored_route
+        };
         self.presets.state.applied = None;
         self.label_adjustment("Change workflow");
         self.invalidate_look_render();
         self.status = crate::app::Message::new(match mode {
             WorkflowMode::Film => "surfaces.status.workflow_film",
             WorkflowMode::Lut => "surfaces.status.workflow_lut",
+            WorkflowMode::Off => "surfaces.status.workflow_off",
         });
     }
 
@@ -94,8 +169,13 @@ impl App {
     pub(crate) fn begin_import_lut(&mut self, preserve: bool) {
         let preserved = (preserve
             && self.params.workflow.mode == WorkflowMode::Lut
-            && !self.params.lut_look.path.as_os_str().is_empty())
-        .then(|| self.params.lut_look.clone());
+            && self
+                .params
+                .lut
+                .as_ref()
+                .is_some_and(|lut| !lut.path.as_os_str().is_empty()))
+        .then(|| self.params.lut_render_params())
+        .flatten();
         let Some(path) = self.chooser.pick_file(
             self.file_dialog("lut")
                 .set_file_name("look.cube")
@@ -296,7 +376,8 @@ impl App {
                     if self.params.workflow.mode == WorkflowMode::Film {
                         self.film_route = Some(self.params.workflow.route.clone());
                     }
-                    self.params.lut_look = params;
+                    let (lut, effects, grade) = params.split();
+                    self.params.set_lut_groups(lut, effects, grade);
                     self.params.workflow.mode = WorkflowMode::Lut;
                     self.params.workflow.route = "input".into();
                     self.params.io.scan_film = false;

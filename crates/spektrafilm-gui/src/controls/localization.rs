@@ -567,6 +567,8 @@ fn key(label: &str) -> Option<&'static str> {
         "Factory reset error: %{error}" => Some("surfaces.status.factory_error"),
         "Film" => Some("controls.label.film"),
         "Film route" => Some("surfaces.route.label"),
+        "LUT" => Some("surfaces.workflow.lut"),
+        "Effects" => Some("surfaces.effects.label"),
         "Look" => Some("controls.label.look"),
         "Film Format" => Some("controls.scanner.film_format"),
         "Film Resolution" => Some("controls.grain.film_resolution"),

@@ -569,8 +569,46 @@ impl FinishingConfiguration {
     }
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RenderMode {
+    #[default]
+    Film,
+    Lut,
+    Off,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct LutConfiguration {
+    pub sha256: String,
+    pub input_space: crate::lut_look::LutSpace,
+    pub output_space: crate::lut_look::LutSpace,
+    pub domain_min: [f64; 3],
+    pub domain_max: [f64; 3],
+    pub domain_policy: crate::lut_look::LutDomainPolicy,
+    pub shaper: crate::lut_look::LutShaper,
+    pub strength: f64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct EffectsConfiguration {
+    pub diffusion: bool,
+    pub halation: bool,
+    pub grain: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct LutGradeConfiguration {
+    pub model: String,
+    pub boundary: String,
+    pub active: bool,
+    pub controls: crate::params::FinishingParams,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RenderConfiguration {
+    #[serde(default)]
+    pub render_mode: RenderMode,
     pub workflow_route: WorkflowRoute,
     pub film_stock: Option<StockId>,
     pub print_stock: Option<StockId>,
@@ -598,6 +636,12 @@ pub struct RenderConfiguration {
     pub gamut_algorithm: GamutAlgorithm,
     pub grain: GrainConfiguration,
     pub spatial: SpatialConfiguration,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lut: Option<LutConfiguration>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effects: Option<EffectsConfiguration>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lut_grade: Option<LutGradeConfiguration>,
 }
 
 fn default_output_mix_amount() -> f64 {
@@ -610,25 +654,65 @@ fn default_conversion_style() -> String {
 
 impl RenderConfiguration {
     pub fn from_runtime(params: &RuntimeParams, film: &Profile, print: &Profile) -> Self {
+        let film_mode = params.workflow.mode.is_film();
+        let render_mode = match params.workflow.mode {
+            crate::params::WorkflowMode::Film => RenderMode::Film,
+            crate::params::WorkflowMode::Lut => RenderMode::Lut,
+            crate::params::WorkflowMode::Off => RenderMode::Off,
+        };
+        let effects = params.effects.as_ref();
+        let effect_halation = effects.is_some_and(|effects| effects.halation.active);
+        let effect_diffusion = effects.is_some_and(|effects| effects.diffusion.active);
+        let effect_grain = effects.is_some_and(|effects| effects.grain.active);
         let grain = &params.film_render.grain;
-        let grain_active = grain.active
+        let grain_active = film_mode
+            && grain.active
             && !params.debug.deactivate_stochastic_effects
             && !(grain.engine == crate::params::GrainEngine::Fotufilm
                 && grain.fotufilm.amount == 0.0)
             && !(grain.engine == crate::params::GrainEngine::Exposure
                 && grain.exposure.strength == 0.0);
         let spatial_active = !params.debug.deactivate_spatial_effects;
+        let lut = if params.workflow.mode.is_lut() {
+            params.lut_render_params().map(|look| LutConfiguration {
+                sha256: look.sha256.clone(),
+                input_space: look.input_space,
+                output_space: look.output_space,
+                domain_min: look.domain_min,
+                domain_max: look.domain_max,
+                domain_policy: look.domain_policy,
+                shaper: look.shaper,
+                strength: look.strength,
+            })
+        } else {
+            None
+        };
+        let effects_configuration = (!film_mode).then_some(EffectsConfiguration {
+            diffusion: effect_diffusion,
+            halation: effect_halation,
+            grain: effect_grain,
+        });
+        let lut_grade = params.workflow.mode.is_lut().then(|| {
+            let grade = params.grade.as_ref();
+            LutGradeConfiguration {
+                model: crate::runtime::MODEL_VERSION.into(),
+                boundary: "pre_output_gamut".into(),
+                active: grade.is_some_and(|grade| grade.active),
+                controls: grade.map(|grade| grade.values.clone()).unwrap_or_default(),
+            }
+        });
         Self {
+            render_mode,
             workflow_route: WorkflowRoute::parse(&params.workflow.route),
-            film_stock: StockId::bundled(film),
-            print_stock: StockId::bundled(print),
+            film_stock: film_mode.then(|| StockId::bundled(film)).flatten(),
+            print_stock: film_mode.then(|| StockId::bundled(print)).flatten(),
             rgb_to_raw_algorithm: RgbToRawAlgorithm::parse(&params.settings.rgb_to_raw_method),
             input_color_space: ColorSpaceRole::parse(&params.io.input_color_space),
             output_color_space: ColorSpaceRole::parse(&params.io.output_color_space),
             input_transfer_decoded: params.io.input_cctf_decoding,
             output_transfer_encoded: params.io.output_cctf_encoding,
-            enlarger_lut_requested: params.settings.use_enlarger_lut,
-            scanner_lut_requested: params.settings.use_scanner_lut,
+            enlarger_lut_requested: film_mode && params.settings.use_enlarger_lut,
+            scanner_lut_requested: film_mode && params.settings.use_scanner_lut,
             scan_output: if params.scanner.scan_output == "negative_to_positive" {
                 ScanOutput::NegativeToPositive
             } else {
@@ -637,17 +721,23 @@ impl RenderConfiguration {
             conversion_style: params.scanner.conversion_style_name().to_owned(),
             scan_operator: params.scanner.operator,
             scan_model: ScanModelConfiguration::from_runtime(params, film, print),
-            output_mix_amount: params.output_mix.amount,
+            output_mix_amount: if film_mode {
+                params.output_mix.amount
+            } else {
+                1.0
+            },
             model_version: crate::runtime::MODEL_VERSION.into(),
-            finishing: Some(FinishingConfiguration::from_params(params, {
-                crate::finishing::scanned_material(params).is_some_and(|material| {
-                    let scanned = match material {
-                        crate::stage_artifact::MaterialKind::Film => film,
-                        crate::stage_artifact::MaterialKind::Print => print,
-                    };
-                    scanned.is_paper() || scanned.is_positive()
+            finishing: film_mode.then(|| {
+                FinishingConfiguration::from_params(params, {
+                    crate::finishing::scanned_material(params).is_some_and(|material| {
+                        let scanned = match material {
+                            crate::stage_artifact::MaterialKind::Film => film,
+                            crate::stage_artifact::MaterialKind::Print => print,
+                        };
+                        scanned.is_paper() || scanned.is_positive()
+                    })
                 })
-            })),
+            }),
             gamut_algorithm: GamutAlgorithm::parse(&params.io.output_gamut_compress.algorithm),
             grain: GrainConfiguration {
                 active: grain_active,
@@ -671,21 +761,35 @@ impl RenderConfiguration {
                 record: None,
             },
             spatial: SpatialConfiguration {
-                lens_blur: spatial_active
+                lens_blur: film_mode
+                    && spatial_active
                     && (params.camera.lens_blur_um > 0.0
                         || params.enlarger.lens_blur > 0.0
                         || params.scanner.lens_blur > 0.0),
-                halation: spatial_active && params.film_render.halation.active,
-                optical_diffusion: spatial_active
-                    && (params.camera.diffusion_filter.active
-                        || params.enlarger.diffusion_filter.active),
-                dir: spatial_active && params.film_render.dir_couplers.active,
-                glare: spatial_active
+                halation: if film_mode {
+                    spatial_active && params.film_render.halation.active
+                } else {
+                    spatial_active && effect_halation
+                },
+                optical_diffusion: if film_mode {
+                    spatial_active
+                        && (params.camera.diffusion_filter.active
+                            || params.enlarger.diffusion_filter.active)
+                } else {
+                    spatial_active && effect_diffusion
+                },
+                dir: film_mode && spatial_active && params.film_render.dir_couplers.active,
+                glare: film_mode
+                    && spatial_active
                     && (params.film_render.glare.active || params.print_render.glare.active),
-                unsharp: spatial_active
+                unsharp: film_mode
+                    && spatial_active
                     && params.scanner.unsharp_mask[0] > 0.0
                     && params.scanner.unsharp_mask[1] > 0.0,
             },
+            lut,
+            effects: effects_configuration,
+            lut_grade,
         }
     }
 }

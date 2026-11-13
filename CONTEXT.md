@@ -21,10 +21,10 @@ _Avoid_: Debug dump, scan capture
 _Avoid_: Scan capture alone
 
 **Scanner lamp**: The single physical light source of a scan. Its accepted values are the illuminant vocabulary the enlarger lamp uses: `D50`, `D55`, `D65`, `T`, `TH-KG3`, `TH-KG3-L`, `K75P`, and a `BB<kelvin>` blackbody token. `D55` is the default.
-_Avoid_: Scanner look, output color space, scan illuminant
+_Avoid_: Scanner rendering, output color space, scan illuminant
 
 **Scan sensor**: The colorimetric spectral response that acquires transmitted or reflected light from a scanned medium. The scanner has one sensor, modeled on the CIE 1931 color-matching functions; it is not selectable.
-_Avoid_: Scanner look, output color space, receiver profile
+_Avoid_: Scanner rendering, output color space, receiver profile
 
 **Scan capture**: The RGB readings the scan sensor acquires from a scanned medium. A negative conversion reads record densities instead of a scan capture.
 _Avoid_: Scan output, scanned medium
@@ -76,33 +76,51 @@ _Avoid_: Chart group
 
 **Patch window**: The declared rectangular area of one grid patch used for visual inspection. It may cover the patch or a smaller central area, but it does not include an inferred correspondence to another set.
 
-**Look preset**: A named, reusable choice of film and print materials with their look-owned adjustments. It is a starting point for a photograph, not a saved photograph or a complete application setup. An unqualified look preset is a film look preset; a LUT preset is a separate kind.
+**Render mode**: The exclusive processing path selected from Film, LUT, or Off. It selects which stages execute; inactive stages retain stored values.
+_Avoid_: Look, color source, page
+
+**Film route**: The spectral stage sequence inside Film mode, such as `input > film > print > scan`. It is serialized as `workflow.route` and is inactive outside Film mode.
+_Avoid_: Workflow mode, render workflow
+
+**Film preset**: A named, reusable choice of film and print materials with their preset-owned adjustments. It is a starting point for a photograph, not a saved photograph or a complete application setup.
 _Avoid_: Photograph record, startup state, LUT
 
-**LUT look**: A non-spectral RGB color transform and its independent effect layers, applied without film or print material simulation. A LUT look may be saved as a LUT preset, but it is not a film look preset.
-_Avoid_: Film profile, look preset, LUT delivery
+**LUT transform**: A non-spectral RGB color transform and its independent Effects layers, applied without film or print material simulation. It is not a film profile and not a preset by itself.
+_Avoid_: Film profile, film preset, LUT delivery
 
-**LUT preset**: A named, user-owned LUT look with an external LUT file path and content hash, declaration, effects, and optional grade. It selects the LUT workflow and carries no film or print profile references.
-_Avoid_: Film look preset, film profile, embedded LUT
+**LUT preset**: A named, user-owned LUT transform with an external LUT file path and content hash, declaration, Effects, and optional LUT Grade. It selects LUT mode and carries no film or print profile references.
+_Avoid_: Film preset, film profile, embedded LUT
 
-**Exported LUT**: A `.cube` file produced from a spectral film look. It is a file, not an active look, imported LUT, or preset.
-_Avoid_: Film profile, film look preset, measured stock
+**Effects preset**: A named, user-owned Off-mode preset carrying Diffusion, Halation, and Grain. It carries no LUT declaration, LUT Grade, or film or print profile reference.
+_Avoid_: Film preset, LUT preset, Effects mode
 
-**LUT workflow**: The product workflow that exports a LUT file, imports a LUT file for use, saves and recalls LUT presets, and renders a LUT look. It is separate from the spectral film workflow.
+**Exported LUT**: A `.cube` file produced from a spectral film rendering. It is a file, not an active mode, an imported LUT, or a preset.
+_Avoid_: Film profile, film preset, measured stock
+
+**LUT workflow**: The product workflow that exports a LUT file, imports a LUT file for use, saves and recalls LUT presets, and renders a LUT transform. It is separate from the Film render mode.
 _Avoid_: Film workflow, spectral simulation
 
-**LUT mode**: The render mode that applies a LUT look. It is exclusive with the spectral film mode and carries no material or illuminant simulation.
+**LUT mode**: The render mode that applies a LUT transform. It carries no material or illuminant simulation.
 _Avoid_: Film workflow, spectral simulation
 
-**LUT stage**: The pointwise 3D color transform declared by a LUT look, with its input and output color spaces, domain, domain policy, shaper, and strength.
+**Off mode**: The render mode that applies neither Film nor LUT. It runs the Effects stage and output color management.
+_Avoid_: Effects mode, input workflow
+
+**LUT Grade**: The optional Tone & Color response applied after an external LUT. It uses independent LUT-stage values and is not Scan Tone & Color or a second grading response.
+_Avoid_: Film grade, baked LUT grade
+
+**LUT stage**: The inspector stage that owns the LUT declaration, strength, import actions, and LUT Grade. It is not a physical film-chain stage.
 _Avoid_: Film density, camera profile
 
-**Preset thumbnail**: A small rendering of the current photograph with a candidate look preset, used to compare looks without changing accepted adjustments. It is not a reference sample or the retained Preview result.
+**Effects stage**: The inspector stage that owns Diffusion, Halation, and Grain for LUT and Off. It is not a film material stage or a render mode.
+_Avoid_: Global effects, film grain, LUT mode
+
+**Preset thumbnail**: A small rendering of the current photograph with a candidate preset, used to compare presets without changing accepted adjustments. It is not a reference sample or the retained Preview result.
 _Avoid_: Reference thumbnail, saved preset image
 
-**Feature profile**: A named, reusable parameter set for one film-chain feature. It resolves only that feature's editable controls and does not select film or print materials, change workflow, or represent a complete look.
+**Feature profile**: A named, reusable parameter set for one film-chain feature. It resolves only that feature's editable controls and does not select film or print materials, change mode, or represent a complete preset.
 
-**Feature profile family**: The named alternatives for one feature, including the feature's `custom` state when the feature exposes editable overrides. A family owns one parameter schema and one resolver; its entries do not become film profiles or look presets.
+**Feature profile family**: The named alternatives for one feature, including the feature's `custom` state when the feature exposes editable overrides. A family owns one parameter schema and one resolver; its entries do not become film profiles or presets.
 
 **Feature profile application**: The operation that resolves one feature profile and replaces exactly that feature's controls. It preserves every control outside the feature and fails transactionally when the resolved values are invalid or incompatible with the active route.
 

@@ -166,9 +166,9 @@ fn workflow_modes_keep_stage_navigation_visible_and_mark_inactive_stages() {
     // The Look stage stays reachable in film mode because it owns the mode
     // switch; its controls explain that they are inactive.
     navigate_stage(h, controls::Stage::Look);
-    assert!(h.query_by_label("Look").is_some());
+    assert!(h.query_all_by_label("LUT").next().is_some());
     assert!(
-        h.query_all_by_label("Inactive in the film workflow. Stored values are retained.")
+        h.query_all_by_label("Inactive in this workflow. Stored values are retained.")
             .next()
             .is_some()
     );
@@ -182,9 +182,11 @@ fn workflow_modes_keep_stage_navigation_visible_and_mark_inactive_stages() {
          0 0 0\n1 0 0\n0 1 0\n1 1 0\n0 0 1\n1 0 1\n0 1 1\n1 1 1\n",
     )
     .unwrap();
-    h.state_mut().params.lut_look.path = cube;
-    h.state_mut().params.lut_look.sha256 =
-        spektrafilm_core::lut_look::hash_file(&h.state().params.lut_look.path).unwrap();
+    let mut look = spektrafilm_core::lut_look::LutLookParams::default();
+    look.path = cube;
+    look.sha256 = spektrafilm_core::lut_look::hash_file(&look.path).unwrap();
+    let (lut, effects, grade) = look.split();
+    h.state_mut().params.set_lut_groups(lut, effects, grade);
     let retained_route = h.state().params.workflow.route.clone();
     // A module in a stage that remains active in both workflows keeps its
     // disclosure state across the real workflow selector.
@@ -199,7 +201,16 @@ fn workflow_modes_keep_stage_navigation_visible_and_mark_inactive_stages() {
             .is_some()
     );
     navigate_stage(h, controls::Stage::Look);
-    h.get_by_role_and_label(egui::accesskit::Role::Button, "LUT")
+    h.query_all_by_role_and_label(egui::accesskit::Role::Button, "LUT")
+        .filter(|node| node.node().toggled().is_some())
+        .min_by(|a, b| {
+            a.node()
+                .raw_bounds()
+                .unwrap()
+                .y0
+                .total_cmp(&b.node().raw_bounds().unwrap().y0)
+        })
+        .expect("mode selector LUT button")
         .simulate_click();
     h.run_steps(6);
     await_input(h);
@@ -242,13 +253,78 @@ fn workflow_modes_keep_stage_navigation_visible_and_mark_inactive_stages() {
     search_controls(h, "Film material");
     assert!(h.query_by_label("Film material").is_some());
     assert!(
-        h.query_all_by_label("Inactive in the LUT workflow. Stored values are retained.")
+        h.query_all_by_label("Inactive in the current workflow. Stored values are retained.")
             .next()
             .is_some()
     );
     search_controls(h, "");
     h.run_steps(3);
-    assert!(h.query_by_label("Look").is_some());
+    assert!(h.query_all_by_label("LUT").next().is_some());
+
+    // Off must not read the stored LUT, and switching back must preserve the
+    // retained film route and every transform group.
+    h.state_mut().params.lut.as_mut().unwrap().path = "missing.cube".into();
+    h.state_mut()
+        .params
+        .effects
+        .get_or_insert_with(Default::default)
+        .halation
+        .active = true;
+    navigate_stage(h, controls::Stage::Look);
+    h.query_all_by_role_and_label(egui::accesskit::Role::Button, "Off")
+        .filter(|node| node.node().toggled().is_some())
+        .min_by(|a, b| {
+            a.node()
+                .raw_bounds()
+                .unwrap()
+                .y0
+                .total_cmp(&b.node().raw_bounds().unwrap().y0)
+        })
+        .expect("mode selector Off button")
+        .simulate_click();
+    h.run_steps(6);
+    await_input(h);
+    assert_eq!(
+        h.state().params.workflow.mode,
+        spektrafilm_core::params::WorkflowMode::Off
+    );
+    assert_eq!(
+        h.state().film_route.as_deref(),
+        Some(retained_route.as_str())
+    );
+    assert_eq!(
+        h.state().params.lut.as_ref().unwrap().path,
+        std::path::Path::new("missing.cube")
+    );
+    assert!(h.state().params.effects.as_ref().unwrap().halation.active);
+    navigate_stage(h, controls::Stage::Effects);
+    assert!(
+        h.query_all_by_label("Inactive in the film workflow. Stored values are retained.")
+            .next()
+            .is_none()
+    );
+    navigate_stage(h, controls::Stage::Film);
+    assert!(h.get_by_label("reset Film material").node().is_disabled());
+    navigate_stage(h, controls::Stage::Look);
+    h.query_all_by_role_and_label(egui::accesskit::Role::Button, "Film")
+        .filter(|node| node.node().toggled().is_some())
+        .min_by(|a, b| {
+            a.node()
+                .raw_bounds()
+                .unwrap()
+                .y0
+                .total_cmp(&b.node().raw_bounds().unwrap().y0)
+        })
+        .expect("mode selector Film button")
+        .simulate_click();
+    h.run_steps(6);
+    await_input(h);
+    assert_eq!(
+        h.state().params.workflow.mode,
+        spektrafilm_core::params::WorkflowMode::Film
+    );
+    assert_eq!(h.state().params.workflow.route, retained_route);
+    assert!(h.state().film_route.is_none());
 }
 
 #[test]
@@ -270,16 +346,21 @@ fn lut_import_previews_at_the_bounded_size_and_preserves_the_declaration() {
     h.run_steps(6);
     click(h, "Import");
     assert_eq!(
-        h.state().params.lut_look.domain_policy,
+        h.state().params.lut.as_ref().unwrap().domain_policy,
         spektrafilm_core::lut_look::LutDomainPolicy::Clamp
     );
 
     let bounded = preview(h);
     assert_eq!((bounded.width, bounded.height), (128, 64));
     assert_eq!(h.state().image.as_ref().unwrap().width(), 160);
-    assert_eq!(h.state().params.lut_look.path, cube);
+    assert_eq!(h.state().params.lut.as_ref().unwrap().path, cube);
 
-    h.state_mut().params.lut_look.diffusion.active = true;
+    h.state_mut()
+        .params
+        .effects
+        .get_or_insert_with(Default::default)
+        .diffusion
+        .active = true;
     h.state_mut().mark_parameters_changed();
     let with_diffusion = preview(h);
     assert_eq!((with_diffusion.width, with_diffusion.height), (128, 64));
@@ -288,7 +369,7 @@ fn lut_import_previews_at_the_bounded_size_and_preserves_the_declaration() {
         .switch_workflow(spektrafilm_core::params::WorkflowMode::Film);
     h.state_mut()
         .switch_workflow(spektrafilm_core::params::WorkflowMode::Lut);
-    assert_eq!(h.state().params.lut_look.path, cube);
+    assert_eq!(h.state().params.lut.as_ref().unwrap().path, cube);
     assert_eq!(
         h.state().params.workflow.mode,
         spektrafilm_core::params::WorkflowMode::Lut
@@ -339,22 +420,33 @@ fn replacing_a_cube_preserves_finishing_and_reports_clipping_in_the_lut_section(
         path
     };
     let first = cube("first.cube", 0.0, 1.0);
-    h.state_mut().params.lut_look = spektrafilm_core::lut_look::LutLookParams::from_cube(
+    let look = spektrafilm_core::lut_look::LutLookParams::from_cube(
         &first,
         spektrafilm_core::lut_look::LutSpace::Srgb,
         spektrafilm_core::lut_look::LutSpace::Srgb,
         spektrafilm_core::lut_look::LutDomainPolicy::Clamp,
     )
     .unwrap();
+    let (lut, effects, grade) = look.split();
+    h.state_mut().params.set_lut_groups(lut, effects, grade);
     h.state_mut()
         .switch_workflow(spektrafilm_core::params::WorkflowMode::Lut);
     h.run_steps(3);
     await_input(h);
 
-    h.state_mut().params.lut_look.strength = 0.4;
-    h.state_mut().params.lut_look.grade_active = true;
-    h.state_mut().params.lut_look.grade.contrast = 0.3;
-    h.state_mut().params.lut_look.diffusion.active = true;
+    h.state_mut().params.lut.as_mut().unwrap().strength = 0.4;
+    h.state_mut()
+        .params
+        .grade
+        .get_or_insert_with(Default::default)
+        .active = true;
+    h.state_mut().params.grade.as_mut().unwrap().values.contrast = 0.3;
+    h.state_mut()
+        .params
+        .effects
+        .get_or_insert_with(Default::default)
+        .diffusion
+        .active = true;
     h.state_mut().mark_parameters_changed();
 
     let second = cube("second.cube", 0.1, 0.9);
@@ -363,14 +455,14 @@ fn replacing_a_cube_preserves_finishing_and_reports_clipping_in_the_lut_section(
     h.run_steps(6);
     click(h, "Import");
 
-    let params = &h.state().params.lut_look;
-    assert_eq!(params.path, second);
-    assert_eq!(params.strength, 0.4);
-    assert!(params.grade_active);
-    assert_eq!(params.grade.contrast, 0.3);
-    assert!(params.diffusion.active);
+    let params = &h.state().params;
+    assert_eq!(params.lut.as_ref().unwrap().path, second);
+    assert_eq!(params.lut.as_ref().unwrap().strength, 0.4);
+    assert!(params.grade.as_ref().unwrap().active);
+    assert_eq!(params.grade.as_ref().unwrap().values.contrast, 0.3);
+    assert!(params.effects.as_ref().unwrap().diffusion.active);
     assert_eq!(
-        params.domain_policy,
+        params.lut.as_ref().unwrap().domain_policy,
         spektrafilm_core::lut_look::LutDomainPolicy::Clamp
     );
 
