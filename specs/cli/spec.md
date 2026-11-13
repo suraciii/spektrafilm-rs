@@ -240,7 +240,9 @@ Paths MUST use the runtime parameter vocabulary, such as `film_render.grain.proc
 
 Pipeline-derived `film_render.grain.monochrome` MUST NOT be an editable path. Other runtime controls MUST use the shared editable parameter description. Removed Spektra controls MUST follow the [Spektra contract](../film-grain/spektra/spec.md).
 
-Valid controls for inactive effects or engines MAY be stored without affecting output. [Procedural grain](../film-grain/procedural/spec.md) MUST retain its named-profile and Custom behavior. Exposure Grain controls MUST use `film_render.grain.exposure`. Spektra RMS granularity, Procedural Amount, and Exposure strength MUST remain distinct controls.
+Valid controls for inactive effects or engines MAY be stored without affecting output. [Procedural grain](../film-grain/procedural/spec.md) MUST retain its named-profile and Custom behavior.
+
+Exposure Grain controls MUST use `film_render.grain.exposure`. Spektra RMS granularity, Procedural Amount, and Exposure strength MUST remain distinct controls.
 
 A parameter-file leaf or inline assignment MUST NOT change another control to make itself effective. The [Output mix and material controls contract](../output-mix/spec.md) defines use of existing preflash and chemistry controls and owns `output_mix`. Simulation blend uses the existing canonical assignment `--set output_mix.amount=0.5`, without an alias or dedicated process flag.
 

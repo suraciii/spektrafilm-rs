@@ -71,9 +71,13 @@ frequency_gain = 0.3 / (2 * (0.3 * roughness_effective + 0.35))
 
 Roughness MUST also shape the grain value with the reconstructed S curve. Roughness `50` at `push = 0` MUST be the identity case. The S-curve parameters, the exact zero-denominator continuation, and the clamp are defined in the [design](design.md#value-shaping).
 
-The display luma MUST use the fixed appearance coefficients `[0.2126, 0.7152, 0.0722]` on encoded RGB. These coefficients are an authored SpektraFilm choice; the frozen reconstruction does not establish vendor channel weights. The zone weights MUST be the adjacent smoothstep differences over the intervals `[-0.5, 0]`, `[0, midtone]`, `[midtone, highlight]`, and `[highlight, 1.5]`. The completed luminance displacement MUST be added uniformly to each RGB channel and clamped to the encoded range. This channel application is an authored adaptation, not a vendor channel-parity claim.
+The display luma MUST use the fixed appearance coefficients `[0.2126, 0.7152, 0.0722]` on encoded RGB. These coefficients are an authored SpektraFilm choice; the frozen reconstruction does not establish vendor channel weights.
 
-The random field MUST use the reconstructed minstd permutation and value-noise tables. The same input, seed, parameters, dimensions, and executor MUST produce the same realization. The seed is the shared `random_seed`; Exposure's additional run counter MUST NOT introduce a second phase input. The shared 64-bit seed MUST be reduced to the reference's nonnegative 31-bit domain by taking its low 31 bits and clamping to `0x7ffffffe`; reference vectors MUST use a seed in that domain.
+The zone weights MUST be the adjacent smoothstep differences over the intervals `[-0.5, 0]`, `[0, midtone]`, `[midtone, highlight]`, and `[highlight, 1.5]`. The completed luminance displacement MUST be added uniformly to each RGB channel and clamped to the encoded range. This channel application is an authored adaptation, not a vendor channel-parity claim.
+
+The random field MUST use the reconstructed minstd permutation and value-noise tables. The same input, seed, parameters, dimensions, and executor MUST produce the same realization.
+
+The seed is the shared `random_seed`; Exposure's additional run counter MUST NOT introduce a second phase input. The shared 64-bit seed MUST be reduced to the reference's nonnegative 31-bit domain by taking its low 31 bits and clamping to `0x7ffffffe`; reference vectors MUST use a seed in that domain.
 
 ## Geometry and execution
 
@@ -85,7 +89,9 @@ Exposure MUST execute only when the selected route executes a scan. Passthrough,
 
 The selected executor MUST implement the same model on CPU and WGPU. CPU and GPU MUST use the same prepared tables, octave weights, size, zone amplitudes, S curve, and coordinates. Floating outputs need not be bit-identical.
 
-The prepared tables are bounded, image-independent coefficients. Host preparation MAY resolve them. GPU execution MUST NOT use image-sized host noise arrays, CPU grain arithmetic, a generic stochastic substitute, or another grain engine. Resource limits and missing device support MUST fail explicitly under [GPU execution](../../gpu-execution/spec.md#backend-selection).
+The prepared tables are bounded, image-independent coefficients. Host preparation MAY resolve them.
+
+GPU execution MUST NOT use image-sized host noise arrays, CPU grain arithmetic, a generic stochastic substitute, or another grain engine. Resource limits and missing device support MUST fail explicitly under [GPU execution](../../gpu-execution/spec.md#backend-selection).
 
 The grain field uses output-raster coordinates. A crop or resize selects the raster it receives; it MUST NOT restart the realization. Tiling and source-page boundaries MUST NOT change the coordinate or the table values.
 
