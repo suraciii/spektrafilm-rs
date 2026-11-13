@@ -752,6 +752,7 @@ mod direct_tests {
             scan_base_xyz_to_rgb: &rgb,
             scan_film: true,
             halation: None,
+            light_leak: None,
             dir_couplers: None,
             glare: None,
             finishing: None,

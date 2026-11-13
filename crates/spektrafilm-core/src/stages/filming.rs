@@ -172,7 +172,7 @@ pub(crate) fn host_diffusion(
 #[allow(clippy::too_many_arguments)]
 pub fn expose(
     image: &ImageBuf,
-    _film: &Profile,
+    film: &Profile,
     params: &RuntimeParams,
     backend: &dyn ComputeBackend,
     tc_lut: Option<&TcLut>,
@@ -214,7 +214,7 @@ pub fn expose(
     let exp_comp = from_f32(2.0f32.powf(params.camera.exposure_compensation_ev));
     raw.data.par_iter_mut().for_each(|v| *v *= exp_comp);
 
-    // Order mirrors Python filming: boost → diffusion → lens_blur → halation.
+    // Order mirrors Python filming: boost → diffusion → lens_blur → leak → halation.
 
     // Highlight boost: reconstructs pre-clip highlight irradiance before the
     // optical-scatter effects. It is a halation option, so it runs only while
@@ -287,6 +287,22 @@ pub fn expose(
             pix_um,
             backend,
         )?;
+    }
+
+    // Camera light leak: stray light that reached the record during exposure.
+    // It is exposure, so it runs on linear raw before the log10 conversion and
+    // before halation, which scatters any light the record received. It runs
+    // after the lens passes: a leak through a seal never went through the lens,
+    // so the taking lens's blur and diffusion must not soften it.
+    let leak = &params.film_render.light_leak;
+    if leak.active && leak.exposure_ev != 0.0 {
+        raw = spektrafilm_model::light_leak::apply_light_leak(
+            &raw,
+            pix_um,
+            crate::chain_prep::mid_density_reference_exposure(film),
+            &leak.to_model(),
+            params.random_seed,
+        );
     }
 
     // Halation (on linear raw)

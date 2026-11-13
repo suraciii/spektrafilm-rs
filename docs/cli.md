@@ -112,7 +112,28 @@ The [CLI parameter contract](../specs/cli/spec.md) defines parameter editing.
     --saving-color-space 'ProPhoto RGB' --saving-cctf-encoding true --data-dir data
 ```
 
+### Camera light leak
+
+`film_render.light_leak` adds stray light to the film exposure. Enable it with `film_render.light_leak.active=true`, then set `film_render.light_leak.exposure_ev` in stops over the film's mid-density exposure. Lengths are millimetres on the film and follow the working pixel pitch. The falloff is compact, so the leak stays near its aperture; a strong leak burns out to the film's white.
+
+```bash
+spektrafilm describe --module film_render.light_leak
+```
+
+```bash
+# A warm corner leak on a 35 mm frame
+./target/release/spektrafilm process input.png -o leak.tif \
+    --set film_render.light_leak.active=true \
+    --set film_render.light_leak.exposure_ev=2.5 \
+    --set film_render.light_leak.position=0.02 \
+    --set film_render.light_leak.width_mm=10 \
+    --set film_render.light_leak.spread_mm=6 \
+    --set 'film_render.light_leak.leak_spectrum=[1.0,0.4,0.15]'
+```
+
 ### Tone & Color
+
+### Common finishing
 
 Tone & Color adjusts the completed positive before output gamut processing and the final output mix. It does not replace negative-conversion operator correction. It is inactive for input-only, material output, and preserved-negative scans; stored values remain intact and are still validated.
 

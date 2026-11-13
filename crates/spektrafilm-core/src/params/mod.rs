@@ -12,6 +12,7 @@ pub mod grain;
 mod grain_compat;
 pub use grain_compat::normalize_grain_control_names;
 pub mod halation;
+pub mod light_leak;
 mod migrations;
 pub mod sources;
 
@@ -27,6 +28,7 @@ use glare::GlareParams;
 pub use grain::{FotufilmGrainParams, FotufilmMaterial};
 pub use grain::{GrainEngine, GrainParams};
 pub use halation::HalationParams;
+pub use light_leak::LightLeakParams;
 pub use validation::{ValidationError, ValidationReason};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -450,6 +452,8 @@ pub struct FilmRenderingParams {
     #[serde(default)]
     pub halation: HalationParams,
     #[serde(default)]
+    pub light_leak: LightLeakParams,
+    #[serde(default)]
     pub dir_couplers: DirCouplersParams,
     #[serde(default)]
     pub glare: GlareParams,
@@ -466,6 +470,7 @@ impl Default for FilmRenderingParams {
             chemistry: PrintCurvesMorphParams::default(),
             grain: GrainParams::default(),
             halation: HalationParams::default(),
+            light_leak: LightLeakParams::default(),
             dir_couplers: DirCouplersParams::default(),
             glare: GlareParams::default(),
             base: FilmBaseParams::default(),

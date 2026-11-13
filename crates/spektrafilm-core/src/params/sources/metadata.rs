@@ -514,6 +514,33 @@ fn description(path: &str) -> Option<&'static str> {
         "film_render.convert.scan_illuminant" => Some(
             "Illumination of the imported RGB acquisition; used only by convert-film inversion, independent of the product readout light.",
         ),
+        "film_render.light_leak.active" => Some(
+            "Enable the camera light leak: stray light that reached the film record during exposure through a seal gap, a door hinge, or a failed light trap.",
+        ),
+        "film_render.light_leak.exposure_ev" => Some(
+            "Aperture strength in stops over the film's own mid-density reference exposure; zero is an exact bypass. Stray light is absolute and does not scale with scene brightness.",
+        ),
+        "film_render.light_leak.position" => Some(
+            "Aperture center position around the frame perimeter, 0 to 1, measured clockwise from the top-left corner.",
+        ),
+        "film_render.light_leak.width_mm" => {
+            Some("Aperture width along the frame perimeter, in millimetres on the film.")
+        }
+        "film_render.light_leak.spread_mm" => Some(
+            "Inward e-folding length of the leak in millimetres on the film; the falloff is compact, so a seal leak stays near the gap.",
+        ),
+        "film_render.light_leak.angle_deg" => {
+            Some("Aperture tilt relative to the perimeter tangent, in degrees.")
+        }
+        "film_render.light_leak.leak_spectrum" => Some(
+            "Stray-light exposure ratio per record, in cyan, magenta, yellow order; the rendered colour is each material's own dye response. The default is the common warm path: light that crossed the base and lost blue, so the rim reads orange-red while a strong leak burns its core to white. A red-only ratio (green and blue equal) gives the red rim that some measured leaks show.",
+        ),
+        "film_render.light_leak.texture_amount" => {
+            Some("Strength of the seeded streak structure over the smooth falloff, 0 to 1.")
+        }
+        "film_render.light_leak.texture_scale_mm" => {
+            Some("Spatial scale of the seeded streak structure, in millimetres on the film.")
+        }
         "scanner.conversion_style" => Some(
             "Named stylization of the negative-to-positive tone: standard is the built-in frozen tone; any other name applies the declared per-channel tone triple from data/scan-styles/<name>.json. A style never runs the frame setup.",
         ),

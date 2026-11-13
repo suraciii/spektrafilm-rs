@@ -3236,3 +3236,230 @@ fn leaving_lut_mode_rebuilds_prepared_film_materials() {
     assert!(pipeline.lut_look.is_none());
     assert!(!Arc::ptr_eq(&pipeline.film, &pipeline.original_film));
 }
+
+/// A camera light leak is exposure on the film record: it belongs to the film
+/// stage, it is added once, and its strength is measured against the material's
+/// own mid-density exposure rather than against the frame's brightness.
+mod light_leak {
+    use super::*;
+    use crate::stage_execution::{StageResult, continue_stage};
+
+    fn leak_pipeline(film: crate::profile::Profile, params: RuntimeParams) -> Pipeline {
+        let dir = data_dir();
+        let print = crate::profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap();
+        Pipeline::new_with_spectral(film, print, params, &dir).unwrap()
+    }
+
+    fn base_params() -> RuntimeParams {
+        let mut params = deterministic_material_params(&build());
+        params.workflow.route = "input > film > scan".into();
+        params.io.scan_film = true;
+        params.scanner.scan_output = "negative_to_positive".into();
+        params.random_seed = 4242;
+        params
+    }
+
+    fn with_leak(mut params: RuntimeParams, exposure_ev: f32) -> RuntimeParams {
+        params.film_render.light_leak.active = true;
+        params.film_render.light_leak.exposure_ev = exposure_ev;
+        params
+    }
+
+    /// A wedge from black to white, wide enough that the leak's inward spread
+    /// reaches every row.
+    fn wedge() -> ImageBuf {
+        ImageBuf::from_data(
+            32,
+            24,
+            (0..32 * 24)
+                .flat_map(|i| {
+                    let x = i % 32;
+                    [
+                        from_f64(x as f64 / 31.0),
+                        from_f64(x as f64 / 31.0),
+                        from_f64(x as f64 / 31.0),
+                    ]
+                })
+                .collect(),
+        )
+    }
+
+    /// The domain decision is observable: one absolute exposure addition is a
+    /// large relative gain in the shadows, a small one in the highlights, and
+    /// it never clips the highlight end to white the way an encoded-domain
+    /// overlay does.
+    #[test]
+    fn the_leak_lifts_shadows_far_more_than_highlights_and_never_clips() {
+        let backend = spektrafilm_backend::cpu_backend::CpuBackend;
+        let dir = data_dir();
+        let film = crate::profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();
+        let input = ImageBuf::from_data(
+            32,
+            32,
+            (0..32 * 32)
+                .flat_map(|i| {
+                    let v = (i % 32) as f64 / 31.0;
+                    [from_f64(v), from_f64(v), from_f64(v)]
+                })
+                .collect(),
+        );
+        // A wide aperture with a long spread keeps the leak's weight nearly
+        // constant across the middle row, so the gain asymmetry is the exposure
+        // domain's own behavior and not the aperture's falloff.
+        let mut leaking = base_params();
+        leaking.film_render.light_leak.active = true;
+        leaking.film_render.light_leak.exposure_ev = 2.0;
+        leaking.film_render.light_leak.width_mm = 200.0;
+        leaking.film_render.light_leak.spread_mm = 200.0;
+        let off = leak_pipeline(film.clone(), base_params())
+            .process(input.clone(), &backend)
+            .unwrap();
+        let on = leak_pipeline(film, leaking)
+            .process(input, &backend)
+            .unwrap();
+        let row = 16 * 32;
+        let sample = |image: &ImageBuf, x: usize| to_f64(image.data[(row + x) * 3]);
+        let shadow_gain = sample(&on, 0) / sample(&off, 0);
+        let highlight_gain = sample(&on, 31) / sample(&off, 31);
+        assert!(
+            shadow_gain > 50.0,
+            "shadow gain was {shadow_gain}, expected a large lift"
+        );
+        assert!(
+            highlight_gain < 1.5,
+            "highlight gain was {highlight_gain}, expected a small lift"
+        );
+        assert!(
+            sample(&on, 31) < 1.0,
+            "the highlight end reached {} and clipped",
+            sample(&on, 31)
+        );
+        assert!(
+            on.data.iter().all(|v| to_f64(*v) <= 1.0),
+            "an exposure-domain leak must not clip any sample"
+        );
+    }
+
+    /// A leak through a seal never passed through the lens, so the taking
+    /// lens's blur must not soften it. With a uniform input the scene is
+    /// unchanged by any blur, which isolates the leak's own contribution.
+    #[test]
+    fn the_lens_blur_does_not_soften_the_leak() {
+        let backend = spektrafilm_backend::cpu_backend::CpuBackend;
+        let film = crate::profile::load_profile_by_name(&data_dir(), "kodak_portra_400").unwrap();
+        let input = ImageBuf::from_data(
+            48,
+            32,
+            (0..48 * 32).flat_map(|_| [from_f64(0.5); 3]).collect(),
+        );
+        let contribution = |blur_um: f32| {
+            let mut blurred = base_params();
+            blurred.camera.lens_blur_um = blur_um;
+            let off = leak_pipeline(film.clone(), blurred.clone())
+                .process(input.clone(), &backend)
+                .unwrap();
+            let on = leak_pipeline(film.clone(), with_leak(blurred, 2.0))
+                .process(input.clone(), &backend)
+                .unwrap();
+            on.data
+                .iter()
+                .zip(off.data.iter())
+                .map(|(on, off)| to_f64(*on) - to_f64(*off))
+                .collect::<Vec<_>>()
+        };
+        let sharp = contribution(0.0);
+        let blurred = contribution(4000.0);
+        // A uniform scene is blur invariant, so any difference here is the lens
+        // acting on the leak itself.
+        let peak = sharp.iter().cloned().fold(0.0f64, f64::max);
+        assert!(peak > 0.05, "the leak left no contribution: peak {peak}");
+        for (index, (a, b)) in sharp.iter().zip(blurred.iter()).enumerate() {
+            assert!(
+                (a - b).abs() < 1e-6,
+                "the lens blur changed the leak at {index}: {a} vs {b}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_inactive_or_zero_leak_is_an_exact_bypass() {
+        let backend = spektrafilm_backend::cpu_backend::CpuBackend;
+        let film = crate::profile::load_profile_by_name(&data_dir(), "kodak_portra_400").unwrap();
+        let input = wedge();
+        let off = leak_pipeline(film.clone(), base_params())
+            .process(input.clone(), &backend)
+            .unwrap();
+        let mut inactive = base_params();
+        inactive.film_render.light_leak.active = false;
+        inactive.film_render.light_leak.exposure_ev = 3.0;
+        let inactive = leak_pipeline(film.clone(), inactive)
+            .process(input.clone(), &backend)
+            .unwrap();
+        assert_eq!(off.data, inactive.data, "an inactive leak must not render");
+        let mut zero = base_params();
+        zero.film_render.light_leak.active = true;
+        zero.film_render.light_leak.exposure_ev = 0.0;
+        let zero = leak_pipeline(film, zero).process(input, &backend).unwrap();
+        assert_eq!(off.data, zero.data, "a zero leak must not render");
+    }
+
+    #[test]
+    fn the_leak_is_added_once_and_freezes_into_the_film_stage() {
+        let backend = spektrafilm_backend::cpu_backend::CpuBackend;
+        let dir = data_dir();
+        let film = crate::profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();
+        let input = wedge();
+        let params = with_leak(base_params(), 2.0);
+        let one_shot = leak_pipeline(film.clone(), params.clone())
+            .process(input.clone(), &backend)
+            .unwrap();
+        // Freeze the film stage with the leak, then continue into the scan with
+        // the leak still requested: the frozen record already carries it, so
+        // re-applying it would change the scan.
+        let mut producing = leak_pipeline(film, params.clone());
+        producing.params.workflow.route = "input > film".into();
+        producing.params.scanner.scan_output = "direct_scan".into();
+        let film_state = producing
+            .process_stage(input.clone(), &backend, 4242)
+            .unwrap();
+        let mut continuation = film_state.header.baseline.clone();
+        continuation.workflow.route = "film > scan".into();
+        continuation.scanner.scan_output = "negative_to_positive".into();
+        let StageResult::Image(actual) =
+            continue_stage(film_state, continuation, None, &dir, &backend, 4242).unwrap()
+        else {
+            panic!("expected scan")
+        };
+        assert_eq!(
+            actual.data, one_shot.data,
+            "a frozen film record must not gain a second leak"
+        );
+    }
+
+    #[test]
+    fn the_same_stops_read_differently_on_different_materials() {
+        let backend = spektrafilm_backend::cpu_backend::CpuBackend;
+        let dir = data_dir();
+        let input = wedge();
+        let mut params = with_leak(base_params(), 2.0);
+        params.film_render.light_leak.position = 0.0;
+        let negative = crate::profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();
+        let reversal = crate::profile::load_profile_by_name(&dir, "fujifilm_velvia_50").unwrap();
+        // A reversal material is scanned directly, so only the film stage and
+        // the scan's reading of it stay comparable.
+        let mut reversal_params = params.clone();
+        reversal_params.scanner.scan_output = "direct_scan".into();
+        let on_negative = leak_pipeline(negative, params.clone())
+            .process(input.clone(), &backend)
+            .unwrap();
+        let on_reversal = leak_pipeline(reversal, reversal_params)
+            .process(input, &backend)
+            .unwrap();
+        // Two stops over the film's own mid-density exposure is the same added
+        // exposure for both materials; the dye response is not.
+        assert_ne!(
+            on_negative.data, on_reversal.data,
+            "the leak's strength is material-relative, not a fixed tint"
+        );
+    }
+}

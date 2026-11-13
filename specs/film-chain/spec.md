@@ -162,6 +162,24 @@ Unsharp mask is digital scan sharpening, not lens resolution. It remains downstr
 
 This control remains separate from `halation_strength`, `halation_amount`, `boost_ev`, camera diffusion, and lens/atmospheric bloom. The general GPU execution contract still governs convolution support and CPU/GPU alignment.
 
+## Camera light leak
+
+- `film_render.light_leak` simulates stray light that reached the film record during exposure through a seal gap, a door hinge, or a failed light trap.
+- The leak MUST be added to linear film raw exposure before the log-exposure conversion and before halation.
+- The leak MUST be added after camera diffusion and lens blur, because light that enters through a seal never passed through the lens.
+- The leak MUST NOT be applied to developed density, to scan RGB, or to any encoded output, and it MUST NOT be baked into a pointwise LUT.
+- The leak's inward falloff MUST be compact. A leak through one seal MUST NOT add visible exposure at the opposite side of the frame.
+- A leak strong enough to drive every record past its shoulder MUST read the film's white.
+- The rim MUST carry the material's own response to the stray spectrum, not a fixed tint applied after development.
+- `film_render.light_leak.exposure_ev` MUST be measured in stops relative to the film's own mid-density reference exposure.
+- The added exposure MUST be absolute: it MUST NOT scale with scene brightness or with camera exposure compensation.
+- `film_render.light_leak.leak_spectrum` MUST be a per-record exposure ratio in cyan, magenta, yellow order.
+- `film_render.light_leak.width_mm`, `spread_mm`, and `texture_scale_mm` MUST be lengths in millimetres on the film and MUST convert through the working pixel pitch.
+- The aperture geometry MUST therefore keep its physical size across crop, resize, and film format.
+- A zero `exposure_ev` MUST be an exact bypass, and an inactive leak MUST leave every stored leaf unused.
+- The leak MUST belong to the film stage. A frozen film record MUST NOT gain a second leak when a continuation runs the remaining stages.
+- Both execution routes MUST evaluate the same leak field for the same geometry, pitch, seed, and parameters.
+
 ## Optical-order cutover
 
 - The historical direct-scan sequence that blurs after output gamut processing MUST NOT remain as a compatibility mode. All admitted scan routes MUST obey [Scan optics and print viewing glare](#scan-optics-and-print-viewing-glare).

@@ -136,6 +136,10 @@ pub struct FilmChainParams<'a> {
     /// Optional halation pass — when `Some`, inserted on the raw film
     /// exposure buffer between hanatos2025 and log10.
     pub halation: Option<HalationGpuParams>,
+    /// Optional camera light leak pass — when `Some`, added to the raw film
+    /// exposure buffer after the lens passes and before halation, so halation
+    /// scatters it exactly as it scatters image-forming light.
+    pub light_leak: Option<LightLeakGpuParams>,
     /// Optional DIR (development inhibitor release) couplers pass — when
     /// `Some`, inserted on the film density buffer between filming and
     /// printing. Re-interpolates density curves using `density_curves_0`.
@@ -547,6 +551,35 @@ pub struct GlareGpuParams {
     /// `(XYZ→RGB) * illuminant_xyz`, pre-divided by 100. The shader
     /// just multiplies the lognormal scalar by this per-channel offset.
     pub rgb_offset: [f32; 3],
+}
+
+/// Camera light leak parameters for the GPU-resident pass. Mirrors the CPU
+/// `spektrafilm_model::light_leak::apply_light_leak`: the host resolves the
+/// aperture geometry and the pixel lengths, and both executors evaluate the
+/// same field.
+#[derive(Debug, Clone, Copy)]
+pub struct LightLeakGpuParams {
+    /// Working raster extent the aperture was resolved against.
+    pub width: u32,
+    pub height: u32,
+    /// Aperture center, in pixels.
+    pub center: [f32; 2],
+    /// Unit aperture direction.
+    pub direction: [f32; 2],
+    /// Half the aperture width, in pixels.
+    pub half_px: f32,
+    /// Inward e-folding length, in pixels.
+    pub spread_px: f32,
+    /// Streak lattice scale, in pixels.
+    pub texture_scale_px: f32,
+    /// Strength of the seeded streak structure over the smooth falloff.
+    pub texture_amount: f32,
+    /// Folded 32-bit lattice seed, shared with the host field.
+    pub seed: u32,
+    /// Added exposure at full aperture weight.
+    pub scale: f32,
+    /// Per-record added-exposure ratio, in cyan, magenta, yellow order.
+    pub spectrum: [f32; 3],
 }
 
 /// Halation parameters for the GPU-resident scatter + multi-bounce pass.

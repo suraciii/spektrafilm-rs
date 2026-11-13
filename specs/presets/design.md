@@ -63,6 +63,7 @@ A section is a named set of preset-owned parameter paths. This table is authorit
 - `film`: `film_render.density_curve_gamma`, `film_render.development_time`, `film_render.chemistry`. Primary module anchor: Film / Chemistry.
 - `grain`: `film_render.grain`. Primary module anchor: Film / Grain.
 - `halation`: `film_render.halation`. Primary module anchor: Film / Halation.
+- `light leak`: `film_render.light_leak`. Primary module anchor: Film / Light leak.
 - `couplers`: `film_render.dir_couplers`. Primary module anchor: Film / Couplers.
 - `base`: `film_render.base`. Primary module anchor: Film / Film base.
 - `convert`: `film_render.convert`. Primary module anchor: Input and capture / Convert.

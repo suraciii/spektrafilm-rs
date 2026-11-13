@@ -428,7 +428,12 @@ impl WgpuBackend {
                     if step.source_stage() {
                         if !matches!(
                             step,
-                            Log | Highlight | CameraDiffusion | CameraBlur | Halation | FilmDensity
+                            Log | Highlight
+                                | CameraDiffusion
+                                | CameraBlur
+                                | LightLeak
+                                | Halation
+                                | FilmDensity
                         ) {
                             ensure_pages(backend, &mut rasters.a, geometry.source, "chain_work_a")?;
                         }
@@ -509,6 +514,53 @@ impl WgpuBackend {
                                 label,
                             )?
                             .submit(backend, image)
+                        }
+                        LightLeak => {
+                            let leak = p.light_leak.as_ref().ok_or("light leak missing")?;
+                            let params = buffers::uniform(
+                                backend,
+                                "light_leak_params",
+                                bytemuck::cast_slice(&[
+                                    n,
+                                    leak.width,
+                                    leak.height,
+                                    0u32,
+                                    leak.center[0].to_bits(),
+                                    leak.center[1].to_bits(),
+                                    leak.direction[0].to_bits(),
+                                    leak.direction[1].to_bits(),
+                                    leak.half_px.to_bits(),
+                                    leak.spread_px.to_bits(),
+                                    leak.texture_scale_px.to_bits(),
+                                    leak.texture_amount.to_bits(),
+                                    leak.seed,
+                                    leak.scale.to_bits(),
+                                    leak.spectrum[0].to_bits(),
+                                    leak.spectrum[1].to_bits(),
+                                    leak.spectrum[2].to_bits(),
+                                    0u32,
+                                ]),
+                            );
+                            let pipe = backend.cached_pointwise_pipeline(
+                                include_str!(
+                                    "../../../../spektrafilm-shaders/wgsl/spectral/light_leak.wgsl"
+                                ),
+                                &[
+                                    wgpu::BufferBindingType::Uniform,
+                                    wgpu::BufferBindingType::Storage { read_only: false },
+                                ],
+                                &[(1, "data")],
+                            );
+                            backend
+                                .chain_pointwise(
+                                    pipe,
+                                    &[&params, &rasters.b],
+                                    &[(1, ReadWrite)],
+                                    n,
+                                    false,
+                                    "light_leak",
+                                )?
+                                .submit(backend)
                         }
                         Halation => build_halation_state(
                             p.halation.as_ref().ok_or("halation missing")?,
@@ -1006,6 +1058,7 @@ mod tests {
             scan_base_xyz_to_rgb: &MAT3,
             scan_film: false,
             halation: None,
+            light_leak: None,
             dir_couplers: None,
             glare: None,
             finishing: None,
@@ -1774,5 +1827,92 @@ mod tests {
             scalars_to_f32(&healthy.to_host(gpu.backend()).unwrap().data).as_ref(),
             &[0.125, 0.5, 0.75]
         );
+    }
+
+    #[test]
+    fn light_leak_device_matches_the_host_field() {
+        use spektrafilm_backend::ComputeBackend;
+        use spektrafilm_model::light_leak::{
+            LightLeakParams, fold_seed, light_leak_field, light_leak_geometry,
+        };
+        let gpu = crate::test_support::adapter();
+        let (w, h) = (48u32, 32u32);
+        let pitch = 1000.0f32;
+        let values: Vec<f32> = (0..w * h)
+            .flat_map(|i| {
+                let x = (i % w) as f32;
+                [0.05 + 0.01 * x, 0.2 + 0.005 * x, 0.4]
+            })
+            .collect();
+        let source = ImageBuf::from_data(w, h, f32_to_scalars(values));
+        let input = gpu
+            .retain_image(
+                &source,
+                &RetainedImageMeta {
+                    width: w,
+                    height: h,
+                    domain: SampleDomain::Linear,
+                    precision: Precision::host(),
+                    space: &colorspace::SRGB,
+                    pixel_pitch_um: Some(f64::from(pitch)),
+                },
+            )
+            .unwrap();
+        let mut p = params(w, h);
+        p.front = FrontPass::Mallett2019 {
+            matrix: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+        };
+        p.pixel_pitch_um = f64::from(pitch);
+        p.collect = Tap::LogEFilm;
+        let model = LightLeakParams {
+            exposure_ev: 2.0,
+            position: 0.3,
+            width_mm: 6.0,
+            spread_mm: 14.0,
+            angle_deg: 25.0,
+            leak_spectrum: [1.0, 0.55, 0.28],
+            texture_amount: 0.6,
+            texture_scale_mm: 6.0,
+        };
+        let geometry = light_leak_geometry(w, h, pitch, &model);
+        let scale = 3.0f32 * 2.0f32.powf(model.exposure_ev);
+        let baseline = gpu
+            .run_film_chain_retained(&input, &p)
+            .unwrap()
+            .to_host(gpu.backend())
+            .unwrap();
+        p.light_leak = Some(spektrafilm_backend::LightLeakGpuParams {
+            width: w,
+            height: h,
+            center: geometry.center,
+            direction: geometry.direction,
+            half_px: geometry.half_px,
+            spread_px: geometry.spread_px,
+            texture_scale_px: geometry.texture_scale_px,
+            texture_amount: model.texture_amount,
+            seed: fold_seed(7),
+            scale,
+            spectrum: model.leak_spectrum,
+        });
+        let leaked = gpu
+            .run_film_chain_retained(&input, &p)
+            .unwrap()
+            .to_host(gpu.backend())
+            .unwrap();
+        let field = light_leak_field(w, h, pitch, &model, 7);
+        let tolerance = 1e-4 * f64::from(scale);
+        for (i, weight) in field.iter().enumerate().take((w * h) as usize) {
+            for c in 0..3 {
+                let raw = |log: f32| 10f64.powf(f64::from(log)) - 1e-10;
+                let delta =
+                    raw(leaked.data[i * 3 + c] as f32) - raw(baseline.data[i * 3 + c] as f32);
+                let expected =
+                    f64::from(*weight) * f64::from(scale) * f64::from(model.leak_spectrum[c]);
+                assert!(
+                    (delta - expected).abs() < tolerance,
+                    "pixel {i} record {c}: device added {delta}, host field adds {expected}"
+                );
+            }
+        }
     }
 }

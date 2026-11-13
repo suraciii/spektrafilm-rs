@@ -513,6 +513,42 @@ fn key(label: &str) -> Option<&'static str> {
         "Enable grain" => Some("controls.grain.enable"),
         "Enable halation" => Some("controls.halation.enable"),
         "Enable halation and in-emulsion scatter." => Some("controls.halation.enable_help"),
+        "Enable light leak" => Some("controls.light_leak.enable"),
+        "Enable the camera light leak and its stray-light aperture." => {
+            Some("controls.light_leak.enable_help")
+        }
+        "leak exposure ev" => Some("controls.light_leak.exposure_ev"),
+        "Aperture strength in stops over the film's own mid-density exposure. Zero is an exact bypass; the stray light is absolute and does not scale with scene brightness." => {
+            Some("controls.light_leak.exposure_ev_help")
+        }
+        "leak position" => Some("controls.light_leak.position"),
+        "Aperture center position around the frame perimeter, from 0 to 1, measured clockwise from the top-left corner." => {
+            Some("controls.light_leak.position_help")
+        }
+        "leak width mm" => Some("controls.light_leak.width_mm"),
+        "Aperture width along the frame perimeter, in millimetres on the film. A door hinge or camera-back gasket is a few millimetres; a failed light trap covers a whole edge." => {
+            Some("controls.light_leak.width_mm_help")
+        }
+        "leak spread mm" => Some("controls.light_leak.spread_mm"),
+        "Inward e-folding length of the leak, in millimetres on the film. A tight seal keeps the stray light near the edge; a scattering gap spreads it across the frame." => {
+            Some("controls.light_leak.spread_mm_help")
+        }
+        "leak angle deg" => Some("controls.light_leak.angle_deg"),
+        "Aperture tilt relative to the perimeter tangent, in degrees." => {
+            Some("controls.light_leak.angle_deg_help")
+        }
+        "leak spectrum" => Some("controls.light_leak.spectrum"),
+        "Stray-light exposure ratio per record, in cyan, magenta, yellow order. The default is a warm path: the rim reads orange-red and a strong leak burns its core to white. The rendered colour is each material's own dye response." => {
+            Some("controls.light_leak.spectrum_help")
+        }
+        "leak texture amount" => Some("controls.light_leak.texture_amount"),
+        "Strength of the seeded streak structure over the smooth falloff, from 0 to 1. Real leaks are uneven where the seal gap is uneven." => {
+            Some("controls.light_leak.texture_amount_help")
+        }
+        "leak texture scale mm" => Some("controls.light_leak.texture_scale_mm"),
+        "Spatial scale of the streak structure, in millimetres on the film." => {
+            Some("controls.light_leak.texture_scale_mm_help")
+        }
         "Enable input gamut compress" => Some("controls.gamut.input_enable"),
         "Enable print base" => Some("controls.base.enable_print"),
         "Enable print base-density tuning." => Some("controls.base.enable_print_help"),
@@ -673,6 +709,10 @@ fn key(label: &str) -> Option<&'static str> {
         "Grain particle size." => Some("controls.grain.size_help"),
         "Green–magenta tint" => Some("controls.scanner.tint"),
         "Halation" => Some("controls.halation.section"),
+        "Light leak" => Some("controls.light_leak.section"),
+        "Key controls: leak exposure ev (strength) · leak position (place) · leak width mm and leak spread mm (size)" => {
+            Some("controls.light_leak.key_controls")
+        }
         "Halation Profiles" => Some("controls.halation.profiles"),
         "still_strong" | "Still / strong antihalation" => {
             Some("controls.halation.profile_still_strong")

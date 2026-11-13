@@ -48,6 +48,7 @@ pub(super) enum ChainStep {
     Highlight,
     CameraDiffusion,
     CameraBlur,
+    LightLeak,
     Halation,
     Log,
     FilmDensity,
@@ -84,6 +85,7 @@ impl ChainStep {
                 | Self::Highlight
                 | Self::CameraDiffusion
                 | Self::CameraBlur
+                | Self::LightLeak
                 | Self::Halation
                 | Self::Log
                 | Self::FilmDensity
@@ -118,6 +120,7 @@ impl ChainStep {
             | Self::Highlight
             | Self::CameraDiffusion
             | Self::CameraBlur
+            | Self::LightLeak
             | Self::Log => GpuStage::FilmExpose,
             Self::Halation => GpuStage::Halation,
             Self::FilmDensity => GpuStage::FilmDevelop,
@@ -148,6 +151,7 @@ impl ChainStep {
             Self::Highlight => "highlight_boost",
             Self::CameraDiffusion => "camera_diffusion",
             Self::CameraBlur => "camera_lens_blur",
+            Self::LightLeak => "light_leak",
             Self::Halation => "halation",
             Self::Log => "log_exposure",
             Self::FilmDensity => "film_density",
@@ -201,6 +205,9 @@ pub(super) fn chain_steps(
         }
         if p.camera_lens_blur_px.is_some_and(|s| s > 0.0) {
             steps.push(CameraBlur);
+        }
+        if p.light_leak.is_some() {
+            steps.push(LightLeak);
         }
         if p.halation.is_some() {
             steps.push(Halation);

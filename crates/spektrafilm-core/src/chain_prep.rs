@@ -29,6 +29,49 @@ impl<'a> FilmCurves<'a> {
     }
 }
 
+/// Exposure that produces mid density on a film, averaged over its records.
+///
+/// Stray light is measured against a material constant instead of against the
+/// frame's own brightness. The crossing nearest the middle of the exposure axis
+/// is used, which keeps the reference meaningful for a reversal material whose
+/// density falls with exposure.
+pub(crate) fn mid_density_reference_exposure(film: &Profile) -> f64 {
+    let curves = FilmCurves::prepare(film);
+    let normalized = &curves.normalized;
+    let log_exposure = film.data.log_exposure.as_slice();
+    if normalized.len() != log_exposure.len() || normalized.is_empty() {
+        return 1.0;
+    }
+    let middle = normalized.len() / 2;
+    let mut sum = 0.0;
+    let mut records = 0.0;
+    for c in 0..3 {
+        let max = normalized
+            .iter()
+            .map(|row| row[c])
+            .fold(f64::NEG_INFINITY, f64::max);
+        if !max.is_finite() || max <= 0.0 {
+            continue;
+        }
+        let target = max * 0.5;
+        let crossings = normalized
+            .iter()
+            .position(|row| row[c] >= target)
+            .into_iter()
+            .chain(normalized.iter().rposition(|row| row[c] >= target));
+        let crossing = crossings.min_by_key(|index| index.abs_diff(middle));
+        if let Some(index) = crossing {
+            sum += log_exposure[index];
+            records += 1.0;
+        }
+    }
+    if records > 0.0 {
+        10.0f64.powf(sum / records)
+    } else {
+        1.0
+    }
+}
+
 pub(crate) struct PrintCurves<'a> {
     pub log_exposure: &'a [f64],
     pub density: Vec<[f64; 3]>,
