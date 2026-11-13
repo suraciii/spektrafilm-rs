@@ -237,13 +237,6 @@ pub struct ScannerParams {
         serialize_with = "serialize_conversion_style"
     )]
     pub conversion_style: String,
-    /// Experimental full-frame setup for the negative-to-positive
-    /// interpretation: it measures the developed frame for exposure, cast and
-    /// contrast placement before the fixed tone. The algorithm is not a
-    /// validated photographic model, so it is off unless a caller asks for it.
-    /// It makes the scan frame-dependent and therefore unbakeable.
-    #[serde(default)]
-    pub experimental_setup: bool,
     /// Standard negative-to-positive corrections; inactive routes require defaults.
     #[serde(default)]
     pub operator: ScanOperatorParams,
@@ -264,7 +257,6 @@ impl Default for ScannerParams {
             scan_output: default_direct_scan(),
             white_reference: default_scan_white_reference(),
             conversion_style: default_conversion_style(),
-            experimental_setup: false,
             operator: ScanOperatorParams::default(),
             scan_profile: ScanProfileParams::default(),
             lens_blur: 0.0,
@@ -278,11 +270,6 @@ fn default_conversion_style() -> String {
 }
 
 impl ScannerParams {
-    /// Experimental automatic setup must observe the complete working frame.
-    pub fn requires_full_frame(&self) -> bool {
-        self.scan_output == "negative_to_positive" && self.experimental_setup
-    }
-
     /// Whether manual operator corrections reach the render: the built-in tone
     /// on the negative interpretation. Declared fixed styles are complete tone
     /// definitions and reject correction.
@@ -846,13 +833,6 @@ impl RuntimeParams {
         validation::validate_detailed(self)
     }
 
-    /// Whether the active workflow needs a full-frame scanner pass. LUT and
-    /// Off modes never consume scanner setup, so retained film settings cannot
-    /// select the film scan cache while either is active.
-    pub fn requires_full_frame(&self) -> bool {
-        self.workflow.mode.is_film() && self.scanner.requires_full_frame()
-    }
-
     /// Split the one pre-render-mode `lut_look` aggregate into the canonical
     /// groups. New documents and writers already carry the split groups.
     pub fn migrate_legacy_lut_look(&mut self) {
@@ -1221,10 +1201,7 @@ mod tests {
     fn lut_mode_ignores_retained_full_frame_scanner_setup() {
         let mut params = RuntimeParams::default();
         params.scanner.scan_output = "negative_to_positive".into();
-        params.scanner.experimental_setup = true;
-        assert!(params.scanner.requires_full_frame());
         params.workflow.mode = crate::lut_look::WorkflowMode::Lut;
-        assert!(!params.requires_full_frame());
     }
 
     #[test]
@@ -1232,11 +1209,9 @@ mod tests {
         use super::ScanOperatorParams;
         let mut params = RuntimeParams::default();
         assert!(params.scanner.operator.is_default());
-        assert!(!params.scanner.requires_full_frame());
         params.scanner.operator.exposure_ev = 0.5;
         assert!(params.validate().unwrap_err().contains("scanner.operator"));
         params.scanner.scan_output = "negative_to_positive".into();
-        assert!(!params.scanner.requires_full_frame());
         assert!(
             params
                 .validate()
@@ -1248,7 +1223,6 @@ mod tests {
         params.workflow.route = "input > convert-film > scan".into();
         params.validate().unwrap();
         params.scanner.conversion_style = "fixed-probe".into();
-        assert!(!params.scanner.requires_full_frame());
         assert!(params.validate().unwrap_err().contains("scanner.operator"));
         params.scanner.operator = ScanOperatorParams::default();
         params.validate().unwrap();
@@ -1304,13 +1278,9 @@ mod tests {
             serde_json::to_value(&params).unwrap()["scanner"]["conversion_style"],
             "standard"
         );
-        assert!(!params.scanner.experimental_setup);
         params.debug.lut_mode = true;
         params.scanner.scan_output = "negative_to_positive".into();
         params.validate().unwrap();
-        params.scanner.experimental_setup = true;
-        assert!(params.validate().unwrap_err().contains("point-wise LUT"));
-        params.scanner.experimental_setup = false;
         params.scanner.conversion_style = "fixed-probe".into();
         params.validate().unwrap();
         assert!(

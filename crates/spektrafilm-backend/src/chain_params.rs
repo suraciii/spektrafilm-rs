@@ -403,9 +403,6 @@ pub struct ScannerDensityGpuParams {
     pub camera_ev: f64,
     pub lens_blur: f32,
     /// Measure the complete post-optics density frame on the device.
-    pub standard_setup: bool,
-    pub setup_aim_density: f64,
-    pub setup_gamma: f64,
     pub operator_pivot: f64,
     pub operator_contrast_delta: f64,
     pub operator_exposure_ev: f64,

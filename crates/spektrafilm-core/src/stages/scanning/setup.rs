@@ -5,10 +5,14 @@ use super::interpretation::DensityCalibration;
 use spektrafilm_math::image::ImageBuf;
 use spektrafilm_math::precision::to_f64;
 
+#[allow(dead_code)]
 const EXPOSURE_SLOPE: f64 = 0.75;
+#[allow(dead_code)]
 const COLOR_SLOPE: f64 = 0.9;
+#[allow(dead_code)]
 const MIN_COLOR_WEIGHT: f64 = 0.2;
 
+#[allow(dead_code)]
 fn chroma(d: [f64; 3]) -> [f64; 2] {
     [
         (d[0] - d[1]) / 2.0_f64.sqrt(),
@@ -20,6 +24,7 @@ fn chroma(d: [f64; 3]) -> [f64; 2] {
 /// density is already optically blurred. Samples are accumulated in raster
 /// order in f64, independent of Rayon worker scheduling.
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[allow(dead_code)]
 pub(super) struct FrameSetup {
     pub offset: [f64; 3],
     #[cfg(test)]
@@ -29,6 +34,7 @@ pub(super) struct FrameSetup {
 }
 
 impl FrameSetup {
+    #[allow(dead_code)]
     pub fn measure(density: &ImageBuf, calibration: &DensityCalibration) -> Result<Self, String> {
         if density.data.is_empty() || !density.data.len().is_multiple_of(3) {
             return Err("standard setup requires a nonempty RGB density frame".into());
@@ -135,94 +141,6 @@ mod tests {
             })
             .collect();
         ImageBuf::from_data(exposures.len() as u32, 1, data)
-    }
-
-    #[test]
-    fn standard_renders_gray_ramps_retains_exposure_and_is_frame_dependent() {
-        let mut profile = film().clone();
-        // Known linear curves make the slope contract exact, independent of
-        // toe/shoulder behaviour. Unequal stock curves catch gray-ramp casts.
-        profile.data.log_exposure = vec![-4.0, 4.0];
-        profile.data.density_curves = vec![vec![0.0, 0.0, 0.0], vec![4.0, 4.4, 4.8]];
-        let cal = DensityCalibration::prepare(&profile).unwrap();
-        let aim_x = (0.16_f64 / 0.184).log10();
-        let aim_frame = density(&cal, &[[aim_x; 3]; 4]);
-        let setup = FrameSetup::measure(&aim_frame, &cal).unwrap();
-        assert!(setup.offset.iter().all(|v| v.abs() < 2e-7), "{setup:?}");
-        for shift_ev in [-2.0, -1.0, 0.0, 1.0, 2.0] {
-            let x = aim_x + shift_ev * std::f64::consts::LOG10_2;
-            let frame = density(&cal, &[[x; 3]; 4]);
-            let measured = FrameSetup::measure(&frame, &cal).unwrap();
-            for offset in measured.offset {
-                let remaining = shift_ev + offset / std::f64::consts::LOG10_2;
-                assert!((remaining - 0.25 * shift_ev).abs() < 2e-6, "{measured:?}");
-            }
-        }
-        let xs: Vec<_> = [-3.0, -2.0, -1.0, 0.0, 1.0, 2.0]
-            .map(|ev| [ev * std::f64::consts::LOG10_2; 3])
-            .into();
-        let frame = density(&cal, &xs);
-        let saved = frame.data.clone();
-        let a = FrameSetup::measure(&frame, &cal).unwrap();
-        let b = FrameSetup::measure(&frame, &cal).unwrap();
-        assert_eq!(a, b);
-        assert_eq!(
-            frame.data, saved,
-            "setup must not rewrite density/tap evidence"
-        );
-        assert!(
-            a.offset.windows(2).all(|w| (w[0] - w[1]).abs() < 2e-7),
-            "gray ramp cast: {a:?}"
-        );
-        let subset = density(&cal, &xs[..2]);
-        assert_ne!(
-            a.offset,
-            FrameSetup::measure(&subset, &cal).unwrap().offset,
-            "per-tile setup must be observably different from whole-frame setup"
-        );
-
-        let mut params = crate::params::RuntimeParams::default();
-        params.scanner.scan_output = "negative_to_positive".into();
-        params.scanner.experimental_setup = true;
-        params.workflow.route = "input > film > scan".into();
-        params.io.scan_film = true;
-        params.io.output_color_space = "sRGB".into();
-        params.scanner.unsharp_mask = [0.0; 2];
-        let run = |params: &crate::params::RuntimeParams| {
-            super::super::interpret_negative_density_stage(
-                &frame,
-                &profile,
-                &super::super::style::STANDARD,
-                params,
-                &spektrafilm_backend::cpu_backend::CpuBackend,
-            )
-            .unwrap()
-        };
-        let rendered = run(&params);
-        for px in rendered.data.as_chunks::<3>().0.iter() {
-            assert!(
-                px.iter()
-                    .all(|v| v.is_finite() && *v >= from_f64(0.0) && *v <= from_f64(1.0))
-            );
-            assert!((to_f64(px[0]) - to_f64(px[2])).abs() < 1e-6, "{px:?}");
-        }
-        assert!(
-            rendered
-                .data
-                .as_chunks::<3>()
-                .0
-                .iter()
-                .map(|px| to_f64(px[0]))
-                .collect::<Vec<_>>()
-                .windows(2)
-                .all(|w| w[0] < w[1])
-        );
-        params.camera.exposure_compensation_ev = 2.0;
-        assert_eq!(
-            run(&params).data,
-            rendered.data,
-            "standard must not subtract camera exposure again after auto setup"
-        );
     }
 
     #[test]

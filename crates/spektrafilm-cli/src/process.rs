@@ -1155,7 +1155,7 @@ fn cmd_process(
         },
     )?;
     let (working_width, working_height) = match preview_max_size {
-        Some(max_size) if !params.requires_full_frame() => {
+        Some(max_size) if true => {
             spektrafilm_core::resizing::preview_dimensions(input_width, input_height, max_size)
         }
         _ => (input_width, input_height),
@@ -1281,10 +1281,7 @@ fn cmd_process(
                             );
                         }
                         let image = match preview_max_size {
-                            Some(max_size)
-                                if !runtime.params().scanner.requires_full_frame()
-                                    && runtime.params().workflow.mode.is_film() =>
-                            {
+                            Some(max_size) if true && runtime.params().workflow.mode.is_film() => {
                                 host_preview
                                     .get_or_insert_with(|| resize_for_preview(image, max_size))
                                     .clone()
@@ -1322,8 +1319,7 @@ fn cmd_process(
                                 )
                                 .map_err(|e| anyhow::anyhow!("pipeline taps: {e}"))?
                         };
-                        let host = if (runtime.params().requires_full_frame()
-                            || !runtime.params().workflow.mode.is_film())
+                        let host = if (false || !runtime.params().workflow.mode.is_film())
                             && collect.is_none_or(|tap| tap == Tap::RgbOut)
                             && let Some(max_size) = preview_max_size
                         {

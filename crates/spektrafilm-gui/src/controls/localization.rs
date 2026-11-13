@@ -1389,9 +1389,8 @@ fn key(label: &str) -> Option<&'static str> {
         "confirmation required" => Some("controls.condition.confirm"),
         "contrast" => Some("controls.finishing.contrast"),
         "conversion style" => Some("controls.scanner.conversion_style"),
-        "experimental frame setup" => Some("controls.scanner.experimental_setup"),
         "Measure the whole developed frame for exposure, cast and contrast placement before the fixed tone. Off by default: the algorithm is a declared heuristic with no validated photographic model behind it, it makes the scan frame-dependent, and it cannot be baked into a point-wise LUT. Turning it off keeps the readout a fixed, frame-independent transform." => {
-            Some("controls.scanner.experimental_setup_help")
+            None
         }
         "copy operator correction" => Some("controls.scanner.copy_correction"),
         "core Halation feature-profile scope; inactive values retained" => {

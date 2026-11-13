@@ -291,7 +291,7 @@ impl Pipeline {
         inject: Tap,
         collect: Tap,
     ) -> Result<Option<DeviceImage>, String> {
-        let defer_preview = self.params.requires_full_frame();
+        let defer_preview = false;
         let working_preview = if defer_preview {
             None
         } else {

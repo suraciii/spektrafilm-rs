@@ -376,7 +376,7 @@ fn render_candidate(
             } else {
                 image.rotated_quarter_turns(context.rotation_quarter_turns as i32)
             };
-            if runtime.params().requires_full_frame() {
+            if false {
                 let full = runtime
                     .process(oriented, backend)
                     .map_err(simulation_error)?;

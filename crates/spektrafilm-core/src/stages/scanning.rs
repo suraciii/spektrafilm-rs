@@ -40,13 +40,8 @@ pub fn conversion_styles(data_dir: &std::path::Path) -> Vec<String> {
 
 fn positive_tone(log_e: f64, tone: &ChannelTone, params: &RuntimeParams) -> f64 {
     let denominator = -(-std::f64::consts::LN_10 * tone.dmax).exp_m1();
-    let e = log_e / std::f64::consts::LOG10_2
-        - if params.scanner.experimental_setup {
-            0.0
-        } else {
-            interpretation::camera_ev(params)
-        }
-        + tone.brightness_ev;
+    let e =
+        log_e / std::f64::consts::LOG10_2 - interpretation::camera_ev(params) + tone.brightness_ev;
     let z = tone.contrast * e;
     let t = if z >= 0.0 {
         1.0 / (1.0 + (-z).exp())
@@ -67,18 +62,6 @@ pub(crate) fn density_reading_gpu_params(
     let calibration = interpretation::DensityCalibration::prepare(profile)?;
     let (density, exposure, offsets, counts) = calibration.gpu_axes();
     let operator = PreparedOperator::new(&params.scanner.operator);
-    let standard_setup = params.scanner.experimental_setup;
-    let setup_aim_density = calibration
-        .neutral_density(operator.pivot)
-        .iter()
-        .sum::<f64>()
-        / 3.0;
-    let setup_gamma = calibration.neutral_gamma(operator.pivot);
-    if standard_setup
-        && (!setup_aim_density.is_finite() || !setup_gamma.is_finite() || setup_gamma <= 0.0)
-    {
-        return Err("standard setup requires a finite positive neutral-curve slope at 16%".into());
-    }
     let output = colorspace::resolve(&params.io.output_color_space)?;
     let tone_to_output = if std::ptr::eq(output, &colorspace::SRGB) {
         [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
@@ -94,15 +77,8 @@ pub(crate) fn density_reading_gpu_params(
         dmax: tones.map(|tone| tone.dmax),
         brightness_ev: tones.map(|tone| tone.brightness_ev),
         denominator: tones.map(|tone| -(-std::f64::consts::LN_10 * tone.dmax).exp_m1()),
-        camera_ev: if standard_setup {
-            0.0
-        } else {
-            interpretation::camera_ev(params)
-        },
+        camera_ev: interpretation::camera_ev(params),
         lens_blur: params.scanner.lens_blur,
-        standard_setup,
-        setup_aim_density,
-        setup_gamma,
         operator_pivot: operator.pivot,
         operator_contrast_delta: operator.contrast_delta,
         operator_exposure_ev: operator.exposure_ev,
@@ -167,12 +143,7 @@ pub(crate) fn prepare_negative(
     } else {
         std::borrow::Cow::Borrowed(density)
     };
-    let offset = if params.scanner.experimental_setup {
-        let _setup = super::StageObservation::new(backend, "standard_setup");
-        setup::FrameSetup::measure(&density, &calibration)?.offset
-    } else {
-        [0.0; 3]
-    };
+    let offset = [0.0; 3];
     let mut exposure = Vec::new();
     let pixels = density.data.len() / 3;
     exposure
@@ -295,7 +266,7 @@ pub(crate) fn render_prepared_negative(
             for channel in 0..3 {
                 let tone = &tones[channel];
                 let ev = exposure[channel] / std::f64::consts::LOG10_2
-                    - if params.scanner.experimental_setup { 0.0 } else { interpretation::camera_ev(params) }
+                    - interpretation::camera_ev(params)
                     + tone.brightness_ev;
                 if !ev.is_finite() || !(tone.contrast * ev).is_finite() {
                     return Err("negative conversion combined tone coordinate overflow".into());
@@ -1113,69 +1084,6 @@ mod tests {
                 .unwrap_err()
                 .contains("overflow")
         );
-    }
-
-    #[test]
-    fn prepared_render_keeps_f64_baseline_and_default_tone_exact() {
-        let film = crate::profile::load_profile_by_name(&data_dir(), "kodak_portra_400").unwrap();
-        let mut params = film_scan_params();
-        params.scanner.scan_output = "negative_to_positive".into();
-        params.scanner.experimental_setup = true;
-        params.io.output_color_space = "sRGB".into();
-        let density = ImageBuf::from_data(
-            2,
-            1,
-            vec![
-                from_f64(0.3),
-                from_f64(0.5),
-                from_f64(0.7),
-                from_f64(1.2),
-                from_f64(1.0),
-                from_f64(0.8),
-            ],
-        );
-        let original_density = density.data.clone();
-        let backend = &spektrafilm_backend::cpu_backend::CpuBackend;
-        let prepared = prepare_negative(&density, &film, &params, backend).unwrap();
-        let calibration = interpretation::DensityCalibration::prepare(&film).unwrap();
-        let offset = setup::FrameSetup::measure(&density, &calibration)
-            .unwrap()
-            .offset;
-        for (baseline, px) in prepared
-            .exposure
-            .iter()
-            .zip(density.data.as_chunks::<3>().0)
-        {
-            let inverse = calibration
-                .estimate([to_f64(px[0]), to_f64(px[1]), to_f64(px[2])])
-                .unwrap();
-            assert_eq!(*baseline, std::array::from_fn(|c| inverse[c] + offset[c]));
-        }
-        let baseline = prepared.exposure.clone();
-        let original =
-            render_prepared_negative(&prepared, &style::STANDARD, &params, backend).unwrap();
-        let expected: Vec<_> = baseline
-            .iter()
-            .flat_map(|px| {
-                std::array::from_fn::<_, 3, _>(|c| {
-                    from_f64(positive_tone(px[c], &style::STANDARD[c], &params))
-                })
-            })
-            .collect();
-        assert_eq!(original.data, expected);
-        params.scanner.operator.exposure_ev = 0.5;
-        let moved =
-            render_prepared_negative(&prepared, &style::STANDARD, &params, backend).unwrap();
-        assert!(moved.data.iter().zip(&original.data).all(|(a, b)| a > b));
-        params.scanner.operator = crate::params::ScanOperatorParams::default();
-        assert_eq!(
-            render_prepared_negative(&prepared, &style::STANDARD, &params, backend)
-                .unwrap()
-                .data,
-            original.data
-        );
-        assert_eq!(prepared.exposure, baseline);
-        assert_eq!(density.data, original_density);
     }
 
     #[test]

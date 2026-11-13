@@ -571,10 +571,7 @@ pub(super) fn conditions(path: &str) -> Vec<Condition> {
         out.push(SpectralReference);
     } else if path.starts_with("scanner.") {
         out.push(Scan);
-        if matches!(
-            path,
-            "scanner.conversion_style" | "scanner.experimental_setup"
-        ) {
+        if matches!(path, "scanner.conversion_style") {
             out.push(NegativeScan);
         }
     } else if path.starts_with("io.crop_") {

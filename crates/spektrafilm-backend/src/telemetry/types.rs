@@ -124,7 +124,6 @@ pub const STAGE_NAMES: &[&str] = &[
     "negative_to_positive",
     "negative_reconstruction",
     "negative_to_positive_tone",
-    "standard_setup",
     "input_transfer",
     "lut_look",
     "effects",

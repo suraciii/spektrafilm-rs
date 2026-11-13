@@ -585,7 +585,7 @@ impl App {
         if self.params.output_mix.amount != 1.0 {
             return Err("output_mix.amount must be exactly 1 for a simple LUT export".into());
         }
-        if self.params.scanner.experimental_setup {
+        if false {
             return Err(
                 "an active frame-dependent negative setup cannot be baked into a pointwise LUT"
                     .into(),
@@ -653,7 +653,6 @@ mod tests {
         let mut app = app();
         app.params.workflow.mode = WorkflowMode::Film;
         app.params.workflow.route = "input > film > print > scan".into();
-        app.params.scanner.experimental_setup = false;
         app.params.output_mix.amount = 1.0;
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("look.cube");
@@ -710,7 +709,6 @@ mod tests {
         let mut app = app();
         app.params.workflow.mode = WorkflowMode::Film;
         app.params.workflow.route = "input > film > print > scan".into();
-        app.params.scanner.experimental_setup = false;
         app.params.output_mix.amount = 1.0;
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("linear.cube");
@@ -732,7 +730,6 @@ mod tests {
         let mut app = app();
         app.params.workflow.mode = WorkflowMode::Film;
         app.params.workflow.route = "input > film > print > scan".into();
-        app.params.scanner.experimental_setup = false;
         app.params.output_mix.amount = 1.0;
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("out.cube");

@@ -1085,9 +1085,9 @@ fn section_application_checks_validation_before_commit() {
     current.io.scan_film = true;
     current.scanner.scan_output = "negative_to_positive".into();
     // A contextual rejection: the section is valid against the default
-    // parameters, and invalid against this workflow, whose frame setup needs
-    // `negative_to_positive`.
-    current.scanner.experimental_setup = true;
+    // parameters, and invalid against this workflow, whose operator correction
+    // requires `negative_to_positive`.
+    current.scanner.operator.exposure_ev = 0.5;
     let section = Preset::from_json_str(
         &serde_json::json!({
             "schema_version":2,"name":"Invalid scan output",

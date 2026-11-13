@@ -2,7 +2,7 @@ use super::*;
 
 fn parameters() -> ScannerDensityGpuParams {
     let pivot = (0.16_f64 / 0.184).log10();
-    let gamma = 0.55;
+    let _gamma = 0.55;
     ScannerDensityGpuParams {
         density: vec![0.0, 4.0, 0.0, 4.4, 0.0, 4.8],
         exposure: vec![-4.0, 4.0, -4.0, 4.0, -4.0, 4.0],
@@ -14,9 +14,6 @@ fn parameters() -> ScannerDensityGpuParams {
         denominator: [-(-std::f64::consts::LN_10 * 1.5625841465572565).exp_m1(); 3],
         camera_ev: 8.0,
         lens_blur: 0.0,
-        standard_setup: true,
-        setup_aim_density: (pivot + 4.0) * gamma,
-        setup_gamma: gamma,
         operator_pivot: pivot,
         operator_contrast_delta: 0.23,
         operator_exposure_ev: -0.31,
@@ -51,12 +48,12 @@ fn reference(data: &[f32], p: &ScannerDensityGpuParams) -> (Vec<f32>, [f64; 3], 
     } else {
         [0.33, 0.30, 0.35]
     };
-    let en = (w[0] * (sum / ns.len() as f64) + w[1] * ns[ns.len() - 1] + w[2] * ns[0])
+    let _en = (w[0] * (sum / ns.len() as f64) + w[1] * ns[ns.len() - 1] + w[2] * ns[0])
         / w.iter().sum::<f64>();
-    let dx = 0.75 * (p.setup_aim_density - en) / p.setup_gamma;
+    let dx = 0.0;
     let cast = cast.map(|v| v / ns.len() as f64);
-    let weight = (1.0 - 40.0 * (cast[0] * cast[0] + cast[1] * cast[1])).max(0.2);
-    let [u, v] = cast.map(|v| -0.9 * weight * v / p.setup_gamma);
+    let _weight = (1.0 - 40.0 * (cast[0] * cast[0] + cast[1] * cast[1])).max(0.2);
+    let [u, v] = [0.0, 0.0];
     let offset = [
         dx + u / 2.0_f64.sqrt() + v / 6.0_f64.sqrt(),
         dx - u / 2.0_f64.sqrt() + v / 6.0_f64.sqrt(),
@@ -191,6 +188,7 @@ fn standard_fullframe_exact_percentile_neutral_locus_and_operator_destination() 
 }
 
 #[test]
+#[allow(dead_code)]
 fn standard_setup_large_frame_error_budget() {
     let gpu = crate::test_support::adapter();
     let p = parameters();

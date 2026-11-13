@@ -94,7 +94,7 @@ pub(crate) fn apply_runtime_constraints(params: &mut RuntimeParams) {
 }
 
 fn apply_preview_constraints(params: &mut RuntimeParams) {
-    if params.settings.preview_mode && !params.requires_full_frame() {
+    if params.settings.preview_mode {
         // Preview keeps the post-scan Procedural and Exposure appearance
         // paths and the Fotufilm Film population model, whose contract
         // evaluates the same model on the declared reduced-resolution source.
