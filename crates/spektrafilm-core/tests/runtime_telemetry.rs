@@ -192,7 +192,7 @@ fn negative_to_positive_cpu_override_preserves_stage_reports() {
             report
                 .stages
                 .iter()
-                .filter(|stage| stage.name == "standard_setup")
+                .filter(|stage| stage.name == "frame_setup")
                 .count(),
             1
         );
@@ -941,7 +941,7 @@ fn standard_gpu_setup_report_persists_valid_hierarchy_and_actual_dispatches() {
         let setup: Vec<_> = decoded
             .stages
             .iter()
-            .filter(|stage| stage.name == "standard_setup")
+            .filter(|stage| stage.name == "frame_setup")
             .collect();
         assert_eq!(setup.len(), 1, "one complete-frame setup must be retained");
         assert_eq!(setup[0].executor, Some(Executor::Gpu));

@@ -2783,7 +2783,7 @@ fn convert_routes_apply_the_shared_terminal_cmyk_appearance() {
 }
 
 #[test]
-fn standard_setup_reads_the_frame_without_rewriting_density_evidence() {
+fn frame_setup_reads_the_frame_without_rewriting_density_evidence() {
     let dir = data_dir();
     let film = crate::profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();
     let print = crate::profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap();

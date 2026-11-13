@@ -82,7 +82,7 @@ impl ScanDensityState {
         // Film-chain transport already has a batch. The caller supplies its
         // Phase/Stage ancestor so this Stage is a sibling, never a batch child.
         let mut scope = context.scope(
-            "standard_setup",
+            "frame_setup",
             spektrafilm_backend::telemetry::ObservationKind::Stage,
             context.purpose(),
         );

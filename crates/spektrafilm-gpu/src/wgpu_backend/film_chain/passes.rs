@@ -756,7 +756,7 @@ impl WgpuBackend {
                             if state.has_setup() {
                                 backend.pipe.run_chain(vec![
                                     super::super::pipe::ChainStage::Device {
-                                        name: "standard_setup",
+                                        name: "frame_setup",
                                         execute: Box::new(|| {
                                             state.submit_setup_observed(backend, setup_context)
                                         }),
