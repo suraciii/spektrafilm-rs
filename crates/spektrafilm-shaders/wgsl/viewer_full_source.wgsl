@@ -157,6 +157,36 @@ fn source_pixel(x: i32, y: i32, c: u32) -> f32 {
     return transform_pixel(vec3<f32>(source[base], source[base + 1u], source[base + 2u]))[c];
 }
 
+// Snap a coordinate that landed within one f32 ulp of an image edge back to
+// the exact edge before the half-open containment test.
+fn edge_snap(value: f32, lo: f32, hi: f32) -> f32 {
+    let tolerance = 2.0 * 1.1920929e-7 * max(1.0, max(abs(value), abs(lo)));
+    if abs(value - lo) <= tolerance {
+        return lo;
+    }
+    if abs(value - hi) <= tolerance {
+        return hi;
+    }
+    return value;
+}
+
+// floor(x + 0.5), with half coordinates rounding up. A plain
+// floor(x + 0.5) can compile to round(), whose ties-to-even rule selects the
+// wrong cell on exact half coordinates.
+fn nearest_coord(x: f32) -> i32 {
+    let shifted = x + 0.5;
+    let base = floor(shifted);
+    let frac = shifted - base;
+    // Devices may round the shifted coordinate one ulp below an exact
+    // integer. Snap such near-boundary values up so the host and device
+    // select the same cell.
+    let tolerance = 2.0 * 1.1920929e-7 * max(1.0, abs(shifted));
+    if frac >= 1.0 - tolerance {
+        return i32(base) + 1;
+    }
+    return i32(base);
+}
+
 // Separable interpolation at a continuous source coordinate, matching the
 // host's `sample_f32` tap for tap.
 //
@@ -169,7 +199,7 @@ fn source_pixel(x: i32, y: i32, c: u32) -> f32 {
 fn sample_source(x: f32, y: f32, c: u32) -> f32 {
     let mode = params.interpolation;
     if mode == 0u {
-        return source_pixel(i32(floor(x + 0.5)), i32(floor(y + 0.5)), c);
+        return source_pixel(nearest_coord(x), nearest_coord(y), c);
     }
     let r = radius(mode);
     let bx = i32(floor(x));
@@ -433,16 +463,20 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_workgroups) 
     let py = params.rect_min_y + (f32(ty) + 0.5) * params.rect_height / f32(params.tex_height);
     // Outside the image rectangle the host leaves the pixel transparent, and
     // the caller never reads it.
-    if px < params.image_min_x || px >= params.image_min_x + params.image_width
-        || py < params.image_min_y || py >= params.image_min_y + params.image_height {
+    let image_max_x = params.image_min_x + params.image_width;
+    let image_max_y = params.image_min_y + params.image_height;
+    let px_edge = edge_snap(px, params.image_min_x, image_max_x);
+    let py_edge = edge_snap(py, params.image_min_y, image_max_y);
+    if px_edge < params.image_min_x || px_edge >= image_max_x
+        || py_edge < params.image_min_y || py_edge >= image_max_y {
         out[base] = 0.0;
         out[base + 1u] = 0.0;
         out[base + 2u] = 0.0;
         return;
     }
     // Map the point into the source's continuous pixel grid.
-    let uvx = (px - params.image_min_x) / params.image_width;
-    let uvy = (py - params.image_min_y) / params.image_height;
+    let uvx = (px_edge - params.image_min_x) / params.image_width;
+    let uvy = (py_edge - params.image_min_y) / params.image_height;
     let sx = uvx * f32(params.src_width) - 0.5;
     let sy = uvy * f32(params.src_height) - 0.5;
     let fx = max(1.0, params.footprint_x);

@@ -148,6 +148,9 @@ pub struct FilmChainParams<'a> {
     /// final RGB buffer. Lognormal-distributed per-pixel surface noise +
     /// blur + per-channel illuminant offset.
     pub glare: Option<GlareGpuParams>,
+    /// Optional scan-stage appearance pass — when `Some`, applied to the
+    /// completed scan RGB before common finishing.
+    pub scan_profile: Option<ScanProfileGpuParams>,
     /// Optional common finishing on completed positive linear RGB, before gamut.
     pub finishing: Option<FinishingGpuParams>,
     /// Optional output gamut compression pass — applied after glare on
@@ -537,7 +540,22 @@ pub struct UnsharpGpuParams {
     pub amount: f32,
 }
 
-/// Viewing glare parameters for the GPU-resident lognormal + blur + apply
+/// Scan-stage appearance in linear sRGB. The core supplies the forward and
+/// inverse working-space matrices and the per-channel knots. Matrix, if
+/// present, runs before the curves; strength blends in linear sRGB.
+#[derive(Debug, Clone, Copy)]
+pub struct ScanProfileGpuParams {
+    pub strength: f32,
+    pub has_matrix: u32,
+    pub to_srgb: [[f32; 3]; 3],
+    pub from_srgb: [[f32; 3]; 3],
+    pub matrix: [[f32; 3]; 3],
+    /// Three channels of up to nine `(x, y)` knots, packed as vec4 rows.
+    pub knots: [[f32; 4]; 27],
+    pub counts: [u32; 4],
+}
+
+/// Optional viewing glare parameters for the GPU-resident lognormal + blur + apply
 /// pass. CPU equivalent: `compute_random_glare_amount` followed by
 /// `add_glare_with_amount`.
 #[derive(Debug, Clone, Copy)]
