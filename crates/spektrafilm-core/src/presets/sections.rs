@@ -102,7 +102,14 @@ impl Section {
             && !(self == Self::Enlarger && path.starts_with("enlarger.diffusion_filter"))
     }
 }
+/// Opaque transform data is carried as one value, not flattened into
+/// user-editable leaves. The resolved transform is authoritative; the
+/// built-in name is derived by exact comparison.
 fn flatten(prefix: &str, value: &Value, out: &mut Vec<(String, Value)>) {
+    if prefix == "scanner.scan_profile.transform" {
+        out.push((prefix.into(), value.clone()));
+        return;
+    }
     if let Some(map) = value.as_object() {
         for (key, value) in map {
             let path = if prefix.is_empty() {

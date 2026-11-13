@@ -755,6 +755,7 @@ mod direct_tests {
             light_leak: None,
             dir_couplers: None,
             glare: None,
+            scan_profile: None,
             finishing: None,
             gamut: None,
             unsharp: None,

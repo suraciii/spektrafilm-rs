@@ -818,6 +818,13 @@ impl WgpuBackend {
                             backend,
                         )?
                         .submit(backend),
+                        ScanProfile => backend
+                            .chain_scan_profile(
+                                &rasters.tail_b,
+                                geometry.tail.0 * geometry.tail.1,
+                                p.scan_profile.as_ref().ok_or("scan profile missing")?,
+                            )?
+                            .submit(backend),
                         Finishing => backend
                             .chain_finishing(
                                 &rasters.tail_b,
@@ -1076,6 +1083,7 @@ mod tests {
             light_leak: None,
             dir_couplers: None,
             glare: None,
+            scan_profile: None,
             finishing: None,
             gamut: None,
             unsharp: None,
