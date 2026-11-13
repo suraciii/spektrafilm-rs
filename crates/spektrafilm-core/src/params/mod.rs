@@ -10,6 +10,7 @@ pub mod finishing;
 pub mod glare;
 pub mod grain;
 mod grain_compat;
+pub mod scan_profile;
 pub use grain_compat::normalize_grain_control_names;
 pub mod halation;
 pub mod sources;
@@ -22,6 +23,7 @@ use glare::GlareParams;
 pub use grain::{FotufilmGrainParams, FotufilmMaterial};
 pub use grain::{GrainEngine, GrainParams};
 pub use halation::HalationParams;
+pub use scan_profile::{ScanCurve, ScanProfileName, ScanProfileParams, ScanProfileTransform};
 pub use validation::{ValidationError, ValidationReason};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -227,6 +229,11 @@ pub struct ScannerParams {
     /// Standard negative-to-positive corrections; inactive routes require defaults.
     #[serde(default)]
     pub operator: ScanOperatorParams,
+    /// Optional scan-stage appearance applied after negative conversion and
+    /// before Tone & Color. The resolved transform is authoritative; names are
+    /// derived by exact comparison with the built-in catalog.
+    #[serde(default)]
+    pub scan_profile: ScanProfileParams,
     #[serde(default)]
     pub lens_blur: f32,
     #[serde(default = "default_unsharp")]
@@ -240,6 +247,7 @@ impl Default for ScannerParams {
             conversion_style: default_conversion_style(),
             experimental_setup: false,
             operator: ScanOperatorParams::default(),
+            scan_profile: ScanProfileParams::default(),
             lens_blur: 0.0,
             unsharp_mask: default_unsharp(),
         }

@@ -345,6 +345,64 @@ pub(crate) fn sections(
                     flags.runtime_changed = true;
                 }
             }
+            // Scan Profile applies after negative conversion, before Tone & Color.
+            if filter_matches(filter, "Scan Profile") {
+                let profile_active = positive_route;
+                if !profile_active {
+                    ui.label(localized(ui.ctx(), "Scan Profile inactive on this route; stored values are retained."));
+                }
+                let current_name = params.scanner.scan_profile.effective_name();
+                let mut selected = current_name.as_str().to_owned();
+                let entries: Vec<(&str, &str)> = vec![
+                    ("none", "No Scan Profile"),
+                    ("sp3000_inspired", "SP-3000 Inspired"),
+                    ("custom", "Custom"),
+                ];
+                let visible_entries: Vec<(&str, &str)> = if current_name
+                    == spektrafilm_core::params::ScanProfileName::Custom
+                {
+                    entries
+                } else {
+                    entries
+                        .into_iter()
+                        .filter(|(name, _)| *name != "custom")
+                        .collect()
+                };
+                if ui
+                    .add_enabled_ui(profile_active, |ui| {
+                        widgets::choice_tip_entries(
+                            ui,
+                            "Scan Profile",
+                            &mut selected,
+                            visible_entries.into_iter(),
+                            "Change how the scan looks after negative conversion and before Tone & Color. Film and negative conversion stay the same.",
+                        )
+                    })
+                    .inner
+                {
+                    flags.runtime_changed = true;
+                    match selected.as_str() {
+                        "sp3000_inspired" => {
+                            params.scanner.scan_profile.set_builtin(
+                                spektrafilm_core::params::ScanProfileName::Sp3000Inspired,
+                            );
+                        }
+                        "none" => {
+                            params.scanner.scan_profile.set_bypass();
+                        }
+                        _ => {} // "custom" is an effective state; no action.
+                    }
+                }
+                if filter_matches(filter, "Scan Profile Strength") {
+                    flags.runtime_changed |= param_numeric(
+                        ui,
+                        "Scan Profile Strength",
+                        &mut params.scanner.scan_profile.strength,
+                        "scanner.scan_profile.strength",
+                        "Application amount of the selected Scan Profile. 0% is no effect; 100% is the full profile.",
+                    );
+                }
+            }
             // The whole-frame measurement is an off-by-default experiment, so it
             // is offered next to the style it modifies rather than as a mode.
             let negative_route =

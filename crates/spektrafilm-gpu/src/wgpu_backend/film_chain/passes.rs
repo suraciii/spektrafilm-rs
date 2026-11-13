@@ -65,6 +65,7 @@ enum ChainStep {
     Scan,
     ScannerBlur,
     Glare,
+    ScanProfile,
     Finishing,
     Gamut,
     Unsharp,
@@ -133,6 +134,7 @@ impl ChainStep {
             Self::Gamut => GpuStage::Gamut,
             Self::Unsharp => GpuStage::Unsharp,
             Self::ProceduralGrain => GpuStage::GrainProcedural,
+            Self::ScanProfile => GpuStage::Output,
             Self::Finishing => GpuStage::Output,
             Self::Transfer | Self::Cmyk => GpuStage::Output,
         }
@@ -163,6 +165,7 @@ impl ChainStep {
             Self::Scan => "scan_spectral",
             Self::ScannerBlur => "scanner_lens_blur",
             Self::Glare => "glare",
+            Self::ScanProfile => "scan_profile",
             Self::Finishing => "finishing",
             Self::Gamut => "output_gamut",
             Self::Unsharp => "unsharp_mask",
@@ -249,6 +252,9 @@ fn chain_steps(p: &spektrafilm_backend::FilmChainParams<'_>) -> Result<Vec<Chain
     }
     if p.glare.is_some() {
         steps.push(Glare);
+    }
+    if p.scan_profile.is_some() {
+        steps.push(ScanProfile);
     }
     if p.finishing.is_some() {
         steps.push(Finishing);
@@ -1111,6 +1117,13 @@ impl WgpuBackend {
                             backend,
                         )?
                         .submit(backend),
+                        ScanProfile => backend
+                            .chain_scan_profile(
+                                &rasters.tail_b,
+                                geometry.tail.0 * geometry.tail.1,
+                                p.scan_profile.as_ref().ok_or("scan profile missing")?,
+                            )?
+                            .submit(backend),
                         Finishing => backend
                             .chain_finishing(
                                 &rasters.tail_b,
@@ -1463,6 +1476,7 @@ mod tests {
             halation: None,
             dir_couplers: None,
             glare: None,
+            scan_profile: None,
             finishing: None,
             gamut: None,
             unsharp: None,

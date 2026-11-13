@@ -729,7 +729,13 @@ mod tests {
         for group in spektrafilm_core::params::sources::describe_root_groups() {
             let description = spektrafilm_core::params::sources::describe_module(&group).unwrap();
             for field in description["fields"].as_array().unwrap() {
-                assert!(lookup(field["path"].as_str().unwrap()).is_some());
+                let path = field["path"].as_str().unwrap();
+                // The resolved transform is authoritative data, not a
+                // user-editable leaf. It is carried in presets but has no editor.
+                if path.starts_with("scanner.scan_profile.transform") {
+                    continue;
+                }
+                assert!(lookup(path).is_some());
             }
         }
     }
