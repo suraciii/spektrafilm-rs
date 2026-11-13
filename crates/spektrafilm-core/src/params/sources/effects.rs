@@ -21,6 +21,7 @@ pub(super) enum Condition {
     Spatial,
     Diffusion(bool),
     Halation,
+    LightLeak,
     Boost,
     LutModeOff,
     Glare,
@@ -98,6 +99,7 @@ impl Condition {
                 "enlarger.diffusion_filter.active = true; strength and spatial_scale positive"
             }
             Self::Halation => "film_render.halation.active = true",
+            Self::LightLeak => "film_render.light_leak.active = true",
             Self::Boost => "film_render.halation.boost_ev != 0",
             Self::LutModeOff => "debug.lut_mode = false",
             Self::Glare => {
@@ -205,6 +207,7 @@ impl Condition {
                 d.active && d.strength > 0.0 && d.spatial_scale > 0.0
             }
             Self::Halation => p.film_render.halation.active,
+            Self::LightLeak => p.film_render.light_leak.active,
             Self::Boost => p.film_render.halation.boost_ev != 0.0,
             Self::LutModeOff => !p.debug.lut_mode,
             Self::Glare => {
@@ -509,6 +512,11 @@ pub(super) fn conditions(path: &str) -> Vec<Condition> {
             out.extend([Halation, Boost, LutModeOff]);
         } else if !path.ends_with(".active") {
             out.extend([Halation, Spatial]);
+        }
+    } else if path.starts_with("film_render.light_leak.") {
+        out.push(FilmExposure);
+        if !path.ends_with(".active") {
+            out.extend([LightLeak, Spatial]);
         }
     } else if path.starts_with("film_render.dir_couplers.") {
         out.push(FilmDevelopment);
@@ -1663,5 +1671,51 @@ mod tests {
                 "{path}"
             );
         }
+    }
+
+    #[test]
+    fn light_leak_leaves_depend_on_the_switch_and_spatial_effects() {
+        let material = film(true, true);
+        let reason = |path: &str, params: &RuntimeParams| {
+            inactive_reason(path, params, &material, &material)
+        };
+        let mut params = RuntimeParams::default();
+        let leaves = [
+            "film_render.light_leak.exposure_ev",
+            "film_render.light_leak.width_mm",
+        ];
+
+        // The switch owns the module; the leaves need the switch.
+        assert_eq!(reason("film_render.light_leak.active", &params), None);
+        for path in leaves {
+            assert_eq!(
+                reason(path, &params).as_deref(),
+                Some(Condition::LightLeak.description()),
+                "{path}"
+            );
+        }
+
+        params.film_render.light_leak.active = true;
+        for path in leaves {
+            assert_eq!(reason(path, &params), None, "{path}");
+        }
+
+        // The leak is spatial.
+        params.debug.deactivate_spatial_effects = true;
+        for path in leaves {
+            assert_eq!(
+                reason(path, &params).as_deref(),
+                Some(Condition::Spatial.description()),
+                "{path}"
+            );
+        }
+
+        // Film-exposure routes only.
+        params.debug.deactivate_spatial_effects = false;
+        params.workflow.route = "input > convert-film > print > scan".into();
+        assert_eq!(
+            reason("film_render.light_leak.active", &params).as_deref(),
+            Some(Condition::FilmExposure.description())
+        );
     }
 }

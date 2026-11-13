@@ -522,9 +522,11 @@ impl WgpuBackend {
                                 "light_leak_params",
                                 bytemuck::cast_slice(&[
                                     n,
+                                    // Word 1 is patched per chunk with the
+                                    // chunk's first item.
+                                    0u32,
                                     leak.width,
                                     leak.height,
-                                    0u32,
                                     leak.center[0].to_bits(),
                                     leak.center[1].to_bits(),
                                     leak.direction[0].to_bits(),
@@ -560,6 +562,7 @@ impl WgpuBackend {
                                     false,
                                     "light_leak",
                                 )?
+                                .with_chunk_origin()
                                 .submit(backend)
                         }
                         Halation => build_halation_state(
@@ -1022,6 +1025,18 @@ mod tests {
     use spektrafilm_math::image::ImageBuf;
 
     const MAT3: [[f64; 3]; 3] = [[0.0; 3]; 3];
+
+    struct RestoreLimit(Option<std::ffi::OsString>);
+    impl Drop for RestoreLimit {
+        fn drop(&mut self) {
+            unsafe {
+                match &self.0 {
+                    Some(value) => std::env::set_var("SPEKTRAFILM_GPU_BINDING_LIMIT_BYTES", value),
+                    None => std::env::remove_var("SPEKTRAFILM_GPU_BINDING_LIMIT_BYTES"),
+                }
+            }
+        }
+    }
 
     /// Minimal chain params: empty lookup tables, no optional stages. The
     /// geometry is declared directly so oversized sizes cost no allocation.
@@ -1876,43 +1891,55 @@ mod tests {
         };
         let geometry = light_leak_geometry(w, h, pitch, &model);
         let scale = 3.0f32 * 2.0f32.powf(model.exposure_ev);
-        let baseline = gpu
-            .run_film_chain_retained(&input, &p)
-            .unwrap()
-            .to_host(gpu.backend())
-            .unwrap();
-        p.light_leak = Some(spektrafilm_backend::LightLeakGpuParams {
-            width: w,
-            height: h,
-            center: geometry.center,
-            direction: geometry.direction,
-            half_px: geometry.half_px,
-            spread_px: geometry.spread_px,
-            texture_scale_px: geometry.texture_scale_px,
-            texture_amount: model.texture_amount,
-            seed: fold_seed(7),
-            scale,
-            spectrum: model.leak_spectrum,
-        });
-        let leaked = gpu
-            .run_film_chain_retained(&input, &p)
-            .unwrap()
-            .to_host(gpu.backend())
-            .unwrap();
         let field = light_leak_field(w, h, pitch, &model, 7);
         let tolerance = 1e-4 * f64::from(scale);
-        for (i, weight) in field.iter().enumerate().take((w * h) as usize) {
-            for c in 0..3 {
-                let raw = |log: f32| 10f64.powf(f64::from(log)) - 1e-10;
-                let delta =
-                    raw(leaked.data[i * 3 + c] as f32) - raw(baseline.data[i * 3 + c] as f32);
-                let expected =
-                    f64::from(*weight) * f64::from(scale) * f64::from(model.leak_spectrum[c]);
-                assert!(
-                    (delta - expected).abs() < tolerance,
-                    "pixel {i} record {c}: device added {delta}, host field adds {expected}"
-                );
+        let mut compare = |label: &str| {
+            p.light_leak = None;
+            let baseline = gpu
+                .run_film_chain_retained(&input, &p)
+                .unwrap()
+                .to_host(gpu.backend())
+                .unwrap();
+            p.light_leak = Some(spektrafilm_backend::LightLeakGpuParams {
+                width: w,
+                height: h,
+                center: geometry.center,
+                direction: geometry.direction,
+                half_px: geometry.half_px,
+                spread_px: geometry.spread_px,
+                texture_scale_px: geometry.texture_scale_px,
+                texture_amount: model.texture_amount,
+                seed: fold_seed(7),
+                scale,
+                spectrum: model.leak_spectrum,
+            });
+            let leaked = gpu
+                .run_film_chain_retained(&input, &p)
+                .unwrap()
+                .to_host(gpu.backend())
+                .unwrap();
+            for (i, weight) in field.iter().enumerate().take((w * h) as usize) {
+                for c in 0..3 {
+                    let raw = |log: f32| 10f64.powf(f64::from(log)) - 1e-10;
+                    let delta =
+                        raw(leaked.data[i * 3 + c] as f32) - raw(baseline.data[i * 3 + c] as f32);
+                    let expected =
+                        f64::from(*weight) * f64::from(scale) * f64::from(model.leak_spectrum[c]);
+                    assert!(
+                        (delta - expected).abs() < tolerance,
+                        "{label}: pixel {i} record {c}: device added {delta}, host field adds {expected}"
+                    );
+                }
             }
+        };
+        compare("single chunk");
+        // The field must not depend on how the frame is chunked across
+        // dispatches: force many small chunks and pages and require the same
+        // agreement.
+        let _restore = RestoreLimit(std::env::var_os("SPEKTRAFILM_GPU_BINDING_LIMIT_BYTES"));
+        unsafe {
+            std::env::set_var("SPEKTRAFILM_GPU_BINDING_LIMIT_BYTES", "4096");
         }
+        compare("forced multi-chunk");
     }
 }

@@ -7,15 +7,18 @@
 // integer arithmetic, so the device and the host evaluate the same lattice
 // values.
 //
-// One thread per pixel; it updates that pixel's three records.
+// One thread per pixel; it updates that pixel's three records. Coordinates
+// come from the pixel's index in the frame, so the field does not depend on
+// how the frame is chunked across dispatches.
 
 struct Params {
-    // The pointwise machinery patches this first word with the chunk's pixel
-    // count; the raster extent follows it.
+    // The pointwise machinery patches the first two words per chunk with the
+    // chunk's pixel count and the chunk's first item in the frame; the raster
+    // extent follows them.
     n_pixels: u32,
+    first_pixel: u32,
     width: u32,
     height: u32,
-    _pad0: u32,
     center_x: f32,
     center_y: f32,
     direction_x: f32,
@@ -103,8 +106,11 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_workgroups) 
     if idx >= params.n_pixels {
         return;
     }
-    let px = f32(idx % params.width);
-    let py = f32(idx / params.width);
+    // The chunk-local index locates the data; the coordinates are the
+    // pixel's place in the frame.
+    let pixel = params.first_pixel + idx;
+    let px = f32(pixel % params.width);
+    let py = f32(pixel / params.width);
     let d = distance_to_segment(px, py);
     let q = d / params.spread;
     // One spread of penumbra beyond one and a half spreads, then nothing: the
