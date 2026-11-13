@@ -145,7 +145,7 @@ The left browser owns whole-look presets. Modules do not have section-preset men
 
 **Copy operator correction** and **Paste operator correction** use a session-local clipboard containing only the four values. Load another frame and paste to apply them over that frame's own readout; no offsets, film density, capture calibration, or other settings are copied. The clipboard and adjustment history are not saved in presets or GUI state.
 
-Changing the route resets an ineligible scan polarity; leaving negative conversion resets the conversion style to `standard`. The style selects the tone only; the separate off-by-default `scanner.experimental_setup` switch adds whole-frame exposure and color measurement before that tone. `neutral` is accepted only as an input migration alias and is saved as `standard`; it does not preserve the former fixed-curve appearance. See [scanning](scanning.md) for scanner mode and style semantics.
+Changing the route resets an ineligible scan polarity; leaving negative conversion resets the conversion style to `standard`. The style selects the tone only. `neutral` is accepted only as an input migration alias and is saved as `standard`; it does not preserve the former fixed-curve appearance. See [scanning](scanning.md) for scanner mode and style semantics.
 
 ### Tone & Color
 

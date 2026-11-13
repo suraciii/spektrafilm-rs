@@ -51,7 +51,7 @@ Endpoints use finite tangent extrapolation. Setup MUST use the neutral locus and
 
 ## Experimental frame setup
 
-`scanner.experimental_setup` is an off-by-default experiment, not a validated photographic model: it is a declared heuristic with no paired real minilab reference and no evidence that it matches Frontier or Noritsu. It stays off unless a caller asks for it, so the default readout is a fixed, frame-independent transform.
+The experimental frame setup has been removed. The default readout is a fixed, frame-independent transform.
 
 When enabled it MUST measure the complete frame delivered to the scan acquisition boundary, after transmission-domain scanner lens blur and before the positive tone. It MUST NOT measure separate tiles.
 
@@ -201,7 +201,6 @@ Invalid or missing style data MUST fail before output publication. Style names M
 
 ## Point-wise consumers and migration
 
-A `negative_to_positive` render with the setup enabled MUST fail LUT baking. A point-wise measurement whose range reaches `rgb_out` through this setup MUST fail before writing measurement output. Both failures MUST identify frame dependence and direct the caller to disable `scanner.experimental_setup`.
 
 Earlier film-density or exposure taps remain measurable.
 
@@ -227,7 +226,7 @@ Presets, recipes, parameter discovery, CLI `--set`, GUI persistence, and effecti
 - Gray ramps remain neutral, monotone, and finite. Positive and negative exposure shifts remain distinguishable.
 - Exact residual `(1 - slope)` applies to linear response curves, not arbitrary toe/shoulder regions.
 - Repeated execution on the same frame produces identical setup and pixels at the same precision and backend.
-- Changing a frame's other pixels MAY change a pixel's output only while `scanner.experimental_setup` is enabled. With it disabled, every style retains record independence before destination primary conversion.
+- Every style retains record independence before destination primary conversion.
 - A dominant red field remains red after correction. A dark field MUST NOT be forced to the same result as the neutral aim.
 - A bright background MAY still darken a subject. Setup provides no face detection, subject classification, or local tone correction.
 - Do not weaken this limit into a claim that inverse-lighting scenes are rescued.
