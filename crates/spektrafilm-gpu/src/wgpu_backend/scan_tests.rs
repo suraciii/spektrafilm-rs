@@ -12,7 +12,7 @@ fn parameters() -> ScannerDensityGpuParams {
         dmax: [1.5625841465572565; 3],
         brightness_ev: [0.8781766618; 3],
         denominator: [-(-std::f64::consts::LN_10 * 1.5625841465572565).exp_m1(); 3],
-        camera_ev: 8.0,
+        camera_ev: 0.0,
         lens_blur: 0.0,
         operator_pivot: pivot,
         operator_contrast_delta: 0.23,
@@ -22,48 +22,12 @@ fn parameters() -> ScannerDensityGpuParams {
     }
 }
 
-fn reference(data: &[f32], p: &ScannerDensityGpuParams) -> (Vec<f32>, [f64; 3], bool) {
+fn reference(data: &[f32], p: &ScannerDensityGpuParams) -> Vec<f32> {
     let slopes = [0.5, 0.55, 0.6];
-    let mut ns = Vec::new();
-    let mut sum = 0.0;
-    let mut cast = [0.0; 2];
-    for d in data.as_chunks::<3>().0 {
-        let d = [f64::from(d[0]), f64::from(d[1]), f64::from(d[2])];
-        let x: [f64; 3] = std::array::from_fn(|c| d[c] / slopes[c] - 4.0);
-        let mean = x.iter().sum::<f64>() / 3.0;
-        let r: [f64; 3] = std::array::from_fn(|c| d[c] - (mean + 4.0) * slopes[c]);
-        cast[0] += (r[0] - r[1]) / 2.0_f64.sqrt();
-        cast[1] += (r[0] + r[1] - 2.0 * r[2]) / 6.0_f64.sqrt();
-        let n = d.iter().sum::<f64>() / 3.0;
-        sum += n;
-        ns.push(n);
-    }
-    ns.sort_by(f64::total_cmp);
-    let position = (ns.len() - 1) as f64 * 0.05;
-    let lo = position.floor() as usize;
-    let n5 = ns[lo] + (position - lo as f64) * (ns[(lo + 1).min(ns.len() - 1)] - ns[lo]);
-    let high = ns[ns.len() - 1] - n5 >= 1.8;
-    let w = if high {
-        [0.30, 0.35, 0.29]
-    } else {
-        [0.33, 0.30, 0.35]
-    };
-    let _en = (w[0] * (sum / ns.len() as f64) + w[1] * ns[ns.len() - 1] + w[2] * ns[0])
-        / w.iter().sum::<f64>();
-    let dx = 0.0;
-    let cast = cast.map(|v| v / ns.len() as f64);
-    let _weight = (1.0 - 40.0 * (cast[0] * cast[0] + cast[1] * cast[1])).max(0.2);
-    let [u, v] = [0.0, 0.0];
-    let offset = [
-        dx + u / 2.0_f64.sqrt() + v / 6.0_f64.sqrt(),
-        dx - u / 2.0_f64.sqrt() + v / 6.0_f64.sqrt(),
-        dx - 2.0 * v / 6.0_f64.sqrt(),
-    ];
     let mut output = Vec::new();
     for d in data.as_chunks::<3>().0 {
         let stops: [f64; 3] = std::array::from_fn(|c| {
-            (f64::from(d[c]) / slopes[c] - 4.0 + offset[c] - p.operator_pivot)
-                / std::f64::consts::LOG10_2
+            (f64::from(d[c]) / slopes[c] - 4.0 - p.operator_pivot) / std::f64::consts::LOG10_2
         });
         let common =
             p.operator_contrast_delta * (stops.iter().sum::<f64>() / 3.0) + p.operator_exposure_ev;
@@ -84,16 +48,14 @@ fn reference(data: &[f32], p: &ScannerDensityGpuParams) -> (Vec<f32>, [f64; 3], 
             output.push((row[0] * rgb[0] + row[1] * rgb[1] + row[2] * rgb[2]) as f32);
         }
     }
-    (output, offset, high)
+    output
 }
 
 #[test]
-fn standard_fullframe_exact_percentile_neutral_locus_and_operator_destination() {
+fn density_tone_matches_the_scalar_reference_with_operator_destination() {
     let gpu = crate::test_support::adapter();
     let p = parameters();
-    for (maximum, expected_high) in [(1.9, false), (2.0, true)] {
-        // 42 samples: the fifth percentile interpolates ranks 2 and 3 (2.05).
-        // For maximum=1.9 the minimum-only contrast test would choose wrongly.
+    for maximum in [1.9, 2.0] {
         for colored in [false, true] {
             let data: Vec<f32> = (0..42)
                 .flat_map(|i| {
@@ -115,15 +77,8 @@ fn standard_fullframe_exact_percentile_neutral_locus_and_operator_destination() 
                     }
                 })
                 .collect();
-            let (expected, offset, high) = reference(&data, &p);
-            if !colored {
-                assert_eq!(high, expected_high);
-                assert!(
-                    (offset[0] - offset[2]).abs() < 1e-6,
-                    "neutral ramp acquired a cast"
-                );
-            }
-            // Deliberately tiny physical source pages split percentile neighbours.
+            let expected = reference(&data, &p);
+            // Deliberately tiny physical source pages exercise paged reads.
             let source: Vec<_> = data
                 .chunks(9)
                 .enumerate()
@@ -153,21 +108,6 @@ fn standard_fullframe_exact_percentile_neutral_locus_and_operator_destination() 
                 .build_scan_density_state(&p, &source, &output, 42, 1, None)
                 .unwrap();
             state.submit_optics(&gpu).unwrap();
-            state.submit_setup(&gpu).unwrap();
-            let setup = gpu
-                .pipe
-                .readback_buffer_as::<f32>(&state.prepared.setup, 64)
-                .unwrap();
-            let offset_error = (0..3)
-                .map(|c| (f64::from(setup[5 + c]) - offset[c]).abs())
-                .fold(0.0_f64, f64::max);
-            // 1e-5 log10 exposure is 3.33e-5 EV; this leaves margin for
-            // binary32 calibrated interpolation and whole-frame reduction.
-            assert!(offset_error < 1e-5, "setup offset error {offset_error}");
-            eprintln!(
-                "scan setup maximum error: {offset_error} log10 exposure ({} EV)",
-                offset_error / std::f64::consts::LOG10_2
-            );
             state.submit_inverse(&gpu).unwrap();
             state.check(&gpu, &p, None, 42, 1).unwrap();
             let actual = gpu
@@ -185,69 +125,6 @@ fn standard_fullframe_exact_percentile_neutral_locus_and_operator_destination() 
             }
         }
     }
-}
-
-#[test]
-#[allow(dead_code)]
-fn standard_setup_large_frame_error_budget() {
-    let gpu = crate::test_support::adapter();
-    let p = parameters();
-    let pixels = 262_144u32;
-    let data: Vec<f32> = (0..pixels)
-        .flat_map(|i| {
-            let n = 0.2 + (i % 251) as f32 * 0.007;
-            [n * 0.91 + 0.03, n, n * 1.09 - 0.02]
-        })
-        .collect();
-    let (expected, offset, _) = reference(&data, &p);
-    let source = gpu
-        .device
-        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("scan_large_frame_source"),
-            contents: bytemuck::cast_slice(&data),
-            usage: wgpu::BufferUsages::STORAGE
-                | wgpu::BufferUsages::COPY_SRC
-                | wgpu::BufferUsages::COPY_DST,
-        });
-    let output = gpu.device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("scan_large_frame_output"),
-        size: data.len() as u64 * 4,
-        usage: wgpu::BufferUsages::STORAGE
-            | wgpu::BufferUsages::COPY_SRC
-            | wgpu::BufferUsages::COPY_DST,
-        mapped_at_creation: false,
-    });
-    let state = gpu
-        .build_scan_density_state(&p, &source, &output, pixels, 1, None)
-        .unwrap();
-    state.submit_setup(&gpu).unwrap();
-    let setup = gpu
-        .pipe
-        .readback_buffer_as::<f32>(&state.prepared.setup, 64)
-        .unwrap();
-    let offset_error = (0..3)
-        .map(|c| (f64::from(setup[5 + c]) - offset[c]).abs())
-        .fold(0.0_f64, f64::max);
-    assert!(
-        offset_error < 1e-5,
-        "large-frame setup offset error {offset_error}"
-    );
-    state.submit_inverse(&gpu).unwrap();
-    state.check(&gpu, &p, None, pixels, 1).unwrap();
-    let actual = gpu
-        .pipe
-        .readback_buffer_as::<f32>(&output, data.len() as u64 * 4)
-        .unwrap();
-    let tone_error = actual
-        .iter()
-        .zip(&expected)
-        .map(|(&a, &b)| (a - b).abs())
-        .fold(0.0_f32, f32::max);
-    assert!(tone_error < 1e-5, "large-frame tone error {tone_error}");
-    eprintln!(
-        "scan large-frame max offset error {offset_error} log10 ({} EV), tone error {tone_error}",
-        offset_error / std::f64::consts::LOG10_2
-    );
 }
 
 mod logic_tests {

@@ -179,7 +179,6 @@ mod tests {
         p: &ScannerDensityGpuParams,
         values: &[f32],
         key: Option<&Arc<dyn DeviceImagePayload>>,
-        expected_setup: bool,
     ) -> Result<Vec<f32>, String> {
         // Every render receives new mutable scratch, not the retained owner.
         let scratch = source(gpu, values);
@@ -190,9 +189,7 @@ mod tests {
             .unwrap();
         let output = gpu.allocate_image_pages(7, 6, "scan_cache_output")?;
         let state = gpu.build_scan_density_state(p, &payload.pages, &output, 7, 6, key)?;
-        assert_eq!(state.has_setup(), expected_setup);
         state.submit_optics(gpu)?;
-        state.submit_setup(gpu)?;
         state.submit_inverse(gpu)?;
         state.check(gpu, p, key, 7, 6)?;
         let mut result = Vec::new();
@@ -332,7 +329,7 @@ mod tests {
                 .collect();
             let owner = source(&gpu, &values);
             let token = owner.payload_ref().unwrap();
-            let first = run(&gpu, &p, &values, Some(token), true).unwrap();
+            let first = run(&gpu, &p, &values, Some(token)).unwrap();
             assert_close(&first, &reference(&p, &values));
             let prepared = gpu.cached_prepared_scan(token, &p, 7, 6).unwrap();
             assert!(
@@ -342,13 +339,12 @@ mod tests {
             p.operator_exposure_ev = 0.6;
             p.operator_color = [-0.1, 0.3, -0.2];
             p.contrast = [1.2, 0.8, 1.4];
-            p.camera_ev = 20.0; // Standard setup ignores camera compensation.
             p.tone_to_output = [[0.9, 0.1, 0.0], [0.0, 0.9, 0.1], [0.1, 0.0, 0.9]];
             // A hit must not read/reconstruct scratch, even if it is invalid.
             let invalid_scratch = [f32::NAN; 126];
-            let changed = run(&gpu, &p, &invalid_scratch, Some(token), false).unwrap();
+            let changed = run(&gpu, &p, &invalid_scratch, Some(token)).unwrap();
             assert_close(&changed, &reference(&p, &values));
-            assert_close(&changed, &run(&gpu, &p, &values, None, true).unwrap());
+            assert_close(&changed, &run(&gpu, &p, &values, None).unwrap());
             assert!(
                 first
                     .iter()
@@ -376,7 +372,7 @@ mod tests {
                 .collect();
             let second_owner = source(&gpu, &second_values);
             let second_token = second_owner.payload_ref().unwrap();
-            let second = run(&gpu, &p, &second_values, Some(second_token), true).unwrap();
+            let second = run(&gpu, &p, &second_values, Some(second_token)).unwrap();
             assert_close(&second, &reference(&p, &second_values));
             assert!(
                 second
@@ -398,22 +394,22 @@ mod tests {
                 "in-flight owner survives eviction"
             );
             p.exposure[1] += 0.2;
-            let axes = run(&gpu, &p, &second_values, Some(second_token), true).unwrap();
+            let axes = run(&gpu, &p, &second_values, Some(second_token)).unwrap();
             assert_close(&axes, &reference(&p, &second_values));
-            assert_close(&axes, &run(&gpu, &p, &second_values, None, true).unwrap());
+            assert_close(&axes, &run(&gpu, &p, &second_values, None).unwrap());
             assert!(axes.iter().zip(&second).any(|(a, b)| (a - b).abs() > 1e-4));
             p.lens_blur = 0.35;
-            let optics = run(&gpu, &p, &second_values, Some(second_token), true).unwrap();
-            assert_close(&optics, &run(&gpu, &p, &second_values, None, true).unwrap());
+            let optics = run(&gpu, &p, &second_values, Some(second_token)).unwrap();
+            assert_close(&optics, &run(&gpu, &p, &second_values, None).unwrap());
             assert!(optics.iter().zip(&axes).any(|(a, b)| (a - b).abs() > 1e-5));
             assert_close(
-                &run(&gpu, &p, &invalid_scratch, Some(second_token), false).unwrap(),
+                &run(&gpu, &p, &invalid_scratch, Some(second_token)).unwrap(),
                 &optics,
             );
             unsafe {
                 std::env::set_var("SPEKTRAFILM_GPU_BINDING_LIMIT_BYTES", "384");
             }
-            let repartitioned = run(&gpu, &p, &second_values, Some(second_token), true).unwrap();
+            let repartitioned = run(&gpu, &p, &second_values, Some(second_token)).unwrap();
             assert_close(&repartitioned, &optics);
             unsafe {
                 std::env::set_var("SPEKTRAFILM_GPU_BINDING_LIMIT_BYTES", "192");
@@ -442,7 +438,6 @@ mod tests {
             .build_scan_density_state(&p, &payload.pages, &output, 7, 6, Some(token))
             .unwrap();
         state.submit_optics(&gpu).unwrap();
-        state.submit_setup(&gpu).unwrap();
         state.submit_inverse(&gpu).unwrap();
         let flag = Arc::new(AtomicBool::new(true));
         let mut cancelled = gpu.derived_explicit();
@@ -454,16 +449,13 @@ mod tests {
         assert!(Arc::ptr_eq(&gpu.scan_cache, &cancelled.scan_cache));
         let mut nonfinite = values;
         nonfinite[125] = f32::INFINITY;
-        assert!(run(&gpu, &p, &nonfinite, Some(token), true).is_err());
+        assert!(run(&gpu, &p, &nonfinite, Some(token)).is_err());
         assert!(gpu.cached_prepared_scan(token, &p, 7, 6).is_none());
-        let recovered = run(&gpu, &p, &values, Some(token), true).unwrap();
+        let recovered = run(&gpu, &p, &values, Some(token)).unwrap();
         assert_close(&recovered, &reference(&p, &values));
         let mut invalid_operator = params();
         invalid_operator.operator_exposure_ev = f64::INFINITY;
-        assert!(run(&gpu, &invalid_operator, &values, Some(token), false).is_err());
-        assert_close(
-            &run(&gpu, &p, &values, Some(token), false).unwrap(),
-            &recovered,
-        );
+        assert!(run(&gpu, &invalid_operator, &values, Some(token)).is_err());
+        assert_close(&run(&gpu, &p, &values, Some(token)).unwrap(), &recovered);
     }
 }
