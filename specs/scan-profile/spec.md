@@ -15,7 +15,7 @@ A Scan Profile is a runtime scan stage, not a [feature profile](../feature-profi
 
 ## Contract
 
-A **Scan Profile** is a named, built-in scan-stage appearance applied to a completed positive reading. It changes appearance after negative conversion and before Tone & Color.
+A [Scan Profile](../../CONTEXT.md#language) is a named, built-in scan-stage appearance applied to a completed positive reading. It changes appearance after negative conversion and before Tone & Color.
 
 It MUST NOT select film or print, change Conversion style, operator correction, scanner hardware, or Tone & Color.
 

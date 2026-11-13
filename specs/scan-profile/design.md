@@ -108,7 +108,7 @@ A future `Matched` entry MAY use a read-only `curve` or `matrix_curve`. It MUST 
 
 A `matrix_curve` entry is built-in and read-only. Its matrix and curves MUST NOT be exposed as editable controls.
 
-A preset may carry a resolved `matrix_curve` that does not match a catalog entry. It reports `custom` and remains read-only.
+A preset MAY carry a resolved `matrix_curve` that does not match a catalog entry. It reports `custom` and remains read-only.
 
 ## Custom
 
