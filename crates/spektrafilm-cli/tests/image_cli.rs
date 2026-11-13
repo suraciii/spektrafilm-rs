@@ -1093,11 +1093,11 @@ fn lut_option_reads_the_cube_declaration_and_reports_lut_mode() {
     assert_eq!(report["workflow"]["mode"], "lut");
     assert_eq!(report["workflow"]["film_stages"], "inactive");
     assert!(report["film_profile"].is_null());
-    assert_eq!(report["parameters"]["lut_look"]["title"], "CLI Look");
-    assert_eq!(report["parameters"]["lut_look"]["path"], cube_arg);
-    assert_eq!(report["parameters"]["lut_look"]["input_space"], "sRGB");
-    assert_eq!(report["parameters"]["lut_look"]["output_space"], "sRGB");
-    assert_eq!(report["parameters"]["lut_look"]["domain_policy"], "clamp");
+    assert_eq!(report["parameters"]["lut"]["title"], "CLI Look");
+    assert_eq!(report["parameters"]["lut"]["path"], cube_arg);
+    assert_eq!(report["parameters"]["lut"]["input_space"], "sRGB");
+    assert_eq!(report["parameters"]["lut"]["output_space"], "sRGB");
+    assert_eq!(report["parameters"]["lut"]["domain_policy"], "clamp");
     assert_eq!(report["film_grain_dye"]["active"], false);
 
     let overridden = f.report_without_output(
@@ -1105,17 +1105,14 @@ fn lut_option_reads_the_cube_declaration_and_reports_lut_mode() {
             declaration.as_slice(),
             &[
                 "--set",
-                "lut_look.strength=0.5,lut_look.domain_policy=fail",
+                "lut.strength=0.5,lut.domain_policy=fail",
                 "--dry-run",
             ],
         ]
         .concat(),
     );
-    assert_eq!(overridden["parameters"]["lut_look"]["strength"], 0.5);
-    assert_eq!(
-        overridden["parameters"]["lut_look"]["domain_policy"],
-        "fail"
-    );
+    assert_eq!(overridden["parameters"]["lut"]["strength"], 0.5);
+    assert_eq!(overridden["parameters"]["lut"]["domain_policy"], "fail");
 
     let text = f.run_without_output(
         &[

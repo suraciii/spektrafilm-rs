@@ -6,10 +6,10 @@
 - Export backend selection, computation scope, and numerical alignment follow [GPU execution](../gpu-execution/spec.md). The production default MUST prefer GPU; the explicit CPU f64 reference remains available.
 - An explicit GPU request MUST NOT use CPU image stages.
 - Save writes retained floating output without rerunning the film simulation. It MAY convert to a separately selected saving color space and transfer function before writing.
-- Existing material controls, [Tone & Color](../finishing/spec.md#persistence-and-replay), and [output mix](../output-mix/spec.md#output-mix) MUST be captured in the immutable Export snapshot.
-- Export MUST evaluate preflash and chemistry at their existing eligible exposure and development stages and preserve scanner calibration and inverse semantics.
-- The `input` workflow MUST NOT run material processing. Save writes the retained completed result without repeating material processing, Tone & Color, CMYK ink style, output gamut processing, grain, or output mix.
-- Saving color conversion follows the completed output mix in linear output RGB.
+- The immutable Export snapshot MUST capture the active render mode, its active LUT transform, Effects, and LUT Grade, together with existing material controls, [Tone & Color](../finishing/spec.md#persistence-and-replay), and [output mix](../output-mix/spec.md#output-mix). Inactive groups remain stored but MUST NOT execute.
+- Export MUST evaluate eligible preflash and chemistry at their existing exposure and development stages and preserve scanner calibration and inverse semantics.
+- The `input` route MUST NOT run material processing. Save writes the retained completed result without repeating material processing, Tone & Color, CMYK ink style, output gamut processing, grain, or output mix.
+- Saving color conversion follows the completed output tail in linear output RGB.
 - PNG and JPEG require 8-bit output. TIFF supports 8-bit, 16-bit, and float output; OpenEXR supports half and float output.
 - Integer output clips to [0,1]; float output preserves negative and super-white values.
 - JPEG quality is 1–100 with 4:4:4 or 4:2:0 sampling. TIFF and OpenEXR support ZIP or no compression where the format allows it.

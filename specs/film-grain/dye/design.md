@@ -59,7 +59,7 @@ The expectation diagnostic replaces `count` by `lambda` and the per-octave draws
 
 Fog keeps the event rate alive at clear base. It is a density baseline, not a level offset: the same `f` is subtracted after the count, so tone is unchanged.
 
-## Look controls
+## Strength controls
 
 Let `s` be grain strength and `k` be grain scale. The delivered constants map as:
 

@@ -858,38 +858,39 @@ fn cmd_process(
         spektrafilm_math::colorspace::resolve(saving_space)
             .map_err(|e| anyhow::anyhow!("unsupported saving color space {saving_space:?}: {e}"))?;
     }
+    let transform_mode = !params.workflow.mode.is_film();
     let lut_mode = params.workflow.mode.is_lut();
     // Validate configuration without creating a compute device for dry runs.
-    // LUT mode never enters a spectral film or print stage, so the Dye
+    // Transform modes never enter a spectral film or print stage, so the Dye
     // condition is not applicable and its placeholder carrier must not gate it.
-    if !lut_mode {
+    if !transform_mode {
         spektrafilm_core::stages::grain_dye::validate_supported(&film, &params)
             .map_err(anyhow::Error::msg)?;
     }
-    let grain_dye_active = !lut_mode && spektrafilm_core::stages::grain_dye::active(&params);
+    let grain_dye_active = !transform_mode && spektrafilm_core::stages::grain_dye::active(&params);
     let mut grain_fotufilm =
         spektrafilm_core::stages::grain_fotufilm::configuration_report(&params);
-    if lut_mode {
+    if transform_mode {
         grain_fotufilm["active"] = json!(false);
-        grain_fotufilm["note"] = json!("LUT mode does not execute film grain");
+        grain_fotufilm["note"] = json!("Film mode is inactive");
         grain_fotufilm["prepared"] = json!(false);
     }
     if dry_run {
         if lut_mode {
             params
-                .lut_look
+                .lut_render_params()
+                .ok_or_else(|| anyhow::anyhow!("LUT mode has no LUT declaration"))?
                 .load()
                 .map_err(|error| anyhow::anyhow!("LUT look validation failed: {error}"))?;
         }
         let mut grain_dye =
             spektrafilm_core::stages::grain_dye::configuration_report(&film, &params);
-        if lut_mode {
+        if transform_mode {
             grain_dye["active"] = json!(false);
-            grain_dye["note"] = json!("LUT mode does not execute film grain");
+            grain_dye["note"] = json!("Film mode is inactive");
             grain_dye["channel_correlation"]["effective"] = json!(null);
             grain_dye["channel_correlation"]["status"] = json!("inactive");
-            grain_dye["channel_correlation"]["reason"] =
-                json!("LUT mode does not execute film grain");
+            grain_dye["channel_correlation"]["reason"] = json!("Film mode is inactive");
         }
         let backend_env = std::env::var("SPEKTRAFILM_BACKEND").ok();
         let output_format = plan.as_ref().map(|plan| plan.format.name());
@@ -966,8 +967,8 @@ fn cmd_process(
         let feature_profile_report = serde_json::to_value(&resolved.feature_profiles)?;
         let workflow_report = json!({
             "mode": params.workflow.mode.name(),
-            "route": &params.workflow.route,
-            "film_stages": if lut_mode { "inactive" } else { "active" },
+            "route": params.workflow.mode.is_film().then_some(&params.workflow.route),
+            "film_stages": if transform_mode { "inactive" } else { "active" },
         });
         let report = json!({
             "feature_profiles": feature_profile_report,
@@ -976,10 +977,10 @@ fn cmd_process(
                 "source": data.source,
             },
             "workflow": workflow_report,
-            "film_profile": (!lut_mode).then_some(resolved.film_name),
-            "print_profile": (!lut_mode).then_some(resolved.print_name),
-            "capture_illuminant": (!lut_mode).then_some(capture_illuminant),
-            "readout_illuminant": (!lut_mode).then_some(readout_illuminant),
+            "film_profile": (!transform_mode).then_some(resolved.film_name),
+            "print_profile": (!transform_mode).then_some(resolved.print_name),
+            "capture_illuminant": (!transform_mode).then_some(capture_illuminant),
+            "readout_illuminant": (!transform_mode).then_some(readout_illuminant),
             "parameters": params,
             "scanner_provenance": ScannerProvenance::from_params(&params),
             "film_grain_dye": grain_dye,
@@ -1169,7 +1170,6 @@ fn cmd_process(
 
     // Run the calibrated runtime — a missing spectral LUT is a hard error.
     let t = Instant::now();
-    let lut_mode = params.workflow.mode.is_lut();
     let runtime = invocation.phase(
         "runtime_prepare",
         IssueCategory::Configuration,
@@ -1188,7 +1188,7 @@ fn cmd_process(
                 anyhow::anyhow!(runtime_prepare_error(
                     &error.to_string(),
                     data_dir,
-                    lut_mode
+                    transform_mode
                 ))
             })
         },
@@ -1283,7 +1283,7 @@ fn cmd_process(
                         let image = match preview_max_size {
                             Some(max_size)
                                 if !runtime.params().scanner.requires_full_frame()
-                                    && !runtime.params().workflow.mode.is_lut() =>
+                                    && runtime.params().workflow.mode.is_film() =>
                             {
                                 host_preview
                                     .get_or_insert_with(|| resize_for_preview(image, max_size))
@@ -1322,8 +1322,8 @@ fn cmd_process(
                                 )
                                 .map_err(|e| anyhow::anyhow!("pipeline taps: {e}"))?
                         };
-                        let host = if (runtime.params().scanner.requires_full_frame()
-                            || runtime.params().workflow.mode.is_lut())
+                        let host = if (runtime.params().requires_full_frame()
+                            || !runtime.params().workflow.mode.is_film())
                             && collect.is_none_or(|tap| tap == Tap::RgbOut)
                             && let Some(max_size) = preview_max_size
                         {
@@ -1538,9 +1538,9 @@ fn raw_options(workflow: &WorkflowOptions) -> spektrafilm_raw::RawOptions {
     }
 }
 
-fn runtime_prepare_error(error: &str, data_dir: &Path, lut_mode: bool) -> String {
-    if lut_mode {
-        return format!("LUT workflow preparation failed: {error}");
+fn runtime_prepare_error(error: &str, data_dir: &Path, transform_mode: bool) -> String {
+    if transform_mode {
+        return format!("LUT or Off workflow preparation failed: {error}");
     }
     format!(
         "spectral pipeline construction failed: {error} — the simplified no-LUT fallback \
@@ -1591,7 +1591,7 @@ mod runtime_prepare_error_tests {
         );
         assert_eq!(
             message,
-            "LUT workflow preparation failed: reading LUT /tmp/look.cube: No such file or directory"
+            "LUT or Off workflow preparation failed: reading LUT /tmp/look.cube: No such file or directory"
         );
         assert!(!message.contains("spectral"));
     }

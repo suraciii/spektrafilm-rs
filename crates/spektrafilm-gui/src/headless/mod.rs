@@ -365,6 +365,7 @@ fn navigate_stage(h: &mut Harness<'_, App>, stage: controls::Stage) {
     close_settings(h);
     search_controls(h, "");
     h.query_all_by_role_and_label(egui::accesskit::Role::Button, stage.label())
+        .filter(|node| node.node().toggled().is_none())
         .min_by(|a, b| {
             a.node()
                 .raw_bounds()

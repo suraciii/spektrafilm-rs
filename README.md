@@ -53,6 +53,14 @@ Apply one external LUT as the LUT workflow:
     --input-color-space sRGB --input-cctf-decoding true --data-dir data
 ```
 
+Run the Effects stage without a film, print, LUT, or LUT Grade:
+
+```bash
+./target/release/spektrafilm process input.png -o out.tif \
+    --set 'workflow.mode=off,effects.grain.active=true' \
+    --input-color-space sRGB --input-cctf-decoding true --data-dir data
+```
+
 Start the desktop GUI, optionally on an image:
 
 ```bash

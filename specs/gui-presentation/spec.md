@@ -27,7 +27,7 @@ The presentation target is a quiet photo-first hierarchy over restrained surface
 | Inactive values | A retained inactive value stays readable beside its reason under [states](#states). |
 | State cues | Selection, modified, and focus states never rely on color alone under [states](#states). |
 | Viewer footer | Footer actions group by target under [viewer footer](#viewer-footer). |
-| Preset browser | The left browser owns whole-look presets under [Presets](../presets/spec.md#contract). |
+| Preset browser | The left browser owns Film, LUT, and Effects presets under [Presets](../presets/spec.md#contract). |
 | Components | One shared implementation serves each control kind under [presentation design](design.md#surface-and-component-boundaries). |
 
 ## Semantic role vocabulary
@@ -99,7 +99,7 @@ The shared native tokens MUST use this baseline in logical points. Settings, Exp
 
 Long labels MUST wrap without obscuring their values. Fixed and inapplicable Export rows MUST use the same readable row structure as editable options under [dialog interaction](../gui-workflow/spec.md#dialog-interaction). Responsive preset geometry follows the [preset browser boundary](../presets/design.md#boundaries).
 
-Expanded modules MUST use a quiet bounded surface. Collapsed modules MUST remain visually lighter than their expanded controls. Workflow and Camera MUST precede source-detail modules in Input and capture.
+Expanded modules MUST use a quiet bounded surface. Collapsed modules MUST remain visually lighter than their expanded controls. Film route and Camera MUST precede source-detail modules in Input and capture.
 
 ## Parameter rows
 
@@ -147,7 +147,9 @@ The [presentation design](design.md#factory-projection-and-modified-state) owns 
 
 ## Stage navigation and control locators
 
-The inspector MUST present Input and capture, Film, Print, Scan, Look, and Output as stage headings in one continuous list. The stage jump strip MUST look like navigation to those headings, not a mutually exclusive page selector. The interface MUST NOT present MAIN, FILM, PRINT, ADVANCED, or CONFIG tabs.
+The inspector MUST present Input and capture, Film, Print, Scan, LUT, Effects, and Output as stage headings in one continuous list. A persistent Mode selector above the list offers Film, LUT, and Off and is not a stage heading.
+
+The stage jump strip MUST look like navigation to those headings, not a mutually exclusive page selector. The interface MUST NOT present MAIN, FILM, PRINT, ADVANCED, or CONFIG tabs.
 
 The search field MUST remain visible above the inspector list. Search behavior follows [control search](../gui-workflow/spec.md#control-search). A locator MUST show the control label, owning module, and destination stage or dialog.
 
@@ -189,7 +191,7 @@ Linked sample markers MUST remain distinguishable from aggregate traces and plot
 - The browser MUST have a labeled, keyboard-operable collapse and reopen control. Collapsing it MUST NOT hide the only indication of how to reopen it.
 - Applied state, hover, and keyboard focus MUST remain visually distinct. Applied state MUST have a non-color cue.
 - Preset names MUST remain readable in long lists. Truncated names and material identities MUST remain available through accessible text and help.
-- The browser MUST keep the current-look summary independent of search. Without an applied preset, it MUST identify current adjustments without inventing an applied look.
+- The browser MUST keep the current-preset summary independent of search. Without an applied preset, it MUST identify current adjustments without inventing an applied preset.
 - Thumbnail updates MUST NOT steal keyboard focus or imply that the retained viewer result already reflects the applied controls.
 
 ## States

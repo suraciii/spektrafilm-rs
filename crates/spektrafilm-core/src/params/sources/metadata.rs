@@ -2,7 +2,7 @@
 //! from a serialization traversal of `RuntimeParams`, vocabularies and bounds
 //! from `params::validation`, and defaults from the serialized default value.
 use serde::Serializer;
-use serde::ser::{Impossible, SerializeSeq, SerializeStruct, SerializeTuple};
+use serde::ser::{Impossible, SerializeMap, SerializeSeq, SerializeStruct, SerializeTuple};
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::sync::OnceLock;
@@ -17,8 +17,12 @@ fn types() -> &'static BTreeMap<String, String> {
     static TYPES: OnceLock<BTreeMap<String, String>> = OnceLock::new();
     TYPES.get_or_init(|| {
         let mut out = BTreeMap::new();
+        let mut params = super::super::RuntimeParams::default();
+        params.lut = Some(crate::params::LutParams::default());
+        params.effects = Some(crate::params::EffectsParams::default());
+        params.grade = Some(crate::params::GradeParams::default());
         serde::Serialize::serialize(
-            &super::super::RuntimeParams::default(),
+            &params,
             &mut Recorder {
                 path: String::new(),
                 out: &mut out,
@@ -111,6 +115,30 @@ macro_rules! seq_impl {
 seq_impl!(SerializeSeq, serialize_element);
 seq_impl!(SerializeTuple, serialize_element);
 
+struct MapRec<'a, 'b> {
+    rec: &'a mut Recorder<'b>,
+    key: Option<String>,
+}
+impl<'a, 'b> SerializeMap for MapRec<'a, 'b> {
+    type Ok = ();
+    type Error = RecError;
+    fn serialize_key<T: serde::Serialize + ?Sized>(&mut self, key: &T) -> Result<(), RecError> {
+        let value = serde_json::to_value(key).map_err(serde::ser::Error::custom)?;
+        self.key = value.as_str().map(str::to_owned);
+        Ok(())
+    }
+    fn serialize_value<T: serde::Serialize + ?Sized>(&mut self, value: &T) -> Result<(), RecError> {
+        let key = self
+            .key
+            .take()
+            .ok_or_else(|| serde::ser::Error::custom("map value without key"))?;
+        self.rec.descend(&key, value)
+    }
+    fn end(self) -> Result<(), RecError> {
+        Ok(())
+    }
+}
+
 struct StructRec<'a, 'b> {
     rec: &'a mut Recorder<'b>,
 }
@@ -136,7 +164,7 @@ impl<'a, 'b> Serializer for &'a mut Recorder<'b> {
     type SerializeTuple = SeqRec<'a, 'b>;
     type SerializeTupleStruct = Impossible<(), RecError>;
     type SerializeTupleVariant = Impossible<(), RecError>;
-    type SerializeMap = Impossible<(), RecError>;
+    type SerializeMap = MapRec<'a, 'b>;
     type SerializeStruct = StructRec<'a, 'b>;
     type SerializeStructVariant = Impossible<(), RecError>;
 
@@ -264,7 +292,10 @@ impl<'a, 'b> Serializer for &'a mut Recorder<'b> {
         ))
     }
     fn serialize_map(self, _: Option<usize>) -> Result<Self::SerializeMap, RecError> {
-        Err(serde::ser::Error::custom("maps are not parameter groups"))
+        Ok(MapRec {
+            rec: self,
+            key: None,
+        })
     }
     fn serialize_struct(
         self,
@@ -382,6 +413,13 @@ fn conditions(path: &str) -> Vec<String> {
             "white minus black must be at least {}; validated even when disabled",
             super::super::finishing::EXPAND_MIN_SPAN
         ));
+    }
+    if path == "workflow.mode" {
+        out.push("film: film chain, Scan Tone & Color, Output mix, and CMYK active; lut, effects, and grade inactive".into());
+        out.push(
+            "lut: lut, effects, and grade active; film chain, Output mix, and CMYK inactive".into(),
+        );
+        out.push("off: effects and output color management active; film chain, lut, grade, Output mix, and CMYK inactive".into());
     }
     if path == "camera.film_format_mm" {
         out.push("finite and strictly positive; exposed full-source long edge, not roll width or film-stock designation".into());
@@ -556,45 +594,45 @@ fn description(path: &str) -> Option<&'static str> {
             "RMS granularity is distinct from Procedural Amount: Spektra derives statistical particle area from the film density curves; Dye uses relative strength G to scale per-channel event area, not a certified optical RMS target.",
         ),
         "workflow.mode" => Some(
-            "Exclusive render workflow: film runs the spectral chain; lut runs one imported external cube and does not load film or print materials.",
+            "Exclusive render workflow: film runs the spectral chain; lut runs one imported external cube; off runs only Effects and output color management.",
         ),
-        "lut_look.path" => Some(
+        "lut.path" => Some(
             "External .cube file used by the LUT workflow; the file is not embedded in presets or GUI state.",
         ),
-        "lut_look.sha256" => Some(
+        "lut.sha256" => Some(
             "Lowercase SHA-256 of the external LUT file; a changed or missing file fails validation.",
         ),
-        "lut_look.title" => Some("Optional title carried by the .cube metadata."),
-        "lut_look.input_space" | "lut_look.output_space" => Some(
+        "lut.title" => Some("Optional title carried by the .cube metadata."),
+        "lut.input_space" | "lut.output_space" => Some(
             "Declared LUT transport primaries and transfer; never inferred from the file name or image.",
         ),
-        "lut_look.domain_min" | "lut_look.domain_max" => Some(
+        "lut.domain_min" | "lut.domain_max" => Some(
             "Declared per-channel input domain from the .cube header; domains must be finite and strictly ordered.",
         ),
-        "lut_look.domain_policy" => Some(
+        "lut.domain_policy" => Some(
             "fail stops the render outside the declared domain; clamp limits each channel to the domain edge and reports the clipped fraction. Imports default to clamp.",
         ),
-        "lut_look.shaper" => Some(
+        "lut.shaper" => Some(
             "Declared optional 1D shaper before the 3D lookup; cube_1d requires a matching LUT_1D_SIZE entry.",
         ),
-        "lut_look.strength" => Some(
+        "lut.strength" => Some(
             "LUT color-transform blend from zero (exact bypass) to one (full declared transform); active effects remain independent.",
         ),
-        "lut_look.grade_active" => {
+        "grade.active" => {
             Some("Enables the optional post-LUT grade; stored grade values remain when disabled.")
         }
-        path if path.starts_with("lut_look.grade.") => {
+        path if path.starts_with("grade.") => {
             Some("Post-LUT Tone & Color response; independent from film-chain finishing.")
         }
-        path if path.starts_with("lut_look.halation.") => Some(
-            "LUT-mode halation in linear light before the lookup; it does not read film density or a film profile.",
+        path if path.starts_with("effects.halation.") => Some(
+            "Halation for LUT and Off modes in linear light before the lookup; it does not read film density or a film profile.",
         ),
-        path if path.starts_with("lut_look.diffusion.") => Some(
-            "LUT-mode diffusion in linear light before the lookup; it does not run camera or enlarger stages.",
+        path if path.starts_with("effects.diffusion.") => Some(
+            "Diffusion for LUT and Off modes in linear light before the lookup; it does not run camera or enlarger stages.",
         ),
-        path if path.starts_with("lut_look.grain.") => {
-            Some("LUT-mode output-encoded appearance grain; it does not use film grain engines.")
-        }
+        path if path.starts_with("effects.grain.") => Some(
+            "Output-encoded appearance grain for LUT and Off modes; it does not use film grain engines.",
+        ),
         _ => None,
     }
 }

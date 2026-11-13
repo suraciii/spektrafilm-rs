@@ -11,7 +11,7 @@ pub(crate) fn sections(
 ) {
     if section == "CMYK ink style" {
         section_header(ui, filter, section, |ui, filter| {
-            let enabled = !params.workflow.mode.is_lut();
+            let enabled = params.workflow.mode.is_film();
             ui.add_enabled_ui(enabled, |ui| {
             let cmyk = &mut params.cmyk;
             if filter_matches(filter, "enable CMYK ink style") {

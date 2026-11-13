@@ -76,12 +76,14 @@ impl Pipeline {
                     .into(),
             );
         }
-        if !self.params.workflow.mode.is_lut() && crate::stages::grain_dye::active(&self.params) {
+        if self.params.workflow.mode.is_film() && crate::stages::grain_dye::active(&self.params) {
             crate::stages::grain_dye::validate_supported(&self.film, &self.params)?;
         }
-        if self.params.workflow.mode.is_lut() {
+        if !self.params.workflow.mode.is_film() {
             if inject != Tap::RgbIn || collect != Tap::RgbOut {
-                return Err("LUT mode exposes only the rgb_in and rgb_out boundaries".into());
+                return Err(
+                    "LUT and Off modes expose only the rgb_in and rgb_out boundaries".into(),
+                );
             }
             return self.process_full(image, backend, timings, capture);
         }
@@ -215,27 +217,39 @@ impl Pipeline {
         mut capture: Option<&mut crate::stage_evidence::StageCapture>,
     ) -> Result<ImageBuf, String> {
         self.check_cancelled()?;
-        if self.params.workflow.mode.is_lut() {
+        if !self.params.workflow.mode.is_film() {
             if capture.is_some() {
-                return Err("stage evidence is unavailable in LUT mode".into());
+                return Err("stage evidence is unavailable outside Film mode".into());
             }
-            // LUT effects are independent of inactive film controls. Use a
-            // fixed 35 mm reference for their micrometre scaling so changing
-            // the stored camera format cannot alter an active LUT look.
+            // LUT and transform effects are independent of inactive film
+            // controls. Use a fixed 35 mm reference for their micrometre
+            // scaling so changing the stored camera format cannot alter an
+            // active transform.
             let (working, pixel_size_um) =
                 crate::resizing::crop_and_rescale(&image, &self.params.io, 35.0)?;
             let source = spektrafilm_math::colorspace::resolve(&self.params.io.input_color_space)?;
             let output = spektrafilm_math::colorspace::resolve(&self.params.io.output_color_space)?;
-            let look = self
-                .lut_look
-                .as_deref()
-                .ok_or_else(|| "LUT mode has no resolved LUT look".to_owned())?;
-            let _lut_observation = if backend.is_gpu() {
-                crate::stages::StageObservation::new(backend, "lut_look")
+            let (look, stage) = if self.params.workflow.mode.is_lut() {
+                (
+                    self.lut_look
+                        .as_deref()
+                        .ok_or_else(|| "LUT mode has no resolved LUT look".to_owned())?,
+                    "lut_look",
+                )
+            } else {
+                (
+                    self.off_look
+                        .as_deref()
+                        .ok_or_else(|| "Off mode has no resolved Effects look".to_owned())?,
+                    "effects",
+                )
+            };
+            let _observation = if backend.is_gpu() {
+                crate::stages::StageObservation::new(backend, stage)
             } else {
                 crate::stages::StageObservation::cpu(
                     backend,
-                    "lut_look",
+                    stage,
                     spektrafilm_backend::telemetry::CpuReason::CpuSelected,
                 )
             };

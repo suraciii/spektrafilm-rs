@@ -81,12 +81,14 @@ impl Pipeline {
         inject: Option<Tap>,
         collect: Option<Tap>,
     ) -> Result<Option<DeviceImage>, String> {
-        if self.params.workflow.mode.is_lut() {
+        if !self.params.workflow.mode.is_film() {
             if !backend.is_gpu() {
                 return Ok(None);
             }
             if inject.is_some() || collect.is_some() {
-                return Err("LUT mode exposes only the rgb_in and rgb_out boundaries".into());
+                return Err(
+                    "LUT and Off modes expose only the rgb_in and rgb_out boundaries".into(),
+                );
             }
             let mut host = image.clone();
             if request.rotation_quarter_turns != 0 {
@@ -166,9 +168,11 @@ impl Pipeline {
         inject: Option<Tap>,
         collect: Option<Tap>,
     ) -> Result<DeviceImage, String> {
-        if self.params.workflow.mode.is_lut() {
+        if !self.params.workflow.mode.is_film() {
             if inject.is_some() || collect.is_some() {
-                return Err("LUT mode exposes only the rgb_in and rgb_out boundaries".into());
+                return Err(
+                    "LUT and Off modes expose only the rgb_in and rgb_out boundaries".into(),
+                );
             }
             let mut host = image.to_host(backend)?;
             if request.rotation_quarter_turns != 0 {

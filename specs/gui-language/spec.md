@@ -67,7 +67,8 @@ The Simplified Chinese presentation MUST use these core terms consistently. The 
 | Input and capture | 输入与拍摄 |
 | Film / Print / Output | 胶片 / 印相 / 输出 |
 | Film route | 胶片路线 |
-| Look | 观感 |
+| Mode / Film / LUT / Off | 模式 / 胶片 / LUT / 关闭 |
+| Effects | 效果 |
 | Tone & Color / Range | 影调与色彩 / 范围 |
 | Brightness / Contrast | 明暗 / 反差 |
 | Conversion contrast / Conversion exposure compensation | 转换反差 / 转换曝光补偿 |
@@ -192,9 +193,11 @@ Module headings, search destinations, accessibility labels, reset and comparison
 
 Canonical paths, serialized identifiers, and model provenance MUST remain unchanged when displayed as technical information under [wire and compatibility](../finishing/design.md#wire-and-compatibility).
 
-The unified Grain selector MUST retain the names Spektra, Dye, and Procedural. Its choice descriptions MUST identify Spektra and Dye as material grain and Procedural as post-scan grain appearance. Procedural help MUST identify Film Resolution as part of that appearance algorithm, not scanner lens resolution.
+The film Grain selector MUST retain the names Spektra, Dye, and Procedural. Its choice descriptions MUST identify Spektra and Dye as material grain and Procedural as post-scan grain appearance. Procedural help MUST identify Film Resolution as part of that appearance algorithm, not scanner lens resolution.
 
-Camera diffusion and Enlarger diffusion MUST retain their distinct optical owners. Halation MUST remain a film-domain effect. Preflash exposure and its independent Magenta and Yellow filter shifts MUST remain printing controls.
+The Effects stage Grain MUST be a separate transform control. Its labels MUST NOT imply material grain or a film grain engine.
+
+Camera diffusion, Enlarger diffusion, and film Halation MUST retain their physical owners. Effects-stage Diffusion and Halation MUST be identified as transform appearance effects, not film density or a second physical stage. Preflash exposure and its independent Magenta and Yellow filter shifts MUST remain printing controls.
 
 Print viewing glare help MUST identify readout stray light, not preflash or a change in material density. Visible placement follows [stage and surface ownership](../gui-workflow/spec.md#stage-and-surface-ownership), not serialized section names.
 
@@ -271,7 +274,7 @@ Actions MUST use one stable verb and one explicit target:
 | `Scan` or `SCAN` | Render the original working resolution using current runtime controls. |
 | `Save…` or `SAVE` | Write retained output without rerendering. |
 | `Export file…` | Start independent export rendering and writing. |
-| `Save preset…` | Open the name dialog to save the current look as a new user copy or explicitly replace an eligible user look under [saving and replacing](../presets/spec.md#saving-and-replacing). |
+| `Save preset…` | Open the name dialog to save the current Film, LUT, or Effects preset as a new user copy or explicitly replace an eligible user preset under [saving and replacing](../presets/spec.md#saving-and-replacing). |
 | `Save current to file` | Write GUI state to a selected state file. |
 | `Load from file` | Load GUI state from a selected state file. |
 | `Save current as default` | Replace the startup GUI state. |
@@ -286,9 +289,11 @@ Undo and Redo wording MUST follow [edit history](../gui-workflow/spec.md#edit-hi
 
 ## Header and status language
 
-The header MUST show the selected film, selected print material, and exact workflow route. Status ownership follows [Labels and surfaces](../gui-workflow/spec.md#labels-and-surfaces). The exact route string remains available because it identifies the physical sequence and is required for diagnostics.
+The header MUST identify the active render mode. In Film mode it MUST show the selected film, selected print material, and exact film route. In LUT and Off modes it MUST show the active LUT or Effects context defined by [Labels and surfaces](../gui-workflow/spec.md#labels-and-surfaces).
 
-The header MAY add a direct physical description beside the exact route. The description MUST translate the route without inventing a look category. For example, `Film → print → scan` MAY describe `input > film > print > scan`; `Film print look` MUST NOT replace it.
+The exact route string remains available in Film mode because it identifies the physical sequence and is required for diagnostics.
+
+The header MAY add a direct physical description beside the exact route. The description MUST translate the route without inventing a rendering category. For example, `Film → print → scan` MAY describe `input > film > print > scan`; `Film print rendering` MUST NOT replace it.
 
 Normal success status MUST describe the accepted operation and its dimensions or target. Backend and precision detail belongs in Diagnostics unless it explains an actionable limitation. A diagnostic label such as `f64 reference` MUST NOT be the only normal success message.
 
@@ -304,7 +309,9 @@ Reset-baseline comparison follows [presentation design](../gui-presentation/desi
 
 A module reset MUST name its module and the reset baseline in its action label, accessible help, and history description under the core-term table. A grouped settings reset MUST name its settings section instead of a photographic module.
 
-The inspector stage names MUST be `Input and capture`, `Film`, `Print`, `Scan`, `Look`, and `Output`. A stage jump MUST identify the heading it reaches, not a page it replaces. `Settings` and `Export` MUST name dialogs rather than additional stages.
+The inspector stage names MUST be `Input and capture`, `Film`, `Print`, `Scan`, `LUT`, `Effects`, and `Output`. The persistent mode selector is not a stage.
+
+A stage jump MUST identify the heading it reaches, not a page it replaces. `Settings` and `Export` MUST name dialogs rather than additional stages.
 
 The interface MUST NOT use MAIN, FILM, PRINT, ADVANCED, or CONFIG as page labels.
 
@@ -335,7 +342,7 @@ Help text MUST NOT:
 - promise recovery of information absent from the source;
 - call a modeled convention measured or physical;
 - call a viewer decoration a saved material;
-- call a scanner sensor a look preset;
+- call a scanner sensor a selectable preset;
 - use a former implementation name as a product concept;
 - use color as the only state cue.
 

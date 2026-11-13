@@ -247,6 +247,7 @@ impl eframe::App for App {
                 });
                 ui.separator();
                 self.search_results(ui);
+                self.mode_selector(ui);
                 controls::install_view_filter(ui.ctx(), self.only_modified);
                 ui.add_space(theme::SPACE_ROW);
                 // Reserve the action bar's height below the scrollable

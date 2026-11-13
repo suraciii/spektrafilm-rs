@@ -228,6 +228,7 @@ impl Pipeline {
             film: Arc::new(film),
             print: Arc::new(print),
             lut_look: None,
+            off_look: None,
             spectral: None,
             convert_converter: None,
             print_calibration: Some(Arc::new(crate::pipeline_calibration::PrintCalibration {

@@ -206,7 +206,7 @@ A winning non-active `--set` edit warns on stderr, names the canonical path, and
 - No Capture & Scan Setup document, no universal camera or scanner registry, no receiver-matrix authoring.
 - No automatic inference from EXIF, RAW metadata, RAW white balance, or image content.
 - No change to RAW white balance, the film profile reference, the readout illuminant, the enlarger illuminant, the output white point, or the scan sensor.
-- No new 800T profile and no stock-specific value written into a generic look.
+- No new 800T profile and no stock-specific value written into a generic preset.
 
 ## Acceptance
 

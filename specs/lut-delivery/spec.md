@@ -2,7 +2,7 @@
 
 ## Contract
 
-- LUT delivery builds a deterministic transform from the selected base workflow, color settings, and runtime controls.
+- LUT delivery builds a deterministic transform from the selected base route, color settings, and runtime controls.
 - Optional [CMYK ink style](../cmyk-style/spec.md) is a modeled RGB finishing behavior, not a photographic-print calibration claim.
 - A LUT bake contains no image-specific spatial effects or stochastic grain.
 - The bundle records any controls neutralized for baking.
@@ -17,7 +17,7 @@
 - Lattice computation and reference alignment follow [GPU execution](../gpu-execution/spec.md).
 - Artifact assembly, reference QA, and file publication retain their delivery ownership.
 - They MUST NOT imply a different lattice computation precision.
-- Bundles with active CMYK ink style MUST record the base workflow and finishing definition independently.
+- Bundles with active CMYK ink style MUST record the base route and finishing definition independently.
 - They MUST use an explicit `cmyk_` final-stage role so they cannot be mistaken for photographic-print LUT stages.
 - Existing material exposure, preflash, and development MUST be evaluated only on routes containing those stages.
 - No digital material-response layer or new scan-reference model is added.
@@ -39,7 +39,7 @@
 - Overall output mix follows CMYK ink style in linear output RGB.
 - A complete one-LUT mixed transform MUST retain appearance and amount provenance even though intermediate nodes are collapsed.
 - Existing output gamut algorithms remain unchanged except for standalone lightness retirement under [Output boundary and retirement](../output-mix/spec.md#output-boundary-and-retirement).
-- A bake MUST NOT introduce a separate material response, replacement output lightness stage, or separate `input`-workflow output-processing switch.
-- A complete one-LUT source-to-output bake MAY be written as one `.cube` for explicit LUT import under [LUT workflow](../lut-workflow/spec.md#export-lut). The simple export MUST require one selected print target, a LUT-workflow-supported input and output encoding, output mix amount 1, and an inactive frame-dependent setup.
-- A segmented bundle is not the simple exported `.cube`; the simple LUT workflow MUST NOT select one stage from an ambiguous bundle.
-- The simple export MUST report its neutralized operations. It MUST NOT import, apply, or create a LUT preset, and it MUST NOT switch workflow.
+- A bake MUST NOT introduce a separate material response, replacement output lightness stage, or separate `input`-route output-processing switch.
+- A complete one-LUT source-to-output bake MAY be written as one `.cube` for explicit LUT import under [LUT workflow](../lut-workflow/spec.md#export-lut). The simple export MUST require one selected print target, a LUT-supported input and output encoding, output mix amount 1, and an inactive frame-dependent setup.
+- A segmented bundle is not the simple exported `.cube`; the simple export MUST NOT select one stage from an ambiguous bundle.
+- The simple export MUST report its neutralized operations. It MUST NOT import, apply, or create a LUT preset, and it MUST NOT switch mode.

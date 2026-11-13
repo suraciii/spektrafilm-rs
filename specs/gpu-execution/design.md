@@ -148,7 +148,7 @@ The operation MUST NOT insert a CPU fence or restart on CPU. A user MAY explicit
 
 Gaussian blur has no CPU fallback exception for small sigma or wide support on a selected GPU operation. It MUST preserve the reference kernel on the device or fail explicitly. A reduction node, for example metering, MAY return only bounded control results and validation flags to host orchestration; its image-dependent interpretation remains on the device.
 
-A missing GPU implementation or a required CPU intermediate is an execution limitation, not a reason to select another photographic route or hide CPU arithmetic in a fence. Workflow and output-gamut selection MUST retain the accepted controls. A supported configuration MUST gain a complete GPU implementation to satisfy acceptance.
+A missing GPU implementation or a required CPU intermediate is an execution limitation, not a reason to select another photographic route or hide CPU arithmetic in a fence. Film route and output-gamut selection MUST retain the accepted controls. A supported configuration MUST gain a complete GPU implementation to satisfy acceptance.
 
 ## Numerical alignment
 

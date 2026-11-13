@@ -66,7 +66,7 @@ Pointer activation MUST belong to an unobscured switch, not a window or editor c
 
 ## Preferences
 
-Both warning choices MUST default to off without saved application preferences. Requested black and white choices MUST persist independently of photographic records, look presets, startup photographic controls, and adjustment history.
+Both warning choices MUST default to off without saved application preferences. Requested black and white choices MUST persist independently of photographic records, presets, startup photographic controls, and adjustment history.
 
 Loading a photograph, state, or preset and using adjustment Undo or Redo MUST NOT replace the requested warning choices.
 

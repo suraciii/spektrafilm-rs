@@ -13,7 +13,7 @@ pub(crate) fn sections(
 ) {
     if section == "Output" {
         if filter_matches(filter, "simulation blend") {
-            let enabled = !params.workflow.mode.is_lut();
+            let enabled = params.workflow.mode.is_film();
             ui.add_enabled_ui(enabled, |ui| {
                 flags.runtime_changed |= param_numeric(
                     ui,

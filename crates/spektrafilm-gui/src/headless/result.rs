@@ -248,10 +248,15 @@ fn export_guidance_and_written_file_follow_crop_and_upscale() {
 /// Inspect the real egui paint output, not merely focus in AccessKit: a
 /// fixed text color must not erase the focused button's visible border.
 fn assert_painted_focus(h: &mut Harness<'_, App>, label: &str) {
-    h.get_by_role_and_label(egui::accesskit::Role::Button, label)
+    h.query_all_by_role_and_label(egui::accesskit::Role::Button, label)
+        .find(|node| node.node().toggled().is_none())
+        .expect("button without mode-toggle semantics")
         .focus();
     h.run_steps(3);
-    let node = h.get_by_role_and_label(egui::accesskit::Role::Button, label);
+    let node = h
+        .query_all_by_role_and_label(egui::accesskit::Role::Button, label)
+        .find(|node| node.node().toggled().is_none())
+        .expect("button without mode-toggle semantics");
     assert!(node.is_focused(), "{label} must receive keyboard focus");
     let bounds = node.raw_bounds().expect("focused action bounds");
     let rect = egui::Rect::from_min_max(

@@ -538,13 +538,13 @@ pub(crate) fn validate_procedural_timer_detailed(value: f64) -> Result<(), Valid
 /// validated but not enumerable (for example `BB<kelvin>` blackbody sources).
 pub(crate) fn enum_values(path: &str) -> Option<Vec<String>> {
     let values: Vec<String> = match path {
-        "workflow.mode" => ["film", "lut"].iter().map(|v| (*v).into()).collect(),
-        "lut_look.input_space" | "lut_look.output_space" => ["sRGB Linear", "sRGB", "Display P3"]
+        "workflow.mode" => ["film", "lut", "off"].iter().map(|v| (*v).into()).collect(),
+        "lut.input_space" | "lut.output_space" => ["sRGB Linear", "sRGB", "Display P3"]
             .iter()
             .map(|v| (*v).into())
             .collect(),
-        "lut_look.domain_policy" => ["fail", "clamp"].iter().map(|v| (*v).into()).collect(),
-        "lut_look.shaper" => ["none", "cube_1d"].iter().map(|v| (*v).into()).collect(),
+        "lut.domain_policy" => ["fail", "clamp"].iter().map(|v| (*v).into()).collect(),
+        "lut.shaper" => ["none", "cube_1d"].iter().map(|v| (*v).into()).collect(),
         "scanner.scan_output" => ["direct_scan", "negative_to_positive"]
             .iter()
             .map(|v| (*v).into())
@@ -596,7 +596,7 @@ pub(crate) fn enum_values(path: &str) -> Option<Vec<String>> {
             .collect(),
         "camera.diffusion_filter.filter_family"
         | "enlarger.diffusion_filter.filter_family"
-        | "lut_look.diffusion.filter_family" => {
+        | "effects.diffusion.filter_family" => {
             ["glimmerglass", "black_pro_mist", "pro_mist", "cinebloom"]
                 .iter()
                 .map(|v| (*v).into())
@@ -979,262 +979,267 @@ pub(super) fn validate_finite_values_detailed(
             })+
         };
     }
-    let camera = &params.camera;
-    scalars!(
-        camera,
-        "camera",
-        exposure_compensation_ev,
-        lens_blur_um,
-        film_format_mm
-    );
-    arrays!(camera, "camera", filter_uv, filter_ir);
-    let enlarger = &params.enlarger;
-    scalars!(
-        enlarger,
-        "enlarger",
-        print_exposure,
-        y_filter_shift,
-        m_filter_shift,
-        y_filter_neutral,
-        m_filter_neutral,
-        c_filter_neutral,
-        lens_blur,
-        preflash_exposure,
-        preflash_y_filter_shift,
-        preflash_m_filter_shift
-    );
-    scalars!(
-        camera.diffusion_filter,
-        "camera.diffusion_filter",
-        strength,
-        spatial_scale,
-        halo_warmth,
-        core_intensity,
-        core_size,
-        halo_intensity,
-        halo_size,
-        bloom_intensity,
-        bloom_size
-    );
-    scalars!(
-        enlarger.diffusion_filter,
-        "enlarger.diffusion_filter",
-        strength,
-        spatial_scale,
-        halo_warmth,
-        core_intensity,
-        core_size,
-        halo_intensity,
-        halo_size,
-        bloom_intensity,
-        bloom_size
-    );
-    scalars!(params.scanner, "scanner", lens_blur);
-    arrays!(params.scanner, "scanner", unsharp_mask);
-    scalars!(
-        params.scanner.operator,
-        "scanner.operator",
-        exposure_ev,
-        warmth_ev,
-        tint_ev,
-        contrast
-    );
-    let film = &params.film_render;
-    let print = &params.print_render;
-    scalars!(film, "film_render", density_curve_gamma);
-    optional!(film, "film_render", development_time);
-    scalars!(print, "print_render", density_curve_gamma);
-    optional!(print, "print_render", development_time);
-    scalars!(
-        film.chemistry,
-        "film_render.chemistry",
-        gamma_factor,
-        gamma_factor_fast,
-        gamma_factor_slow,
-        gamma_factor_red,
-        gamma_factor_green,
-        gamma_factor_blue,
-        developer_exhaustion
-    );
-    scalars!(
-        print.density_curves_morph,
-        "print_render.density_curves_morph",
-        gamma_factor,
-        gamma_factor_fast,
-        gamma_factor_slow,
-        gamma_factor_red,
-        gamma_factor_green,
-        gamma_factor_blue,
-        developer_exhaustion
-    );
-    let grain = &film.grain;
-    scalars!(
-        grain,
-        "film_render.grain",
-        procedural_timer,
-        dye_support_um,
-        dye_event_area_um2,
-        dye_strength,
-        dye_scale,
-        channel_correlation,
-        mult_usm_sigma,
-        mult_usm_amount,
-        blur,
-        blur_dye_clouds_um
-    );
-    arrays!(
-        grain,
-        "film_render.grain",
-        particle_scale_sublayers,
-        rms_granularity,
-        density_min,
-        uniformity,
-        micro_structure
-    );
-    optional!(
-        grain,
-        "film_render.grain",
-        procedural_size,
-        procedural_amount,
-        procedural_shadows,
-        procedural_midtones,
-        procedural_highlights,
-        procedural_chroma,
-        procedural_resolution_factor
-    );
-    scalars!(
-        grain.exposure,
-        "film_render.grain.exposure",
-        strength,
-        size,
-        absolute_size_px,
-        roughness,
-        shadows,
-        midtones,
-        highlights,
-        push
-    );
-    let fotufilm = &grain.fotufilm;
-    scalars!(
-        fotufilm,
-        "film_render.grain.fotufilm",
-        amount,
-        size,
-        softness,
-        color,
-        rms_density,
-        clump_radius_um,
-        radius_span,
-        coating_density_scale,
-        fog_density
-    );
-    arrays!(
-        fotufilm,
-        "film_render.grain.fotufilm",
-        layers,
-        layer_weights,
-        layer_size_ratio,
-        sublayer_shares
-    );
-    let halation = &film.halation;
-    scalars!(
-        halation,
-        "film_render.halation",
-        scatter_amount,
-        scatter_spatial_scale,
-        halation_amount,
-        halation_spatial_scale,
-        source_compression,
-        boost_ev,
-        boost_range,
-        protect_ev,
-        halation_bounce_decay
-    );
-    arrays!(
-        halation,
-        "film_render.halation",
-        scatter_core_um,
-        scatter_tail_um,
-        scatter_tail_weight,
-        halation_strength,
-        halation_first_sigma_um
-    );
-    let couplers = &film.dir_couplers;
-    scalars!(
-        couplers,
-        "film_render.dir_couplers",
-        amount,
-        inhibition_samelayer,
-        inhibition_interlayer,
-        diffusion_size_um,
-        diffusion_tail_um,
-        diffusion_tail_weight
-    );
-    arrays!(
-        couplers,
-        "film_render.dir_couplers",
-        gamma_samelayer_rgb,
-        gamma_interlayer_r_to_gb,
-        gamma_interlayer_g_to_rb,
-        gamma_interlayer_b_to_rg,
-        langmuir_donor_k_rgb,
-        langmuir_receiver_k_rgb
-    );
-    scalars!(film.glare, "film_render.glare", percent, roughness, blur);
-    scalars!(print.glare, "print_render.glare", percent, roughness, blur);
-    scalars!(
-        film.base,
-        "film_render.base",
-        scale,
-        tilt,
-        cyan,
-        magenta,
-        yellow
-    );
-    scalars!(
-        film.convert,
-        "film_render.convert",
-        exposure_compensation_ev,
-        base_percentile
-    );
-    scalars!(
-        print.base,
-        "print_render.base",
-        scale,
-        cyan,
-        magenta,
-        yellow
-    );
+    let film_mode = params.workflow.mode.is_film();
+    if film_mode {
+        let camera = &params.camera;
+        scalars!(
+            camera,
+            "camera",
+            exposure_compensation_ev,
+            lens_blur_um,
+            film_format_mm
+        );
+        arrays!(camera, "camera", filter_uv, filter_ir);
+        let enlarger = &params.enlarger;
+        scalars!(
+            enlarger,
+            "enlarger",
+            print_exposure,
+            y_filter_shift,
+            m_filter_shift,
+            y_filter_neutral,
+            m_filter_neutral,
+            c_filter_neutral,
+            lens_blur,
+            preflash_exposure,
+            preflash_y_filter_shift,
+            preflash_m_filter_shift
+        );
+        scalars!(
+            camera.diffusion_filter,
+            "camera.diffusion_filter",
+            strength,
+            spatial_scale,
+            halo_warmth,
+            core_intensity,
+            core_size,
+            halo_intensity,
+            halo_size,
+            bloom_intensity,
+            bloom_size
+        );
+        scalars!(
+            enlarger.diffusion_filter,
+            "enlarger.diffusion_filter",
+            strength,
+            spatial_scale,
+            halo_warmth,
+            core_intensity,
+            core_size,
+            halo_intensity,
+            halo_size,
+            bloom_intensity,
+            bloom_size
+        );
+        scalars!(params.scanner, "scanner", lens_blur);
+        arrays!(params.scanner, "scanner", unsharp_mask);
+        scalars!(
+            params.scanner.operator,
+            "scanner.operator",
+            exposure_ev,
+            warmth_ev,
+            tint_ev,
+            contrast
+        );
+        let film = &params.film_render;
+        let print = &params.print_render;
+        scalars!(film, "film_render", density_curve_gamma);
+        optional!(film, "film_render", development_time);
+        scalars!(print, "print_render", density_curve_gamma);
+        optional!(print, "print_render", development_time);
+        scalars!(
+            film.chemistry,
+            "film_render.chemistry",
+            gamma_factor,
+            gamma_factor_fast,
+            gamma_factor_slow,
+            gamma_factor_red,
+            gamma_factor_green,
+            gamma_factor_blue,
+            developer_exhaustion
+        );
+        scalars!(
+            print.density_curves_morph,
+            "print_render.density_curves_morph",
+            gamma_factor,
+            gamma_factor_fast,
+            gamma_factor_slow,
+            gamma_factor_red,
+            gamma_factor_green,
+            gamma_factor_blue,
+            developer_exhaustion
+        );
+        let grain = &film.grain;
+        scalars!(
+            grain,
+            "film_render.grain",
+            procedural_timer,
+            dye_support_um,
+            dye_event_area_um2,
+            dye_strength,
+            dye_scale,
+            channel_correlation,
+            mult_usm_sigma,
+            mult_usm_amount,
+            blur,
+            blur_dye_clouds_um
+        );
+        arrays!(
+            grain,
+            "film_render.grain",
+            particle_scale_sublayers,
+            rms_granularity,
+            density_min,
+            uniformity,
+            micro_structure
+        );
+        optional!(
+            grain,
+            "film_render.grain",
+            procedural_size,
+            procedural_amount,
+            procedural_shadows,
+            procedural_midtones,
+            procedural_highlights,
+            procedural_chroma,
+            procedural_resolution_factor
+        );
+        scalars!(
+            grain.exposure,
+            "film_render.grain.exposure",
+            strength,
+            size,
+            absolute_size_px,
+            roughness,
+            shadows,
+            midtones,
+            highlights,
+            push
+        );
+        let fotufilm = &grain.fotufilm;
+        scalars!(
+            fotufilm,
+            "film_render.grain.fotufilm",
+            amount,
+            size,
+            softness,
+            color,
+            rms_density,
+            clump_radius_um,
+            radius_span,
+            coating_density_scale,
+            fog_density
+        );
+        arrays!(
+            fotufilm,
+            "film_render.grain.fotufilm",
+            layers,
+            layer_weights,
+            layer_size_ratio,
+            sublayer_shares
+        );
+        let halation = &film.halation;
+        scalars!(
+            halation,
+            "film_render.halation",
+            scatter_amount,
+            scatter_spatial_scale,
+            halation_amount,
+            halation_spatial_scale,
+            source_compression,
+            boost_ev,
+            boost_range,
+            protect_ev,
+            halation_bounce_decay
+        );
+        arrays!(
+            halation,
+            "film_render.halation",
+            scatter_core_um,
+            scatter_tail_um,
+            scatter_tail_weight,
+            halation_strength,
+            halation_first_sigma_um
+        );
+        let couplers = &film.dir_couplers;
+        scalars!(
+            couplers,
+            "film_render.dir_couplers",
+            amount,
+            inhibition_samelayer,
+            inhibition_interlayer,
+            diffusion_size_um,
+            diffusion_tail_um,
+            diffusion_tail_weight
+        );
+        arrays!(
+            couplers,
+            "film_render.dir_couplers",
+            gamma_samelayer_rgb,
+            gamma_interlayer_r_to_gb,
+            gamma_interlayer_g_to_rb,
+            gamma_interlayer_b_to_rg,
+            langmuir_donor_k_rgb,
+            langmuir_receiver_k_rgb
+        );
+        scalars!(film.glare, "film_render.glare", percent, roughness, blur);
+        scalars!(print.glare, "print_render.glare", percent, roughness, blur);
+        scalars!(
+            film.base,
+            "film_render.base",
+            scale,
+            tilt,
+            cyan,
+            magenta,
+            yellow
+        );
+        scalars!(
+            film.convert,
+            "film_render.convert",
+            exposure_compensation_ev,
+            base_percentile
+        );
+        scalars!(
+            print.base,
+            "print_render.base",
+            scale,
+            cyan,
+            magenta,
+            yellow
+        );
+    }
     scalars!(params.io, "io", upscale_factor);
     arrays!(params.io, "io", crop_center, crop_size);
-    scalars!(
-        params.io.input_gamut_compress,
-        "io.input_gamut_compress",
-        hull_detail
-    );
-    arrays!(
-        params.io.input_gamut_compress,
-        "io.input_gamut_compress",
-        knee
-    );
     arrays!(
         params.io.output_gamut_compress,
         "io.output_gamut_compress",
         knee
     );
-    scalars!(params.cmyk, "cmyk", strength);
-    scalars!(params.output_mix, "output_mix", amount);
-    scalars!(
-        params.finishing,
-        "finishing",
-        brightness,
-        contrast,
-        warmth,
-        saturation
-    );
-    scalars!(params.finishing.expand, "finishing.expand", black, white);
-    scalars!(params.settings, "settings", spectral_gaussian_blur);
-    arrays!(params.settings, "settings", spectral_shape);
+    if film_mode {
+        scalars!(
+            params.io.input_gamut_compress,
+            "io.input_gamut_compress",
+            hull_detail
+        );
+        arrays!(
+            params.io.input_gamut_compress,
+            "io.input_gamut_compress",
+            knee
+        );
+        scalars!(params.cmyk, "cmyk", strength);
+        scalars!(params.output_mix, "output_mix", amount);
+        scalars!(
+            params.finishing,
+            "finishing",
+            brightness,
+            contrast,
+            warmth,
+            saturation
+        );
+        scalars!(params.finishing.expand, "finishing.expand", black, white);
+        scalars!(params.settings, "settings", spectral_gaussian_blur);
+        arrays!(params.settings, "settings", spectral_shape);
+    }
     Ok(())
 }
 
@@ -1245,25 +1250,40 @@ pub(super) fn validate_detailed(params: &RuntimeParams) -> Result<(), Validation
 
 pub(super) fn validate_values_detailed(params: &RuntimeParams) -> Result<(), ValidationError> {
     validate_finite_values_detailed(params)?;
-    validate_film_format_mm_detailed(f64::from(params.camera.film_format_mm))?;
-    params.output_mix.validate_detailed()?;
-    params.finishing.validate_detailed()?;
-    validate_enum_value_detailed("workflow.route", &params.workflow.route)?;
-    params
-        .lut_look
-        .validate(params.workflow.mode.is_lut())
-        .map_err(|detail| ValidationError::new(Reason::LutLook, "lut_look", detail))?;
+    if params.workflow.mode.is_film() {
+        validate_film_format_mm_detailed(f64::from(params.camera.film_format_mm))?;
+        params.output_mix.validate_detailed()?;
+        params.finishing.validate_detailed()?;
+    }
+    if params.workflow.mode.is_film() {
+        validate_enum_value_detailed("workflow.route", &params.workflow.route)?;
+    } else {
+        if let Some(lut) = params.lut.as_ref() {
+            lut.validate(params.workflow.mode.is_lut())
+                .map_err(|detail| ValidationError::new(Reason::LutLook, "lut", detail))?;
+        } else {
+            params
+                .lut_look
+                .validate(params.workflow.mode.is_lut())
+                .map_err(|detail| ValidationError::new(Reason::LutLook, "lut_look", detail))?;
+        }
+        if let Some(effects) = params.effects.as_ref() {
+            effects
+                .validate()
+                .map_err(|detail| ValidationError::new(Reason::LutLook, "effects", detail))?;
+        }
+        if params.workflow.mode.is_lut()
+            && let Some(grade) = params.grade.as_ref()
+            && grade.active
+        {
+            grade
+                .validate()
+                .map_err(|detail| ValidationError::new(Reason::LutLook, "grade", detail))?;
+        }
+    }
     for (path, value) in [
         ("io.input_color_space", &params.io.input_color_space),
         ("io.output_color_space", &params.io.output_color_space),
-        (
-            "io.input_gamut_compress.algorithm",
-            &params.io.input_gamut_compress.algorithm,
-        ),
-        (
-            "io.input_gamut_compress.boundary",
-            &params.io.input_gamut_compress.boundary,
-        ),
         (
             "io.output_gamut_compress.algorithm",
             &params.io.output_gamut_compress.algorithm,
@@ -1271,18 +1291,35 @@ pub(super) fn validate_values_detailed(params: &RuntimeParams) -> Result<(), Val
     ] {
         validate_enum_value_detailed(path, value)?;
     }
-    validate_scalar_detailed(
-        "io.input_gamut_compress.hull_detail",
-        params.io.input_gamut_compress.hull_detail,
-    )?;
-    validate_gamut_triplet_detailed(
-        "io.input_gamut_compress.knee",
-        params.io.input_gamut_compress.knee,
-    )?;
+    if params.workflow.mode.is_film() {
+        for (path, value) in [
+            (
+                "io.input_gamut_compress.algorithm",
+                &params.io.input_gamut_compress.algorithm,
+            ),
+            (
+                "io.input_gamut_compress.boundary",
+                &params.io.input_gamut_compress.boundary,
+            ),
+        ] {
+            validate_enum_value_detailed(path, value)?;
+        }
+        validate_scalar_detailed(
+            "io.input_gamut_compress.hull_detail",
+            params.io.input_gamut_compress.hull_detail,
+        )?;
+        validate_gamut_triplet_detailed(
+            "io.input_gamut_compress.knee",
+            params.io.input_gamut_compress.knee,
+        )?;
+    }
     validate_gamut_triplet_detailed(
         "io.output_gamut_compress.knee",
         params.io.output_gamut_compress.knee,
     )?;
+    if !params.workflow.mode.is_film() {
+        return Ok(());
+    }
     params
         .film_render
         .chemistry
@@ -1397,7 +1434,9 @@ pub(super) fn validate_values_detailed(params: &RuntimeParams) -> Result<(), Val
     ] {
         validate_enum_value_detailed(path, value)?;
     }
-    validate_scalar_detailed("cmyk.strength", params.cmyk.strength)?;
+    if params.workflow.mode.is_film() {
+        validate_scalar_detailed("cmyk.strength", params.cmyk.strength)?;
+    }
     if let Some(t) = params.taps.inject.as_deref() {
         validate_enum_value_detailed("taps.inject", t)?;
     }
@@ -1408,15 +1447,17 @@ pub(super) fn validate_values_detailed(params: &RuntimeParams) -> Result<(), Val
 }
 
 fn validate_context_detailed(params: &RuntimeParams) -> Result<(), ValidationError> {
-    let bounds = params.settings.spectral_shape;
-    let expected = crate::spectral_service::default_spectral_shape();
-    if bounds != expected {
-        return Err(ValidationError::new(Reason::SpectralBundled, "settings.spectral_shape", format!(
-            "settings.spectral_shape: only the bundled {expected:?} grid is supported by the current profile/CMF/LUT contract, got {bounds:?}"
-        )).arg("expected", format!("{expected:?}")).arg("value", format!("{bounds:?}")));
+    if params.workflow.mode.is_film() {
+        let bounds = params.settings.spectral_shape;
+        let expected = crate::spectral_service::default_spectral_shape();
+        if bounds != expected {
+            return Err(ValidationError::new(Reason::SpectralBundled, "settings.spectral_shape", format!(
+                "settings.spectral_shape: only the bundled {expected:?} grid is supported by the current profile/CMF/LUT contract, got {bounds:?}"
+            )).arg("expected", format!("{expected:?}")).arg("value", format!("{bounds:?}")));
+        }
     }
     params.validate_color_detailed()?;
-    if params.workflow.mode.is_lut() {
+    if !params.workflow.mode.is_film() {
         return Ok(());
     }
     if !params.scanner.operator.is_default() {

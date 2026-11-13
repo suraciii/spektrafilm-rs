@@ -23,6 +23,7 @@ pub enum Section {
 pub enum PresetKind {
     Look,
     Lut,
+    Effects,
     Section(Section),
 }
 pub const SECTIONS: &[Section] = &[

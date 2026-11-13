@@ -592,6 +592,50 @@ fn version_two_states_rename_conversion_paths_and_map_the_exposure_pair() {
 }
 
 #[test]
+fn legacy_lut_look_migrates_once_and_current_state_rejects_it() {
+    let legacy = json!({
+        "rust": {
+            "version": 7,
+            "runtime": {
+                "workflow": {"mode": "lut"},
+                "lut_look": {
+                    "path": "look.cube",
+                    "sha256": "a".repeat(64),
+                    "strength": 0.5,
+                    "domain_min": [0.0, 0.0, 0.0],
+                    "domain_max": [1.0, 1.0, 1.0],
+                    "grade_active": true,
+                    "grade": {"contrast": 0.2}
+                }
+            }
+        }
+    });
+    let state = GuiState::from_value(legacy).unwrap();
+    let params = state.runtime_params().unwrap();
+    assert_eq!(params.lut.as_ref().unwrap().strength, 0.5);
+    assert_eq!(params.grade.as_ref().unwrap().values.contrast, 0.2);
+    assert!(params.grade.as_ref().unwrap().active);
+    assert_eq!(
+        params.lut_look,
+        spektrafilm_core::params::LutLookParams::default()
+    );
+    assert_eq!(
+        state.sections["rust"]["version"],
+        json!(CURRENT_STATE_VERSION)
+    );
+    assert!(state.sections["rust"]["runtime"].get("lut_look").is_none());
+
+    let current = json!({
+        "rust": {
+            "version": CURRENT_STATE_VERSION,
+            "runtime": {"lut_look": {}}
+        }
+    });
+    let error = GuiState::from_value(current).unwrap_err();
+    assert!(error.to_string().contains("lut_look"), "{error}");
+}
+
+#[test]
 fn legacy_cmyk_state_migration_is_transactional_and_idempotent() {
     // A legacy complete document carrying the retired group migrates onto
     // the canonical name, preserving active and strength.

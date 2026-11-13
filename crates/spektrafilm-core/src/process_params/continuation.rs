@@ -125,6 +125,12 @@ pub fn resolve_continuation(
         let mut candidate = params.clone();
         match preset.parameters.as_ref() {
             Some(presets::PresetParameters::Look(look)) => look.apply_to(&mut candidate),
+            Some(presets::PresetParameters::Effects(effects)) => {
+                candidate.workflow.mode = crate::lut_look::WorkflowMode::Off;
+                candidate.workflow.route = "input".into();
+                candidate.io.scan_film = false;
+                candidate.effects = Some(effects.clone());
+            }
             Some(presets::PresetParameters::Section(_)) => {
                 candidate = preset.overlay_section(&params)?
             }

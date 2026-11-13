@@ -8,11 +8,17 @@ The [stage input and output contract](stage-artifacts.md) adds resumable materia
 
 The `process` command MUST support [presets](../presets/spec.md), sparse parameter files, and individual parameter assignments through the unified `--set` option. Both `spektrafilm` and `spektrafilm-f64` MUST accept the same language. Backend policy and computation precision follow [GPU execution](../gpu-execution/spec.md#backend-selection).
 
-A **parameter override** is a sparse set of explicit edits to runtime controls for one invocation. It MAY contain look-owned and non-look controls. It MUST NOT change profile references or rewrite its source preset.
+A **parameter override** is a sparse set of explicit edits to runtime controls for one invocation. It MAY contain preset-owned and non-preset controls. It MUST NOT change profile references or rewrite its source preset.
 
 A parameter override is not a preset, GUI state, or render recipe. The parameter contract owns the added command syntax. Preset document fields and carriers belong to the [preset specification](../presets/spec.md).
 
-LUT look mode MUST follow the [LUT workflow](../lut-workflow/spec.md) and [LUT look](../lut-look/spec.md#ui-and-cli). Its canonical runtime leaves MUST be addressable through `--set` and `describe`. A LUT preset is a preset kind, but it is not a film look preset.
+LUT mode MUST follow [Render modes](../render-mode/spec.md), the [LUT workflow](../lut-workflow/spec.md), and the [LUT transform](../lut-transform/spec.md#ui-and-cli). Its canonical runtime leaves MUST be addressable through `--set` and `describe`. A LUT preset is a preset kind, but it is not a Film preset.
+
+Off mode MUST follow [Render modes](../render-mode/spec.md). Its active groups are `effects` and `io`; the film chain, `lut`, `grade`, `output_mix`, and `cmyk` remain stored and inactive. Off mode MUST NOT require a LUT declaration.
+
+Editing `effects` or `grade` MUST NOT select a render mode. A parameter-only invocation MUST set `workflow.mode` or use a preset.
+
+`describe --field workflow.mode` MUST report `film`, `lut`, and `off` with their active groups.
 
 Every leaf carried by a preset MUST remain addressable through canonical `--set` and exposed by `describe --field` or `describe --module`; the CLI description MUST report the same type, validator, units, and effect conditions used by the GUI. Field names, units, bounds, and conditional effect behavior belong to their parameter model and capability specifications.
 
@@ -35,7 +41,7 @@ spektrafilm process ARTIFACT --route ROUTE --output OUTPUT [OPTIONS]
 
 OPTIONS may include:
   --preset SELECTOR     repeatable; presets apply in appearance order
-  --lut CUBE            use one .cube as the LUT look; conflicts with film, preset, route, and feature-profile selectors
+  --lut CUBE            use one .cube as the LUT transform; conflicts with film, preset, route, and feature-profile selectors
   --set SOURCE          repeatable file or comma-separated assignments
   --dry-run             resolve and validate; print effective parameters without rendering; --output may be omitted
   --dry-run-format json|text  dry-run presentation; default: json
@@ -46,7 +52,7 @@ OPTIONS may include:
   --debug              emit detailed execution diagnostics to stderr; no argument or implicit files
 ```
 
-Existing backend, workflow, RAW, output, and data-directory options MUST remain available.
+Existing backend, route, RAW, output, and data-directory options MUST remain available.
 
 ### Preset selector
 
@@ -60,33 +66,37 @@ A bare name that also exists in another group MUST resolve in the user library, 
 
 ### LUT selector
 
-`process --lut CUBE` MUST construct one LUT workflow source from the selected `.cube`. It MUST read the file title, per-axis domain, shaper declaration, and SHA-256 content hash.
+`process --lut CUBE` MUST construct one LUT source from the selected `.cube`. It MUST read the file title, per-axis domain, shaper declaration, and SHA-256 content hash.
 
 It MUST use display-encoded sRGB for the input and output encodings and clamp for the domain policy unless a later `--set` source overrides them. It MUST NOT save or modify a preset.
 
 `--lut` MUST conflict with `--preset`, `--film`, `--paper`, `--route`, `--scan-film`, and `--feature-profile`. It MUST NOT require a film or print profile.
 
-`--set workflow.mode=lut` and the canonical `lut_look` leaves MUST remain an alternative for parameter-only invocations. An explicit `--set workflow.mode=film` with `--lut` MUST fail rather than choose a workflow silently.
+`--set workflow.mode=lut` with the canonical `lut`, `effects`, and `grade` leaves MUST remain an alternative for parameter-only invocations. An explicit `--set workflow.mode=film` or `workflow.mode=off` with `--lut` MUST fail rather than choose a mode silently.
 
-Artifact input obtains its frozen material from the artifact under the [stage profile rules](stage-artifacts.md#input-declarations-and-profile-requirements). The `input` workflow MUST ignore the resolved film and paper profiles. Without a preset, an image direct-film scan MUST select the film as the runtime print profile.
+An explicit `workflow.mode` edit that conflicts with a selected preset kind MUST fail. A matching explicit mode MUST remain accepted. A conflicting preset set MUST fail rather than apply presets across modes.
+
+Artifact input obtains its frozen material from the artifact under the [stage profile rules](stage-artifacts.md#input-declarations-and-profile-requirements). The `input` route MUST ignore the resolved film and paper profiles. Without a preset, an image direct-film scan MUST select the film as the runtime print profile.
 
 A photographic print operation MUST obtain its print material from the applicable explicit, retained, or target-print selection. CMYK ink style enablement MUST NOT affect these requirements. Without a preset, a print target MUST accept `support=paper` or `support=film` with `stage=printing` when parameter sources are added.
 
 Preset print references retain the paper-only restriction in the preset specification.
 
-`--preset` MAY be repeated; presets apply in appearance order, and supplied profile references and parameter controls count as explicit. For image input with a film look preset, both profile references MUST come from that preset. `--scan-film` MUST request `input > film > scan` without replacing the preset's print reference.
+`--preset` MAY be repeated; presets apply in appearance order, and supplied profile references and parameter controls count as explicit. For image input with a film preset, both profile references MUST come from that preset. `--scan-film` MUST request `input > film > scan` without replacing the preset's print reference.
 
-A LUT preset MUST select the LUT workflow and MUST NOT require film or print profile selectors. It MUST NOT be combined with a film look preset, a section preset, `--film`, `--paper`, `--route`, or `--scan-film` in one invocation.
+A LUT preset MUST select LUT mode and MUST NOT require film or print profile selectors. An Effects preset MUST select Off mode and MUST require neither film, print, nor LUT selectors.
 
-The command MUST fail rather than choose a workflow silently or apply presets in a cross-workflow sequence. A section preset MUST NOT be applied while the final workflow is LUT; the command MUST require an explicit film-workflow selection first.
+A LUT or Effects preset MUST NOT be combined with a Film preset, a section preset, a complete preset of a different mode, `--film`, `--paper`, `--route`, `--scan-film`, or `--feature-profile` in one invocation.
 
-`lut build` MUST retain its existing export contract. It MUST NOT import its result, apply it, create a LUT preset, or switch workflow. The simple GUI export/import workflow remains governed by [LUT workflow](../lut-workflow/spec.md).
+The command MUST fail rather than choose a mode silently or apply presets in a cross-mode sequence. A section preset MUST NOT be applied while the final mode is LUT or Off; the command MUST require an explicit Film-mode selection first.
 
-On image input, a film look preset's workflow default MUST apply unless `--route` or `--scan-film` supplies an explicit choice. A preset set that supplies no film reference MUST NOT select a profile-derived workflow default.
+`lut build` MUST retain its existing export contract. It MUST NOT import its result, apply it, create a LUT preset, or switch mode. The simple GUI export/import workflow remains governed by [LUT workflow](../lut-workflow/spec.md).
+
+On image input, a film preset's film route default MUST apply unless `--route` or `--scan-film` supplies an explicit choice. A preset set that supplies no film reference MUST NOT select a profile-derived film route default.
 
 A LUT preset selects LUT mode and MUST NOT acquire a profile-derived route. Artifact input MUST supply `--route` explicitly.
 
-`--route` and `--scan-film` MUST conflict, including for equivalent routes. The final route MUST determine topology; `io.scan_film` MUST be true for `input > film > scan` and `film > scan`, and false for other supported routes. The shared workflow validator MUST enforce the finite route vocabulary, including the [stage routes](stage-artifacts.md#route-language).
+`--route` and `--scan-film` MUST conflict, including for equivalent routes. In Film mode, the final route MUST determine topology; `io.scan_film` MUST be true for `input > film > scan` and `film > scan`, and false for other supported routes. The shared film route validator MUST enforce the finite route vocabulary, including the [stage routes](stage-artifacts.md#route-language).
 
 CMYK ink style enablement remains independent of `--route` under its [owning contract](../cmyk-style/spec.md).
 
@@ -98,9 +108,9 @@ The scan has no light-source control: the readout illuminant is a product consta
 
 ### Input declaration
 
-A **source declaration** states the color space and transfer state of raster samples before simulation. It is not a look or a saving conversion. Every public raster `process` invocation MUST supply both `io.input_color_space` and `io.input_cctf_decoding` through dedicated input flags, supplied leaves of legacy `--params`, or `--set`.
+A **source declaration** states the color space and transfer state of raster samples before simulation. It is not a preset or a saving conversion. Every public raster `process` invocation MUST supply both `io.input_color_space` and `io.input_cctf_decoding` through dedicated input flags, supplied leaves of legacy `--params`, or `--set`.
 
-Defaults and look presets MUST NOT count as a declaration. A missing component MUST fail with guidance to declare both components. File extension, bit depth, and embedded ICC metadata MUST NOT select a declaration.
+Defaults and presets MUST NOT count as a declaration. A missing component MUST fail with guidance to declare both components. File extension, bit depth, and embedded ICC metadata MUST NOT select a declaration.
 
 This requirement also applies to the `input` route and dry run.
 
@@ -119,7 +129,7 @@ The assumed scene light of the photograph is declared through the canonical path
 - The leaf is an optional string. TOML omission makes no edit.
 - Inline `null` and JSON `null` clear it to its unset value, which then inherits the selected film profile's `reference_illuminant`.
 - An explicit value is a catalog illuminant name or a `BB<kelvin>` token, validated by the shared illuminant vocabulary. An unsupported or malformed value MUST fail with the permitted values and MUST NOT fall back to the profile reference.
-- The leaf belongs to the camera group, so it participates in the same composition layers as the other camera controls: presets apply first, then `--set` sources in appearance order, then workflow, scan-output, and input choices.
+- The leaf belongs to the camera group, so it participates in the same composition layers as the other camera controls: presets apply first, then `--set` sources in appearance order, then film route, scan-output, and input choices.
 - RAW loading flags remain loader controls. `--raw-white-balance`, `--raw-temperature`, and `--raw-tint` MUST NOT write this leaf, and RAW metadata MUST NOT supply a value.
 - Editing this leaf MUST NOT change the readout illuminant, `enlarger.illuminant`, the output white point, or the film profile reference. It MUST NOT rewrite a preset document or change profile references.
 
@@ -236,7 +246,7 @@ Repetition MUST fail at argument parsing rather than silently select a value.
 
 Paths MUST use the runtime parameter vocabulary, such as `film_render.grain.procedural_amount`. The command MUST NOT add shortened paths such as `grain.amount`. It MUST NOT infer a grain engine or change `procedural_profile` to `custom` from the presence of a control.
 
-`workflow.route` MUST use `--route`; `io.scan_film` MUST remain derived from the selected workflow. Neither path MAY appear in a parameter file or inline assignment. Random seed MUST remain outside this language.
+`workflow.route` MUST use `--route`; `io.scan_film` MUST remain derived from the selected film route. Neither path MAY appear in a parameter file or inline assignment. Random seed MUST remain outside this language.
 
 Pipeline-derived `film_render.grain.monochrome` MUST NOT be an editable path. Other runtime controls MUST use the shared editable parameter description. Removed Spektra controls MUST follow the [Spektra contract](../film-grain/spektra/spec.md).
 
@@ -248,7 +258,7 @@ A parameter-file leaf or inline assignment MUST NOT change another control to ma
 
 `output_mix.amount` is a non-nullable finite f64 in `[0,1]`, with default 1. Current complete parameter documents, sparse sources, recipes, and GUI state MUST share typed value validators. Complete-document compatibility MAY supply an absent output-mix default; sparse omission remains no edit.
 
-Material-control edits MUST retain existing route and profile capability conditions. Preflash affects exposure only on admitted print-development routes, including printing recovered negative density. Film chemistry MUST NOT redevelop real captured negatives or run on the `input` workflow.
+Material-control edits MUST retain existing route and profile capability conditions. Preflash affects exposure only on admitted print-development routes, including printing recovered negative density. Film chemistry MUST NOT redevelop real captured negatives or run on the `input` route.
 
 Developer exhaustion MUST remain a model-specific development control; unsupported profiles MUST NOT acquire a fitted model or substitute effect. Inactive values remain stored. Edits MUST NOT change a route or silently activate chemistry.
 
@@ -323,16 +333,20 @@ Inline assignments within one source also apply in their written order.
 
 For an invocation with added parameter sources, resolution MUST use this order:
 
-1. Select and validate the film and print profiles. Decode the baseline with `RuntimeParams::default()` or the unchanged legacy `--params` decoder.
-2. Apply stock-specific look initialization to this baseline with the same precedence as the legacy batch policy. Defer preview, debug, and database-calibration preparation until the final controls are available.
+1. Select and validate the film and print profiles required by the selected preset kind or film-chain route. Decode the baseline with `RuntimeParams::default()` or the unchanged legacy `--params` decoder.
+2. Apply stock-specific initialization to this baseline with the same precedence as the legacy batch policy. Defer preview, debug, and database-calibration preparation until the final controls are available.
 3. Values supplied only by legacy `--params` MUST retain their legacy relationship to stock initialization and database calibration.
-4. Apply every selected preset in appearance order through the shared preset resolver. A film look preset replaces the whole film look; a LUT preset replaces the LUT look and selects LUT mode; a section preset edits only the controls of its section, and those values count as explicit from this step on.
-5. Retain excluded runtime context and derive the profile workflow default when the preset set supplies a film reference.
+4. Apply every selected preset in appearance order through the shared preset resolver:
+   - A Film preset replaces the complete Film payload.
+   - A LUT preset replaces the LUT transform, Effects, and LUT Grade and selects LUT mode.
+   - An Effects preset replaces Effects and selects Off mode.
+   - A section preset edits only its section controls and counts as explicit from this step on.
+5. Retain excluded runtime context and derive the profile film route default when the preset set supplies a film reference.
 6. Apply every `--set` source in appearance order. A file source and an inline assignment source have identical leaf-merge semantics.
-7. Apply explicit workflow, scan-output, and input choices. Enforce the [input declaration](#input-declaration) rules.
+7. Apply explicit film route, scan-output, and input choices under their existing mode and conflict rules. Enforce the [input declaration](#input-declaration) rules.
 8. Input flags MUST count as explicit only for their matching leaves.
 9. Validate the composed controls. Resolve dependent database defaults only for values that are not explicit.
-10. Apply preview, LUT-mode, and debug constraints using the final controls. Do not reapply stock look defaults over explicit edits.
+10. Apply preview, render-mode, and debug constraints using the final controls. Do not reapply stock defaults over explicit edits.
 11. Validate the effective typed parameters after constraints. Resolve and validate the output options before decoding input pixels or rendering.
 12. Create the runtime using these effective parameters.
 
@@ -372,7 +386,7 @@ These rules MUST be validated before rendering, including support for the select
 
 Output sample depth MUST NOT select computation precision. `spektrafilm-f64 --backend cpu` MUST retain the CPU f64 reference contract; software WGPU and hardware WGPU MUST remain distinguishable execution evidence.
 
-The following POSIX command combines a look with independent TIFF export options:
+The following POSIX command combines a preset with independent TIFF export options:
 
 ```bash
 spektrafilm-f64 process input.png --output output.tif \
@@ -386,7 +400,7 @@ Each file source and inline assignment source MUST pass syntax and field validat
 
 The runtime MUST also validate parameters after applying its constraints.
 
-Section composition MUST defer scan compatibility until explicit workflow and scan-output choices are applied.
+Section composition MUST defer scan compatibility until explicit film route and scan-output choices are applied.
 
 Errors MUST identify the offending option or file, field path when available, supplied value when safe to display, and violated rule. Parse errors MUST include the parser location when available. Unknown paths MUST NOT create new fields; paths naming non-settable runtime fields MUST identify the out-of-band field and why it is unavailable.
 
@@ -438,7 +452,7 @@ A leaf supplied to `--module` MUST fail with guidance to use `--field`. These se
 
 A record MUST show path, type, nullability, default and its source, unit when applicable, enum values or bounds, distinct array-component domains, and effect conditions. Missing units, bounds, and finite enum inventories MUST NOT be presented as invented values. `describe` MUST retain JSON as its default format.
 
-`preset list --format json` MUST list each preset's name and group. It MUST also report the kind and section of a section preset, the film and print references of a film look preset, or the LUT file path and validation status of a LUT preset.
+`preset list --format json` MUST list each preset's name and group. It MUST also report the kind and section of a section preset, the film and print references of a Film preset, the LUT file path and validation status of a LUT preset, or the active Effects of an Effects preset.
 
 `preset list --source built-in|user|all` MUST select the listed groups and MUST default to `built-in`.
 
@@ -446,15 +460,17 @@ A record MUST show path, type, nullability, default and its source, unit when ap
 
 `preset show SELECTOR --format toml|json` MUST write the selected document to stdout. `--format` MUST default to TOML for `preset show` and JSON for `preset list`. Both commands MUST follow the [CLI data-directory selection policy](#data-directory-selection), and listing library entries MUST NOT require a data directory.
 
-`preset show` MUST validate the selected document. A film look preset MUST validate its profile references; a LUT preset MUST validate its LUT file path, hash, and declaration. These commands MUST NOT inspect a GUI state, load LUT pixels into the document, or render an image.
+`preset show` MUST validate the selected document. A Film preset MUST validate its profile references; a LUT preset MUST validate its LUT file path, hash, and declaration; an Effects preset MUST validate its Effects groups. These commands MUST NOT inspect a GUI state, load LUT pixels into the document, or render an image.
 
 Export MUST preserve the selected preset name and MUST NOT modify its source file. Exporting a LUT preset MUST move only the preset document; the LUT file remains external and MUST NOT be included in a package.
 
-Export and update of an older whole-look preset MUST migrate its look-owned controls to version 3 with `output_mix.amount = 1`. Older section presets MUST retain sparse omission and MUST NOT gain output-mix or other leaves. User-library import MUST preserve the older carrier until explicit export or update writes version 3.
+Export and update of an older Film preset MUST migrate its preset-owned controls to schema version 7. A migration that adds output mix MUST supply `output_mix.amount = 1`.
+
+Older section presets MUST retain sparse omission and MUST NOT gain output-mix or other leaves. User-library import MUST preserve the older carrier until explicit export or update writes schema version 7.
 
 Discovery MUST NOT change a stored document merely by listing it. Preset application and export MUST preserve the caller's other `io` settings; no preset owns output gamut processing.
 
-`process --dry-run` MUST accept the same configuration and input paths as a normal process invocation. It MUST resolve parameters, workflow, and writer options using the same decisions as normal processing. `--output` MUST be optional with `--dry-run`.
+`process --dry-run` MUST accept the same configuration and input paths as a normal process invocation. It MUST resolve parameters, render mode, film route, and writer options using the same decisions as normal processing. `--output` MUST be optional with `--dry-run`.
 
 Normal processing MUST still require `--output`. Without `--output`, `output` MUST remain an object whose `path` is `null`. Its `format` MUST be `null` unless `--format` was supplied.
 
@@ -464,7 +480,11 @@ It MUST check input existence, readability, and supported file kind without deco
 
 Terminal detection MUST NOT change the format. JSON MUST contain one object on stdout with `workflow`, `film_profile`, `print_profile`, `parameters`, `output`, and `backend` keys. `parameters` MUST contain effective runtime controls after constraints.
 
-`workflow` MUST contain `mode`, `route`, and `film_stages`. `mode` MUST be `film` or `lut`; `film_stages` MUST be `active` or `inactive`. In LUT mode, `film_profile`, `print_profile`, capture illuminant, and readout illuminant MUST be null, and film-grain reports MUST report inactive.
+`workflow` MUST contain `mode`, `route`, and `film_stages`. `mode` MUST be `film`, `lut`, or `off`; `film_stages` MUST be `active` only in Film mode.
+
+In LUT and Off modes, `route`, `film_profile`, `print_profile`, capture illuminant, and readout illuminant MUST be null. Film-grain reports MUST report inactive.
+
+In Off mode, the LUT declaration and LUT Grade MUST report inactive.
 
 `output` MUST retain `path`, `format`, `bit_depth`, `color_space`, `cctf_encoding`, `compression`, `jpeg_quality`, and `jpeg_subsampling`; inapplicable options MUST be `null`. `backend` MUST report the requested `cpu` or `gpu` policy, or `auto` when selection remains deferred. Diagnostics MUST go to stderr.
 
@@ -498,25 +518,27 @@ Classification precedence MUST be `overridden`, then `constrained`, then `inacti
 
 A full per-field provenance history MUST NOT be added. Active status MUST NOT claim a measured pixel change.
 
-Text dry run MUST show the same resolved input declaration and sources, workflow mode, seed, requested backend, writer options, and edit feedback as JSON. It MUST show data selection and RAW loading choices.
+Text dry run MUST show the same resolved input declaration and sources, render mode, seed, requested backend, writer options, and edit feedback as JSON. It MUST show data selection and RAW loading choices.
 
-In the film workflow it MUST show profile identities, route, scan-output mode, effective exposure, film format, grain engine, and grain controls in their canonical units and conditions.
+In Film mode it MUST show profile identities, route, scan-output mode, effective exposure, film format, grain engine, and grain controls in their canonical units and conditions.
 
-In the LUT workflow it MUST show the cube path, title when present, input and output spaces, per-axis domain, domain policy, shaper, and strength, and MUST NOT print film grain or spectral stage controls as active.
+In LUT mode it MUST show the cube path, title when present, input and output spaces, per-axis domain, domain policy, shaper, strength, Effects, and LUT Grade, and MUST NOT print film grain or spectral stage controls as active.
+
+In Off mode it MUST show the active Effects and output color management, and MUST NOT print film, LUT, or LUT Grade controls as active.
 
 Text layout MUST NOT be a machine contract.
 
-In the film workflow, both dry-run formats MUST report the capture illuminant separately from every other light source, in a `capture_illuminant` object.
+In Film mode, both dry-run formats MUST report the capture illuminant separately from every other light source, in a `capture_illuminant` object.
 
 The report MUST carry the selected film profile's `reference_illuminant`, the requested `camera.capture_illuminant` value, the effective value in force for the render, and the source that supplied it, where source is one of `unset`, `set`, or `preset`.
 
-In the LUT workflow, `capture_illuminant` MUST be null.
+In LUT and Off modes, `capture_illuminant` MUST be null.
 
 An unset requested value MUST report the inherited profile reference as the effective value with source `unset`. An explicit value on a route that computes no film exposure from scene RGB MUST be reported inactive with its reason, and its effective value MUST be the profile reference illuminant.
 
 The report MUST NOT present RAW white balance, the readout illuminant, `enlarger.illuminant`, or the output white point as the capture illuminant.
 
-In the film workflow, both dry-run formats MUST report the resolved readout illuminant separately from the capture and enlarger illuminants, together with the material-category rule that selected it. In the LUT workflow, `readout_illuminant` MUST be null.
+In Film mode, both dry-run formats MUST report the resolved readout illuminant separately from the capture and enlarger illuminants, together with the material-category rule that selected it. In LUT and Off modes, `readout_illuminant` MUST be null.
 
 Both formats MUST state that pixel decoding, compute-device availability, metered exposure, and final pixel geometry remain unchecked. JSON MUST add `unchecked` with the stable values `pixel_decode`, `compute_device`, `metered_exposure`, and `output_geometry`. Dry run MUST NOT claim these outcomes.
 
@@ -548,7 +570,7 @@ Developer-exhaustion discovery MUST report its existing dimensionless `[0,1]` do
 
 Descriptions MUST NOT promise universal highlight compression or equivalence to a digital compressor. [Output mix](../output-mix/spec.md#output-mix) discovery MUST report f64, non-nullability, default 1, and inclusive `[0,1]` bounds. Amount 1 is the complete result after CMYK ink style; amount 0 is the prepared, same-geometry input before simulated camera exposure and processing.
 
-A captured-negative source remains negative at 0 and MUST NOT be automatically inverted. Mixing occurs in common linear output RGB before save conversion and applies to all workflows. Final output below 1 requires a declared source branch; diagnostic or segmented paths without one MUST reject it.
+A captured-negative source remains negative at 0 and MUST NOT be automatically inverted. Mixing occurs in common linear output RGB before save conversion and applies to every Film-mode route. Final output below 1 requires a declared source branch; diagnostic or segmented paths without one MUST reject it.
 
 Amount 1 requires no source copy. Intermediate taps remain unaffected. Dry-run feedback MUST apply these conditions without claiming that pixels were exercised.
 
@@ -588,7 +610,7 @@ Invalid field/group selectors and their conflict MUST fail before image work. Ex
 
 Text preset listing MUST contain the same names, groups, kinds, profile references, and LUT file status as JSON listing. File selectors and preset export validation MUST retain their existing behavior.
 
-LUT preset acceptance MUST exercise `process --preset` without film or print selectors, rejection of a mixed film/LUT preset set, validation of a missing or changed LUT file, and document-only preset export/import. `lut build` MUST NOT create or publish a preset. Listing and `show` MUST report the LUT kind without reading LUT pixels.
+LUT and Effects preset acceptance MUST exercise `process --preset` without film or print selectors, rejection of a mixed Film/LUT/Effects preset set, validation of a missing or changed LUT file, and document-only preset export/import. `lut build` MUST NOT create or publish a preset. Listing and `show` MUST report the LUT or Effects kind without reading LUT pixels.
 
 `process --lut` acceptance MUST exercise declaration discovery from a cube, the clamp default, `--set` overrides, the selector conflicts, and LUT-aware JSON and text dry runs. It MUST exercise one real render through the image writer.
 
@@ -596,7 +618,7 @@ Material-control and output-mix discovery acceptance MUST compare text and selec
 
 Equivalent sparse TOML, JSON, and inline output-mix edits MUST resolve to the same finite f64 amount without changing material activation or routes. Discovery and dry-run descriptions MUST identify both source endpoints, including negative capture, and reject a known missing-source final-output configuration below 1.
 
-Persistence acceptance MUST exercise version 1 and version 2 whole-look migration, sparse Film and Print section migration, and version 3 capture/export/reload. Whole looks gain amount 1; sparse sections gain no leaves; `io` settings outside existing scanner-output normalization remain caller-owned.
+Persistence acceptance MUST exercise version 1 and version 2 complete preset migration, sparse Film and Print section migration, and version 3 capture/export/reload. Complete presets gain amount 1; sparse sections gain no leaves; `io` settings outside existing scanner-output normalization remain caller-owned.
 
 Reject unshipped response groups, Cyan-shift paths, and the output-response section through normal schema validation without aliases or migration, including draft version 3 documents. For complete legacy states, recipes, and baselines, exercise absent and null retired lightness leaves and explicit numeric triplets with each old gamut algorithm.
 
@@ -652,7 +674,7 @@ Previously accepted out-of-domain inactive values are not a supported legacy val
 
 1. Run both real executables with encoded sRGB PNG and JPEG input. Omission of either declaration component MUST fail without output.
 2. Dedicated flags and equivalent TOML, JSON, and inline declarations MUST resolve to the same input controls and produce equal raw simulation buffers within the same executable/backend. Explicit `false` MUST count as supplied.
-3. A look preset MUST NOT satisfy a missing declaration.
+3. A preset MUST NOT satisfy a missing declaration.
 4. Run linear prepared TIFF and OpenEXR with explicit declarations. Retained ICC bytes and an integer or float container MUST NOT change those declarations.
 5. Run a real RAW fixture through all supported white-balance modes. Compatible declarations MUST preserve RAW pixels; incompatible flags and early incompatible edits MUST fail before decode.
 6. Use RAW provenance from existing acceptance fixtures.
@@ -689,7 +711,7 @@ Every public command and option MUST have a help description. Descriptions MUST 
 
 Options with finite choices MUST show the choices from their authoritative definition. A field with an open vocabulary MUST explain how to discover or supply its values.
 
-`process` help MUST group options by input and RAW loading, look and workflow, output, and execution and diagnostics. LUT build help MUST distinguish bundle configuration, delivery, and quality assessment. Long help MUST include a basic preset process command, a LUT process command, a parameter override command, and the relevant discovery commands.
+`process` help MUST group options by input and RAW loading, preset and mode, output, and execution and diagnostics. LUT build help MUST distinguish bundle configuration, delivery, and quality assessment. Long help MUST include a basic preset process command, a LUT process command, a parameter override command, and the relevant discovery commands.
 
 It MUST distinguish scanner color controls from saving color conversion. The preset list help MUST state the default source selection, the preset library directory, and the group order that resolves a bare preset name.
 
@@ -731,7 +753,7 @@ Invalid command syntax MUST return status `2`. A failed command after successful
 
 Existing telemetry-report persistence exceptions MUST follow the [telemetry contract](../telemetry/spec.md#local-surfaces).
 
-An error MUST identify the offending option or input and explain the corrective action when it is known. Unknown parameter paths, preset names, module prefixes, and workflow routes MUST offer up to three nearby canonical candidates when a sufficiently close match exists. Otherwise, they MUST identify the relevant discovery command or help option.
+An error MUST identify the offending option or input and explain the corrective action when it is known. Unknown parameter paths, preset names, module prefixes, and film routes MUST offer up to three nearby canonical candidates when a sufficiently close match exists. Otherwise, they MUST identify the relevant discovery command or help option.
 
 Candidate suggestions MUST NOT change the supplied value, accept an invalid invocation, introduce aliases, or search the filesystem for an unknown preset name.
 
@@ -763,6 +785,8 @@ JSON and TOML discovery, dry-run, render, and inspect output MUST remain parseab
 
 ## Lab scan recipe cutover
 
-The recipe writer MUST emit `spektrafilm-rs-params-7`. Versions 1–6 MUST migrate finishing under the [finishing wire contract](../finishing/design.md#wire-and-compatibility), while retaining their declared [lab scan migration boundaries](../film-chain/lab-scan/spec.md#point-wise-consumers-and-migration). Historical scanner provenance MUST match the built-in model before replacement.
+The recipe writer MUST emit `spektrafilm-rs-params-8`. Versions 1–6 MUST migrate finishing under the [finishing wire contract](../finishing/design.md#wire-and-compatibility), while retaining their declared [lab scan migration boundaries](../film-chain/lab-scan/spec.md#point-wise-consumers-and-migration).
+
+Versions 1–7 MUST migrate `lut_look` into `lut`, `effects`, and `grade`. Historical scanner provenance MUST match the built-in model before replacement.
 
 Version 5 MUST NOT reopen older retired-field migrations. Current recipe parameters MUST reject `scanner.lamp`; independent imported-capture illumination belongs to `film_render.convert.scan_illuminant`.

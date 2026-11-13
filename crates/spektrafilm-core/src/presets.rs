@@ -18,6 +18,7 @@ use std::path::Path;
 
 pub const PRESET_SCHEMA_VERSION: u32 = 7;
 pub const LUT_PRESET_SCHEMA_VERSION: u32 = 8;
+pub const EFFECTS_PRESET_SCHEMA_VERSION: u32 = 9;
 /// Preset-owned validation identity; English diagnostics remain the CLI contract.
 #[derive(Debug, Clone)]
 pub enum PresetDocumentReason {
@@ -456,6 +457,7 @@ fn default_true() -> bool {
 #[serde(untagged)]
 pub enum PresetParameters {
     Look(LookParameters),
+    Effects(crate::lut_look::EffectsParams),
     Section(Value),
 }
 #[derive(Debug, Clone, PartialEq)]
@@ -511,6 +513,17 @@ struct LutPresetWire<'a> {
     provenance: &'a Provenance,
 }
 #[derive(Serialize)]
+struct EffectsPresetWire<'a> {
+    schema_version: u32,
+    name: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    author: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    description: Option<&'a str>,
+    effects: &'a crate::lut_look::EffectsParams,
+    provenance: &'a Provenance,
+}
+#[derive(Serialize)]
 struct FilmPresetWire<'a> {
     schema_version: u32,
     name: &'a str,
@@ -528,7 +541,17 @@ struct FilmPresetWire<'a> {
 }
 impl Serialize for Preset {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        if let Some(lut) = &self.lut {
+        if let Some(PresetParameters::Effects(effects)) = &self.parameters {
+            EffectsPresetWire {
+                schema_version: self.schema_version,
+                name: &self.name,
+                author: self.author.as_deref(),
+                description: self.description.as_deref(),
+                effects,
+                provenance: &self.provenance,
+            }
+            .serialize(serializer)
+        } else if let Some(lut) = &self.lut {
             LutPresetWire {
                 schema_version: self.schema_version,
                 name: &self.name,
@@ -591,6 +614,11 @@ pub struct ResolvedPreset {
 pub struct ResolvedLutPreset {
     pub params: RuntimeParams,
     pub lut: LutLookParams,
+}
+#[derive(Debug, Clone)]
+pub struct ResolvedEffectsPreset {
+    pub params: RuntimeParams,
+    pub effects: crate::lut_look::EffectsParams,
 }
 impl LookParameters {
     pub fn capture(params: &RuntimeParams) -> Self {
@@ -697,6 +725,12 @@ impl Preset {
     }
     pub fn lut_parameters(&self) -> Option<&LutLookParams> {
         self.lut.as_ref()
+    }
+    pub fn effects_parameters(&self) -> Option<&crate::lut_look::EffectsParams> {
+        match self.parameters.as_ref() {
+            Some(PresetParameters::Effects(effects)) => Some(effects),
+            _ => None,
+        }
     }
     pub fn from_json_str(text: &str) -> Result<Self, String> {
         Self::from_json_str_detailed(text).map_err(|error| error.to_string())
@@ -898,6 +932,18 @@ impl Preset {
                 )
             })?;
         }
+        if !value.is_object() {
+            return Err(PresetDocumentError::new(
+                PresetDocumentReason::RootObject,
+                "preset must be an object",
+            ));
+        }
+        if value.get("mode").is_some() {
+            return Err(PresetDocumentError::new(
+                PresetDocumentReason::Shape,
+                "a preset selects its mode by kind and must not carry a mode field",
+            ));
+        }
         let wire: Wire = serde_json::from_value(value).map_err(|e| {
             PresetDocumentError::new(
                 PresetDocumentReason::Parser {
@@ -906,7 +952,43 @@ impl Preset {
                 format!("invalid preset: {e}"),
             )
         })?;
-        if wire.lut.is_none() && (wire.effects.is_some() || wire.grade.is_some()) {
+        let effects_preset =
+            if wire.lut.is_none() && wire.schema_version == EFFECTS_PRESET_SCHEMA_VERSION {
+                if wire.grade.is_some()
+                    || wire.parameters.is_some()
+                    || wire.film_profile.is_some()
+                    || wire.print_profile.is_some()
+                {
+                    return Err(PresetDocumentError::new(
+                        PresetDocumentReason::Shape,
+                        "an Effects preset must carry only the effects group and provenance",
+                    ));
+                }
+                let effects = wire.effects.clone().ok_or_else(|| {
+                    PresetDocumentError::new(
+                        PresetDocumentReason::Shape,
+                        "an Effects preset requires an effects group",
+                    )
+                })?;
+                Some(
+                    serde_json::from_value::<crate::lut_look::EffectsParams>(effects).map_err(
+                        |error| {
+                            PresetDocumentError::new(
+                                PresetDocumentReason::Parser {
+                                    detail: error.to_string(),
+                                },
+                                format!("invalid effects preset group: {error}"),
+                            )
+                        },
+                    )?,
+                )
+            } else {
+                None
+            };
+        if effects_preset.is_none()
+            && wire.lut.is_none()
+            && (wire.effects.is_some() || wire.grade.is_some())
+        {
             return Err(PresetDocumentError::new(
                 PresetDocumentReason::Shape,
                 "LUT effects and grade require a LUT declaration",
@@ -1014,7 +1096,9 @@ impl Preset {
             }
             None => None,
         };
-        let parameters = if lut.is_some() {
+        let parameters = if let Some(effects) = effects_preset {
+            Some(PresetParameters::Effects(effects))
+        } else if lut.is_some() {
             if wire.parameters.is_some()
                 || wire.film_profile.is_some()
                 || wire.print_profile.is_some()
@@ -1063,6 +1147,18 @@ impl Preset {
         self.kind_detailed().map_err(|error| error.to_string())
     }
     pub fn kind_detailed(&self) -> Result<PresetKind, PresetDocumentError> {
+        if let Some(PresetParameters::Effects(effects)) = &self.parameters {
+            if self.film_profile.is_none() && self.print_profile.is_none() && self.lut.is_none() {
+                effects.validate().map_err(|detail| {
+                    PresetDocumentError::new(PresetDocumentReason::Shape, detail)
+                })?;
+                return Ok(PresetKind::Effects);
+            }
+            return Err(PresetDocumentError::new(
+                PresetDocumentReason::Shape,
+                "an Effects preset must carry only the effects group",
+            ));
+        }
         if let Some(lut) = &self.lut {
             if self.film_profile.is_none()
                 && self.print_profile.is_none()
@@ -1097,7 +1193,9 @@ impl Preset {
         self.validate_detailed().map_err(|error| error.to_string())
     }
     pub fn validate_detailed(&self) -> Result<(), PresetDocumentError> {
-        let expected = if self.lut.is_some() {
+        let expected = if matches!(&self.parameters, Some(PresetParameters::Effects(_))) {
+            EFFECTS_PRESET_SCHEMA_VERSION
+        } else if self.lut.is_some() {
             LUT_PRESET_SCHEMA_VERSION
         } else {
             PRESET_SCHEMA_VERSION
@@ -1127,6 +1225,9 @@ impl Preset {
             ));
         }
         self.kind_detailed()?;
+        if matches!(&self.parameters, Some(PresetParameters::Effects(_))) {
+            return Ok(());
+        }
         if let Some(lut) = &self.lut {
             lut.validate(true)
                 .map_err(|detail| PresetDocumentError::new(PresetDocumentReason::Shape, detail))?;
@@ -1165,6 +1266,7 @@ impl Preset {
             .expect("non-LUT preset validated with parameters")
         {
             PresetParameters::Look(look) => look.apply_to(&mut params),
+            PresetParameters::Effects(_) => return Ok(()),
             PresetParameters::Section(payload) => {
                 // An omitted endpoint belongs to the destination, not this
                 // sparse document. Check whether the authored endpoint can
@@ -1367,6 +1469,7 @@ impl Preset {
             params.scanner.scan_output = "direct_scan".into();
         }
         crate::pipeline_calibration::validate_scan_output_route_detailed(&params)?;
+        params.workflow.mode = crate::lut_look::WorkflowMode::Film;
         params.validate_detailed()?;
         Ok(ResolvedPreset {
             film_name: film_ref.stock.clone(),
@@ -1376,6 +1479,29 @@ impl Preset {
             film,
             print,
         })
+    }
+    pub fn resolve_effects_detailed(
+        &self,
+        current: &RuntimeParams,
+    ) -> Result<ResolvedEffectsPreset, PresetDocumentError> {
+        self.validate_detailed()?;
+        let effects = match self.parameters.as_ref() {
+            Some(PresetParameters::Effects(effects)) => effects.clone(),
+            _ => {
+                return Err(PresetDocumentError::new(
+                    PresetDocumentReason::ExpectedLook,
+                    "not an Effects preset",
+                ));
+            }
+        };
+        let mut params = current.clone();
+        params.migrate_legacy_lut_look();
+        params.workflow.mode = crate::lut_look::WorkflowMode::Off;
+        params.workflow.route = "input".into();
+        params.io.scan_film = false;
+        params.effects = Some(effects.clone());
+        params.validate_detailed()?;
+        Ok(ResolvedEffectsPreset { params, effects })
     }
     pub fn resolve_lut_detailed(
         &self,
@@ -1391,7 +1517,11 @@ impl Preset {
         params.workflow.mode = crate::lut_look::WorkflowMode::Lut;
         params.workflow.route = "input".into();
         params.io.scan_film = false;
-        params.lut_look = lut.clone();
+        let (declaration, effects, grade) = lut.clone().split();
+        params.lut = Some(declaration);
+        params.effects = Some(effects);
+        params.grade = Some(grade);
+        params.lut_look = LutLookParams::default();
         params.validate_detailed()?;
         Ok(ResolvedLutPreset {
             params,
@@ -1444,6 +1574,24 @@ impl Preset {
             print_profile: None,
             parameters: None,
             lut: Some(lut),
+            provenance,
+        }
+    }
+    pub fn capture_effects(
+        name: impl Into<String>,
+        effects: crate::lut_look::EffectsParams,
+        mut provenance: Provenance,
+    ) -> Self {
+        provenance.scanner = None;
+        Self {
+            schema_version: EFFECTS_PRESET_SCHEMA_VERSION,
+            name: name.into(),
+            author: None,
+            description: None,
+            film_profile: None,
+            print_profile: None,
+            parameters: Some(PresetParameters::Effects(effects)),
+            lut: None,
             provenance,
         }
     }

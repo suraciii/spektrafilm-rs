@@ -300,10 +300,21 @@ fn render_candidate(
     cancel: &Arc<AtomicBool>,
 ) -> Result<egui::ColorImage, crate::app::Message> {
     let lut_candidate = candidate.preset.lut.is_some();
+    let effects_candidate = candidate.preset.effects_parameters().is_some();
     let (params, film_name, print_name) = if lut_candidate {
         let resolved = candidate
             .preset
             .resolve_lut_detailed(&context.params)
+            .map_err(|error| document_error_message(&error))?;
+        (
+            resolved.params,
+            context.film_name.clone(),
+            context.print_name.clone(),
+        )
+    } else if effects_candidate {
+        let resolved = candidate
+            .preset
+            .resolve_effects_detailed(&context.params)
             .map_err(|error| document_error_message(&error))?;
         (
             resolved.params,

@@ -98,13 +98,27 @@ pub fn marker(
         .iter()
         .find(|e| e.group == applied.group && e.name == applied.name)
         .and_then(|e| e.preset.as_ref())
-        .filter(|p| matches!(p.kind(), Ok(PresetKind::Look | PresetKind::Lut)))
+        .filter(|p| {
+            matches!(
+                p.kind(),
+                Ok(PresetKind::Look | PresetKind::Lut | PresetKind::Effects)
+            )
+        })
     else {
         return Marker::Missing;
     };
+    if preset.kind() == Ok(PresetKind::Effects) {
+        return if params.workflow.mode == spektrafilm_core::params::WorkflowMode::Off
+            && preset.effects_parameters() == Some(&params.effects.clone().unwrap_or_default())
+        {
+            Marker::Applied
+        } else {
+            Marker::Modified
+        };
+    }
     if preset.kind() == Ok(PresetKind::Lut) {
         return if params.workflow.mode == spektrafilm_core::params::WorkflowMode::Lut
-            && preset.lut.as_ref() == Some(&params.lut_look)
+            && preset.lut.as_ref() == params.lut_render_params().as_ref()
         {
             if preset.lut.as_ref().is_some_and(|lut| lut.load().is_ok()) {
                 Marker::Applied

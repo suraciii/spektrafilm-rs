@@ -158,7 +158,7 @@ pub fn resolve(
 /// LUT mode never consumes a film or print profile. The pipeline still
 /// carries profile-shaped carriers, so an empty unvalidated carrier keeps the
 /// LUT preset runnable without a data-directory profile lookup.
-pub(crate) fn lut_placeholder_profile() -> Result<Profile, String> {
+pub fn lut_placeholder_profile() -> Result<Profile, String> {
     serde_json::from_value(serde_json::json!({
         "metadata": {},
         "info": {"stock": null, "name": null, "target_print": null},
@@ -170,32 +170,35 @@ pub(crate) fn lut_placeholder_profile() -> Result<Profile, String> {
 /// A parameter document or `--set` leaves may select LUT mode without a
 /// preset. Detect that before profile resolution so the CLI does not demand
 /// film and print selectors that LUT mode never consumes.
-fn declares_lut_mode(request: &ProcessParamsRequest<'_>) -> Result<bool, String> {
+fn declares_transform_mode(request: &ProcessParamsRequest<'_>) -> Result<bool, String> {
     let (mut params, _) = load_baseline(request.params_file)?;
     for source in request.sources {
         ParameterEdits::parse(source)
             .map_err(|error| format!("--set {source:?}: {error}"))?
             .apply(&mut params)?;
     }
-    Ok(params.workflow.mode.is_lut())
+    Ok(!params.workflow.mode.is_film())
 }
 
-fn resolve_lut(
+fn resolve_transform(
     request: ProcessParamsRequest<'_>,
     _data_dir: &Path,
     preview_mode: Option<bool>,
 ) -> Result<ResolvedProcessParams, String> {
     let preset = match request.presets {
-        [preset] if preset.lut.is_some() => Some(preset),
+        [preset] if preset.lut.is_some() => Some((crate::lut_look::WorkflowMode::Lut, preset)),
+        [preset] if preset.effects_parameters().is_some() => {
+            Some((crate::lut_look::WorkflowMode::Off, preset))
+        }
         [] => None,
         _ => {
             return Err(
-                "a LUT preset must be the only --preset and cannot be mixed with a film look or section preset"
+                "a LUT or Effects preset must be the only --preset and cannot be mixed with a film look or section preset"
                     .into(),
             );
         }
     };
-    if let Some(_preset) = preset
+    if preset.is_some()
         && (request.film.is_some()
             || request.paper.is_some()
             || request.route.is_some()
@@ -203,16 +206,28 @@ fn resolve_lut(
             || !request.feature_profiles.is_empty())
     {
         return Err(
-            "a LUT preset conflicts with --film, --paper, --route, --scan-film, and --feature-profile"
+            "a LUT or Effects preset conflicts with --film, --paper, --route, --scan-film, and --feature-profile"
                 .into(),
         );
     }
     let (mut params, _) = load_baseline(request.params_file)?;
-    if let Some(preset) = preset {
-        let resolved = preset
-            .resolve_lut_detailed(&params)
-            .map_err(|error| error.to_string())?;
-        params = resolved.params;
+    params.migrate_legacy_lut_look();
+    if let Some((mode, preset)) = &preset {
+        params = match *mode {
+            crate::lut_look::WorkflowMode::Lut => {
+                preset
+                    .resolve_lut_detailed(&params)
+                    .map_err(|error| error.to_string())?
+                    .params
+            }
+            crate::lut_look::WorkflowMode::Off => {
+                preset
+                    .resolve_effects_detailed(&params)
+                    .map_err(|error| error.to_string())?
+                    .params
+            }
+            crate::lut_look::WorkflowMode::Film => unreachable!("transform preset kind"),
+        };
     }
     let parsed_sources: Vec<ParameterEdits> = request
         .sources
@@ -287,19 +302,21 @@ fn resolve_lut(
     if request.input_is_raw {
         force_raw_input(&mut params);
     }
-    // The selected LUT preset owns the workflow; canonical leaf edits may
-    // change its declaration and effects, not turn the invocation into a film
-    // render with placeholder carriers.
-    if preset.is_some()
-        && winning
-            .get("workflow.mode")
-            .is_some_and(|(requested, _)| requested.as_str() != Some("lut"))
+    // A selected transform preset owns the mode; canonical leaf edits may
+    // change its declaration and effects, but cannot turn the invocation into
+    // a film render or the other transform mode.
+    if let Some((expected, _)) = &preset
+        && params.workflow.mode != *expected
     {
-        return Err(
-            "a LUT preset or --lut conflicts with an explicit non-lut workflow.mode edit".into(),
-        );
+        return Err(format!(
+            "the selected {} preset conflicts with workflow.mode={}",
+            if expected.is_lut() { "LUT" } else { "Effects" },
+            params.workflow.mode.name()
+        ));
     }
-    params.workflow.mode = crate::lut_look::WorkflowMode::Lut;
+    if params.workflow.mode.is_film() {
+        return Err("LUT and Off processing require workflow.mode=lut or off".into());
+    }
     params.workflow.route = "input".into();
     params.io.scan_film = false;
     if let Some(mode) = request.scan_output {
@@ -390,8 +407,13 @@ fn resolve_with_preview_mode(
     data_dir: &Path,
     preview_mode: Option<bool>,
 ) -> Result<ResolvedProcessParams, String> {
-    if request.presets.iter().any(|preset| preset.lut.is_some()) || declares_lut_mode(&request)? {
-        return resolve_lut(request, data_dir, preview_mode);
+    if request
+        .presets
+        .iter()
+        .any(|preset| preset.lut.is_some() || preset.effects_parameters().is_some())
+        || declares_transform_mode(&request)?
+    {
+        return resolve_transform(request, data_dir, preview_mode);
     }
     let supplies_film = request
         .presets
@@ -436,6 +458,7 @@ fn resolve_with_preview_mode(
             Some(presets::PresetParameters::Look(look)) => {
                 grain_engine = look.film_render.grain.engine
             }
+            Some(presets::PresetParameters::Effects(_)) => {}
             Some(presets::PresetParameters::Section(payload)) => {
                 if let Some(value) = lookup(payload, "film_render.grain.engine") {
                     grain_engine = GrainEngine::deserialize(value).map_err(|e| e.to_string())?;

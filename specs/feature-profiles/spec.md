@@ -2,23 +2,23 @@
 
 ## Authority
 
-This document owns the feature profile concept, built-in catalog, profile scopes, and selection behavior. Feature specifications own execution and parameter semantics. [Presets](../presets/spec.md) owns reusable look and section documents.
+This document owns the feature profile concept, built-in catalog, profile scopes, and selection behavior. Feature specifications own execution and parameter semantics. [Presets](../presets/spec.md) owns reusable preset and section documents.
 
 ## Contract
 
-A **feature profile** is a named, built-in parameter set for one film-chain feature. It resolves only the leaves in its declared scope. It does not select a film profile, print profile, workflow, route, input, scan sensor, calibration state, GUI state, or complete look.
+A **feature profile** is a named, built-in parameter set for one film-chain feature. It resolves only the leaves in its declared scope. It does not select a film profile, print profile, render mode, film route, input, scan sensor, calibration state, GUI state, or complete preset.
 
 A **feature profile family** has one feature identifier, one profile scope, one validation rule, and one set of named entries. A family MAY expose `custom` as the state in which the user controls the scoped leaves directly. `custom` is not a built-in parameter set.
 
 The application MUST resolve a feature profile before rendering. It MUST validate the family, name, scope values, and active parameter combination before changing controls. An invalid selection MUST leave controls, transient state, and render revision unchanged except for the error status.
 
-Applying a feature profile MUST replace exactly the leaves in its profile scope. It MUST preserve every other control, including `active`, engine selection, film and print references, workflow, route, seed, and controls outside the profile scope. A profile MUST NOT enable or disable its feature as a side effect.
+Applying a feature profile MUST replace exactly the leaves in its profile scope. It MUST preserve every other control, including `active`, engine selection, film and print references, render mode, film route, seed, and controls outside the profile scope. A profile MUST NOT enable or disable its feature as a side effect.
 
-A profile selection is an edit to active controls. It MUST NOT rewrite a built-in look or section document. A later direct edit MAY produce a `custom` effective profile; it MUST NOT cause the application to reapply the previous named profile silently.
+A profile selection is an edit to active controls. It MUST NOT rewrite a built-in preset or section document. A later direct edit MAY produce a `custom` effective profile; it MUST NOT cause the application to reapply the previous named profile silently.
 
 Feature profiles are built-in catalog entries. They are not a second user profile library.
 
-A user who wants a reusable custom combination in the GUI MUST save a complete look. Shared section documents remain available to non-browser consumers.
+A user who wants a reusable custom combination in the GUI MUST save a complete preset. Shared section documents remain available to non-browser consumers.
 
 The GUI and CLI MUST resolve the same family identifiers, names, scope, validation, and values. A profile selected in either surface MUST produce the same resolved feature controls at the same precision boundary.
 
@@ -99,7 +99,7 @@ Selecting an entry MUST update only its profile scope and mark the feature secti
 
 `FAMILY` MUST be `grain.procedural` or `halation`. `NAME` MUST be a built-in name from this document or `custom`. Malformed assignments, unknown families, and unknown names MUST fail.
 
-The option MUST NOT fall back to a parameter path or look preset name.
+The option MUST NOT fall back to a parameter path or preset name.
 
 Feature profile options apply in command-line order before `--set` sources. A later selection for the same family replaces the earlier selection. `--set` sources then apply in their existing order and MAY override the profile's scoped values.
 
@@ -111,25 +111,25 @@ Feature profile selection MUST NOT be accepted inside a preset document, sparse 
 
 Resolution MUST use this order:
 
-1. Resolve film and print references and any look or section preset sources.
+1. Resolve film and print references and any preset or section document sources.
 2. Apply feature profile selections in their appearance order.
 3. Apply sparse `--set` sources in their appearance order.
-4. Apply explicit workflow, scan-output, and input choices.
+4. Apply explicit film route, scan-output, and input choices.
 5. Validate composed runtime controls and apply ordinary preview and backend constraints.
 
-A GUI feature-profile action has the same position as step 2 relative to an already applied look and later direct edits. Applying a look after a feature profile MAY replace look-owned values.
+A GUI feature-profile action has the same position as step 2 relative to an already applied preset and later direct edits. Applying a preset after a feature profile MAY replace preset-owned values.
 
-Feature-profile selection is not serialized as a new top-level or nested field. A saved look or section contains resolved runtime leaves under its existing schema. A document MUST NOT require a catalog entry because it stores leaves rather than profile names.
+Feature-profile selection is not serialized as a new top-level or nested field. A saved preset or section contains resolved runtime leaves under its existing schema. A document MUST NOT require a catalog entry because it stores leaves rather than profile names.
 
 ## Acceptance
 
 1. Every built-in family and name in this document resolves to the exact scope values in its table. Dye is not part of this catalog.
 2. An unknown family or name fails before render publication and leaves active controls unchanged.
-3. Applying a profile changes only its declared scope. Tests MUST retain sentinels in out-of-scope controls, including `active`, route, workflow, engine, and seed.
+3. Applying a profile changes only its declared scope. Tests MUST retain sentinels in out-of-scope controls, including `active`, render mode, film route, engine, and seed.
 4. A direct Halation scope edit reports `custom` and preserves existing Procedural profile behavior.
 5. CLI and GUI selection resolve identical values. A profile run and equivalent direct-leaf `--set` run produce identical output for the same executable, backend, seed, and input.
 6. Profile selection does not create a second preset library or add profile references or external-product fields to carriers.
-7. Existing look presets, section presets, sparse parameter files, GUI state, Procedural profile values, Halation stock defaults, CPU execution, GPU execution, and inactive-value behavior remain compatible when no feature profile is selected.
+7. Existing presets, section presets, sparse parameter files, GUI state, Procedural profile values, Halation stock defaults, CPU execution, GPU execution, and inactive-value behavior remain compatible when no feature profile is selected.
 8. Catalog changes require an explicit product revision and MUST NOT silently reinterpret stored resolved values.
 
 ## Reference basis

@@ -219,8 +219,11 @@ impl App {
             // route, an unsupported combination) must fall back to the factory
             // state with a visible reason instead of failing at construction.
             let params = state.runtime_params()?;
-            let film = profile::load_profile_by_name(&data_dir, state.film())?;
-            spektrafilm_core::validate_scan_output(&params, &film).map_err(anyhow::Error::msg)?;
+            if params.workflow.mode.is_film() {
+                let film = profile::load_profile_by_name(&data_dir, state.film())?;
+                spektrafilm_core::validate_scan_output(&params, &film)
+                    .map_err(anyhow::Error::msg)?;
+            }
             Ok(state)
         })
         .unwrap_or_else(|error| {
@@ -229,7 +232,12 @@ impl App {
         });
         let film_name = gui_state.film().to_owned();
         let print_name = gui_state.paper().to_owned();
-        let film_profile = profile::load_profile_by_name(&data_dir, &film_name).ok();
+        let film_mode = gui_state
+            .runtime_params()
+            .is_ok_and(|params| params.workflow.mode.is_film());
+        let film_profile = film_mode
+            .then(|| profile::load_profile_by_name(&data_dir, &film_name).ok())
+            .flatten();
         let film_reference_illuminant = film_profile
             .as_ref()
             .map(|profile| profile.info.reference_illuminant.clone())
@@ -244,14 +252,20 @@ impl App {
         let mut params = gui_state
             .runtime_params()
             .expect("validated GUI factory state");
-        params.film_render.grain.monochrome =
-            film_profile.as_ref().is_some_and(|film| film.is_bw());
-        normalize_scanner_selections(&mut params, film_medium);
+        if film_mode {
+            params.film_render.grain.monochrome =
+                film_profile.as_ref().is_some_and(|film| film.is_bw());
+            normalize_scanner_selections(&mut params, film_medium);
+        }
         let film_dev_times = film_profile
             .as_ref()
             .map(|f| f.data.development_time.clone())
             .unwrap_or_default();
-        let print_dev_times = profile_dev_times(&data_dir, &print_name);
+        let print_dev_times = if film_mode {
+            profile_dev_times(&data_dir, &print_name)
+        } else {
+            Vec::new()
+        };
         let export_options = ExportOptions::from_state(&gui_state.sections);
         let mut presets = presets::Browser::new(
             &gui_state.sections,
@@ -533,33 +547,47 @@ impl App {
 
     fn validate_state(&self, state: state::GuiState) -> Result<StateApplication> {
         let mut params = state.runtime_params()?;
-        let film = profile::load_profile_by_name(&self.data_dir, state.film())?;
-        let print = profile::load_profile_by_name(&self.data_dir, state.paper())?;
-        if !film.is_film() || !film.is_filming() {
-            return Err(crate::app::Message::new("app.state.invalid_film_profile")
-                .arg("profile", state.film())
-                .into());
+        let film_mode = params.workflow.mode.is_film();
+        let (film, print) = if film_mode {
+            let film = profile::load_profile_by_name(&self.data_dir, state.film())?;
+            let print = profile::load_profile_by_name(&self.data_dir, state.paper())?;
+            if !film.is_film() || !film.is_filming() {
+                return Err(crate::app::Message::new("app.state.invalid_film_profile")
+                    .arg("profile", state.film())
+                    .into());
+            }
+            if !print.is_print_stock() {
+                return Err(crate::app::Message::new("app.state.invalid_print_profile")
+                    .arg("profile", state.paper())
+                    .into());
+            }
+            (film, print)
+        } else {
+            let film = spektrafilm_core::process_params::lut_placeholder_profile()
+                .map_err(anyhow::Error::msg)?;
+            (film.clone(), film)
+        };
+        if film_mode {
+            params.film_render.grain.monochrome = film.is_bw();
+            spektrafilm_core::validate_scan_output(&params, &film).map_err(anyhow::Error::msg)?;
         }
-        if !print.is_print_stock() {
-            return Err(crate::app::Message::new("app.state.invalid_print_profile")
-                .arg("profile", state.paper())
-                .into());
-        }
-        params.film_render.grain.monochrome = film.is_bw();
-        spektrafilm_core::validate_scan_output(&params, &film).map_err(anyhow::Error::msg)?;
         if self.image_path.as_deref().is_some_and(image_io::is_raw) {
             params.io.input_color_space = "ACES2065-1".into();
             params.io.input_cctf_decoding = false;
         }
         let film_medium = scan_medium(&film);
-        let before_scanner = params.scanner.clone();
-        normalize_scanner_selections(&mut params, film_medium);
-        let normalization = App::scanner_normalization_detail(
-            &before_scanner,
-            &params.scanner,
-            film_medium,
-            &params.workflow.route,
-        );
+        let normalization = if film_mode {
+            let before_scanner = params.scanner.clone();
+            normalize_scanner_selections(&mut params, film_medium);
+            App::scanner_normalization_detail(
+                &before_scanner,
+                &params.scanner,
+                film_medium,
+                &params.workflow.route,
+            )
+        } else {
+            None
+        };
         Ok(StateApplication {
             state,
             params,

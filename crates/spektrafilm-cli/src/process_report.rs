@@ -67,6 +67,37 @@ fn record(label: &str, fields: &Value) {
     }
 }
 
+fn print_effects(params: &Value) {
+    let effects = &params["effects"];
+    for (name, group) in [
+        ("diffusion", &effects["diffusion"]),
+        ("halation", &effects["halation"]),
+        ("grain", &effects["grain"]),
+    ] {
+        let active = group["active"].as_bool().unwrap_or(false);
+        println!(
+            "  effects.{name}: {}",
+            if active { "active" } else { "inactive" }
+        );
+    }
+}
+
+fn print_grade(params: &Value) {
+    let grade = &params["grade"];
+    let active = grade["active"].as_bool().unwrap_or(false);
+    println!(
+        "  lut grade: {}",
+        if active { "active" } else { "inactive" }
+    );
+    if active {
+        for name in ["brightness", "contrast", "warmth", "saturation"] {
+            if let Some(field) = grade.get(name) {
+                println!("    {name}: {}", value(field));
+            }
+        }
+    }
+}
+
 pub(crate) fn print_text(report: &Value) {
     println!("INPUT");
     println!("  kind: {}", value(&report["input"]["kind"]));
@@ -91,45 +122,61 @@ pub(crate) fn print_text(report: &Value) {
     }
     record("DATA", &report["data"]);
     let params = &report["parameters"];
-    let lut_mode = report["workflow"]["mode"].as_str() == Some("lut");
+    let mode = report["workflow"]["mode"].as_str().unwrap_or("film");
+    let film_mode = mode == "film";
     println!("LOOK AND WORKFLOW");
-    if lut_mode {
-        let lut = &params["lut_look"];
-        println!("  mode: lut");
-        println!("  lut: {}", value(&lut["path"]));
-        if lut["title"].as_str().is_some_and(|title| !title.is_empty()) {
-            println!("  title: {}", value(&lut["title"]));
+    match mode {
+        "lut" => {
+            let lut = &params["lut"];
+            println!("  mode: lut");
+            println!("  lut: {}", value(&lut["path"]));
+            if lut["title"].as_str().is_some_and(|title| !title.is_empty()) {
+                println!("  title: {}", value(&lut["title"]));
+            }
+            println!("  input space: {}", value(&lut["input_space"]));
+            println!("  output space: {}", value(&lut["output_space"]));
+            println!(
+                "  domain: {} .. {}",
+                value(&lut["domain_min"]),
+                value(&lut["domain_max"])
+            );
+            println!("  domain policy: {}", value(&lut["domain_policy"]));
+            println!("  shaper: {}", value(&lut["shaper"]));
+            println!("  strength: {}", value(&lut["strength"]));
+            println!("  sha256: {}", value(&lut["sha256"]));
+            print_effects(params);
+            print_grade(params);
+            println!(
+                "  film stages: {}",
+                value(&report["workflow"]["film_stages"])
+            );
         }
-        println!("  input space: {}", value(&lut["input_space"]));
-        println!("  output space: {}", value(&lut["output_space"]));
-        println!(
-            "  domain: {} .. {}",
-            value(&lut["domain_min"]),
-            value(&lut["domain_max"])
-        );
-        println!("  domain policy: {}", value(&lut["domain_policy"]));
-        println!("  shaper: {}", value(&lut["shaper"]));
-        println!("  strength: {}", value(&lut["strength"]));
-        println!("  sha256: {}", value(&lut["sha256"]));
-        println!(
-            "  film stages: {}",
-            value(&report["workflow"]["film_stages"])
-        );
-    } else {
-        println!("  mode: film");
-        println!("  film: {}", value(&report["film_profile"]));
-        println!("  print: {}", value(&report["print_profile"]));
-        println!("  route: {}", value(&params["workflow"]["route"]));
-        println!(
-            "  scan output: {}",
-            value(&params["scanner"]["scan_output"])
-        );
+        "off" => {
+            println!("  mode: off");
+            print_effects(params);
+            println!("  lut: inactive");
+            println!("  lut grade: inactive");
+            println!(
+                "  film stages: {}",
+                value(&report["workflow"]["film_stages"])
+            );
+        }
+        _ => {
+            println!("  mode: film");
+            println!("  film: {}", value(&report["film_profile"]));
+            println!("  print: {}", value(&report["print_profile"]));
+            println!("  route: {}", value(&params["workflow"]["route"]));
+            println!(
+                "  scan output: {}",
+                value(&params["scanner"]["scan_output"])
+            );
+        }
     }
     println!("  seed: {}", value(&report["seed"]));
     if !report["seed_source"].is_null() {
         println!("  seed source: {}", value(&report["seed_source"]));
     }
-    if !lut_mode {
+    if film_mode {
         record("CAPTURE ILLUMINANT", &report["capture_illuminant"]);
         record("READOUT ILLUMINANT", &report["readout_illuminant"]);
         record("SCANNER", &params["scanner"]);

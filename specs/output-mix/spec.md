@@ -2,7 +2,7 @@
 
 ## Product model
 
-This is the final target scope for material-control simplification, Output lightness retirement, and overall effect mixing. Existing material controls remain authoritative; this capability does not add a digital material-response layer, another workflow, or a second RGB film pipeline.
+This is the final target scope for material-control simplification, Output lightness retirement, and overall effect mixing. Existing material controls remain authoritative; this capability does not add a digital material-response layer, another render mode, or a second RGB film pipeline.
 
 **Preflash** is an independent, spatially uniform exposure added at the print material plane before development. **Simulation blend** blends the complete result with the prepared source; it does not scale material parameters. **Prepared source** means decoded, geometrically aligned input before simulated camera exposure and processing, not the Input viewer raster or an automatically inverted negative.
 
@@ -57,15 +57,17 @@ A versioned legacy complete-document migration MAY discard an absent or null ret
 
 It MUST NOT direct users to withdrawn digital-response controls. Current complete documents, sparse sources, and inline assignments MUST reject the retired path even when its value is null. Failed migration MUST leave source documents, active state, accepted render identity, and published output unchanged.
 
-The discarded draft paths `reproduction.*`, `io.finished_rgb_output_processing`, and the Output response preset section MUST NOT become aliases. The `input` workflow retains its existing color-management path and MAY use overall effect mixing without enabling film or print development. Floating headroom and integer-writer clipping remain governed by [Photo export](../photo-export/spec.md).
+The discarded draft paths `reproduction.*`, `io.finished_rgb_output_processing`, and the Output response preset section MUST NOT become aliases. The `input` route retains its existing color-management path and MAY use overall effect mixing without enabling film or print development. Floating headroom and integer-writer clipping remain governed by [Photo export](../photo-export/spec.md).
 
 Removing lightness compression does not guarantee that every highlight fits the output gamut.
 
 ## Output mix
 
+Output mix and CMYK ink style are active only in Film mode. LUT and Off modes retain their values and MUST NOT execute them.
+
 `output_mix.amount` MUST be f64, finite in [0,1], and default to 1. It mixes the prepared source with the complete result after [Tone & Color](../finishing/design.md#color-and-order) and the existing output tail, before saving conversion. Both branches MUST use the same output-space linear RGB and the same orientation, rotation, crop, and resize.
 
-This is one look-owned Output control, not an additional workflow, per-stage opacity, or CMYK Strength alias.
+This is one preset-owned Output control, not an additional render mode, per-stage opacity, or CMYK Strength alias.
 
 The prepared source includes decoding, RAW white balance, and requested lens correction. It excludes virtual camera metering and exposure compensation, film, print, scanner interpretation, Tone & Color, output gamut processing, and CMYK ink style. It uses the existing input-to-output color-space conversion, without a new creative tone curve.
 
@@ -89,7 +91,7 @@ Scanner references MUST retain their [medium-specific meanings](../film-chain/sp
 
 Row and module resets MUST follow [Section reset](../gui-workflow/spec.md#section-reset). Simulation blend MUST reset `output_mix.amount` to its factory value of 1. A module reset MUST affect only the visible canonical paths it owns, not the wider serialized preset section.
 
-Enlarger and Preflash MUST therefore reset their own visible controls even though both belong to the `enlarger` preset section. Moving controls MUST NOT change their numerical semantics or add a response reset. [Presets](../presets/spec.md) owns version migration, complete look capture, and the single primary menu anchor for each unchanged section scope.
+Enlarger and Preflash MUST therefore reset their own visible controls even though both belong to the `enlarger` preset section. Moving controls MUST NOT change their numerical semantics or add a response reset. [Presets](../presets/spec.md) owns version migration, complete preset capture, and the single primary menu anchor for each unchanged section scope.
 
 [CLI parameters](../cli/spec.md) owns canonical paths, sparse edits, discovery, and inactive-edit feedback.
 

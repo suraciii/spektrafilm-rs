@@ -17,7 +17,7 @@ A preset document, a sparse parameter file, and inline assignments MUST remain d
 - Invalid numeric or boolean input MUST fail with a type-specific message instead of falling back to text. The carrier parser MUST return the same typed values to the existing leaf validator.
 
 ## Parameter preparation
-- Stock look initialization, explicit controls, and runtime constraints MUST be separate preparation decisions. Preparation MUST retain each explicit neutral-filter axis through database calibration.
+- Stock-specific initialization, explicit controls, and runtime constraints MUST be separate preparation decisions. Preparation MUST retain each explicit neutral-filter axis through database calibration.
 - It MUST use supplied-field information rather than comparing numbers with defaults. A value equal to a stock default is still an explicit edit.
 - The capture illuminant is resolved in core, not in the CLI adapter. The CLI MUST NOT add a dedicated flag, a shortened path, or a second illuminant vocabulary for it.
 - It is an optional camera leaf under the [capture illuminant contract](spec.md#capture-illuminant). It is resolved through the same field description, sparse-file and inline carriers, and shared illuminant validator as every other light-source leaf.
@@ -25,14 +25,14 @@ A preset document, a sparse parameter file, and inline assignments MUST remain d
 
 Explicit-axis ownership MUST survive runtime construction and calibration rebuilds. It MUST NOT change the user's database-calibration setting. Calibration MUST retain database f64 values for axes that remain database-owned.
 
-A prepared configuration MUST NOT receive another stock initialization step when the runtime is constructed. Applying preview, LUT-mode, or debug constraints MUST NOT corrupt the editable controls used to resolve a subsequent configuration. Legacy baseline decoding and numerical preparation MUST retain their existing semantics while the [compatibility contract](spec.md#compatibility) governs canonical validation and other explicit cutovers.
+A prepared configuration MUST NOT receive another stock initialization step when the runtime is constructed. Applying preview, render-mode, or debug constraints MUST NOT corrupt the editable controls used to resolve a subsequent configuration. Legacy baseline decoding and numerical preparation MUST retain their existing semantics while the [compatibility contract](spec.md#compatibility) governs canonical validation and other explicit cutovers.
 
 - Core MUST return the resolved profiles and effective parameters as one validated result. The CLI MUST resolve and validate writer options separately from scanner output parameters.
 - Writer resolution MUST NOT require an output artifact. A dry run without `--output` MUST resolve the writer defaults without inventing a destination path.
 - Normal processing and dry run MUST consume these same resolution results. Dry run MUST stop before image decoding and compute-device creation.
 - It MUST NOT approximate a render or independently reconstruct the parameter composition.
 
-The resolution report MUST include deterministic topology and monochrome channel normalization performed by runtime construction. These decisions MUST use the selected profiles and workflow without decoding image pixels.
+The resolution report MUST include deterministic topology and monochrome channel normalization performed by runtime construction. These decisions MUST use the selected profiles and film route without decoding image pixels.
 
 ## Field description
 - The editable field description MUST serve parameter-file and inline-assignment validation and parameter discovery. It MUST identify leaves, types, optional values, units, domains, and effect conditions.
@@ -139,7 +139,7 @@ This cutover MUST NOT change numerical algorithms, parameter wire shapes, docume
 ## Design choice and implementation dependencies
 - Canonical runtime paths and the existing sparse TOML/JSON language are retained. Short aliases would duplicate vocabulary and obscure distinct exposure and grain controls.
 - A complete job file would duplicate profile, render-recipe, and export boundaries. Neither alternative is part of this design.
-- Dedicated source declarations and seed flags solve invocation context without expanding the look language.
+- Dedicated source declarations and seed flags solve invocation context without expanding the preset language.
 - Safe publication MUST land before new success-facing image examples are accepted. The publication transaction belongs to [photo export](../photo-export/design.md#transaction-boundary).
 - Declaration, seed, and route changes MUST then migrate every public process caller, README example, packaged example, acceptance script, and affected behavior test. New required declarations MUST NOT be bypassed by legacy-only calls or a compatibility flag.
 - Feedback and text presentation MUST build on the same prepared result after source tracking is available. Selected-field descriptions MUST be updated with the authoritative conditions.

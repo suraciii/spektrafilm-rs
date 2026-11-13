@@ -130,8 +130,11 @@ fn collect_metadata(prefix: &str, value: &Value, out: &mut Vec<Value>) {
 
 pub(super) fn schema_value() -> &'static Value {
     static SCHEMA: LazyLock<Value> = LazyLock::new(|| {
-        let mut value =
-            serde_json::to_value(RuntimeParams::default()).expect("RuntimeParams serializes");
+        let mut params = RuntimeParams::default();
+        params.lut = Some(crate::params::LutParams::default());
+        params.effects = Some(crate::params::EffectsParams::default());
+        params.grade = Some(crate::params::GradeParams::default());
+        let mut value = serde_json::to_value(params).expect("RuntimeParams serializes");
         value["workflow"].as_object_mut().unwrap().remove("route");
         value["io"].as_object_mut().unwrap().remove("scan_film");
         value["film_render"]["grain"]

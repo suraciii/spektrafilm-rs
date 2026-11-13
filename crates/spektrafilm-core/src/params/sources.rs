@@ -156,6 +156,38 @@ impl ParameterEdits {
             )
             .arg("detail", error)
         })?;
+        // Optional canonical transform groups are absent from the serialized
+        // default. A sparse edit must create the owning group, not fail path
+        // traversal because the group was omitted.
+        for (path, _) in &self.edits {
+            let (key, default) = if path.starts_with("lut.") {
+                (
+                    "lut",
+                    serde_json::to_value(crate::params::LutParams::default()),
+                )
+            } else if path.starts_with("effects.") {
+                (
+                    "effects",
+                    serde_json::to_value(crate::params::EffectsParams::default()),
+                )
+            } else if path.starts_with("grade.") {
+                (
+                    "grade",
+                    serde_json::to_value(crate::params::GradeParams::default()),
+                )
+            } else {
+                continue;
+            };
+            if root.get(key).is_none() {
+                root[key] = default.map_err(|error| {
+                    Error::new(
+                        Reason::SerializeParameters,
+                        "",
+                        format!("serialize {key} defaults: {error}"),
+                    )
+                })?;
+            }
+        }
         for (path, value) in &self.edits {
             set_value_detailed(&mut root, path, value.clone())?;
         }

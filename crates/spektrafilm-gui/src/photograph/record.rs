@@ -496,13 +496,19 @@ pub(crate) fn dependencies(
         if settings.params.workflow.mode == spektrafilm_core::params::WorkflowMode::Lut {
             let mut params = settings.params.clone();
             params.restore_render_preparation_state(&settings.preparation);
-            params.lut_look.load().map_err(anyhow::Error::msg)?;
-            let path = absolute(&params.lut_look.path)?;
+            let lut = params
+                .lut_render_params()
+                .ok_or_else(|| anyhow::anyhow!("LUT mode has no declaration"))?;
+            lut.load().map_err(anyhow::Error::msg)?;
+            let path = absolute(&lut.path)?;
             let sha256 = digest(&path)?;
             return Ok(vec![Dependency {
                 path,
                 sha256: Some(sha256),
             }]);
+        }
+        if settings.params.workflow.mode == spektrafilm_core::params::WorkflowMode::Off {
+            return Ok(Vec::new());
         }
         let mut paths = BTreeSet::new();
         for stock in [&settings.film, &settings.print] {

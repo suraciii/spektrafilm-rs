@@ -127,6 +127,7 @@ pub const STAGE_NAMES: &[&str] = &[
     "standard_setup",
     "input_transfer",
     "lut_look",
+    "effects",
     "colorspace_convert",
     "output_transfer",
     "rgb_to_raw",

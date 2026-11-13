@@ -437,6 +437,12 @@ mod tests {
     }
 
     #[test]
+    fn workflow_mode_locates_the_global_selector() {
+        let entry = lookup("workflow.mode").expect("workflow mode inventory");
+        assert_eq!(entry.owner, ControlOwner::Global);
+    }
+
+    #[test]
     fn photograph_commands_locate_actual_owners_and_exact_paths() {
         let (params, extras) = factory();
         for (path, owner, section) in [

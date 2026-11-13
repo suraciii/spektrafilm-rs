@@ -74,7 +74,7 @@ Search MUST inspect control descriptions without invoking editor mutations, mate
 
 Normal disclosure state and query-induced disclosure MUST be separate. Clearing a query MUST remove only the query-induced expansion. Only modified MUST read the same reset-baseline comparison as row markers, not a separately maintained dirty flag.
 
-Search text, temporary result selection, and adjustment history remain session-local. Browser preferences and applied identity follow [browser state ownership](../presets/design.md#browser-state-ownership). Inspector organization MUST NOT leak into look presets, runtime recipes, CLI parameter documents, or Python-compatible GUI sections.
+Search text, temporary result selection, and adjustment history remain session-local. Browser preferences and applied identity follow [browser state ownership](../presets/design.md#browser-state-ownership). Inspector organization MUST NOT leak into presets, runtime recipes, CLI parameter documents, or Python-compatible GUI sections.
 
 ## Retained output and delivery
 

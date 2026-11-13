@@ -23,7 +23,7 @@ The [GUI language design](../gui-language/design.md) owns localized presentation
 - Material selection and reset-baseline construction MUST use the core-owned [material defaults](../presets/design.md#material-defaults), not a GUI copy of stock tables. Reset baseline construction starts from a fresh factory projection without live explicit edits.
 - Ordinary rendering, full-state restoration, and history replay retain accepted values without material-default initialization. State compatibility follows [finishing wire and compatibility](../finishing/design.md#wire-and-compatibility).
 - Scanner references and inverses retain their existing dependencies. Input and capture → Camera exposes the canonical `camera.capture_illuminant` leaf under the [Camera control contract](spec.md#contract), including inherited effective values and the CLI's shared type, validator, and conditions.
-- The output amount control MUST use [core output composition](../output-mix/design.md#output-composition). The GUI MUST NOT derive an output-mix source from the Input viewer raster, restore retired output lightness processing, or add a separate output-processing switch for the `input` workflow.
+- The output amount control MUST use [core output composition](../output-mix/design.md#output-composition). The GUI MUST NOT derive an output-mix source from the Input viewer raster, restore retired output lightness processing, or add a separate output-processing switch for the `input` route.
 - Tone & Color controls and inactive reasons MUST consume the core-owned [adjustment applicability](../finishing/design.md#ownership), not a GUI route table. Module comparison MUST use [adjustment editing and comparison](../finishing/spec.md#editing-and-comparison) without creating another history owner.
 - State and preset loading MUST validate and migrate a candidate before committing any UI or runtime state. With a loaded source, state application prepares RAW reloads, GPU upload and the input view on the input worker before one UI-side commit.
 - RGB state application MUST reuse accepted source samples and preserve their metadata and source identity without rereading the file. Completion status and history replacement occur only after that commit; preparation failure preserves the source, controls, accepted output, history and numeric drafts.
@@ -87,7 +87,7 @@ The existing frame-level adjustment transaction MUST detect explicit-ownership c
 
 Idle-frame comparison MUST borrow the core-owned explicit paths without serializing parameters or cloning a preparation snapshot. Accepted changes retain the existing render-revision, calibration, cancellation, and publication rules.
 
-GUI edits MUST acquire explicit ownership only for core-discovered parameter leaves. Workflow selection and GUI-only fields MUST retain their existing persistence semantics without entering runtime explicit ownership.
+GUI edits MUST acquire explicit ownership only for core-discovered parameter leaves. Render mode, film route selection, and GUI-only fields MUST retain their existing persistence semantics without entering runtime explicit ownership.
 
 History and photograph records MUST retain GUI-only values in their existing fields, subject to accepted-state and RAW-draft rules.
 

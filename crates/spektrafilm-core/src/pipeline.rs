@@ -92,6 +92,7 @@ pub struct Pipeline {
     pub print: Arc<Profile>,
     pub params: RuntimeParams,
     lut_look: Option<Arc<crate::lut_look::LutLook>>,
+    off_look: Option<Arc<crate::lut_look::LutLook>>,
     spectral: Option<Arc<crate::spectral_service::SpectralPreparation>>,
     gray: Option<Arc<crate::pipeline_calibration::GrayReferences>>,
     print_calibration: Option<Arc<crate::pipeline_calibration::PrintCalibration>>,
@@ -117,6 +118,7 @@ pub(crate) struct ParameterUpdate {
     pub film: Arc<Profile>,
     print: Arc<Profile>,
     lut_look: Option<Arc<crate::lut_look::LutLook>>,
+    off_look: Option<Arc<crate::lut_look::LutLook>>,
     spectral: Option<Arc<crate::spectral_service::SpectralPreparation>>,
     gray: Option<Arc<crate::pipeline_calibration::GrayReferences>>,
     print_calibration: Option<Arc<crate::pipeline_calibration::PrintCalibration>>,
@@ -242,17 +244,36 @@ impl Pipeline {
         backend: &dyn ComputeBackend,
         previous: Option<&Pipeline>,
     ) -> Result<ParameterUpdate, String> {
+        params.migrate_legacy_lut_look();
         params.validate_values()?;
-        if params.workflow.mode.is_lut() {
+        if !params.workflow.mode.is_film() {
             params.workflow.route = "input".into();
             params.io.scan_film = false;
             params.validate()?;
-            let lut_look = match previous
-                .filter(|old| old.params.lut_look == params.lut_look)
-                .and_then(|old| old.lut_look.clone())
-            {
-                Some(look) => Some(look),
-                None => Some(Arc::new(params.lut_look.load()?)),
+            let render = params
+                .lut_render_params()
+                .ok_or_else(|| "LUT mode requires a LUT declaration".to_owned())?;
+            let lut_look = if params.workflow.mode.is_lut() {
+                match previous
+                    .and_then(|old| old.lut_look.as_ref())
+                    .filter(|old| old.params() == &render)
+                    .cloned()
+                {
+                    Some(look) => Some(look),
+                    None => Some(Arc::new(render.load()?)),
+                }
+            } else {
+                None
+            };
+            let off_look = if params.workflow.mode.is_off() {
+                Some(Arc::new(crate::lut_look::LutLook::off(
+                    params
+                        .effects
+                        .as_ref()
+                        .unwrap_or(&crate::lut_look::EffectsParams::default()),
+                )?))
+            } else {
+                None
             };
             let output_gamut = crate::gamut_compression::OutputGamutCompress::build(
                 &params.io.output_gamut_compress,
@@ -263,13 +284,14 @@ impl Pipeline {
                 film: Arc::clone(original_film),
                 print: Arc::clone(original_print),
                 lut_look,
+                off_look,
                 spectral: None,
                 gray: None,
                 print_calibration: None,
                 convert_converter: None,
-                // The LUT branch never applies negative conversion or scan
-                // styles; the frozen standard tone keeps inactive values out
-                // of data-directory requirements.
+                // The non-film branch never applies negative conversion or
+                // scan styles; the frozen standard tone keeps inactive values
+                // out of data-directory requirements.
                 conversion_tones: crate::stages::scanning::style::STANDARD,
                 output_gamut: Arc::new(output_gamut),
                 preparation_device: backend.preparation_device_id(),
@@ -296,7 +318,7 @@ impl Pipeline {
         params.validate_color()?;
         let film_inputs = FilmMaterialInputs::new(original_film, &params);
         let film = if let Some(old) = previous.filter(|old| {
-            !old.params.workflow.mode.is_lut()
+            old.params.workflow.mode.is_film()
                 && film_inputs == FilmMaterialInputs::new(original_film, &old.params)
         }) {
             if params.scanner.scan_output == "negative_to_positive"
@@ -325,7 +347,7 @@ impl Pipeline {
         let conversion_tones = if let Some(tones) = cold_tones {
             tones
         } else if let Some(old) = previous.filter(|old| {
-            !old.params.workflow.mode.is_lut()
+            old.params.workflow.mode.is_film()
                 && old.params.scanner.conversion_style == params.scanner.conversion_style
         }) {
             old.conversion_tones
@@ -334,7 +356,7 @@ impl Pipeline {
         };
         let print_inputs = PrintMaterialInputs::new(original_print, &params);
         let print = if let Some(old) = previous.filter(|old| {
-            !old.params.workflow.mode.is_lut()
+            old.params.workflow.mode.is_film()
                 && print_inputs == PrintMaterialInputs::new(original_print, &old.params)
         }) {
             Arc::clone(&old.print)
@@ -474,22 +496,12 @@ impl Pipeline {
         } else {
             Arc::new(output_inputs.build(backend)?)
         };
-        let lut_look = if params.workflow.mode.is_lut() {
-            match previous
-                .filter(|old| old.params.lut_look == params.lut_look)
-                .and_then(|old| old.lut_look.clone())
-            {
-                Some(look) => Some(look),
-                None => Some(Arc::new(params.lut_look.load()?)),
-            }
-        } else {
-            None
-        };
         Ok(ParameterUpdate {
             params,
             film,
             print,
-            lut_look,
+            lut_look: None,
+            off_look: None,
             spectral,
             gray,
             print_calibration,
@@ -505,6 +517,7 @@ impl Pipeline {
         self.film = update.film;
         self.print = update.print;
         self.lut_look = update.lut_look;
+        self.off_look = update.off_look;
         self.spectral = update.spectral;
         self.gray = update.gray;
         self.print_calibration = update.print_calibration;
@@ -604,6 +617,7 @@ impl Pipeline {
             print: Arc::new(print),
             params,
             lut_look: None,
+            off_look: None,
             spectral: None,
             gray: None,
             print_calibration: Some(Arc::new(crate::pipeline_calibration::PrintCalibration {
@@ -668,6 +682,7 @@ impl Pipeline {
             print: prepared.print,
             params: prepared.params,
             lut_look: prepared.lut_look,
+            off_look: prepared.off_look,
             spectral: prepared.spectral,
             gray: prepared.gray,
             print_calibration: prepared.print_calibration,
