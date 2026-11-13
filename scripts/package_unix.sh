@@ -29,7 +29,7 @@ fi
 rm -rf "$dist_root" "$archive"
 mkdir -p "$dist_root"
 
-for binary in spektrafilm-gui spektrafilm spektrafilm-f64 decode_raw_gui spektrafilm-lab; do
+for binary in spektrafilm-gui spektrafilm spektrafilm-f64 decode_raw_gui spektrafilm-lab spektrafilm-experiment; do
     source="$repo_root/target/release/$binary"
     test -x "$source" || { echo "missing release binary: $source" >&2; exit 1; }
     cp "$source" "$dist_root/$binary"

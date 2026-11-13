@@ -1,0 +1,4 @@
+# Recorded evidence is content-addressed: a checkout must not rewrite bytes,
+# because every artifact digest and the record's own identity are hashes of
+# the stored bytes.
+crates/spektrafilm-benchmark/tests/fixtures/** -text

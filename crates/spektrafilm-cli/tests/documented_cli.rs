@@ -42,12 +42,12 @@ fn documented_instrument_commands_use_supported_flags() {
             if words
                 .first()
                 .map(|word| word.rsplit('/').next().unwrap_or(word))
-                != Some("spektrafilm-lab")
+                != Some("spektrafilm-experiment")
             {
                 command.clear();
                 continue;
             }
-            let binary = env!("CARGO_BIN_EXE_spektrafilm-lab");
+            let binary = env!("CARGO_BIN_EXE_spektrafilm-experiment");
             let command_path: Vec<_> = words
                 .iter()
                 .skip(1)
@@ -77,8 +77,15 @@ fn documented_instrument_commands_use_supported_flags() {
     }
     // Protect the documented workflow, not just an empty extraction.
     for subcommand in [
-        "validate", "target", "run", "measure", "compare", "inspect", "report", "regions",
-        "fixtures", "fit",
+        "target",
+        "run",
+        "measure",
+        "compare",
+        "fixtures",
+        "sample",
+        "verify",
+        "fit",
+        "experiment",
     ] {
         assert!(checked.contains(&Some(subcommand.into())), "{subcommand}");
     }

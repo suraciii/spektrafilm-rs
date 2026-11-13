@@ -1,25 +1,22 @@
-//! `spektrafilm-lab`: the research instrument at f64 reference precision.
+//! `spektrafilm-experiment`: the research renderer at f64 reference precision.
 
 use anyhow::Result;
 use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
-use spektrafilm_benchmark::{
-    common, compare, documents, inspect, local_input, regions, report, runner, target,
-};
+use spektrafilm_benchmark::{local_input, runner, target};
 use spektrafilm_cli::lab::cli::{
-    CompareCommand, EvaluationCompareArgs, EvaluationInspectArgs, EvaluationRunArgs,
-    ExperimentCommand, MeasureCommand, RegionsCommand, ReportCommand, RunCommand, RunImageArgs,
+    CompareCommand, EvaluationRunArgs, ExperimentCommand, MeasureCommand, RunCommand, RunImageArgs,
     RunSuiteArgs, SpectralCommand,
 };
 
 #[derive(Parser)]
 #[command(
-    name = "spektrafilm-lab",
-    about = "SpektraFilm instrument: film-profile development, calibration, and appearance evaluation at f64 reference precision",
+    name = "spektrafilm-experiment",
+    about = "SpektraFilm research renderer: execute a declaration and publish retained evidence at f64 reference precision",
     // Version must identify the instrument implementation and the document
     // versions it reads and writes, so the instrument's own version is not the
     // only number a caller can rely on.
-    version = concat!(env!("CARGO_PKG_VERSION"), " (instrument documents schema_version 1)"),
-    after_help = "Generate packaged examples with `spektrafilm-lab fixtures --renderer RENDERER --data-dir DATA --out BUNDLE`, then consume a generated suite with `spektrafilm-lab run suite --suite BUNDLE/complete.json --target BUNDLE/baseline.json --out RUN`."
+    version = concat!(env!("CARGO_PKG_VERSION"), " (research documents schema_version 1)"),
+    after_help = "Generate packaged examples with `spektrafilm-experiment fixtures --renderer RENDERER --data-dir DATA --out BUNDLE`, then consume a generated suite with `spektrafilm-experiment run suite --suite BUNDLE/complete.json --target BUNDLE/baseline.json --out RUN`."
 )]
 struct LabCli {
     #[command(subcommand)]
@@ -30,38 +27,6 @@ struct LabCli {
 // Clap subcommands are built once at startup, outside hot paths.
 #[allow(clippy::large_enum_variant)]
 enum LabCommands {
-    /// Print the authoritative schema for an authored or retained document.
-    Schema {
-        /// Document kind.
-        #[arg(
-            long,
-            value_name = "KIND",
-            value_parser = [
-                "suite", "target", "policy", "run", "comparison", "configuration", "reference",
-                "regions", "preparation", "stimuli", "material_measurement", "correspondence_review",
-                "experiment", "preflight", "provenance", "report", "resolved", "command", "export",
-                "evidence", "metrics", "review"
-            ]
-        )]
-        kind: String,
-    },
-    /// Validate document shape and available local dependencies without rendering.
-    Validate {
-        /// Document kind.
-        #[arg(
-            long,
-            value_name = "KIND",
-            value_parser = [
-                "suite", "target", "policy", "configuration", "reference", "regions",
-                "preparation", "stimuli", "material_measurement", "correspondence_review",
-                "experiment", "run", "comparison", "review"
-            ]
-        )]
-        kind: String,
-        /// JSON document to validate.
-        #[arg(long, value_name = "FILE")]
-        file: std::path::PathBuf,
-    },
     /// Pin a renderer executable in an existing target document.
     Target {
         /// Renderer executable.
@@ -91,21 +56,6 @@ enum LabCommands {
     Compare {
         #[command(subcommand)]
         command: CompareCommand,
-    },
-    /// Read retained measurements without recomputing or invoking a renderer.
-    Inspect {
-        #[command(flatten)]
-        args: EvaluationInspectArgs,
-    },
-    /// Build an offline report from one retained comparison.
-    Report {
-        #[command(subcommand)]
-        command: ReportCommand,
-    },
-    /// Generate standalone measurement regions.
-    Regions {
-        #[command(subcommand)]
-        command: RegionsCommand,
     },
     /// Generate the packaged examples: probe assets, suites, targets, and policy.
     ///
@@ -149,6 +99,9 @@ enum LabCommands {
     },
     /// Fit profile and look parameters against reference patch data.
     Fit(spektrafilm_cli::fit::FitArgs),
+    /// A lab endpoint that belongs to `spektrafilm-lab`.
+    #[command(external_subcommand)]
+    External(Vec<String>),
 }
 
 fn emit(value: &serde_json::Value) {
@@ -161,111 +114,18 @@ type BenchError = spektrafilm_benchmark::Error;
 /// The command name a result object carries.
 fn command_name(command: &LabCommands) -> &'static str {
     match command {
-        LabCommands::Schema { .. } => "schema",
-        LabCommands::Validate { .. } => "validate",
         LabCommands::Target { .. } => "target",
         LabCommands::Run { .. } => "run",
         LabCommands::Measure { .. } => "measure",
         LabCommands::Compare { .. } => "compare",
-        LabCommands::Inspect { .. } => "inspect",
-        LabCommands::Report { .. } => "report",
-        LabCommands::Regions { .. } => "regions",
         LabCommands::Fixtures { .. } => "fixtures",
         LabCommands::Sample { .. } => "sample",
         LabCommands::Verify { .. } => "verify",
         LabCommands::Spectral { .. } => "spectral",
         LabCommands::Experiment { .. } => "experiment",
         LabCommands::Fit(_) => "fit",
+        LabCommands::External(_) => "unknown",
     }
-}
-
-fn validate(
-    kind: &str,
-    file: &std::path::Path,
-) -> spektrafilm_benchmark::Result<serde_json::Value> {
-    let display = file.display().to_string();
-    let value = if matches!(kind, "run" | "comparison") {
-        let root = file.parent().ok_or_else(|| {
-            spektrafilm_benchmark::Error::new("invalid_path", "Manifest has no parent")
-        })?;
-        documents::load_json_document(file).and_then(|value| {
-            documents::validate_generated_document(kind, &value, root)?;
-            Ok(value)
-        })
-    } else {
-        match kind {
-            "suite" => documents::load_suite(file),
-            "target" => documents::load_target(file),
-            "policy" => documents::load_policy(file),
-            "configuration" | "reference" | "regions" | "preparation" => {
-                local_input::load(kind, file)
-            }
-            "stimuli" | "material_measurement" | "correspondence_review" | "experiment" => {
-                documents::validate_authored_document(kind, file)
-            }
-            _ => Err(spektrafilm_benchmark::Error::new(
-                "unknown_document_kind",
-                format!("unknown document kind: {kind}"),
-            )),
-        }
-    }
-    .map_err(|e| e.file(display))?;
-    let unchecked = match kind {
-        "suite"
-        | "target"
-        | "configuration"
-        | "reference"
-        | "regions"
-        | "stimuli"
-        | "experiment"
-        | "material_measurement"
-        | "correspondence_review" => {
-            serde_json::json!([
-                "rendering",
-                "compute_device",
-                "cross_document_applicability"
-            ])
-        }
-        "policy" => serde_json::json!([
-            "selector_applicability",
-            "measurement_selection",
-            "protocol_binding",
-            "rendering",
-            "compute_device"
-        ]),
-        "preparation" => serde_json::json!([
-            "reference_derivation",
-            "cross_document_applicability",
-            "rendering",
-            "compute_device"
-        ]),
-        "run" => serde_json::json!([
-            "image_decoding",
-            "rendering",
-            "compute_device",
-            "measurement"
-        ]),
-        "comparison" => serde_json::json!([
-            "image_decoding",
-            "rendering",
-            "compute_device",
-            "measurement",
-            "rule_evaluation"
-        ]),
-        _ => serde_json::json!([]),
-    };
-    let mut result = serde_json::json!({
-        "schema_version": 1,
-        "command": "validate",
-        "execution_status": "completed",
-        "kind": kind,
-        "digest": common::digest(&value)?,
-        "unchecked": unchecked
-    });
-    if kind == "suite" {
-        result["protocol_digest"] = serde_json::json!(documents::protocol_digest(&value)?);
-    }
-    Ok(result)
 }
 
 fn execute(
@@ -273,26 +133,6 @@ fn execute(
     matches: &clap::ArgMatches,
 ) -> Result<(serde_json::Value, i32), BenchError> {
     match command {
-        LabCommands::Schema { kind } => {
-            if kind == "review" {
-                Err(BenchError::new(
-                    "unsupported_document_kind",
-                    "review documents are benchmark-owned and unsupported by spektrafilm-lab",
-                ))
-            } else {
-                Ok((documents::schema_for(&kind)?, 0))
-            }
-        }
-        LabCommands::Validate { kind, file } => {
-            if kind == "review" {
-                Err(BenchError::new(
-                    "unsupported_document_kind",
-                    "review documents are benchmark-owned and unsupported by spektrafilm-lab",
-                ))
-            } else {
-                Ok((validate(&kind, &documents::normalize_path(&file)?)?, 0))
-            }
-        }
         LabCommands::Target {
             renderer,
             data_dir,
@@ -313,13 +153,6 @@ fn execute(
             }
         },
         LabCommands::Compare { command } => match command {
-            CompareCommand::Runs(args) => compare::compare(
-                &args.baseline,
-                &args.candidate,
-                &args.out,
-                args.policy.as_deref(),
-                args.gate,
-            ),
             CompareCommand::Readings(args) => {
                 let measurement = spektrafilm_cli::lab::cli::MeasureCompareArgs {
                     baseline: args.baseline,
@@ -330,42 +163,17 @@ fn execute(
                 spektrafilm_cli::lab::measure::compare::compare_with_result(&measurement)
                     .map_err(|error| BenchError::with_message("operation_failed", error))
             }
-            CompareCommand::Pairs(args) => {
-                compare::compare_single(&args.run, &args.against, &args.out)
-            }
-            CompareCommand::Flat(args) => execute_compare_legacy(args),
-        },
-        LabCommands::Inspect { args } => Ok((
-            inspect::inspect(
-                &args.comparison,
-                &args.case_ids,
-                &args.region_ids,
-                &args.metrics,
-            )?,
-            0,
-        )),
-        LabCommands::Report { command } => match command {
-            ReportCommand::Comparison(args) => {
-                let out = documents::normalize_path(&args.out)?;
-                Ok((report::build_report(&args.comparison, &out)?, 0))
-            }
-        },
-        LabCommands::Regions { command } => match command {
-            RegionsCommand::Grid(args) => Ok((
-                regions::generate_grid(
-                    &args.id,
-                    args.rows,
-                    args.columns,
-                    args.origin,
-                    args.patch_size,
-                    args.gap,
-                    args.sample,
-                    &args.space,
-                    &args.role,
-                    &args.measurements,
-                    &args.out,
-                )?,
-                0,
+            CompareCommand::Runs(_) => Err(BenchError::new(
+                "argument_syntax",
+                "`compare runs` belongs to spektrafilm-lab; run `spektrafilm-lab compare runs`",
+            )),
+            CompareCommand::Pairs(_) => Err(BenchError::new(
+                "argument_syntax",
+                "`compare pairs` belongs to spektrafilm-lab; run `spektrafilm-lab compare pairs`",
+            )),
+            CompareCommand::Flat(_) => Err(BenchError::new(
+                "argument_syntax",
+                "the flat compare alias is removed; run `spektrafilm-lab compare runs|images|pairs`",
             )),
         },
         LabCommands::Fixtures {
@@ -407,6 +215,7 @@ fn execute(
             spektrafilm_cli::lab::experiment::dispatch_with_result(&command)
                 .map_err(|error| BenchError::with_message("operation_failed", error))
         }
+        LabCommands::External(_) => unreachable!("handled before dispatch"),
         LabCommands::Fit(args) => {
             let (value, status) = spektrafilm_cli::fit::cmd_fit_with_result(&args, matches)
                 .map_err(|error| BenchError::with_message("operation_failed", error))?;
@@ -571,77 +380,6 @@ fn execute_run_legacy(
         dry_run: args.dry_run,
     })
 }
-fn execute_compare_legacy(
-    args: EvaluationCompareArgs,
-) -> Result<(serde_json::Value, i32), BenchError> {
-    let out = args
-        .out
-        .ok_or_else(|| BenchError::new("argument_syntax", "flat compare requires --out"))?;
-    if args.run.is_some()
-        && (args.baseline.is_some()
-            || args.candidate.is_some()
-            || args.reference_run.is_some()
-            || args.policy.is_some()
-            || args.gate)
-    {
-        return Err(BenchError::new(
-            "argument_syntax",
-            "flat compare cannot combine --run with two-sided comparison options",
-        ));
-    }
-    if args.run.is_some() && args.against.is_none() {
-        return Err(BenchError::new(
-            "argument_syntax",
-            "flat --run requires --against",
-        ));
-    }
-    if args.run.is_none() && args.against.is_some() {
-        return Err(BenchError::new(
-            "argument_syntax",
-            "flat --against requires --run",
-        ));
-    }
-    if let Some(run) = args.run {
-        let against = args
-            .against
-            .ok_or_else(|| BenchError::new("argument_syntax", "flat --run requires --against"))?;
-        return compare::compare_single(&run, &against, &out);
-    }
-    if args.reference_run.is_some() && args.policy.is_some() {
-        return Err(BenchError::new(
-            "argument_syntax",
-            "flat compare cannot combine --reference-run with --policy",
-        ));
-    }
-    if args.reference_run.is_some() {
-        let measurement = spektrafilm_cli::lab::cli::MeasureCompareArgs {
-            baseline: args.baseline.ok_or_else(|| {
-                BenchError::new("argument_syntax", "flat compare requires --baseline")
-            })?,
-            candidate: args.candidate.ok_or_else(|| {
-                BenchError::new("argument_syntax", "flat compare requires --candidate")
-            })?,
-            reference: args.reference_run,
-            out,
-        };
-        return spektrafilm_cli::lab::measure::compare::compare_with_result(&measurement)
-            .map_err(|error| BenchError::with_message("operation_failed", error));
-    }
-    let baseline = args
-        .baseline
-        .ok_or_else(|| BenchError::new("argument_syntax", "flat compare requires --baseline"))?;
-    let candidate = args
-        .candidate
-        .ok_or_else(|| BenchError::new("argument_syntax", "flat compare requires --candidate"))?;
-    compare::compare(
-        &baseline,
-        &candidate,
-        &out,
-        args.policy.as_deref(),
-        args.gate,
-    )
-}
-
 fn normalize_legacy_argv() -> Vec<std::ffi::OsString> {
     let mut args: Vec<_> = std::env::args_os().collect();
     if args.len() >= 3 {
@@ -655,6 +393,7 @@ fn normalize_legacy_argv() -> Vec<std::ffi::OsString> {
                 "runs"
                     | "readings"
                     | "pairs"
+                    | "images"
                     | "flat"
                     | "help"
                     | "-h"
@@ -671,12 +410,30 @@ fn normalize_legacy_argv() -> Vec<std::ffi::OsString> {
     args
 }
 
+/// Lab endpoints, with the binary that owns them.
+fn moved(name: &str) -> Option<String> {
+    const MOVED: &[&str] = &["schema", "validate", "regions", "inspect", "report"];
+    MOVED
+        .contains(&name)
+        .then(|| format!("spektrafilm-lab {name} ..."))
+}
+
 fn run() -> i32 {
     let matches = LabCli::command().get_matches_from(normalize_legacy_argv());
     let Ok(cli) = LabCli::from_arg_matches(&matches) else {
         eprintln!("argument syntax error: the command could not be parsed");
         return 2;
     };
+    if let LabCommands::External(args) = &cli.command {
+        let name = args.first().map(String::as_str).unwrap_or("<unknown>");
+        match moved(name) {
+            Some(replacement) => eprintln!(
+                "argument_syntax: `{name}` belongs to spektrafilm-lab; run `{replacement}`"
+            ),
+            None => eprintln!("argument_syntax: unknown endpoint `{name}`"),
+        }
+        return 2;
+    }
     let name = command_name(&cli.command);
     // The chain options a subcommand flattens live in that subcommand's own
     // matches, so the data-directory resolution reads them from there rather
@@ -785,7 +542,7 @@ mod tests {
         );
     }
 
-    /// The instrument returns 2 for a rejected invocation and 1 for a failure
+    /// The renderer returns 2 for a rejected invocation and 1 for a failure
     /// to execute. The discriminator is the error code, so the mapping lives in
     /// one place and every argument-syntax rejection shares it.
     #[test]
@@ -801,89 +558,6 @@ mod tests {
             let error = spektrafilm_benchmark::Error::new(code, "rejected elsewhere");
             assert_eq!(exit_status_for(&error), 1, "{code} must exit 1");
         }
-    }
-
-    #[test]
-    fn canonical_compare_subcommands_keep_sources_separate() {
-        assert!(
-            LabCli::try_parse_from([
-                "lab",
-                "compare",
-                "runs",
-                "--baseline",
-                "baseline",
-                "--candidate",
-                "candidate",
-                "--out",
-                "comparison",
-            ])
-            .is_ok()
-        );
-        assert!(
-            LabCli::try_parse_from([
-                "lab",
-                "compare",
-                "readings",
-                "--baseline",
-                "baseline",
-                "--candidate",
-                "candidate",
-                "--reference",
-                "reference",
-                "--out",
-                "comparison",
-            ])
-            .is_ok()
-        );
-        assert!(
-            LabCli::try_parse_from([
-                "lab",
-                "compare",
-                "pairs",
-                "--run",
-                "run",
-                "--against",
-                "both",
-                "--out",
-                "comparison",
-            ])
-            .is_ok()
-        );
-        assert!(
-            LabCli::try_parse_from([
-                "lab",
-                "compare",
-                "runs",
-                "--baseline",
-                "baseline",
-                "--candidate",
-                "candidate",
-                "--reference-run",
-                "reference",
-                "--out",
-                "comparison",
-            ])
-            .is_err()
-        );
-    }
-
-    #[test]
-    fn report_sources_require_comparison_subcommand_and_reject_manifest() {
-        assert!(LabCli::try_parse_from(["lab", "report"]).is_err());
-        assert!(LabCli::try_parse_from(["lab", "report", "comparison"]).is_err());
-        assert!(
-            LabCli::try_parse_from([
-                "lab",
-                "report",
-                "comparison",
-                "--comparison",
-                "comparison",
-                "--out",
-                "report"
-            ])
-            .is_ok()
-        );
-        assert!(LabCli::try_parse_from(["lab", "report", "--manifest", "manifest.json"]).is_err());
     }
 
     #[test]

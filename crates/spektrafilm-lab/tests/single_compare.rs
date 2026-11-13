@@ -1,16 +1,13 @@
 #![cfg(feature = "precision-f64")]
 use image::{GrayImage, Luma, Rgb, RgbImage};
+mod support;
 use serde_json::{Value, json};
 use spektrafilm_benchmark::{
     common::{self, Evidence},
     compare, documents, report,
 };
 use std::{fs, path::Path};
-
-#[path = "support/fixtures.rs"]
-mod fixtures;
-#[path = "support/progress.rs"]
-mod progress;
+use support::{fixtures, progress};
 
 use fixtures::{record, save_manifest, write};
 
@@ -234,18 +231,18 @@ fn cli_report_opens_unaligned_reference_as_side_views() {
     let comparison = temp.path().join("comparison");
     let report = temp.path().join("report");
     for (command, source_option, source, destination) in [
-        ("compare", "--run", &run, &comparison),
-        ("report", "comparison", &comparison, &report),
+        (["compare", "pairs"], "--run", &run, &comparison),
+        (["report", "comparison"], "comparison", &comparison, &report),
     ] {
         let mut cli = std::process::Command::new(env!("CARGO_BIN_EXE_spektrafilm-lab"));
-        cli.arg(command);
-        if command == "report" {
-            cli.arg("comparison").arg("--comparison");
+        cli.args(command);
+        if command[0] == "report" {
+            cli.arg("--comparison");
         } else {
             cli.arg(source_option);
         }
         cli.arg(source).arg("--out").arg(destination);
-        if command == "compare" {
+        if command[0] == "compare" {
             cli.args(["--against", "reference"]);
         }
         let output = cli.output().unwrap();
@@ -256,7 +253,7 @@ fn cli_report_opens_unaligned_reference_as_side_views() {
             String::from_utf8_lossy(&output.stderr)
         );
         let _: Value = serde_json::from_slice(&output.stdout).unwrap();
-        if command == "compare" {
+        if command[0] == "compare" {
             let manifest: Value =
                 serde_json::from_slice(&fs::read(comparison.join("comparison.json")).unwrap())
                     .unwrap();

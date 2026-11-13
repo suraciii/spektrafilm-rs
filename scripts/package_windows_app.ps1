@@ -396,8 +396,10 @@ try {
     if ($LASTEXITCODE -ne 0) { throw "Failed building default CLI binaries" }
 
     if ($Aio) {
-        cargo build --release -p spektrafilm-cli --features precision-f64 --bin spektrafilm-f64 --bin spektrafilm-lab --target-dir $BuildTargetDir
+        cargo build --release -p spektrafilm-cli --features precision-f64 --bin spektrafilm-f64 --bin spektrafilm-experiment --target-dir $BuildTargetDir
         if ($LASTEXITCODE -ne 0) { throw "Failed building f64 binaries" }
+        cargo build --release -p spektrafilm-lab --features precision-f64 --target-dir $BuildTargetDir
+        if ($LASTEXITCODE -ne 0) { throw "Failed building the lab instrument" }
         $releaseDir = Join-Path $BuildTargetDir $(if ($env:SPEKTRAFILM_RELEASE_SUBDIR) { $env:SPEKTRAFILM_RELEASE_SUBDIR } else { "release" })
         $manifestPath = Join-Path $repo "target\packaging\embedded_bundle.rs"
         New-EmbedManifest -DataDir "data" -F64Exe (Join-Path $releaseDir "spektrafilm-f64.exe") -Destination $manifestPath
@@ -435,7 +437,8 @@ the adjacent native DLLs, external exporter, helper, instrument binary and Lensf
 - application data/profiles/LUTs
 - arctic2026alpha02 assets
 - spektrafilm-f64.exe for CPU f64 Export
-- spektrafilm-lab.exe for film-profile development and appearance evaluation
+- spektrafilm-lab.exe for measurement, comparison, and reporting
+- spektrafilm-experiment.exe for executing a declaration and retaining evidence
 On first launch it extracts the embedded payload to:
 %LOCALAPPDATA%\spektrafilm\embedded
 
@@ -448,8 +451,10 @@ Backends:
     } else {
         cargo build --release -p spektrafilm-gui --target-dir $BuildTargetDir
         if ($LASTEXITCODE -ne 0) { throw "Failed building GUI" }
-        cargo build --release -p spektrafilm-cli --features precision-f64 --bin spektrafilm-f64 --bin spektrafilm-lab --target-dir $BuildTargetDir
+        cargo build --release -p spektrafilm-cli --features precision-f64 --bin spektrafilm-f64 --bin spektrafilm-experiment --target-dir $BuildTargetDir
         if ($LASTEXITCODE -ne 0) { throw "Failed building f64 binaries" }
+        cargo build --release -p spektrafilm-lab --features precision-f64 --target-dir $BuildTargetDir
+        if ($LASTEXITCODE -ne 0) { throw "Failed building the lab instrument" }
 
         $releaseDir = Join-Path $BuildTargetDir $(if ($env:SPEKTRAFILM_RELEASE_SUBDIR) { $env:SPEKTRAFILM_RELEASE_SUBDIR } else { "release" })
         $guiExe = Join-Path $releaseDir "spektrafilm-gui.exe"
@@ -468,7 +473,7 @@ Backends:
         Write-Host "Packaged: $(Resolve-Path -LiteralPath $DistDir)"
         Write-Host "Icon:     $(Resolve-Path -LiteralPath $iconPath)"
     }
-    foreach ($binary in @("spektrafilm", "spektrafilm-f64", "decode_raw_gui", "spektrafilm-lab")) {
+    foreach ($binary in @("spektrafilm", "spektrafilm-f64", "decode_raw_gui", "spektrafilm-lab", "spektrafilm-experiment")) {
         Copy-Item -LiteralPath (Join-Path $releaseDir "$binary.exe") -Destination (Join-Path $DistDir "$binary.exe") -Force
     }
     Copy-NativeBundle $DistDir

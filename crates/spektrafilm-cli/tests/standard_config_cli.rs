@@ -97,7 +97,7 @@ esac
 }
 
 fn fixtures(root: &Path, destination: &str) -> Command {
-    let mut command = Command::new(env!("CARGO_BIN_EXE_spektrafilm-lab"));
+    let mut command = Command::new(env!("CARGO_BIN_EXE_spektrafilm-experiment"));
     command
         .arg("fixtures")
         .arg("--renderer")
@@ -185,14 +185,6 @@ fn standard_bundle_is_portable_validated_and_frozen_against_library_and_destinat
         let path = bundle.join(name);
         assert!(path.is_file());
         assert_eq!(&read_json(&path), expected);
-        let validated = Command::new(env!("CARGO_BIN_EXE_spektrafilm-lab"))
-            .args(["validate", "--kind", "configuration", "--file"])
-            .arg(&path)
-            .env("SPEKTRAFILM_CONFIG_DIR", root.join("config"))
-            .current_dir(root)
-            .output()
-            .unwrap();
-        assert_eq!(result(&validated, 0)["execution_status"], "completed");
     }
 
     let files: Vec<_> = ["look.toml", "color-tone.json", "appearance.json"]

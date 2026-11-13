@@ -1,17 +1,14 @@
 #![cfg(feature = "precision-f64")]
 use image::{GrayImage, Luma, Rgb, RgbImage};
+mod support;
 use serde_json::{Value, json};
 use spektrafilm_benchmark::{
     common::{self, Evidence},
     documents,
 };
 use std::{fs, path::Path, process::Command};
+use support::{fixtures, progress};
 use tempfile::TempDir;
-
-#[path = "support/fixtures.rs"]
-mod fixtures;
-#[path = "support/progress.rs"]
-mod progress;
 
 use fixtures::{record, save_manifest, write};
 
@@ -196,7 +193,7 @@ fn retained_run_with_review_regions(root: &Path, value: f64, masked: bool, crops
 }
 fn compare(a: &Path, b: &Path, out: &Path, code: i32) -> Value {
     invoke(
-        &["compare"],
+        &["compare", "runs"],
         &[("--baseline", a), ("--candidate", b), ("--out", out)],
         code,
     )
@@ -448,7 +445,7 @@ fn undecodable_master_reports_failed_progress_and_retains_incomplete_destination
     save_manifest(&run, "run.json", manifest);
     let out = temp.path().join("comparison");
     let output = Command::new(env!("CARGO_BIN_EXE_spektrafilm-lab"))
-        .arg("compare")
+        .args(["compare", "runs"])
         .arg("--baseline")
         .arg(&run)
         .arg("--candidate")
@@ -484,7 +481,7 @@ fn exploratory_policy_cannot_qualify_and_wrong_protocol_creates_no_output() {
     let mut value = policy(&p, &read(&a.join("suite.json")));
     let out = temp.path().join("comparison");
     let result = invoke(
-        &["compare", "--gate"],
+        &["compare", "runs", "--gate"],
         &[
             ("--baseline", &a),
             ("--candidate", &a),
@@ -503,7 +500,7 @@ fn exploratory_policy_cannot_qualify_and_wrong_protocol_creates_no_output() {
     write(&p, &value);
     let wrong = temp.path().join("wrong");
     let result = invoke(
-        &["compare"],
+        &["compare", "runs"],
         &[
             ("--baseline", &a),
             ("--candidate", &a),
@@ -520,7 +517,7 @@ fn exploratory_policy_cannot_qualify_and_wrong_protocol_creates_no_output() {
     write(&p, &value);
     let unresolved = temp.path().join("unresolved");
     let result = invoke(
-        &["compare"],
+        &["compare", "runs"],
         &[
             ("--baseline", &a),
             ("--candidate", &a),
@@ -781,7 +778,7 @@ fn protocol_tone_policy_remains_selected_with_empty_case_probe() {
     write(&p, &value);
     let out = temp.path().join("comparison");
     let result = invoke(
-        &["compare", "--gate"],
+        &["compare", "runs", "--gate"],
         &[
             ("--baseline", &a),
             ("--candidate", &a),
@@ -843,7 +840,7 @@ fn reference_policy_requires_distance_suffix_and_corresponding_region() {
         write(&p, &value);
         let out = temp.path().join(format!("invalid-{i}"));
         let result = invoke(
-            &["compare"],
+            &["compare", "runs"],
             &[
                 ("--baseline", &a),
                 ("--candidate", &a),
@@ -861,7 +858,7 @@ fn reference_policy_requires_distance_suffix_and_corresponding_region() {
     write(&p, &value);
     let out = temp.path().join("valid-reference");
     let result = invoke(
-        &["compare", "--gate"],
+        &["compare", "runs", "--gate"],
         &[
             ("--baseline", &a),
             ("--candidate", &a),

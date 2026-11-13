@@ -1,0 +1,1 @@
+{"parameters":{"camera":{"auto_exposure":false,"auto_exposure_method":"center_weighted","exposure_compensation_ev":0.0},"enlarger":{"print_exposure":1.0},"io":{"input_cctf_decoding":true,"input_color_space":"sRGB","output_cctf_encoding":false,"output_color_space":"sRGB"},"settings":{"print_exposure_ev_tracking":"never"}}}

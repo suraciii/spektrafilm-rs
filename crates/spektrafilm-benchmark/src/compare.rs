@@ -41,7 +41,7 @@ fn raw_image(root: &Path, row: &Value) -> Result<ImageData> {
     );
     image_data::load_image(&declaration)
 }
-fn review_image(
+pub(crate) fn review_image(
     image: &ImageData,
     destination: &Path,
     evidence: &mut Evidence,
@@ -70,7 +70,7 @@ fn review_image(
     evidence.add(destination,role,"image/png",json!({"width":image.width,"height":image.height,"dimensions":image.dimensions(),"source_dimensions":image.dimensions(),"bit_depth":16,"resampling":"none","quantization":"16-bit rounded; no dither","color":{"color_space":"sRGB","transfer":"srgb"},"fit_preview":fit_record["path"],"case_id":case_id,"seed":seed}))
 }
 // All generated readouts refer to immutable artifacts inside the comparison.
-fn relative_paths(value: &mut Value, root: &Path) {
+pub(crate) fn relative_paths(value: &mut Value, root: &Path) {
     match value {
         Value::Object(map) => {
             if let Some(path) = map
@@ -145,7 +145,7 @@ fn retain_color_readouts(
     readouts
 }
 
-fn retain_metrics(
+pub(crate) fn retain_metrics(
     mut measured: Value,
     folder: &Path,
     evidence: &mut Evidence,
@@ -704,7 +704,7 @@ fn publish_failed_render(
 
 /// Rewrites each finding identity with the owning scope and defaults a missing
 /// evidence reference to the published measurement artifact.
-fn publish_measurement_findings(
+pub(crate) fn publish_measurement_findings(
     rows: &mut [Value],
     scope: &[Value],
     measurement_path: &Value,

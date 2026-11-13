@@ -6,6 +6,7 @@ members = [
     "crates/spektrafilm-math",
     "crates/spektrafilm-model",
     "crates/spektrafilm-cli",
+    "crates/spektrafilm-lab",
     "crates/spektrafilm-backend",
     "crates/spektrafilm-benchmark",
     "crates/spektrafilm-gui",
@@ -25,6 +26,7 @@ spektrafilm-gpu = { path = "crates/spektrafilm-gpu" }
 spektrafilm-math = { path = "crates/spektrafilm-math" }
 spektrafilm-model = { path = "crates/spektrafilm-model" }
 spektrafilm-raw = { path = "crates/spektrafilm-raw" }
+spektrafilm-benchmark = { path = "crates/spektrafilm-benchmark" }
 
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["float_roundtrip"] }

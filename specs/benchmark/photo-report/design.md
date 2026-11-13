@@ -2,7 +2,7 @@
 
 ## Boundary
 
-Photo Report is a benchmark-owned visual report builder. It consumes one photo manifest and publishes one offline page. It does not consume a run, comparison, policy, review manifest, or `spektrafilm-lab` document.
+Photo Report is a benchmark-owned visual report builder. It consumes one photo manifest and publishes one offline page. It does not consume a run, comparison, policy, review manifest, or laboratory document.
 
 The existing comparison report remains the owner of retained metrics, findings, difference maps, and comparison evidence. The existing prepared-image review remains a separate product for sets, shared grids, and explicit per-image geometry. Photo Report is intentionally smaller: it owns a flat photo inventory, rectangular photo ROIs, and explicit comparison pairs.
 
@@ -22,7 +22,7 @@ The prepared-image review manifest supports chart-like sets, shared grid arithme
 
 Photo Report MUST NOT add `sets`, `grid`, `measurement`, or `default_pair` to its input. It MUST NOT overload the prepared-image review manifest with single-photo mode or arbitrary multi-photo comparison requests. One small contract is easier for a user and an agent to author, validate, and repair.
 
-The command MUST NOT be added to `spektrafilm-lab`. `spektrafilm-lab` remains the instrument for rendering, measurement, retained comparison, inspection, and comparison reporting. If the benchmark executable is consolidated later, the Photo Report subcommand MUST remain a benchmark product command with its own document kind and handler.
+The command MUST NOT be added to `spektrafilm-lab` or `spektrafilm-experiment`. The lab remains the instrument for measurement, retained comparison, inspection, and comparison reporting; `spektrafilm-experiment` renders evidence. If the benchmark executable is consolidated later, the Photo Report subcommand MUST remain a benchmark product command with its own document kind and handler.
 
 ## Domain model
 

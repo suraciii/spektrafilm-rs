@@ -35,8 +35,11 @@ cargo build --release -p spektrafilm-cli
 # f64 reference CLI — GPU image storage and execution precision are reported separately
 cargo build --release --features precision-f64 -p spektrafilm-cli --bin spektrafilm-f64
 
-# instrument CLI — the research command surface at f64 reference precision
-cargo build --release --features precision-f64 -p spektrafilm-cli --bin spektrafilm-lab
+# research renderer — executes a declaration and retains evidence
+cargo build --release --features precision-f64 -p spektrafilm-cli --bin spektrafilm-experiment
+
+# lab instrument — measures delivered images at f64 reference precision, links no renderer
+cargo build --release --features precision-f64 -p spektrafilm-lab
 
 # Optional RAW decoding helper using the shared native decoder
 cargo build --release -p spektrafilm-cli --bin decode_raw_gui
@@ -50,7 +53,8 @@ This produces:
 - `target/release/spektrafilm-gui` — desktop GUI.
 - `target/release/spektrafilm` — fast f32 CLI.
 - `target/release/spektrafilm-f64` — f64 reference exporter; explicit GPU selection retains the device execution contract.
-- `target/release/spektrafilm-lab` — the instrument command surface (f64 reference precision; shipped in packages).
+- `target/release/spektrafilm-experiment` — the research renderer that publishes retained evidence (f64 reference precision; shipped in packages).
+- `target/release/spektrafilm-lab` — the measurement instrument: analysis, comparison, and reporting (f64 reference precision; links no renderer; shipped in packages).
 - `target/release/decode_raw_gui` — standalone RAW decoding helper.
 - `target/release/spektrafilm-bench` — benchmark-owned offline visual reports, for example `report photos`.
 
@@ -71,7 +75,7 @@ just install
 
 ## Packaging and installation
 
-Packages must distribute the native shared libraries and their transitive dependencies with the CLI, GUI, `decode_raw_gui`, and the instrument binary `spektrafilm-lab`. They must also include the Lensfun XML database. Preserve Lensfun's default database lookup location or deploy it in the platform's standard data directory.
+Packages must distribute the native shared libraries and their transitive dependencies with the CLI, GUI, `decode_raw_gui`, the research renderer `spektrafilm-experiment`, and the instrument binary `spektrafilm-lab`. They must also include the Lensfun XML database. Preserve Lensfun's default database lookup location or deploy it in the platform's standard data directory.
 
 LibRaw is dual LGPL 2.1/CDDL 1.0. Lensfun's library is LGPL 3.0, and its database is CC BY-SA 3.0. Exiv2 is GPL 2.0 or later. GLib is LGPL 2.1 or later. Packages must include applicable license texts. The application remains GPL 3.0.
 

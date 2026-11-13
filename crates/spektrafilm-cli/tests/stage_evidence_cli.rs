@@ -61,7 +61,7 @@ impl Fixture {
     }
 
     fn observe(&self, extra: &[&str]) -> Output {
-        self.command(env!("CARGO_BIN_EXE_spektrafilm-lab"))
+        self.command(env!("CARGO_BIN_EXE_spektrafilm-experiment"))
             .args(["experiment", "run", "--experiment"])
             .arg(self.0.join("experiment.json"))
             .arg("--out")
@@ -298,7 +298,7 @@ fn ordinary_suite_and_image_runs_retain_absence_without_capture_files() {
     })).unwrap()).unwrap();
     for mode in ["suite", "image"] {
         let out = fixture.0.join(mode);
-        let mut command = fixture.command(env!("CARGO_BIN_EXE_spektrafilm-lab"));
+        let mut command = fixture.command(env!("CARGO_BIN_EXE_spektrafilm-experiment"));
         command
             .args(["run", mode, "--target"])
             .arg(&target)

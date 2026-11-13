@@ -14,8 +14,8 @@ path = "src/main.rs"
 required-features = ["precision-f64"]
 
 [[bin]]
-name = "spektrafilm-lab"
-path = "src/bin/lab.rs"
+name = "spektrafilm-experiment"
+path = "src/bin/experiment.rs"
 required-features = ["precision-f64"]
 
 [[bin]]
