@@ -335,7 +335,6 @@ A caller who needs the renderer's reading of a file does not need a shared codec
 ## Current implementation gap
 
 - The binary split is implemented: `spektrafilm-lab` is its own package, links no renderer, and the render endpoints reject a lab invocation naming the owning binary.
-- `sample` and `compare readings` are specified here but still hosted by `spektrafilm-f64`; they move once the reading family no longer shares code with the renderer.
 - A region is a rectangle. Mask geometry is rejected; reading mask files on a delivered raster is not implemented.
 - The report composition removes a half-written report directory, but every failure the report can be shown to hit is refused before that directory exists, so the cleanup is defensive and unexercised.
 - The lab reader decodes PNG, TIFF, JPEG, WebP, and EXR. A container layout with no stated normalization is rejected.

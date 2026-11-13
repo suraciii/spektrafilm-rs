@@ -13,9 +13,11 @@ use serde_json::{Value, json};
 use spektrafilm_math::colorspace::{self, RgbColorSpace};
 use spektrafilm_math::lab;
 
-use super::super::cli::MeasureCompareArgs;
-use super::super::report;
-use super::{csv_field, number_field, sha256_file, statistics};
+use clap::Args;
+
+use spektrafilm_benchmark::readings::{
+    csv_field, number_field, sha256_file, statistics, write_measure_named,
+};
 
 /// The comparison a summary describes.
 const SIDE_CANDIDATE_MINUS_BASELINE: &str = "candidate_minus_baseline";
@@ -212,11 +214,22 @@ fn transfer_word(decoding: Option<bool>) -> String {
     }
 }
 
-pub fn compare(args: &MeasureCompareArgs) -> Result<()> {
-    compare_with_result(args).map(|_| ())
+#[derive(Args)]
+pub struct MeasureCompareArgs {
+    /// Baseline measurement directory.
+    #[arg(long, value_name = "DIR", help_heading = "Comparison")]
+    pub baseline: PathBuf,
+    /// Candidate measurement directory.
+    #[arg(long, value_name = "DIR", help_heading = "Comparison")]
+    pub candidate: PathBuf,
+    /// Reference measurement directory; per-sample distance needs one.
+    #[arg(long, value_name = "DIR", help_heading = "Comparison")]
+    pub reference: Option<PathBuf>,
+    /// Comparison destination directory; existing artifacts are never replaced.
+    #[arg(long, value_name = "DIR", help_heading = "Comparison")]
+    pub out: PathBuf,
 }
 
-/// Compare two retained readings and return the command result object.
 pub fn compare_with_result(args: &MeasureCompareArgs) -> Result<(Value, i32)> {
     let baseline = load_side(&args.baseline, "baseline")?;
     let candidate = load_side(&args.candidate, "candidate")?;
@@ -294,8 +307,7 @@ pub fn compare_with_result(args: &MeasureCompareArgs) -> Result<(Value, i32)> {
     // index: it is not final until this digest exists. `deltas.csv` is written
     // first so its hash can be recorded.
     let deltas = build_deltas_csv(&pairings);
-    report::write_measure_named(&args.out, &[("deltas.csv", deltas)])
-        .map_err(anyhow::Error::msg)?;
+    write_measure_named(&args.out, &[("deltas.csv", deltas)]).map_err(anyhow::Error::msg)?;
     let body = json!({
         "schema_version": 1,
         "kind": "comparison",
@@ -332,7 +344,7 @@ pub fn compare_with_result(args: &MeasureCompareArgs) -> Result<(Value, i32)> {
     document["id"] = json!(spektrafilm_benchmark::common::digest(&document)?);
 
     let compare_text = format!("{}\n", serde_json::to_string_pretty(&document)?);
-    report::write_measure_named(&args.out, &[("comparison.json", compare_text)])
+    write_measure_named(&args.out, &[("comparison.json", compare_text)])
         .map_err(anyhow::Error::msg)?;
 
     print_summary(&args.out, reported, &document);

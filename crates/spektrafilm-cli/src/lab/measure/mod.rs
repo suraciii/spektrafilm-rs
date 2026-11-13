@@ -2,22 +2,22 @@
 //! shared parameter surface and the core-owned execution path. The commands
 //! report values; they never fit, render, or judge.
 
-pub mod compare;
-pub mod plan;
 pub mod run;
-pub mod sample;
 pub mod stimuli;
 
-use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, anyhow, bail};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
-use spektrafilm_benchmark::documents;
 use spektrafilm_core::WorkflowRoute;
 
-pub use crate::lab::report::{csv_field, number_field};
+pub use spektrafilm_benchmark::readings::{
+    StageAvailability, StageReading, Statistics, read_stage_bundle, sha256_file, statistics,
+};
+pub use spektrafilm_benchmark::readings::{
+    csv_field, number_field, publish_staged, write_measure_named, write_named,
+};
 use spektrafilm_core::params::{RuntimeParams, Tap};
 use spektrafilm_core::presets::PresetLibrary;
 use spektrafilm_core::process_params::{
@@ -26,7 +26,7 @@ use spektrafilm_core::process_params::{
 use spektrafilm_core::profile::Profile;
 use spektrafilm_core::runtime::DigestMode;
 
-use super::cli::{ChainArgs, MeasureEntry, MeasureStage};
+use super::cli::{ChainArgs, ChainTap, MeasureEntry, MeasureStage};
 
 /// The input declaration a measurement supplies to the shared resolver.
 pub struct InputRequest<'a> {
@@ -571,249 +571,4 @@ pub fn renderer_record() -> Result<Value> {
         "version": env!("CARGO_PKG_VERSION"),
         "precision": "f64",
     }))
-}
-
-/// Streaming SHA-256 of one file.
-pub fn sha256_file(path: &Path) -> Result<String> {
-    let mut file =
-        std::fs::File::open(path).with_context(|| format!("hashing {}", path.display()))?;
-    let mut hasher = Sha256::new();
-    let mut buffer = vec![0_u8; 1 << 20];
-    loop {
-        let read = file
-            .read(&mut buffer)
-            .with_context(|| format!("hashing {}", path.display()))?;
-        if read == 0 {
-            break;
-        }
-        hasher.update(&buffer[..read]);
-    }
-    Ok(format!("{:x}", hasher.finalize()))
-}
-
-pub struct StageReading {
-    pub id: String,
-    pub domain: String,
-    pub units: String,
-    pub channel_order: String,
-    /// The declared color space of the values, when the stage declares one.
-    pub color_space: Option<String>,
-    /// Whether the stored values are transfer-decoded, when the stage
-    /// declares a color space.
-    pub cctf_decoding: Option<bool>,
-    /// The producer-declared coordinate space of the captured buffer.
-    pub coordinate_space: String,
-    pub width: u32,
-    pub height: u32,
-    pub sha256: String,
-    pub values: Vec<f64>,
-}
-
-impl StageReading {
-    /// The three channel values of one sample of a one-row measurement.
-    pub fn sample(&self, index: usize) -> [f64; 3] {
-        let base = index * 3;
-        [
-            self.values[base],
-            self.values[base + 1],
-            self.values[base + 2],
-        ]
-    }
-}
-
-/// A stage record of the executed run that carries no values.
-pub struct StageAvailability {
-    pub id: String,
-    pub availability: String,
-    pub reason: Option<String>,
-}
-
-/// Read the requested stages from a published stage-evidence bundle.
-pub fn read_stage_bundle(
-    directory: &Path,
-    wanted: &[String],
-) -> Result<(Vec<StageReading>, Vec<StageAvailability>), String> {
-    let manifest_path = directory.join("stage-evidence.json");
-    let bytes = std::fs::read(&manifest_path)
-        .map_err(|e| format!("reading {}: {e}", manifest_path.display()))?;
-    let manifest: Value = serde_json::from_slice(&bytes)
-        .map_err(|e| format!("parsing {}: {e}", manifest_path.display()))?;
-    if manifest.get("execution_status").and_then(Value::as_str) != Some("completed") {
-        return Err(format!(
-            "{} is not a completed stage capture",
-            manifest_path.display()
-        ));
-    }
-    let records = manifest
-        .get("stages")
-        .and_then(Value::as_array)
-        .ok_or_else(|| format!("{} has no stage records", manifest_path.display()))?;
-    let mut readings = Vec::new();
-    let mut availability = Vec::new();
-    for record in records {
-        let id = record
-            .get("id")
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_owned();
-        if !wanted.iter().any(|stage| stage == &id) {
-            continue;
-        }
-        match record.get("availability").and_then(Value::as_str) {
-            Some("available") => readings.push(read_stage(directory, record, id)?),
-            other => availability.push(StageAvailability {
-                id,
-                availability: other.unwrap_or("unknown").to_owned(),
-                reason: record
-                    .get("reason")
-                    .and_then(Value::as_str)
-                    .map(str::to_owned),
-            }),
-        }
-    }
-    Ok((readings, availability))
-}
-
-fn read_stage(directory: &Path, record: &Value, id: String) -> Result<StageReading, String> {
-    let layout = record
-        .get("layout")
-        .ok_or_else(|| format!("stage {id} carries no layout"))?;
-    let width = layout
-        .get("width")
-        .and_then(Value::as_u64)
-        .ok_or_else(|| format!("stage {id} layout has no width"))? as u32;
-    let height = layout
-        .get("height")
-        .and_then(Value::as_u64)
-        .ok_or_else(|| format!("stage {id} layout has no height"))? as u32;
-    if layout.get("dtype").and_then(Value::as_str) != Some("f64")
-        || layout.get("endianness").and_then(Value::as_str) != Some("little")
-        || layout.get("channels").and_then(Value::as_u64) != Some(3)
-    {
-        return Err(format!("stage {id} has an unsupported buffer layout"));
-    }
-    let relative_path = record
-        .get("path")
-        .and_then(Value::as_str)
-        .ok_or_else(|| format!("stage {id} has no buffer path"))?;
-    let path = documents::safe_artifact_path(directory, relative_path)
-        .map_err(|error| error.to_string())?;
-    let bytes = std::fs::read(&path)
-        .map_err(|error| format!("reading stage {id} buffer {}: {error}", path.display()))?;
-    let expected = width as usize * height as usize * 3;
-    if bytes.len() != expected * 8 {
-        return Err(format!(
-            "stage {id} buffer {} has {} bytes, expected {}",
-            path.display(),
-            bytes.len(),
-            expected * 8
-        ));
-    }
-    // The declaration must stay true: a buffer that no longer matches the
-    // digest its manifest records cannot be attributed to this run.
-    let digest = format!("{:x}", Sha256::digest(&bytes));
-    let declared = record
-        .get("sha256")
-        .and_then(Value::as_str)
-        .unwrap_or_default();
-    if declared != digest {
-        return Err(format!(
-            "stage {id} buffer {} hashes {digest} but the manifest declares {declared}",
-            path.display()
-        ));
-    }
-    let values = bytes
-        .as_chunks::<8>()
-        .0
-        .iter()
-        .map(|chunk| f64::from_le_bytes(*chunk))
-        .collect();
-    Ok(StageReading {
-        id,
-        width,
-        height,
-        domain: record
-            .get("domain")
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_owned(),
-        units: record
-            .get("units")
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_owned(),
-        channel_order: layout
-            .get("channel_order")
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_owned(),
-        color_space: record
-            .get("color")
-            .and_then(|color| color.get("color_space"))
-            .and_then(Value::as_str)
-            .map(str::to_owned),
-        cctf_decoding: record
-            .get("color")
-            .and_then(|color| color.get("cctf_decoding"))
-            .and_then(Value::as_bool),
-        coordinate_space: record
-            .get("geometry")
-            .and_then(|geometry| geometry.get("coordinate_space"))
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_owned(),
-        sha256: record
-            .get("sha256")
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_owned(),
-        values,
-    })
-}
-
-/// One group summary of finite values.
-pub struct Statistics {
-    pub count: usize,
-    pub mean: f64,
-    pub median: f64,
-    /// 95th percentile with the benchmark's interpolating estimator.
-    pub p95: f64,
-    pub min: f64,
-    pub max: f64,
-}
-
-/// Summarize the finite values of one group; `NaN` counts report zero.
-pub fn statistics(values: impl Iterator<Item = f64>) -> Statistics {
-    let mut finite: Vec<f64> = values.filter(|value| value.is_finite()).collect();
-    let count = finite.len();
-    if count == 0 {
-        return Statistics {
-            count: 0,
-            mean: f64::NAN,
-            median: f64::NAN,
-            p95: f64::NAN,
-            min: f64::NAN,
-            max: f64::NAN,
-        };
-    }
-    let mean = finite.iter().sum::<f64>() / count as f64;
-    finite.sort_by(|a, b| a.partial_cmp(b).expect("finite values"));
-    let middle = count / 2;
-    let median = if count.is_multiple_of(2) {
-        (finite[middle - 1] + finite[middle]) / 2.0
-    } else {
-        finite[middle]
-    };
-    // One estimator for the whole workspace: the benchmark's interpolating
-    // quantile (`spektrafilm_benchmark::metrics::quantile`), which this CLI
-    // already depends on under `precision-f64`.
-    let p95 = spektrafilm_benchmark::metrics::quantile(&finite, 0.95).unwrap_or(f64::NAN);
-    Statistics {
-        count,
-        mean,
-        median,
-        p95,
-        min: finite[0],
-        max: finite[count - 1],
-    }
 }

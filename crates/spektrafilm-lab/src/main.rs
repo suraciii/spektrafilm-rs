@@ -8,9 +8,14 @@
 use std::path::PathBuf;
 
 use clap::{Args, Parser, Subcommand};
-use spektrafilm_benchmark::{common, compare, documents, inspect, local_input, regions, report};
+use spektrafilm_benchmark::{
+    Error, common, compare, documents, inspect, local_input, regions, report,
+};
 
 mod images;
+mod plan;
+mod readings_compare;
+mod sample;
 
 #[derive(Parser)]
 #[command(
@@ -60,6 +65,11 @@ enum Commands {
         command: CompareCommand,
     },
     /// Read retained measurements without recomputing.
+    /// Read declared sample points from an image or a retained stage capture.
+    Sample {
+        #[command(flatten)]
+        args: sample::MeasureSampleArgs,
+    },
     Inspect {
         /// Retained comparison directory.
         #[arg(long, value_name = "DIR")]
@@ -131,6 +141,8 @@ struct GridArgs {
 enum CompareCommand {
     /// Quantify two delivered image sets. No renderer is involved.
     Images(images::Args),
+    /// Join two retained reading records.
+    Readings(readings_compare::MeasureCompareArgs),
     /// Compare two completed image-domain runs.
     Runs(RunComparisonArgs),
     /// Select explicit evidence pairs from one retained run.
@@ -306,7 +318,6 @@ fn moved(name: &str) -> Option<String> {
         "target",
         "spectral",
         "fit",
-        "sample",
     ];
     MOVED
         .contains(&name)
@@ -342,6 +353,7 @@ fn run() -> i32 {
         Commands::Validate { .. } => "validate",
         Commands::Regions { .. } => "regions",
         Commands::Compare { .. } => "compare",
+        Commands::Sample { .. } => "sample",
         Commands::Inspect { .. } => "inspect",
         Commands::Report { .. } => "report",
         Commands::External(_) => "unknown",
@@ -371,6 +383,8 @@ fn run() -> i32 {
         .map(|value| (value, 0)),
         Commands::Compare { command } => match command {
             CompareCommand::Images(args) => images::run(&args),
+            CompareCommand::Readings(args) => readings_compare::compare_with_result(&args)
+                .map_err(|error| Error::with_message("operation_failed", error)),
             CompareCommand::Runs(args) => compare::compare(
                 &args.baseline,
                 &args.candidate,
@@ -382,6 +396,8 @@ fn run() -> i32 {
                 compare::compare_single(&args.run, &args.against, &args.out)
             }
         },
+        Commands::Sample { args } => sample::sample_with_result(&args)
+            .map_err(|error| Error::with_message("operation_failed", error)),
         Commands::Inspect {
             comparison,
             case_ids,

@@ -1,12 +1,11 @@
 # Measurement
 
-`spektrafilm-f64` reads the executed chain and reports what it produced. Three commands
-carry the measurement surface: `measure run` measures the chain on a declared stimulus set,
-`sample` reads declared regions from an image or a retained stage capture, and `compare
-readings` matches two retained measurements. The commands run at
-f64 reference precision inside `spektrafilm-f64` until the reading family moves to
-`spektrafilm-lab`; the instrument compares and reports the records it consumes. They compute values and write
-evidence; they do not fit parameters, render images, or judge a result. See the [measurement
+Three commands carry the measurement surface. `spektrafilm-f64 measure run` measures the
+chain on a declared stimulus set. `spektrafilm-lab sample` reads declared regions from an
+image or a retained stage capture, and `spektrafilm-lab compare readings` matches two
+retained measurements: those two read and join what the first one produced. The commands
+run at f64 reference precision. They compute values and write evidence; they do not fit
+parameters, render images, or judge a result. See the [measurement
 contract](../specs/instrument/spec.md#measurement) for the requirements.
 
 The [native observation contract](../specs/instrument/native-observations.md) separates dedicated measurement and experiment endpoints from ordinary rendering. They attach the common core observer to their actual execution and own observation retention; they do not request capture through `process` flags. Measurement records retain their replayable declaration and actual observer entry, collection boundary, named taps, schema, and CPU f64 precision. Ordinary `process`, `run suite`, and `run image` offer no optional native capture or implicit replacement. Scientific bundles remain explicit research inputs, not resumable `.sfstage` states.
@@ -188,7 +187,7 @@ command prints its human text on stderr and a result object on stdout whose
 ## `sample`
 
 ```bash
-./target/release/spektrafilm-f64 sample \
+./target/release/spektrafilm-lab sample \
     --source chart.tif --input-color-space 'ProPhoto RGB' --input-cctf-decoding false \
     --regions regions.json --out sample-1
 ```
@@ -233,7 +232,7 @@ A region window that leaves the source bounds fails with the region identity. Th
 ## `compare readings`
 
 ```bash
-./target/release/spektrafilm-f64 compare readings \
+./target/release/spektrafilm-lab compare readings \
     --baseline run-1 --candidate run-2 \
     --reference run-ref --out compare-1
 ```

@@ -11,6 +11,7 @@ pub mod inspect;
 pub mod local_input;
 pub mod metrics;
 pub mod photo_report;
+pub mod readings;
 pub mod references;
 pub mod regions;
 pub mod report;

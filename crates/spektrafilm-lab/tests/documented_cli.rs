@@ -78,7 +78,9 @@ fn documented_lab_commands_use_supported_flags() {
         }
     }
     // Protect the documented workflow, not just an empty extraction.
-    for subcommand in ["validate", "compare", "inspect", "report", "regions"] {
+    for subcommand in [
+        "validate", "sample", "compare", "inspect", "report", "regions",
+    ] {
         assert!(checked.contains(&Some(subcommand.into())), "{subcommand}");
     }
 }

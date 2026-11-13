@@ -13,10 +13,92 @@ use serde_json::{Value, json};
 use spektrafilm_benchmark::image_data::{self, ImageData};
 use spektrafilm_math::colorspace::{self, RgbColorSpace};
 
-use super::super::cli::MeasureSampleArgs;
-use super::super::report;
-use super::plan::{self, Plan};
-use super::{StageReading, csv_field, number_field, read_stage_bundle, sha256_file, statistics};
+use clap::Args;
+
+use crate::plan::{self, Plan};
+use spektrafilm_benchmark::readings::{
+    MeasureStage, StageReading, csv_field, number_field, read_stage_bundle, sha256_file,
+    statistics, write_measure_named,
+};
+
+#[derive(Args)]
+#[command(group(
+    clap::ArgGroup::new("sample_source").required(true).multiple(false)
+        .args(["source", "from_evidence", "from_run"])
+))]
+pub struct MeasureSampleArgs {
+    /// Raster image to read; requires the input declaration below.
+    #[arg(long, value_name = "PATH", help_heading = "Source")]
+    pub source: Option<PathBuf>,
+    /// Retained stage-capture bundle to read instead of an image.
+    #[arg(
+        long,
+        value_name = "DIR",
+        conflicts_with_all = ["source", "from_run"],
+        help_heading = "Source"
+    )]
+    pub from_evidence: Option<PathBuf>,
+    /// Retained image-domain run directory or RUN.JSON whose selected case owns the stage capture.
+    #[arg(
+        long,
+        value_name = "DIR|RUN.JSON",
+        conflicts_with_all = ["source", "from_evidence"],
+        help_heading = "Source"
+    )]
+    pub from_run: Option<PathBuf>,
+    /// Exact case identity in a retained image-domain run.
+    #[arg(
+        long,
+        value_name = "ID",
+        required_unless_present_any = ["source", "from_evidence"],
+        requires = "from_run",
+        help_heading = "Source"
+    )]
+    pub case: Option<String>,
+    #[arg(
+        long,
+        value_name = "UINT32",
+        required_unless_present_any = ["source", "from_evidence"],
+        requires = "from_run",
+        help_heading = "Source"
+    )]
+    pub seed: Option<u32>,
+    /// Stage to read from a retained source; its declaration governs the reading.
+    #[arg(
+        long,
+        value_enum,
+        value_name = "STAGE",
+        required_unless_present = "source",
+        conflicts_with = "source",
+        help_heading = "Source"
+    )]
+    pub stage: Option<MeasureStage>,
+    /// Source color space of the image, as `process` declares it.
+    #[arg(
+        long,
+        value_name = "NAME",
+        requires = "source",
+        required_unless_present_any = ["from_evidence", "from_run"],
+        help_heading = "Source"
+    )]
+    pub input_color_space: Option<String>,
+    /// Whether the image's stored values are transfer-encoded.
+    #[arg(
+        long,
+        value_name = "true|false",
+        value_parser = clap::value_parser!(bool),
+        requires = "source",
+        required_unless_present_any = ["from_evidence", "from_run"],
+        help_heading = "Source"
+    )]
+    pub input_cctf_decoding: Option<bool>,
+    /// Regions document: explicit windows with stable sample identities.
+    #[arg(long, value_name = "PATH", help_heading = "Measurement")]
+    pub regions: PathBuf,
+    /// Record destination directory; existing artifacts are never replaced.
+    #[arg(long, value_name = "DIR", help_heading = "Measurement")]
+    pub out: PathBuf,
+}
 
 /// The pixels a measurement reads, and the authority that declares them.
 enum Pixels {
@@ -126,11 +208,6 @@ impl Reading {
     }
 }
 
-pub fn sample(args: &MeasureSampleArgs) -> Result<()> {
-    sample_with_result(args).map(|_| ())
-}
-
-/// Read the declared samples and return the command result object.
 pub fn sample_with_result(args: &MeasureSampleArgs) -> Result<(Value, i32)> {
     let plan = plan::load(&args.regions).map_err(anyhow::Error::msg)?;
     let source = select_source(args)?;
@@ -683,7 +760,7 @@ fn write_report(
     });
     let measure_text = format!("{}\n", serde_json::to_string_pretty(&measure_json)?);
     let points_text = build_points_csv(plan, source, readings);
-    report::write_measure_named(
+    write_measure_named(
         &args.out,
         &[("run.json", measure_text), ("readings.csv", points_text)],
     )

@@ -159,12 +159,6 @@ enum Commands {
         #[arg(long)]
         download_natural: bool,
     },
-    /// Read declared sample points from an image or a retained stage capture.
-    #[cfg(feature = "precision-f64")]
-    Sample {
-        #[command(flatten)]
-        args: spektrafilm_cli::lab::cli::MeasureSampleArgs,
-    },
     /// Spectral diagnostics.
     #[cfg(feature = "precision-f64")]
     Spectral {
@@ -244,7 +238,6 @@ fn main() -> Result<()> {
             | Commands::Measure { .. }
             | Commands::Compare { .. }
             | Commands::Fixtures { .. }
-            | Commands::Sample { .. }
             | Commands::Spectral { .. }
             | Commands::Experiment { .. }
             | Commands::Fit(_)

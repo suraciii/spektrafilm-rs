@@ -29,7 +29,6 @@ fn command_name(command: &Commands) -> &'static str {
         Commands::Measure { .. } => "measure",
         Commands::Compare { .. } => "compare",
         Commands::Fixtures { .. } => "fixtures",
-        Commands::Sample { .. } => "sample",
         Commands::Spectral { .. } => "spectral",
         Commands::Experiment { .. } => "experiment",
         Commands::Fit(_) => "fit",
@@ -63,16 +62,10 @@ fn execute(
             }
         },
         Commands::Compare { command } => match command {
-            CompareCommand::Readings(args) => {
-                let measurement = spektrafilm_cli::lab::cli::MeasureCompareArgs {
-                    baseline: args.baseline,
-                    candidate: args.candidate,
-                    reference: args.reference,
-                    out: args.out,
-                };
-                spektrafilm_cli::lab::measure::compare::compare_with_result(&measurement)
-                    .map_err(|error| BenchError::with_message("operation_failed", error))
-            }
+            CompareCommand::Readings(_) => Err(BenchError::new(
+                "argument_syntax",
+                "`compare readings` belongs to spektrafilm-lab; run `spektrafilm-lab compare readings`",
+            )),
             CompareCommand::Runs(_) => Err(BenchError::new(
                 "argument_syntax",
                 "`compare runs` belongs to spektrafilm-lab; run `spektrafilm-lab compare runs`",
@@ -102,11 +95,6 @@ fn execute(
             )?,
             0,
         )),
-        Commands::Sample { args } => {
-            let (value, status) = spektrafilm_cli::lab::measure::sample::sample_with_result(&args)
-                .map_err(|error| BenchError::with_message("operation_failed", error))?;
-            Ok((value, status))
-        }
         Commands::Spectral { command } => match command {
             SpectralCommand::Evaluate(args) => {
                 let (value, status) =
@@ -350,7 +338,7 @@ pub fn normalize_legacy_argv() -> Vec<std::ffi::OsString> {
 }
 /// The lab endpoints, with the binary that owns them.
 pub fn moved(name: &str) -> Option<String> {
-    const MOVED: &[&str] = &["schema", "validate", "regions", "report"];
+    const MOVED: &[&str] = &["schema", "validate", "regions", "report", "sample"];
     MOVED
         .contains(&name)
         .then(|| format!("spektrafilm-lab {name} ..."))

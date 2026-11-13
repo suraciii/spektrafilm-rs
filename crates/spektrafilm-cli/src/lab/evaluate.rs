@@ -19,9 +19,9 @@ use spektrafilm_math::spectral as math_spectral;
 use super::SCENE_RGB_SPACE;
 use super::cli::EvaluateArgs;
 use super::metrics::{self, SampleMetrics};
-use super::report::{csv_field, number_field};
 use super::spectra::SpectraSet;
 use crate::select_data_dir;
+use spektrafilm_benchmark::readings::{csv_field, number_field, write};
 
 struct Condition {
     reference: String,
@@ -256,7 +256,7 @@ pub fn run_with_result(args: &EvaluateArgs, matches: &ArgMatches) -> Result<(Val
 
     let samples_csv = build_samples_csv(&set, &sample_metrics, &raw_responses);
     let report_text = format!("{}\n", serde_json::to_string_pretty(&document)?);
-    super::report::write(&args.out, &report_text, &samples_csv).map_err(anyhow::Error::msg)?;
+    write(&args.out, &report_text, &samples_csv).map_err(anyhow::Error::msg)?;
     eprintln!("Report: {}", args.out.join("report.json").display());
     eprintln!("Samples: {}", args.out.join("samples.csv").display());
     Ok((

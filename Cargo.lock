@@ -4191,9 +4191,12 @@ dependencies = [
 name = "spektrafilm-lab"
 version = "0.1.2"
 dependencies = [
+ "anyhow",
  "clap",
  "image",
+ "serde",
  "serde_json",
+ "sha2",
  "spektrafilm-benchmark",
  "spektrafilm-math",
  "tempfile",

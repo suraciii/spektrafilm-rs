@@ -6,7 +6,43 @@
 
 use std::path::PathBuf;
 
-use clap::{Args, Subcommand, ValueEnum};
+use clap::{Args, Subcommand};
+pub use spektrafilm_benchmark::readings::{MeasureEntry, MeasureStage};
+
+/// The chain tap one declared vocabulary name maps to. The mapping is the
+/// renderer's: the reading vocabulary names what a buffer is, and this says
+/// where the renderer produced it.
+pub trait ChainTap: Copy {
+    fn tap(self) -> Tap;
+    fn position(self) -> u8 {
+        self.tap().position()
+    }
+}
+
+impl ChainTap for MeasureEntry {
+    /// `spectra` enters at `rgb_in`; the spectral path builds its own film
+    /// response instead of running the image pipeline.
+    fn tap(self) -> Tap {
+        match self {
+            MeasureEntry::Spectra | MeasureEntry::RgbIn => Tap::RgbIn,
+            MeasureEntry::LogEFilm => Tap::LogEFilm,
+            MeasureEntry::CmyFilm => Tap::CmyFilm,
+        }
+    }
+}
+
+impl ChainTap for MeasureStage {
+    fn tap(self) -> Tap {
+        match self {
+            MeasureStage::RgbIn => Tap::RgbIn,
+            MeasureStage::LogEFilm => Tap::LogEFilm,
+            MeasureStage::CmyFilm => Tap::CmyFilm,
+            MeasureStage::LogEPrint => Tap::LogEPrint,
+            MeasureStage::CmyPrint => Tap::CmyPrint,
+            MeasureStage::RgbOut => Tap::RgbOut,
+        }
+    }
+}
 use spektrafilm_core::params::Tap;
 
 /// Spectral diagnostics.
@@ -326,135 +362,7 @@ pub struct EvaluationCompareArgs {
     #[arg(long)]
     pub gate: bool,
 }
-#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
-pub enum MeasureEntry {
-    /// Measured reflectance spectra.
-    #[value(name = "spectra")]
-    Spectra,
-    /// Scene RGB after input decoding.
-    #[value(name = "rgb_in")]
-    RgbIn,
-    /// Film raw log exposure (CMY).
-    #[value(name = "log_e_film")]
-    LogEFilm,
-    /// Film density (CMY).
-    #[value(name = "cmy_film")]
-    CmyFilm,
-}
-
-impl MeasureEntry {
-    /// Every entry in chain order.
-    pub const ALL: [MeasureEntry; 4] = [
-        MeasureEntry::Spectra,
-        MeasureEntry::RgbIn,
-        MeasureEntry::LogEFilm,
-        MeasureEntry::CmyFilm,
-    ];
-
-    /// The declared name of the entry, as the command surface spells it.
-    pub const fn name(self) -> &'static str {
-        match self {
-            MeasureEntry::Spectra => "spectra",
-            MeasureEntry::RgbIn => "rgb_in",
-            MeasureEntry::LogEFilm => "log_e_film",
-            MeasureEntry::CmyFilm => "cmy_film",
-        }
-    }
-
-    /// The canonical tap the entry injects at: the shared `taps.inject`
-    /// control. `spectra` enters at `rgb_in`; the spectral path builds its own
-    /// film response instead of running the image pipeline.
-    pub const fn tap(self) -> Tap {
-        match self {
-            MeasureEntry::Spectra | MeasureEntry::RgbIn => Tap::RgbIn,
-            MeasureEntry::LogEFilm => Tap::LogEFilm,
-            MeasureEntry::CmyFilm => Tap::CmyFilm,
-        }
-    }
-
-    /// The stimulus domain the entry requires.
-    pub const fn domain(self) -> &'static str {
-        match self {
-            MeasureEntry::Spectra => "reflectance",
-            MeasureEntry::RgbIn => "scene_rgb",
-            MeasureEntry::LogEFilm => "film_log_e",
-            MeasureEntry::CmyFilm => "film_density",
-        }
-    }
-
-    /// The entry's position on the chain's tap scale: 0 is `rgb_in`. A stage
-    /// the entry is at or before executes; an earlier stage does not.
-    pub const fn position(self) -> u8 {
-        self.tap().position()
-    }
-}
-
 /// A stage a measurement can read.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, ValueEnum)]
-pub enum MeasureStage {
-    /// Scene RGB as the chain reads it after input decoding.
-    #[value(name = "rgb_in")]
-    RgbIn,
-    /// Film raw log exposure.
-    #[value(name = "log_e_film")]
-    LogEFilm,
-    /// Film density.
-    #[value(name = "cmy_film")]
-    CmyFilm,
-    /// Print raw log exposure.
-    #[value(name = "log_e_print")]
-    LogEPrint,
-    /// Print density.
-    #[value(name = "cmy_print")]
-    CmyPrint,
-    /// Final pipeline output before saving.
-    #[value(name = "rgb_out")]
-    RgbOut,
-}
-
-impl MeasureStage {
-    /// Every readable stage in chain order.
-    pub const ALL: [MeasureStage; 6] = [
-        MeasureStage::RgbIn,
-        MeasureStage::LogEFilm,
-        MeasureStage::CmyFilm,
-        MeasureStage::LogEPrint,
-        MeasureStage::CmyPrint,
-        MeasureStage::RgbOut,
-    ];
-
-    /// The canonical tap this stage reads.
-    pub const fn tap(self) -> Tap {
-        match self {
-            MeasureStage::RgbIn => Tap::RgbIn,
-            MeasureStage::LogEFilm => Tap::LogEFilm,
-            MeasureStage::CmyFilm => Tap::CmyFilm,
-            MeasureStage::LogEPrint => Tap::LogEPrint,
-            MeasureStage::CmyPrint => Tap::CmyPrint,
-            MeasureStage::RgbOut => Tap::RgbOut,
-        }
-    }
-
-    /// The stage's position on the chain's tap scale: 0 is `rgb_in`. An
-    /// operation that changes values from this stage on is inside a range
-    /// whose entry is before it and whose last reading is at or after it.
-    pub const fn position(self) -> u8 {
-        self.tap().position()
-    }
-
-    /// The stage-evidence identifier this stage reads.
-    pub const fn id(self) -> &'static str {
-        match self {
-            MeasureStage::RgbIn => "rgb_in",
-            MeasureStage::LogEFilm => "log_e_film",
-            MeasureStage::CmyFilm => "cmy_film",
-            MeasureStage::LogEPrint => "log_e_print",
-            MeasureStage::CmyPrint => "cmy_print",
-            MeasureStage::RgbOut => "rgb_out",
-        }
-    }
-}
-
 /// The chain options a measurement shares with `process`.
 #[derive(Args)]
 pub struct ChainArgs {
@@ -507,101 +415,6 @@ pub struct MeasureRunArgs {
     pub out: PathBuf,
     #[command(flatten)]
     pub chain: ChainArgs,
-}
-
-#[derive(Args)]
-#[command(group(
-    clap::ArgGroup::new("sample_source").required(true).multiple(false)
-        .args(["source", "from_evidence", "from_run"])
-))]
-pub struct MeasureSampleArgs {
-    /// Raster image to read; requires the input declaration below.
-    #[arg(long, value_name = "PATH", help_heading = "Source")]
-    pub source: Option<PathBuf>,
-    /// Retained stage-capture bundle to read instead of an image.
-    #[arg(
-        long,
-        value_name = "DIR",
-        conflicts_with_all = ["source", "from_run"],
-        help_heading = "Source"
-    )]
-    pub from_evidence: Option<PathBuf>,
-    /// Retained image-domain run directory or RUN.JSON whose selected case owns the stage capture.
-    #[arg(
-        long,
-        value_name = "DIR|RUN.JSON",
-        conflicts_with_all = ["source", "from_evidence"],
-        help_heading = "Source"
-    )]
-    pub from_run: Option<PathBuf>,
-    /// Exact case identity in a retained image-domain run.
-    #[arg(
-        long,
-        value_name = "ID",
-        required_unless_present_any = ["source", "from_evidence"],
-        requires = "from_run",
-        help_heading = "Source"
-    )]
-    pub case: Option<String>,
-    #[arg(
-        long,
-        value_name = "UINT32",
-        required_unless_present_any = ["source", "from_evidence"],
-        requires = "from_run",
-        help_heading = "Source"
-    )]
-    pub seed: Option<u32>,
-    /// Stage to read from a retained source; its declaration governs the reading.
-    #[arg(
-        long,
-        value_enum,
-        value_name = "STAGE",
-        required_unless_present = "source",
-        conflicts_with = "source",
-        help_heading = "Source"
-    )]
-    pub stage: Option<MeasureStage>,
-    /// Source color space of the image, as `process` declares it.
-    #[arg(
-        long,
-        value_name = "NAME",
-        requires = "source",
-        required_unless_present_any = ["from_evidence", "from_run"],
-        help_heading = "Source"
-    )]
-    pub input_color_space: Option<String>,
-    /// Whether the image's stored values are transfer-encoded.
-    #[arg(
-        long,
-        value_name = "true|false",
-        value_parser = clap::value_parser!(bool),
-        requires = "source",
-        required_unless_present_any = ["from_evidence", "from_run"],
-        help_heading = "Source"
-    )]
-    pub input_cctf_decoding: Option<bool>,
-    /// Regions document: explicit windows with stable sample identities.
-    #[arg(long, value_name = "PATH", help_heading = "Measurement")]
-    pub regions: PathBuf,
-    /// Record destination directory; existing artifacts are never replaced.
-    #[arg(long, value_name = "DIR", help_heading = "Measurement")]
-    pub out: PathBuf,
-}
-
-#[derive(Args)]
-pub struct MeasureCompareArgs {
-    /// Baseline measurement directory.
-    #[arg(long, value_name = "DIR", help_heading = "Comparison")]
-    pub baseline: PathBuf,
-    /// Candidate measurement directory.
-    #[arg(long, value_name = "DIR", help_heading = "Comparison")]
-    pub candidate: PathBuf,
-    /// Reference measurement directory; per-sample distance needs one.
-    #[arg(long, value_name = "DIR", help_heading = "Comparison")]
-    pub reference: Option<PathBuf>,
-    /// Comparison destination directory; existing artifacts are never replaced.
-    #[arg(long, value_name = "DIR", help_heading = "Comparison")]
-    pub out: PathBuf,
 }
 
 /// The development loop for a film profile: render one declared experiment,
