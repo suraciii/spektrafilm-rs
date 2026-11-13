@@ -841,7 +841,7 @@ fn engine_controls(
                         filter,
                         exposure.roughness,
                         "Roughness",
-                        "Exposure grain shape; 50 keeps the reference value-noise shape."
+                        "Exposure grain shape; 50 keeps the reference gradient-noise shape."
                     );
                     changed |= number!(
                         ui,
@@ -874,6 +874,14 @@ fn engine_controls(
                         exposure.push,
                         "Push",
                         "Additional Exposure grain amplitude added to the resolved zone amounts."
+                    );
+                    changed |= number!(
+                        ui,
+                        params,
+                        filter,
+                        exposure.color_variation,
+                        "Color variation",
+                        "Per-channel grain decorrelation; zero keeps the grain monochrome."
                     );
                     changed
                 },
@@ -1423,6 +1431,7 @@ mod tests {
             midtones: 88.0,
             highlights: 44.0,
             push: 1.5,
+            color_variation: 30.0,
         };
         let document = serde_json::to_value(&params).unwrap();
         assert_eq!(

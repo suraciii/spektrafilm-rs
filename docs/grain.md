@@ -19,7 +19,7 @@ Dye diagnostics use `SPEKTRAFILM_GRAIN_DYE_*`. Historical numbered diagnostic na
 - Procedural derives from Dehancer. It provides Analogue/Noise grain with twelve format/speed profiles. Its controls include Size, Amount, Shadows, Midtones, Highlights, Chroma, and Film Resolution. Pixel parity with Dehancer is not claimed.
 - Dye is the default self-developed experimental film-coordinate dye field. `dye_strength` and `dye_scale` control it.
 - Fotufilm Film is an adapted appearance population model fitted to resolved film curves. It is opt-in. `film_render.grain.fotufilm.*` controls it.
-- Exposure Grain is a reconstructed post-scan encoded-RGB value-noise appearance model. It is opt-in. `film_render.grain.exposure.*` controls it.
+- Exposure Grain is a reconstructed post-scan encoded-RGB gradient-noise appearance model. It is opt-in. `film_render.grain.exposure.*` controls it.
 
 Explicit engines in existing looks remain unchanged. To keep the historical engine in a sparse source, set `film_render.grain.engine = spektra`. See [default compatibility](../specs/film-grain/spec.md#defaults-and-compatibility) for omitted-engine and GUI state migration rules.
 
@@ -176,14 +176,15 @@ It runs after scan acquisition, output gamut, unsharp masking, and transfer enco
 
 Controls live in `film_render.grain.exposure`:
 
-- `strength` (0–100, default 100) scales the appearance.
+- `strength` (0–150, default 100) scales the appearance.
 - `size` (0.25–4.5, default 1) sets the relative grain scale.
-- `auto_size` (default `true`) derives the absolute grain size from `format` and the full source dimensions. Setting it to `false` uses `absolute_size_px` (0.5–64, default 1.5).
+- `auto_size` (default `true`) derives the absolute grain size from `format` and the actual output dimensions. Setting it to `false` uses `absolute_size_px` (0.5–64, default 1.5).
 - `format` chooses `35mm`, `medium_format`, or `large_format` for automatic sizing.
 - `roughness`, `shadows`, `midtones`, and `highlights` (each 0–100) set the roughness S curve and zone partition.
 - `push` (0–3, default 0) applies the reconstructed push response.
+- `color_variation` (0–100, default 20) controls per-channel grain decorrelation; zero keeps the grain monochrome.
 
-The shared `random_seed` drives the reconstruction; Exposure adds no second phase input. CPU and GPU use the reconstructed minstd permutation and value-noise tables, with deterministic repeatability at the same seed and declared dimensions. The GPU path runs the complete Exposure stage on the selected device and does not claim pixel parity with Exposure X7 or its presets. Color Variation is not part of this engine.
+The shared `random_seed` drives the reconstruction; Exposure adds no second phase input. CPU and GPU use the reconstructed minstd permutation and gradient-noise tables, with deterministic repeatability at the same seed and declared dimensions. The GPU path runs the complete Exposure stage on the selected device and does not claim pixel parity with Exposure X7 or its presets. Color Variation is a reconstructed per-channel decorrelation control, not a vendor channel-parity claim.
 
 ## See also
 

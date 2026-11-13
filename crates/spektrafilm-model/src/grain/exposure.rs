@@ -1,4 +1,4 @@
-//! Exposure Grain: a reconstructed post-scan encoded-RGB value-noise appearance.
+//! Exposure Grain: a reconstructed post-scan encoded-RGB gradient-noise appearance.
 //!
 //! The frozen scalar reference is the reconstructed Exposure X7 luma path. The
 //! device and host share the same binary32 tables and control coefficients from
@@ -41,6 +41,9 @@ pub struct ExposureGrainParams {
     pub midtones: f32,
     pub highlights: f32,
     pub push: f32,
+    /// Per-channel grain decorrelation, `0.0..=100.0`. Zero keeps the frozen
+    /// monochrome scalar field exactly.
+    pub color_variation: f32,
     /// The reference seed domain. Use [`exposure_seed`] to reduce the shared
     /// 64-bit runtime seed without introducing a second phase input.
     pub seed: u32,
@@ -60,6 +63,7 @@ impl Default for ExposureGrainParams {
             midtones: 70.0,
             highlights: 30.0,
             push: 0.0,
+            color_variation: 20.0,
             seed: 0,
             render_scale: 1.0,
         }
@@ -118,11 +122,22 @@ pub fn apply_cpu(input: &ImageBuf, mut params: ExposureGrainParams) -> ImageBuf 
         params.midtones,
         params.highlights,
         params.push,
+        params.color_variation,
         params.render_scale,
         input.width,
         input.height,
     );
     let tables = ExposureTables::new(params.seed, coefficients.size_low, coefficients.size_high);
+    // The color-noise pass runs a second, independent generator whose seed is
+    // offset by 0x1f from the luma generator (binary: `lea 0x1f(%rsi),%r9d`
+    // feeding the color generator constructor at 0x1418d857b).
+    let color_tables = (coefficients.colorvar > 0.0).then(|| {
+        ExposureTables::new(
+            params.seed.wrapping_add(0x1f),
+            coefficients.size_low,
+            coefficients.size_high,
+        )
+    });
     let mut output = input.clone();
     output
         .data
@@ -139,12 +154,35 @@ pub fn apply_cpu(input: &ImageBuf, mut params: ExposureGrainParams) -> ImageBuf 
             let displacement = shadow * coefficients.shadow_amplitude
                 + middle * coefficients.midtone_amplitude
                 + highlight * coefficients.highlight_amplitude;
+            let base = displacement * coefficients.frequency_gain;
             let grain = shaped(tables.noise(x, y), coefficients.roughness_effective);
-            let output_luma =
-                (luma + displacement * coefficients.frequency_gain * grain).clamp(0.0, 1.0);
+            let output_luma = (luma + base * grain).clamp(0.0, 1.0);
             let delta = output_luma - luma;
+            // Luma pass: the achromatic grain delta reaches every channel.
+            let mut out = [0.0f32; 3];
             for channel in 0..3 {
-                pixel[channel] = from_f32((rgb[channel] + delta).clamp(0.0, 1.0));
+                out[channel] = (rgb[channel] + delta).clamp(0.0, 1.0);
+            }
+            // Color pass (binary 0x1418d8070): a second generator supplies three
+            // chromatic noise fields (consecutive gradient-table slots g+0/g+1/g+2);
+            // the per-zone amplitude uses 0.4 for shadow/midtone and 0.8 for
+            // highlight (k1 = cg*0.4, k2 = cg*0.8), then frequency gain.  The raw
+            // noise is not S-curved.
+            if let Some(color_tables) = &color_tables {
+                let n = color_tables.noise_rgb(x, y);
+                let k1 = 0.4 * coefficients.colorvar;
+                let k2 = 0.8 * coefficients.colorvar;
+                let color_gain = (shadow * coefficients.shadow_amplitude
+                    + middle * coefficients.midtone_amplitude)
+                    * k1
+                    + highlight * coefficients.highlight_amplitude * k2;
+                let delta_c = color_gain * coefficients.frequency_gain;
+                for channel in 0..3 {
+                    out[channel] = (out[channel] + n[channel] * delta_c).clamp(0.0, 1.0);
+                }
+            }
+            for channel in 0..3 {
+                pixel[channel] = from_f32(out[channel]);
             }
         });
     output
@@ -176,6 +214,9 @@ mod tests {
         assert_eq!(shaped(0.37, 0.5), 0.37);
         assert_eq!(shaped(1.0, 0.0), 1.0);
         assert_eq!(shaped(-1.0, 0.0), -1.0);
+        // rough_eff = 1 (max roughness): a = 0, b = 1 → magnitude saturates to ±1.
+        assert_eq!(shaped(0.5, 1.0), 1.0);
+        assert_eq!(shaped(-0.5, 1.0), -1.0);
     }
 
     #[test]
@@ -196,42 +237,42 @@ mod tests {
     #[test]
     fn frozen_reference_vector_matches() {
         let expected = [
-            0.022_249_42,
-            0.122_249_42,
-            0.222_249_42,
-            0.498_152_08,
-            0.498_152_08,
-            0.548_152_08,
-            0.599_189_3,
-            0.499_189_3,
-            0.499_189_3,
-            0.845_625_3,
-            0.645_625_3,
-            0.595_625_3,
-            0.231_514_09,
-            0.361_514_09,
-            0.511_514_1,
-            0.525_190_1,
-            0.555_190_1,
-            0.655_190_1,
-            0.601_370_2,
-            0.531_370_2,
-            0.581_370_2,
-            0.835_610_2,
-            0.665_610_2,
-            0.665_610_2,
-            0.333_935_15,
-            0.493_935_15,
-            0.693_935_15,
-            0.549_323_4,
-            0.609_323_4,
-            0.759_323_4,
-            0.586_061_5,
-            0.546_061_5,
-            0.646_061_5,
-            0.821_086,
-            0.681_086,
-            0.731_086,
+            0.117_065_62,
+            0.217_065_62,
+            0.317_065_63,
+            0.331_604_78,
+            0.331_604_78,
+            0.381_604_8,
+            0.497_056_96,
+            0.397_056_97,
+            0.397_056_97,
+            0.711_947_86,
+            0.511_947_8,
+            0.461_947_83,
+            0.067_261_59,
+            0.197_261_59,
+            0.347_261_6,
+            0.368_598_52,
+            0.398_598_52,
+            0.498_598_52,
+            0.572_399_5,
+            0.502_399_5,
+            0.552_399_54,
+            0.765_141_4,
+            0.595_141_4,
+            0.595_141_4,
+            0.136_440_95,
+            0.296_440_96,
+            0.496_440_95,
+            0.400_066_9,
+            0.460_066_9,
+            0.610_066_9,
+            0.584_775_33,
+            0.544_775_3,
+            0.644_775_33,
+            0.786_717_06,
+            0.646_717,
+            0.696_717,
         ];
         let image = ImageBuf::from_data(
             4,
@@ -252,6 +293,7 @@ mod tests {
             auto_size: false,
             absolute_size_px: 2.0,
             seed: 7,
+            color_variation: 0.0,
             ..Default::default()
         };
         let actual = apply_cpu(&image, params);
@@ -262,6 +304,58 @@ mod tests {
                 to_f32(actual)
             );
         }
+    }
+
+    #[test]
+    fn color_variation_decorrelates_channels_and_keeps_the_scalar_path() {
+        let image = ImageBuf::from_data(8, 8, vec![from_f32(0.5); 8 * 8 * 3]);
+        let base = ExposureGrainParams {
+            auto_size: false,
+            absolute_size_px: 1.5,
+            seed: 9,
+            color_variation: 0.0,
+            ..Default::default()
+        };
+        let mono = apply_cpu(&image, base);
+        let zero = apply_cpu(
+            &image,
+            ExposureGrainParams {
+                color_variation: 0.0,
+                ..base
+            },
+        );
+        assert_eq!(
+            zero.data, mono.data,
+            "zero must stay on the frozen scalar path"
+        );
+        let colored = apply_cpu(
+            &image,
+            ExposureGrainParams {
+                color_variation: 80.0,
+                ..base
+            },
+        );
+        assert_ne!(colored.data, mono.data, "nonzero must decorrelate channels");
+        // Decoded chroma is additive and asymmetric: channels must split.
+        let (colored_chunks, _) = colored.data.as_chunks::<3>();
+        assert!(
+            colored_chunks.iter().any(|px| {
+                let v: [f32; 3] = [to_f32(px[0]), to_f32(px[1]), to_f32(px[2])];
+                (v[0] - v[2]).abs() > 1e-6 || (v[1] - v[2]).abs() > 1e-6
+            }),
+            "nonzero color variation must split channels"
+        );
+        let again = apply_cpu(
+            &image,
+            ExposureGrainParams {
+                color_variation: 80.0,
+                ..base
+            },
+        );
+        assert_eq!(
+            again.data, colored.data,
+            "color variation must be deterministic"
+        );
     }
 
     #[test]

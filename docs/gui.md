@@ -190,7 +190,7 @@ The shared **density min** editor remains available when an executing film-scann
 
 **Procedural Grain Profiles** appears only for Procedural. Named profiles retain editable **Amount**; choose **Custom** to expose custom controls. Noise hides **Film Resolution** and **Resolution Type** without clearing their requests.
 
-**Exposure Grain** exposes strength, size, automatic size, format, roughness, shadows, midtones, highlights, and push. Automatic size hides absolute size without clearing it. It does not expose Color Variation.
+**Exposure Grain** exposes strength, size, automatic size, format, roughness, shadows, midtones, highlights, push, and color variation. Automatic size hides absolute size without clearing it.
 
 Spektra's sublayer controls follow the selected film's actual capabilities. Fotufilm's fourth sublayer share remains a read-only remainder. Unsupported material requests retain their values and show a reason; the GUI does not choose another engine or material automatically.
 

@@ -185,7 +185,14 @@ impl WgpuBackend {
                 )?;
                 bytes
             }
-            "grain_exposure" => super::super::grain::exposure_workspace_bytes(self, width, height)?,
+            "grain_exposure" => super::super::grain::exposure_workspace_bytes(
+                self,
+                width,
+                height,
+                p.grain_exposure
+                    .as_ref()
+                    .ok_or("exposure grain parameters missing")?,
+            )?,
             "grain_procedural" => {
                 // The procedural owner validates its resolution support. Four
                 // full rasters and eight capped sample/filter windows coexist.

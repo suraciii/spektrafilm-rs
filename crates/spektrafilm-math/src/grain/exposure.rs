@@ -1,4 +1,4 @@
-//! Frozen Exposure-compatible value-noise tables and control coefficients.
+//! Frozen Exposure-compatible gradient-noise tables and control coefficients.
 //!
 //! This is numerical primitives only. The model crate owns the encoded-RGB
 //! appearance composition and the core crate owns serialization.
@@ -9,7 +9,9 @@ const MINSTD_A: u32 = 16_807;
 const MINSTD_Q: u32 = 127_773;
 const MINSTD_R: u32 = 2_836;
 const SEED_LIMIT: u32 = 0x7fff_fffe;
-const OCTAVE_OFFSETS: [f32; 8] = [23.1, 8.15, 57.0, 69.2, 117.4, 138.6, 198.6, 278.85];
+/// Per-octave phase offset, shared by the x and y coordinates
+/// (`oct_offsets[o]` in the original).
+const OCTAVE_OFFSETS: [f32; 5] = [23.1, 8.15, 57.0, 69.2, 117.4];
 
 /// Reduce the shared runtime seed to the frozen reference's nonnegative
 /// 31-bit domain.
@@ -27,6 +29,8 @@ pub struct ExposureCoefficients {
     pub highlight_amplitude: f32,
     pub frequency_gain: f32,
     pub roughness_effective: f32,
+    /// Color Variation normalized to `0.0..=1.0` from the `0..=100` control.
+    pub colorvar: f32,
 }
 
 /// Resolve the automatic or manual size pair and the zone/frequency gains.
@@ -63,6 +67,7 @@ pub fn exposure_coefficients(
     midtones: f32,
     highlights: f32,
     push: f32,
+    color_variation: f32,
     render_scale: f32,
     width: u32,
     height: u32,
@@ -87,6 +92,7 @@ pub fn exposure_coefficients(
         highlight_amplitude: amplitude * zone_gain(highlights, push) * size_low,
         frequency_gain: 0.3 / (2.0 * (0.3 * roughness_effective + 0.35)),
         roughness_effective,
+        colorvar: (color_variation / 100.0).clamp(0.0, 1.0),
     }
 }
 
@@ -99,32 +105,39 @@ pub struct ExposureTables {
     pub perm: Vec<u32>,
     pub perm2: Vec<u32>,
     pub weights: Vec<f32>,
+    pub size_low: f32,
     pub fx: f32,
     pub fy: f32,
-    pub amplitude: f32,
 }
 
 impl ExposureTables {
+    /// Build the scalar field. `size_low` divides the x frequency and sets the
+    /// table amplitude and output clamp; `size_high` divides the y frequency.
     pub fn new(seed: u32, size_low: f32, size_high: f32) -> Self {
         let seed = seed.min(SEED_LIMIT);
-        let amplitude = size_low.abs() as f64;
+        let amplitude = size_low as f64;
         let mut state = minstd_seed(seed);
         let mut t1 = vec![0.0f32; SPECTRAL_LEN];
         let mut t2 = vec![0.0f32; SPECTRAL_LEN];
         let mut t3 = vec![0.0f32; SPECTRAL_LEN];
         for k in 0..(SPECTRAL_LEN / 2) {
+            // One phase per k, shared by all three tables: T1 == T2, and T3
+            // reuses the same components swapped at half amplitude.
             let (next, unit) = minstd_unit(state);
             state = next;
             let theta = std::f64::consts::TAU * unit;
             let (sin, cos) = theta.sin_cos();
-            t1[2 * k] = (cos * amplitude) as f32;
-            t1[2 * k + 1] = (sin * amplitude) as f32;
-            t2[2 * k] = (cos * amplitude) as f32;
-            t2[2 * k + 1] = (sin * amplitude) as f32;
+            let c = cos * amplitude;
+            let s = sin * amplitude;
+            t1[2 * k] = c as f32;
+            t1[2 * k + 1] = s as f32;
+            t2[2 * k] = c as f32;
+            t2[2 * k + 1] = s as f32;
             t3[2 * k] = (sin * amplitude * 0.5) as f32;
             t3[2 * k + 1] = (cos * amplitude * 0.5) as f32;
         }
-        // The reconstructed Fisher-Yates bound is deliberately N - 1.
+        // Fisher-Yates with the reconstructed bound N - 1; one shuffle index
+        // is shared by all three tables.
         for i in 0..SPECTRAL_LEN {
             let (next, j) = minstd_int(state, (SPECTRAL_LEN - 1) as u32);
             state = next;
@@ -166,45 +179,90 @@ impl ExposureTables {
             perm,
             perm2,
             weights,
+            size_low,
             fx: 1.0 / size_low,
             fy: 1.0 / size_high,
-            amplitude: size_low.abs(),
         }
     }
 
-    fn lattice(&self, ix: i32, iy: i32) -> [f32; 4] {
+    /// Resolve the four permuted lattice indices for one cell.
+    fn corner(&self, ix: i32, iy: i32) -> [usize; 4] {
         let h0 = self.perm2[(ix & 8191) as usize];
         let h1 = self.perm2[((ix + 1) & 8191) as usize];
         let i0 = (iy & 8191) as u32;
         let i1 = ((iy + 1) & 8191) as u32;
-        let c00 = self.perm[(h0 ^ i0) as usize] as usize;
-        let c01 = self.perm[(h0 ^ i1) as usize] as usize;
-        let c10 = self.perm[(h1 ^ i0) as usize] as usize;
-        let c11 = self.perm[(h1 ^ i1) as usize] as usize;
         [
-            self.t1[c00] + self.t3[c00] + self.t2[c00],
-            self.t1[c01] + self.t3[c01] + self.t2[c01],
-            self.t1[c10] + self.t3[c10] + self.t2[c10],
-            self.t1[c11] + self.t3[c11] + self.t2[c11],
+            self.perm[(h0 ^ i0) as usize] as usize,
+            self.perm[(h0 ^ i1) as usize] as usize,
+            self.perm[(h1 ^ i0) as usize] as usize,
+            self.perm[(h1 ^ i1) as usize] as usize,
         ]
     }
 
+    /// The frozen scalar field (channel 0) at one point.
     pub fn noise(&self, x: f32, y: f32) -> f32 {
         let mut acc = 0.0f32;
         for (octave, &weight) in self.weights.iter().enumerate() {
-            let x_frequency = (1u32 << octave) as f32;
-            let px = x * self.fx * x_frequency + OCTAVE_OFFSETS[octave];
+            let frequency = (1u32 << octave) as f32;
+            let px = x * self.fx * frequency + OCTAVE_OFFSETS[octave];
             let py = y * self.fy + OCTAVE_OFFSETS[octave];
             let ix = px.floor();
             let iy = py.floor();
-            let tx = smoothstep(px - ix);
-            let ty = smoothstep(py - iy);
-            let [v00, v01, v10, v11] = self.lattice(ix as i32, iy as i32);
+            let fx = px - ix;
+            let fy = py - iy;
+            let tx = smoothstep(fx);
+            let ty = smoothstep(fy);
+            let [c00, c01, c10, c11] = self.corner(ix as i32, iy as i32);
+            // Perlin-style gradient dot plus a per-corner value term:
+            //   corner = (P - corner_pos) · (T1, T2) + T3
+            let v00 = fx * self.t1[c00] + fy * self.t2[c00] + self.t3[c00];
+            let v01 = fx * self.t1[c01] + (fy - 1.0) * self.t2[c01] + self.t3[c01];
+            let v10 = (fx - 1.0) * self.t1[c10] + fy * self.t2[c10] + self.t3[c10];
+            let v11 = (fx - 1.0) * self.t1[c11] + (fy - 1.0) * self.t2[c11] + self.t3[c11];
             let a = v00 + (v10 - v00) * tx;
             let b = v01 + (v11 - v01) * tx;
             acc += weight * (a + (b - a) * ty);
         }
-        acc.clamp(-self.amplitude, self.amplitude)
+        acc.clamp(-self.size_low.abs(), self.size_low.abs())
+    }
+
+    /// Sample all three channel fields at one point. Channel 0 is the frozen
+    /// scalar field; channels 1 and 2 read consecutive spectral entries at the
+    /// same lattice corner, so they are correlated but decorrelated from
+    /// channel 0. This is the Color Variation source.
+    pub fn noise_rgb(&self, x: f32, y: f32) -> [f32; 3] {
+        let mut acc = [0.0f32; 3];
+        for (octave, &weight) in self.weights.iter().enumerate() {
+            let frequency = (1u32 << octave) as f32;
+            let px = x * self.fx * frequency + OCTAVE_OFFSETS[octave];
+            let py = y * self.fy + OCTAVE_OFFSETS[octave];
+            let ix = px.floor();
+            let iy = py.floor();
+            let fx = px - ix;
+            let fy = py - iy;
+            let tx = smoothstep(fx);
+            let ty = smoothstep(fy);
+            let [c00, c01, c10, c11] = self.corner(ix as i32, iy as i32);
+            for (channel, acc) in acc.iter_mut().enumerate() {
+                let s = channel;
+                // Perlin gradient dot plus per-corner value term: (P-C)·(T1,T2)+T3.
+                let v00 = fx * self.t1[c00 + s] + fy * self.t2[c00 + s] + self.t3[c00 + s];
+                let v01 = fx * self.t1[c01 + s] + (fy - 1.0) * self.t2[c01 + s] + self.t3[c01 + s];
+                let v10 = (fx - 1.0) * self.t1[c10 + s] + fy * self.t2[c10 + s] + self.t3[c10 + s];
+                let v11 = (fx - 1.0) * self.t1[c11 + s]
+                    + (fy - 1.0) * self.t2[c11 + s]
+                    + self.t3[c11 + s];
+                let a = v00 + (v10 - v00) * tx;
+                let b = v01 + (v11 - v01) * tx;
+                *acc += weight * (a + (b - a) * ty);
+            }
+        }
+        let amp = self.size_low.abs();
+        [
+            acc[0].clamp(-amp, amp),
+            acc[1].clamp(-amp, amp),
+            acc[2].clamp(-amp, amp),
+        ]
     }
 }
 
@@ -276,6 +334,22 @@ mod tests {
         assert_eq!(exposure_seed(0x8000_0001), 1);
         assert_eq!(exposure_seed(u64::MAX), SEED_LIMIT);
         assert_eq!(exposure_seed(7), 7);
+    }
+
+    #[test]
+    fn spectral_tables_share_one_phase_with_a_swapped_third() {
+        // The original draws one phase per k: T1 == T2, and T3 reuses the same
+        // components swapped at half amplitude.
+        let tables = ExposureTables::new(7, 1.0, 1.0);
+        assert_eq!(tables.t1, tables.t2);
+        assert_ne!(tables.t1, tables.t3);
+    }
+
+    #[test]
+    fn generator_uses_size_low_for_x_and_size_high_for_y() {
+        let tables = ExposureTables::new(7, 1.0, 4.0);
+        assert_eq!(tables.fx, 1.0);
+        assert_eq!(tables.fy, 0.25);
     }
 
     #[test]
