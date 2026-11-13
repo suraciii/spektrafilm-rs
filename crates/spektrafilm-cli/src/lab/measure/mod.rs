@@ -7,7 +7,6 @@ pub mod plan;
 pub mod run;
 pub mod sample;
 pub mod stimuli;
-pub mod verify;
 
 use std::io::Read;
 use std::path::{Path, PathBuf};

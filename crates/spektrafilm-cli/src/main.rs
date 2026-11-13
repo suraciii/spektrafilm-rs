@@ -165,12 +165,6 @@ enum Commands {
         #[command(flatten)]
         args: spektrafilm_cli::lab::cli::MeasureSampleArgs,
     },
-    /// Re-resolve a recorded record and report identity differences.
-    #[cfg(feature = "precision-f64")]
-    Verify {
-        #[command(flatten)]
-        args: spektrafilm_cli::lab::cli::MeasureVerifyArgs,
-    },
     /// Spectral diagnostics.
     #[cfg(feature = "precision-f64")]
     Spectral {
@@ -251,7 +245,6 @@ fn main() -> Result<()> {
             | Commands::Compare { .. }
             | Commands::Fixtures { .. }
             | Commands::Sample { .. }
-            | Commands::Verify { .. }
             | Commands::Spectral { .. }
             | Commands::Experiment { .. }
             | Commands::Fit(_)

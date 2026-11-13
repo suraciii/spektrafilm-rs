@@ -93,7 +93,6 @@ The canonical grammar is owned by the [research machine interface](../instrument
 | `compare pairs` | create the explicitly requested pairs of one run | compare two runs, infer a pair, or render |
 | `inspect` | project retained comparison evidence | recalculate a metric or evaluate a policy |
 | `report comparison` | present one retained comparison | accept a manifest, render, or measure |
-| `verify` | re-hash one retained record and its dependencies | rewrite, render, or judge |
 
 The result object, the exit status, and the progress rules are the shared [machine-output contract](../instrument/spec.md#machine-output).
 
@@ -336,7 +335,7 @@ A caller who needs the renderer's reading of a file does not need a shared codec
 ## Current implementation gap
 
 - The binary split is implemented: `spektrafilm-lab` is its own package, links no renderer, and the render endpoints reject a lab invocation naming the owning binary.
-- `sample`, `verify`, and `compare readings` are specified here but still hosted by `spektrafilm-f64`. They read retained stages and re-hash retained identity, so they move once the reader and the identity checker no longer share code with the renderer.
+- `sample` and `compare readings` are specified here but still hosted by `spektrafilm-f64`; they move once the reading family no longer shares code with the renderer.
 - A region is a rectangle. Mask geometry is rejected; reading mask files on a delivered raster is not implemented.
 - The report composition removes a half-written report directory, but every failure the report can be shown to hit is refused before that directory exists, so the cleanup is defensive and unexercised.
 - The lab reader decodes PNG, TIFF, JPEG, WebP, and EXR. A container layout with no stated normalization is rejected.

@@ -47,13 +47,12 @@ The supported command families have distinct endpoint roles:
 | `compare readings` | compare two retained reading records | retained reading records | compare image-domain runs, invoke a renderer, or select a candidate |
 | `compare pairs` | create explicitly requested pairs from one retained run | one retained run record | compare two runs, infer a default pair, or invoke a renderer |
 | `inspect` / `report comparison` | project retained evidence | completed comparison | recalculate metrics |
-| `verify` | re-hash retained identity | one retained record | render, rewrite, compare, or judge |
 
 ### Command ownership
 
 | Binary | Owns |
 |---|---|
-| `spektrafilm-lab` | `schema`, `validate`, `regions grid`, `sample`, `compare images`, `compare runs`, `compare readings`, `compare pairs`, `inspect`, `report comparison`, `verify` |
+| `spektrafilm-lab` | `schema`, `validate`, `regions grid`, `sample`, `compare images`, `compare runs`, `compare readings`, `compare pairs`, `inspect`, `report comparison` |
 | `spektrafilm-f64` | `target`, `fixtures`, `run suite`, `run image`, `measure run`, `experiment run`, `experiment export`, `spectral evaluate`, `fit` |
 
 An endpoint MUST NOT be accepted by the binary that does not own it. A rejected invocation MUST return `argument_syntax` and name the owning binary. The binaries MUST NOT forward a command to each other, because a forwarded command would hide the dependency that this table makes explicit.
@@ -92,7 +91,6 @@ spektrafilm-lab compare runs --baseline DIRECTORY --candidate DIRECTORY --out DI
 spektrafilm-lab compare readings --baseline DIRECTORY --candidate DIRECTORY --out DIRECTORY [--reference DIRECTORY]
 spektrafilm-lab compare pairs --run DIRECTORY --against input|reference|both --out DIRECTORY
 spektrafilm-lab inspect --comparison DIRECTORY [--case ID ...] [--region ID ...] [--metric ID ...]
-spektrafilm-lab verify --record DIRECTORY [--data-dir DIRECTORY]
 spektrafilm-lab report comparison --comparison DIRECTORY --out DIRECTORY
 spektrafilm-lab regions grid --id ID --rows N --columns N --origin X,Y --patch-size WxH --gap X,Y [--sample WxH] [--space SPACE] [--role ROLE] [--measurements FAMILY,...] --out FILE
 ```
@@ -167,7 +165,7 @@ The command family names are semantic, not workflow steps. `measure run` publish
 - A delivered image has no executed command. The comparison MUST NOT fabricate one, and a reader MUST NOT reconstruct one.
 - A region, a protocol, or a mask that a comparison consumed MUST be copied into that comparison and hashed. A reader MUST NOT require the caller's original file.
 - Inspection and reporting MUST accept a source block of either kind. They MUST NOT require a manifest hash that the source does not have.
-- `verify` MUST re-hash every file an image source block names, in addition to the comparison identity.
+- Every file an image source block names MUST be hashed in that block, so a reader can re-hash it against the bytes in front of it.
 - Each case MUST carry `review` entries for `baseline` and `candidate`, written by the shared review writer. Reporting MUST resolve a case image from that entry, not from a run record.
 - The comparison MUST carry `evaluation_status` equal to `not_evaluated`, `selection` naming its case identities, and a `seed_measurements` array that MAY be empty.
 - A region that selects a family whose probe is absent MUST retain an unavailable row with the family's own reason. The other selected families MUST still measure.
@@ -271,7 +269,7 @@ Every JSON document a research binary reads or writes has one kind and one ownin
 | `metrics` | vocabulary | [Measurement protocol](../benchmark/metrics/spec.md) |
 
 - A kind's state decides which commands accept it. An authored kind is written by a person or another tool and MAY be validated.
-- A retained kind is published by a research binary, is immutable, and is consumed by `compare`, `inspect`, `verify`, `report`, and the matching `sample` adapters (`--from-evidence` or `--from-run`). `metrics` is not a document: it is the closed vocabulary of metric identities a policy MAY name, and the same vocabulary the measurement protocol owns.
+- A retained kind is published by a research binary, is immutable, and is consumed by `compare`, `inspect`, `report`, and the matching `sample` adapters (`--from-evidence` or `--from-run`). `metrics` is not a document: it is the closed vocabulary of metric identities a policy MAY name, and the same vocabulary the measurement protocol owns.
 
 ## Measurement
 
@@ -284,7 +282,7 @@ A measurement enters the chain at one declared boundary: `spectra`, `rgb_in`, `l
 The entry MUST use the canonical `taps.inject` control, and the executed range MUST end at or after it. The command MUST NOT add a second chain-entry mechanism or a second execution path.
 
 - The measured range is declared through the same controls the user binaries read: `--enter` becomes the resolved `taps.inject`, and the collection boundary is the chain's own `taps.collect` when it reaches every requested reading, otherwise the last requested reading.
-- A declared `taps.inject` that contradicts `--enter`, a `taps.collect` that stops before a requested reading, and a reading upstream of the entry MUST all fail before executing, each naming the conflict. The retained effective parameter document therefore describes the range that executed, and `verify` re-resolves the same range from the recorded declaration.
+- A declared `taps.inject` that contradicts `--enter`, a `taps.collect` that stops before a requested reading, and a reading upstream of the entry MUST all fail before executing, each naming the conflict. The retained effective parameter document therefore describes the range that executed, and it is what a later resolution of the same declaration is compared against.
 - A stimulus that enters at `rgb_in` declares its color space and its transfer state in the stimulus document, exactly as a raster input to `process` does.
 - A stimulus that enters at `spectra` declares its color space, its transfer state, and its illuminant pair in the stimulus document; the command MUST NOT accept these declarations as command options, because the document is their single authority. A film-domain stimulus declares neither, because its values are already film-domain numbers.
 
@@ -374,19 +372,6 @@ spektrafilm-lab sample --from-run DIRECTORY|RUN.JSON --case ID --seed UINT32 --s
 - The command MUST NOT resize, re-encode, or convert the source beyond the declared input declaration.
 - A reading describes the values it stores: applying the declared transfer decoding makes the reading linear, and its record MUST say so while the source block keeps the source's own declaration. A stage that declares no transfer state records none.
 - Every record carries the common fields, including `executed`: a sample never executes a chain.
-
-### `verify`
-```text
-spektrafilm-lab verify --record DIRECTORY [--data-dir DIRECTORY]
-```
-
-- The command MUST read the record's kind and re-hash what that record names. It MUST NOT render, rewrite, or judge the record.
-- For an image-domain run it MUST re-resolve the retained suite, target, and case configuration, and re-hash the renderer executable, the selected data inventory, the profiles, and the authored dependencies.
-- For a chain run it MUST re-resolve the recorded declaration, and re-hash the renderer executable, the selected data inventory, and the profiles.
-- For a comparison it MUST re-hash the retained run and comparison identities and the evidence the comparison cites.
-- It MUST report every difference from the recorded identity.
-- It MUST re-hash every stage buffer the record retained, whether or not the reading requested that stage.
-- It writes no artifact; it prints its report, so a verification cannot overwrite the record it verifies.
 
 ### Guard runs
 
@@ -518,13 +503,13 @@ Completed case artifact references MUST be objects with an indexed `path`. A mal
 
 ### Chain runs
 
-A chain run writes the same `run` kind. It MUST carry `kind` set to `run` or `sample`, so `verify` can read a record without being told what it is.
+A chain run writes the same `run` kind. It MUST carry `kind` set to `run` or `sample`, so a reader knows which it is without being told.
 
 - `declaration`: the owning replayable `measure run` invocation, chain options, entry boundary, requested read stages, observer configuration, and declared stimulus document with hashes — everything needed to resolve and observe the same chain again. Observer configuration includes selected taps, backend, host precision, bundle destination, and native schema version.
 - It MUST NOT contain fabricated process capture argv.
 - `stimulus`: the stimulus manifest path and the array hashes. A sampled source records its own `source` block instead, because no chain was resolved to read it.
 - `identity` for an executed run includes the renderer's path, content hash, and version, the selected data inventory digest, and the profile identities. It also includes the declared parameter sources and the content hash of every parameter file they name, the stock-specific application, the effective parameter document, the execution precision, and the seed.
-- `verify` diffs that document leaf by leaf, so a re-verification names the parameter that moved instead of only its digest.
+- The retained effective parameter document is comparable leaf by leaf, so a difference names the parameter that moved instead of only its digest.
 - `stages`: one record per read stage with its identity, domain, units, channel order, the declared color space and transfer state, the buffer hash, and its availability together with a stable reason when the stage did not run.
 - `groups` and `summaries`: the group identities and their per-channel statistics.
 - `executor`: the backend and the precision of an executed run.
@@ -679,7 +664,7 @@ Existing natural-source provenance MUST remain intact. A change to authored stan
 - A comparison MUST publish each comparison's own rows and own availability. Every `deltas.csv` row MUST name its comparison.
 - A shared key whose group labels differ MUST still compare with the label difference reported, and a key whose units or channel order differ MUST fail.
 - A run that fails after executing, and a sampling of a bundle whose buffer disagrees with its manifest, MUST leave no artifact behind.
-- A record MUST carry `kind`, and `verify --record` MUST read a run or a comparison without being told which one it is.
+- A record MUST carry `kind`, so a reader can read a run or a comparison without being told which one it is.
 - Every artifact MUST survive a round trip: a command MUST read back what it wrote, including identities that carry separators.
 - Ordinary suite and single-image runs, including preflight, expose no optional native capture or implicit replacement. New rows explicitly retain absence, and sampling/inspection/reporting never rerender or fabricate exposure, normalization, or native-stage readings.
 - Dedicated experiment and measurement records retain the owning replayable invocation and actual observer configuration; existing supported `sample --from-evidence` and `sample --from-run` inputs remain readable without restoring a process capture option.

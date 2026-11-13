@@ -307,7 +307,6 @@ fn moved(name: &str) -> Option<String> {
         "spectral",
         "fit",
         "sample",
-        "verify",
     ];
     MOVED
         .contains(&name)

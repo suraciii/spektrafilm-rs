@@ -83,7 +83,6 @@ fn documented_instrument_commands_use_supported_flags() {
         "compare",
         "fixtures",
         "sample",
-        "verify",
         "fit",
         "experiment",
     ] {

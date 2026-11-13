@@ -1,9 +1,9 @@
 # Measurement
 
-`spektrafilm-f64` reads the executed chain and reports what it produced. Four commands
+`spektrafilm-f64` reads the executed chain and reports what it produced. Three commands
 carry the measurement surface: `measure run` measures the chain on a declared stimulus set,
-`sample` reads declared regions from an image or a retained stage capture, `compare readings`
-matches two retained measurements, and `verify` re-resolves a recorded run. The commands run at
+`sample` reads declared regions from an image or a retained stage capture, and `compare
+readings` matches two retained measurements. The commands run at
 f64 reference precision inside `spektrafilm-f64` until the reading family moves to
 `spektrafilm-lab`; the instrument compares and reports the records it consumes. They compute values and write
 evidence; they do not fit parameters, render images, or judge a result. See the [measurement
@@ -159,9 +159,9 @@ named after a flag.
 `run.json` carries the declared inputs and their hashes, the resolved chain identity,
 the entry boundary, the read stages, the stimulus identity, and the group summaries.
 The `command` record retains the owning replayable `spektrafilm-f64 measure run`
-argv, executable identity, executed seed, and the dependency identities already used by
-`verify`: parameter-source hashes, stimulus manifest/array hashes, profile identities,
-and the data inventory. It reuses the canonical `declaration`, rather than serializing
+argv, executable identity, executed seed, and the dependency identities that make the
+record self-describing: parameter-source hashes, stimulus manifest/array hashes, profile
+identities, and the data inventory. It reuses the canonical `declaration`, rather than serializing
 a resolved snapshot as a new input. The `observer` record identifies the actual named
 taps, entry and collection boundary, CPU f64 execution, native schema version, and
 `directory: "evidence"` relative to `run.json`. Replay may change `--out` to a fresh
@@ -274,25 +274,6 @@ empty field rather than a zero, and a pair whose two sides declare different col
 interpretations reports its channel deltas empty and its validity `false`, exactly as the same
 comparison's record reports that metric unavailable.
 
-## `verify`
-
-```bash
-./target/release/spektrafilm-f64 verify --record run-1 --data-dir data
-```
-
-The command re-resolves the declaration recorded in `run-1/run.json` against the data
-directory you name, then re-hashes the renderer executable, the data inventory, the
-profiles, and the retained stage buffers. It reports every difference from the recorded
-identity. It renders nothing, rewrites nothing, and judges nothing: it exits 0 whenever it
-could read the record and re-resolve the chain, because a difference is evidence rather than
-a failure.
-
-The command writes no artifact. It prints its full report object on stdout and then the usual
-command result, so a verification cannot overwrite the record it verifies.
-
-This is how a guard run stays useful. Retain a measurement of a frozen stimulus set, then
-verify it later to see whether the executable, the data, the profiles, or the parameters
-
 ## Worked example
 
 Measure Kodak Portra 800 through the default print-and-scan route. The preset enables
@@ -345,11 +326,9 @@ rgb_out: available
 
 The entry stage is `available`, because the run executes the range the entry declares; the
 stages before it, which the route never executed for this measurement, report
-`not_applicable`. Retain the run, then verify it after a rebuild or a data change:
-
-```bash
-./target/release/spektrafilm-f64 verify --record run-1 --data-dir data
-```
+`not_applicable`. The record retains the parameter-source hashes, the profile identities,
+and the data inventory that produced it, so a later reader can compare them with the
+environment in front of it.
 
 ## See also
 

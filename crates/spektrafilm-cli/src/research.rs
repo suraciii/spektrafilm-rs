@@ -30,7 +30,6 @@ fn command_name(command: &Commands) -> &'static str {
         Commands::Compare { .. } => "compare",
         Commands::Fixtures { .. } => "fixtures",
         Commands::Sample { .. } => "sample",
-        Commands::Verify { .. } => "verify",
         Commands::Spectral { .. } => "spectral",
         Commands::Experiment { .. } => "experiment",
         Commands::Fit(_) => "fit",
@@ -106,12 +105,6 @@ fn execute(
         Commands::Sample { args } => {
             let (value, status) = spektrafilm_cli::lab::measure::sample::sample_with_result(&args)
                 .map_err(|error| BenchError::with_message("operation_failed", error))?;
-            Ok((value, status))
-        }
-        Commands::Verify { args } => {
-            let (value, status) =
-                spektrafilm_cli::lab::measure::verify::verify_with_result(&args, matches)
-                    .map_err(|error| BenchError::with_message("operation_failed", error))?;
             Ok((value, status))
         }
         Commands::Spectral { command } => match command {

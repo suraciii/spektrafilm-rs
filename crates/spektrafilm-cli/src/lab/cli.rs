@@ -604,16 +604,6 @@ pub struct MeasureCompareArgs {
     pub out: PathBuf,
 }
 
-#[derive(Args)]
-pub struct MeasureVerifyArgs {
-    /// Record directory to re-resolve.
-    #[arg(long, value_name = "DIR", help_heading = "Verification")]
-    pub record: PathBuf,
-    /// Data directory to re-resolve against; defaults to the directory the run recorded.
-    #[arg(long, default_value = "data", help_heading = "Verification")]
-    pub data_dir: PathBuf,
-}
-
 /// The development loop for a film profile: render one declared experiment,
 /// then convert its boundary values for a measurement tool.
 #[derive(Subcommand)]
