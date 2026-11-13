@@ -305,6 +305,41 @@ impl Pipeline {
         let print_exposure_scale = self.params.enlarger.print_exposure as f64;
         let print_norm_factor = self.print_exposure_factor();
 
+        // Camera light leak in the resident chain — stray light that reached
+        // the record during exposure. Built only when the stage is active, and
+        // evaluated on the same aperture and pixel lengths the host stage
+        // resolves, so both executors share one field.
+        let light_leak = if expose && self.params.film_render.light_leak.active {
+            let leak = &self.params.film_render.light_leak;
+            let model = leak.to_model();
+            if model.exposure_ev != 0.0 {
+                let geometry = spektrafilm_model::light_leak::light_leak_geometry(
+                    input.width(),
+                    input.height(),
+                    pix_um,
+                    &model,
+                );
+                Some(spektrafilm_backend::LightLeakGpuParams {
+                    width: input.width(),
+                    height: input.height(),
+                    center: geometry.center,
+                    direction: geometry.direction,
+                    half_px: geometry.half_px,
+                    spread_px: geometry.spread_px,
+                    texture_scale_px: geometry.texture_scale_px,
+                    texture_amount: model.texture_amount,
+                    seed: spektrafilm_model::light_leak::fold_seed(self.params.random_seed),
+                    scale: (crate::chain_prep::mid_density_reference_exposure(&self.film)
+                        * 2.0f64.powf(model.exposure_ev as f64)) as f32,
+                    spectrum: model.leak_spectrum,
+                })
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
         // Halation in the resident chain — only built when the halation
         // stage is active. Preserve channel-specific profile controls.
         let halation = if expose && self.params.film_render.halation.active {
@@ -806,6 +841,7 @@ impl Pipeline {
             scan_output_space,
             scan_film,
             halation,
+            light_leak,
             dir_couplers,
             glare,
             finishing: if scan

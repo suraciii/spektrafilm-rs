@@ -564,6 +564,7 @@ pub(crate) fn render_sections(
     upsampling::sections(ui, params, section, flags, filter);
     grain::sections(ui, params, section, flags, filter);
     halation::sections(ui, params, section, flags, filter);
+    light_leak::sections(ui, params, section, flags, filter);
     couplers::sections(ui, params, section, flags, filter);
     cmyk::sections(ui, params, section, flags, filter);
     output::sections(ui, params, extras, section, flags, filter);
@@ -680,6 +681,7 @@ pub(crate) const STAGE_LAYOUT: &[(Stage, &[&str])] = &[
             "Film chemistry",
             "Film base",
             "Halation",
+            "Light leak",
             "Couplers",
             "Grain",
         ],
@@ -968,6 +970,7 @@ mod gamut;
 mod glare;
 mod grain;
 mod halation;
+mod light_leak;
 mod output;
 mod scanner;
 

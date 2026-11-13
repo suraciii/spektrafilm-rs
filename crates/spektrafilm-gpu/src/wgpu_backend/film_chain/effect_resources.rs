@@ -203,6 +203,7 @@ impl WgpuBackend {
             | "convert_inverse_solver"
             | "front_transform"
             | "log_exposure"
+            | "light_leak"
             | "film_density"
             | "print_lut_roundtrip"
             | "print_spectral"

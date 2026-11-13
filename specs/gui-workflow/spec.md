@@ -202,7 +202,7 @@ Each module has one editing owner. The inspector MUST contain these stages and m
 | Owner | Modules and controls |
 | --- | --- |
 | Input and capture | Film route selector (inactive in LUT and Off); input color space and decoding; RAW white balance, temperature, tint, lens correction, and reprocess action; crop, upscale, and source rotation; Camera exposure, metering, film format, color filter, and capture illuminant; Camera diffusion; input gamut compression; spectral reconstruction and its applicable adaptation controls; Convert imported-capture scan illuminant, exposure, base estimation, calibration, channel swaps, and calibration actions. Spectral camera, conversion, gamut, and reconstruction controls are inactive in LUT and Off. |
-| Film | Film material selector and its development-time family; Chemistry; Film base; Halation; Couplers; Grain selector, shared material-grain parameters, and every engine-specific parameter group. |
+| Film | Film material selector and its development-time family; Chemistry; Film base; Halation; Light leak; Couplers; Grain selector, shared material-grain parameters, and every engine-specific parameter group. |
 | Print | Print material selector and its development-time family; Enlarger exposure mode, exposure, exposure tracking, M/Y shifts, and illuminant; Preflash; Enlarger diffusion; print Chemistry and independent density-curve gamma; Print base. |
 | Scan | Fixed product readout illuminant information; eligible scan output and conversion-style controls; specialized negative-conversion correction, restore, copy/paste and held automatic comparison; lens blur, unsharp mask; Print viewing glare; Tone & Color and its collapsible Range group. |
 | LUT | LUT file import, replace, and reveal; LUT declaration and strength; LUT Grade and its held comparison. Film, Print, and Scan stages remain stored but inactive. |
@@ -283,6 +283,8 @@ The GUI MUST expose a searchable control index that can locate each inventory en
 Calibration baselines, prepared values, no-op leaves, removed parameters, and internal state MUST NOT be promoted to creative controls. The inventory MUST distinguish such exclusions from supported controls that have not yet been connected. A missing editor for a supported control is a defect, not an exclusion.
 
 Halation MUST expose `active`, `scatter_amount`, `scatter_spatial_scale`, `halation_amount`, `halation_spatial_scale`, `source_compression`, `boost_ev`, `protect_ev`, `boost_range`, `scatter_core_um`, `scatter_tail_um`, `scatter_tail_weight`, `halation_strength`, `halation_first_sigma_um`, `halation_n_bounces`, `halation_bounce_decay`, and `halation_renormalize` under `film_render.halation`. Each editable RGB component MUST remain available. Its feature-profile selector follows [Feature profiles](../feature-profiles/spec.md#halation-profile-family); it MUST NOT add a persisted Halation profile identity or replace the individual controls.
+
+Light leak MUST expose `active`, `exposure_ev`, `position`, `width_mm`, `spread_mm`, `angle_deg`, `leak_spectrum`, `texture_amount`, and `texture_scale_mm` under `film_render.light_leak`. Each editable RGB component MUST remain available.
 
 `boost_ev`, `boost_range`, and `protect_ev` are the highlight-reconstruction option of Halation: they remain stored but apply only while Halation is enabled, and `boost_range` and `protect_ev` further require a nonzero boost.
 

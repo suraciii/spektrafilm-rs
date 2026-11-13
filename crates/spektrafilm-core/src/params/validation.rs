@@ -259,6 +259,14 @@ pub(crate) fn leaf_numeric_bounds(path: &str) -> Option<(f64, Option<f64>)> {
         // Discovery range only; `validate` and the sparse-source leaf check
         // own the strict positivity.
         "film_render.halation.source_compression" => Some((0.0, Some(0.999999))),
+        "film_render.light_leak.exposure_ev" => Some((0.0, Some(8.0))),
+        "film_render.light_leak.position" => Some((0.0, Some(1.0))),
+        "film_render.light_leak.width_mm" => Some((0.0, Some(200.0))),
+        "film_render.light_leak.spread_mm" => Some((0.0, Some(200.0))),
+        "film_render.light_leak.angle_deg" => Some((0.0, Some(360.0))),
+        "film_render.light_leak.leak_spectrum" => Some((0.0, Some(4.0))),
+        "film_render.light_leak.texture_amount" => Some((0.0, Some(1.0))),
+        "film_render.light_leak.texture_scale_mm" => Some((0.0, Some(200.0))),
         "camera.film_format_mm" => Some((0.0, None)),
         "io.input_gamut_compress.hull_detail" => Some((0.0, None)),
         "cmyk.strength" => Some((0.0, Some(1.0))),

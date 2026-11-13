@@ -134,6 +134,14 @@ pub static ALL_PATHS: &[&str] = &[
     "film_render.halation.scatter_tail_weight",
     "film_render.halation.halation_strength",
     "film_render.halation.halation_first_sigma_um",
+    "film_render.light_leak.exposure_ev",
+    "film_render.light_leak.position",
+    "film_render.light_leak.width_mm",
+    "film_render.light_leak.spread_mm",
+    "film_render.light_leak.angle_deg",
+    "film_render.light_leak.leak_spectrum",
+    "film_render.light_leak.texture_amount",
+    "film_render.light_leak.texture_scale_mm",
     "io.input_gamut_compress.hull_detail",
     "io.upscale_factor",
     "io.input_gamut_compress.knee",
@@ -345,6 +353,16 @@ pub fn editor_range(path: &str) -> Option<EditorRange> {
         "film_render.halation.scatter_tail_weight" => Some((0.0, 1.0, 0.01, 2)),
         "film_render.halation.halation_strength" => Some((0.0, 1000000.0, 0.005, 3)),
         "film_render.halation.halation_first_sigma_um" => Some((0.0, 1000000.0, 1.0, 2)),
+
+        // Camera light leak
+        "film_render.light_leak.exposure_ev" => Some((0.0, 8.0, 0.25, 2)),
+        "film_render.light_leak.position" => Some((0.0, 1.0, 0.01, 3)),
+        "film_render.light_leak.width_mm" => Some((0.0, 200.0, 0.5, 2)),
+        "film_render.light_leak.spread_mm" => Some((0.0, 200.0, 0.5, 2)),
+        "film_render.light_leak.angle_deg" => Some((0.0, 360.0, 1.0, 1)),
+        "film_render.light_leak.leak_spectrum" => Some((0.0, 4.0, 0.05, 2)),
+        "film_render.light_leak.texture_amount" => Some((0.0, 1.0, 0.05, 2)),
+        "film_render.light_leak.texture_scale_mm" => Some((0.0, 200.0, 0.5, 2)),
 
         // IO
         "io.input_gamut_compress.hull_detail" => Some((0.5, 48.0, 0.5, 1)),

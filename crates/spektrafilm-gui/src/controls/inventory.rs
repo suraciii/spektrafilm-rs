@@ -506,6 +506,8 @@ fn runtime_owner(path: &str) -> (ControlOwner, &'static str) {
         (Owner(Stage::Film), "Grain")
     } else if path.starts_with("film_render.halation.") {
         (Owner(Stage::Film), "Halation")
+    } else if path.starts_with("film_render.light_leak.") {
+        (Owner(Stage::Film), "Light leak")
     } else if path.starts_with("film_render.dir_couplers.") {
         (Owner(Stage::Film), "Couplers")
     } else if path.starts_with("film_render.base.") {
@@ -1584,6 +1586,21 @@ const LABELS: &[(&str, &str)] = &[
     ("film_render.grain.procedural_shadows", "Shadows"),
     ("film_render.grain.procedural_size", "Size"),
     ("film_render.grain.procedural_timer", "Timer"),
+    ("film_render.light_leak.active", "Enable light leak"),
+    ("film_render.light_leak.exposure_ev", "leak exposure ev"),
+    ("film_render.light_leak.position", "leak position"),
+    ("film_render.light_leak.width_mm", "leak width mm"),
+    ("film_render.light_leak.spread_mm", "leak spread mm"),
+    ("film_render.light_leak.angle_deg", "leak angle deg"),
+    ("film_render.light_leak.leak_spectrum", "leak spectrum"),
+    (
+        "film_render.light_leak.texture_amount",
+        "leak texture amount",
+    ),
+    (
+        "film_render.light_leak.texture_scale_mm",
+        "leak texture scale mm",
+    ),
     ("film_render.halation.active", "Enable halation"),
     ("film_render.halation.boost_ev", "boost ev"),
     ("film_render.halation.boost_range", "boost range"),

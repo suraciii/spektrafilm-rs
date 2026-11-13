@@ -57,6 +57,21 @@ fn print_base(ui: &mut egui::Ui, params: &mut RuntimeParams) {
     );
 }
 
+fn light_leak(ui: &mut egui::Ui, params: &mut RuntimeParams) {
+    super::show(
+        ui,
+        params,
+        &mut serde_json::Value::Null,
+        "Light leak",
+        super::ScanMedium::Negative,
+        false,
+        "",
+        &mut Default::default(),
+        "D65",
+        &crate::profiles::pick_data_dir(),
+    );
+}
+
 fn preflash(ui: &mut egui::Ui, params: &mut RuntimeParams) {
     super::show(
         ui,
@@ -675,6 +690,40 @@ mod layout_snapshots {
 mod roles {
     use super::*;
     use egui_kittest::kittest::Queryable;
+
+    /// The leak section must reach the operator: the switch turns the aperture
+    /// on, and the strength row edits the stops over mid-density exposure.
+    #[test]
+    fn the_light_leak_section_switches_on_and_edits_its_strength() {
+        let mut params = scanner_params();
+        params.camera.auto_exposure = false;
+        let mut harness = Harness::new_ui_state(light_leak, params);
+        let enable = harness.get_by_label("Enable light leak");
+        assert_eq!(enable.role(), egui::accesskit::Role::Switch);
+        assert_eq!(enable.toggled(), Some(egui::accesskit::Toggled::False));
+        enable.simulate_click();
+        harness.run();
+        assert_eq!(
+            harness.get_by_label("Enable light leak").toggled(),
+            Some(egui::accesskit::Toggled::True)
+        );
+        assert!(harness.state().film_render.light_leak.active);
+        let field = harness.get_by_label("leak exposure ev");
+        field.focus();
+        harness.run();
+        harness.press_key_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+        harness.get_by_label("leak exposure ev").type_text("3.5");
+        harness.run();
+        harness
+            .get_by_label("leak exposure ev")
+            .key_press(egui_kittest::kittest::Key::Enter);
+        harness.run();
+        assert!(
+            (harness.state().film_render.light_leak.exposure_ev - 3.5).abs() < 1e-3,
+            "leak exposure ev was {}",
+            harness.state().film_render.light_leak.exposure_ev
+        );
+    }
 
     #[test]
     fn a_parameter_row_boolean_is_a_switch() {

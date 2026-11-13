@@ -4,4 +4,5 @@ pub mod diffusion;
 pub mod glare;
 pub mod grain;
 pub mod halation;
+pub mod light_leak;
 pub mod optics;

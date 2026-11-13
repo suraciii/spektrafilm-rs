@@ -37,7 +37,7 @@ Fresh disclosure expands Workflow, Camera, and Tone & Color. A closed inactive m
 | Stage | Main modules |
 | --- | --- |
 | Input and capture | Workflow, Camera, Camera diffusion, Input, Import Raw, Source rotation, Crop and upscale, Input gamut compress, Spectral upsampling, Convert |
-| Film | Film material, Film chemistry, Film base, Halation, Couplers, Grain |
+| Film | Film material, Film chemistry, Film base, Halation, Light leak, Couplers, Grain |
 | Print | Print material, Enlarger, Preflash, Enlarger diffusion, Print chemistry, Print base |
 | Scan | Scanner, Print viewing glare, Tone & Color |
 | LUT | LUT look and LUT Grade |
@@ -196,6 +196,18 @@ Spektra's sublayer controls follow the selected film's actual capabilities. Fotu
 Use **Search controls** or **Only modified** to inspect hidden requests at their existing owners. Inactive matches remain readable with their reasons. Grain reset and Undo/Redo cover hidden controls as well as visible rows.
 
 For Dye inspection, use **SCAN**, then select exact **100%** zoom. [Preview and Scan](#preview-and-scan) explains the lightweight preview boundary. [Grain](grain.md) describes engine domains and default compatibility; [Feature profiles](../specs/feature-profiles/spec.md) owns catalog scope.
+
+### Light leak
+
+**Film → Light leak** models stray light that reached the film while the shutter was open, through a seal gap, a door hinge, or a failed light trap. Start with **Enable light leak**.
+
+**leak exposure ev** is the aperture strength in stops over the film's own mid-density exposure. The stray light is absolute: it does not scale with scene brightness, so a dark frame gains a large relative amount and a bright frame gains a small one. Zero is an exact bypass.
+
+**leak position** places the aperture around the frame perimeter from 0 to 1, clockwise from the top-left corner. **leak width mm** and **leak spread mm** are millimetres on the film, so the aperture keeps its physical size when you crop, resize, or change film format. **leak angle deg** tilts the aperture against the perimeter. The falloff is compact: the leak stays near its aperture instead of fogging the whole frame.
+
+**leak spectrum** is the stray-light ratio per record in cyan, magenta, yellow order. The default is the common warm path: light that crossed the film base and lost blue, so the rim reads orange-red. Measured on real leaks, the warm family spans 1.3x to 2.8x red over green with blue below green. A red-only ratio (`1.0, 0.3, 0.3`) gives the red rim that some scans show, and a cool ratio gives a front-leak rim. A strong leak still burns its core out to the film's white, because every record saturates. The rendered color is each film's own dye response, so the same stops read differently on a negative and on a reversal film.
+
+**leak texture amount** and **leak texture scale mm** add a seeded unevenness where the seal gap is uneven. The texture is stretched along the aperture, so it reads as an uneven seal rather than as drifting smoke. The seed comes from the render seed.
 
 ## Adjustment history
 
