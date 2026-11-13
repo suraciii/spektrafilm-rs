@@ -9,6 +9,8 @@ pub(super) enum Condition {
     Grain,
     Spektra,
     Procedural,
+    Exposure,
+    AutoSize,
     Dye,
     Retained,
     DensityMinimum(Option<usize>),
@@ -71,6 +73,8 @@ impl Condition {
             Self::Grain => "film_render.grain.active = true; stochastic effects enabled",
             Self::Spektra => "film_render.grain.engine = spektra",
             Self::Procedural => "film_render.grain.engine = procedural",
+            Self::Exposure => "film_render.grain.engine = exposure",
+            Self::AutoSize => "film_render.grain.exposure.auto_size = false",
             Self::Dye => "film_render.grain.engine = dye; supported stock, format and route",
             Self::Retained => "retained legacy Dye value; the delivered Dye law does not read it",
             Self::DensityMinimum(_) => {
@@ -166,6 +170,8 @@ impl Condition {
             Self::Grain => g.active && !p.debug.deactivate_stochastic_effects,
             Self::Spektra => g.engine == GrainEngine::Spektra,
             Self::Procedural => g.engine == GrainEngine::Procedural,
+            Self::Exposure => g.engine == GrainEngine::Exposure,
+            Self::AutoSize => !g.exposure.auto_size,
             Self::Dye => g.engine == GrainEngine::Dye,
             Self::DensityMinimum(component) => {
                 (Self::density_min_lut(p)
@@ -263,7 +269,7 @@ impl Condition {
             }
             Self::GrainOperation => {
                 let route = p.workflow.route_enum();
-                if g.engine == GrainEngine::Procedural {
+                if g.engine.is_post_scan() {
                     route.executes_scan(&p.taps)
                 } else {
                     route.executes_film_development(&p.taps)
@@ -327,6 +333,11 @@ fn grain_conditions(path: &str, component: Option<usize>) -> [Option<Condition>;
     out[0] = Some(Grain);
     if path.starts_with("film_render.grain.fotufilm.") {
         out[1] = Some(Fotufilm);
+    } else if path.starts_with("film_render.grain.exposure.") {
+        out[1] = Some(Exposure);
+        if path.ends_with(".absolute_size_px") {
+            out[2] = Some(AutoSize);
+        }
     } else if path.contains(".procedural_") {
         out[1] = Some(Procedural);
         if path.ends_with(".procedural_film_type") {
@@ -627,7 +638,10 @@ pub fn inactive_reason_with_materials(
             return None;
         }
         if film.is_none()
-            && params.film_render.grain.engine != GrainEngine::Procedural
+            && !matches!(
+                params.film_render.grain.engine,
+                GrainEngine::Procedural | GrainEngine::Exposure
+            )
             && !path.ends_with(".active")
             && !path.ends_with(".engine")
         {

@@ -854,6 +854,7 @@ mod tests {
             GrainEngine::Procedural,
             GrainEngine::Dye,
             GrainEngine::Fotufilm,
+            GrainEngine::Exposure,
         ] {
             params.film_render.grain.engine = engine;
             let outcome = super::validate_scan_output_detailed(&params, &film);

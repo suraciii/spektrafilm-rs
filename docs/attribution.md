@@ -52,6 +52,10 @@ It is an authored appearance model.
 The resolved spectral film profile remains the authority for developed color and tone.
 Its grain parameters are explicitly authored effective values rather than measured stock data.
 
+## Exposure grain reconstruction
+
+The optional Exposure Grain engine is an independent reconstruction of the scalar luma grain behavior observed in Exposure X7 by Exposure Software. The reconstruction used behavioral analysis and executable probes of a licensed copy; no Exposure binary, preset asset, source code, or lookup table is redistributed, and no affiliation or endorsement is claimed. The engine does not claim pixel parity with Exposure X7, and its controls are the authored contract in the [Exposure grain specification](../specs/film-grain/exposure/spec.md).
+
 ## See also
 
 - [Building and packaging](building.md) for third-party library license facts.
@@ -59,6 +63,7 @@ Its grain parameters are explicitly authored effective values rather than measur
 - [Grain](grain.md).
 - [LUTs](luts.md) for LUT bundle attribution details.
 - [Fotufilm grain specification](../specs/film-grain/fotufilm/spec.md).
+- [Exposure grain specification](../specs/film-grain/exposure/spec.md).
 
 ## Kodak Tri-X 400 / 400TX
 

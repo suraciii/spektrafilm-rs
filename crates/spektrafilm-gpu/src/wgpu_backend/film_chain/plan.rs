@@ -69,6 +69,7 @@ pub(super) enum ChainStep {
     Gamut,
     Unsharp,
     ProceduralGrain,
+    ExposureGrain,
     Transfer,
     Cmyk,
 }
@@ -133,6 +134,7 @@ impl ChainStep {
             Self::Gamut => GpuStage::Gamut,
             Self::Unsharp => GpuStage::Unsharp,
             Self::ProceduralGrain => GpuStage::GrainProcedural,
+            Self::ExposureGrain => GpuStage::GrainExposure,
             Self::Finishing => GpuStage::Output,
             Self::Transfer | Self::Cmyk => GpuStage::Output,
         }
@@ -167,6 +169,7 @@ impl ChainStep {
             Self::Gamut => "output_gamut",
             Self::Unsharp => "unsharp_mask",
             Self::ProceduralGrain => "grain_procedural",
+            Self::ExposureGrain => "grain_exposure",
             Self::Transfer => "output_transfer",
             Self::Cmyk => "cmyk",
         }
@@ -263,6 +266,9 @@ pub(super) fn chain_steps(
     }
     if p.grain_procedural.is_some() {
         steps.push(ProceduralGrain);
+    }
+    if p.grain_exposure.is_some() {
+        steps.push(ExposureGrain);
     }
     if p.output_transfer.as_ref().is_some_and(|t| !t.decode) {
         steps.push(Transfer);
@@ -442,6 +448,7 @@ pub(in crate::wgpu_backend) fn required_chain_buffers(
         needed(ChainStep::Front, tc_lut_bytes),
         needed(ChainStep::Gamut, cmax_bytes),
         needed(ChainStep::SpektraGrain, grain_spektra_curve_bytes),
+        needed(ChainStep::ExposureGrain, 8192 * 2 * 4),
         needed(ChainStep::Readout, scan_axes_bytes),
         needed(ChainStep::Inverse, convert_table_bytes),
         MAX_FIXED_AUX_BYTES,

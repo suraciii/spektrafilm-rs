@@ -12,7 +12,7 @@ Contracts live in [../specs/](../specs/). Domain terms live in [../CONTEXT.md](.
 - [CLI guide](cli.md) — commands, formats, parameter overrides, geometry, color management, and reports.
 - [Scanning and negative conversion](scanning.md) — scan output modes, scanner controls, film-scan points and the CineStill approximation.
 - [Presets](presets.md) — look documents, the user library and `--set` overrides.
-- [Grain engines](grain.md) — Spektra, Procedural, Dye and Fotufilm Film, with their controls.
+- [Grain engines](grain.md) — Spektra, Procedural, Dye, Fotufilm Film and Exposure Grain, with their controls.
 - [RAW decoding](raw.md) — the shared LibRaw and Lensfun decoder, white balance modes, and the RAW helper.
 - [Profile fitting](profile-fitting.md) — deriving surface terms and conversion tone from reference patch data.
 - [Measurement](measurement.md) — the instrument's stimulus documents, point-wise readings, reading comparison, and verification.

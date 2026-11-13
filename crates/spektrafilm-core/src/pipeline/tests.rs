@@ -2869,6 +2869,7 @@ fn completed_film_and_print_splits_preserve_exact_cpu_math_and_source_geometry()
         GrainEngine::Procedural,
         GrainEngine::Dye,
         GrainEngine::Fotufilm,
+        GrainEngine::Exposure,
     ] {
         let mut full = build();
         full.params.camera.auto_exposure = true;

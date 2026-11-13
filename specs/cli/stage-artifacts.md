@@ -30,7 +30,7 @@ The following routes extend the existing finite route vocabulary:
 | `print > scan` | Print artifact | Image |
 
 - `film` includes film exposure, development, and effects that belong before the completed film boundary. `print` includes print exposure and development, retaining the existing admitted printing-material types rather than meaning paper only.
-- `scan` includes the existing eligible scan interpretation, post-scan appearance, and final output processing. It MUST NOT stop before those operations or run them twice.
+- `scan` includes the existing eligible scan interpretation, post-scan appearance grain, and final output processing. It MUST NOT stop before those operations or run them twice.
 
 The numerical film boundary is `cmy_film`. The numerical print boundary is `cmy_print`. These names describe the record-density domains; they do not imply RGB color data or establish that every model can be represented by three density arrays alone.
 
@@ -106,7 +106,7 @@ The artifact MUST provide the baseline for continuation. Existing preset and `--
 
 The resolver MUST NOT replay a complete saved parameter snapshot through input preparation and stock initialization. It MUST restore validated completed state and prepare only remaining operations. Frozen interpretation data, recorded provenance, and editable downstream defaults MUST remain distinct even when they refer to the same parameter vocabulary.
 
-- Applicability MUST follow the executed operation and the owning model, not a parameter prefix or GUI section. Procedural grain remains post-scan appearance even though it is configured under `film_render.grain`.
+- Applicability MUST follow the executed operation and the owning model, not a parameter prefix or GUI section. Procedural and Exposure Grain remain post-scan appearance even though they are configured under `film_render.grain`.
 - [Tone & Color](../finishing/spec.md#scope-and-applicability) remains editable downstream of a saved material. It MUST execute only on an eligible positive continuation and MUST NOT alter the frozen material or its interpretation dependencies.
 - Already formed material grain MUST NOT be generated again. Camera context needed by negative conversion MUST remain available without applying camera exposure again.
 - Omitted `--seed` MUST inherit the artifact's seed. An explicit seed MUST affect only the remaining random operations and MUST NOT replace an already stored realization.
@@ -217,7 +217,7 @@ spektrafilm process negative.sfstage --backend cpu \
 1. Parse every example through both real CLI executables. Reject route/type mismatches, missing artifact routes, invalid node paths, image writer options on artifact output, explicit source declarations on artifact input, diagnostic tap conflicts, and the retired option without publishing output.
 2. Exercise all six added routes through the real CLI. Prove that film-only processing does not require or execute printing and that continuation does not execute upstream exposure, development, material grain, or geometry again.
 3. Compare one-pass output with film-split and print-split output under the same model, seed, precision, backend, and effective controls; establish exact identity for the deterministic same-path CPU reference fixture. For model/backend cases without bit identity, use the owning predeclared numerical budget and report measured errors; do not select a tolerance after observing the result.
-4. Exercise active material grain, post-scan Procedural grain, non-square geometry, negative conversion's camera context, print material replacement, and prepared-source mixing; verify each owning model's state completeness. Unsupported configurations MUST reject rather than disable effects or publish observation-only states.
+4. Exercise active material grain, post-scan appearance grain, non-square geometry, negative conversion's camera context, print material replacement, and prepared-source mixing; verify each owning model's state completeness. Unsupported configurations MUST reject rather than disable effects or publish observation-only states.
 5. Move artifacts away from original images and profile libraries; modify a same-named external profile and verify that stored interpretation is unchanged. Verify immutable profile conflicts, downstream overrides, seed inheritance, and the separation between provenance and executable defaults.
 6. Reject unknown versions, missing state, malformed layouts, non-finite required values, unsafe paths, hash mismatches, and truncated payloads before simulation. Exercise both f32 and f64 storage and admitted precision conversions without mislabeling computation precision.
 7. Force cancellation, write failure, destination races, and path aliasing. Verify no valid-looking partial primary artifact, preservation of existing files, no second render, and nonzero status on failure.

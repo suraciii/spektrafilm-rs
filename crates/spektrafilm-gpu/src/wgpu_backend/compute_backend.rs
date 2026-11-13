@@ -311,6 +311,13 @@ impl ComputeBackend for WgpuBackend {
     ) -> Result<Option<ImageBuf>, String> {
         self.grain_procedural_gpu(img, params).map(Some)
     }
+    fn grain_exposure(
+        &self,
+        img: &ImageBuf,
+        params: &spektrafilm_backend::ExposureGrainGpuParams,
+    ) -> Result<Option<ImageBuf>, String> {
+        self.grain_exposure_gpu(img, params).map(Some)
+    }
     fn fotufilm_grain(
         &self,
         img: &ImageBuf,

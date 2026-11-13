@@ -21,7 +21,7 @@ The scope MUST cover these production operations:
 - All supported base workflows, including the `input` workflow, film scan, film-print-scan, and every supported convert-film route.
 - Both RGB-to-raw methods, selected input and output gamut operations, spectral integration, selected spectral-LUT evaluation, material exposure and development, independently filtered preflash, chemistry, and channel mapping.
 - Camera and enlarger diffusion, highlight boost, per-channel halation, DIR including its exponential tails and non-default coefficients, scanner optics, print viewing glare, and unsharp masking.
-- All four grain engines in their declared domains, including Spektra's resolved layer model and single-curve case, both Procedural modes and resolution models, Dye field readout, and Fotufilm population formation and readout.
+- All five grain engines in their declared domains, including Spektra's resolved layer model and single-curve case, both Procedural modes and resolution models, Dye field readout, Fotufilm population formation and readout, and Exposure Grain's reconstructed post-scan scalar field.
 - Every readout-illuminant category, direct scan, negative conversion, and scanner optics.
 - Eligible [Tone & Color](../finishing/spec.md#scope-and-applicability), including its fixed color interpretation and RGB-only policy.
 - CMYK ink style, complete-result output mixing, output transfer encoding, and independent saving color and sample conversion.

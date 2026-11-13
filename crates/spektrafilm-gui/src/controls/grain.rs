@@ -10,6 +10,7 @@ fn engine_label(engine: GrainEngine) -> &'static str {
         GrainEngine::Procedural => "Procedural",
         GrainEngine::Dye => "Dye",
         GrainEngine::Fotufilm => "Fotufilm Film",
+        GrainEngine::Exposure => "Exposure Grain",
     }
 }
 
@@ -284,8 +285,9 @@ pub(crate) fn sections(
                     engine_label(GrainEngine::Procedural),
                 ),
                 (GrainEngine::Fotufilm, engine_label(GrainEngine::Fotufilm)),
+                (GrainEngine::Exposure, engine_label(GrainEngine::Exposure)),
             ],
-            "Select the grain engine: Spektra for material grain in developed film density, Procedural for post-scan grain appearance in encoded RGB, Dye for material grain formed in a film-coordinate dye field, Fotufilm Film for effective-appearance film population grain model.",
+            "Select the grain engine: Spektra for material grain in developed film density, Procedural for post-scan grain appearance in encoded RGB, Dye for material grain formed in a film-coordinate dye field, Fotufilm Film for effective-appearance film population grain model, Exposure Grain for reconstructed post-scan grain appearance in encoded RGB.",
         );
     }
     flags.runtime_changed |= vector!(
@@ -307,6 +309,7 @@ pub(crate) fn sections(
             GrainEngine::Spektra,
             GrainEngine::Procedural,
             GrainEngine::Fotufilm,
+            GrainEngine::Exposure,
         ] {
             ui.push_id(("grain", engine_label(engine)), |ui| {
                 flags.runtime_changed |= engine_controls(ui, params, filter, engine);
@@ -340,6 +343,7 @@ fn engine_description(engine: GrainEngine) -> &'static str {
         GrainEngine::Spektra => "controls.grain.spektra_description",
         GrainEngine::Procedural => "controls.grain.procedural_description",
         GrainEngine::Fotufilm => "controls.grain.fotufilm_description",
+        GrainEngine::Exposure => "controls.grain.exposure_description",
     }
 }
 
@@ -764,6 +768,117 @@ fn engine_controls(
                 notice(ui, "controls.grain.unsupported_silver");
             }
         }
+        GrainEngine::Exposure => {
+            changed |= number!(
+                ui,
+                params,
+                filter,
+                exposure.strength,
+                "Grain strength",
+                "Overall Exposure grain amplitude in encoded RGB; post-scan appearance, not material formation."
+            );
+            changed |= number!(
+                ui,
+                params,
+                filter,
+                exposure.size,
+                "Grain size",
+                "Exposure grain particle size in output pixels; the authored grain scale."
+            );
+            changed |= control(
+                ui,
+                params,
+                filter,
+                "Automatic size",
+                "film_render.grain.exposure.auto_size",
+                |ui, params| {
+                    toggle(
+                        ui,
+                        "Automatic size",
+                        &mut params.film_render.grain.exposure.auto_size,
+                        "Derive the grain size from the film format; off reveals the absolute size in pixels.",
+                    )
+                },
+            );
+            changed |= control(
+                ui,
+                params,
+                filter,
+                "Film format",
+                "film_render.grain.exposure.format",
+                |ui, params| {
+                    enum_choice(
+                        ui,
+                        "Film format",
+                        &mut params.film_render.grain.exposure.format,
+                        &[
+                            (ExposureGrainFormat::ThirtyFive, "35mm"),
+                            (ExposureGrainFormat::Medium, "Medium format"),
+                            (ExposureGrainFormat::Large, "Large format"),
+                        ],
+                        "Captured film format driving the automatic grain size.",
+                    )
+                },
+            );
+            changed |= number!(
+                ui,
+                params,
+                filter,
+                exposure.absolute_size_px,
+                "Absolute size (px)",
+                "Explicit grain size in output pixels; used while automatic size is off."
+            );
+            changed |= advanced(
+                ui,
+                params,
+                filter,
+                "Exposure Advanced",
+                |ui, params, filter| {
+                    let mut changed = false;
+                    changed |= number!(
+                        ui,
+                        params,
+                        filter,
+                        exposure.roughness,
+                        "Roughness",
+                        "Exposure grain shape; 50 keeps the reference value-noise shape."
+                    );
+                    changed |= number!(
+                        ui,
+                        params,
+                        filter,
+                        exposure.shadows,
+                        "Shadows",
+                        "Exposure grain amplitude in the shadows."
+                    );
+                    changed |= number!(
+                        ui,
+                        params,
+                        filter,
+                        exposure.midtones,
+                        "Midtones",
+                        "Exposure grain amplitude in the midtones."
+                    );
+                    changed |= number!(
+                        ui,
+                        params,
+                        filter,
+                        exposure.highlights,
+                        "Highlights",
+                        "Exposure grain amplitude in the highlights."
+                    );
+                    changed |= number!(
+                        ui,
+                        params,
+                        filter,
+                        exposure.push,
+                        "Push",
+                        "Additional Exposure grain amplitude added to the resolved zone amounts."
+                    );
+                    changed
+                },
+            );
+        }
     }
     changed
 }
@@ -886,7 +1001,12 @@ mod tests {
                     query: query.into(),
                 },
             );
-            assert!(harness.get_by_label(label).node().is_disabled(), "{label}");
+            assert!(
+                harness
+                    .query_all_by_label(label)
+                    .all(|node| node.node().is_disabled()),
+                "{label}"
+            );
             assert_eq!(harness.state().params, before);
         }
     }
@@ -898,6 +1018,7 @@ mod tests {
             GrainEngine::Dye,
             GrainEngine::Procedural,
             GrainEngine::Fotufilm,
+            GrainEngine::Exposure,
         ] {
             for (query, label) in [
                 ("rms granularity", "rms granularity R"),
@@ -982,7 +1103,13 @@ mod tests {
                 query: "shadows".into(),
             },
         );
-        assert!(harness.get_by_label("Shadows").node().is_disabled());
+        assert!(
+            harness
+                .query_all_by_label("Shadows")
+                .filter(|node| node.node().value() == Some("72.0".to_owned()))
+                .all(|node| node.node().is_disabled()),
+            "the stored Procedural request stays discoverable and inactive"
+        );
         assert_eq!(
             harness.state().params.film_render.grain.procedural_shadows,
             Some(72.0)
@@ -1018,7 +1145,13 @@ mod tests {
             .procedural_profile = "custom".into();
         harness.state_mut().query = "shadows".into();
         harness.run();
-        assert!(!harness.get_by_label("Shadows").node().is_disabled());
+        assert!(
+            harness
+                .query_all_by_label("Shadows")
+                .filter(|node| node.node().value() == Some("72.0".to_owned()))
+                .any(|node| !node.node().is_disabled()),
+            "the custom profile makes the stored Procedural request editable"
+        );
     }
 
     #[test]
@@ -1126,5 +1259,180 @@ mod tests {
         );
         assert!(metadata.all(|node| node.node().is_disabled()));
         assert_eq!(harness.state().params, before);
+    }
+
+    /// Exposure is a post-scan appearance engine: its own controls are the
+    /// only ordinary ones, the auto-size switch hides the absolute size, and a
+    /// control search or the modified-only view still reveals that stored
+    /// request without switching the engine.
+    #[test]
+    fn exposure_controls_edit_hide_the_absolute_size_until_searched_and_round_trip() {
+        let mut params = RuntimeParams::default();
+        params.film_render.grain.engine = GrainEngine::Exposure;
+        params.film_render.grain.exposure.absolute_size_px = 2.25;
+        params.film_render.grain.exposure.roughness = 62.0;
+        let stored = params.film_render.grain.exposure.clone();
+        let mut harness = Harness::new_ui_state(
+            grain_ui,
+            GrainUi {
+                params,
+                query: String::new(),
+            },
+        );
+        // Ordinary browsing shows the engine's own controls and no other
+        // engine's material or procedural rows.
+        assert!(harness.query_by_label("Exposure Grain").is_none());
+        assert!(harness.query_by_label("Procedural").is_none());
+        assert!(harness.query_by_label("Layer amounts").is_none());
+        assert!(harness.query_by_label("rms granularity").is_none());
+        assert!(!harness.get_by_label("Grain strength").node().is_disabled());
+        assert!(
+            !harness
+                .get_by_role_and_label(egui::accesskit::Role::ComboBox, "Film format")
+                .node()
+                .is_disabled()
+        );
+        assert!(
+            harness.get_by_label("Automatic size").toggled()
+                == Some(egui::accesskit::Toggled::True),
+            "automatic size is the default request"
+        );
+        // Automatic size is on, so the absolute size is hidden from ordinary
+        // browsing but stays stored.
+        assert!(harness.query_by_label("Absolute size (px)").is_none());
+        harness.get_by_label("Grain strength").focus();
+        harness.run();
+        harness.press_key_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+        harness.get_by_label("Grain strength").type_text("64");
+        harness.run();
+        harness.get_by_label("Exposure Advanced").simulate_click();
+        harness.run();
+        assert!(!harness.get_by_label("Roughness").node().is_disabled());
+        harness.get_by_label("Roughness").focus();
+        harness.run();
+        harness.press_key_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+        harness.get_by_label("Roughness").type_text("35");
+        harness.run();
+        let edited = harness.state().params.film_render.grain.clone();
+        assert_eq!(edited.exposure.strength, 64.0);
+        assert_eq!(edited.exposure.roughness, 35.0);
+        assert_eq!(edited.exposure.absolute_size_px, 2.25);
+        assert_eq!(edited.exposure.format, ExposureGrainFormat::ThirtyFive);
+        assert_eq!(edited.engine, GrainEngine::Exposure);
+
+        // A control search reveals the hidden stored request, disabled, without
+        // changing the engine or any value.
+        let stored_after_edit = harness.state().params.film_render.grain.exposure.clone();
+        harness.state_mut().query = "absolute size".into();
+        harness.run();
+        let absolute = harness.get_by_label("Absolute size (px)");
+        assert!(absolute.node().is_disabled());
+        assert_eq!(
+            harness.state().params.film_render.grain.exposure,
+            stored_after_edit
+        );
+        // The Only-modified view reveals the same stored request through the
+        // row filter, again disabled and unchanged.
+        harness.state_mut().query = String::new();
+        install_view_filter(&harness.ctx, true);
+        harness.run();
+        let modified: Vec<_> = harness
+            .query_all_by_label("Absolute size (px)")
+            .filter(|node| !node.node().is_disabled())
+            .collect();
+        assert!(
+            modified.is_empty(),
+            "the stored request stays inactive under Only modified"
+        );
+        assert_eq!(
+            harness.state().params.film_render.grain.exposure,
+            stored_after_edit
+        );
+        install_view_filter(&harness.ctx, false);
+        harness.run();
+        assert!(harness.query_by_label("Absolute size (px)").is_none());
+        // Turning automatic size off reveals the row for ordinary editing.
+        harness.state_mut().query = "automatic size".into();
+        harness.run();
+        harness.get_by_label("Automatic size").simulate_click();
+        harness.run();
+        assert!(
+            harness
+                .get_by_label("Automatic size")
+                .toggled()
+                .is_some_and(|toggled| toggled == egui::accesskit::Toggled::False)
+        );
+        assert!(!harness.state().params.film_render.grain.exposure.auto_size);
+        harness.state_mut().query = String::new();
+        harness.run();
+        let absolute = harness.get_by_label("Absolute size (px)");
+        assert!(!absolute.node().is_disabled());
+        absolute.focus();
+        harness.run();
+        harness.press_key_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+        harness.get_by_label("Absolute size (px)").type_text("6.5");
+        harness.run();
+        assert_eq!(
+            harness
+                .state()
+                .params
+                .film_render
+                .grain
+                .exposure
+                .absolute_size_px,
+            6.5
+        );
+        // The film-format selector writes the nested enum through the GUI.
+        harness
+            .get_by_role_and_label(egui::accesskit::Role::ComboBox, "Film format")
+            .click();
+        harness.run();
+        harness.get_by_label("Medium format").click();
+        harness.run();
+        assert_eq!(
+            harness.state().params.film_render.grain.exposure.format,
+            ExposureGrainFormat::Medium
+        );
+
+        // The nested params round-trip through the canonical runtime document.
+        let final_params = harness.state().params.clone();
+        let document = serde_json::to_value(&final_params).unwrap();
+        let reopened: RuntimeParams = serde_json::from_value(document).unwrap();
+        assert_eq!(
+            reopened.film_render.grain.exposure,
+            final_params.film_render.grain.exposure
+        );
+        assert_eq!(reopened.film_render.grain.engine, GrainEngine::Exposure);
+        assert_ne!(reopened.film_render.grain.exposure, stored);
+    }
+
+    /// Exposure's request must survive the state document's own serialization
+    /// of the nested grain params.
+    #[test]
+    fn exposure_request_round_trips_the_nested_document() {
+        let mut params = RuntimeParams::default();
+        params.film_render.grain.engine = GrainEngine::Exposure;
+        params.film_render.grain.exposure = spektrafilm_core::params::grain::ExposureGrainParams {
+            strength: 85.0,
+            size: 2.5,
+            auto_size: false,
+            format: ExposureGrainFormat::Large,
+            absolute_size_px: 12.5,
+            roughness: 62.0,
+            shadows: 12.0,
+            midtones: 88.0,
+            highlights: 44.0,
+            push: 1.5,
+        };
+        let document = serde_json::to_value(&params).unwrap();
+        assert_eq!(
+            document["film_render"]["grain"]["exposure"]["format"],
+            "large_format"
+        );
+        let reopened: RuntimeParams = serde_json::from_value(document).unwrap();
+        assert_eq!(
+            reopened.film_render.grain.exposure,
+            params.film_render.grain.exposure
+        );
     }
 }

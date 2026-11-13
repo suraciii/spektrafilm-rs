@@ -239,6 +239,14 @@ pub(crate) fn leaf_numeric_bounds(path: &str) -> Option<(f64, Option<f64>)> {
         | "film_render.grain.procedural_resolution_factor" => Some((0.0, Some(100.0))),
         "film_render.grain.procedural_resolution_type" => Some((0.0, Some(1.0))),
         "film_render.grain.procedural_timer" => Some((0.0, Some(1.0))),
+        "film_render.grain.exposure.strength" => Some((0.0, Some(100.0))),
+        "film_render.grain.exposure.size" => Some((0.25, Some(4.5))),
+        "film_render.grain.exposure.absolute_size_px" => Some((0.5, Some(64.0))),
+        "film_render.grain.exposure.roughness"
+        | "film_render.grain.exposure.shadows"
+        | "film_render.grain.exposure.midtones"
+        | "film_render.grain.exposure.highlights" => Some((0.0, Some(100.0))),
+        "film_render.grain.exposure.push" => Some((0.0, Some(3.0))),
         "film_render.grain.dye_support_um" | "film_render.grain.dye_event_area_um2" => {
             Some((0.0, None))
         }
@@ -548,11 +556,15 @@ pub(crate) fn enum_values(path: &str) -> Option<Vec<String>> {
         .iter()
         .map(|v| (*v).into())
         .collect(),
-        "film_render.grain.engine" => ["spektra", "procedural", "dye", "fotufilm"]
+        "film_render.grain.engine" => ["spektra", "procedural", "dye", "fotufilm", "exposure"]
             .iter()
             .map(|v| (*v).into())
             .collect(),
         "film_render.grain.fotufilm.material" => ["auto", "silver", "dye_negative", "dye_reversal"]
+            .iter()
+            .map(|v| (*v).into())
+            .collect(),
+        "film_render.grain.exposure.format" => ["35mm", "medium_format", "large_format"]
             .iter()
             .map(|v| (*v).into())
             .collect(),
@@ -738,7 +750,13 @@ pub(crate) fn validate_enum_value_detailed(path: &str, value: &str) -> Result<()
                 | crate::params::SCAN_WHITE_REFERENCE_READOUT_ILLUMINANT
         ),
         "film_render.grain.engine" => {
-            matches!(value, "spektra" | "procedural" | "dye" | "fotufilm")
+            matches!(
+                value,
+                "spektra" | "procedural" | "dye" | "fotufilm" | "exposure"
+            )
+        }
+        "film_render.grain.exposure.format" => {
+            matches!(value, "35mm" | "medium_format" | "large_format")
         }
         "film_render.grain.fotufilm.material" => {
             matches!(value, "auto" | "silver" | "dye_negative" | "dye_reversal")
@@ -1084,6 +1102,18 @@ pub(super) fn validate_finite_values_detailed(
         procedural_chroma,
         procedural_resolution_factor
     );
+    scalars!(
+        grain.exposure,
+        "film_render.grain.exposure",
+        strength,
+        size,
+        absolute_size_px,
+        roughness,
+        shadows,
+        midtones,
+        highlights,
+        push
+    );
     let fotufilm = &grain.fotufilm;
     scalars!(
         fotufilm,
@@ -1263,6 +1293,7 @@ pub(super) fn validate_values_detailed(params: &RuntimeParams) -> Result<(), Val
         .validate_detailed("print_render.density_curves_morph")?;
     let grain = &params.film_render.grain;
     grain.fotufilm.validate_detailed()?;
+    grain.exposure.validate_detailed()?;
     validate_enum_value_detailed(
         "film_render.grain.procedural_profile",
         &grain.procedural_profile,

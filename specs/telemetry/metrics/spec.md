@@ -85,7 +85,7 @@ A changed current scope MUST reflect observed begin and end events. Dropped even
 - Scan provenance in rendering configuration MUST identify the colorimetric sensor, the selected white reference (`clear_film_base` or `readout_illuminant`), the output space white, and the identity scan matrix.
 - Record the existing `negative_to_positive_output` reason only when negative conversion actually executes on CPU and that condition declined the historical resident route; GPU execution MUST NOT carry a forced CPU or resident-decline reason. The report MUST preserve the selected backend identity when the pipeline executes an explicit CPU override.
 - Scan provenance MUST identify the neutral scan model and version. A static state declaration MUST NOT claim prepared scan identities before preparation.
-- Render provenance MUST identify the model/version implementing the [optical-order cutover](../../film-chain/spec.md#optical-order-cutover). Effective stage descriptions MUST distinguish scanner readout blur, digital unsharp mask, print viewing glare, material grain, and Procedural post-scan appearance.
+- Render provenance MUST identify the model/version implementing the [optical-order cutover](../../film-chain/spec.md#optical-order-cutover). Effective stage descriptions MUST distinguish scanner readout blur, digital unsharp mask, print viewing glare, material grain, and post-scan appearance grain.
 - Fused execution MUST retain those semantic boundaries in its declared model even when it has no separate timing observation per operation. A declaration alone MUST NOT be reported as measured stage-order acceptance.
 - Rendering configuration MUST retain `output_mix.amount` and identify whether final output composition ran or was bypassed for an intermediate tap under [Output mix](../../output-mix/spec.md#output-mix). Source-branch rejection MUST be an operation failure, not a reported successful amount-1 render.
 - Preflash eligibility follows the actual print-development route; its controls retain existing parameter provenance. Preflash MUST NOT introduce a digital material-response definition, baseline/effective reference identity, or calibration pass.
@@ -236,6 +236,6 @@ A useful diagnosis first identifies the executed route and CPU stages, then comp
 
 ## Grain naming compatibility
 
-New stage and reason names MUST identify Spektra, Procedural, or Dye.
+New stage and reason names MUST identify Spektra, Procedural, Dye, Fotufilm, or Exposure Grain.
 Readers MUST accept the historical numbered stage and reason names in schema-one reports and normalize them to canonical names.
 This migration MUST NOT accept arbitrary stage names outside the existing privacy allowlist.

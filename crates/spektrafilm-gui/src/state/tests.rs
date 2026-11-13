@@ -274,6 +274,7 @@ fn explicit_grain_engines_survive_every_state_boundary() {
         ("procedural", GrainEngine::Procedural),
         ("dye", GrainEngine::Dye),
         ("fotufilm", GrainEngine::Fotufilm),
+        ("exposure", GrainEngine::Exposure),
     ] {
         for version in 1..=CURRENT_STATE_VERSION {
             for source in [

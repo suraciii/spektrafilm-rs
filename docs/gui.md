@@ -188,6 +188,8 @@ The shared **density min** editor remains available when an executing film-scann
 
 **Procedural Grain Profiles** appears only for Procedural. Named profiles retain editable **Amount**; choose **Custom** to expose custom controls. Noise hides **Film Resolution** and **Resolution Type** without clearing their requests.
 
+**Exposure Grain** exposes strength, size, automatic size, format, roughness, shadows, midtones, highlights, and push. Automatic size hides absolute size without clearing it. It does not expose Color Variation.
+
 Spektra's sublayer controls follow the selected film's actual capabilities. Fotufilm's fourth sublayer share remains a read-only remainder. Unsupported material requests retain their values and show a reason; the GUI does not choose another engine or material automatically.
 
 Use **Search controls** or **Only modified** to inspect hidden requests at their existing owners. Inactive matches remain readable with their reasons. Grain reset and Undo/Redo cover hidden controls as well as visible rows.
@@ -224,7 +226,7 @@ Large GPU operations may wait for earlier device work to release temporary stora
 
 **Scan → Print viewing glare** is the single control for print-readout stray light. Use **Simulate viewing glare** to turn it on or off; off gives a clean print scan. Scanner reports whether the current print readout includes viewing glare and can jump to the switch. This is a normal saved adjustment, included in Undo/Redo, state, presets, recipes, and reports. It does not change print exposure, chemistry, or developed density. On a route that scans film directly, the module states that it does not apply and keeps the stored values.
 
-The current optical model moves scanner lens blur to linear readout light. It runs before interpretation, gamut, sharpening, and transfer encoding. Print viewing glare follows optical blur and does not expose or develop the print material. Nonzero blur can intentionally change historical direct-scan pixels. Recipes and reports identify the current model revision. Corrected scans use faithful per-stage execution when resident shaders cannot preserve that order. Preflash retains both exposure gains and floors. Resident printing applies its outer gain to flash as well as main exposure. Film grain stays in the material domain. Procedural grain stays a post-scan appearance. See [the output mix specification](../specs/output-mix/spec.md) and [the GUI workflow specification](../specs/gui-workflow/spec.md) for the owning semantics.
+The current optical model moves scanner lens blur to linear readout light. It runs before interpretation, gamut, sharpening, and transfer encoding. Print viewing glare follows optical blur and does not expose or develop the print material. Nonzero blur can intentionally change historical direct-scan pixels. Recipes and reports identify the current model revision. Corrected scans use faithful per-stage execution when resident shaders cannot preserve that order. Preflash retains both exposure gains and floors. Resident printing applies its outer gain to flash as well as main exposure. Film grain stays in the material domain. Procedural and Exposure Grain stay post-scan appearances. See [the output mix specification](../specs/output-mix/spec.md) and [the GUI workflow specification](../specs/gui-workflow/spec.md) for the owning semantics.
 
 See the [GUI workflow specification](../specs/gui-workflow/spec.md) for the action contract.
 

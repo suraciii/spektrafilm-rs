@@ -19,7 +19,7 @@ named_vocabulary!(#[derive(Default)] GpuStage {
     #[default] Other => "other", SpectralPrepare => "spectral_prepare", GamutPrepare => "gamut_prepare",
     Input => "input", Metering => "metering", Geometry => "geometry", FilmExpose => "film_expose",
     Halation => "halation", FilmDevelop => "film_develop", Dir => "dir", GrainSpektra => "grain_spektra",
-    GrainProcedural => "grain_procedural", DyeFormation => "dye_formation", DyeReadout => "dye_readout",
+    GrainProcedural => "grain_procedural", GrainExposure => "grain_exposure", DyeFormation => "dye_formation", DyeReadout => "dye_readout",
     FotufilmFormation => "fotufilm_formation", FotufilmStatistics => "fotufilm_statistics",
     FotufilmReadout => "fotufilm_readout", PrintExpose => "print_expose", PrintDevelop => "print_develop",
     Glare => "glare", Scan => "scan", NegativeToPositive => "negative_to_positive", Unsharp => "unsharp",
@@ -46,6 +46,7 @@ impl GpuStage {
             "dir" | "dir_couplers" => Self::Dir,
             "grain_spektra" | "grain_spektra_sampler" => Self::GrainSpektra,
             "grain_procedural" | "grain_procedural_cpu" => Self::GrainProcedural,
+            "grain_exposure" | "grain_exposure_cpu" => Self::GrainExposure,
             "dye_formation" => Self::DyeFormation,
             "dye_readout" => Self::DyeReadout,
             "fotufilm_formation" => Self::FotufilmFormation,
@@ -111,6 +112,8 @@ pub const STAGE_NAMES: &[&str] = &[
     "grain_spektra_sampler",
     "grain_procedural",
     "grain_procedural_cpu",
+    "grain_exposure",
+    "grain_exposure_cpu",
     "grain_dye_field",
     "grain_fotufilm",
     "printing",
@@ -239,6 +242,7 @@ vocabulary!(CpuReason {
     DeviceResourceLimits,
     #[serde(alias = "grain_v2_unsupported")]
     ProceduralGrainUnsupported,
+    ExposureGrainUnsupported,
     #[serde(alias = "grain_v3_field_cpu")]
     DyeGrainFieldCpu,
     FotufilmFilmCpu,

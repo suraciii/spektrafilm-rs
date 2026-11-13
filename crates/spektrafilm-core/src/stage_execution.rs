@@ -1,5 +1,5 @@
 //! Finite material execution and completed-state ownership rules.
-use crate::params::{RuntimeParams, grain::GrainEngine};
+use crate::params::RuntimeParams;
 use crate::profile::Profile;
 use crate::stage_artifact::{MaterialKind, MaterialState, StageHeader};
 use spektrafilm_backend::ComputeBackend;
@@ -52,11 +52,13 @@ pub fn is_frozen_parameter(kind: MaterialKind, path: &str, baseline: &RuntimePar
         return false;
     }
     if path.starts_with("film_render.grain.") {
-        // Procedural is a post-scan appearance; a formed material realization is immutable.
+        // Post-scan appearance is editable after a formed material realization;
+        // material grain remains immutable.
         return !(path == "film_render.grain.engine"
             || path == "film_render.grain.active"
             || path.starts_with("film_render.grain.procedural_")
-            || baseline.film_render.grain.engine == GrainEngine::Procedural);
+            || path.starts_with("film_render.grain.exposure.")
+            || baseline.film_render.grain.engine.is_post_scan());
     }
     if kind == MaterialKind::Film
         && (path.starts_with("enlarger.")
@@ -115,11 +117,11 @@ pub fn validate_frozen_controls(
     }
     check("", &baseline, &requested, header)?;
     if params.film_render.grain.engine != header.baseline.film_render.grain.engine
-        && params.film_render.grain.engine != GrainEngine::Procedural
+        && !params.film_render.grain.engine.is_post_scan()
     {
-        return Err("film_render.grain.engine: new material grain belongs before the completed boundary; procedural is post-scan, other engines require regeneration from earlier input".into());
+        return Err("film_render.grain.engine: new material grain belongs before the completed boundary; Procedural and Exposure Grain are post-scan, other engines require regeneration from earlier input".into());
     }
-    if params.film_render.grain.engine != GrainEngine::Procedural
+    if !params.film_render.grain.engine.is_post_scan()
         && params.film_render.grain.active != header.baseline.film_render.grain.active
     {
         return Err("film_render.grain.active: formed material grain cannot be added or removed after the completed boundary; regenerate from earlier input".into());

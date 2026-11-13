@@ -240,7 +240,7 @@ Paths MUST use the runtime parameter vocabulary, such as `film_render.grain.proc
 
 Pipeline-derived `film_render.grain.monochrome` MUST NOT be an editable path. Other runtime controls MUST use the shared editable parameter description. Removed Spektra controls MUST follow the [Spektra contract](../film-grain/spektra/spec.md).
 
-Valid controls for inactive effects or engines MAY be stored without affecting output. [Procedural grain](../film-grain/procedural/spec.md) MUST retain its named-profile and Custom behavior. Spektra RMS granularity and Procedural Amount MUST remain distinct controls.
+Valid controls for inactive effects or engines MAY be stored without affecting output. [Procedural grain](../film-grain/procedural/spec.md) MUST retain its named-profile and Custom behavior. Exposure Grain controls MUST use `film_render.grain.exposure`. Spektra RMS granularity, Procedural Amount, and Exposure strength MUST remain distinct controls.
 
 A parameter-file leaf or inline assignment MUST NOT change another control to make itself effective. The [Output mix and material controls contract](../output-mix/spec.md) defines use of existing preflash and chemistry controls and owns `output_mix`. Simulation blend uses the existing canonical assignment `--set output_mix.amount=0.5`, without an alias or dedicated process flag.
 
@@ -296,7 +296,7 @@ The following operation distinctions MUST hold alongside each feature's existing
 | Film chemistry | Actual film development is distinct from convert-film inversion and continuation of an already developed film state. |
 | Enlarger, Preflash, and print chemistry | New print exposure or development is distinct from scanning an already developed print. |
 | Print viewing glare | Print readout is required; producing a print artifact alone is insufficient, while `print > scan` supplies the readout without new printing. |
-| Material grain and Procedural grain | The selected model owns its operation; Procedural remains post-scan appearance rather than film development. |
+| Material grain and post-scan appearance grain | The selected model owns its operation; Procedural and Exposure Grain remain post-scan appearance rather than film development. |
 | `film_render.grain.density_min` | Spektra grain formation and executing film-scanner or enlarger LUTs are separate consumers. Grain enable or engine selection MUST NOT gate LUT use. Bypassed LUTs MUST NOT count as consumers. Component applicability MUST follow the selected execution path's monochrome normalization. |
 | Scan-only controls on a material terminal route | Downstream defaults MAY be retained, but the material output does not execute scanning. |
 | Shared geometry, color, and interpretation controls | Every actual consumer counts; a storage group MUST NOT impose a single-stage gate on a shared control. |
@@ -532,7 +532,7 @@ Selector-free JSON MUST retain its existing render contract. Discovery MUST dist
 
 Existing Cyan neutral calibration remains a calibration control rather than a new creative Cyan shift. Scanner lens blur discovery MUST identify linear readout optics before interpretation and gamut processing. Unsharp mask MUST identify digital scan sharpening.
 
-`print_render.glare` MUST identify print viewing/readout stray light, not preflash or density formation. Grain descriptions MUST distinguish material grain from [Procedural post-scan appearance](../film-grain/procedural/spec.md), including Film Resolution's appearance-only meaning. These descriptions MUST NOT rename canonical paths or introduce aliases.
+`print_render.glare` MUST identify print viewing/readout stray light, not preflash or density formation. Grain descriptions MUST distinguish material grain from [post-scan appearance grain](../film-grain/spec.md#contract), including Film Resolution's appearance-only meaning. These descriptions MUST NOT rename canonical paths or introduce aliases.
 
 Dry run MUST report the selected model/version and optical route without claiming that the pixels or kernel were exercised.
 
@@ -626,7 +626,7 @@ Exercise complete `--params`, sparse JSON, sparse TOML, inline assignments, pres
 | Input-only versus full-chain output | Legal scene exposure, Halation, and print-glare edits with grain disabled MUST report inactive with an operation reason on `input` in text and JSON. Paired CPU output dimensions and samples MUST remain identical; an admitted full-chain render of a nonuniform image MUST provide a positive control. |
 | Route boundaries | Representative controls MUST cover every admitted route's operations. Include `input > film > print` versus `print > scan`: print-glare defaults are inactive in the first and applicable in the second when enabled. |
 | Continuation and diagnostic spans | Convert-film, film-artifact continuation, and an admitted span that skips film exposure MUST NOT claim new exposure or redevelopment. Frozen-state conflicts MUST still fail; retained interpretation context MUST preserve the downstream result. |
-| Grain operation ownership | Material grain and Procedural post-scan appearance MUST remain distinct. Artifact output MUST NOT gain post-scan appearance because its controls are stored under `film_render.grain`. |
+| Grain operation ownership | Material grain and post-scan appearance grain MUST remain distinct. Artifact output MUST NOT gain post-scan appearance because its controls are stored under `film_render.grain`. |
 | Conditional controls | Production controls MUST exercise feature off/on, engine selection, supported and unsupported materials, and named versus custom Procedural profiles. Shared geometry and color controls MUST remain applicable at their actual consumers; one inactive optional subfeature MUST NOT make its whole module inactive. |
 | GUI route round trip | A real GUI full-route to `input` to full-route transition and save/reopen MUST preserve values and explicit ownership subject to owning normalizations. Disclosure MUST track the route and distinguish Preview-only bypasses from final-render inactivity. |
 | Admission failures | Unsupported active grain, frozen-state mutation, incompatible LUT targets, and unsupported selected-GPU operations MUST retain their errors without fallback or successful output. |
@@ -658,7 +658,7 @@ Previously accepted out-of-domain inactive values are not a supported legacy val
 8. Legacy baseline leaves MUST NOT acquire new stock/calibration protection. Invalid earlier sources MUST still fail.
 9. Reject `--route` with `--scan-film` at argument parsing in dry run and normal processing. Resolve each supported route with and without a no-op `--set` source.
 10. Route, `io.scan_film`, and runtime print-profile selection MUST agree. Exercise negative-conversion compatibility through the real CLI.
-11. Render stochastic Spektra, Procedural, Dye, and Fotufilm Film with seeds `0` and `4294967295` under each engine's admitted configuration. Repeating a render with the same seed MUST match its raw output in the same executable/backend.
+11. Render stochastic Spektra, Procedural, Dye, Fotufilm Film, and Exposure Grain with seeds `0` and `4294967295` under each engine's admitted configuration. Repeating a render with the same seed MUST match its raw output in the same executable/backend.
 12. Exercise seed `42` through `--iters`. Verify that `42` and another seed change a known stochastic fixture under the owning grain contract.
 13. Negative, fractional, malformed, and overflowing seeds MUST fail. This evidence MUST NOT be presented as cross-backend numerical identity.
 14. Compare JSON and text dry run for raster, RAW, preview constraints, dedicated overrides, and Procedural custom versus named-profile controls. Verify typed requested/effective values and winning sources.

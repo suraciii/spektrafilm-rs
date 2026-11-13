@@ -179,3 +179,24 @@ pub struct FotufilmSublayerGpuParams {
     /// the uncovered square's side.
     pub occupied_area: f64,
 }
+
+/// f32 boundary representation shared by the core mapper and the WGPU
+/// Exposure Grain shader. Tables are prepared from `seed` and the effective
+/// size pair resolved from these controls.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ExposureGrainGpuParams {
+    pub strength: f32,
+    pub size: f32,
+    pub auto_size: bool,
+    /// Automatic-size short-edge format constant in millimetres.
+    pub format_mm: f32,
+    pub absolute_size_px: f32,
+    pub roughness: f32,
+    pub shadows: f32,
+    pub midtones: f32,
+    pub highlights: f32,
+    pub push: f32,
+    /// Already reduced to the reference's nonnegative 31-bit domain.
+    pub seed: u32,
+    pub render_scale: f32,
+}

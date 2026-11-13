@@ -478,14 +478,22 @@ impl Pipeline {
         };
         let grain_procedural = if scan
             && self.params.film_render.grain.active
-            && matches!(
-                self.params.film_render.grain.engine,
-                crate::params::grain::GrainEngine::Procedural
-            ) {
+            && self.params.film_render.grain.engine == crate::params::grain::GrainEngine::Procedural
+        {
             Some(self.params.film_render.grain.gpu_params(
                 self.params.random_seed,
                 self.params.debug.deactivate_spatial_effects,
             ))
+        } else {
+            None
+        };
+        let grain_exposure = if scan && self.params.film_render.grain.exposure_active() {
+            Some(
+                self.params
+                    .film_render
+                    .grain
+                    .gpu_params_exposure(self.params.random_seed),
+            )
         } else {
             None
         };
@@ -667,19 +675,19 @@ impl Pipeline {
         // Procedural-grain pass hasn't already emitted encoded samples, or
         // restore linear when it has and no encoding was requested. This
         // moved the former post-readback host encode/decode onto the device.
-        let grain_procedural_active = scan && self.grain_emits_encoded();
+        let grain_post_scan_active = scan && self.grain_emits_encoded();
         let cctf_kind = spektrafilm_backend::cctf_kind(scan_output_space.cctf);
         let identity_f32: [[f32; 3]; 3] = std::array::from_fn(|i| {
             std::array::from_fn(|j| scan_output_space.rgb_to_rgb_identity()[i][j] as f32)
         });
         let output_transfer =
-            if scan && !grain_procedural_active && self.params.io.output_cctf_encoding {
+            if scan && !grain_post_scan_active && self.params.io.output_cctf_encoding {
                 Some(spektrafilm_backend::OutputTransferGpuParams {
                     decode: false,
                     cctf_kind,
                     matrix: identity_f32,
                 })
-            } else if grain_procedural_active && !self.params.io.output_cctf_encoding {
+            } else if grain_post_scan_active && !self.params.io.output_cctf_encoding {
                 Some(spektrafilm_backend::OutputTransferGpuParams {
                     decode: true,
                     cctf_kind,
@@ -691,7 +699,7 @@ impl Pipeline {
         // CMYK runs after the encoded grain domain when Procedural grain is
         // active, even for a linear output; the final decode is appended
         // after CMYK to match the CPU scanner order exactly.
-        let cmyk_encoded = grain_procedural_active || self.params.io.output_cctf_encoding;
+        let cmyk_encoded = grain_post_scan_active || self.params.io.output_cctf_encoding;
         let cmyk = if scan && self.params.cmyk.active && self.params.cmyk.strength > 0.0 {
             let (to_lab, from_lab) =
                 crate::cmyk::CmykTransform::new(scan_output_space).gpu_matrices();
@@ -816,6 +824,7 @@ impl Pipeline {
             },
             unsharp,
             grain_procedural,
+            grain_exposure,
             camera_lens_blur_px,
             camera_diffusion: camera_diffusion.as_ref().map(|resolved| {
                 spektrafilm_backend::OpticalDiffusionGpuParams {
@@ -920,14 +929,10 @@ impl Pipeline {
         Ok(result)
     }
 
-    /// Whether the Procedural-grain pass emits encoded samples on the
-    /// resident chain (it encodes before grain; the pipe-tail transfer
-    /// decodes afterwards when the caller requested linear output).
+    /// Whether a post-scan grain pass emits encoded samples on the resident
+    /// chain (it encodes before grain; the pipe-tail transfer decodes
+    /// afterwards when the caller requested linear output).
     fn grain_emits_encoded(&self) -> bool {
-        self.params.film_render.grain.active
-            && matches!(
-                self.params.film_render.grain.engine,
-                crate::params::grain::GrainEngine::Procedural
-            )
+        self.params.film_render.grain.post_scan_active()
     }
 }

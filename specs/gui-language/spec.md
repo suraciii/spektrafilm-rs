@@ -184,7 +184,7 @@ The GUI MUST call the terminal modeled appearance `CMYK ink style`. Its help MUS
 
 The GUI MUST keep `Simulation blend` as the name of the full-result/prepared-source mix. It MUST NOT rename it to opacity, intensity, saturation, or strength.
 
-The GUI MUST keep `Print viewing glare`, `Lens blur (readout optics)`, `Unsharp mask (digital sharpening)`, material grain, and Procedural post-scan grain distinct. Similar visual effects MUST NOT share a label that implies the same physical stage.
+The GUI MUST keep `Print viewing glare`, `Lens blur (readout optics)`, `Unsharp mask (digital sharpening)`, material grain, and Procedural or Exposure Grain post-scan grain distinct. Similar visual effects MUST NOT share a label that implies the same physical stage.
 
 Tone & Color labels MUST follow [tone and color controls](../finishing/spec.md#controls). Brightness MUST NOT imply exposure-value units; the specialized negative-conversion operator MUST retain its own exposure-domain meaning and units.
 

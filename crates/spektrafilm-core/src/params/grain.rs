@@ -1,9 +1,10 @@
 use super::default_true;
 use serde::{Deserialize, Serialize};
 
-/// Selects one of four independent grain routes. Spektra preserves the
+/// Selects one of five independent grain routes. Spektra preserves the
 /// upstream density model; Procedural is Dehancer-derived encoded RGB grain;
-/// Dye is the self-developed dye field; Fotufilm is an appearance population model.
+/// Dye is the self-developed dye field; Fotufilm is an appearance population model;
+/// Exposure is a reconstructed post-scan encoded-RGB appearance model.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 #[derive(Default)]
@@ -13,6 +14,36 @@ pub enum GrainEngine {
     #[default]
     Dye,
     Fotufilm,
+    Exposure,
+}
+
+/// Stable serialized film format for the Exposure automatic-size model.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum ExposureGrainFormat {
+    #[default]
+    #[serde(rename = "35mm")]
+    ThirtyFive,
+    #[serde(rename = "medium_format")]
+    Medium,
+    #[serde(rename = "large_format")]
+    Large,
+}
+
+impl GrainEngine {
+    /// Whether this engine is an encoded-RGB post-scan appearance stage.
+    pub const fn is_post_scan(self) -> bool {
+        matches!(self, Self::Procedural | Self::Exposure)
+    }
+}
+
+impl ExposureGrainFormat {
+    pub const fn short_edge_mm(self) -> f64 {
+        match self {
+            Self::ThirtyFive => 24.0,
+            Self::Medium => 56.0,
+            Self::Large => 101.6,
+        }
+    }
 }
 
 /// Procedural Grain Procedural generation mode.
@@ -94,6 +125,66 @@ impl Default for FotufilmGrainParams {
     }
 }
 
+/// Authored post-scan Exposure Grain controls. The model is reconstructed from
+/// the Exposure X7 luma path; these ranges are product bounds, not vendor
+/// calibration or a pixel-parity claim.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct ExposureGrainParams {
+    pub strength: f64,
+    pub size: f64,
+    pub auto_size: bool,
+    pub format: ExposureGrainFormat,
+    pub absolute_size_px: f64,
+    pub roughness: f64,
+    pub shadows: f64,
+    pub midtones: f64,
+    pub highlights: f64,
+    pub push: f64,
+}
+
+impl Default for ExposureGrainParams {
+    fn default() -> Self {
+        Self {
+            strength: 100.0,
+            size: 1.0,
+            auto_size: true,
+            format: ExposureGrainFormat::ThirtyFive,
+            absolute_size_px: 1.5,
+            roughness: 50.0,
+            shadows: 50.0,
+            midtones: 70.0,
+            highlights: 30.0,
+            push: 0.0,
+        }
+    }
+}
+
+impl ExposureGrainParams {
+    pub fn validate(&self) -> Result<(), String> {
+        self.validate_detailed().map_err(|error| error.to_string())
+    }
+
+    pub fn validate_detailed(&self) -> Result<(), super::validation::ValidationError> {
+        for (name, value) in [
+            ("strength", self.strength),
+            ("size", self.size),
+            ("absolute_size_px", self.absolute_size_px),
+            ("roughness", self.roughness),
+            ("shadows", self.shadows),
+            ("midtones", self.midtones),
+            ("highlights", self.highlights),
+            ("push", self.push),
+        ] {
+            super::validation::validate_scalar_detailed(
+                &format!("film_render.grain.exposure.{name}"),
+                value,
+            )?;
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct GrainParams {
@@ -104,6 +195,8 @@ pub struct GrainParams {
     pub engine: GrainEngine,
     #[serde(default)]
     pub fotufilm: FotufilmGrainParams,
+    #[serde(default)]
+    pub exposure: ExposureGrainParams,
     /// Dehancer grain profile id, or "custom" for explicit controls.
     #[serde(default = "default_grain_procedural_profile")]
     #[serde(alias = "v2_profile")]
@@ -279,6 +372,7 @@ impl Default for GrainParams {
             active: true,
             engine: GrainEngine::default(),
             fotufilm: FotufilmGrainParams::default(),
+            exposure: ExposureGrainParams::default(),
             procedural_profile: default_grain_procedural_profile().to_owned(),
             procedural_mode: ProceduralGrainMode::Analogue,
             procedural_film_type: ProceduralGrainFilmType::Negative,
@@ -312,6 +406,23 @@ impl Default for GrainParams {
 }
 
 impl GrainParams {
+    /// Whether a post-scan appearance engine must encode the resident tail.
+    /// `active = false` and Exposure `strength = 0` are exact bypasses.
+    pub fn post_scan_active(&self) -> bool {
+        self.active
+            && match self.engine {
+                GrainEngine::Procedural => true,
+                GrainEngine::Exposure => self.exposure.strength > 0.0,
+                _ => false,
+            }
+    }
+
+    /// Whether the selected Exposure engine must execute. `active = false`
+    /// and `strength = 0` are exact bypasses on both executors.
+    pub fn exposure_active(&self) -> bool {
+        self.engine == GrainEngine::Exposure && self.post_scan_active()
+    }
+
     /// Resolve the selected Dehancer preset or custom controls.
     pub fn resolved_grain_procedural(
         &self,
@@ -381,6 +492,55 @@ impl GrainParams {
             timer: grain.timer,
             colored: grain.colored,
             clustered: grain.clustered,
+        }
+    }
+
+    /// Convert the selected Exposure controls to the shared f32 GPU boundary.
+    pub fn gpu_params_exposure(
+        &self,
+        random_seed: u64,
+    ) -> spektrafilm_backend::ExposureGrainGpuParams {
+        spektrafilm_backend::ExposureGrainGpuParams {
+            strength: self.exposure.strength as f32,
+            size: self.exposure.size as f32,
+            auto_size: self.exposure.auto_size,
+            format_mm: self.exposure.format.short_edge_mm() as f32,
+            absolute_size_px: self.exposure.absolute_size_px as f32,
+            roughness: self.exposure.roughness as f32,
+            shadows: self.exposure.shadows as f32,
+            midtones: self.exposure.midtones as f32,
+            highlights: self.exposure.highlights as f32,
+            push: self.exposure.push as f32,
+            seed: spektrafilm_model::grain::exposure::exposure_seed(random_seed),
+            render_scale: 1.0,
+        }
+    }
+
+    /// Resolve the selected Exposure engine controls for the host reference and
+    /// GPU boundary. The shared seed is reduced to the frozen reference domain.
+    pub fn resolved_grain_exposure(
+        &self,
+        random_seed: u64,
+    ) -> spektrafilm_model::grain::exposure::ExposureGrainParams {
+        use spektrafilm_model::grain::exposure::{ExposureFilmFormat, ExposureGrainParams};
+        let format = match self.exposure.format {
+            ExposureGrainFormat::ThirtyFive => ExposureFilmFormat::ThirtyFive,
+            ExposureGrainFormat::Medium => ExposureFilmFormat::Medium,
+            ExposureGrainFormat::Large => ExposureFilmFormat::Large,
+        };
+        ExposureGrainParams {
+            strength: self.exposure.strength as f32,
+            size: self.exposure.size as f32,
+            auto_size: self.exposure.auto_size,
+            format,
+            absolute_size_px: self.exposure.absolute_size_px as f32,
+            roughness: self.exposure.roughness as f32,
+            shadows: self.exposure.shadows as f32,
+            midtones: self.exposure.midtones as f32,
+            highlights: self.exposure.highlights as f32,
+            push: self.exposure.push as f32,
+            seed: spektrafilm_model::grain::exposure::exposure_seed(random_seed),
+            render_scale: 1.0,
         }
     }
 
@@ -455,6 +615,7 @@ mod fotufilm_tests {
             ("procedural", GrainEngine::Procedural),
             ("dye", GrainEngine::Dye),
             ("fotufilm", GrainEngine::Fotufilm),
+            ("exposure", GrainEngine::Exposure),
         ] {
             let source = serde_json::json!({"engine": name, "dye_event_area_um2": 2.25});
             let params: GrainParams = serde_json::from_value(source).unwrap();
@@ -478,6 +639,48 @@ mod fotufilm_tests {
 
     /// A named control and the setter that writes it.
     type Setter = (&'static str, fn(&mut FotufilmGrainParams, f64));
+
+    #[test]
+    fn exposure_defaults_and_nested_roundtrip_keep_the_engine_independent() {
+        let params = GrainParams::default();
+        assert_eq!(params.engine, GrainEngine::Dye);
+        assert_eq!(params.exposure, ExposureGrainParams::default());
+        assert_eq!(params.exposure.format, ExposureGrainFormat::ThirtyFive);
+
+        let source = serde_json::json!({
+            "engine": "exposure",
+            "exposure": {
+                "strength": 73.0,
+                "size": 2.5,
+                "auto_size": false,
+                "format": "large_format",
+                "absolute_size_px": 3.0,
+                "roughness": 61.0,
+                "shadows": 12.0,
+                "midtones": 80.0,
+                "highlights": 44.0,
+                "push": 2.0
+            }
+        });
+        let parsed: GrainParams = serde_json::from_value(source.clone()).unwrap();
+        assert_eq!(parsed.engine, GrainEngine::Exposure);
+        assert_eq!(parsed.exposure.format, ExposureGrainFormat::Large);
+        let saved = serde_json::to_value(&parsed).unwrap();
+        assert_eq!(saved["exposure"], source["exposure"]);
+        assert_eq!(
+            serde_json::from_value::<GrainParams>(saved).unwrap(),
+            parsed
+        );
+        let toml = toml::to_string(&parsed).unwrap();
+        assert_eq!(toml::from_str::<GrainParams>(&toml).unwrap(), parsed);
+
+        for source in [
+            serde_json::json!({"engine": "exposure", "exposure": {"unknown": 1}}),
+            serde_json::json!({"engine": "exposure", "exposure": {"format": "4x5"}}),
+        ] {
+            assert!(serde_json::from_value::<GrainParams>(source).is_err());
+        }
+    }
 
     #[test]
     fn fotufilm_defaults_partial_sections_and_material_roundtrip() {

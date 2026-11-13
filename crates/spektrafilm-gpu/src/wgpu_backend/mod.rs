@@ -385,6 +385,7 @@ impl WgpuBackend {
 }
 
 #[cfg(feature = "wgpu-backend")]
+#[derive(Clone)]
 struct GpuBuffer {
     data: Vec<u8>,
     binding_type: wgpu::BufferBindingType,

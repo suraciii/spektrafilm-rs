@@ -758,6 +758,7 @@ mod direct_tests {
             gamut: None,
             unsharp: None,
             grain_procedural: None,
+            grain_exposure: None,
             grain_spektra: None,
             scan_output_space: &spektrafilm_math::colorspace::SRGB,
             camera_lens_blur_px: None,

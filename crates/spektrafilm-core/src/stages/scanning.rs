@@ -544,14 +544,13 @@ fn finish_tail(
     // Grain consumes native display-encoded RGB, with no internal transfer
     // or primaries conversion. The scanned image supplies its output space.
     let grain_procedural_active = params.film_render.grain.active
-        && matches!(
-            params.film_render.grain.engine,
-            crate::params::grain::GrainEngine::Procedural
-        );
+        && params.film_render.grain.engine == crate::params::grain::GrainEngine::Procedural;
+    let grain_exposure_active = params.film_render.grain.exposure_active();
+    let grain_post_scan_active = params.film_render.grain.post_scan_active();
     // CMYK ink style is optional finishing, not a route: it applies to
     // any scanned base workflow after the scanner-domain effects.
     let cmyk_active = params.cmyk.active && params.cmyk.strength > 0.0;
-    let encoded_domain = params.io.output_cctf_encoding || grain_procedural_active;
+    let encoded_domain = params.io.output_cctf_encoding || grain_post_scan_active;
     if encoded_domain {
         let _encoding = super::StageObservation::cpu(
             backend,
@@ -593,6 +592,32 @@ fn finish_tail(
             }
         };
     }
+    if grain_exposure_active {
+        let grain_observation = super::StageObservation::new(backend, "grain_exposure");
+        let backend = grain_observation.backend(backend);
+        let grain = params
+            .film_render
+            .grain
+            .resolved_grain_exposure(params.random_seed);
+        let gpu_params = params
+            .film_render
+            .grain
+            .gpu_params_exposure(params.random_seed);
+        rgb = match backend.grain_exposure(&rgb, &gpu_params)? {
+            Some(image) => image,
+            None if backend.is_gpu() => {
+                return Err("grain_exposure: selected GPU has no device operation".into());
+            }
+            None => {
+                let _cpu = super::StageObservation::cpu(
+                    backend,
+                    "grain_exposure_cpu",
+                    spektrafilm_backend::telemetry::CpuReason::ExposureGrainUnsupported,
+                );
+                spektrafilm_model::grain::exposure::apply_cpu(&rgb, grain)
+            }
+        };
+    }
     // CMYK ink style is the final post-scan appearance, after scanner-domain
     // grain. A linear export uses the helper's finite transfer round-trip and
     // remains linear at the API boundary.
@@ -606,7 +631,7 @@ fn finish_tail(
     }
     // Linear exports retain the same grain realization as encoded exports.
     // Decode only the transfer; the stored same-space matrix ran above once.
-    if grain_procedural_active && !params.io.output_cctf_encoding {
+    if grain_post_scan_active && !params.io.output_cctf_encoding {
         let _encoding = super::StageObservation::cpu(
             backend,
             "output_transfer",

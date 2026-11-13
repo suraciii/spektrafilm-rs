@@ -183,7 +183,7 @@ Grade MUST be optional. LUT mode MUST NOT add a second tone curve, a second whit
 
 ### Grain
 
-Grain MUST evaluate after output encoding. It MUST NOT call Spektra, Dye, Fotufilm Film, or Procedural grain engines.
+Grain MUST evaluate after output encoding. It MUST NOT call Spektra, Dye, Fotufilm Film, Procedural, or Exposure Grain engines.
 
 A representative response is:
 
