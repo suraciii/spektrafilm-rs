@@ -10,9 +10,8 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, anyhow, bail};
 use serde_json::{Value, json};
-use spektrafilm_core::image_io;
+use spektrafilm_benchmark::image_data::{self, ImageData};
 use spektrafilm_math::colorspace::{self, RgbColorSpace};
-use spektrafilm_math::image::ImageBuf;
 
 use super::super::cli::MeasureSampleArgs;
 use super::super::report;
@@ -21,8 +20,9 @@ use super::{StageReading, csv_field, number_field, read_stage_bundle, sha256_fil
 
 /// The pixels a measurement reads, and the authority that declares them.
 enum Pixels {
-    /// A raster image loaded with the loader `process` uses.
-    Image(ImageBuf),
+    /// A raster image read by the lab reader: no sidecar, no ICC profile, no
+    /// orientation, and no normalization the caller did not declare.
+    Image(ImageData),
     /// One stage buffer read back from a published evidence bundle.
     Evidence(StageReading),
 }
@@ -30,7 +30,7 @@ enum Pixels {
 impl Pixels {
     fn dimensions(&self) -> [u32; 2] {
         match self {
-            Pixels::Image(image) => [image.width, image.height],
+            Pixels::Image(image) => [image.width as u32, image.height as u32],
             Pixels::Evidence(reading) => [reading.width, reading.height],
         }
     }
@@ -38,10 +38,7 @@ impl Pixels {
     /// One stored pixel, before the declared transfer decoding.
     fn pixel(&self, x: u32, y: u32) -> [f64; 3] {
         match self {
-            Pixels::Image(image) => {
-                let base = (y as usize * image.width as usize + x as usize) * 3;
-                [image.data[base], image.data[base + 1], image.data[base + 2]]
-            }
+            Pixels::Image(image) => image.samples[y as usize * image.width + x as usize],
             Pixels::Evidence(reading) => {
                 let base = (y as usize * reading.width as usize + x as usize) * 3;
                 [
@@ -176,14 +173,14 @@ fn image_source(args: &MeasureSampleArgs, path: &Path) -> Result<Source> {
     // An unknown declared space is an error naming it, never a pass-through.
     let space = colorspace::resolve(color_space)
         .map_err(|e| anyhow!("unsupported input color space {color_space:?}: {e}"))?;
-    let loaded =
-        image_io::load(path).map_err(|e| anyhow!("loading image {}: {e}", path.display()))?;
+    let loaded = image_data::decode_raster(path, color_space, cctf_decoding)
+        .map_err(|e| anyhow!("loading image {}: {e}", path.display()))?;
     let sha256 = sha256_file(path)?;
     Ok(Source {
         kind: "image",
         path: path.to_path_buf(),
         sha256,
-        pixels: Pixels::Image(loaded.image),
+        pixels: Pixels::Image(loaded),
         color_space: Some(color_space.to_owned()),
         space: Some(space),
         // The flag carries `process`'s own meaning: true declares that the

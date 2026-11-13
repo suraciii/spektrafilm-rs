@@ -46,6 +46,7 @@ fn request(baseline: &Path, candidate: &Path) -> Request {
             baseline: baseline.into(),
             candidate: candidate.into(),
         }],
+        map_scale: 1,
         regions: analysis::regions(
             profile,
             &[analysis::Region {
@@ -248,5 +249,170 @@ fn the_declaration_decides_whether_samples_are_decoded() {
                 "stored"
             }
         );
+    }
+}
+
+#[test]
+fn map_scale_reduces_the_retained_difference_maps_and_nothing_else() {
+    let temp = tempfile::tempdir().unwrap();
+    let left = temp.path().join("left.png");
+    let right = temp.path().join("right.png");
+    png(&left, 8, 8, |x, y| {
+        flat(if (x + y).is_multiple_of(2) { 0.2 } else { 0.8 })
+    });
+    png(&right, 8, 8, |_, _| flat(0.5));
+
+    let mut request = request(&left, &right);
+    let out_full = temp.path().join("full");
+    images::compare(&request, &out_full).unwrap();
+
+    request.map_scale = 4;
+    let out_scaled = temp.path().join("scaled");
+    images::compare(&request, &out_scaled).unwrap();
+
+    assert_eq!(
+        scalar_rows(&comparison(&out_full)),
+        scalar_rows(&comparison(&out_scaled)),
+        "a map scale must change no scalar measurement"
+    );
+    assert_eq!(comparison(&out_scaled)["map_scale"], 4);
+    assert_eq!(comparison(&out_full)["map_scale"], 1);
+
+    // The role decides what may shrink: a difference map is evidence for
+    // inspection, and every other artifact is a retained record of the run.
+    let full = shapes_by_role(&comparison(&out_full));
+    let scaled = shapes_by_role(&comparison(&out_scaled));
+    let mut difference_maps = 0;
+    for (role, shape) in &full {
+        if role == "difference_map" {
+            difference_maps += 1;
+            assert_eq!(*shape, [8, 8], "{role}");
+            assert_eq!(scaled.get(role), Some(&[2, 2]), "{role} is not reduced");
+        } else {
+            assert_eq!(scaled.get(role), Some(shape), "{role} must not be reduced");
+        }
+    }
+    assert!(
+        difference_maps > 0,
+        "the comparison retained no difference map"
+    );
+}
+
+/// The scalar rows of one comparison, as identity and value.
+fn scalar_rows(comparison: &serde_json::Value) -> Vec<(String, serde_json::Value)> {
+    comparison["cases"][0]["measurements"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|row| {
+            (
+                format!("{}:{}", row["region_id"], row["metric"]),
+                row["value"].clone(),
+            )
+        })
+        .collect()
+}
+
+/// The retained shape of every measurement artifact, keyed by its role.
+fn shapes_by_role(
+    comparison: &serde_json::Value,
+) -> std::collections::BTreeMap<String, [usize; 2]> {
+    comparison["cases"][0]["artifacts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|artifact| artifact["shape"].as_array().unwrap().len() == 2)
+        .map(|artifact| {
+            let shape: Vec<usize> = artifact["shape"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|value| value.as_u64().unwrap() as usize)
+                .collect();
+            (
+                artifact["role"].as_str().unwrap().to_owned(),
+                [shape[0], shape[1]],
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn one_family_cannot_suppress_the_other_families_of_its_region() {
+    let temp = tempfile::tempdir().unwrap();
+    let left = temp.path().join("left.png");
+    let right = temp.path().join("right.png");
+    png(&left, 8, 8, |_, _| flat(0.5));
+    png(&right, 8, 8, |_, _| flat(0.75));
+
+    let mut request = request(&left, &right);
+    request.regions = vec![json!({
+        "id": "probe",
+        "role": "other",
+        "measurements": ["halation", "numeric"],
+        "geometry": {"x": 2, "y": 2, "width": 4, "height": 4, "space": "render"}
+    })];
+    let out = temp.path().join("comparison");
+    images::compare(&request, &out).unwrap();
+
+    let rows: Vec<(String, String, Option<String>)> = comparison(&out)["cases"][0]["measurements"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|row| row["region_id"] == "probe")
+        .map(|row| {
+            (
+                row["metric"].as_str().unwrap().to_owned(),
+                row["availability"].as_str().unwrap().to_owned(),
+                row["reason"].as_str().map(str::to_owned),
+            )
+        })
+        .collect();
+    assert!(
+        rows.iter().any(|(metric, _, _)| metric == "halation"),
+        "the failing family keeps its row: {rows:?}"
+    );
+    assert!(
+        rows.iter().any(
+            |(metric, availability, _)| metric == "numeric.rmse" && availability == "available"
+        ),
+        "the region's other families still measure: {rows:?}"
+    );
+}
+
+#[test]
+fn a_flat_mean_residual_is_refused_where_there_is_no_flat_field() {
+    let temp = tempfile::tempdir().unwrap();
+    let left = temp.path().join("left.png");
+    let right = temp.path().join("right.png");
+    png(&left, 8, 8, |_, _| flat(0.5));
+    png(&right, 8, 8, |_, _| flat(0.75));
+
+    for (role, expected) in [("other", "unavailable"), ("flat_field", "available")] {
+        let mut request = request(&left, &right);
+        request.regions = vec![json!({
+            "id": "patch",
+            "role": role,
+            "measurements": ["grain"],
+            "geometry": {"x": 2, "y": 2, "width": 4, "height": 4, "space": "render"}
+        })];
+        let out = temp.path().join(role);
+        images::compare(&request, &out).unwrap();
+        let row = comparison(&out)["cases"][0]["measurements"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|row| {
+                row["region_id"] == "patch" && row["metric"].as_str().unwrap().starts_with("grain")
+            })
+            .unwrap_or_else(|| panic!("{role} keeps a grain row"))
+            .clone();
+        assert_eq!(row["availability"], expected, "{role}: {row}");
+        if expected == "unavailable" {
+            assert_eq!(
+                row["reason"], "missing_probe_geometry",
+                "the conflict names its cause: {row}"
+            );
+        }
     }
 }

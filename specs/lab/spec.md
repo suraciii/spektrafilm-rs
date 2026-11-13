@@ -322,25 +322,22 @@ A caller who needs the renderer's reading of a file does not need a shared codec
 12. A generated region outside the image fails with `region_out_of_bounds` and names the region.
 13. The same arguments produce byte-identical `comparison.json`, `protocol.json`, and `regions.json`.
 14. `--analysis ID` materializes a protocol whose `id` is that same string, and two runs of the same arguments write byte-identical `protocol.json`.
-15. A region that selects `halation` without a declared probe retains an unavailable row with `missing_probe_geometry` rather than a value.
+15. A region that selects `halation` without a declared probe retains an unavailable row with `missing_probe_geometry`, and the region's other families still measure.
 16. `--map-scale 4` changes no scalar measurement and records the scale.
-17. `--report` publishes `OUT/report/`; a forced report failure leaves `OUT` incomplete and readable as incomplete.
+17. `--report` publishes `OUT/report/`. A comparison that cannot be reported is refused before the report destination exists, so no report is left behind and no byte of the comparison changes.
 18. `inspect` over a `compare images` comparison returns the retained measurements without reading an image.
 19. A report opens offline with the original images deleted and shows every source digest it retained.
 20. An EXR and the float TIFF written from the same render decode to the same samples.
 21. A single-channel PNG decodes to three equal channels, and a four-channel PNG ignores its alpha instead of compositing.
 22. A `<path>.json` sidecar beside a measured image does not change the reading.
 23. `spektrafilm-f64 compare runs ...` fails with `argument_syntax` and names `spektrafilm-lab compare runs`.
+24. A `flat_mean` grain residual on a region that is not a flat field is refused with `missing_probe_geometry`; the same declaration on a `flat_field` region measures.
 
 ## Current implementation gap
 
 - The binary split is implemented: `spektrafilm-lab` is its own package, links no renderer, and the render endpoints reject a lab invocation naming the owning binary.
-- `sample`, `verify`, and `compare readings` are specified here but still hosted by `spektrafilm-f64`; they move once the reader and the identity checker no longer share code with the renderer.
-- `sample --source` still loads through the renderer's image bridge instead of the lab reader; `compare images` is the only endpoint on the lab reader today.
-- `compare images` is implemented: directory pairing, `--roi`, `--regions`, two analysis profiles, and the `--report` composition.
-- `--map-scale` is not implemented.
+- `sample`, `verify`, and `compare readings` are specified here but still hosted by `spektrafilm-f64`. They read retained stages and re-hash retained identity, so they move once the reader and the identity checker no longer share code with the renderer.
 - A region is a rectangle. Mask geometry is rejected; reading mask files on a delivered raster is not implemented.
-- A family that fails inside a region suppresses that region's remaining families, so the unavailable row is recorded for the failing family only.
-- `grain` still substitutes `gaussian_high_pass` for a `flat_mean` declaration on a region that is not `flat_field`.
+- The report composition removes a half-written report directory, but every failure the report can be shown to hit is refused before that directory exists, so the cleanup is defensive and unexercised.
 - The lab reader decodes PNG, TIFF, JPEG, WebP, and EXR. A container layout with no stated normalization is rejected.
 - The evaluation library builds its native perceptual-difference evaluator with a C++ toolchain.

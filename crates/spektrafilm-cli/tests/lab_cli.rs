@@ -1206,6 +1206,60 @@ fn measure_sample_reproduces_a_retained_stage_and_reports_a_plan_violation() {
 }
 
 #[test]
+fn measure_sample_reads_a_raster_through_the_lab_reader() {
+    let f = MeasureFixture::new();
+    let image = f.root.join("input.png");
+    let sample = |f: &MeasureFixture, name: &str| {
+        let out = f.root.join(name);
+        let result = f.lab(&[
+            "sample",
+            "--source",
+            image.to_str().unwrap(),
+            "--input-color-space",
+            "sRGB",
+            "--input-cctf-decoding",
+            "true",
+            "--regions",
+            f.plan.to_str().unwrap(),
+            "--out",
+            out.to_str().unwrap(),
+        ]);
+        assert!(
+            result.status.success(),
+            "{}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+        read_points(&out.join("readings.csv"), "source")
+    };
+
+    // The reading applies the declared transfer decoding and nothing else:
+    // the stored sample is normalized by its container and decoded once.
+    let space = spektrafilm_math::colorspace::resolve("sRGB").unwrap();
+    let read = sample(&f, "sample-source");
+    assert_eq!(read.len(), CHART.len());
+    for (index, pixel) in CHART.iter().enumerate() {
+        let want = pixel.map(|value| {
+            spektrafilm_math::colorspace::cctf_decode(value as f64 / 255.0, space.cctf)
+        });
+        assert_close(
+            &format!("read p{index:02}"),
+            read[&format!("p{index:02}")],
+            want,
+        );
+    }
+
+    // A declaration beside the file is not an input. The reader takes the
+    // declaration from the caller alone, so a sidecar that claims another
+    // colour space and transfer state changes nothing.
+    std::fs::write(
+        f.root.join("input.png.json"),
+        r#"{"color_space":"ACES2065-1","cctf_decoding":false}"#,
+    )
+    .unwrap();
+    assert_eq!(read, sample(&f, "sample-with-sidecar"));
+}
+
+#[test]
 fn measure_compare_reports_deltas_and_identity_drift_beside_them() {
     let f = MeasureFixture::new();
     let lab = f.root.join("lab");

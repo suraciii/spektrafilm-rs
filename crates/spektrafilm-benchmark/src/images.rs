@@ -37,6 +37,9 @@ pub struct Request {
     pub pairs: Vec<Pair>,
     pub regions: Vec<Value>,
     pub protocol: Value,
+    /// Retained difference maps are box-averaged to one sample per `N × N`
+    /// block. Measurement populations are never reduced.
+    pub map_scale: u32,
 }
 
 /// A declared identity made safe for a document id.
@@ -299,8 +302,14 @@ fn compare_impl(request: &Request, out: &Path) -> Result<(Value, i32)> {
             protocol["seed_population"] = json!([0]);
             protocol
         };
-        let measured =
-            metrics::compare_images(baseline, candidate, &request.regions, &protocol, &folder)?;
+        let measured = metrics::compare_images(
+            baseline,
+            candidate,
+            &request.regions,
+            &protocol,
+            &folder,
+            request.map_scale,
+        )?;
         let measured = retain_metrics(measured, &folder, &mut evidence, &pair.case_id, 0)?;
         let mut record = json!({
             "case_id": pair.case_id,
@@ -388,6 +397,12 @@ fn compare_impl(request: &Request, out: &Path) -> Result<(Value, i32)> {
         "candidate": request.protocol["id"],
         "declared": true,
     }));
+    differences.push(json!({
+        "field": "map_scale",
+        "baseline": request.map_scale,
+        "candidate": request.map_scale,
+        "declared": true,
+    }));
     let case_ids: Vec<Value> = request
         .pairs
         .iter()
@@ -404,6 +419,7 @@ fn compare_impl(request: &Request, out: &Path) -> Result<(Value, i32)> {
         "candidate": candidate,
         "protocol": request.protocol,
         "analysis": {"id": request.protocol["id"]},
+        "map_scale": request.map_scale,
         "protocol_digest": digest,
         "selection": {"case_ids": case_ids, "full_suite": true},
         "condition_differences": differences,

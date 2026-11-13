@@ -163,11 +163,17 @@ pub fn grain(
         } else {
             "gaussian_high_pass"
         });
-    let method = if requested == "flat_mean" && !flat {
-        "gaussian_high_pass"
-    } else {
-        requested
-    };
+    if requested == "flat_mean" && !flat {
+        // A flat mean removes only the patch offset; on a textured region what
+        // is left is the content, not grain. Declaring it there is a probe
+        // error, and repairing it with a different estimator would measure
+        // something the caller never asked for.
+        return Err(err(
+            "missing_probe_geometry",
+            "grain residual method flat_mean requires a flat-field probe;              declare the region role flat_field or use gaussian_high_pass",
+        ));
+    }
+    let method = requested;
     if !["flat_mean", "gaussian_high_pass"].contains(&method) {
         return Err(err("invalid_protocol", "Unknown grain detrending method"));
     }

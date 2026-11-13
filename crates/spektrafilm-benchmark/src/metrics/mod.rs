@@ -1,5 +1,5 @@
 use crate::color_readouts;
-use crate::common::{Result, err};
+use crate::common::{Error, Result, err};
 use crate::image_data::{self, ImageData};
 use serde_json::{Value, json};
 use std::{
@@ -19,6 +19,99 @@ pub use math::{count, luminance, mean, median, number, quantile, selected, spell
 
 pub const METRIC_VERSION: &str = "spektrafilm-appearance-spatial-v3";
 pub const COLOR_TRANSFORM: &str = "colour-science-CAT02-srgb-D65-2deg-v1";
+/// Reduce a retained map to one sample per `scale × scale` block.
+///
+/// The map is evidence for inspection. Its measurement population is the
+/// full-resolution values the families computed, so only the retained bytes
+/// are reduced.
+fn box_average(
+    values: &[f64],
+    width: usize,
+    height: usize,
+    scale: u32,
+) -> Result<(Vec<f64>, [usize; 2])> {
+    if values.len() != width * height {
+        return Err(err(
+            "computation_failure",
+            "Difference map does not match its declared shape",
+        ));
+    }
+    let scale = scale as usize;
+    if scale <= 1 {
+        return Ok((values.to_vec(), [height, width]));
+    }
+    let across = width.div_ceil(scale);
+    let down = height.div_ceil(scale);
+    let mut sums = vec![0.0_f64; across * down];
+    let mut counts = vec![0_u32; across * down];
+    for y in 0..height {
+        for x in 0..width {
+            let index = (y / scale) * across + x / scale;
+            sums[index] += values[y * width + x];
+            counts[index] += 1;
+        }
+    }
+    for (sum, count) in sums.iter_mut().zip(&counts) {
+        *sum /= f64::from(*count);
+    }
+    Ok((sums, [down, across]))
+}
+
+/// Retain one difference map under the declared map scale.
+fn difference_map(
+    e: &mut Evidence,
+    name: &str,
+    values: &[f64],
+    width: usize,
+    height: usize,
+    map_scale: u32,
+    metadata: Value,
+) -> Result<String> {
+    let (retained, shape) = box_average(values, width, height, map_scale)?;
+    let mut metadata = metadata;
+    metadata["retained_map"] = json!({
+        "map_scale": map_scale,
+        "dimensions": [shape[1], shape[0]],
+        "estimator": "box average of the full-resolution map",
+    });
+    e.artifact(
+        name,
+        &retained,
+        &shape,
+        ArtifactRole::DifferenceMap,
+        metadata,
+    )
+}
+
+/// One measurement that could not run: an unavailable row and one finding
+/// that names why. A missing probe or too few selected pixels is an
+/// unavailable measurement, not a failed comparison.
+fn unavailable(e: &mut Evidence, region: &str, family: &str, error: &Error, refs: &[String]) {
+    e.scalar(
+        region,
+        family,
+        None,
+        0,
+        "declared_measurement",
+        "unavailable",
+        "selected family execution",
+        &[],
+        Some(&error.code),
+    );
+    e.failure(
+        region,
+        family,
+        error,
+        refs,
+        ![
+            "missing_probe_geometry",
+            "insufficient_samples",
+            "zero_edge_contrast",
+        ]
+        .contains(&error.code.as_str()),
+    );
+}
+
 fn populations(regions: &[Value], protocol: &Value) -> Vec<Value> {
     let mut result = vec![
         json!({"id":"full_image","measurements":protocol.get("measurements").cloned().unwrap_or(json!(["numeric","color","tone"]))}),
@@ -32,6 +125,7 @@ fn compare_inner(
     b: &ImageData,
     populations: &[Value],
     protocol: &Value,
+    map_scale: u32,
 ) -> Result<()> {
     e.extra.insert("numeric_health".into(),json!({"baseline":health(&a.samples,a.dimensions()),"candidate":health(&b.samples,b.dimensions())}));
     if a.dimensions() != b.dimensions() {
@@ -96,11 +190,13 @@ fn compare_inner(
                 Some(c) => b[c] - a[c],
             })
             .collect();
-        let artifact = e.artifact(
+        let artifact = difference_map(
+            e,
             name,
             &values,
-            &[h, w],
-            ArtifactRole::DifferenceMap,
+            w,
+            h,
+            map_scale,
             json!({"metric":name,"domain":"bounded_srgb_d65_lab","units":units,"dimensions":[w,h]}),
         )?;
         maps.push(Map {
@@ -120,7 +216,15 @@ fn compare_inner(
     if has_family("flip") {
         let ppd = number(protocol, "pixels_per_degree")?;
         let values = image_data::official_flip(&encoded[0], &encoded[1], w, h, ppd)?;
-        let artifact=e.artifact("flip",&values,&[h,w],ArtifactRole::DifferenceMap,json!({"metric":"flip","domain":"bounded_encoded_srgb","units":"FLIP error","pixels_per_degree":protocol["pixels_per_degree"],"implementation":"NVlabs flip-evaluator 1.7","output_size":[w,h]}))?;
+        let artifact = difference_map(
+            e,
+            "flip",
+            &values,
+            w,
+            h,
+            map_scale,
+            json!({"metric":"flip","domain":"bounded_encoded_srgb","units":"FLIP error","pixels_per_degree":protocol["pixels_per_degree"],"implementation":"NVlabs flip-evaluator 1.7","output_size":[w,h]}),
+        )?;
         maps.push(Map {
             name: "flip",
             units: "FLIP error",
@@ -221,53 +325,57 @@ fn compare_inner(
             }
             for family in population["measurements"].as_array().into_iter().flatten() {
                 active = family.as_str().unwrap_or("");
-                match active {
-                    "numeric" => numeric(e, region, &mask, a, b),
-                    "color" => {
-                        summary(
-                            e,
-                            region,
-                            "delta_e00",
-                            selected(&maps[0].values, &mask),
-                            std::slice::from_ref(&maps[0].artifact),
-                            "bounded_srgb_d65_lab",
-                            "delta E 00",
-                            false,
-                        );
-                        for m in &maps[1..5] {
-                            let mut values = selected(&m.values, &mask);
-                            let average = mean(&values);
-                            let middle = median(&mut values);
-                            for (label, value) in [("mean", average), ("median", middle)] {
-                                e.scalar(
-                                    region,
-                                    &format!("{}.{label}", m.name),
-                                    value,
-                                    n,
-                                    "bounded_srgb_d65_lab",
-                                    m.units,
-                                    &format!("signed pixel {label} candidate minus baseline"),
-                                    std::slice::from_ref(&m.artifact),
-                                    None,
-                                );
+                // One family answers one question. A family that cannot
+                // measure records one unavailable row, and the region's other
+                // families still measure.
+                let family_execution = (|| -> Result<()> {
+                    match active {
+                        "numeric" => numeric(e, region, &mask, a, b),
+                        "color" => {
+                            summary(
+                                e,
+                                region,
+                                "delta_e00",
+                                selected(&maps[0].values, &mask),
+                                std::slice::from_ref(&maps[0].artifact),
+                                "bounded_srgb_d65_lab",
+                                "delta E 00",
+                                false,
+                            );
+                            for m in &maps[1..5] {
+                                let mut values = selected(&m.values, &mask);
+                                let average = mean(&values);
+                                let middle = median(&mut values);
+                                for (label, value) in [("mean", average), ("median", middle)] {
+                                    e.scalar(
+                                        region,
+                                        &format!("{}.{label}", m.name),
+                                        value,
+                                        n,
+                                        "bounded_srgb_d65_lab",
+                                        m.units,
+                                        &format!("signed pixel {label} candidate minus baseline"),
+                                        std::slice::from_ref(&m.artifact),
+                                        None,
+                                    );
+                                }
                             }
-                        }
-                        for threshold in protocol["delta_e_thresholds"]
-                            .as_array()
-                            .into_iter()
-                            .flatten()
-                        {
-                            let t = threshold.as_f64().ok_or_else(|| {
-                                err("invalid_protocol", "Threshold must be numeric")
-                            })?;
-                            let label = spelling(threshold);
-                            let above = maps[0]
-                                .values
-                                .iter()
-                                .zip(&mask)
-                                .filter(|(x, m)| **m && **x > t)
-                                .count();
-                            e.scalar(
+                            for threshold in protocol["delta_e_thresholds"]
+                                .as_array()
+                                .into_iter()
+                                .flatten()
+                            {
+                                let t = threshold.as_f64().ok_or_else(|| {
+                                    err("invalid_protocol", "Threshold must be numeric")
+                                })?;
+                                let label = spelling(threshold);
+                                let above = maps[0]
+                                    .values
+                                    .iter()
+                                    .zip(&mask)
+                                    .filter(|(x, m)| **m && **x > t)
+                                    .count();
+                                e.scalar(
                                 region,
                                 &format!("delta_e00.fraction_above_{label}"),
                                 Some(above as f64 / n as f64),
@@ -280,90 +388,78 @@ fn compare_inner(
                                 std::slice::from_ref(&maps[0].artifact),
                                 None,
                             );
+                            }
                         }
-                    }
-                    "flip" => {
-                        let map = maps.last().unwrap();
-                        summary(
+                        "flip" => {
+                            let map = maps.last().unwrap();
+                            summary(
+                                e,
+                                region,
+                                "flip",
+                                selected(&map.values, &mask),
+                                std::slice::from_ref(&map.artifact),
+                                "bounded_encoded_srgb",
+                                "FLIP error",
+                                true,
+                            );
+                        }
+                        "tone" => tone(
                             e,
                             region,
-                            "flip",
-                            selected(&map.values, &mask),
-                            std::slice::from_ref(&map.artifact),
-                            "bounded_encoded_srgb",
-                            "FLIP error",
-                            true,
-                        );
+                            &mask,
+                            &labs,
+                            linear.as_ref().unwrap(),
+                            protocol,
+                            w,
+                            h,
+                            std::slice::from_ref(&maps[1].artifact),
+                        )?,
+                        "grain" => grain(
+                            e,
+                            region,
+                            &mask,
+                            linear.as_ref().unwrap(),
+                            w,
+                            h,
+                            &protocol["grain"],
+                            population["role"].as_str() == Some("flat_field")
+                                || protocol["probe"]["kind"].as_str() == Some("flat_field"),
+                        )?,
+                        "halation" => halation(
+                            e,
+                            region,
+                            &mask,
+                            linear.as_ref().unwrap(),
+                            w,
+                            h,
+                            &protocol["halation"],
+                        )?,
+                        "edge" => edge(
+                            e,
+                            region,
+                            &mask,
+                            linear.as_ref().unwrap(),
+                            w,
+                            h,
+                            &protocol["edge"],
+                        )?,
+                        _ => {
+                            return Err(err(
+                                "invalid_protocol",
+                                format!("Unknown family: {active}"),
+                            ));
+                        }
                     }
-                    "tone" => tone(
-                        e,
-                        region,
-                        &mask,
-                        &labs,
-                        linear.as_ref().unwrap(),
-                        protocol,
-                        w,
-                        h,
-                        std::slice::from_ref(&maps[1].artifact),
-                    )?,
-                    "grain" => grain(
-                        e,
-                        region,
-                        &mask,
-                        linear.as_ref().unwrap(),
-                        w,
-                        h,
-                        &protocol["grain"],
-                        population["role"].as_str() == Some("flat_field")
-                            || protocol["probe"]["kind"].as_str() == Some("flat_field"),
-                    )?,
-                    "halation" => halation(
-                        e,
-                        region,
-                        &mask,
-                        linear.as_ref().unwrap(),
-                        w,
-                        h,
-                        &protocol["halation"],
-                    )?,
-                    "edge" => edge(
-                        e,
-                        region,
-                        &mask,
-                        linear.as_ref().unwrap(),
-                        w,
-                        h,
-                        &protocol["edge"],
-                    )?,
-                    _ => return Err(err("invalid_protocol", format!("Unknown family: {active}"))),
+                    Ok(())
+                })();
+                if let Err(error) = family_execution {
+                    unavailable(e, region, active, &error, &refs);
                 }
             }
             Ok(())
         })();
         if let Err(error) = execution {
-            e.scalar(
-                region,
-                active,
-                None,
-                0,
-                "declared_measurement",
-                "unavailable",
-                "selected family execution",
-                &[],
-                Some(&error.code),
-            );
-            e.failure(
-                region,
-                active,
-                &error,
-                &refs,
-                ![
-                    "missing_probe_geometry",
-                    "insufficient_samples",
-                    "zero_edge_contrast",
-                ]
-                .contains(&error.code.as_str()),
-            );
+            unavailable(e, region, active, &error, &refs);
         }
     }
     drop(encoded);
@@ -389,10 +485,11 @@ pub fn compare_images(
     regions: &[Value],
     protocol: &Value,
     out: &Path,
+    map_scale: u32,
 ) -> Result<Value> {
     let mut evidence = Evidence::new(protocol, out);
     let populations = populations(regions, protocol);
-    if let Err(error) = compare_inner(&mut evidence, a, b, &populations, protocol) {
+    if let Err(error) = compare_inner(&mut evidence, a, b, &populations, protocol, map_scale) {
         evidence.failure("full_image", "image", &error, &[], true);
         let reason = error.code.clone();
         let mut unavailable = Vec::new();
@@ -774,6 +871,18 @@ mod tests {
     use super::families::mtf50;
     use super::*;
     use std::{fs, path::PathBuf};
+
+    /// The tests measure at full resolution. `map_scale` is a retention
+    /// choice that never touches a population, so no test declares one.
+    fn compare_images(
+        a: &ImageData,
+        b: &ImageData,
+        regions: &[Value],
+        protocol: &Value,
+        out: &Path,
+    ) -> Result<Value> {
+        super::compare_images(a, b, regions, protocol, out, 1)
+    }
 
     #[test]
     fn policy_reference_relation_only_accepts_the_measured_pair_anchor() {

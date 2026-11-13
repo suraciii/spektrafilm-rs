@@ -260,3 +260,46 @@ fn an_authored_regions_document_must_declare_render_geometry() {
             .unwrap();
     assert_eq!(retained["regions"][0]["id"], "patch");
 }
+
+#[test]
+fn a_report_failure_leaves_no_report_and_keeps_the_comparison() {
+    let temp = tempfile::tempdir().unwrap();
+    let baseline = temp.path().join("a.png");
+    let candidate = temp.path().join("b.png");
+    chart(&baseline);
+    chart_changed(&candidate);
+    let out = temp.path().join("comparison");
+    let built = lab()
+        .args(["compare", "images", "--baseline"])
+        .arg(&baseline)
+        .arg("--candidate")
+        .arg(&candidate)
+        .args(["--declaration", "sRGB:encoded", "--out"])
+        .arg(&out)
+        .output()
+        .unwrap();
+    assert!(built.status.success());
+
+    // A comparison whose retained artifact is gone cannot be reported. The
+    // refusal happens before the report destination exists, so a failed
+    // report leaves no report behind and changes no byte of the comparison.
+    let before = std::fs::read(out.join("comparison.json")).unwrap();
+    std::fs::remove_file(out.join("cases/a/baseline-source.png")).unwrap();
+    let report = temp.path().join("report");
+    let refused = lab()
+        .args(["report", "comparison", "--comparison"])
+        .arg(&out)
+        .arg("--out")
+        .arg(&report)
+        .output()
+        .unwrap();
+    assert_eq!(refused.status.code(), Some(1));
+    let result: serde_json::Value = serde_json::from_slice(&refused.stdout).unwrap();
+    assert_eq!(result["errors"][0]["code"], "missing_artifact");
+    assert!(!report.exists(), "a refused report creates no destination");
+    assert_eq!(
+        std::fs::read(out.join("comparison.json")).unwrap(),
+        before,
+        "a refused report does not rewrite the comparison"
+    );
+}

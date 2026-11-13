@@ -46,6 +46,9 @@ pub struct Args {
     /// Authored protocol document.
     #[arg(long, value_name = "FILE")]
     pub protocol: Option<std::path::PathBuf>,
+    /// Box-average retained difference maps to one sample per NxN block.
+    #[arg(long, value_name = "N")]
+    pub map_scale: Option<u32>,
     /// Build the offline report inside the comparison directory.
     #[arg(long)]
     pub report: bool,
@@ -62,6 +65,13 @@ pub struct Args {
 const ACCEPTED: &[&str] = &["png", "tif", "tiff", "exr"];
 
 pub fn run(args: &Args) -> Result<(Value, i32)> {
+    let map_scale = args.map_scale.unwrap_or(1);
+    if map_scale == 0 {
+        return Err(Error::new(
+            "argument_syntax",
+            "--map-scale requires a positive integer",
+        ));
+    }
     let (color_space, cctf_decoding) = declaration(&args.declaration)?;
     let profile = analysis::profile(args.analysis.as_deref().unwrap_or("lab-appearance-v1"))?;
     let protocol = match &args.protocol {
@@ -92,6 +102,7 @@ pub fn run(args: &Args) -> Result<(Value, i32)> {
         pairs,
         regions,
         protocol,
+        map_scale,
     };
     let (result, status) = engine::compare(&request, &args.out)?;
     if !args.report {
