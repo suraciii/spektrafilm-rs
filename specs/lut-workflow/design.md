@@ -58,7 +58,6 @@ The simple export writes one complete `.cube` with `Topology::One` semantics: in
 - the source cannot produce a completed positive reading;
 - the selected print target is unresolved;
 - output mix amount is not exactly 1;
-- `scanner.experimental_setup` is active;
 - the requested input or output encoding is not a LUT transform encoding;
 - the pointwise transform would silently omit a required operation.
 
