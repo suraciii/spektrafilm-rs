@@ -8,6 +8,8 @@ This document owns the feature profile concept, built-in catalog, profile scopes
 
 A **feature profile** is a named, built-in parameter set for one film-chain feature. It resolves only the leaves in its declared scope. It does not select a film profile, print profile, workflow, route, input, scan sensor, calibration state, GUI state, or complete look.
 
+A [Scan Profile](../scan-profile/spec.md) is a runtime scan-stage appearance, not a feature profile. It is outside this catalog and does not create another feature-profile family.
+
 A **feature profile family** has one feature identifier, one profile scope, one validation rule, and one set of named entries. A family MAY expose `custom` as the state in which the user controls the scoped leaves directly. `custom` is not a built-in parameter set.
 
 The application MUST resolve a feature profile before rendering. It MUST validate the family, name, scope values, and active parameter combination before changing controls. An invalid selection MUST leave controls, transient state, and render revision unchanged except for the error status.

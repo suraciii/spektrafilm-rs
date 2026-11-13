@@ -502,6 +502,27 @@ fn finish_tail(
         spektrafilm_model::glare::add_glare_with_amount(&mut rgb, &glare_amount, glare_rgb_offset);
     }
 
+    // Scan Profile runs after negative conversion, before Tone & Color.
+    if crate::finishing::is_applicable(params, medium_is_positive)
+        && params.scanner.scan_profile.is_effective()
+    {
+        if backend.is_gpu() {
+            let prepared =
+                crate::scan_profile::gpu_params(&params.scanner.scan_profile, output_space)
+                    .expect("effective scan profile has device parameters");
+            rgb = backend
+                .scan_profile(&rgb, &prepared)?
+                .ok_or("scan profile: selected GPU has no device operation")?;
+        } else {
+            let _profile = super::StageObservation::cpu(
+                backend,
+                "scan_profile",
+                spektrafilm_backend::telemetry::CpuReason::BackendDefault,
+            );
+            crate::scan_profile::apply(&mut rgb, &params.scanner.scan_profile, output_space);
+        }
+    }
+
     if crate::finishing::is_applicable(params, medium_is_positive) && !params.finishing.is_neutral()
     {
         if backend.is_gpu() {

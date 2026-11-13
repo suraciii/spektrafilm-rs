@@ -142,6 +142,9 @@ pub struct FilmChainParams<'a> {
     /// final RGB buffer. Lognormal-distributed per-pixel surface noise +
     /// blur + per-channel illuminant offset.
     pub glare: Option<GlareGpuParams>,
+    /// Optional scan-stage appearance on completed positive linear RGB, before
+    /// common finishing and gamut.
+    pub scan_profile: Option<ScanProfileGpuParams>,
     /// Optional common finishing on completed positive linear RGB, before gamut.
     pub finishing: Option<FinishingGpuParams>,
     /// Optional output gamut compression pass — applied after glare on
@@ -446,6 +449,19 @@ pub struct DirCouplersGpuParams<'a> {
     pub density_curves_0: &'a [[f64; 3]],
     pub log_exposure: &'a [f64],
     pub gamma_factor: f64,
+}
+
+/// Prepared scan-stage appearance. Curves are in linear sRGB; knots carry
+/// `[x, y, 0, 0]` and unused slots are zero. `matrix` is applied before curves.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ScanProfileGpuParams {
+    pub strength: f32,
+    pub has_matrix: u32,
+    pub to_srgb: [[f32; 3]; 3],
+    pub from_srgb: [[f32; 3]; 3],
+    pub matrix: [[f32; 3]; 3],
+    pub knots: [[f32; 4]; 27],
+    pub counts: [u32; 4],
 }
 
 /// Prepared common-finishing response and row-major color transforms.

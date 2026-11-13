@@ -44,6 +44,8 @@ fn nullable_inner(path: &str) -> Option<&'static str> {
         "taps.inject" | "taps.collect" => "String",
         "neutral_print_filters_protected" => "[bool; 3]",
         "camera.capture_illuminant" => "String",
+        "scanner.scan_profile.transform.curves" => "[ScanCurve; 3]",
+        "scanner.scan_profile.transform.matrix" => "[[f32; 3]; 3]",
         _ => return None,
     })
 }

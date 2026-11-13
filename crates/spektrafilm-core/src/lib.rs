@@ -20,6 +20,7 @@ pub mod params;
 pub mod params_builder;
 pub mod pipeline;
 mod pipeline_calibration;
+pub mod scan_profile;
 pub use pipeline_calibration::validate_scan_output;
 pub mod dye_measurement;
 pub mod feature_profiles;

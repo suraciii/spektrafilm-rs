@@ -6,6 +6,63 @@ use super::grain::RasterStorage;
 use super::*;
 
 impl WgpuBackend {
+    /// Apply the prepared scan-stage appearance in-place on bounded resident
+    /// RGB windows. The pass precedes common finishing.
+    pub(super) fn chain_scan_profile(
+        &self,
+        image: &(impl RasterStorage + ?Sized),
+        n_pixels: u32,
+        params: &spektrafilm_backend::ScanProfileGpuParams,
+    ) -> Result<PointwisePass, String> {
+        #[repr(C)]
+        #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+        struct ScanProfileUniform {
+            n_pixels: u32,
+            strength: f32,
+            has_matrix: u32,
+            _pad: u32,
+            to_srgb: [[f32; 4]; 3],
+            from_srgb: [[f32; 4]; 3],
+            matrix: [[f32; 4]; 3],
+            knots: [[f32; 4]; 27],
+            counts: [u32; 4],
+        }
+        let uniform = self
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("scan_profile_params"),
+                contents: bytemuck::bytes_of(&ScanProfileUniform {
+                    n_pixels,
+                    strength: params.strength,
+                    has_matrix: params.has_matrix,
+                    _pad: 0,
+                    to_srgb: pack_matrix_columns(&params.to_srgb),
+                    from_srgb: pack_matrix_columns(&params.from_srgb),
+                    matrix: pack_matrix_columns(&params.matrix),
+                    knots: params.knots,
+                    counts: params.counts,
+                }),
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_SRC,
+            });
+        let pipeline = self.cached_pointwise_pipeline(
+            include_str!("../../../spektrafilm-shaders/wgsl/scan_profile.wgsl"),
+            &[
+                wgpu::BufferBindingType::Uniform,
+                wgpu::BufferBindingType::Storage { read_only: false },
+            ],
+            &[(1, "data")],
+        );
+        let pages = image.pages();
+        self.chain_pointwise(
+            pipeline,
+            &[&uniform, &pages],
+            &[(1, super::page_views::Access::ReadWrite)],
+            n_pixels,
+            false,
+            "scan_profile",
+        )
+    }
+
     /// Apply prepared finishing in-place on bounded resident RGB windows.
     pub(super) fn chain_finishing(
         &self,

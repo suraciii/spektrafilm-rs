@@ -2,7 +2,9 @@
 
 ## Authority
 
-This capability owns [tone and color adjustments](../../CONTEXT.md#language) after positive-image formation. [Film chain](../film-chain/spec.md) owns material formation and scanner interpretation. [Output mix](../output-mix/spec.md#output-mix) owns final composition with the prepared source.
+This capability owns [tone and color adjustments](../../CONTEXT.md#language) after positive-image formation.
+
+[Film chain](../film-chain/spec.md) owns material formation and scanner interpretation. [Scan Profile](../scan-profile/spec.md) owns the optional scan-stage appearance before this module. [Output mix](../output-mix/spec.md#output-mix) owns final composition with the prepared source.
 
 ## Scope and applicability
 

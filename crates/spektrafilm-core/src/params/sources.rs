@@ -443,6 +443,11 @@ fn validate_leaf(path: &str, value: &Value, expected: &Value) -> Result<(), Erro
         .strip_prefix("Option<")
         .and_then(|s| s.strip_suffix('>'))
         .unwrap_or(&ty);
+    // Complex nested types (arrays of structs) are validated by the typed
+    // parameter model after deserialization, not by the leaf type recorder.
+    if base_ty == "[ScanCurve; 3]" || base_ty == "[[f32; 3]; 3]" {
+        return Ok(());
+    }
     let ok = if let Some(arr) = base_ty.strip_prefix('[').and_then(|s| s.strip_suffix(']')) {
         let (inner, len) = arr
             .split_once(';')

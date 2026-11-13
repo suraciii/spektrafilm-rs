@@ -800,6 +800,18 @@ impl Pipeline {
             halation,
             dir_couplers,
             glare,
+            scan_profile: if scan
+                && crate::finishing::is_applicable(
+                    &self.params,
+                    scan_profile.is_paper() || scan_profile.is_positive(),
+                ) {
+                crate::scan_profile::gpu_params(
+                    &self.params.scanner.scan_profile,
+                    scan_output_space,
+                )
+            } else {
+                None
+            },
             finishing: if scan
                 && crate::finishing::is_applicable(
                     &self.params,

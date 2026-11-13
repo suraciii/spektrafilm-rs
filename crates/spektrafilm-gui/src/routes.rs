@@ -54,6 +54,10 @@ pub(crate) mod vocabulary {
     pub(crate) const CONVERSION_STYLE_STANDARD: &str = "standard";
 
     /// `scan output`: native polarity or negative conversion.
+    pub(crate) const SCAN_PROFILE: &str = "Scan Profile";
+    pub(crate) const SCAN_PROFILE_HELP: &str = "Change how the scan looks after negative conversion and before Tone & Color. Film and negative conversion stay the same.";
+    pub(crate) const SCAN_PROFILE_STRENGTH: &str = "Scan Profile Strength";
+    pub(crate) const SCAN_PROFILE_STRENGTH_HELP: &str = "Application amount of the selected Scan Profile. 0% is no effect; 100% is the full profile.";
     pub(crate) const SCAN_OUTPUT: &str = "scan output";
 
     pub(crate) const SCAN_OUTPUT_HELP: &str = "Preserve medium polarity keeps the scanned \
