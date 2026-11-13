@@ -2,7 +2,7 @@ use super::*;
 
 fn parameters() -> ScannerDensityGpuParams {
     let pivot = (0.16_f64 / 0.184).log10();
-    let gamma = 0.55;
+    let _gamma = 0.55;
     ScannerDensityGpuParams {
         density: vec![0.0, 4.0, 0.0, 4.4, 0.0, 4.8],
         exposure: vec![-4.0, 4.0, -4.0, 4.0, -4.0, 4.0],
@@ -14,9 +14,6 @@ fn parameters() -> ScannerDensityGpuParams {
         denominator: [-(-std::f64::consts::LN_10 * 1.5625841465572565).exp_m1(); 3],
         camera_ev: 8.0,
         lens_blur: 0.0,
-        standard_setup: true,
-        setup_aim_density: (pivot + 4.0) * gamma,
-        setup_gamma: gamma,
         operator_pivot: pivot,
         operator_contrast_delta: 0.23,
         operator_exposure_ev: -0.31,
@@ -28,7 +25,7 @@ fn parameters() -> ScannerDensityGpuParams {
 fn reference(data: &[f32], p: &ScannerDensityGpuParams) -> (Vec<f32>, [f64; 3], bool) {
     let slopes = [0.5, 0.55, 0.6];
     let mut ns = Vec::new();
-    let mut sum = 0.0;
+    let mut _sum = 0.0;
     let mut cast = [0.0; 2];
     for d in data.as_chunks::<3>().0 {
         let d = [f64::from(d[0]), f64::from(d[1]), f64::from(d[2])];
@@ -38,7 +35,7 @@ fn reference(data: &[f32], p: &ScannerDensityGpuParams) -> (Vec<f32>, [f64; 3], 
         cast[0] += (r[0] - r[1]) / 2.0_f64.sqrt();
         cast[1] += (r[0] + r[1] - 2.0 * r[2]) / 6.0_f64.sqrt();
         let n = d.iter().sum::<f64>() / 3.0;
-        sum += n;
+        _sum += n;
         ns.push(n);
     }
     ns.sort_by(f64::total_cmp);
@@ -46,17 +43,15 @@ fn reference(data: &[f32], p: &ScannerDensityGpuParams) -> (Vec<f32>, [f64; 3], 
     let lo = position.floor() as usize;
     let n5 = ns[lo] + (position - lo as f64) * (ns[(lo + 1).min(ns.len() - 1)] - ns[lo]);
     let high = ns[ns.len() - 1] - n5 >= 1.8;
-    let w = if high {
+    let _w_unused = if high {
         [0.30, 0.35, 0.29]
     } else {
         [0.33, 0.30, 0.35]
     };
-    let en = (w[0] * (sum / ns.len() as f64) + w[1] * ns[ns.len() - 1] + w[2] * ns[0])
-        / w.iter().sum::<f64>();
-    let dx = 0.75 * (p.setup_aim_density - en) / p.setup_gamma;
+    let dx = 0.0;
     let cast = cast.map(|v| v / ns.len() as f64);
-    let weight = (1.0 - 40.0 * (cast[0] * cast[0] + cast[1] * cast[1])).max(0.2);
-    let [u, v] = cast.map(|v| -0.9 * weight * v / p.setup_gamma);
+    let _weight = (1.0 - 40.0 * (cast[0] * cast[0] + cast[1] * cast[1])).max(0.2);
+    let [u, v] = [0.0, 0.0];
     let offset = [
         dx + u / 2.0_f64.sqrt() + v / 6.0_f64.sqrt(),
         dx - u / 2.0_f64.sqrt() + v / 6.0_f64.sqrt(),

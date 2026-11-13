@@ -29,9 +29,6 @@ struct Acquisition {
     offsets: [u32; 3],
     counts: [u32; 3],
     lens_blur: f32,
-    standard_setup: bool,
-    aim_density: f64,
-    gamma: f64,
 }
 
 impl Acquisition {
@@ -45,9 +42,6 @@ impl Acquisition {
             offsets: p.offsets,
             counts: p.counts,
             lens_blur: p.lens_blur,
-            standard_setup: p.standard_setup,
-            aim_density: p.setup_aim_density,
-            gamma: p.setup_gamma,
         }
     }
 
@@ -66,9 +60,6 @@ impl Acquisition {
             && self.offsets == p.offsets
             && self.counts == p.counts
             && self.lens_blur == p.lens_blur
-            && self.standard_setup == p.standard_setup
-            && self.aim_density == p.setup_aim_density
-            && self.gamma == p.setup_gamma
     }
 }
 
@@ -154,9 +145,6 @@ mod tests {
             denominator: [1.6f64, 1.8, 2.0].map(|d| -(-std::f64::consts::LN_10 * d).exp_m1()),
             camera_ev: 0.0,
             lens_blur: 0.0,
-            standard_setup: true,
-            setup_aim_density: 0.8,
-            setup_gamma: 1.0,
             operator_pivot: -0.2,
             operator_contrast_delta: 0.15,
             operator_exposure_ev: -0.3,
@@ -258,21 +246,17 @@ mod tests {
         let lo = position.floor() as usize;
         let n5 = neutral[lo]
             + position.fract() * (neutral[(lo + 1).min(neutral.len() - 1)] - neutral[lo]);
-        let min = neutral[0];
+        let _min = neutral[0];
         let max = *neutral.last().unwrap();
-        let w = if max - n5 >= 1.8 {
+        let _w = if max - n5 >= 1.8 {
             [0.30, 0.35, 0.29]
         } else {
             [0.33, 0.30, 0.35]
         };
-        let count = neutral.len() as f64;
-        let en = (w[0] * (sums[0] / count) + w[1] * max + w[2] * min) / (w[0] + w[1] + w[2]);
-        let dx = 0.75 * (p.setup_aim_density - en) / p.setup_gamma;
-        let u = sums[1] / count;
-        let v = sums[2] / count;
-        let weight = (1.0 - 40.0 * (u * u + v * v)).max(0.2);
-        let u = -0.9 * weight * u / p.setup_gamma;
-        let v = -0.9 * weight * v / p.setup_gamma;
+        let _count = neutral.len() as f64;
+        let dx = 0.0;
+        let u = 0.0;
+        let v = 0.0;
         let offset = [
             dx + u / 2.0f64.sqrt() + v / 6.0f64.sqrt(),
             dx - u / 2.0f64.sqrt() + v / 6.0f64.sqrt(),

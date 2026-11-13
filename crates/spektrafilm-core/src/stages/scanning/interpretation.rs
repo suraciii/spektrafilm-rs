@@ -63,6 +63,7 @@ impl DensityAxis {
         Ok(Self { density, exposure })
     }
 
+    #[allow(dead_code)]
     fn density_at(&self, exposure: f64) -> (f64, f64) {
         let upper = self
             .exposure
@@ -138,10 +139,12 @@ impl DensityCalibration {
         (density, exposure, offsets, counts)
     }
 
+    #[allow(dead_code)]
     pub(super) fn neutral_density(&self, exposure: f64) -> [f64; 3] {
         self.axes.each_ref().map(|axis| axis.density_at(exposure).0)
     }
 
+    #[allow(dead_code)]
     pub(super) fn neutral_gamma(&self, exposure: f64) -> f64 {
         self.axes
             .iter()

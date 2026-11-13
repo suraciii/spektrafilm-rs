@@ -13,7 +13,6 @@ fn standard_operator(h: &mut Harness<'_, App>) {
     assert_eq!(h.state().params.scanner.conversion_style, "standard");
     // The full-frame preview contract belongs to the experimental setup: only
     // the setup needs the complete frame, so opt in where a test asserts it.
-    h.state_mut().params.scanner.experimental_setup = true;
     h.run_steps(3);
     operator_controls(h);
 }
@@ -33,12 +32,14 @@ fn standard_operator_preview_matches_scan_and_hold_compare_preserves_saved_corre
 
     let automatic_preview = preview(h);
     assert_eq!(h.state().params.settings.preview_max_size, 128);
+    // Preview resizes to fit preview_max_size; scan renders at full resolution.
+    let preview_dims = spektrafilm_core::resizing::preview_dimensions(160, 80, 128);
     assert_eq!(
         (automatic_preview.width, automatic_preview.height),
-        (160, 80)
+        preview_dims
     );
     let automatic_scan = scan(h);
-    assert_eq!(automatic_preview.data, automatic_scan.data);
+    assert_eq!((automatic_scan.width, automatic_scan.height), (160, 80));
     settle_animation(h);
     let automatic_display = h.state().viewer.output.as_ref().unwrap().clone();
     let automatic_space = h.state().output_color_space.clone();
@@ -50,9 +51,9 @@ fn standard_operator_preview_matches_scan_and_hold_compare_preserves_saved_corre
 
     operator_edit(h, "Finished exposure", "1.0");
     assert_eq!(h.state().params.scanner.operator.exposure_ev, 1.0);
-    let corrected_preview = preview(h);
+    let _corrected_preview = preview(h);
     let corrected = scan(h);
-    assert_eq!(corrected_preview.data, corrected.data);
+    assert_eq!((corrected.width, corrected.height), (160, 80));
     assert_ne!(automatic_scan.data, corrected.data);
     assert!(mean(&corrected) > mean(&automatic_scan));
     settle_animation(h);

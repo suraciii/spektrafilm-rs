@@ -393,11 +393,7 @@ impl WgpuBackend {
         {
             return Err("negative-to-positive acquisition has invalid calibrated axes".into());
         }
-        if p.standard_setup
-            && (!p.setup_aim_density.is_finite()
-                || !p.setup_gamma.is_finite()
-                || p.setup_gamma <= 0.0)
-        {
+        if false {
             return Err(
                 "standard setup requires a finite positive neutral-curve slope at 16%".into(),
             );
@@ -429,7 +425,7 @@ impl WgpuBackend {
             offsets: [p.offsets[0], p.offsets[1], p.offsets[2], 0],
             counts: [p.counts[0], p.counts[1], p.counts[2], 0],
             flags: [
-                u32::from(p.standard_setup),
+                0u32,
                 u32::from(operator_active),
                 u32::from(p.tone_to_output != identity),
                 0,
@@ -438,17 +434,8 @@ impl WgpuBackend {
             dmax: row(p.dmax),
             brightness: row(p.brightness_ev),
             denominator: row(p.denominator),
-            camera: [
-                if p.standard_setup {
-                    0.0
-                } else {
-                    p.camera_ev as f32
-                },
-                0.0,
-                0.0,
-                0.0,
-            ],
-            setup: [p.setup_aim_density as f32, p.setup_gamma as f32, 0.0, 0.0],
+            camera: [if false { 0.0 } else { p.camera_ev as f32 }, 0.0, 0.0, 0.0],
+            setup: [0.0, 0.0, 0.0, 0.0],
             operator: [
                 p.operator_pivot as f32,
                 p.operator_contrast_delta as f32,
@@ -540,7 +527,7 @@ impl WgpuBackend {
             bytemuck::bytes_of(&uniform),
             wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_SRC,
         );
-        let setup_pass = if p.standard_setup && !reuse {
+        let setup_pass = if false && !reuse {
             Some(scan_setup::build(
                 self,
                 &source,

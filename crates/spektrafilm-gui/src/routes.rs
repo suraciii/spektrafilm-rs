@@ -41,15 +41,6 @@ pub(crate) mod vocabulary {
          selector lists the styles found there. A style applies only with scan output set to \
          Negative to positive.";
 
-    /// `experimental frame setup`: the off-by-default whole-frame measurement.
-    pub(crate) const EXPERIMENTAL_SETUP: &str = "experimental frame setup";
-
-    pub(crate) const EXPERIMENTAL_SETUP_HELP: &str = "Measure the whole developed frame \
-         for exposure, cast and contrast placement before the fixed tone. Off by default: the \
-         algorithm is a declared heuristic with no validated photographic model behind it, it \
-         makes the scan frame-dependent, and it cannot be baked into a point-wise LUT. Turning \
-         it off keeps the readout a fixed, frame-independent transform.";
-
     /// The automatic built-in style; aliases are never offered as choices.
     pub(crate) const CONVERSION_STYLE_STANDARD: &str = "standard";
 

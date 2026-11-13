@@ -595,64 +595,6 @@ mod tests {
     }
 
     #[test]
-    fn negative_standard_cannot_be_baked_as_a_point_wise_transform() {
-        let film: profile::Profile =
-            serde_json::from_str(r#"{"metadata":{},"info":{},"data":{}}"#).unwrap();
-        let neutral = NeutralFilters::load(Path::new(env!("CARGO_MANIFEST_DIR"))).unwrap();
-        let spec = spec("srgb", "srgb");
-        let input = lut_transport::resolve("srgb").unwrap();
-        let mut params = RuntimeParams::default();
-        params.workflow.route = "input > film > scan".into();
-        params.scanner.scan_output = "negative_to_positive".into();
-        params.scanner.experimental_setup = true;
-        for name in ["standard", "neutral"] {
-            params.scanner.conversion_style = name.into();
-            let error = bake_params(
-                &spec,
-                input,
-                input,
-                &film,
-                &film,
-                &neutral,
-                Some(&params),
-                true,
-            )
-            .unwrap_err();
-            assert!(
-                error.contains("whole frame") && error.contains("scanner.experimental_setup"),
-                "{error}"
-            );
-        }
-        // Disabling the experimental setup makes the built-in tone point-wise
-        // again: the default readout carries no frame measurement.
-        params.scanner.experimental_setup = false;
-        params.scanner.conversion_style = "standard".into();
-        bake_params(
-            &spec,
-            input,
-            input,
-            &film,
-            &film,
-            &neutral,
-            Some(&params),
-            true,
-        )
-        .unwrap();
-        params.scanner.conversion_style = "fixed-probe".into();
-        bake_params(
-            &spec,
-            input,
-            input,
-            &film,
-            &film,
-            &neutral,
-            Some(&params),
-            true,
-        )
-        .unwrap();
-    }
-
-    #[test]
     fn lut_topology_rejects_routes_without_matching_taps() {
         for route in [
             "input > film",

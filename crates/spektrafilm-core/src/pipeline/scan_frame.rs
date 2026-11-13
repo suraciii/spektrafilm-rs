@@ -59,8 +59,7 @@ impl Pipeline {
     }
 
     fn device_scan_cacheable(&self) -> bool {
-        self.params.scanner.requires_full_frame()
-            && self.params.taps.inject.is_none()
+        self.params.taps.inject.is_none()
             && self.params.taps.collect.is_none()
             && !crate::stages::grain_dye::active(&self.params)
             && !crate::stages::grain_fotufilm::active(&self.params)
@@ -338,8 +337,7 @@ impl Pipeline {
         cache.device_entry = None;
         // Optical grain readout owns its full-frame context and final crop.
         // Recompute that exact route rather than substitute a density tap.
-        let cacheable = self.params.scanner.requires_full_frame()
-            && self.params.taps.inject.is_none()
+        let cacheable = self.params.taps.inject.is_none()
             && self.params.taps.collect.is_none()
             && !crate::stages::grain_dye::active(&self.params)
             && !crate::stages::grain_fotufilm::active(&self.params);

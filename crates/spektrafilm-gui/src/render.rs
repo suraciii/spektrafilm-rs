@@ -248,7 +248,7 @@ impl RenderSnapshot {
         if !params.scanner.operator_eligible() {
             params.scanner.operator = Default::default();
         }
-        params.settings.preview_mode = preview && !params.scanner.requires_full_frame();
+        params.settings.preview_mode = preview && !false;
         spektrafilm_core::runtime::digest_params_with_neutral(
             params,
             film,
@@ -564,7 +564,6 @@ mod tests {
         // every saved correction in the default configuration.
         let (mut snapshot, _image) = snapshot_and_input();
         snapshot.params.scanner.operator.exposure_ev = 0.5;
-        assert!(!snapshot.params.scanner.experimental_setup);
         assert!(snapshot.params.scanner.operator_eligible());
         let corrected = RuntimeCache::default()
             .prepare_observed(&snapshot, false, &ObservationContext::default())

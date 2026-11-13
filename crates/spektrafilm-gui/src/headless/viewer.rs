@@ -1254,6 +1254,7 @@ fn canonical_search_preserves_inspector_and_viewer_geometry_at_supported_desktop
 }
 
 #[track_caller]
+#[allow(dead_code)]
 fn wait_device_output(h: &mut Harness<'_, App>) {
     wait_until(h, |app| {
         let viewer = app.viewer.observation();
@@ -1268,6 +1269,7 @@ fn wait_device_output(h: &mut Harness<'_, App>) {
 }
 
 #[track_caller]
+#[allow(dead_code)]
 fn scan_device_output(h: &mut Harness<'_, App>) {
     // Unlike the CPU pixel helpers, readiness is the accepted device carrier
     // and its provenance, never a compatibility raster or a host readback.
@@ -1282,6 +1284,7 @@ fn scan_device_output(h: &mut Harness<'_, App>) {
     wait_for_new_scan(h, previous);
 }
 
+#[allow(dead_code)]
 fn wait_for_new_scan(h: &mut Harness<'_, App>, previous: u64) {
     wait_until(h, |app| {
         !app.dirty
@@ -1300,6 +1303,7 @@ fn wait_for_new_scan(h: &mut Harness<'_, App>, previous: u64) {
 /// form a whole Fotufilm bank that this test does not inspect. The Scan still
 /// exercises the same cold production formation and worker observation.
 #[track_caller]
+#[allow(dead_code)]
 fn request_scan_device_output(h: &mut Harness<'_, App>) {
     let previous = h.state().source_render.as_ref().unwrap().operation_id;
     h.state_mut().full_scan_requested = true;

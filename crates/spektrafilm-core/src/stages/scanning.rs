@@ -12,7 +12,7 @@ use spektrafilm_math::precision::{from_f64, to_f64};
 use crate::params::RuntimeParams;
 use crate::profile::Profile;
 mod interpretation;
-mod setup;
+
 mod spectral;
 pub(crate) use spectral::{scan_spectral_rgb, scanner_lut_bounds};
 
@@ -40,13 +40,8 @@ pub fn conversion_styles(data_dir: &std::path::Path) -> Vec<String> {
 
 fn positive_tone(log_e: f64, tone: &ChannelTone, params: &RuntimeParams) -> f64 {
     let denominator = -(-std::f64::consts::LN_10 * tone.dmax).exp_m1();
-    let e = log_e / std::f64::consts::LOG10_2
-        - if params.scanner.experimental_setup {
-            0.0
-        } else {
-            interpretation::camera_ev(params)
-        }
-        + tone.brightness_ev;
+    let e =
+        log_e / std::f64::consts::LOG10_2 - interpretation::camera_ev(params) + tone.brightness_ev;
     let z = tone.contrast * e;
     let t = if z >= 0.0 {
         1.0 / (1.0 + (-z).exp())
@@ -67,18 +62,6 @@ pub(crate) fn density_reading_gpu_params(
     let calibration = interpretation::DensityCalibration::prepare(profile)?;
     let (density, exposure, offsets, counts) = calibration.gpu_axes();
     let operator = PreparedOperator::new(&params.scanner.operator);
-    let standard_setup = params.scanner.experimental_setup;
-    let setup_aim_density = calibration
-        .neutral_density(operator.pivot)
-        .iter()
-        .sum::<f64>()
-        / 3.0;
-    let setup_gamma = calibration.neutral_gamma(operator.pivot);
-    if standard_setup
-        && (!setup_aim_density.is_finite() || !setup_gamma.is_finite() || setup_gamma <= 0.0)
-    {
-        return Err("standard setup requires a finite positive neutral-curve slope at 16%".into());
-    }
     let output = colorspace::resolve(&params.io.output_color_space)?;
     let tone_to_output = if std::ptr::eq(output, &colorspace::SRGB) {
         [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
@@ -94,15 +77,8 @@ pub(crate) fn density_reading_gpu_params(
         dmax: tones.map(|tone| tone.dmax),
         brightness_ev: tones.map(|tone| tone.brightness_ev),
         denominator: tones.map(|tone| -(-std::f64::consts::LN_10 * tone.dmax).exp_m1()),
-        camera_ev: if standard_setup {
-            0.0
-        } else {
-            interpretation::camera_ev(params)
-        },
+        camera_ev: interpretation::camera_ev(params),
         lens_blur: params.scanner.lens_blur,
-        standard_setup,
-        setup_aim_density,
-        setup_gamma,
         operator_pivot: operator.pivot,
         operator_contrast_delta: operator.contrast_delta,
         operator_exposure_ev: operator.exposure_ev,
@@ -167,12 +143,7 @@ pub(crate) fn prepare_negative(
     } else {
         std::borrow::Cow::Borrowed(density)
     };
-    let offset = if params.scanner.experimental_setup {
-        let _setup = super::StageObservation::new(backend, "standard_setup");
-        setup::FrameSetup::measure(&density, &calibration)?.offset
-    } else {
-        [0.0; 3]
-    };
+    let offset = [0.0; 3];
     let mut exposure = Vec::new();
     let pixels = density.data.len() / 3;
     exposure
@@ -295,7 +266,7 @@ pub(crate) fn render_prepared_negative(
             for channel in 0..3 {
                 let tone = &tones[channel];
                 let ev = exposure[channel] / std::f64::consts::LOG10_2
-                    - if params.scanner.experimental_setup { 0.0 } else { interpretation::camera_ev(params) }
+                    - interpretation::camera_ev(params)
                     + tone.brightness_ev;
                 if !ev.is_finite() || !(tone.contrast * ev).is_finite() {
                     return Err("negative conversion combined tone coordinate overflow".into());
@@ -1004,7 +975,6 @@ mod tests {
         let film = crate::profile::load_profile_by_name(&data_dir(), "kodak_portra_400").unwrap();
         let mut params = film_scan_params();
         params.scanner.scan_output = "negative_to_positive".into();
-        params.scanner.experimental_setup = true;
         params.io.output_color_space = "sRGB".into();
         let density = ImageBuf::from_data(
             2,
@@ -1022,9 +992,7 @@ mod tests {
         let backend = &spektrafilm_backend::cpu_backend::CpuBackend;
         let prepared = prepare_negative(&density, &film, &params, backend).unwrap();
         let calibration = interpretation::DensityCalibration::prepare(&film).unwrap();
-        let offset = setup::FrameSetup::measure(&density, &calibration)
-            .unwrap()
-            .offset;
+        let offset = [0.0; 3];
         for (baseline, px) in prepared
             .exposure
             .iter()

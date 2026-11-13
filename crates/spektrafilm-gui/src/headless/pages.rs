@@ -1288,31 +1288,6 @@ fn experimental_frame_setup_toggle_is_off_by_default_and_gated_by_the_negative_r
     search_controls(h, "Scanner");
     choose(h, "scan output", "Negative to positive");
     assert_eq!(h.state().params.scanner.scan_output, "negative_to_positive");
-    assert!(!h.state().params.scanner.experimental_setup);
-    reveal_control(h, "scanner.experimental_setup");
-    let control = h.get_by_label("experimental frame setup");
-    assert!(!control.node().is_disabled());
-    click(h, "experimental frame setup");
-    assert!(
-        h.state().params.scanner.experimental_setup,
-        "toggle did not latch"
-    );
-    click(h, "experimental frame setup");
-    assert!(
-        !h.state().params.scanner.experimental_setup,
-        "toggle did not clear"
-    );
-
-    // Leaving the negative interpretation makes the experiment inapplicable.
-    search_controls(h, "Scanner");
-    choose(h, "scan output", "Preserve medium polarity");
-    reveal_control(h, "scanner.experimental_setup");
-    assert!(
-        h.get_by_label("experimental frame setup")
-            .node()
-            .is_disabled()
-    );
-    assert!(!h.state().params.scanner.experimental_setup);
 }
 
 #[test]

@@ -345,21 +345,6 @@ pub(crate) fn sections(
                     flags.runtime_changed = true;
                 }
             }
-            // The whole-frame measurement is an off-by-default experiment, so it
-            // is offered next to the style it modifies rather than as a mode.
-            let negative_route =
-                positive_route && params.scanner.scan_output == "negative_to_positive";
-            if filter_matches(filter, vocabulary::EXPERIMENTAL_SETUP) {
-                ui.add_enabled_ui(negative_route, |ui| {
-                    let changed = toggle(
-                        ui,
-                        vocabulary::EXPERIMENTAL_SETUP,
-                        &mut params.scanner.experimental_setup,
-                        vocabulary::EXPERIMENTAL_SETUP_HELP,
-                    );
-                    flags.runtime_changed |= changed;
-                });
-            }
             if filter_matches(filter, "lens blur (readout optics)") {
                 flags.runtime_changed |= param_numeric(ui, "Lens blur (readout optics)", &mut params.scanner.lens_blur, "scanner.lens_blur", "Gaussian sigma in pixels on linear transmitted or reflected readout light, before negative conversion, gamut processing, sharpening and encoding. Identity points retain this optical order.");
             }

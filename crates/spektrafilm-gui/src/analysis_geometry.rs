@@ -42,7 +42,7 @@ impl AnalysisGeometry {
         }
         let mut geometry = Self::original(source_size, rotation);
         let mut working = geometry.image_size;
-        if params.settings.preview_mode && !params.scanner.requires_full_frame() {
+        if params.settings.preview_mode {
             let (w, h) = spektrafilm_core::resizing::preview_dimensions(
                 working[0],
                 working[1],
@@ -228,17 +228,22 @@ mod tests {
         params.settings.preview_mode = true;
         params.settings.preview_max_size = 9;
         params.scanner.scan_output = "negative_to_positive".into();
-        params.scanner.experimental_setup = true;
+        // Without experimental_setup, preview resize always happens before crop.
+        // The geometry reflects the resized preview, not the full frame.
         let g = AnalysisGeometry::rendered([19, 11], 0, [4, 4], &params).unwrap();
+        // With preview resize before crop, the geometry reflects the resized
+        // preview dimensions, not the full frame.
+        let preview = spektrafilm_core::resizing::preview_dimensions(19, 11, 9);
         let (x, y, w, h) =
-            spektrafilm_core::resizing::requested_crop_rect(19, 11, &params.io).unwrap();
+            spektrafilm_core::resizing::requested_crop_rect(preview.0, preview.1, &params.io)
+                .unwrap();
         close(
             g.coverage(),
             [
-                x as f64 / 19.0,
-                y as f64 / 11.0,
-                (x + w) as f64 / 19.0,
-                (y + h) as f64 / 11.0,
+                x as f64 / preview.0 as f64,
+                y as f64 / preview.1 as f64,
+                (x + w) as f64 / preview.0 as f64,
+                (y + h) as f64 / preview.1 as f64,
             ],
         );
     }

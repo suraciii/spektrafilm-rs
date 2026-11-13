@@ -467,9 +467,6 @@ fn description(path: &str) -> Option<&'static str> {
         "scanner.conversion_style" => Some(
             "Named stylization of the negative-to-positive tone: standard is the built-in frozen tone; any other name applies the declared per-channel tone triple from data/scan-styles/<name>.json. A style never runs the frame setup.",
         ),
-        "scanner.experimental_setup" => Some(
-            "Off-by-default experimental whole-frame measurement of the developed negative for exposure, cast and contrast placement. Declared heuristic, not a validated photographic model; makes the scan frame-dependent and unbakeable.",
-        ),
         "scanner.unsharp_mask" => {
             Some("Digital scan sharpening after optical readout and output processing.")
         }

@@ -313,18 +313,14 @@ impl RenderWorker {
                                 oriented_host = Some((job.input_epoch, rotation, image.clone()));
                                 image
                             };
-                            Ok(Some(
-                                if runtime_params.settings.preview_mode
-                                    && !runtime_params.scanner.requires_full_frame()
-                                {
-                                    Arc::new(spektrafilm_core::params_builder::resize_for_preview(
-                                        &source,
-                                        runtime_params.settings.preview_max_size,
-                                    ))
-                                } else {
-                                    source
-                                },
-                            ))
+                            Ok(Some(if runtime_params.settings.preview_mode {
+                                Arc::new(spektrafilm_core::params_builder::resize_for_preview(
+                                    &source,
+                                    runtime_params.settings.preview_max_size,
+                                ))
+                            } else {
+                                source
+                            }))
                         })();
                         let host_input = observed_result(
                             input_prepare,
@@ -341,7 +337,7 @@ impl RenderWorker {
                             observation.scope("simulation", ObservationKind::Phase, Purpose::Image);
                         let processed = {
                             let _unit = spektrafilm_core::progress::report("simulation");
-                            if !runtime_params.scanner.requires_full_frame() {
+                            if true {
                                 // A cached scan baseline also owns its raw source.
                                 // Release it when leaving the full-frame route.
                                 scan_cache = spektrafilm_core::runtime::ScanFrameCache::default();
@@ -386,7 +382,7 @@ impl RenderWorker {
                                             .preview_mode
                                             .then_some(runtime_params.settings.preview_max_size),
                                     };
-                                    if runtime_params.scanner.requires_full_frame() {
+                                    if false {
                                         pipeline_template
                                             .process_device_scan_cached_retained_observed(
                                                 &image,
@@ -419,7 +415,7 @@ impl RenderWorker {
                                 Ok(Some(image)) => Ok((None, Some(image))),
                                 Ok(None) => {
                                     let image = host_input.expect("CPU working image prepared");
-                                    if runtime_params.scanner.requires_full_frame() {
+                                    if false {
                                         pipeline_template.process_scan_cached_observed(
                                             &image,
                                             &mut scan_cache,

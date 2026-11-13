@@ -397,16 +397,8 @@ pub fn point_wise_offenders(
             MeasureStage::RgbOut,
         );
     }
-    if scan
-        && params.scanner.scan_output == "negative_to_positive"
-        && params.scanner.experimental_setup
-    {
-        add(
-            "scanner.experimental_setup",
-            "true".to_owned(),
-            "false",
-            MeasureStage::RgbOut,
-        );
+    if scan && params.scanner.scan_output == "negative_to_positive" {
+        add("true".to_owned(), "false", MeasureStage::RgbOut);
     }
     if scan && params.scanner.lens_blur > 0.0 {
         add(
