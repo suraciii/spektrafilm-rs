@@ -13,7 +13,7 @@ mod mask;
 mod math;
 
 pub use evidence::{ArtifactRole, Evidence};
-pub use families::{Map, edge, grain, halation, health, numeric, summary, tone};
+pub use families::{Map, color_noise, edge, grain, halation, health, numeric, summary, tone};
 pub use mask::geometry_mask;
 pub use math::{count, luminance, mean, median, number, quantile, selected, spelling};
 
@@ -414,6 +414,16 @@ fn compare_inner(
                             h,
                             std::slice::from_ref(&maps[1].artifact),
                         )?,
+                        "color_noise" => color_noise(
+                            e,
+                            region,
+                            &mask,
+                            a,
+                            b,
+                            // The high-pass sigma is a protocol parameter; a
+                            // protocol that omits it measures at eight pixels.
+                            protocol["color_noise"]["sigma"].as_f64().unwrap_or(8.0),
+                        ),
                         "grain" => grain(
                             e,
                             region,
@@ -755,6 +765,23 @@ fn metric_definitions(case: &Value, region_id: &str, protocol: &Value) -> HashSe
             definitions.insert(format!("delta_e00.fraction_above_{}", spelling(threshold)));
         }
     }
+    if chosen.contains("color_noise") {
+        for name in [
+            "mean_r",
+            "mean_g",
+            "mean_b",
+            "luma_std",
+            "chroma_rms",
+            "chroma_to_luminance_ratio",
+            "channel_correlation_rg",
+            "radial_frequency_centroid",
+        ] {
+            definitions.insert(format!("color_noise.{name}"));
+            for side in ["baseline", "candidate", "delta"] {
+                definitions.insert(format!("color_noise.{side}.{name}"));
+            }
+        }
+    }
     if chosen.contains("flip") {
         for stat in ["mean", "p95", "p99", "max"] {
             definitions.insert(format!("flip.{stat}"));
@@ -1005,6 +1032,110 @@ mod tests {
         );
         fs::remove_dir_all(path).unwrap();
     }
+    /// A dither whose every channel carries the same value has no chroma at
+    /// all, so the chroma axes of its residual vanish identically however the
+    /// high pass treats it.
+    #[test]
+    fn color_noise_sees_no_chroma_in_a_gray_dither() {
+        let mut samples = vec![[0.0; 3]; 32 * 32];
+        for (i, p) in samples.iter_mut().enumerate() {
+            let d = if (i / 32 + i % 32) % 2 == 0 {
+                0.2
+            } else {
+                -0.2
+            };
+            *p = [0.5 + d; 3];
+        }
+        let mut a = image(0.5, 32, 32);
+        a.samples = samples;
+        let path = output();
+        let result =
+            compare_images(&a, &a, &[], &json!({"measurements":["color_noise"]}), &path).unwrap();
+        let rows = result["measurements"].as_array().unwrap();
+        let value = |metric: &str| {
+            rows.iter()
+                .find(|r| r["metric"] == metric)
+                .unwrap_or_else(|| panic!("missing {metric}"))["value"]
+                .as_f64()
+        };
+        let chroma = value("color_noise.baseline.chroma_rms").unwrap();
+        assert!(chroma.abs() < 1e-12, "chroma_rms {chroma}");
+        let ratio = value("color_noise.baseline.chroma_to_luminance_ratio").unwrap();
+        assert!(ratio.abs() < 1e-12, "ratio {ratio}");
+        let luma = value("color_noise.baseline.luma_std").unwrap();
+        assert!(luma > 0.1, "a dither of amplitude 0.2 has luma_std {luma}");
+        fs::remove_dir_all(path).unwrap();
+    }
+
+    /// The BT.709 chroma axes are deviations from the BT.709 luminance, so a
+    /// field built from a chroma axis alone carries no luminance at all and
+    /// its luminance residual vanishes identically.
+    #[test]
+    fn color_noise_sees_no_luma_in_a_pure_chroma_field() {
+        // (0.7152, -0.2126, 0) is orthogonal to the BT.709 luminance weights.
+        let mut samples = vec![[0.0; 3]; 32 * 32];
+        for (i, p) in samples.iter_mut().enumerate() {
+            let d = if (i / 32 + i % 32) % 2 == 0 {
+                0.1
+            } else {
+                -0.1
+            };
+            *p = [0.5 + 0.7152 * d, 0.5 - 0.2126 * d, 0.5];
+        }
+        let mut a = image(0.5, 32, 32);
+        a.samples = samples;
+        let path = output();
+        let result =
+            compare_images(&a, &a, &[], &json!({"measurements":["color_noise"]}), &path).unwrap();
+        let rows = result["measurements"].as_array().unwrap();
+        let row = |metric: &str| {
+            rows.iter()
+                .find(|r| r["metric"] == metric)
+                .unwrap_or_else(|| panic!("missing {metric}"))
+        };
+        let luma = row("color_noise.baseline.luma_std")["value"]
+            .as_f64()
+            .unwrap();
+        assert!(luma.abs() < 1e-12, "luma_std {luma}");
+        let chroma = row("color_noise.baseline.chroma_rms")["value"]
+            .as_f64()
+            .unwrap();
+        assert!(chroma > 0.01, "chroma_rms {chroma}");
+        // The ratio cannot exist when its denominator does not.
+        let ratio = row("color_noise.baseline.chroma_to_luminance_ratio");
+        assert_eq!(ratio["reason"], "zero_variance");
+        assert!(ratio["value"].is_null());
+        fs::remove_dir_all(path).unwrap();
+    }
+
+    /// The residual is a grain amplitude and not a gradient: a smooth ramp
+    /// has almost nothing left once its own low pass is subtracted.
+    #[test]
+    fn color_noise_removes_a_gradient() {
+        let mut samples = vec![[0.0; 3]; 64 * 64];
+        for (i, p) in samples.iter_mut().enumerate() {
+            let v = (i % 64) as f64 / 63.0;
+            *p = [v; 3];
+        }
+        let mut a = image(0.5, 64, 64);
+        a.samples = samples;
+        let path = output();
+        let result =
+            compare_images(&a, &a, &[], &json!({"measurements":["color_noise"]}), &path).unwrap();
+        let luma = result["measurements"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["metric"] == "color_noise.baseline.luma_std")
+            .unwrap()["value"]
+            .as_f64()
+            .unwrap();
+        // A ramp of range 1.0 has a standard deviation near 0.29 before the
+        // high pass; afterwards only its boundary layers remain.
+        assert!(luma < 0.05, "gradient residual luma_std {luma}");
+        fs::remove_dir_all(path).unwrap();
+    }
+
     #[test]
     fn flat_zero_variance_retains_radial_spectrum() {
         let a = image(0.0, 8, 8);

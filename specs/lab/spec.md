@@ -88,20 +88,29 @@ Six nouns. A caller holds all six at once, so a seventh displaces one.
 
 A region carries one role. The role decides which families are meaningful on
 it, so a family that cannot apply to a role is refused rather than silently
-measured on the wrong population.
+measured on the wrong population. The roles are the closed set the regions
+document already declares; this product introduces no second vocabulary.
 
 | Role | Population | Families that apply |
 |---|---|---|
-| `color` | a color patch | color_error, distribution |
-| `gray` | a neutral patch or gray step | color_error, neutrality, distribution |
-| `ramp` | a sequence of known increasing density or reflectance | tone, distribution |
-| `flat` | a uniform field | color_noise, distribution |
+| `skin` | a skin patch | color, distribution |
+| `neutral` | a neutral patch or gray step | color, neutrality, tone, distribution |
+| `shadow` | a shadow step | color, tone, distribution |
+| `highlight` | a highlight step | color, tone, distribution |
+| `color` | a color patch | color, distribution |
+| `flat_field` | a uniform field | color_noise, grain, distribution |
+| `texture` | a textured field | color_noise, distribution |
+| `edge` | a slanted or straight edge | edge, distribution |
 | `other` | anything | distribution |
+| `full_image` | the whole raster | flip, distribution |
 
 A family declared on a role it does not apply to MUST be refused with
 `incompatible_measurement_role`, naming the family and the role. The lab MUST
 NOT substitute a family that does apply: the substitution would measure a
 signal the caller never declared.
+
+A probe family is not in this table because its applicability depends on a
+probe the caller declares, not on the role alone.
 
 ## Command surface
 
@@ -173,10 +182,14 @@ Two stems that produce one identity MUST fail as `duplicate_case_identity`.
 ### Geometry
 
 A region is a rectangle in the delivered raster's own pixel space. That is the
-only coordinate space this product has. A regions document MUST declare it; a
-`source` or `render` region MUST be rejected with `unsupported_coordinate_space`
-before any pixel is read, because a delivered raster carries neither a source
-declaration nor a render.
+only coordinate space this product has. The regions document names that space
+`render`, which is a name from the renderer's vocabulary that predates this
+product: a delivered raster has no render, and the name means "the pixels as
+delivered" here and nothing more.
+
+A regions document MUST declare `render` geometry. Every other declared space
+MUST be rejected with `unsupported_coordinate_space` before any pixel is read:
+a delivered raster carries neither a source declaration nor a working stage.
 
 `--roi ID=X,Y,W,H[:ROLE]` declares one region directly and repeats.
 `--regions FILE` declares the geometry as an authored regions document. The two
@@ -195,28 +208,34 @@ and MUST be rejected rather than re-rooted.
 ### Measurement families
 
 The [measurement protocol](../benchmark/metrics/spec.md) owns each family's
-domain, estimator, and availability rules. This document owns which families
-exist and which roles they apply to.
+domain, estimator, and availability rules. This document names the families
+and the roles they apply to; it does not define a second implementation of
+one. The family names are the ones the measurement library already emits, so a
+retained record stays readable.
 
 | Family | Measures | Applies to |
 |---|---|---|
-| `color_error` | ΔE00, ΔL\*, Δa\*, Δb\*, ΔC\* against a reference | `color`, `gray` |
-| `neutrality` | gray-axis a\*b\* residual, mid-gray L\* error, neutral-locus shift | `gray` |
-| `tone` | density or log-exposure response over a declared ramp: slope, shoulder, toe, Dmax | `ramp` |
-| `color_noise` | luminance standard deviation, chroma RMS, chroma-to-luminance ratio, channel correlation, radial spectrum | `flat` |
-| `distribution` | mean, bias, quantiles, and the histogram of the declared quantity | any role |
-
-`color_error` requires a reference. Without one it is unavailable with
-`missing_reference`, and the remaining families still measure.
+| `numeric` | native-channel statistics: maximum absolute difference, RMSE, out-of-range fractions | any role |
+| `color` | ΔE00 and ΔL\*, Δa\*, Δb\*, ΔC\* against a reference | `skin`, `neutral`, `shadow`, `highlight`, `color` |
+| `neutrality` | gray-axis a\*b\* residual and mid-gray L\* error | `neutral` |
+| `tone` | density or log-exposure response over a declared ramp: slope, shoulder, toe, Dmax | `neutral`, `shadow`, `highlight` |
+| `color_noise` | luminance standard deviation, chroma RMS, chroma-to-luminance ratio, channel correlation, radial spectrum | `flat_field`, `texture` |
+| `edge` | spatial frequency response and MTF50 | `edge` |
+| `flip` | perceptual difference over the whole raster | `full_image` |
+| `grain` | grain residual under a declared probe | `flat_field` |
+| `halation` | halation residual under a declared probe | probe-bound |
 
 `color_noise` is the family this product is most often asked for: a film grain
 that is not neutral is a color error, and the chroma-to-luminance ratio is the
 number that says so.
 
-A probe family is added to this list only with the probe that makes it
-measurable. A family that needs a declared probe MUST refuse without one,
-retain an unavailable row naming the missing probe, and MUST NOT fall back to
-a default probe geometry.
+`color` requires a reference. Without one it is unavailable with
+`missing_reference`, and the remaining families still measure.
+
+A probe family is added to the applicability table only with the probe that
+makes it measurable. A family that needs a declared probe MUST refuse without
+one, retain an unavailable row naming the missing probe, and MUST NOT fall
+back to a default probe geometry.
 
 ### Decoding
 
@@ -425,15 +444,16 @@ that the renderer's own input route produced, and `sample` reads it.
   `compare images`, `compare readings`, `compare runs`, `compare pairs`,
   `inspect`, `report comparison`. This document reduces it to `analyze`,
   `compare`, `sample`, `regions`, `validate`.
-- The measured families are `numeric`, `color`, `tone`, `flip`, and the probe
-  families `grain` and `halation`. The families this document names are not
-  those, and `color_noise` has no implementation at all. This is the largest
-  gap: the product's most-asked measurement does not exist.
+- `color_noise` has no implementation at all. This is the largest gap: the
+  product's most-asked measurement does not exist.
+- `neutrality` has no implementation; the gray-axis residual and the mid-gray
+  error are computed by hand in every experiment that needs them.
 - The comparison record carries `seed`, `review`, `evaluation_status`, and
   `findings`. This document removes all four; `seed` is currently written as
   `0`, which Law 4 forbids.
-- Regions use the `render` coordinate space. This document names the delivered
-  raster's own pixel space instead.
+- The one coordinate space of a delivered raster is called `render`, a name
+  that belongs to the renderer's vocabulary. Renaming it is a wire change and
+  does not happen here; the name is carried with its meaning stated.
 - A region is a rectangle. Mask geometry is rejected; reading mask files on a
   delivered raster is not implemented.
 - The lab reader decodes PNG, TIFF, JPEG, WebP, and EXR. A container layout

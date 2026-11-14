@@ -26,7 +26,10 @@ fn paired(
     estimator: &str,
     refs: &[String],
 ) {
-    let reason = if name.contains("correlation") || name.contains("frequency_centroid") {
+    let reason = if name.contains("correlation")
+        || name.contains("frequency_centroid")
+        || name.contains("ratio")
+    {
         "zero_variance"
     } else if name.contains("half_height") {
         "no_half_height_crossing"
@@ -1201,6 +1204,271 @@ pub struct Map {
     pub values: Vec<f64>,
     pub artifact: String,
 }
+/// Color noise over one population: the high-frequency residual of the
+/// samples, split into its luminance part and its chroma part.
+///
+/// The residual is the sample minus its own Gaussian low pass, so the measure
+/// is a grain amplitude and not a gradient. The chroma axes are the orthogonal
+/// opponent pair of the Rec. 709 luminance weights, so `chroma_rms` and
+/// `luma_std` are directly comparable and their ratio is dimensionless.
+///
+/// A film grain that is not neutral is a color error. `chroma_to_luminance`
+/// is the number that says so.
+#[allow(clippy::too_many_arguments)]
+pub fn color_noise(
+    e: &mut Evidence,
+    region: &str,
+    mask: &[bool],
+    a: &ImageData,
+    b: &ImageData,
+    sigma: f64,
+) {
+    let n = count(mask);
+    let domain = format!("native:{}:{}", a.color_space, a.transfer);
+    for (name, left, right, units, estimator) in noise_statistics(a, b, mask, sigma, n) {
+        paired(
+            e,
+            region,
+            "color_noise",
+            &name,
+            left,
+            right,
+            n,
+            &domain,
+            units,
+            estimator,
+            &[],
+        );
+    }
+}
+
+/// Every colour-noise quantity of one pair, in the order the report shows
+/// them. Each entry is one metric name, its two sides, its units and its
+/// estimator; `paired` derives the delta and the availability reason.
+/// One metric of a pair: its name, its two sides, its units and its estimator.
+type NoiseRow = (String, Option<f64>, Option<f64>, &'static str, &'static str);
+
+fn noise_statistics(
+    a: &ImageData,
+    b: &ImageData,
+    mask: &[bool],
+    sigma: f64,
+    n: usize,
+) -> Vec<NoiseRow> {
+    const ROWS: [(&str, &str, &str); 8] = [
+        (
+            "mean_r",
+            "native channel sample",
+            "population mean of the declared samples",
+        ),
+        (
+            "mean_g",
+            "native channel sample",
+            "population mean of the declared samples",
+        ),
+        (
+            "mean_b",
+            "native channel sample",
+            "population mean of the declared samples",
+        ),
+        (
+            "luma_std",
+            "native channel sample",
+            "population standard deviation of the Gaussian-high-passed luminance",
+        ),
+        (
+            "chroma_rms",
+            "native channel sample",
+            "root mean square of the Gaussian-high-passed chroma axes",
+        ),
+        (
+            "chroma_to_luminance_ratio",
+            "ratio",
+            "chroma_rms over luma_std of the same residual",
+        ),
+        (
+            "channel_correlation_rg",
+            "correlation",
+            "Pearson correlation of the Gaussian-high-passed red and green residuals",
+        ),
+        (
+            "radial_frequency_centroid",
+            "cycles per pixel",
+            "power-weighted mean radial frequency of the windowed residual",
+        ),
+    ];
+    let empty: Vec<(Option<f64>, ())> = Vec::new();
+    let _ = empty;
+    let sides: Vec<Vec<Option<f64>>> = if n < 2 {
+        vec![vec![None; ROWS.len()]; 2]
+    } else {
+        [a, b]
+            .iter()
+            .map(|image| residual_statistics(image, mask, sigma))
+            .collect()
+    };
+    ROWS.iter()
+        .enumerate()
+        .map(|(index, (name, units, estimator))| {
+            (
+                name.to_string(),
+                sides[0][index],
+                sides[1][index],
+                *units,
+                *estimator,
+            )
+        })
+        .collect()
+}
+
+/// The colour-noise statistics of one image over one population. A quantity
+/// that cannot be computed is `None`, and `paired` reports why.
+fn residual_statistics(image: &ImageData, mask: &[bool], sigma: f64) -> Vec<Option<f64>> {
+    let width = image.width;
+    let height = image.height;
+    let n = count(mask);
+    let mut blurred = Vec::with_capacity(3);
+    for c in 0..3 {
+        let channel: Vec<f64> = image.samples.iter().map(|p| p[c]).collect();
+        blurred.push(gaussian(&channel, width, height, sigma));
+    }
+    let mut mean = [0.0_f64; 3];
+    let mut y_scale = 0.0_f64;
+    let mut sum_y = 0.0;
+    let mut sum_y2 = 0.0;
+    let mut sum_c = 0.0;
+    let mut sum_r = 0.0;
+    let mut sum_g = 0.0;
+    let mut sum_r2 = 0.0;
+    let mut sum_g2 = 0.0;
+    let mut sum_rg = 0.0;
+    for (i, selected) in mask.iter().enumerate() {
+        if !selected {
+            continue;
+        }
+        let p = image.samples[i];
+        for c in 0..3 {
+            mean[c] += p[c];
+        }
+        let d = [
+            p[0] - blurred[0][i],
+            p[1] - blurred[1][i],
+            p[2] - blurred[2][i],
+        ];
+        let y = luminance(d);
+        y_scale = y_scale.max(luminance(p).abs());
+        sum_y += y;
+        sum_y2 += y * y;
+        // ITU-R BT.709 chroma: each axis is the deviation from the same
+        // luminance, normalized so a fully saturated primary reaches one.
+        // They are orthogonal to the luminance weights by construction, so
+        // luma_std and chroma_rms describe disjoint parts of the residual.
+        let cb = (d[2] - y) / 1.8556;
+        let cr = (d[0] - y) / 1.5748;
+        sum_c += cb * cb + cr * cr;
+        sum_r += d[0];
+        sum_g += d[1];
+        sum_r2 += d[0] * d[0];
+        sum_g2 += d[1] * d[1];
+        sum_rg += d[0] * d[1];
+    }
+    let count = n as f64;
+    let luma_var = (sum_y2 - sum_y * sum_y / count) / count;
+    let luma_std = luma_var.max(0.0).sqrt();
+    let chroma_rms = (sum_c / count).sqrt();
+    let variance_r = sum_r2 - sum_r * sum_r / count;
+    let variance_g = sum_g2 - sum_g * sum_g / count;
+    let covariance = sum_rg - sum_r * sum_g / count;
+    let correlation = (variance_r > 0.0 && variance_g > 0.0)
+        .then(|| covariance / (variance_r * variance_g).sqrt());
+    vec![
+        Some(mean[0] / count),
+        Some(mean[1] / count),
+        Some(mean[2] / count),
+        Some(luma_std),
+        Some(chroma_rms),
+        // Below the numerical resolution of the sample scale there is no
+        // luminance to divide by, and a ratio would be an artifact of the
+        // accumulation rather than a measurement.
+        (luma_std > f64::EPSILON * y_scale).then(|| chroma_rms / luma_std),
+        correlation,
+        radial_centroid(image, mask, sigma),
+    ]
+}
+
+/// The power-weighted mean radial frequency of the residual, in cycles per
+/// pixel. It is defined only on a population that fills its bounding box:
+/// a masked spectrum would measure the mask as much as the grain.
+fn radial_centroid(image: &ImageData, mask: &[bool], sigma: f64) -> Option<f64> {
+    let width = image.width;
+    let height = image.height;
+    let (x0, y0, x1, y1) = bounds(mask, width, height)?;
+    if (x1 - x0) * (y1 - y0) != count(mask) {
+        return None;
+    }
+    let box_width = x1 - x0;
+    let box_height = y1 - y0;
+    if box_width < 2 || box_height < 2 {
+        return None;
+    }
+    let mut blurred = Vec::with_capacity(3);
+    for c in 0..3 {
+        let channel: Vec<f64> = image.samples.iter().map(|p| p[c]).collect();
+        blurred.push(gaussian(&channel, width, height, sigma));
+    }
+    let mut spectrum = vec![Complex::default(); box_width * box_height];
+    for y in 0..box_height {
+        for x in 0..box_width {
+            let i = (y0 + y) * width + (x0 + x);
+            let p = image.samples[i];
+            let d = [
+                p[0] - blurred[0][i],
+                p[1] - blurred[1][i],
+                p[2] - blurred[2][i],
+            ];
+            let window = periodic_hann(x, box_width) * periodic_hann(y, box_height);
+            spectrum[y * box_width + x] = Complex::new(luminance(d) * window, 0.0);
+        }
+    }
+    let mut planner = FftPlanner::new();
+    fft2(&mut spectrum, box_width, box_height, false, &mut planner);
+    let mut weighted = 0.0;
+    let mut power = 0.0;
+    for (index, bin) in spectrum.iter().enumerate() {
+        if index == 0 {
+            continue;
+        }
+        let radius = {
+            let fx = frequency(index % box_width, box_width);
+            let fy = frequency(index / box_width, box_height);
+            (fx * fx + fy * fy).sqrt()
+        };
+        let p = bin.norm_sqr();
+        weighted += radius * p;
+        power += p;
+    }
+    (power > 0.0).then(|| weighted / power)
+}
+
+/// The smallest box that contains the population.
+fn bounds(mask: &[bool], width: usize, height: usize) -> Option<(usize, usize, usize, usize)> {
+    let mut x0 = width;
+    let mut y0 = height;
+    let mut x1 = 0;
+    let mut y1 = 0;
+    for (i, selected) in mask.iter().enumerate() {
+        if !*selected {
+            continue;
+        }
+        let (x, y) = (i % width, i / width);
+        x0 = x0.min(x);
+        y0 = y0.min(y);
+        x1 = x1.max(x + 1);
+        y1 = y1.max(y + 1);
+    }
+    (x0 < x1 && y0 < y1).then_some((x0, y0, x1, y1))
+}
+
 pub fn numeric(e: &mut Evidence, region: &str, mask: &[bool], a: &ImageData, b: &ImageData) {
     let n = count(mask);
     let mut maximum = 0.0_f64;

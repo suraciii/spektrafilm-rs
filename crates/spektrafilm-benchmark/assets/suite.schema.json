@@ -616,7 +616,8 @@
                       "flip",
                       "grain",
                       "halation",
-                      "edge"
+                      "edge",
+                      "color_noise"
                     ]
                   },
                   "minItems": 0,
@@ -683,7 +684,8 @@
                 "flip",
                 "grain",
                 "halation",
-                "edge"
+                "edge",
+                "color_noise"
               ]
             },
             "minItems": 0,
@@ -1013,7 +1015,8 @@
                           "flip",
                           "grain",
                           "halation",
-                          "edge"
+                          "edge",
+                          "color_noise"
                         ]
                       },
                       "minItems": 0,
