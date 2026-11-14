@@ -449,3 +449,186 @@ fn compare_impl(request: &Request, out: &Path) -> Result<(Value, i32)> {
     result["summary"] = manifest["summary"].clone();
     Ok((result, 0))
 }
+
+/// One `analyze` invocation: one delivered image set measured on its own.
+pub struct AnalysisRequest {
+    pub source_id: String,
+    pub color_space: String,
+    pub cctf_decoding: bool,
+    pub files: Vec<Pair>,
+    pub regions: Vec<Value>,
+    pub protocol: Value,
+}
+
+/// Quantify one delivered image set and publish one analysis record.
+///
+/// The adapter owns argument shape, pairing, and the analysis profile; the
+/// engine quantifies. A measurement that needs a second source is recorded as
+/// unavailable by the family that cannot compute it, so this function never
+/// invents a side to measure against.
+pub fn analyze(request: &AnalysisRequest, out: &Path) -> Result<(Value, i32)> {
+    let root = documents::normalize_path(out)?;
+    let preexisting = std::fs::symlink_metadata(out).is_ok();
+    let result = analyze_impl(request, out);
+    if preexisting {
+        result
+    } else {
+        result.map_err(|error| common::incomplete_destination(error, &root, "analysis.json"))
+    }
+}
+
+fn analyze_impl(request: &AnalysisRequest, out: &Path) -> Result<(Value, i32)> {
+    if request.files.is_empty() {
+        return Err(Error::new("missing_image", "No image declared"));
+    }
+    validate_regions(&request.regions)?;
+    let root = documents::normalize_path(out)?;
+    common::create_destination(&root)?;
+    let mut evidence = Evidence::new(&root);
+    common::dump(&root.join("protocol.json"), &request.protocol)?;
+    evidence.add(
+        &root.join("protocol.json"),
+        "protocol",
+        "application/json",
+        json!({"id": request.protocol["id"]}),
+    )?;
+    let source_id = slug(&request.source_id);
+    if !request.regions.is_empty() {
+        let regions = json!({
+            "schema_version": 1,
+            "id": slug(&format!("{source_id}-regions")),
+            "regions": request.regions,
+        });
+        common::dump(&root.join("regions.json"), &regions)?;
+        evidence.add(
+            &root.join("regions.json"),
+            "regions",
+            "application/json",
+            json!({"id": regions["id"]}),
+        )?;
+    }
+    let mut cases = Vec::new();
+    let mut files = Vec::new();
+    for file in &request.files {
+        let folder = root.join("cases").join(&file.case_id);
+        std::fs::create_dir_all(&folder)?;
+        let image =
+            image_data::decode_raster(&file.baseline, &request.color_space, request.cctf_decoding)?
+                .into_linear()?;
+        let path = &file.baseline;
+        let source = evidence.copy(
+            path,
+            &format!("cases/{}/source{}", file.case_id, artifact_extension(path)),
+            "source_image",
+            json!({
+                "case_id": file.case_id,
+                "color_space": request.color_space,
+                "cctf_decoding": request.cctf_decoding,
+                "width": image.width,
+                "height": image.height,
+                "dimensions": [image.width, image.height],
+            }),
+        )?;
+        check_bounds(&request.regions, image.width, image.height, &file.case_id)?;
+        files.push((file.case_id.clone(), source.clone()));
+        let protocol = {
+            let mut protocol = request.protocol.clone();
+            protocol["case_id"] = json!(file.case_id);
+            protocol
+        };
+        let measured = metrics::analyze_image(&image, &request.regions, &protocol, &folder)?;
+        let measured = retain_metrics(measured, &folder, &mut evidence, &file.case_id, 0)?;
+        let mut record = json!({
+            "case_id": file.case_id,
+            "status": measured["execution_status"],
+            "measurements": measured["measurements"],
+            "regions": request.regions,
+            "region_readouts": measured["region_readouts"],
+            "automatic_regions": measured["automatic_regions"],
+            "artifacts": measured["artifacts"],
+            "source": source.clone(),
+        });
+        if record["status"] == "failed" {
+            let reason = measured["measurements"]
+                .as_array()
+                .and_then(|rows| rows.iter().find_map(|row| row["reason"].as_str()))
+                .unwrap_or("measurement_failure")
+                .to_owned();
+            return Err(
+                Error::new(reason, format!("Case {} did not measure", file.case_id))
+                    .at(&file.case_id),
+            );
+        }
+        record["source"] = source.clone();
+        cases.push(record);
+    }
+    let declaration = json!({
+        "color_space": request.color_space,
+        "cctf_decoding": request.cctf_decoding,
+    });
+    let listed: Vec<Value> = files
+        .iter()
+        .map(|(case_id, record)| {
+            json!({
+                "case_id": case_id,
+                "path": record["path"],
+                "sha256": record["sha256"],
+                "width": record["width"],
+                "height": record["height"],
+                "role": "source",
+            })
+        })
+        .collect();
+    let source = json!({
+        "kind": "images",
+        "id": source_id,
+        "declaration": declaration,
+        "files": listed,
+        "declaration_sha256": common::digest(&json!({"declaration": declaration, "files": listed}))?,
+    });
+    let case_ids: Vec<Value> = request
+        .files
+        .iter()
+        .map(|file| json!(file.case_id))
+        .collect();
+    let digest = documents::protocol_digest(&json!({
+        "protocol": request.protocol,
+        "cases": request.files.iter().map(|file| json!({
+            "id": file.case_id,
+            "regions": request.regions,
+            "measurements": request.protocol["measurements"],
+        })).collect::<Vec<_>>(),
+    }))?;
+    let mut manifest = json!({
+        "schema_version": 1,
+        "kind": "analysis",
+        "id": format!("{source_id}-analysis"),
+        "execution_status": "completed",
+        "source": source,
+        "protocol": request.protocol,
+        "analysis": {"id": request.protocol["id"]},
+        "protocol_digest": digest,
+        "selection": {"case_ids": case_ids, "full_suite": true},
+        "cases": cases,
+        "artifacts": evidence.values(),
+        "summary": {
+            "selected_cases": request.files.len(),
+            "completed_cases": request.files.len(),
+            "failed_results": 0,
+            "unavailable_rules": 0,
+        },
+    });
+    runner::finalize(&root, "analysis.json", &mut manifest)?;
+    let mut result = json!({
+        "schema_version": 1,
+        "command": "analyze",
+        "execution_status": "completed",
+        "artifact": root.join("analysis.json").to_string_lossy().replace('\\', "/"),
+        "analysis_id": manifest["id"],
+        "protocol_digest": manifest["protocol_digest"],
+        "cases": request.files.len(),
+        "regions": request.regions.len() + 1,
+    });
+    result["summary"] = manifest["summary"].clone();
+    Ok((result, 0))
+}

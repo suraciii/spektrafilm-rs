@@ -346,3 +346,104 @@ fn pairs(args: &Args) -> Result<Vec<engine::Pair>> {
         )),
     }
 }
+
+#[derive(ClapArgs)]
+pub struct AnalyzeArgs {
+    /// One delivered image, or a directory of delivered images.
+    #[arg(long, value_name = "FILE_OR_DIR")]
+    pub source: std::path::PathBuf,
+    /// Declared color space and transfer state of the source.
+    #[arg(long, value_name = "SPACE:encoded|decoded")]
+    pub declaration: String,
+    /// Declared region: name=x,y,w,h[:role]. Repeats.
+    #[arg(
+        long = "roi",
+        value_name = "ID=X,Y,W,H[:ROLE]",
+        conflicts_with = "regions"
+    )]
+    pub roi: Vec<String>,
+    /// Authored regions document in render coordinates.
+    #[arg(long, value_name = "FILE")]
+    pub regions: Option<std::path::PathBuf>,
+    /// Built-in analysis profile.
+    #[arg(long, value_name = "ID", conflicts_with = "protocol")]
+    pub analysis: Option<String>,
+    /// Authored protocol document.
+    #[arg(long, value_name = "FILE")]
+    pub protocol: Option<std::path::PathBuf>,
+    /// New analysis directory; must not exist.
+    #[arg(long, value_name = "DIR")]
+    pub out: std::path::PathBuf,
+}
+
+pub fn analyze_run(args: &AnalyzeArgs) -> Result<(Value, i32)> {
+    let (color_space, cctf_decoding) = declaration(&args.declaration)?;
+    let profile = analysis::profile(args.analysis.as_deref().unwrap_or("lab-analysis-v1"))?;
+    let protocol = match &args.protocol {
+        Some(path) => documents::load_json_document(path)
+            .map_err(|error| error.at(path.display().to_string()))?,
+        None => analysis::protocol(profile),
+    };
+    let regions = match (&args.regions, args.roi.is_empty()) {
+        (Some(path), _) => {
+            let document = local_input::load("regions", path)
+                .map_err(|error| error.at(path.display().to_string()))?;
+            document["regions"].as_array().cloned().ok_or_else(|| {
+                Error::new(
+                    "invalid_document",
+                    "regions document carries no regions array",
+                )
+            })?
+        }
+        (None, false) => analysis::regions(profile, &declared_regions(&args.roi)?),
+        (None, true) => Vec::new(),
+    };
+    let files = analysis_files(&args.source)?;
+    let request = engine::AnalysisRequest {
+        source_id: source_id(&args.source),
+        color_space,
+        cctf_decoding,
+        files,
+        regions,
+        protocol,
+    };
+    engine::analyze(&request, &args.out)
+}
+
+/// One source is one file, or a directory of files that pair with nothing.
+fn analysis_files(source: &Path) -> Result<Vec<engine::Pair>> {
+    if !source.is_dir() {
+        let stem = source
+            .file_stem()
+            .and_then(|value| value.to_str())
+            .unwrap_or("source");
+        let case_id = case_identity(stem)?;
+        return Ok(vec![engine::Pair {
+            case_id,
+            baseline: source.to_path_buf(),
+            candidate: source.to_path_buf(),
+        }]);
+    }
+    let listed = listing(source)?;
+    let mut files = Vec::new();
+    for (stem, path) in listed {
+        if !is_image(&path) {
+            return Err(Error::new(
+                "unsupported_image_file",
+                format!("not an accepted image container: {}", path.display()),
+            ));
+        }
+        files.push(engine::Pair {
+            case_id: case_identity(&stem)?,
+            baseline: path.clone(),
+            candidate: path,
+        });
+    }
+    if files.is_empty() {
+        return Err(Error::new(
+            "missing_image",
+            format!("no delivered images in {}", source.display()),
+        ));
+    }
+    Ok(files)
+}

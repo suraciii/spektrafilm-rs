@@ -18,6 +18,20 @@ The agent prepares the evidence and reads the measurements. The reviewer opens `
     --out /tmp/spektrafilm-benchmark-regions.json
 ```
 
+## Quantify one delivered image set
+
+```bash
+./target/release/spektrafilm-lab analyze \
+    --source render/ \
+    --declaration sRGB:encoded \
+    --regions /tmp/spektrafilm-benchmark-regions.json \
+    --out /tmp/spektrafilm-analysis
+```
+
+One source is one measurement: the record's rows name no side, and a family that
+measures a difference between two sources is recorded as unavailable with
+`requires_second_source` instead of being computed against the source itself.
+
 ## Compare two delivered image sets
 
 The instrument's product case needs no suite, target, or renderer. Two builds

@@ -126,14 +126,15 @@ measure a signal the caller never declared.
 
 | Endpoint | Owns | Does not do |
 |---|---|---|
+| `analyze` | quantify one delivered image set | compare, evaluate a policy, or present |
 | `compare` | quantify how two delivered image sets differ | compare two runs, join reading records, select a candidate, or present |
 | `regions` | expand one finite grid declaration into explicit regions | read an image, render, or measure |
 | `schema` | print the authoritative schema of one document kind | validate a document or measure |
 | `validate` | document shape and locally decidable dependencies | measure or guarantee an execution |
 
-`compare` is the product. The other three produce and check the declarations it
-consumes, and a caller who authors those documents another way never needs
-them.
+`analyze` and `compare` are the product. The other three produce and check the
+declarations they consume, and a caller who authors those documents another way
+never needs them.
 
 The evaluation workflow and the reading family belong to `spektrafilm-bench`.
 That surface compares two completed runs, joins two reading records, selects
@@ -164,8 +165,36 @@ spektrafilm-lab compare --baseline <FILE_OR_DIR> --candidate <FILE_OR_DIR>
 protocol document; the two are mutually exclusive. `--map-scale` reduces
 retained difference maps only.
 
+### analyze
+
+```text
+spektrafilm-lab analyze --source <FILE_OR_DIR>
+  --declaration <SPACE:encoded|decoded>
+  (--roi ID=X,Y,W,H[:ROLE] ... | --regions FILE)
+  [--analysis ID | --protocol FILE]
+  --out <DIR>
+```
+
+`analyze` reads one source and publishes `analysis.json`. Its measurement rows
+name no side: one source is one measurement, and there is no difference to
+state.
+
+A family that measures a difference between two sources cannot be measured
+here. It is recorded as unavailable with `requires_second_source` rather than
+computed against the source itself, because subtracting an image from itself
+would report a zero that no measurement produced. `color`, `flip`, and the two
+`numeric` difference statistics are the families this applies to.
+
+The default profile of `analyze` is `lab-analysis-v1`, whose whole-image
+families are the ones a whole image supports. The structural families appear on
+the regions a caller declares, for the same reason a whole image is not a flat
+field.
+
 `compare` takes the same source, declaration, and geometry options in the
-single-pair form as `--baseline FILE --candidate FILE`. `regions` and `validate`
+two-source form as `--baseline FILE --candidate FILE`.
+
+Both endpoints measure the same quantity for the same source. An analysis and
+the baseline side of a comparison of that source MUST report equal values. `regions` and `validate`
 are authoring tools: they produce and check the declarations the product
 consumes, and a caller who authors those documents another way never needs
 them.
@@ -327,7 +356,7 @@ One invocation publishes one directory:
 
 ```text
 OUT/
-  analysis.json | comparison.json | samples.json
+  analysis.json | comparison.json
   protocol.json
   regions.json
   cases/<case-id>/...
@@ -372,7 +401,7 @@ this document does not have is out of scope.
 
 | # | Case | Command |
 |---|---|---|
-| U1 | Quantify one image set: noise statistics, neutrality, distribution | `compare` over two identical sources |
+| U1 | Quantify one image set: noise statistics, neutrality, distribution | `analyze` |
 | U2 | Quantify how two builds differ: per-patch color error, family deltas, regressions | `compare` |
 | U4 | Confine a measurement to the regions a change touched | `compare --regions` |
 | U5 | Publish evidence a third party can recompute to the same identity | any, from the record |
@@ -469,7 +498,8 @@ that the renderer's own input route produced, and `sample` reads it.
 
 ## Current implementation gap
 
-- The command surface is `compare`, `regions grid`, `schema`, and `validate`.
+- The command surface is `analyze`, `compare`, `regions grid`, `schema`, and
+  `validate`.
   `sample`, `inspect`, `report comparison`, and the run, reading, and pair
   comparisons belong to `spektrafilm-bench` and are refused here.
 - `regions grid` is still spelled with its subcommand; this document names the

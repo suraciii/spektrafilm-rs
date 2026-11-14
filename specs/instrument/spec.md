@@ -42,6 +42,7 @@ The supported command families have distinct endpoint roles:
 | `run image` | adapt one local image into one image-domain run | image, configuration, and target declarations | execute a suite, measure stimuli, sample, compare, or select |
 | `measure run` | execute one declared point-wise stimulus chain | stimuli and chain declarations | execute an image-domain run, sample, compare, or select |
 | `sample` | read declared windows from one source | image or retained stage evidence plus `regions` | render, resize, infer geometry, or score |
+| `analyze` | quantify one delivered image set | one raster image set plus `regions` and a protocol | compare, invoke a renderer, or report |
 | `compare images` | quantify two delivered image sets and join them | two raster image sets plus `regions` and a protocol | invoke a renderer, compare runs, or report |
 | `compare runs` | compare two completed image-domain runs | retained run records | compare readings, invoke a renderer, or select a candidate |
 | `compare readings` | compare two retained reading records | retained reading records | compare image-domain runs, invoke a renderer, or select a candidate |
@@ -52,7 +53,7 @@ The supported command families have distinct endpoint roles:
 
 | Binary | Owns |
 |---|---|
-| `spektrafilm-lab` | `compare images`, `regions grid`, `schema`, `validate` |
+| `spektrafilm-lab` | `analyze`, `compare images`, `regions grid`, `schema`, `validate` |
 | `spektrafilm-bench` | `compare runs`, `compare readings`, `compare pairs`, `sample`, `inspect`, `report comparison`, `report photos` |
 | `spektrafilm-f64` | `target`, `fixtures`, `run suite`, `run image`, `measure run`, `experiment run`, `experiment export`, `spectral evaluate`, `fit` |
 
@@ -86,6 +87,7 @@ spektrafilm-lab validate --kind KIND --file FILE
 spektrafilm-bench sample --source IMAGE --input-color-space NAME --input-cctf-decoding true|false --regions FILE --out DIRECTORY
 spektrafilm-bench sample --from-evidence DIRECTORY --stage STAGE --regions FILE --out DIRECTORY
 spektrafilm-bench sample --from-run DIRECTORY|RUN.JSON --case ID --seed UINT32 --stage STAGE --regions FILE --out DIRECTORY
+spektrafilm-lab analyze --source FILE_OR_DIR --declaration SPACE:encoded|decoded --out DIRECTORY [IMAGE COMPARISON OPTIONS]
 spektrafilm-lab compare --baseline FILE --candidate FILE --declaration SPACE:encoded|decoded --out DIRECTORY [IMAGE COMPARISON OPTIONS]
 spektrafilm-lab compare --baseline DIRECTORY --candidate DIRECTORY --declaration SPACE:encoded|decoded --out DIRECTORY [IMAGE COMPARISON OPTIONS]
 spektrafilm-bench compare runs --baseline DIRECTORY --candidate DIRECTORY --out DIRECTORY [COMPARISON OPTIONS]

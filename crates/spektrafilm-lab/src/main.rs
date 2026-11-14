@@ -26,6 +26,8 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
+    /// Quantify the color science of one delivered image set.
+    Analyze(images::AnalyzeArgs),
     /// Quantify how two delivered image sets differ.
     Compare(images::Args),
     /// Generate standalone measurement regions.
@@ -48,7 +50,7 @@ enum Commands {
             value_parser = [
                 "suite", "target", "policy", "configuration", "reference", "regions",
                 "preparation", "stimuli", "material_measurement", "correspondence_review",
-                "experiment", "run", "comparison"
+                "experiment", "run", "comparison", "analysis"
             ]
         )]
         kind: String,
@@ -145,7 +147,7 @@ fn validate(
     file: &std::path::Path,
 ) -> spektrafilm_benchmark::Result<serde_json::Value> {
     let display = file.display().to_string();
-    let value = if matches!(kind, "run" | "comparison") {
+    let value = if matches!(kind, "run" | "comparison" | "analysis") {
         let root = file.parent().ok_or_else(|| {
             spektrafilm_benchmark::Error::new("invalid_path", "Manifest has no parent")
         })?;
@@ -197,6 +199,12 @@ fn validate(
             "compute_device",
             "measurement",
             "rule_evaluation"
+        ]),
+        "analysis" => serde_json::json!([
+            "image_decoding",
+            "rendering",
+            "compute_device",
+            "measurement"
         ]),
         _ => serde_json::json!([
             "rendering",
@@ -291,6 +299,7 @@ fn run() -> i32 {
         return 2;
     }
     let command = match &cli.command {
+        Commands::Analyze { .. } => "analyze",
         Commands::Compare { .. } => "compare",
         Commands::Regions { .. } => "regions",
         Commands::Schema { .. } => "schema",
@@ -318,6 +327,7 @@ fn run() -> i32 {
             &args.out,
         )
         .map(|value| (value, 0)),
+        Commands::Analyze(args) => images::analyze_run(&args),
         Commands::Compare(args) => images::run(&args),
         Commands::External(_) => unreachable!("handled before dispatch"),
     };

@@ -12,7 +12,7 @@ mod families;
 mod mask;
 mod math;
 
-pub use evidence::{ArtifactRole, Evidence};
+pub use evidence::{ArtifactRole, Evidence, Sides};
 pub use families::{
     Map, color_noise, edge, grain, halation, health, neutrality, numeric, summary, tone,
 };
@@ -125,21 +125,35 @@ fn populations(regions: &[Value], protocol: &Value) -> Vec<Value> {
 fn compare_inner(
     e: &mut Evidence,
     a: &ImageData,
-    b: &ImageData,
+    b: Option<&ImageData>,
     populations: &[Value],
     protocol: &Value,
     map_scale: u32,
 ) -> Result<()> {
-    e.extra.insert("numeric_health".into(),json!({"baseline":health(&a.samples,a.dimensions()),"candidate":health(&b.samples,b.dimensions())}));
-    if a.dimensions() != b.dimensions() {
+    let single = b.is_none();
+    let sources = [Some(a), b];
+    let sides: &[(&str, usize)] = if single {
+        &[("", 0)]
+    } else {
+        &[("baseline", 0), ("candidate", 1)]
+    };
+    let mut numeric_health = json!({"baseline":health(&a.samples,a.dimensions())});
+    if let Some(b) = b {
+        numeric_health["candidate"] = health(&b.samples, b.dimensions());
+    }
+    e.extra.insert("numeric_health".into(), numeric_health);
+    if let Some(b) = b
+        && a.dimensions() != b.dimensions()
+    {
         return Err(err(
             "dimension_mismatch",
             "Masters differ in dimensions; no resize performed",
         ));
     }
-    if a.samples
+    if sources
         .iter()
-        .chain(&b.samples)
+        .flatten()
+        .flat_map(|image| image.samples.iter())
         .any(|p| p.iter().any(|x| !x.is_finite()))
     {
         return Err(err(
@@ -148,7 +162,10 @@ fn compare_inner(
         ));
     }
     let (w, h) = (a.width, a.height);
-    let encoded = [image_data::display_rgb(a)?, image_data::display_rgb(b)?];
+    let mut encoded = Vec::with_capacity(sources.len());
+    for image in sources.iter().flatten() {
+        encoded.push(image_data::display_rgb(image)?);
+    }
     if encoded
         .iter()
         .flatten()
@@ -160,30 +177,39 @@ fn compare_inner(
         ));
     }
     let mut display_health = json!({});
-    for (side, image) in ["baseline", "candidate"].into_iter().zip(&encoded) {
+    for (side, image) in sides.iter().map(|(side, index)| (*side, &encoded[*index])) {
         let below = image.iter().flatten().filter(|x| **x < 0.0).count();
         let above = image.iter().flatten().filter(|x| **x > 1.0).count();
         let total = image.len() * 3;
         display_health[side] = json!({"below_zero_fraction":below as f64/total as f64,"above_one_fraction":above as f64/total as f64,"clipped_sample_fraction":(below+above) as f64/total as f64,"sample_count":total,"domain":"unclipped_encoded_srgb"});
     }
     e.extra.insert("display_health".into(), display_health);
-    let labs = std::array::from_fn::<_, 2, _>(|side| {
-        let mut lab = Vec::with_capacity(w * h);
-        for chunk in encoded[side].chunks(65536) {
-            let bounded: Vec<[f64; 3]> =
-                chunk.iter().map(|p| p.map(|x| x.clamp(0.0, 1.0))).collect();
-            lab.extend(image_data::rgb_to_lab(&bounded));
-        }
-        lab
-    });
+    let labs: Vec<Vec<[f64; 3]>> = encoded
+        .iter()
+        .map(|side| {
+            let mut lab = Vec::with_capacity(w * h);
+            for chunk in side.chunks(65536) {
+                let bounded: Vec<[f64; 3]> =
+                    chunk.iter().map(|p| p.map(|x| x.clamp(0.0, 1.0))).collect();
+                lab.extend(image_data::rgb_to_lab(&bounded));
+            }
+            lab
+        })
+        .collect();
+    // A difference map needs a second source. An analysis builds none, and the
+    // families that would read one record why they do not measure.
     let mut maps = Vec::new();
-    for (name, units, component) in [
-        ("delta_e00", "delta E 00", None),
-        ("delta_l_star", "L*", Some(0)),
-        ("delta_a_star", "a*", Some(1)),
-        ("delta_b_star", "b*", Some(2)),
-        ("delta_c_star", "C*", Some(3)),
-    ] {
+    for (name, units, component) in if b.is_none() {
+        Vec::new()
+    } else {
+        vec![
+            ("delta_e00", "delta E 00", None),
+            ("delta_l_star", "L*", Some(0)),
+            ("delta_a_star", "a*", Some(1)),
+            ("delta_b_star", "b*", Some(2)),
+            ("delta_c_star", "C*", Some(3)),
+        ]
+    } {
         let values: Vec<f64> = labs[0]
             .iter()
             .zip(&labs[1])
@@ -229,7 +255,9 @@ fn compare_inner(
                 .is_some_and(|x| x.iter().any(|x| x.as_str() == Some(family)))
         })
     };
-    if has_family("flip") {
+    // FLIP is a difference between two sources; an analysis does not build it
+    // and the family records why it stayed unmeasured.
+    if has_family("flip") && b.is_some() {
         let ppd = number(protocol, "pixels_per_degree")?;
         let values = image_data::official_flip(&encoded[0], &encoded[1], w, h, ppd)?;
         let artifact = difference_map(
@@ -249,16 +277,20 @@ fn compare_inner(
         });
         e.extra.insert("flip_parameters".into(), json!({"ppd":ppd}));
     }
-    let linear = if ["tone", "grain", "halation", "edge"]
+    let linear: Option<Vec<Vec<[f64; 3]>>> = if ["tone", "grain", "halation", "edge"]
         .iter()
         .any(|f| has_family(f))
     {
-        Some(std::array::from_fn::<_, 2, _>(|side| {
-            encoded[side]
+        Some(
+            encoded
                 .iter()
-                .map(|p| p.map(image_data::srgb_decode))
-                .collect::<Vec<_>>()
-        }))
+                .map(|side| {
+                    side.iter()
+                        .map(|p| p.map(image_data::srgb_decode))
+                        .collect::<Vec<_>>()
+                })
+                .collect(),
+        )
     } else {
         None
     };
@@ -292,9 +324,12 @@ fn compare_inner(
             } else {
                 population["geometry"].clone()
             };
-            if population["measurements"]
-                .as_array()
-                .is_some_and(|families| families.iter().any(|family| family == "color"))
+            // A color readout reports a displacement between two sources, so
+            // an analysis retains none.
+            if !single
+                && population["measurements"]
+                    .as_array()
+                    .is_some_and(|families| families.iter().any(|family| family == "color"))
             {
                 if region != "full_image" {
                     let indices: Vec<usize> = mask
@@ -333,7 +368,7 @@ fn compare_inner(
                         None,
                     )?);
                 }
-            } else if region != "full_image" {
+            } else if !single && region != "full_image" {
                 color_readouts.extend(color_readouts::unavailable_pair(
                     region,
                     "color_family_not_selected",
@@ -359,8 +394,16 @@ fn compare_inner(
                             ),
                         ));
                     }
+                    for exclusive in ["color", "flip"] {
+                        if active == exclusive && e.sides == Sides::One {
+                            return Err(err(
+                                "requires_second_source",
+                                format!("{active} measures a difference between two sources"),
+                            ));
+                        }
+                    }
                     match active {
-                        "numeric" => numeric(e, region, &mask, a, b),
+                        "numeric" => numeric(e, region, &mask, a, b.unwrap_or(a)),
                         "color" => {
                             summary(
                                 e,
@@ -442,15 +485,19 @@ fn compare_inner(
                             protocol,
                             w,
                             h,
-                            std::slice::from_ref(&maps[1].artifact),
+                            maps.get(1)
+                                .map(|m| std::slice::from_ref(&m.artifact))
+                                .unwrap_or(&[]),
                         )?,
-                        "neutrality" => neutrality(e, region, &mask, &labs[0], &labs[1]),
+                        "neutrality" => {
+                            neutrality(e, region, &mask, &labs[0], labs.get(1).unwrap_or(&labs[0]))
+                        }
                         "color_noise" => color_noise(
                             e,
                             region,
                             &mask,
                             a,
-                            b,
+                            b.unwrap_or(a),
                             // The high-pass sigma is a protocol parameter; a
                             // protocol that omits it measures at eight pixels.
                             protocol["color_noise"]["sigma"].as_f64().unwrap_or(8.0),
@@ -504,18 +551,20 @@ fn compare_inner(
         }
     }
     drop(encoded);
-    let ranking = maps.last().filter(|m| m.name == "flip").unwrap_or(&maps[0]);
-    e.extra.insert(
-        "automatic_regions".into(),
-        json!(select_hotspots(
+    // Navigation hotspots are a difference map's, so an analysis has none.
+    let automatic_regions = match maps.last() {
+        Some(ranking) => select_hotspots(
             &ranking.values,
             w,
             h,
             &protocol["hotspots"],
             ranking.name,
-            std::slice::from_ref(&ranking.artifact)
-        )),
-    );
+            std::slice::from_ref(&ranking.artifact),
+        ),
+        None => Vec::new(),
+    };
+    e.extra
+        .insert("automatic_regions".into(), json!(automatic_regions));
     e.extra
         .insert("region_readouts".into(), json!(color_readouts));
     Ok(())
@@ -530,7 +579,8 @@ pub fn compare_images(
 ) -> Result<Value> {
     let mut evidence = Evidence::new(protocol, out);
     let populations = populations(regions, protocol);
-    if let Err(error) = compare_inner(&mut evidence, a, b, &populations, protocol, map_scale) {
+    if let Err(error) = compare_inner(&mut evidence, a, Some(b), &populations, protocol, map_scale)
+    {
         evidence.failure("full_image", "image", &error, &[], true);
         let reason = error.code.clone();
         let mut unavailable = Vec::new();
@@ -561,6 +611,39 @@ pub fn compare_images(
     }
     Ok(evidence.finish())
 }
+/// Quantify one source. The families that need a second source record why they
+/// do not measure, and every other selected family measures as it does in a
+/// comparison.
+pub fn analyze_image(
+    image: &ImageData,
+    regions: &[Value],
+    protocol: &Value,
+    out: &Path,
+) -> Result<Value> {
+    let mut evidence = Evidence::new(protocol, out);
+    evidence.sides = Sides::One;
+    let populations = populations(regions, protocol);
+    if let Err(error) = compare_inner(&mut evidence, image, None, &populations, protocol, 1) {
+        evidence.failure("full_image", "image", &error, &[], true);
+        for population in &populations {
+            for family in population["measurements"].as_array().into_iter().flatten() {
+                evidence.scalar(
+                    population["id"].as_str().unwrap_or(""),
+                    family.as_str().unwrap_or(""),
+                    None,
+                    0,
+                    "declared_measurement",
+                    "unavailable",
+                    "selected family boundary failure",
+                    &[],
+                    Some(&error.code),
+                );
+            }
+        }
+    }
+    Ok(evidence.finish())
+}
+
 pub fn select_hotspots(
     values: &[f64],
     width: usize,

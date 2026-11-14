@@ -1346,6 +1346,33 @@ pub fn validate_generated_document(kind: &str, v: &Value, root: &Path) -> Result
                 reference(x)?
             }
         }
+    } else if kind == "analysis" {
+        // One source, one realisation: no seed population, no policy, and no
+        // difference to evaluate.
+        let source = obj(req(obj(v)?, "source")?)?;
+        if source.get("kind") != Some(&json!("images")) {
+            return Err(err(
+                "source_kind",
+                "an analysis source is a delivered image set",
+            ));
+        }
+        for field in ["policy", "run", "mode", "evaluation_status", "findings"] {
+            if v.get(field).is_some() {
+                return Err(err(
+                    "inapplicable_field",
+                    format!("an analysis record carries no {field}"),
+                ));
+            }
+        }
+        for case in v["cases"].as_array().unwrap() {
+            measurements(&case["measurements"])?;
+            if case.get("seed").is_some() {
+                return Err(err(
+                    "inapplicable_field",
+                    "a delivered image is one realisation and carries no seed",
+                ));
+            }
+        }
     } else if kind == "comparison" {
         if let Some(p) = v.get("policy") {
             reference(p)?

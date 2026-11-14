@@ -26,6 +26,11 @@ pub struct Profile {
 const APPEARANCE: &[&str] = &["numeric", "color", "tone", "flip"];
 /// Measurement families of a deterministic colour-and-tone comparison.
 const COLOR_TONE: &[&str] = &["numeric", "color", "tone"];
+/// Measurement families of one source measured on its own. `color` and `flip`
+/// are absent because both are differences between two sources. The whole
+/// image is not a neutral patch or a flat field, so the structural families
+/// appear only on the regions a caller declares.
+const SINGLE_SOURCE: &[&str] = &["numeric", "tone"];
 
 /// The built-in profiles, in declaration order.
 pub const PROFILES: &[Profile] = &[
@@ -38,6 +43,11 @@ pub const PROFILES: &[Profile] = &[
         id: "lab-color-tone-v1",
         full_image: COLOR_TONE,
         regions: &["numeric", "color"],
+    },
+    Profile {
+        id: "lab-analysis-v1",
+        full_image: SINGLE_SOURCE,
+        regions: &["numeric", "neutrality", "color_noise"],
     },
 ];
 

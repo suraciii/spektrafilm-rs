@@ -4,7 +4,7 @@ use rustfft::{FftPlanner, num_complex::Complex};
 use serde_json::{Value, json};
 
 use super::err;
-use super::evidence::{ArtifactRole, Evidence, GrainRetained};
+use super::evidence::{ArtifactRole, Evidence, GrainRetained, Sides};
 use super::mask::{crop, cropped_mask, erode, geometry_mask};
 use super::math::{
     count, fft2, frequency, gaussian, luminance, mean, median, number, periodic_hann, quantile,
@@ -38,6 +38,22 @@ fn paired(
     } else {
         "insufficient_evidence"
     };
+    // An analysis measures one source, so the metric is the measurement and
+    // there is no side to name.
+    if e.sides == Sides::One {
+        e.scalar(
+            region,
+            &format!("{prefix}.{name}"),
+            left,
+            count,
+            domain,
+            units,
+            estimator,
+            refs,
+            if left.is_none() { Some(reason) } else { None },
+        );
+        return;
+    }
     for (side, value) in [
         ("baseline", left),
         ("candidate", right),
@@ -136,7 +152,7 @@ pub fn grain(
     e: &mut Evidence,
     region: &str,
     mask: &[bool],
-    images: &[Vec<[f64; 3]>; 2],
+    images: &[Vec<[f64; 3]>],
     width: usize,
     height: usize,
     settings: &Value,
@@ -476,42 +492,43 @@ pub fn grain(
         });
         statistics.push(stats);
     }
-    for (name, a, b, shape) in [
-        ("psd2d", &retained[0].psd, &retained[1].psd, vec![h, w, 4]),
-        (
-            "radial_psd",
-            &retained[0].radial,
-            &retained[1].radial,
-            vec![retained[0].radial.len() / 6, 6],
-        ),
-        (
-            "autocovariance",
-            &retained[0].autocovariance,
-            &retained[1].autocovariance,
-            vec![h, w, 4],
-        ),
-        (
-            "residual",
-            &retained[0].residual,
-            &retained[1].residual,
-            vec![h, w, 3],
-        ),
-    ] {
-        let mut delta: Vec<f64> = b.iter().zip(a).map(|(b, a)| b - a).collect();
-        if name == "radial_psd" {
-            for (row, original) in delta
-                .as_chunks_mut::<6>()
-                .0
-                .iter_mut()
-                .zip(a.as_chunks::<6>().0)
-            {
-                row[0] = original[0];
-                row[5] = original[5];
+    // A signed difference needs a second source. An analysis declares one, so
+    // it retains no delta artifact rather than a zero one.
+    if let Some(right) = retained.get(1) {
+        let left = &retained[0];
+        for (name, a, b, shape) in [
+            ("psd2d", &left.psd, &right.psd, vec![h, w, 4]),
+            (
+                "radial_psd",
+                &left.radial,
+                &right.radial,
+                vec![left.radial.len() / 6, 6],
+            ),
+            (
+                "autocovariance",
+                &left.autocovariance,
+                &right.autocovariance,
+                vec![h, w, 4],
+            ),
+            ("residual", &left.residual, &right.residual, vec![h, w, 3]),
+        ] {
+            let mut delta: Vec<f64> = b.iter().zip(a).map(|(b, a)| b - a).collect();
+            if name == "radial_psd" {
+                for (row, original) in delta
+                    .as_chunks_mut::<6>()
+                    .0
+                    .iter_mut()
+                    .zip(a.as_chunks::<6>().0)
+                {
+                    row[0] = original[0];
+                    row[5] = original[5];
+                }
             }
+            refs.push(e.artifact(&format!("grain.{region}.delta.{name}"),&delta,&shape,ArtifactRole::GrainSignedDifference,json!({"domain":"linear_srgb","estimator":format!("candidate minus baseline {name}"),"residual_method":method}))?);
         }
-        refs.push(e.artifact(&format!("grain.{region}.delta.{name}"),&delta,&shape,ArtifactRole::GrainSignedDifference,json!({"domain":"linear_srgb","estimator":format!("candidate minus baseline {name}"),"residual_method":method}))?);
     }
-    for ((name, left), (_, right)) in statistics[0].iter().zip(&statistics[1]) {
+    let right = statistics.get(1).unwrap_or(&statistics[0]);
+    for ((name, left), (_, right)) in statistics[0].iter().zip(right) {
         let units = if name.starts_with("correlation") {
             "correlation"
         } else if name.contains("frequency") {
@@ -544,7 +561,7 @@ pub fn halation(
     e: &mut Evidence,
     region: &str,
     mask: &[bool],
-    images: &[Vec<[f64; 3]>; 2],
+    images: &[Vec<[f64; 3]>],
     width: usize,
     height: usize,
     settings: &Value,
@@ -758,19 +775,22 @@ pub fn halation(
         profiles.push(profile);
         stats.push(values);
     }
-    let mut delta = profiles[1].clone();
-    for (row, left) in delta
-        .as_chunks_mut::<6>()
-        .0
-        .iter_mut()
-        .zip(profiles[0].as_chunks::<6>().0)
-    {
-        for channel in 1..5 {
-            row[channel] -= left[channel];
+    if let Some(second) = profiles.get(1) {
+        let mut delta = second.clone();
+        for (row, left) in delta
+            .as_chunks_mut::<6>()
+            .0
+            .iter_mut()
+            .zip(profiles[0].as_chunks::<6>().0)
+        {
+            for channel in 1..5 {
+                row[channel] -= left[channel];
+            }
         }
+        refs.push(e.artifact(&format!("halation.{region}.delta.radial"),&delta,&[delta.len()/6,6],ArtifactRole::HalationProfile,json!({"columns":["radius_px","R_delta","G_delta","B_delta","red_minus_green_delta","count"],"domain":"linear_srgb"}))?);
     }
-    refs.push(e.artifact(&format!("halation.{region}.delta.radial"),&delta,&[delta.len()/6,6],ArtifactRole::HalationProfile,json!({"columns":["radius_px","R_delta","G_delta","B_delta","red_minus_green_delta","count"],"domain":"linear_srgb"}))?);
-    for ((name, left), (_, right)) in stats[0].iter().zip(&stats[1]) {
+    let right = stats.get(1).unwrap_or(&stats[0]);
+    for ((name, left), (_, right)) in stats[0].iter().zip(right) {
         let units = if name.ends_with("_px") {
             "pixels"
         } else if name.contains("fraction") {
@@ -834,7 +854,7 @@ pub fn edge(
     e: &mut Evidence,
     region: &str,
     mask: &[bool],
-    images: &[Vec<[f64; 3]>; 2],
+    images: &[Vec<[f64; 3]>],
     width: usize,
     height: usize,
     settings: &Value,
@@ -991,7 +1011,7 @@ pub fn edge(
             "edge",
             name,
             statistics[0][i],
-            statistics[1][i],
+            statistics.get(1).map(|s| s[i]).unwrap_or(statistics[0][i]),
             count(mask),
             "linear_srgb",
             units,
@@ -1008,37 +1028,55 @@ pub fn tone(
     e: &mut Evidence,
     region: &str,
     mask: &[bool],
-    labs: &[Vec<[f64; 3]>; 2],
-    images: &[Vec<[f64; 3]>; 2],
+    labs: &[Vec<[f64; 3]>],
+    images: &[Vec<[f64; 3]>],
     protocol: &Value,
     width: usize,
     height: usize,
     refs: &[String],
 ) -> Result<()> {
     let n = count(mask);
-    let mut quantiles = [[0.0; 5]; 2];
-    for side in 0..2 {
-        let mut values: Vec<f64> = labs[side]
+    // Which sides this invocation measured. An analysis measures one and names
+    // no side at all.
+    let sources: Vec<(&str, usize)> = if e.sides == Sides::One {
+        vec![("", 0)]
+    } else {
+        vec![("baseline", 0), ("candidate", 1)]
+    };
+    let mut quantiles = Vec::with_capacity(labs.len());
+    for lab in labs {
+        let mut values: Vec<f64> = lab
             .iter()
             .zip(mask)
             .filter_map(|(p, m)| m.then_some(p[0]))
             .collect();
         sort(&mut values);
+        let mut row = [0.0; 5];
         for (i, q) in [0.05, 0.25, 0.5, 0.75, 0.95].into_iter().enumerate() {
-            quantiles[side][i] = quantile(&values, q)
+            row[i] = quantile(&values, q)
                 .ok_or_else(|| err("insufficient_samples", "Tone region has no selected pixels"))?;
         }
+        quantiles.push(row);
     }
-    for (side, index) in [("baseline", 0), ("candidate", 1), ("delta", 2)] {
+    let sides: &[(&str, Option<usize>)] = if e.sides == Sides::One {
+        &[("", None)]
+    } else {
+        &[
+            ("baseline.", Some(0)),
+            ("candidate.", Some(1)),
+            ("delta.", None),
+        ]
+    };
+    for (side, index) in sides {
         for (i, percent) in [5, 25, 50, 75, 95].into_iter().enumerate() {
-            let value = if index == 2 {
-                quantiles[1][i] - quantiles[0][i]
-            } else {
-                quantiles[index][i]
+            let value = match index {
+                Some(side_index) => quantiles[*side_index][i],
+                None if quantiles.len() == 2 => quantiles[1][i] - quantiles[0][i],
+                None => quantiles[0][i],
             };
             e.scalar(
                 region,
-                &format!("tone.l_star.{side}.q{percent:02}"),
+                &format!("tone.l_star.{side}q{percent:02}"),
                 Some(value),
                 n,
                 "bounded_srgb_d65_lab",
@@ -1060,7 +1098,7 @@ pub fn tone(
             let label = spelling(scale);
             let mut rms = [0.0; 2];
             let mut contrast_refs = Vec::new();
-            for (index, side) in ["baseline", "candidate"].into_iter().enumerate() {
+            for &(side, index) in &sources {
                 let luminances: Vec<f64> = images[index].iter().map(|p| luminance(*p)).collect();
                 let mut residual = gaussian(&luminances, width, height, sigma);
                 for (value, original) in residual.iter_mut().zip(luminances) {
@@ -1073,7 +1111,12 @@ pub fn tone(
                     .sum::<f64>()
                     / n as f64)
                     .sqrt();
-                contrast_refs.push(e.artifact(&format!("tone.{region}.{side}.local_contrast.{label}"),&residual,&[height,width],ArtifactRole::LocalContrastMap,json!({"domain":"linear_srgb_luminance","units":"linear luminance","sigma_px":sigma}))?);
+                let name = if side.is_empty() {
+                    format!("tone.{region}.local_contrast.{label}")
+                } else {
+                    format!("tone.{region}.{side}.local_contrast.{label}")
+                };
+                contrast_refs.push(e.artifact(&name,&residual,&[height,width],ArtifactRole::LocalContrastMap,json!({"domain":"linear_srgb_luminance","units":"linear luminance","sigma_px":sigma}))?);
             }
             paired(
                 e,
@@ -1081,7 +1124,7 @@ pub fn tone(
                 &format!("tone.local_contrast.sigma_{label}"),
                 "rms",
                 Some(rms[0]),
-                Some(rms[1]),
+                Some(rms.get(1).copied().unwrap_or(rms[0])),
                 n,
                 "linear_srgb_luminance",
                 "linear luminance RMS",
@@ -1109,7 +1152,7 @@ pub fn tone(
     }
     let mut responses = Vec::new();
     let mut curve_refs = Vec::new();
-    for (side, index) in [("baseline", 0), ("candidate", 1)] {
+    for &(side, index) in &sources {
         let mut response = Vec::new();
         let mut curve = Vec::new();
         for (point, &exposure) in points.iter().zip(&coordinates) {
@@ -1142,24 +1185,32 @@ pub fn tone(
             response.push([y, l]);
             curve.extend_from_slice(&[exposure, y, l, population as f64]);
         }
-        curve_refs.push(e.artifact(&format!("tone.{region}.{side}.response"),&curve,&[points.len(),4],ArtifactRole::ToneResponse,json!({"columns":["input_exposure_stops","linear_luminance","L_star","pixel_count"],"estimator":"frozen patch median"}))?);
+        let name = if side.is_empty() {
+            format!("tone.{region}.response")
+        } else {
+            format!("tone.{region}.{side}.response")
+        };
+        curve_refs.push(e.artifact(&name,&curve,&[points.len(),4],ArtifactRole::ToneResponse,json!({"columns":["input_exposure_stops","linear_luminance","L_star","pixel_count"],"estimator":"frozen patch median"}))?);
         responses.push(response);
     }
-    let mut delta = Vec::new();
-    for i in 0..points.len() {
-        delta.extend_from_slice(&[
-            coordinates[i],
-            responses[1][i][0] - responses[0][i][0],
-            responses[1][i][1] - responses[0][i][1],
-        ]);
+    // A delta curve needs a second source; an analysis retains none.
+    if responses.len() == 2 {
+        let mut delta = Vec::new();
+        for i in 0..points.len() {
+            delta.extend_from_slice(&[
+                coordinates[i],
+                responses[1][i][0] - responses[0][i][0],
+                responses[1][i][1] - responses[0][i][1],
+            ]);
+        }
+        curve_refs.push(e.artifact(
+            &format!("tone.{region}.delta.response"),
+            &delta,
+            &[points.len(), 3],
+            ArtifactRole::ToneResponse,
+            json!({"columns":["input_exposure_stops","delta_linear_luminance","delta_L_star"]}),
+        )?);
     }
-    curve_refs.push(e.artifact(
-        &format!("tone.{region}.delta.response"),
-        &delta,
-        &[points.len(), 3],
-        ArtifactRole::ToneResponse,
-        json!({"columns":["input_exposure_stops","delta_linear_luminance","delta_L_star"]}),
-    )?);
     for i in 0..points.len() - 1 {
         let interval = coordinates[i + 1] - coordinates[i];
         for (channel, label) in ["linear_luminance", "l_star"].into_iter().enumerate() {
@@ -1182,7 +1233,11 @@ pub fn tone(
                 &format!("tone.response.interval_{i}.{label}"),
                 "slope",
                 Some(slope(0)),
-                Some(slope(1)),
+                Some(if responses.len() == 2 {
+                    slope(1)
+                } else {
+                    slope(0)
+                }),
                 2,
                 domain,
                 units,
@@ -1578,7 +1633,57 @@ fn bounds(mask: &[bool], width: usize, height: usize) -> Option<(usize, usize, u
     (x0 < x1 && y0 < y1).then_some((x0, y0, x1, y1))
 }
 
+/// The native-channel statistics of one source. A maximum difference and an
+/// RMS are differences, so an analysis names them unavailable rather than
+/// computing them against the source itself.
+fn numeric_single(e: &mut Evidence, region: &str, mask: &[bool], a: &ImageData) {
+    let n = count(mask);
+    for name in ["max_abs_difference", "rmse"] {
+        e.scalar(
+            region,
+            &format!("numeric.{name}"),
+            None,
+            0,
+            "declared_measurement",
+            "unavailable",
+            "aligned native channel difference",
+            &[],
+            Some("requires_second_source"),
+        );
+    }
+    let mut below = 0;
+    let mut above = 0;
+    for (p, m) in a.samples.iter().zip(mask) {
+        if *m {
+            for x in p {
+                below += usize::from(*x < 0.0);
+                above += usize::from(*x > 1.0);
+            }
+        }
+    }
+    for (name, value) in [
+        ("below_zero_fraction", below as f64 / (n * 3) as f64),
+        ("above_one_fraction", above as f64 / (n * 3) as f64),
+    ] {
+        e.scalar(
+            region,
+            &format!("numeric.{name}"),
+            Some(value),
+            n * 3,
+            "native",
+            "fraction",
+            "native all-channel sample population",
+            &[],
+            None,
+        );
+    }
+}
+
 pub fn numeric(e: &mut Evidence, region: &str, mask: &[bool], a: &ImageData, b: &ImageData) {
+    if e.sides == Sides::One {
+        numeric_single(e, region, mask, a);
+        return;
+    }
     let n = count(mask);
     let mut maximum = 0.0_f64;
     for (i, selected) in mask.iter().enumerate() {

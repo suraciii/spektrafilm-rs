@@ -67,9 +67,18 @@ struct Finding {
     message: String,
     evidence: Vec<String>,
 }
+/// How many sources one invocation measures. A comparison has two and states
+/// a difference; an analysis has one and states only the measured side.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Sides {
+    One,
+    Two,
+}
+
 pub struct Evidence {
     out: PathBuf,
     case_id: Option<String>,
+    pub sides: Sides,
     seeds: Vec<Value>,
     body: EvidenceBuilder<Measurement, Finding, Artifact>,
     pub extra: BTreeMap<String, Value>,
@@ -78,6 +87,7 @@ impl Evidence {
     pub fn new(protocol: &Value, out: &Path) -> Self {
         Self {
             out: out.into(),
+            sides: Sides::Two,
             case_id: protocol
                 .get("case_id")
                 .and_then(Value::as_str)
@@ -163,6 +173,13 @@ impl Evidence {
             },
         });
     }
+    /// The availability reason for a quantity this invocation cannot measure
+    /// because it declares one source, where the quantity would be a
+    /// difference.
+    pub fn second_source_reason(&self) -> Option<&'static str> {
+        (self.sides == Sides::One).then_some("requires_second_source")
+    }
+
     pub fn artifact(
         &mut self,
         name: &str,
