@@ -173,13 +173,6 @@ impl Evidence {
             },
         });
     }
-    /// The availability reason for a quantity this invocation cannot measure
-    /// because it declares one source, where the quantity would be a
-    /// difference.
-    pub fn second_source_reason(&self) -> Option<&'static str> {
-        (self.sides == Sides::One).then_some("requires_second_source")
-    }
-
     pub fn artifact(
         &mut self,
         name: &str,

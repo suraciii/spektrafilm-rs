@@ -139,6 +139,12 @@
       },
       "minItems": 0,
       "uniqueItems": false
+    },
+    "binary": {
+      "enum": [
+        "spektrafilm-lab",
+        "spektrafilm-bench"
+      ]
     }
   },
   "$defs": {

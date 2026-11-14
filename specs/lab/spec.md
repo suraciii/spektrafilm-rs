@@ -233,14 +233,14 @@ Two stems that produce one identity MUST fail as `duplicate_case_identity`.
 ### Geometry
 
 A region is a rectangle in the delivered raster's own pixel space. That is the
-only coordinate space this product has. The regions document names that space
-`render`, which is a name from the renderer's vocabulary that predates this
-product: a delivered raster has no render, and the name means "the pixels as
-delivered" here and nothing more.
+only coordinate space this product has, and the regions document names it
+`render` because a delivered raster is the render's output: its pixels are the
+render coordinates, and the two names address the same grid.
 
 A regions document MUST declare `render` geometry. Every other declared space
 MUST be rejected with `unsupported_coordinate_space` before any pixel is read:
-a delivered raster carries neither a source declaration nor a working stage.
+`source` and the native stage spaces address a different image than the one the
+lab was handed.
 
 `--roi ID=X,Y,W,H[:ROLE]` declares one region directly and repeats.
 `--regions FILE` declares the geometry as an authored regions document. The two
@@ -499,23 +499,19 @@ that the renderer's own input route produced, and `sample` reads it.
 
 ## Current implementation gap
 
-- The command surface is `analyze`, `compare`, `regions grid`, `schema`, and
-  `validate`, and the endpoints this document moves to `spektrafilm-bench` are
-  refused here. Implemented.
-- `regions grid` is still spelled with its subcommand; this document names the
+Everything this document states is implemented, with four exceptions.
+
+- `regions grid` is spelled with its subcommand. This document names the
   endpoint `regions` and leaves the leaf form to the machine interface.
-- Every family in the table above is implemented. `color_noise` and
-  `neutrality` are the two the previous revision was missing.
-- An image-source comparison carries no `seed`, `review`, `evaluation_status`,
-  or `findings`, and a measurement of a delivered image carries no
-  `seed_population`. Implemented; the `comparison` schema states those fields
-  as optional because a run comparison evaluated by a policy writes them.
-- The one coordinate space of a delivered raster is called `render`, a name
-  that belongs to the renderer's vocabulary. Renaming it is a wire change and
-  does not happen here; the name is carried with its meaning stated.
-- A region is a rectangle. Mask geometry is rejected; reading mask files on a
-  delivered raster is not implemented.
-- The lab reader decodes PNG, TIFF, JPEG, WebP, and EXR. A container layout
-  with no stated normalization is rejected.
+- A region is a rectangle. Mask geometry is rejected rather than re-rooted;
+  reading a mask file on a delivered raster would introduce a second
+  interpretation of the pixels, which the single-reader rule forbids.
+- The lab reader decodes PNG, TIFF, JPEG, WebP, and EXR, and a container layout
+  whose normalization it cannot state is rejected. The command surface accepts
+  `.png`, `.tif`, `.tiff`, and `.exr`: a lossy container is not yet an accepted
+  measurement input, and that is a product decision this document has not made
+  either way.
 - The evaluation library builds its native perceptual-difference evaluator
-  with a C++ toolchain.
+  with a C++ toolchain, so building the lab requires a C++ compiler. The lab
+  selects `flip` in no default profile of its own; the dependency is the
+  measurement library's.

@@ -412,6 +412,9 @@ fn compare_impl(request: &Request, out: &Path) -> Result<(Value, i32)> {
     let mut manifest = json!({
         "schema_version": 1,
         "kind": "comparison",
+        // Which binary wrote this record. A `comparison` can come from the lab
+        // or from the benchmark, and the kind alone does not say which.
+        "binary": "spektrafilm-lab",
         "id": format!("{}-{}", request.baseline_id, request.candidate_id),
         "execution_status": "completed",
         "baseline": baseline,
@@ -424,14 +427,14 @@ fn compare_impl(request: &Request, out: &Path) -> Result<(Value, i32)> {
         "condition_differences": differences,
         "cases": cases,
         "artifacts": evidence.values(),
+        // An image comparison evaluates no policy, so it has no rules to
+        // count. `required_rules`, `unavailable_rules`, and
+        // `protected_failures` are a policy's vocabulary and writing them as
+        // zero would state a fact about rules that do not exist.
         "summary": {
             "selected_cases": request.pairs.len(),
             "completed_cases": request.pairs.len(),
-            "completed_results": request.pairs.len(),
             "failed_results": 0,
-            "required_rules": 0,
-            "unavailable_rules": 0,
-            "protected_failures": [],
         },
     });
     runner::finalize(&root, "comparison.json", &mut manifest)?;
@@ -602,6 +605,7 @@ fn analyze_impl(request: &AnalysisRequest, out: &Path) -> Result<(Value, i32)> {
     let mut manifest = json!({
         "schema_version": 1,
         "kind": "analysis",
+        "binary": "spektrafilm-lab",
         "id": format!("{source_id}-analysis"),
         "execution_status": "completed",
         "source": source,
@@ -611,11 +615,11 @@ fn analyze_impl(request: &AnalysisRequest, out: &Path) -> Result<(Value, i32)> {
         "selection": {"case_ids": case_ids, "full_suite": true},
         "cases": cases,
         "artifacts": evidence.values(),
+        // No policy, no rules: see the comparison summary above.
         "summary": {
             "selected_cases": request.files.len(),
             "completed_cases": request.files.len(),
             "failed_results": 0,
-            "unavailable_rules": 0,
         },
     });
     runner::finalize(&root, "analysis.json", &mut manifest)?;

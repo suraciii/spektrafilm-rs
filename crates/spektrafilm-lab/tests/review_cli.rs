@@ -45,6 +45,8 @@ fn regions_grid_writes_an_explicit_regions_document() {
                 "color",
                 "--measurements",
                 "color,tone",
+                "--space",
+                "render",
                 "--out",
             ])
             .arg(&out)
@@ -61,7 +63,7 @@ fn regions_grid_writes_an_explicit_regions_document() {
     assert_eq!(regions["regions"][3]["id"], "A2");
     assert_eq!(
         regions["regions"][0]["geometry"],
-        json!({"x": 14, "y": 23, "width": 8, "height": 6, "space": "source"})
+        json!({"x": 14, "y": 23, "width": 8, "height": 6, "space": "render"})
     );
     let validated = result(
         cli()
@@ -95,6 +97,8 @@ fn regions_grid_refuses_invalid_geometry_and_existing_destinations() {
             "0,0",
             "--sample",
             "5x4",
+            "--space",
+            "render",
             "--out",
         ])
         .arg(&out)
@@ -120,6 +124,8 @@ fn regions_grid_refuses_invalid_geometry_and_existing_destinations() {
                 "4x4",
                 "--gap",
                 "0,0",
+                "--space",
+                "render",
                 "--out",
             ])
             .arg(&out)
@@ -142,6 +148,8 @@ fn regions_grid_refuses_invalid_geometry_and_existing_destinations() {
             "4x4",
             "--gap",
             "0,0",
+            "--space",
+            "render",
             "--out",
         ])
         .arg(&out)

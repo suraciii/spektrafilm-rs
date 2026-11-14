@@ -4,7 +4,7 @@
 
 - Compare versions: generate one bundle, run baseline and candidate targets, then use `spektrafilm-bench compare runs`, `spektrafilm-bench inspect`, and `spektrafilm-bench report comparison --comparison DIRECTORY --out DIRECTORY`.
 - Compare delivered images: use `spektrafilm-lab compare --baseline FILE_OR_DIR --candidate FILE_OR_DIR --declaration SPACE:encoded|decoded --out DIRECTORY [--roi name=x,y,w,h]... [--analysis lab-appearance-v1] [--report]` when two renderer builds already wrote the rasters. No suite, target, or renderer is involved.
-- Generate measurement geometry independently: use `spektrafilm-lab regions grid --id ID --rows N --columns N --origin X,Y --patch-size WIDTHxHEIGHT --gap X,Y --out REGIONS.json`. It does not read images or create a visual report.
+- Generate measurement geometry independently: use `spektrafilm-lab regions grid --id ID --rows N --columns N --origin X,Y --patch-size WIDTHxHEIGHT --gap X,Y --space render --out REGIONS.json`. It does not read images or create a visual report, and it does not decide the coordinate space: a lab endpoint reads only `render` geometry, and a generator that guessed another space would produce a declaration the caller never made.
 - Prepared-image visual review, if used, is benchmark-owned. It is not registered as an instrument document and is not accepted by lab `sample`, `compare`, `inspect`, or `report comparison`.
 - Review a small set of photos visually: build one offline page with `spektrafilm-bench report photos --manifest FILE --out DIRECTORY`. It shows no measurements, no scores, and no baseline, candidate, or reference judgment. See [Review a small set of photos](#review-a-small-set-of-photos).
 - Check a new configuration: use `spektrafilm-f64 run suite --dry-run` before rendering. Read its grouped errors and retained renderer logs before changing the configuration.
@@ -15,6 +15,7 @@ The agent prepares the evidence and reads the measurements. The reviewer opens `
 ./target/release/spektrafilm-lab regions grid \
     --id chart-regions --rows 6 --columns 4 \
     --origin 0,0 --patch-size 8x8 --gap 2,2 \
+    --space render \
     --out /tmp/spektrafilm-benchmark-regions.json
 ```
 

@@ -1729,17 +1729,25 @@ pub fn numeric(e: &mut Evidence, region: &str, mask: &[bool], a: &ImageData, b: 
     for (side, image) in [("baseline", a), ("candidate", b)] {
         let mut below = 0;
         let mut above = 0;
+        let mut nonfinite = 0;
+        let mut nonfinite_pixels = 0;
         for (p, m) in image.samples.iter().zip(mask) {
             if *m {
+                let mut bad = false;
                 for x in p {
                     below += usize::from(*x < 0.0);
                     above += usize::from(*x > 1.0);
+                    if !x.is_finite() {
+                        nonfinite += 1;
+                        bad = true;
+                    }
                 }
+                nonfinite_pixels += usize::from(bad);
             }
         }
         for (name, value) in [
-            ("nonfinite_sample_count", 0.0),
-            ("nonfinite_pixel_count", 0.0),
+            ("nonfinite_sample_count", nonfinite as f64),
+            ("nonfinite_pixel_count", nonfinite_pixels as f64),
             ("below_zero_fraction", below as f64 / (n * 3) as f64),
             ("above_one_fraction", above as f64 / (n * 3) as f64),
         ] {

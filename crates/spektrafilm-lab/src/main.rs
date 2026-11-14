@@ -92,8 +92,9 @@ struct GridArgs {
     /// Centered sample size as WIDTHxHEIGHT.
     #[arg(long, value_name = "WIDTHxHEIGHT", value_parser = parse_size)]
     sample: Option<[u64; 2]>,
-    /// Coordinate space for generated rectangles.
-    #[arg(long, value_name = "SPACE", default_value = "source")]
+    /// Coordinate space for generated rectangles. Required: a generator does
+    /// not decide which pixels a rectangle addresses.
+    #[arg(long, value_name = "SPACE")]
     space: String,
     /// Region role.
     #[arg(long, value_name = "ROLE", default_value = "other")]
