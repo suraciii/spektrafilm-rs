@@ -451,6 +451,7 @@ fn scan_profile_module_follows_the_positive_reading_rule() {
     let mut paper = scanner_params();
     paper.workflow.route = "input > film > print > scan".into();
     paper.io.scan_film = false;
+    paper.scanner.scan_profile = spektrafilm_core::params::scan_profile::builtin_sp3000_inspired();
     let mut harness = Harness::new_ui_state(
         |ui, params: &mut RuntimeParams| scan_profile_reading(ui, params, true),
         paper,
@@ -466,6 +467,8 @@ fn scan_profile_module_follows_the_positive_reading_rule() {
     // A preserved negative is not.
     let mut preserved = scanner_params();
     preserved.scanner.scan_output = "direct_scan".into();
+    preserved.scanner.scan_profile =
+        spektrafilm_core::params::scan_profile::builtin_sp3000_inspired();
     let mut harness = Harness::new_ui_state(
         |ui, params: &mut RuntimeParams| scan_profile_reading(ui, params, false),
         preserved,
@@ -474,6 +477,45 @@ fn scan_profile_module_follows_the_positive_reading_rule() {
     assert!(
         harness
             .get_by_label("Scan Profile Strength")
+            .node()
+            .is_disabled()
+    );
+}
+
+#[test]
+fn scan_profile_bypass_has_nothing_to_apply_or_compare() {
+    let params = scanner_params();
+    let mut harness = Harness::new_ui_state(scan_profile, params);
+    harness.run();
+    assert!(
+        harness
+            .get_by_label("Scan Profile Strength")
+            .node()
+            .is_disabled()
+    );
+    assert!(
+        harness
+            .get_by_label("Hold Scan Profile comparison")
+            .node()
+            .is_disabled()
+    );
+}
+
+#[test]
+fn scan_profile_zero_strength_reports_no_effect() {
+    let mut params = scanner_params();
+    params.scanner.scan_profile = spektrafilm_core::params::scan_profile::builtin_sp3000_inspired();
+    params.scanner.scan_profile.strength = 0.0;
+    let mut harness = Harness::new_ui_state(scan_profile, params);
+    harness.run();
+    assert!(
+        harness
+            .query_by_label("No effect at strength 0%.")
+            .is_some()
+    );
+    assert!(
+        harness
+            .get_by_label("Hold Scan Profile comparison")
             .node()
             .is_disabled()
     );

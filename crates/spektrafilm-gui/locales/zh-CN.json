@@ -705,7 +705,7 @@
   "controls.scanner.scan_profile_curve": "扫描配置文件曲线",
   "controls.scanner.scan_profile_curve_row": "曲线",
   "controls.scanner.scan_profile_channel": "通道",
-  "controls.scanner.scan_profile_channel_help": "“全部”以相同幅度编辑每个通道；R、G、B 只编辑一条曲线。",
+  "controls.scanner.scan_profile_channel_help": "“全部”会把各通道一起编辑；某通道此处没有节点且仍有空位时会补上一个。R、G、B 只编辑一条曲线。",
   "controls.scanner.scan_profile_editor_help": "拖动节点改变影调形状，点击空白处添加节点，按 Delete 删除所选节点。每个通道最多九个节点。",
   "controls.scanner.scan_profile_matrix": "此扫描配置文件携带固定矩阵，没有可编辑的曲线。",
   "controls.scanner.scan_profile_compare": "按住以比较扫描配置文件",
@@ -1703,5 +1703,6 @@
   "surfaces.status.lut_exported": "LUT 已保存:%{path}。输入 %{input};输出 %{output}。已中和:%{neutralized}。LUT 文件保持外部文件。",
   "surfaces.status.lut_export_film_only": "将胶片外观导出为 .cube 仅在胶片工作流中可用。",
   "surfaces.header.no_lut": "无 LUT",
-  "controls.scanner.scan_profile_bypass": "当前为“无扫描外观”；选择一个外观后才能编辑曲线。"
+  "controls.scanner.scan_profile_bypass": "当前为“无扫描外观”；选择一个外观后才能编辑曲线。",
+  "controls.scanner.scan_profile_no_effect": "强度为 0% 时无效果。"
 }

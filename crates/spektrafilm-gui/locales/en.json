@@ -705,7 +705,7 @@
   "controls.scanner.scan_profile_curve": "Scan Profile Curve",
   "controls.scanner.scan_profile_curve_row": "Curve",
   "controls.scanner.scan_profile_channel": "Channel",
-  "controls.scanner.scan_profile_channel_help": "All edits every channel by the same amount. R, G, or B edits one curve alone.",
+  "controls.scanner.scan_profile_channel_help": "All edits every channel together and gives a channel without a knot here one when it has room. R, G, or B edits one curve alone.",
   "controls.scanner.scan_profile_editor_help": "Drag a knot to reshape the tone, click empty space to add one, and press Delete to remove the selected knot. Each channel holds up to nine knots.",
   "controls.scanner.scan_profile_matrix": "This Scan Profile carries a fixed matrix; it has no editable curve.",
   "controls.scanner.scan_profile_compare": "Hold Scan Profile comparison",
@@ -1703,5 +1703,6 @@
   "surfaces.status.lut_exported": "LUT saved: %{path}. Input %{input}; output %{output}. Neutralized: %{neutralized}. The LUT file stays external.",
   "surfaces.status.lut_export_film_only": "Export film look as .cube is available in the film workflow only.",
   "surfaces.header.no_lut": "No LUT",
-  "controls.scanner.scan_profile_bypass": "No Scan Profile is selected; choose one to edit a curve."
+  "controls.scanner.scan_profile_bypass": "No Scan Profile is selected; choose one to edit a curve.",
+  "controls.scanner.scan_profile_no_effect": "No effect at strength 0%."
 }

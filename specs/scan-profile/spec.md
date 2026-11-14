@@ -117,7 +117,9 @@ The module MUST NOT include a second library, import/export surface, or profile 
 
 The module MUST expose curve controls only. It MUST expose one editor per channel curve. A `matrix_curve` entry or preset-carried matrix transform MUST NOT expose matrix or curve editing.
 
-The editor MUST display all three channel curves together. An all-channel edit MUST move every channel by the same input and output amount. A single-channel edit MUST change only that channel's curve.
+The editor MUST display all three channel curves together. An all-channel edit MUST move every channel by the same input and output amount.
+
+A channel without a knot at the grabbed input MUST receive one at its current output when it has fewer than nine knots. A channel already holding nine knots and no knot at that input MUST retain its curve. A single-channel edit MUST change only that channel's curve.
 
 Adding a knot MUST keep that channel's current output at the new input, so adding alone does not change the image.
 
@@ -125,7 +127,9 @@ The editor MUST clamp an edit that would violate a curve invariant. It MUST NOT 
 
 The editor MUST add and remove interior knots. It MUST NOT remove a domain endpoint.
 
-The module MUST provide one transient comparison. It MUST bypass only the scan-stage appearance while the primary mouse button or focused Space holds it.
+The module MUST disable the strength control while the transform is `bypass`. A stored transform with zero strength MUST report no effect.
+
+The module MUST provide one transient comparison while the transform is effective. It MUST bypass only the scan-stage appearance while the primary mouse button or focused Space holds it.
 
 The comparison MUST preserve stored controls, adjustment history, presets, Save output, and Export output.
 

@@ -693,13 +693,23 @@ fn scan_profile_controls(
             }
         }
         if filter_matches(filter, "Scan Profile Strength") {
-            flags.runtime_changed |= param_numeric(
-                ui,
-                "Scan Profile Strength",
-                &mut params.scanner.scan_profile.strength,
-                "scanner.scan_profile.strength",
-                "Application amount of the selected Scan Profile. 0% is no effect; 100% is the full profile.",
-            );
+            let bypass = params.scanner.scan_profile.is_bypass();
+            ui.add_enabled_ui(!bypass, |ui| {
+                flags.runtime_changed |= param_numeric(
+                    ui,
+                    "Scan Profile Strength",
+                    &mut params.scanner.scan_profile.strength,
+                    "scanner.scan_profile.strength",
+                    "Application amount of the selected Scan Profile. 0% is no effect; 100% is the full profile.",
+                );
+            });
+            if !bypass && params.scanner.scan_profile.strength <= 0.0 {
+                ui.label(
+                    egui::RichText::new(localized(ui.ctx(), "No effect at strength 0%."))
+                        .small()
+                        .color(theme::FG_MUTED),
+                );
+            }
         }
         if filter_matches(filter, "Scan Profile Curve") {
             flags.runtime_changed |=
@@ -707,10 +717,10 @@ fn scan_profile_controls(
         }
         if filter_matches(filter, "Hold Scan Profile comparison") {
             let response = ui
-                .add(egui::Button::new(localized(
-                    ui.ctx(),
-                    "Hold Scan Profile comparison",
-                )))
+                .add_enabled(
+                    params.scanner.scan_profile.is_effective(),
+                    egui::Button::new(localized(ui.ctx(), "Hold Scan Profile comparison")),
+                )
                 .on_hover_text(localized(
                     ui.ctx(),
                     "Hold the primary mouse button or focused Space to bypass only the scan appearance. Release to restore it. Film, negative conversion, Tone & Color, and saved output are unchanged.",
