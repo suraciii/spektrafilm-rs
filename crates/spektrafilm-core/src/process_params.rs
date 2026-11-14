@@ -112,38 +112,50 @@ pub struct ResolvedProcessParams {
     pub feature_profiles: Vec<FeatureProfileFeedback>,
 }
 
+/// Compare a requested control value with the value that runtime preparation
+/// left in the parameters. A value typed `f32` compares at `f32` precision, so
+/// decimal rounding in the request is not reported as a change. Arrays and
+/// objects compare structurally: a composite such as the per-channel Scan
+/// Profile curves is one control, not an opaque value.
 fn equal_control_values(path: &str, requested: &Value, effective: &Value) -> bool {
     if requested == effective {
         return true;
     }
     let metadata = crate::params::sources::describe_field(path).expect("validated edit path");
-    if metadata["type"]
+    let stored_as_f32 = metadata["type"]
         .as_str()
-        .is_some_and(|ty| ty.contains("f32"))
-    {
-        fn equal_f32(a: &Value, b: &Value) -> bool {
-            match (a, b) {
-                (Value::Number(a), Value::Number(b)) => {
-                    a.as_f64().map(|v| v as f32) == b.as_f64().map(|v| v as f32)
-                }
-                (Value::Array(a), Value::Array(b)) => {
-                    a.len() == b.len() && a.iter().zip(b).all(|(a, b)| equal_f32(a, b))
-                }
-                _ => a == b,
-            }
-        }
-        equal_f32(requested, effective)
+        .is_some_and(|ty| crate::params::sources::stores_f32(path, ty));
+    if stored_as_f32 {
+        equal_nested(requested, effective, &|a, b| a as f32 == b as f32)
     } else {
-        fn equal_numbers(a: &Value, b: &Value) -> bool {
-            match (a, b) {
-                (Value::Number(a), Value::Number(b)) => a.as_f64() == b.as_f64(),
-                (Value::Array(a), Value::Array(b)) => {
-                    a.len() == b.len() && a.iter().zip(b).all(|(a, b)| equal_numbers(a, b))
-                }
-                _ => a == b,
-            }
+        equal_nested(requested, effective, &|a, b| a == b)
+    }
+}
+
+fn equal_nested(
+    requested: &Value,
+    effective: &Value,
+    numbers_equal: &dyn Fn(f64, f64) -> bool,
+) -> bool {
+    match (requested, effective) {
+        (Value::Number(a), Value::Number(b)) => match (a.as_f64(), b.as_f64()) {
+            (Some(a), Some(b)) => numbers_equal(a, b),
+            _ => a == b,
+        },
+        (Value::Array(a), Value::Array(b)) => {
+            a.len() == b.len()
+                && a.iter()
+                    .zip(b)
+                    .all(|(a, b)| equal_nested(a, b, numbers_equal))
         }
-        equal_numbers(requested, effective)
+        (Value::Object(a), Value::Object(b)) => {
+            a.len() == b.len()
+                && a.iter().all(|(key, value)| {
+                    b.get(key)
+                        .is_some_and(|other| equal_nested(value, other, numbers_equal))
+                })
+        }
+        _ => requested == effective,
     }
 }
 

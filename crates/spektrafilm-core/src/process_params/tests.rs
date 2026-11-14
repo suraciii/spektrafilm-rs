@@ -941,6 +941,30 @@ fn feedback_reports_conditions_constraints_and_only_winning_leaves() {
 }
 
 #[test]
+fn a_custom_scan_profile_curve_is_not_reported_as_constrained() {
+    let curves = concat!(
+        r#"[{"x":[0.0,0.25,0.5,1.0],"y":[0.0,0.2,0.55,1.0]},"#,
+        r#"{"x":[0.0,0.25,0.5,1.0],"y":[0.0,0.1,0.5,0.9]},"#,
+        r#"{"x":[0.0,0.25,0.5,1.0],"y":[0.0,0.3,0.6,1.0]}]"#,
+    );
+    let sources = vec![
+        "scanner.scan_profile.strength=1.0".to_owned(),
+        "scanner.scan_profile.transform.kind=curve".to_owned(),
+        format!("scanner.scan_profile.transform.curves={curves}"),
+    ];
+    let mut req = public_request(&sources);
+    req.route = Some("input > film > scan");
+    req.scan_output = Some("negative_to_positive");
+    let result = resolve(req, &data_dir()).unwrap();
+    let edit = result
+        .edits
+        .iter()
+        .find(|edit| edit.path == "scanner.scan_profile.transform.curves")
+        .expect("the curve edit is reported");
+    assert_eq!(edit.status, EditStatus::Active, "{:?}", edit.reason);
+}
+
+#[test]
 fn material_feedback_retains_inactive_values_on_non_development_routes() {
     for route in [
         "input",

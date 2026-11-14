@@ -23,6 +23,7 @@ use super::grain_compat::canonical_grain_path;
 use super::validation::retired_lightness_error_detailed;
 use super::{ValidationError as Error, ValidationReason as Reason};
 use crate::suggest::error_suffix;
+pub(crate) use metadata::stores_f32;
 use metadata::{nullable, rust_type};
 use serde_json::{Map, Value};
 
