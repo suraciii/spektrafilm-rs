@@ -383,6 +383,29 @@ fn key(label: &str) -> Option<&'static str> {
         }
         "Current look: %{group} / %{name} • %{state}" => Some("surfaces.presets.current"),
         "Custom" => Some("controls.scanner.custom"),
+        "Scan Profile" => Some("controls.scanner.scan_profile"),
+        "Scan Profile Strength" => Some("controls.scanner.scan_profile_strength"),
+        "No Scan Profile" => Some("controls.scanner.scan_profile_none"),
+        "SP-3000 Inspired" => Some("controls.scanner.scan_profile_inspired"),
+        "Scan Profile Curve" => Some("controls.scanner.scan_profile_curve"),
+        "Curve" => Some("controls.scanner.scan_profile_curve_row"),
+        "Channel" => Some("controls.scanner.scan_profile_channel"),
+        "All edits every channel by the same amount. R, G, or B edits one curve alone." => {
+            Some("controls.scanner.scan_profile_channel_help")
+        }
+        "Drag a knot to reshape the tone, click empty space to add one, and press Delete to remove the selected knot. Each channel holds up to nine knots." => {
+            Some("controls.scanner.scan_profile_editor_help")
+        }
+        "This Scan Profile carries a fixed matrix; it has no editable curve." => {
+            Some("controls.scanner.scan_profile_matrix")
+        }
+        "Hold Scan Profile comparison" => Some("controls.scanner.scan_profile_compare"),
+        "Hold the primary mouse button or focused Space to bypass only the scan appearance. Release to restore it. Film, negative conversion, Tone & Color, and saved output are unchanged." => {
+            Some("controls.scanner.scan_profile_compare_help")
+        }
+        "Scan Profile is inactive: the route does not deliver an eligible positive reading. Stored values are retained." => {
+            Some("controls.scanner.scan_profile_inactive")
+        }
         "Custom-only controls are inactive under a named profile; stored overrides are retained. Select Custom to edit them." => {
             Some("controls.grain.named_profile_custom_controls")
         }

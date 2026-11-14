@@ -47,13 +47,10 @@ _Avoid_: Positive scan, scanner finish
 **Exposure reconstruction**: The negative conversion that uses the selected film's response to estimate relative exposure from record densities.
 _Avoid_: Reference conversion
 
-**Conversion style**: The named positive rendering of a developed negative. The built-in `standard` combines automatic frame setup with a declared positive tone; a fixed style uses a declared tone without automatic frame setup.
+**Conversion style**: The named positive rendering of a developed negative. The built-in `standard` applies a declared positive tone; a fixed style applies its own declared tone. Every style is frame-independent.
 _Avoid_: Scanner finish, receiver profile, chart fit, calibration
 
-**Automatic frame setup**: The global exposure and color judgment derived from one complete developed frame. It is separate from exposure reconstruction and operator correction, not a calibrated response of a particular scanner.
-_Avoid_: Capture exposure, operator correction, scanner calibration
-
-**Operator correction**: The user's global finished-positive exposure, warmth, green–magenta balance, and common-exposure contrast judgment over a frame's automatic result. It does not change the developed negative or the automatic judgment.
+**Operator correction**: The user's global finished-positive exposure, warmth, green–magenta balance, and common-exposure contrast judgment over a frame's readout. It does not change the developed negative or the conversion style.
 _Avoid_: Capture white balance, material gamma, scanner calibration
 
 **Tone and color adjustments**: The user's brightness, contrast, warmth, saturation, and input-range adjustments to a completed positive image, independent of the material and readout route that formed it. They do not describe material exposure, development, scanner calibration, or negative-conversion operator correction.

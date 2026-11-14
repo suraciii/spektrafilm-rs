@@ -679,7 +679,7 @@ fn n2p_device_density_reading_matches_cpu() {
         .process(image.clone(), &spektrafilm_backend::cpu_backend::CpuBackend)
         .unwrap();
     let (mean, max_diff) = parity_metrics(&out_gpu, &out_cpu);
-    eprintln!("standard setup CPU/resident output parity mean={mean:.9} max={max_diff:.9}");
+    eprintln!("density reading CPU/resident output parity mean={mean:.9} max={max_diff:.9}");
     assert!(
         mean < 5e-3 && max_diff < 5e-2,
         "device density reading: mean={mean:.6} max={max_diff:.6}"
@@ -688,15 +688,6 @@ fn n2p_device_density_reading_matches_cpu() {
     assert_eq!(
         snapshot.execution.path,
         Some(spektrafilm_backend::telemetry::ExecutionPath::GpuResident)
-    );
-    assert_eq!(
-        snapshot
-            .observations
-            .iter()
-            .filter(|stage| stage.name == "frame_setup")
-            .count(),
-        0,
-        "resident acquisition must measure the complete frame exactly once"
     );
 
     // The reading changes the image (a direct scan of the same negative

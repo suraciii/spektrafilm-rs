@@ -12,7 +12,6 @@ use spektrafilm_math::precision::{from_f64, to_f64};
 use crate::params::RuntimeParams;
 use crate::profile::Profile;
 mod interpretation;
-mod setup;
 mod spectral;
 pub(crate) use spectral::{scan_spectral_rgb, scanner_lut_bounds};
 
@@ -143,7 +142,6 @@ pub(crate) fn prepare_negative(
     } else {
         std::borrow::Cow::Borrowed(density)
     };
-    let offset = [0.0; 3];
     let mut exposure = Vec::new();
     let pixels = density.data.len() / 3;
     exposure
@@ -157,7 +155,7 @@ pub(crate) fn prepare_negative(
             let reconstructed =
                 calibration.estimate([to_f64(px[0]), to_f64(px[1]), to_f64(px[2])])?;
             for channel in 0..3 {
-                dst[channel] = reconstructed[channel] + offset[channel];
+                dst[channel] = reconstructed[channel];
                 if !dst[channel].is_finite() {
                     return Err("negative reconstruction coordinate must be finite".into());
                 }

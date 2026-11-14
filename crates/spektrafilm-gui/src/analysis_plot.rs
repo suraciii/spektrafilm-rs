@@ -1259,6 +1259,14 @@ pub(crate) fn show_plot(
                 }
             }
             messages.push(text);
+            // CIE L*a*b* under the sRGB white point, so a sample can be
+            // compared with a reference measurement. The plot markers keep
+            // their own declared coordinates.
+            let lab = spektrafilm_math::lab::srgb_encoded_to_lab(sample.pixel.rgb);
+            messages.push(format!(
+                "L* {:.2}  a* {:.2}  b* {:.2}",
+                lab[0], lab[1], lab[2]
+            ));
             let off_scale = if mode == AnalysisMode::Vectorscope {
                 let extent = 0.4 / prefs.chroma_zoom.clamp(1, 4) as f64;
                 sample.pixel.ab.iter().any(|v| v.abs() > extent)

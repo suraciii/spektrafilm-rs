@@ -116,7 +116,21 @@ const SECTION_PARAMETERS: &[(&str, &[&str], &[&str])] = &[
         &[],
     ),
     ("Enlarger diffusion", &["enlarger.diffusion_filter"], &[]),
-    ("Scanner", &["scanner"], &[]),
+    // The Scan Profile group is its own module, so the Scanner section names
+    // its leaves instead of claiming the whole scanner group.
+    (
+        "Scanner",
+        &[
+            "scanner.scan_output",
+            "scanner.white_reference",
+            "scanner.conversion_style",
+            "scanner.operator",
+            "scanner.lens_blur",
+            "scanner.unsharp_mask",
+        ],
+        &[],
+    ),
+    ("Scan Profile", &["scanner.scan_profile"], &[]),
     ("Glare", &["print_render.glare"], &[]),
     ("Finishing", &["finishing"], &[]),
     (
@@ -568,6 +582,44 @@ mod tests {
         assert!(!paths.iter().any(|path| path.starts_with("finishing.")));
         assert!(paths.contains(&"output_mix.amount".to_owned()));
         assert!(!is_modified("Finishing", &params, &extras, factory_root()));
+    }
+
+    #[test]
+    fn scan_profile_reset_owns_the_profile_group_and_leaves_scanner_values() {
+        let mut params = factory();
+        let mut extras = GuiState::factory().sections;
+        params.scanner.scan_profile =
+            spektrafilm_core::params::scan_profile::builtin_sp3000_inspired();
+        assert!(is_modified(
+            "Scan Profile",
+            &params,
+            &extras,
+            factory_root()
+        ));
+        assert!(!is_modified("Scanner", &params, &extras, factory_root()));
+
+        assert!(reset(
+            &mut params,
+            &mut extras,
+            "Scan Profile",
+            factory_root()
+        ));
+        assert_eq!(
+            params.scanner.scan_profile,
+            spektrafilm_core::params::ScanProfileParams::default()
+        );
+        assert!(!is_modified(
+            "Scan Profile",
+            &params,
+            &extras,
+            factory_root()
+        ));
+
+        params.scanner.lens_blur = 0.4;
+        assert!(is_modified("Scanner", &params, &extras, factory_root()));
+        assert!(reset(&mut params, &mut extras, "Scanner", factory_root()));
+        assert_eq!(params.scanner.lens_blur, 0.0);
+        assert!(!is_modified("Scanner", &params, &extras, factory_root()));
     }
 
     #[test]

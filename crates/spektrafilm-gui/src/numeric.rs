@@ -42,7 +42,7 @@ pub(crate) fn take_adjustment_signals(ctx: &egui::Context) -> AdjustmentSignals 
     })
 }
 
-fn signal_adjustment(ctx: &egui::Context, label: &str, signals: AdjustmentSignals) {
+pub(crate) fn signal_adjustment(ctx: &egui::Context, label: &str, signals: AdjustmentSignals) {
     let pass = ctx.cumulative_pass_nr();
     ctx.data_mut(|data| {
         let id = egui::Id::new("numeric-adjustment-signals");

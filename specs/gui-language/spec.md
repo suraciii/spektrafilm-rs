@@ -158,13 +158,15 @@ The GUI MUST display:
 | `scanner.white_reference = readout_illuminant` | `Readout illuminant` |
 | `scanner.lens_blur` | `Lens blur (readout optics)` |
 | `scanner.unsharp_mask` | `Unsharp mask (digital sharpening)` |
+| `scanner.scan_profile` | `Scan Profile`, with `No Scan Profile`, `SP-3000 Inspired`, and the derived `Custom` |
+| `scanner.scan_profile.strength` | `Scan Profile Strength` |
 | `film_render.convert.scan_illuminant` | `Scan illuminant` in Input and capture → Convert |
 
 The GUI MUST NOT offer a scanner light control. The readout illuminant is a product constant selected by the material category. The white-reference selector chooses the normalization and chromatic-adaptation reference; it MUST NOT be presented as a readout-light selector.
 
 The Convert scan-illuminant help MUST identify the light used to acquire an imported RGB negative. It MUST distinguish that declaration from the fixed product readout illuminant and the Camera capture illuminant. Conversion-style choices MUST follow the [lab scan style-name contract](../film-chain/lab-scan/spec.md#tone-and-style-names).
 
-The GUI MUST NOT present `neutral` as a fixed built-in style. It MUST expose the experimental frame setup as its own off-by-default control, labelled experimental, rather than folding it into the style choice.
+The GUI MUST NOT present `neutral` as a fixed built-in style. The conversion-style choice MUST NOT contain an automatic setup entry.
 
 The GUI MUST explain that `negative conversion` interprets a developed negative as a positive image through the film's own density response. It MUST NOT describe negative conversion as a file conversion, a scan finish, or a positive-scan alias.
 

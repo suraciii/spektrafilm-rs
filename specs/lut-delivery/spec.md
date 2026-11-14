@@ -6,8 +6,6 @@
 - Optional [CMYK ink style](../cmyk-style/spec.md) is a modeled RGB finishing behavior, not a photographic-print calibration claim.
 - A LUT bake contains no image-specific spatial effects or stochastic grain.
 - The bundle records any controls neutralized for baking.
-- The negative frame setup is frame-dependent and MUST fail baking while enabled.
-- It MUST NOT be silently neutralized.
 - A declared fixed style is the point-wise alternative under the [lab scan contract](../film-chain/lab-scan/spec.md#point-wise-consumers-and-migration).
 - The bundle MAY contain canonical LUT stages, contiguous collapsed sub-chains, machine-readable metadata, OCIO wiring, and QA results.
 - LUT domains, ranges, color spaces, stock selections, and wire constants are part of the bundle contract.
@@ -40,6 +38,6 @@
 - A complete one-LUT mixed transform MUST retain appearance and amount provenance even though intermediate nodes are collapsed.
 - Existing output gamut algorithms remain unchanged except for standalone lightness retirement under [Output boundary and retirement](../output-mix/spec.md#output-boundary-and-retirement).
 - A bake MUST NOT introduce a separate material response, replacement output lightness stage, or separate `input`-route output-processing switch.
-- A complete one-LUT source-to-output bake MAY be written as one `.cube` for explicit LUT import under [LUT workflow](../lut-workflow/spec.md#export-lut). The simple export MUST require one selected print target, a LUT-supported input and output encoding, output mix amount 1, and an inactive frame-dependent setup.
+- A complete one-LUT source-to-output bake MAY be written as one `.cube` for explicit LUT import under [LUT workflow](../lut-workflow/spec.md#export-lut). The simple export MUST require one selected print target, a LUT-supported input and output encoding, and output mix amount 1.
 - A segmented bundle is not the simple exported `.cube`; the simple export MUST NOT select one stage from an ambiguous bundle.
 - The simple export MUST report its neutralized operations. It MUST NOT import, apply, or create a LUT preset, and it MUST NOT switch mode.

@@ -110,7 +110,7 @@ Preview reduction and nonlinear tone and color adjustments MUST NOT be claimed t
 
 [Photo export](../photo-export/spec.md) owns retained Save and independent Export. Saving MUST NOT apply these adjustments again.
 
-[LUT delivery](../lut-delivery/spec.md) MUST include eligible pointwise adjustments exactly once. It MUST retain their provenance without changing material-density wire meanings or waiving existing frame-setup and output-mix restrictions.
+[LUT delivery](../lut-delivery/spec.md) MUST include eligible pointwise adjustments exactly once. It MUST retain their provenance without changing material-density wire meanings or waiving existing output-mix restrictions.
 
 ## Acceptance
 

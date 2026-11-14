@@ -128,7 +128,7 @@ The typed schema and shared validator MUST enforce the normalized scale and enco
 
 Finishing preparation MUST depend only on its accepted response definition, parameters, and required color transforms. It MUST NOT trigger material calibration or automatic frame statistics.
 
-Finishing-only edits MUST preserve compatible material, spectral, reconstruction, and frame-setup preparation. They MUST invalidate any downstream result that contains finishing.
+Finishing-only edits MUST preserve compatible material, spectral, reconstruction, and scan preparation. They MUST invalidate any downstream result that contains finishing.
 
 The base positive MUST remain upstream of all finishing edits. A cached finished result MUST NOT serve as an input baseline for later adjustments.
 

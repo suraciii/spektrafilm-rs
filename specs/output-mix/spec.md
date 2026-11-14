@@ -45,7 +45,7 @@ Existing print-exposure gain and normalization conventions MUST remain unchanged
 
 Print order is main filtration and transmitted exposure, optical propagation in linear exposure, independent material-plane preflash addition, then the existing nonlinear material response and development. [Print exposure composition](design.md#print-exposure-composition) owns numerical derivation and equivalence conditions. Print exposure MUST NOT include local tone masks or a digital material-response evaluator.
 
-Scanner calibration and automatic setup retain their existing material-setting semantics; this change MUST NOT introduce a new baseline/effective-reference split to make existing controls look stronger.
+Scanner calibration retains its existing material-setting semantics; this change MUST NOT introduce a new baseline/effective-reference split to make existing controls look stronger.
 
 ## Output boundary and retirement
 

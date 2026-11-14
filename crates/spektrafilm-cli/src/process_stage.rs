@@ -138,8 +138,12 @@ fn execute(
     };
     let (mut params, film, print, declaration, edits, feature_report, film_name, print_name) =
         if let Some(header) = &header {
-            let resolved = process_params::resolve_continuation(request, header, &data.path)
+            let mut resolved = process_params::resolve_continuation(request, header, &data.path)
                 .map_err(anyhow::Error::msg)?;
+            crate::process::apply_scan_profile(
+                &mut resolved.params,
+                args.workflow.scan_profile.as_deref(),
+            )?;
             let print_name = if route.prints() || header.state == MaterialKind::Print {
                 resolved
                     .print
@@ -172,8 +176,12 @@ fn execute(
                 print_name,
             )
         } else {
-            let resolved =
+            let mut resolved =
                 process_params::resolve(request, &data.path).map_err(anyhow::Error::msg)?;
+            crate::process::apply_scan_profile(
+                &mut resolved.params,
+                args.workflow.scan_profile.as_deref(),
+            )?;
             let mut film = resolved.film;
             let mut print = resolved.print;
             apply_channel_swap(&mut film, &args.workflow.film_channel_swap)?;

@@ -46,6 +46,8 @@ pub(crate) struct App {
     pub(crate) operator_compare: bool,
     /// Temporary finishing-only baseline; mutually exclusive with operator comparison.
     pub(crate) finishing_compare: bool,
+    /// Temporary scan-appearance baseline; mutually exclusive with the others.
+    pub(crate) scan_profile_compare: bool,
     pub(crate) displayed_comparison: Option<super::render::DisplayedComparison>,
     pub(crate) adjustment_history: super::history::AdjustmentHistory,
     pub(crate) photograph: crate::photograph::PhotographWork,
@@ -347,6 +349,7 @@ impl App {
             scan_medium_polarity: None,
             operator_compare: false,
             finishing_compare: false,
+            scan_profile_compare: false,
             displayed_comparison: None,
             adjustment_history: super::history::AdjustmentHistory::default(),
             photograph: crate::photograph::PhotographWork::default(),

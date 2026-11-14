@@ -32,6 +32,21 @@ fn operator_editor_id() -> egui::Id {
     egui::Id::new("scanner.operator.editor")
 }
 
+fn scan_profile_comparison_id() -> egui::Id {
+    egui::Id::new("scanner.scan_profile.compare")
+}
+
+/// End a held scan-appearance comparison even when its module is hidden.
+pub(crate) fn release_scan_profile_compare(ctx: &egui::Context) -> bool {
+    if ctx.input(|input| input.pointer.primary_down() || input.key_down(egui::Key::Space)) {
+        return false;
+    }
+    ctx.data_mut(|data| {
+        let comparing = data.get_temp_mut_or_default::<bool>(scan_profile_comparison_id());
+        std::mem::take(comparing)
+    })
+}
+
 /// End a held comparison even if its section has since been hidden.
 pub(crate) fn release_operator_compare(ctx: &egui::Context) -> bool {
     let holding =
@@ -192,6 +207,10 @@ pub(crate) fn sections(
     capture_reference_illuminant: &str,
     data_dir: &Path,
 ) {
+    if section == "Scan Profile" {
+        scan_profile_controls(ui, params, film_medium, flags, filter);
+        return;
+    }
     if section == "Input" {
         section_header(ui, filter, "Input", |ui, filter| {
             if filter_matches(filter, "input color space") {
@@ -392,79 +411,6 @@ pub(crate) fn sections(
                 )).inner {
                     flags.runtime_changed = true;
                 }
-            }
-            // Scan Profile applies after negative conversion, before Tone & Color.
-            if filter_matches(filter, "Scan Profile") {
-                let profile_active = positive_route;
-                if !profile_active {
-                    ui.label(localized(ui.ctx(), "Scan Profile inactive on this route; stored values are retained."));
-                }
-                let current_name = params.scanner.scan_profile.effective_name();
-                let mut selected = current_name.as_str().to_owned();
-                let entries: Vec<(&str, &str)> = vec![
-                    ("none", "No Scan Profile"),
-                    ("sp3000_inspired", "SP-3000 Inspired"),
-                    ("custom", "Custom"),
-                ];
-                let visible_entries: Vec<(&str, &str)> = if current_name
-                    == spektrafilm_core::params::ScanProfileName::Custom
-                {
-                    entries
-                } else {
-                    entries
-                        .into_iter()
-                        .filter(|(name, _)| *name != "custom")
-                        .collect()
-                };
-                if ui
-                    .add_enabled_ui(profile_active, |ui| {
-                        widgets::choice_tip_entries(
-                            ui,
-                            "Scan Profile",
-                            &mut selected,
-                            visible_entries.into_iter(),
-                            "Change how the scan looks after negative conversion and before Tone & Color. Film and negative conversion stay the same.",
-                        )
-                    })
-                    .inner
-                {
-                    flags.runtime_changed = true;
-                    match selected.as_str() {
-                        "sp3000_inspired" => {
-                            params.scanner.scan_profile.set_builtin(
-                                spektrafilm_core::params::ScanProfileName::Sp3000Inspired,
-                            );
-                        }
-                        "none" => {
-                            params.scanner.scan_profile.set_bypass();
-                        }
-                        _ => {} // "custom" is an effective state; no action.
-                    }
-                }
-                if filter_matches(filter, "Scan Profile Strength") {
-                    flags.runtime_changed |= param_numeric(
-                        ui,
-                        "Scan Profile Strength",
-                        &mut params.scanner.scan_profile.strength,
-                        "scanner.scan_profile.strength",
-                        "Application amount of the selected Scan Profile. 0% is no effect; 100% is the full profile.",
-                    );
-                }
-            }
-            // The whole-frame measurement is an off-by-default experiment, so it
-            // is offered next to the style it modifies rather than as a mode.
-            let negative_route =
-                positive_route && params.scanner.scan_output == "negative_to_positive";
-            if filter_matches(filter, vocabulary::EXPERIMENTAL_SETUP) {
-                ui.add_enabled_ui(negative_route, |ui| {
-                    let changed = toggle(
-                        ui,
-                        vocabulary::EXPERIMENTAL_SETUP,
-                        &mut false,
-                        vocabulary::EXPERIMENTAL_SETUP_HELP,
-                    );
-                    flags.runtime_changed |= changed;
-                });
             }
             if filter_matches(filter, "lens blur (readout optics)") {
                 flags.runtime_changed |= param_numeric(ui, "Lens blur (readout optics)", &mut params.scanner.lens_blur, "scanner.lens_blur", "Gaussian sigma in pixels on linear transmitted or reflected readout light, before negative conversion, gamut processing, sharpening and encoding. Identity points retain this optical order.");
@@ -687,6 +633,101 @@ fn preflash_controls(
         }
         if filter_matches(filter, "preflash m filter shift") {
             flags.runtime_changed |= param_numeric(ui, "preflash m filter shift", &mut params.enlarger.preflash_m_filter_shift, "enlarger.preflash_m_filter_shift", "Independent preflash Magenta shift around the calibrated neutral filter pack, in Kodak CC units.");
+        }
+    });
+}
+
+/// Scan Profile applies after negative conversion and before Tone & Color.
+/// The selector, the strength, and the curve editor edit one look-owned group.
+fn scan_profile_controls(
+    ui: &mut Ui,
+    params: &mut RuntimeParams,
+    film_medium: ScanMedium,
+    flags: &mut ChangeFlags,
+    filter: &mut ControlFilter<'_>,
+) {
+    let scan_active =
+        crate::controls::control_inactive_reason(ui.ctx(), "scanner.scan_output", params).is_none();
+    let medium = if scan_active {
+        film_medium.for_route(&params.workflow.route)
+    } else {
+        ScanMedium::None
+    };
+    let profile_active = scan_active && medium.positive_output_eligible(&params.workflow.route);
+    ui.add_enabled_ui(profile_active, |ui| {
+        if filter_matches(filter, "Scan Profile") {
+            let current_name = params.scanner.scan_profile.effective_name();
+            let mut selected = current_name.as_str().to_owned();
+            let entries: Vec<(&str, &str)> = vec![
+                ("none", "No Scan Profile"),
+                ("sp3000_inspired", "SP-3000 Inspired"),
+                ("custom", "Custom"),
+            ];
+            let visible_entries: Vec<(&str, &str)> = if current_name
+                == spektrafilm_core::params::ScanProfileName::Custom
+            {
+                entries
+            } else {
+                entries
+                    .into_iter()
+                    .filter(|(name, _)| *name != "custom")
+                    .collect()
+            };
+            if widgets::choice_tip_entries(
+                ui,
+                "Scan Profile",
+                &mut selected,
+                visible_entries.into_iter(),
+                "Change how the scan looks after negative conversion and before Tone & Color. Film and negative conversion stay the same.",
+            ) {
+                flags.runtime_changed = true;
+                match selected.as_str() {
+                    "sp3000_inspired" => {
+                        params.scanner.scan_profile.set_builtin(
+                            spektrafilm_core::params::ScanProfileName::Sp3000Inspired,
+                        );
+                    }
+                    "none" => {
+                        params.scanner.scan_profile.set_bypass();
+                    }
+                    _ => {} // "custom" is an effective state; no action.
+                }
+            }
+        }
+        if filter_matches(filter, "Scan Profile Strength") {
+            flags.runtime_changed |= param_numeric(
+                ui,
+                "Scan Profile Strength",
+                &mut params.scanner.scan_profile.strength,
+                "scanner.scan_profile.strength",
+                "Application amount of the selected Scan Profile. 0% is no effect; 100% is the full profile.",
+            );
+        }
+        if filter_matches(filter, "Scan Profile Curve") {
+            flags.runtime_changed |=
+                super::curve::editor(ui, &mut params.scanner.scan_profile.transform);
+        }
+        if filter_matches(filter, "Hold Scan Profile comparison") {
+            let response = ui
+                .add(egui::Button::new(localized(
+                    ui.ctx(),
+                    "Hold Scan Profile comparison",
+                )))
+                .on_hover_text(localized(
+                    ui.ctx(),
+                    "Hold the primary mouse button or focused Space to bypass only the scan appearance. Release to restore it. Film, negative conversion, Tone & Color, and saved output are unchanged.",
+                ));
+            focus_response(ui, "Hold Scan Profile comparison", &response);
+            let comparing = (response.is_pointer_button_down_on()
+                && ui.input(|input| input.pointer.primary_down()))
+                || (response.has_focus() && ui.input(|input| input.key_down(egui::Key::Space)));
+            let previous = ui.ctx().data_mut(|data| {
+                let state = data.get_temp_mut_or_default::<bool>(scan_profile_comparison_id());
+                std::mem::replace(state, comparing)
+            });
+            if previous != comparing {
+                flags.scan_profile_compare = Some(comparing);
+            }
         }
     });
 }

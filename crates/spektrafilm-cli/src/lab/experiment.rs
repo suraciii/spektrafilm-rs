@@ -166,6 +166,7 @@ fn run(args: &ExperimentRunArgs) -> Result<()> {
                 .scan_output
                 .clone()
                 .or_else(|| document.chain.scan_output.clone()),
+            scan_profile: None,
             film_channel_swap: "none".to_owned(),
             print_channel_swap: "none".to_owned(),
         },

@@ -207,6 +207,7 @@ impl Default for WorkflowOptions {
             lens_correction: false,
             route: None,
             scan_output: None,
+            scan_profile: None,
             film_channel_swap: "none".to_owned(),
             print_channel_swap: "none".to_owned(),
         }
@@ -495,6 +496,9 @@ pub(crate) struct WorkflowOptions {
     /// Film scanner output mode; applied after parameter sources.
     #[arg(long, value_parser = ["direct_scan", "negative_to_positive"], help_heading = "Look and workflow")]
     pub(crate) scan_output: Option<String>,
+    /// Built-in scan-stage appearance; applied after parameter sources.
+    #[arg(long = "scan-profile", value_parser = ["none", "sp3000_inspired"], help_heading = "Look and workflow")]
+    pub(crate) scan_profile: Option<String>,
     /// Film density channel order: none or three comma-separated indices in 0..2.
     #[arg(long, default_value = "none", help_heading = "Look and workflow")]
     pub(crate) film_channel_swap: String,
@@ -797,6 +801,7 @@ fn cmd_process(
     apply_channel_swap(&mut film, &workflow.film_channel_swap)?;
     apply_channel_swap(&mut print, &workflow.print_channel_swap)?;
     let mut params = resolved.params;
+    apply_scan_profile(&mut params, workflow.scan_profile.as_deref())?;
     params.random_seed = u64::from(args.seed.unwrap_or(0));
     process_report::warn_edits(&resolved.edits);
     if args.debug {
@@ -1548,6 +1553,23 @@ fn runtime_prepare_error(error: &str, data_dir: &Path, transform_mode: bool) -> 
 
 fn validate_raw_options(options: &spektrafilm_raw::RawOptions) -> Result<()> {
     options.validate().map_err(anyhow::Error::from)
+}
+
+/// Apply the CLI's built-in Scan Profile selector. A named entry replaces the
+/// resolved transform and its default strength, exactly as the GUI selector
+/// does; `none` bypasses. `custom` is an effective state, never an input.
+pub(crate) fn apply_scan_profile(
+    params: &mut spektrafilm_core::params::RuntimeParams,
+    name: Option<&str>,
+) -> Result<()> {
+    let Some(name) = name else {
+        return Ok(());
+    };
+    let Some(name) = spektrafilm_core::params::ScanProfileName::from_builtin_name(name) else {
+        bail!("--scan-profile: {name:?} is an effective state, not a selectable name");
+    };
+    params.scanner.scan_profile.set_builtin(name);
+    Ok(())
 }
 
 fn apply_channel_swap(profile: &mut profile::Profile, selection: &str) -> Result<()> {

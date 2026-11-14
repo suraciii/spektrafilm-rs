@@ -1420,6 +1420,35 @@ fn scanner_search_reveals_independent_rows_on_an_inactive_route() {
 }
 
 #[test]
+fn scan_profile_module_is_reachable_and_resets_only_its_group() {
+    let mut s = session();
+    let h = &mut s.harness;
+    set_route(h, "input > film > scan");
+    h.state_mut().params.scanner.scan_output = "negative_to_positive".into();
+    let builtin = spektrafilm_core::params::scan_profile::builtin_sp3000_inspired();
+    h.state_mut().params.scanner.scan_profile = builtin.clone();
+    h.run_steps(3);
+
+    reveal_control(h, "scanner.scan_profile.transform");
+    assert!(
+        h.query_by_label("Scan Profile Curve").is_some(),
+        "the curve editor must be reachable from its canonical path"
+    );
+    click(h, "reset Scan Profile");
+    assert_eq!(
+        h.state().params.scanner.scan_profile,
+        spektrafilm_core::params::ScanProfileParams::default()
+    );
+    assert_eq!(
+        h.state().params.scanner.scan_output,
+        "negative_to_positive",
+        "the reset must not disturb the Scanner module"
+    );
+    click(h, "Undo");
+    assert_eq!(h.state().params.scanner.scan_profile, builtin);
+}
+
+#[test]
 fn module_resets_restore_only_their_owned_values_and_are_reversible() {
     let mut s = session();
     let h = &mut s.harness;

@@ -319,6 +319,14 @@ impl<'a, 'b> Serializer for &'a mut Recorder<'b> {
     }
 }
 
+/// True when a control stores its numbers as `f32`, so an unchanged value can
+/// differ from the request in its decimal spelling. The recorded type string
+/// names `f32` for scalar leaves; `ScanCurve` hides its `f32` vectors inside a
+/// composite the recorder cannot look through.
+pub(crate) fn stores_f32(path: &str, ty: &str) -> bool {
+    ty.contains("f32") || path == "scanner.scan_profile.transform.curves"
+}
+
 pub(super) fn rust_type(path: &str) -> String {
     types()
         .get(path)

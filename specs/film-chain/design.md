@@ -2,7 +2,7 @@
 
 - Scanner vocabulary follows [Scanner language](spec.md#scanner-language). The canonical scan output mode is `negative_to_positive`; scan output validation owns its accepted values.
 - CLI, presets, recipes, GUI state, and diagnostics consume that vocabulary without aliases. The UI separates display labels from serialized values.
-- The [lab scan design](lab-scan/design.md) owns frame setup, style naming, point-wise rejection, and shared CPU/resident acquisition. The model version identifies the numerical cutover; legacy style aliases do not preserve fixed-curve pixels.
+- The [lab scan design](lab-scan/design.md) owns point-wise readout, style naming, and shared CPU/resident acquisition. The model version identifies the numerical cutover; legacy style aliases do not preserve fixed-curve pixels.
 - The scan model retains the existing runtime field names, document schema versions, defaults, calibration, processing order, and numerical operations for the controls it keeps. Telemetry uses the scan output name for its stage and execution reasons.
 - The readout illuminant participates in the prepared scan identity and its cache key.
 - `core::runtime` is the production entry point. `Pipeline` owns stage topology and state.

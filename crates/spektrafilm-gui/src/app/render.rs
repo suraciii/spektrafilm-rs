@@ -32,20 +32,34 @@ impl App {
     pub(crate) fn set_operator_compare(&mut self, comparing: bool) {
         let comparing = comparing && self.params.scanner.operator_eligible();
         let finishing = self.finishing_compare && !comparing;
-        self.set_comparison(comparing, finishing);
+        let scan_profile = self.scan_profile_compare && !comparing;
+        self.set_comparison(comparing, finishing, scan_profile);
     }
 
     pub(crate) fn set_finishing_compare(&mut self, comparing: bool) {
         let positive = self.scanned_medium_positive();
         let comparing = comparing && controls::finishing_applicable(&self.params, positive);
         let operator = self.operator_compare && !comparing;
-        self.set_comparison(operator, comparing);
+        let scan_profile = self.scan_profile_compare && !comparing;
+        self.set_comparison(operator, comparing, scan_profile);
     }
 
-    fn set_comparison(&mut self, operator: bool, finishing: bool) {
-        if self.operator_compare != operator || self.finishing_compare != finishing {
+    pub(crate) fn set_scan_profile_compare(&mut self, comparing: bool) {
+        let positive = self.scanned_medium_positive();
+        let comparing = comparing && controls::finishing_applicable(&self.params, positive);
+        let operator = self.operator_compare && !comparing;
+        let finishing = self.finishing_compare && !comparing;
+        self.set_comparison(operator, finishing, comparing);
+    }
+
+    fn set_comparison(&mut self, operator: bool, finishing: bool, scan_profile: bool) {
+        if self.operator_compare != operator
+            || self.finishing_compare != finishing
+            || self.scan_profile_compare != scan_profile
+        {
             self.operator_compare = operator;
             self.finishing_compare = finishing;
+            self.scan_profile_compare = scan_profile;
             self.displayed_comparison = None;
             self.viewer
                 .set_retained_output(self.output_retained.clone());
@@ -128,6 +142,8 @@ impl App {
             crate::render::Comparison::Operator
         } else if self.finishing_compare {
             crate::render::Comparison::Finishing
+        } else if self.scan_profile_compare {
+            crate::render::Comparison::ScanProfile
         } else {
             crate::render::Comparison::None
         };

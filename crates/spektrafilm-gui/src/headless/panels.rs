@@ -1094,6 +1094,10 @@ fn keyboard_analysis_selects_and_inspects_without_photographic_edits() {
         h.query_by_label_contains(&point).is_some(),
         "keyboard pixel readout must replace the plot inspection"
     );
+    assert!(
+        h.query_by_label_contains("L* ").is_some(),
+        "the readout must identify the sample's CIE L*a*b*"
+    );
 
     let image = composed(h, h.ctx.input(|input| input.time) + 1.0).image_rect;
     h.input_mut()

@@ -961,6 +961,50 @@ fn section_matching_compares_typed_carried_values() {
 }
 
 #[test]
+fn a_custom_scan_profile_curve_survives_section_and_look_capture() {
+    let mut current = RuntimeParams::default();
+    current.workflow.route = "input > film > scan".into();
+    current.io.scan_film = true;
+    current.scanner.scan_output = "negative_to_positive".into();
+    current.scanner.scan_profile = crate::params::scan_profile::builtin_sp3000_inspired();
+    for curve in current
+        .scanner
+        .scan_profile
+        .transform
+        .curves
+        .as_mut()
+        .unwrap()
+    {
+        curve.y[4] += 0.02;
+    }
+    assert_eq!(
+        current.scanner.scan_profile.effective_name(),
+        crate::params::ScanProfileName::Custom
+    );
+
+    let section =
+        Preset::capture_section("Scan profile", Section::Scanner, &current, provenance()).unwrap();
+    let mut base = RuntimeParams::default();
+    base.workflow.route = current.workflow.route.clone();
+    base.io.scan_film = true;
+    let applied = section.apply_section(&base, &test_film()).unwrap();
+    assert_eq!(applied.scanner.scan_profile, current.scanner.scan_profile);
+
+    let look = Preset::capture(
+        "Scan look",
+        "kodak_portra_400",
+        "kodak_portra_endura",
+        &current,
+        provenance(),
+    );
+    let resolved = look.resolve(&data(), &current).unwrap();
+    assert_eq!(
+        resolved.params.scanner.scan_profile,
+        current.scanner.scan_profile
+    );
+}
+
+#[test]
 fn look_resolution_keeps_a_declared_film_scan_route_and_its_scan_mode() {
     let mut current = RuntimeParams::default();
     current.workflow.route = "input > film > scan".into();
