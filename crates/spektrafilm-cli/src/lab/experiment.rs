@@ -22,9 +22,9 @@ use sha2::{Digest, Sha256};
 use spektrafilm_core::presets::PresetLibrary;
 
 use super::cli::{ChainArgs, ExperimentCommand, ExperimentRunArgs, OutputFormatArg};
-use super::report;
 use crate::process::{self, OutputFormat, ProcessArgs, WorkflowOptions};
 use crate::select_data_dir_impl;
+use spektrafilm_benchmark::readings::write_named;
 
 mod export;
 
@@ -1042,7 +1042,7 @@ fn write_records(out: &Path, force: bool, records: &Records<'_>) -> Result<()> {
         },
         "bundle": manifest,
     }))?;
-    report::write_named(
+    write_named(
         out,
         &[
             ("report.json", report_text.as_str()),

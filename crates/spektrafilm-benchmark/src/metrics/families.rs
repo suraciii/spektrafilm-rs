@@ -4,7 +4,7 @@ use rustfft::{FftPlanner, num_complex::Complex};
 use serde_json::{Value, json};
 
 use super::err;
-use super::evidence::{ArtifactRole, Evidence, GrainRetained};
+use super::evidence::{ArtifactRole, Evidence, GrainRetained, Sides};
 use super::mask::{crop, cropped_mask, erode, geometry_mask};
 use super::math::{
     count, fft2, frequency, gaussian, luminance, mean, median, number, periodic_hann, quantile,
@@ -26,7 +26,10 @@ fn paired(
     estimator: &str,
     refs: &[String],
 ) {
-    let reason = if name.contains("correlation") || name.contains("frequency_centroid") {
+    let reason = if name.contains("correlation")
+        || name.contains("frequency_centroid")
+        || name.contains("ratio")
+    {
         "zero_variance"
     } else if name.contains("half_height") {
         "no_half_height_crossing"
@@ -35,6 +38,22 @@ fn paired(
     } else {
         "insufficient_evidence"
     };
+    // An analysis measures one source, so the metric is the measurement and
+    // there is no side to name.
+    if e.sides == Sides::One {
+        e.scalar(
+            region,
+            &format!("{prefix}.{name}"),
+            left,
+            count,
+            domain,
+            units,
+            estimator,
+            refs,
+            if left.is_none() { Some(reason) } else { None },
+        );
+        return;
+    }
     for (side, value) in [
         ("baseline", left),
         ("candidate", right),
@@ -133,7 +152,7 @@ pub fn grain(
     e: &mut Evidence,
     region: &str,
     mask: &[bool],
-    images: &[Vec<[f64; 3]>; 2],
+    images: &[Vec<[f64; 3]>],
     width: usize,
     height: usize,
     settings: &Value,
@@ -163,11 +182,17 @@ pub fn grain(
         } else {
             "gaussian_high_pass"
         });
-    let method = if requested == "flat_mean" && !flat {
-        "gaussian_high_pass"
-    } else {
-        requested
-    };
+    if requested == "flat_mean" && !flat {
+        // A flat mean removes only the patch offset; on a textured region what
+        // is left is the content, not grain. Declaring it there is a probe
+        // error, and repairing it with a different estimator would measure
+        // something the caller never asked for.
+        return Err(err(
+            "missing_probe_geometry",
+            "grain residual method flat_mean requires a flat-field probe;              declare the region role flat_field or use gaussian_high_pass",
+        ));
+    }
+    let method = requested;
     if !["flat_mean", "gaussian_high_pass"].contains(&method) {
         return Err(err("invalid_protocol", "Unknown grain detrending method"));
     }
@@ -467,42 +492,43 @@ pub fn grain(
         });
         statistics.push(stats);
     }
-    for (name, a, b, shape) in [
-        ("psd2d", &retained[0].psd, &retained[1].psd, vec![h, w, 4]),
-        (
-            "radial_psd",
-            &retained[0].radial,
-            &retained[1].radial,
-            vec![retained[0].radial.len() / 6, 6],
-        ),
-        (
-            "autocovariance",
-            &retained[0].autocovariance,
-            &retained[1].autocovariance,
-            vec![h, w, 4],
-        ),
-        (
-            "residual",
-            &retained[0].residual,
-            &retained[1].residual,
-            vec![h, w, 3],
-        ),
-    ] {
-        let mut delta: Vec<f64> = b.iter().zip(a).map(|(b, a)| b - a).collect();
-        if name == "radial_psd" {
-            for (row, original) in delta
-                .as_chunks_mut::<6>()
-                .0
-                .iter_mut()
-                .zip(a.as_chunks::<6>().0)
-            {
-                row[0] = original[0];
-                row[5] = original[5];
+    // A signed difference needs a second source. An analysis declares one, so
+    // it retains no delta artifact rather than a zero one.
+    if let Some(right) = retained.get(1) {
+        let left = &retained[0];
+        for (name, a, b, shape) in [
+            ("psd2d", &left.psd, &right.psd, vec![h, w, 4]),
+            (
+                "radial_psd",
+                &left.radial,
+                &right.radial,
+                vec![left.radial.len() / 6, 6],
+            ),
+            (
+                "autocovariance",
+                &left.autocovariance,
+                &right.autocovariance,
+                vec![h, w, 4],
+            ),
+            ("residual", &left.residual, &right.residual, vec![h, w, 3]),
+        ] {
+            let mut delta: Vec<f64> = b.iter().zip(a).map(|(b, a)| b - a).collect();
+            if name == "radial_psd" {
+                for (row, original) in delta
+                    .as_chunks_mut::<6>()
+                    .0
+                    .iter_mut()
+                    .zip(a.as_chunks::<6>().0)
+                {
+                    row[0] = original[0];
+                    row[5] = original[5];
+                }
             }
+            refs.push(e.artifact(&format!("grain.{region}.delta.{name}"),&delta,&shape,ArtifactRole::GrainSignedDifference,json!({"domain":"linear_srgb","estimator":format!("candidate minus baseline {name}"),"residual_method":method}))?);
         }
-        refs.push(e.artifact(&format!("grain.{region}.delta.{name}"),&delta,&shape,ArtifactRole::GrainSignedDifference,json!({"domain":"linear_srgb","estimator":format!("candidate minus baseline {name}"),"residual_method":method}))?);
     }
-    for ((name, left), (_, right)) in statistics[0].iter().zip(&statistics[1]) {
+    let right = statistics.get(1).unwrap_or(&statistics[0]);
+    for ((name, left), (_, right)) in statistics[0].iter().zip(right) {
         let units = if name.starts_with("correlation") {
             "correlation"
         } else if name.contains("frequency") {
@@ -535,7 +561,7 @@ pub fn halation(
     e: &mut Evidence,
     region: &str,
     mask: &[bool],
-    images: &[Vec<[f64; 3]>; 2],
+    images: &[Vec<[f64; 3]>],
     width: usize,
     height: usize,
     settings: &Value,
@@ -749,19 +775,22 @@ pub fn halation(
         profiles.push(profile);
         stats.push(values);
     }
-    let mut delta = profiles[1].clone();
-    for (row, left) in delta
-        .as_chunks_mut::<6>()
-        .0
-        .iter_mut()
-        .zip(profiles[0].as_chunks::<6>().0)
-    {
-        for channel in 1..5 {
-            row[channel] -= left[channel];
+    if let Some(second) = profiles.get(1) {
+        let mut delta = second.clone();
+        for (row, left) in delta
+            .as_chunks_mut::<6>()
+            .0
+            .iter_mut()
+            .zip(profiles[0].as_chunks::<6>().0)
+        {
+            for channel in 1..5 {
+                row[channel] -= left[channel];
+            }
         }
+        refs.push(e.artifact(&format!("halation.{region}.delta.radial"),&delta,&[delta.len()/6,6],ArtifactRole::HalationProfile,json!({"columns":["radius_px","R_delta","G_delta","B_delta","red_minus_green_delta","count"],"domain":"linear_srgb"}))?);
     }
-    refs.push(e.artifact(&format!("halation.{region}.delta.radial"),&delta,&[delta.len()/6,6],ArtifactRole::HalationProfile,json!({"columns":["radius_px","R_delta","G_delta","B_delta","red_minus_green_delta","count"],"domain":"linear_srgb"}))?);
-    for ((name, left), (_, right)) in stats[0].iter().zip(&stats[1]) {
+    let right = stats.get(1).unwrap_or(&stats[0]);
+    for ((name, left), (_, right)) in stats[0].iter().zip(right) {
         let units = if name.ends_with("_px") {
             "pixels"
         } else if name.contains("fraction") {
@@ -825,7 +854,7 @@ pub fn edge(
     e: &mut Evidence,
     region: &str,
     mask: &[bool],
-    images: &[Vec<[f64; 3]>; 2],
+    images: &[Vec<[f64; 3]>],
     width: usize,
     height: usize,
     settings: &Value,
@@ -982,7 +1011,7 @@ pub fn edge(
             "edge",
             name,
             statistics[0][i],
-            statistics[1][i],
+            statistics.get(1).map(|s| s[i]).unwrap_or(statistics[0][i]),
             count(mask),
             "linear_srgb",
             units,
@@ -999,37 +1028,55 @@ pub fn tone(
     e: &mut Evidence,
     region: &str,
     mask: &[bool],
-    labs: &[Vec<[f64; 3]>; 2],
-    images: &[Vec<[f64; 3]>; 2],
+    labs: &[Vec<[f64; 3]>],
+    images: &[Vec<[f64; 3]>],
     protocol: &Value,
     width: usize,
     height: usize,
     refs: &[String],
 ) -> Result<()> {
     let n = count(mask);
-    let mut quantiles = [[0.0; 5]; 2];
-    for side in 0..2 {
-        let mut values: Vec<f64> = labs[side]
+    // Which sides this invocation measured. An analysis measures one and names
+    // no side at all.
+    let sources: Vec<(&str, usize)> = if e.sides == Sides::One {
+        vec![("", 0)]
+    } else {
+        vec![("baseline", 0), ("candidate", 1)]
+    };
+    let mut quantiles = Vec::with_capacity(labs.len());
+    for lab in labs {
+        let mut values: Vec<f64> = lab
             .iter()
             .zip(mask)
             .filter_map(|(p, m)| m.then_some(p[0]))
             .collect();
         sort(&mut values);
+        let mut row = [0.0; 5];
         for (i, q) in [0.05, 0.25, 0.5, 0.75, 0.95].into_iter().enumerate() {
-            quantiles[side][i] = quantile(&values, q)
+            row[i] = quantile(&values, q)
                 .ok_or_else(|| err("insufficient_samples", "Tone region has no selected pixels"))?;
         }
+        quantiles.push(row);
     }
-    for (side, index) in [("baseline", 0), ("candidate", 1), ("delta", 2)] {
+    let sides: &[(&str, Option<usize>)] = if e.sides == Sides::One {
+        &[("", None)]
+    } else {
+        &[
+            ("baseline.", Some(0)),
+            ("candidate.", Some(1)),
+            ("delta.", None),
+        ]
+    };
+    for (side, index) in sides {
         for (i, percent) in [5, 25, 50, 75, 95].into_iter().enumerate() {
-            let value = if index == 2 {
-                quantiles[1][i] - quantiles[0][i]
-            } else {
-                quantiles[index][i]
+            let value = match index {
+                Some(side_index) => quantiles[*side_index][i],
+                None if quantiles.len() == 2 => quantiles[1][i] - quantiles[0][i],
+                None => quantiles[0][i],
             };
             e.scalar(
                 region,
-                &format!("tone.l_star.{side}.q{percent:02}"),
+                &format!("tone.l_star.{side}q{percent:02}"),
                 Some(value),
                 n,
                 "bounded_srgb_d65_lab",
@@ -1051,7 +1098,7 @@ pub fn tone(
             let label = spelling(scale);
             let mut rms = [0.0; 2];
             let mut contrast_refs = Vec::new();
-            for (index, side) in ["baseline", "candidate"].into_iter().enumerate() {
+            for &(side, index) in &sources {
                 let luminances: Vec<f64> = images[index].iter().map(|p| luminance(*p)).collect();
                 let mut residual = gaussian(&luminances, width, height, sigma);
                 for (value, original) in residual.iter_mut().zip(luminances) {
@@ -1064,7 +1111,12 @@ pub fn tone(
                     .sum::<f64>()
                     / n as f64)
                     .sqrt();
-                contrast_refs.push(e.artifact(&format!("tone.{region}.{side}.local_contrast.{label}"),&residual,&[height,width],ArtifactRole::LocalContrastMap,json!({"domain":"linear_srgb_luminance","units":"linear luminance","sigma_px":sigma}))?);
+                let name = if side.is_empty() {
+                    format!("tone.{region}.local_contrast.{label}")
+                } else {
+                    format!("tone.{region}.{side}.local_contrast.{label}")
+                };
+                contrast_refs.push(e.artifact(&name,&residual,&[height,width],ArtifactRole::LocalContrastMap,json!({"domain":"linear_srgb_luminance","units":"linear luminance","sigma_px":sigma}))?);
             }
             paired(
                 e,
@@ -1072,7 +1124,7 @@ pub fn tone(
                 &format!("tone.local_contrast.sigma_{label}"),
                 "rms",
                 Some(rms[0]),
-                Some(rms[1]),
+                Some(rms.get(1).copied().unwrap_or(rms[0])),
                 n,
                 "linear_srgb_luminance",
                 "linear luminance RMS",
@@ -1100,7 +1152,7 @@ pub fn tone(
     }
     let mut responses = Vec::new();
     let mut curve_refs = Vec::new();
-    for (side, index) in [("baseline", 0), ("candidate", 1)] {
+    for &(side, index) in &sources {
         let mut response = Vec::new();
         let mut curve = Vec::new();
         for (point, &exposure) in points.iter().zip(&coordinates) {
@@ -1133,24 +1185,32 @@ pub fn tone(
             response.push([y, l]);
             curve.extend_from_slice(&[exposure, y, l, population as f64]);
         }
-        curve_refs.push(e.artifact(&format!("tone.{region}.{side}.response"),&curve,&[points.len(),4],ArtifactRole::ToneResponse,json!({"columns":["input_exposure_stops","linear_luminance","L_star","pixel_count"],"estimator":"frozen patch median"}))?);
+        let name = if side.is_empty() {
+            format!("tone.{region}.response")
+        } else {
+            format!("tone.{region}.{side}.response")
+        };
+        curve_refs.push(e.artifact(&name,&curve,&[points.len(),4],ArtifactRole::ToneResponse,json!({"columns":["input_exposure_stops","linear_luminance","L_star","pixel_count"],"estimator":"frozen patch median"}))?);
         responses.push(response);
     }
-    let mut delta = Vec::new();
-    for i in 0..points.len() {
-        delta.extend_from_slice(&[
-            coordinates[i],
-            responses[1][i][0] - responses[0][i][0],
-            responses[1][i][1] - responses[0][i][1],
-        ]);
+    // A delta curve needs a second source; an analysis retains none.
+    if responses.len() == 2 {
+        let mut delta = Vec::new();
+        for i in 0..points.len() {
+            delta.extend_from_slice(&[
+                coordinates[i],
+                responses[1][i][0] - responses[0][i][0],
+                responses[1][i][1] - responses[0][i][1],
+            ]);
+        }
+        curve_refs.push(e.artifact(
+            &format!("tone.{region}.delta.response"),
+            &delta,
+            &[points.len(), 3],
+            ArtifactRole::ToneResponse,
+            json!({"columns":["input_exposure_stops","delta_linear_luminance","delta_L_star"]}),
+        )?);
     }
-    curve_refs.push(e.artifact(
-        &format!("tone.{region}.delta.response"),
-        &delta,
-        &[points.len(), 3],
-        ArtifactRole::ToneResponse,
-        json!({"columns":["input_exposure_stops","delta_linear_luminance","delta_L_star"]}),
-    )?);
     for i in 0..points.len() - 1 {
         let interval = coordinates[i + 1] - coordinates[i];
         for (channel, label) in ["linear_luminance", "l_star"].into_iter().enumerate() {
@@ -1173,7 +1233,11 @@ pub fn tone(
                 &format!("tone.response.interval_{i}.{label}"),
                 "slope",
                 Some(slope(0)),
-                Some(slope(1)),
+                Some(if responses.len() == 2 {
+                    slope(1)
+                } else {
+                    slope(0)
+                }),
                 2,
                 domain,
                 units,
@@ -1195,7 +1259,431 @@ pub struct Map {
     pub values: Vec<f64>,
     pub artifact: String,
 }
+/// Neutrality of one population: how far a declared neutral field sits from
+/// the gray axis, and in which direction.
+///
+/// A neutral patch that is not neutral is a color cast, and the mean `a*` and
+/// `b*` are the cast itself rather than a distance from it. The chroma radius
+/// is the same quantity as a distance, so the RMS and the maximum describe the
+/// population's spread and its worst sample.
+///
+/// `l_star_std` is part of neutrality and not of distribution: a neutral field
+/// that is not flat is not a neutral field, and a single number for its
+/// lightness would hide that.
+pub fn neutrality(
+    e: &mut Evidence,
+    region: &str,
+    mask: &[bool],
+    left: &[[f64; 3]],
+    right: &[[f64; 3]],
+) {
+    const ROWS: [(&str, &str, &str); 6] = [
+        (
+            "l_star_mean",
+            "Lab L*",
+            "population mean of the bounded display Lab lightness",
+        ),
+        (
+            "l_star_std",
+            "Lab L*",
+            "population standard deviation of the bounded display Lab lightness",
+        ),
+        (
+            "a_star_mean",
+            "Lab a*",
+            "population mean of the bounded display Lab a* axis",
+        ),
+        (
+            "b_star_mean",
+            "Lab b*",
+            "population mean of the bounded display Lab b* axis",
+        ),
+        (
+            "chroma_radius_rms",
+            "Lab chroma radius",
+            "root mean square of hypot(a*, b*) over the population",
+        ),
+        (
+            "chroma_radius_max",
+            "Lab chroma radius",
+            "largest hypot(a*, b*) in the population",
+        ),
+    ];
+    let n = count(mask);
+    let a = lab_statistics(left, mask);
+    let b = lab_statistics(right, mask);
+    for (index, (name, units, estimator)) in ROWS.into_iter().enumerate() {
+        paired(
+            e,
+            region,
+            "neutrality",
+            name,
+            a[index],
+            b[index],
+            n,
+            "bounded_srgb_d65_lab",
+            units,
+            estimator,
+            &[],
+        );
+    }
+}
+
+/// The neutrality statistics of one population, in the order `neutrality`
+/// reports them. A quantity that does not exist is `None`.
+fn lab_statistics(lab: &[[f64; 3]], mask: &[bool]) -> Vec<Option<f64>> {
+    let mut l_sum = 0.0;
+    let mut l_square = 0.0;
+    let mut a_sum = 0.0;
+    let mut b_sum = 0.0;
+    let mut radius_square = 0.0;
+    let mut radius_max = 0.0_f64;
+    let mut n = 0usize;
+    for (i, selected) in mask.iter().enumerate() {
+        if !selected {
+            continue;
+        }
+        let p = lab[i];
+        n += 1;
+        l_sum += p[0];
+        l_square += p[0] * p[0];
+        a_sum += p[1];
+        b_sum += p[2];
+        let radius = p[1].hypot(p[2]);
+        radius_square += radius * radius;
+        radius_max = radius_max.max(radius);
+    }
+    if n == 0 {
+        return vec![None; 6];
+    }
+    let count = n as f64;
+    let variance = (l_square - l_sum * l_sum / count) / count;
+    vec![
+        Some(l_sum / count),
+        Some(variance.max(0.0).sqrt()),
+        Some(a_sum / count),
+        Some(b_sum / count),
+        Some((radius_square / count).sqrt()),
+        Some(radius_max),
+    ]
+}
+
+/// Color noise over one population: the high-frequency residual of the
+/// samples, split into its luminance part and its chroma part.
+///
+/// The residual is the sample minus its own Gaussian low pass, so the measure
+/// is a grain amplitude and not a gradient. The chroma axes are the orthogonal
+/// opponent pair of the Rec. 709 luminance weights, so `chroma_rms` and
+/// `luma_std` are directly comparable and their ratio is dimensionless.
+///
+/// A film grain that is not neutral is a color error. `chroma_to_luminance`
+/// is the number that says so.
+#[allow(clippy::too_many_arguments)]
+pub fn color_noise(
+    e: &mut Evidence,
+    region: &str,
+    mask: &[bool],
+    a: &ImageData,
+    b: &ImageData,
+    sigma: f64,
+) {
+    let n = count(mask);
+    let domain = format!("native:{}:{}", a.color_space, a.transfer);
+    for (name, left, right, units, estimator) in noise_statistics(a, b, mask, sigma, n) {
+        paired(
+            e,
+            region,
+            "color_noise",
+            &name,
+            left,
+            right,
+            n,
+            &domain,
+            units,
+            estimator,
+            &[],
+        );
+    }
+}
+
+/// Every colour-noise quantity of one pair, in the order the report shows
+/// them. Each entry is one metric name, its two sides, its units and its
+/// estimator; `paired` derives the delta and the availability reason.
+/// One metric of a pair: its name, its two sides, its units and its estimator.
+type NoiseRow = (String, Option<f64>, Option<f64>, &'static str, &'static str);
+
+fn noise_statistics(
+    a: &ImageData,
+    b: &ImageData,
+    mask: &[bool],
+    sigma: f64,
+    n: usize,
+) -> Vec<NoiseRow> {
+    const ROWS: [(&str, &str, &str); 8] = [
+        (
+            "mean_r",
+            "native channel sample",
+            "population mean of the declared samples",
+        ),
+        (
+            "mean_g",
+            "native channel sample",
+            "population mean of the declared samples",
+        ),
+        (
+            "mean_b",
+            "native channel sample",
+            "population mean of the declared samples",
+        ),
+        (
+            "luma_std",
+            "native channel sample",
+            "population standard deviation of the Gaussian-high-passed luminance",
+        ),
+        (
+            "chroma_rms",
+            "native channel sample",
+            "root mean square of the Gaussian-high-passed chroma axes",
+        ),
+        (
+            "chroma_to_luminance_ratio",
+            "ratio",
+            "chroma_rms over luma_std of the same residual",
+        ),
+        (
+            "channel_correlation_rg",
+            "correlation",
+            "Pearson correlation of the Gaussian-high-passed red and green residuals",
+        ),
+        (
+            "radial_frequency_centroid",
+            "cycles per pixel",
+            "power-weighted mean radial frequency of the windowed residual",
+        ),
+    ];
+    let empty: Vec<(Option<f64>, ())> = Vec::new();
+    let _ = empty;
+    let sides: Vec<Vec<Option<f64>>> = if n < 2 {
+        vec![vec![None; ROWS.len()]; 2]
+    } else {
+        [a, b]
+            .iter()
+            .map(|image| residual_statistics(image, mask, sigma))
+            .collect()
+    };
+    ROWS.iter()
+        .enumerate()
+        .map(|(index, (name, units, estimator))| {
+            (
+                name.to_string(),
+                sides[0][index],
+                sides[1][index],
+                *units,
+                *estimator,
+            )
+        })
+        .collect()
+}
+
+/// The colour-noise statistics of one image over one population. A quantity
+/// that cannot be computed is `None`, and `paired` reports why.
+fn residual_statistics(image: &ImageData, mask: &[bool], sigma: f64) -> Vec<Option<f64>> {
+    let width = image.width;
+    let height = image.height;
+    let n = count(mask);
+    let mut blurred = Vec::with_capacity(3);
+    for c in 0..3 {
+        let channel: Vec<f64> = image.samples.iter().map(|p| p[c]).collect();
+        blurred.push(gaussian(&channel, width, height, sigma));
+    }
+    let mut mean = [0.0_f64; 3];
+    let mut y_scale = 0.0_f64;
+    let mut sum_y = 0.0;
+    let mut sum_y2 = 0.0;
+    let mut sum_c = 0.0;
+    let mut sum_r = 0.0;
+    let mut sum_g = 0.0;
+    let mut sum_r2 = 0.0;
+    let mut sum_g2 = 0.0;
+    let mut sum_rg = 0.0;
+    for (i, selected) in mask.iter().enumerate() {
+        if !selected {
+            continue;
+        }
+        let p = image.samples[i];
+        for c in 0..3 {
+            mean[c] += p[c];
+        }
+        let d = [
+            p[0] - blurred[0][i],
+            p[1] - blurred[1][i],
+            p[2] - blurred[2][i],
+        ];
+        let y = luminance(d);
+        y_scale = y_scale.max(luminance(p).abs());
+        sum_y += y;
+        sum_y2 += y * y;
+        // ITU-R BT.709 chroma: each axis is the deviation from the same
+        // luminance, normalized so a fully saturated primary reaches one.
+        // They are orthogonal to the luminance weights by construction, so
+        // luma_std and chroma_rms describe disjoint parts of the residual.
+        let cb = (d[2] - y) / 1.8556;
+        let cr = (d[0] - y) / 1.5748;
+        sum_c += cb * cb + cr * cr;
+        sum_r += d[0];
+        sum_g += d[1];
+        sum_r2 += d[0] * d[0];
+        sum_g2 += d[1] * d[1];
+        sum_rg += d[0] * d[1];
+    }
+    let count = n as f64;
+    let luma_var = (sum_y2 - sum_y * sum_y / count) / count;
+    let luma_std = luma_var.max(0.0).sqrt();
+    let chroma_rms = (sum_c / count).sqrt();
+    let variance_r = sum_r2 - sum_r * sum_r / count;
+    let variance_g = sum_g2 - sum_g * sum_g / count;
+    let covariance = sum_rg - sum_r * sum_g / count;
+    let correlation = (variance_r > 0.0 && variance_g > 0.0)
+        .then(|| covariance / (variance_r * variance_g).sqrt());
+    vec![
+        Some(mean[0] / count),
+        Some(mean[1] / count),
+        Some(mean[2] / count),
+        Some(luma_std),
+        Some(chroma_rms),
+        // Below the numerical resolution of the sample scale there is no
+        // luminance to divide by, and a ratio would be an artifact of the
+        // accumulation rather than a measurement.
+        (luma_std > f64::EPSILON * y_scale).then(|| chroma_rms / luma_std),
+        correlation,
+        radial_centroid(image, mask, sigma),
+    ]
+}
+
+/// The power-weighted mean radial frequency of the residual, in cycles per
+/// pixel. It is defined only on a population that fills its bounding box:
+/// a masked spectrum would measure the mask as much as the grain.
+fn radial_centroid(image: &ImageData, mask: &[bool], sigma: f64) -> Option<f64> {
+    let width = image.width;
+    let height = image.height;
+    let (x0, y0, x1, y1) = bounds(mask, width, height)?;
+    if (x1 - x0) * (y1 - y0) != count(mask) {
+        return None;
+    }
+    let box_width = x1 - x0;
+    let box_height = y1 - y0;
+    if box_width < 2 || box_height < 2 {
+        return None;
+    }
+    let mut blurred = Vec::with_capacity(3);
+    for c in 0..3 {
+        let channel: Vec<f64> = image.samples.iter().map(|p| p[c]).collect();
+        blurred.push(gaussian(&channel, width, height, sigma));
+    }
+    let mut spectrum = vec![Complex::default(); box_width * box_height];
+    for y in 0..box_height {
+        for x in 0..box_width {
+            let i = (y0 + y) * width + (x0 + x);
+            let p = image.samples[i];
+            let d = [
+                p[0] - blurred[0][i],
+                p[1] - blurred[1][i],
+                p[2] - blurred[2][i],
+            ];
+            let window = periodic_hann(x, box_width) * periodic_hann(y, box_height);
+            spectrum[y * box_width + x] = Complex::new(luminance(d) * window, 0.0);
+        }
+    }
+    let mut planner = FftPlanner::new();
+    fft2(&mut spectrum, box_width, box_height, false, &mut planner);
+    let mut weighted = 0.0;
+    let mut power = 0.0;
+    for (index, bin) in spectrum.iter().enumerate() {
+        if index == 0 {
+            continue;
+        }
+        let radius = {
+            let fx = frequency(index % box_width, box_width);
+            let fy = frequency(index / box_width, box_height);
+            (fx * fx + fy * fy).sqrt()
+        };
+        let p = bin.norm_sqr();
+        weighted += radius * p;
+        power += p;
+    }
+    (power > 0.0).then(|| weighted / power)
+}
+
+/// The smallest box that contains the population.
+fn bounds(mask: &[bool], width: usize, height: usize) -> Option<(usize, usize, usize, usize)> {
+    let mut x0 = width;
+    let mut y0 = height;
+    let mut x1 = 0;
+    let mut y1 = 0;
+    for (i, selected) in mask.iter().enumerate() {
+        if !*selected {
+            continue;
+        }
+        let (x, y) = (i % width, i / width);
+        x0 = x0.min(x);
+        y0 = y0.min(y);
+        x1 = x1.max(x + 1);
+        y1 = y1.max(y + 1);
+    }
+    (x0 < x1 && y0 < y1).then_some((x0, y0, x1, y1))
+}
+
+/// The native-channel statistics of one source. A maximum difference and an
+/// RMS are differences, so an analysis names them unavailable rather than
+/// computing them against the source itself.
+fn numeric_single(e: &mut Evidence, region: &str, mask: &[bool], a: &ImageData) {
+    let n = count(mask);
+    for name in ["max_abs_difference", "rmse"] {
+        e.scalar(
+            region,
+            &format!("numeric.{name}"),
+            None,
+            0,
+            "declared_measurement",
+            "unavailable",
+            "aligned native channel difference",
+            &[],
+            Some("requires_second_source"),
+        );
+    }
+    let mut below = 0;
+    let mut above = 0;
+    for (p, m) in a.samples.iter().zip(mask) {
+        if *m {
+            for x in p {
+                below += usize::from(*x < 0.0);
+                above += usize::from(*x > 1.0);
+            }
+        }
+    }
+    for (name, value) in [
+        ("below_zero_fraction", below as f64 / (n * 3) as f64),
+        ("above_one_fraction", above as f64 / (n * 3) as f64),
+    ] {
+        e.scalar(
+            region,
+            &format!("numeric.{name}"),
+            Some(value),
+            n * 3,
+            "native",
+            "fraction",
+            "native all-channel sample population",
+            &[],
+            None,
+        );
+    }
+}
+
 pub fn numeric(e: &mut Evidence, region: &str, mask: &[bool], a: &ImageData, b: &ImageData) {
+    if e.sides == Sides::One {
+        numeric_single(e, region, mask, a);
+        return;
+    }
     let n = count(mask);
     let mut maximum = 0.0_f64;
     for (i, selected) in mask.iter().enumerate() {
@@ -1241,17 +1729,25 @@ pub fn numeric(e: &mut Evidence, region: &str, mask: &[bool], a: &ImageData, b: 
     for (side, image) in [("baseline", a), ("candidate", b)] {
         let mut below = 0;
         let mut above = 0;
+        let mut nonfinite = 0;
+        let mut nonfinite_pixels = 0;
         for (p, m) in image.samples.iter().zip(mask) {
             if *m {
+                let mut bad = false;
                 for x in p {
                     below += usize::from(*x < 0.0);
                     above += usize::from(*x > 1.0);
+                    if !x.is_finite() {
+                        nonfinite += 1;
+                        bad = true;
+                    }
                 }
+                nonfinite_pixels += usize::from(bad);
             }
         }
         for (name, value) in [
-            ("nonfinite_sample_count", 0.0),
-            ("nonfinite_pixel_count", 0.0),
+            ("nonfinite_sample_count", nonfinite as f64),
+            ("nonfinite_pixel_count", nonfinite_pixels as f64),
             ("below_zero_fraction", below as f64 / (n * 3) as f64),
             ("above_one_fraction", above as f64 / (n * 3) as f64),
         ] {

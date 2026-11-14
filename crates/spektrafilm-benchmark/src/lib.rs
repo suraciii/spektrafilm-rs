@@ -1,3 +1,4 @@
+pub mod analysis;
 pub(crate) mod color_readouts;
 pub mod common;
 pub mod compare;
@@ -5,15 +6,20 @@ pub mod documents;
 pub mod fixtures;
 pub mod icc;
 pub mod image_data;
+pub mod images;
 pub mod inspect;
 pub mod local_input;
 pub mod metrics;
 pub mod photo_report;
+pub mod plan;
+pub mod readings;
+pub mod readings_compare;
 pub mod references;
 pub mod regions;
 pub mod report;
 pub mod review;
 pub mod runner;
+pub mod sample;
 pub(crate) mod stage_readouts;
 pub mod target;
 

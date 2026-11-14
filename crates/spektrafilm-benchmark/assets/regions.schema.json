@@ -32,7 +32,7 @@
           "measurements": {
             "type": "array",
             "items": {
-              "enum": ["numeric", "color", "tone", "flip", "grain", "halation", "edge"]
+              "enum": ["numeric", "color", "tone", "flip", "grain", "halation", "edge", "color_noise", "neutrality"]
             },
             "minItems": 0,
             "uniqueItems": true

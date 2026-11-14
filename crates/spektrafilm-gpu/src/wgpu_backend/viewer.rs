@@ -1302,6 +1302,13 @@ mod tests {
                 assert_area_pixels(&retained_area_pixels(&gpu, &result), &expected);
             }
         }
+        // `nearest` picks the source pixel at `floor(coord + 0.5)`, so the
+        // fixture must not place a sample exactly on a pixel boundary: there
+        // the answer is decided by the last bit of the device's f32
+        // arithmetic and cannot be pinned across devices. The image rectangle
+        // stays fractional, and the rounded pixel is unambiguous.
+        let image_min = p.image_min;
+        p.image_min = [0.1, 0.1];
         p.interpolation = 0;
         let nearest = [[1.0, 1.0, 0.25]; 2];
         assert_area_pixels(
@@ -1310,6 +1317,7 @@ mod tests {
         );
         let result = gpu.viewer_full_gpu_with_limit(&source, &p, 96).unwrap();
         assert_area_pixels(&retained_area_pixels(&gpu, &result), &nearest);
+        p.image_min = image_min;
 
         p.interpolation = 1;
         p.transform = true;
@@ -1326,14 +1334,21 @@ mod tests {
         p.tex_height = 2;
         p.rect_min = [-1.0, -0.5];
         p.rect_size = [6.0, 3.0];
-        p.image_min = [0.0, 0.0];
+        // The image rectangle is half-open, so a texel whose centre lands
+        // exactly on its edge is decided by the last bit of the device's f32
+        // comparison and cannot be pinned across devices. The rectangle is
+        // therefore off the texel centres here: strictly outside is
+        // transparent, strictly inside is the clamped box average over the
+        // source with the edge pixel held. Each texel covers 2x1.5 source
+        // pixels, so the centres are 0.05 clear of both edges.
+        p.image_min = [-0.05, 0.0];
         p.image_size = [4.0, 2.0];
         p.source_footprint = [2.0, 1.5];
         let boundary = [
-            [0.0, 0.0, 0.25],
+            [0.025, 0.0, 0.25],
             [0.5, 0.0, 0.25],
             [0.0; 3],
-            [0.0, 1.0, 0.25],
+            [0.025, 1.0, 0.25],
             [0.5, 1.0, 0.25],
             [0.0; 3],
         ];
@@ -1349,6 +1364,7 @@ mod tests {
         p.tex_height = 4;
         p.rect_min = [0.0, 0.0];
         p.rect_size = [4.0, 2.0];
+        p.image_min = [0.0, 0.0];
         p.source_footprint = [0.5, 0.5];
         for (mode, pixel) in [(0, [0.0, 0.0, 0.25]), (1, [0.25, 0.25, 0.25])] {
             p.interpolation = mode;

@@ -12,7 +12,7 @@ The benchmark MUST NOT change film simulation algorithms, add measurement famili
 
 ## Installation and distribution
 
-The release MUST include `spektrafilm-lab` and its `fixtures` command. The `fixtures` command MUST retain its current options and source attribution behavior, and it MUST answer the [standard configuration generation](../../instrument/spec.md#standard-configuration-generation) contract by invoking the selected renderer's preset export command. The instrument and its fixture generation MUST run without Python, uv, pip, or Python packages.
+The release MUST include `spektrafilm-lab` and `spektrafilm-f64`, and the `fixtures` command of `spektrafilm-f64`. The `fixtures` command MUST retain its current options and source attribution behavior, and it MUST answer the [standard configuration generation](../../instrument/spec.md#standard-configuration-generation) contract by invoking the selected renderer's preset export command. Both binaries and the fixture generation MUST run without Python, uv, pip, or Python packages.
 
 The release ships the instrument's supported commands as the surface a release user gets. An experimental command ships with the binary and carries no compatibility promise.
 

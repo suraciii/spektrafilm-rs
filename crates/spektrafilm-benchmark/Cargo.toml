@@ -24,6 +24,8 @@ png = "0.18"
 ureq = "3"
 jsonschema = { version = "0.33", default-features = false }
 libloading = "0.8"
+anyhow.workspace = true
+exr = "1.73"
 
 [build-dependencies]
 cc = "1"

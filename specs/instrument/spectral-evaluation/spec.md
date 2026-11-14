@@ -1,6 +1,6 @@
 # Spectral evaluation
 
-`spektrafilm-lab spectral evaluate` reports the roundtrip error of the product path on measured spectra. It computes values and writes evidence. It MUST NOT fit parameters, render images, or judge a profile.
+`spektrafilm-f64 spectral evaluate` reports the roundtrip error of the product path on measured spectra. It computes values and writes evidence. It MUST NOT fit parameters, render images, or judge a profile.
 
 It is an experimental command: it carries no compatibility promise.
 

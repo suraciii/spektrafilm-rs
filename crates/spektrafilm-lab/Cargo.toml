@@ -1,0 +1,31 @@
+[package]
+name = "spektrafilm-lab"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "SpektraFilm measurement instrument: analysis, comparison, reporting"
+
+[features]
+default = []
+precision-f64 = ["spektrafilm-math/precision-f64"]
+
+[[bin]]
+name = "spektrafilm-lab"
+path = "src/main.rs"
+required-features = ["precision-f64"]
+
+[dependencies]
+spektrafilm-benchmark.workspace = true
+spektrafilm-math.workspace = true
+serde_json.workspace = true
+sha2 = "0.10"
+serde.workspace = true
+anyhow.workspace = true
+clap.workspace = true
+
+[dev-dependencies]
+image = { version = "0.25", default-features = false, features = ["png"] }
+tempfile = "3"
+
+[lints]
+workspace = true

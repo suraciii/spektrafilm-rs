@@ -32,11 +32,13 @@ cargo build --release -p spektrafilm-gui
 # f32 CLI — fast batch processor, defaults to WGPU
 cargo build --release -p spektrafilm-cli
 
-# f64 reference CLI — GPU image storage and execution precision are reported separately
+# f64 reference CLI — GPU image storage and execution precision are reported
+# separately; its experimental research commands execute a declaration and
+# retain evidence
 cargo build --release --features precision-f64 -p spektrafilm-cli --bin spektrafilm-f64
 
-# instrument CLI — the research command surface at f64 reference precision
-cargo build --release --features precision-f64 -p spektrafilm-cli --bin spektrafilm-lab
+# lab instrument — measures delivered images at f64 reference precision, links no renderer
+cargo build --release --features precision-f64 -p spektrafilm-lab
 
 # Optional RAW decoding helper using the shared native decoder
 cargo build --release -p spektrafilm-cli --bin decode_raw_gui
@@ -49,8 +51,8 @@ This produces:
 
 - `target/release/spektrafilm-gui` — desktop GUI.
 - `target/release/spektrafilm` — fast f32 CLI.
-- `target/release/spektrafilm-f64` — f64 reference exporter; explicit GPU selection retains the device execution contract.
-- `target/release/spektrafilm-lab` — the instrument command surface (f64 reference precision; shipped in packages).
+- `target/release/spektrafilm-f64` — f64 reference exporter; explicit GPU selection retains the device execution contract. Its experimental research commands execute a declaration and publish retained evidence.
+- `target/release/spektrafilm-lab` — the measurement instrument: analysis, comparison, and reporting (f64 reference precision; links no renderer; shipped in packages).
 - `target/release/decode_raw_gui` — standalone RAW decoding helper.
 - `target/release/spektrafilm-bench` — benchmark-owned offline visual reports, for example `report photos`.
 

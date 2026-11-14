@@ -36,6 +36,9 @@ pub enum ArtifactRole {
 #[derive(Serialize)]
 struct Measurement {
     case_id: Option<String>,
+    /// A rendered run measures a seed population. A delivered image is one
+    /// realisation and has none, so the field is absent rather than empty.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     seed_population: Vec<Value>,
     #[serde(flatten)]
     shared: common::Measurement,
@@ -64,9 +67,18 @@ struct Finding {
     message: String,
     evidence: Vec<String>,
 }
+/// How many sources one invocation measures. A comparison has two and states
+/// a difference; an analysis has one and states only the measured side.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Sides {
+    One,
+    Two,
+}
+
 pub struct Evidence {
     out: PathBuf,
     case_id: Option<String>,
+    pub sides: Sides,
     seeds: Vec<Value>,
     body: EvidenceBuilder<Measurement, Finding, Artifact>,
     pub extra: BTreeMap<String, Value>,
@@ -75,6 +87,7 @@ impl Evidence {
     pub fn new(protocol: &Value, out: &Path) -> Self {
         Self {
             out: out.into(),
+            sides: Sides::Two,
             case_id: protocol
                 .get("case_id")
                 .and_then(Value::as_str)

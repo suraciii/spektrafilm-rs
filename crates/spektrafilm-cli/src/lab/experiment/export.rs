@@ -6,9 +6,9 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result, anyhow, bail};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
+use spektrafilm_benchmark::readings::write_named;
 
 use super::super::cli::ExperimentExportArgs;
-use super::super::report;
 use super::{BUNDLE_SCHEMA_VERSION, absolute};
 
 /// Convert one bundle's buffers into `.npy` arrays.
@@ -80,7 +80,7 @@ pub(super) fn run(args: &ExperimentExportArgs) -> Result<()> {
             })).collect::<Vec<_>>(),
         }))?
     );
-    report::write_named(
+    write_named(
         &out,
         &[("export.json", export_text.as_str())],
         "refusing to replace an existing array report",

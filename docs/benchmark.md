@@ -1,12 +1,13 @@
 # Appearance benchmark
 
-The `spektrafilm-lab` instrument renders immutable evidence, compares versions, and creates an offline review. It reports color, tone, official LDR-FLIP, grain, halation, edge response, and numerical health by case and region. It preserves floating masters, full-resolution maps, curves, spectra, and per-seed observations.
+`spektrafilm-f64` renders immutable evidence and `spektrafilm-lab` compares it and creates the offline review. The lab reports color, tone, official LDR-FLIP, grain, halation, edge response, and numerical health by case and region. The renderer preserves floating masters, full-resolution maps, curves, spectra, and per-seed observations.
 
-- Compare versions: generate one bundle, run baseline and candidate targets, then use `compare`, `inspect`, and `report comparison --comparison DIRECTORY --out DIRECTORY`.
-- Generate measurement geometry independently: use `spektrafilm-lab regions grid --id ID --rows N --columns N --origin X,Y --patch-size WIDTHxHEIGHT --gap X,Y --out REGIONS.json`. It does not read images or create a visual report.
+- Compare versions: generate one bundle, run baseline and candidate targets, then use `spektrafilm-bench compare runs`, `spektrafilm-bench inspect`, and `spektrafilm-bench report comparison --comparison DIRECTORY --out DIRECTORY`.
+- Compare delivered images: use `spektrafilm-lab compare --baseline FILE_OR_DIR --candidate FILE_OR_DIR --declaration SPACE:encoded|decoded --out DIRECTORY [--roi name=x,y,w,h]... [--analysis lab-appearance-v1] [--report]` when two renderer builds already wrote the rasters. No suite, target, or renderer is involved.
+- Generate measurement geometry independently: use `spektrafilm-lab regions grid --id ID --rows N --columns N --origin X,Y --patch-size WIDTHxHEIGHT --gap X,Y --space render --out REGIONS.json`. It does not read images or create a visual report, and it does not decide the coordinate space: a lab endpoint reads only `render` geometry, and a generator that guessed another space would produce a declaration the caller never made.
 - Prepared-image visual review, if used, is benchmark-owned. It is not registered as an instrument document and is not accepted by lab `sample`, `compare`, `inspect`, or `report comparison`.
 - Review a small set of photos visually: build one offline page with `spektrafilm-bench report photos --manifest FILE --out DIRECTORY`. It shows no measurements, no scores, and no baseline, candidate, or reference judgment. See [Review a small set of photos](#review-a-small-set-of-photos).
-- Check a new configuration: use `run --dry-run` before rendering. Read its grouped errors and retained renderer logs before changing the configuration.
+- Check a new configuration: use `spektrafilm-f64 run suite --dry-run` before rendering. Read its grouped errors and retained renderer logs before changing the configuration.
 
 The agent prepares the evidence and reads the measurements. The reviewer opens `index.html` to inspect full images and native crops. Baseline selection and calibrated policy budgets remain explicit decisions.
 
@@ -14,8 +15,47 @@ The agent prepares the evidence and reads the measurements. The reviewer opens `
 ./target/release/spektrafilm-lab regions grid \
     --id chart-regions --rows 6 --columns 4 \
     --origin 0,0 --patch-size 8x8 --gap 2,2 \
+    --space render \
     --out /tmp/spektrafilm-benchmark-regions.json
 ```
+
+## Quantify one delivered image set
+
+```bash
+./target/release/spektrafilm-lab analyze \
+    --source render/ \
+    --declaration sRGB:encoded \
+    --regions /tmp/spektrafilm-benchmark-regions.json \
+    --out /tmp/spektrafilm-analysis
+```
+
+One source is one measurement: the record's rows name no side, and a family that
+measures a difference between two sources is recorded as unavailable with
+`requires_second_source` instead of being computed against the source itself.
+
+## Compare two delivered image sets
+
+The instrument's product case needs no suite, target, or renderer. Two builds
+write their rasters anywhere, and one invocation quantifies the difference.
+
+```bash
+./target/release/spektrafilm-lab compare \
+    --baseline baseline/ --candidate candidate/ \
+    --declaration sRGB:encoded \
+    --regions /tmp/spektrafilm-benchmark-regions.json \
+    --report \
+    --out /tmp/spektrafilm-image-comparison
+```
+
+`--declaration` states the color space and transfer state of both sides, and
+the two sides must declare the same one. Without `--regions` or `--roi` the
+whole image is the only population. `--analysis` selects a built-in profile and
+`--protocol` an authored protocol document; they are mutually exclusive.
+
+The result is `comparison.json` beside `protocol.json`, `regions.json`, the
+per-case evidence, and — with `--report` — one offline page. The record names
+the digest of every file it read, so a third party recomputes the same
+identity without the originals.
 
 ## Generate and compare suite evidence
 
@@ -27,33 +67,34 @@ The generated grain probe selects `procedural` in custom Noise mode with three e
 
 ```bash
 just build-f64
+just build-experiment
 just build-lab
-./target/release/spektrafilm-lab fixtures \
+./target/release/spektrafilm-f64 fixtures \
     --renderer ./target/release/spektrafilm-f64 --data-dir ./data \
     --out /tmp/spektrafilm-benchmark-fixtures --download-natural
 
 ./target/release/spektrafilm-lab validate --kind suite \
     --file /tmp/spektrafilm-benchmark-fixtures/complete.json
-./target/release/spektrafilm-lab run suite \
+./target/release/spektrafilm-f64 run suite \
     --suite /tmp/spektrafilm-benchmark-fixtures/complete.json \
     --target /tmp/spektrafilm-benchmark-fixtures/baseline.json \
     --dry-run --out /tmp/spektrafilm-benchmark-preflight
-./target/release/spektrafilm-lab run suite \
+./target/release/spektrafilm-f64 run suite \
     --suite /tmp/spektrafilm-benchmark-fixtures/complete.json \
     --target /tmp/spektrafilm-benchmark-fixtures/baseline.json \
     --out /tmp/spektrafilm-benchmark-baseline
-./target/release/spektrafilm-lab run suite \
+./target/release/spektrafilm-f64 run suite \
     --suite /tmp/spektrafilm-benchmark-fixtures/complete.json \
     --target /tmp/spektrafilm-benchmark-fixtures/candidate.json \
     --out /tmp/spektrafilm-benchmark-candidate
-./target/release/spektrafilm-lab compare runs \
+./target/release/spektrafilm-bench compare runs \
     --baseline /tmp/spektrafilm-benchmark-baseline \
     --candidate /tmp/spektrafilm-benchmark-candidate \
     --out /tmp/spektrafilm-benchmark-comparison
-./target/release/spektrafilm-lab inspect \
+./target/release/spektrafilm-bench inspect \
     --comparison /tmp/spektrafilm-benchmark-comparison \
     --case color_chart --region skin --metric delta_e00.p95
-./target/release/spektrafilm-lab report comparison \
+./target/release/spektrafilm-bench report comparison \
     --comparison /tmp/spektrafilm-benchmark-comparison \
     --out /tmp/spektrafilm-benchmark-review
 just benchmark-test
@@ -72,21 +113,21 @@ cat > /tmp/spektrafilm-local-configuration.json <<'JSON'
   "set": ["camera.auto_exposure=false"]
 }
 JSON
-./target/release/spektrafilm-lab target \
+./target/release/spektrafilm-f64 target \
     --renderer ./target/release/spektrafilm-f64 --data-dir ./data \
     --backend cpu --out /tmp/spektrafilm-local-target.json
 ./target/release/spektrafilm-lab validate --kind configuration \
     --file /tmp/spektrafilm-local-configuration.json
-./target/release/spektrafilm-lab run image \
+./target/release/spektrafilm-f64 run image \
     --input /tmp/spektrafilm-benchmark-fixtures/chart.png \
     --input-color-space sRGB --input-cctf-decoding true \
     --configuration /tmp/spektrafilm-local-configuration.json \
     --target /tmp/spektrafilm-local-target.json \
     --out /tmp/spektrafilm-local-run
-./target/release/spektrafilm-lab compare pairs \
+./target/release/spektrafilm-bench compare pairs \
     --run /tmp/spektrafilm-local-run --against input \
     --out /tmp/spektrafilm-local-comparison
-./target/release/spektrafilm-lab report comparison \
+./target/release/spektrafilm-bench report comparison \
     --comparison /tmp/spektrafilm-local-comparison \
     --out /tmp/spektrafilm-local-review
 ```
@@ -101,7 +142,7 @@ The exported look is a preset document of the renderer that generated it. A cand
 just build-f64
 just build-lab
 : "${CANDIDATE_RENDERER:?Set CANDIDATE_RENDERER to the candidate renderer executable}"
-./target/release/spektrafilm-lab fixtures \
+./target/release/spektrafilm-f64 fixtures \
     --renderer ./target/release/spektrafilm-f64 --data-dir ./data \
     --out /tmp/spektrafilm-standard-bundle
 
@@ -109,18 +150,18 @@ just build-lab
     --file /tmp/spektrafilm-standard-bundle/color-tone.json
 ./target/release/spektrafilm-lab validate --kind configuration \
     --file /tmp/spektrafilm-standard-bundle/appearance.json
-./target/release/spektrafilm-lab target \
+./target/release/spektrafilm-f64 target \
     --renderer ./target/release/spektrafilm-f64 --data-dir ./data \
     --backend cpu --out /tmp/spektrafilm-standard-baseline-target.json
 
 LOCAL_IMAGE=/tmp/spektrafilm-standard-bundle/chart.png
-./target/release/spektrafilm-lab run image \
+./target/release/spektrafilm-f64 run image \
     --input "$LOCAL_IMAGE" \
     --input-color-space sRGB --input-cctf-decoding true \
     --configuration /tmp/spektrafilm-standard-bundle/color-tone.json \
     --target /tmp/spektrafilm-standard-baseline-target.json \
     --seed 0 --out /tmp/spektrafilm-standard-color-tone
-./target/release/spektrafilm-lab run image \
+./target/release/spektrafilm-f64 run image \
     --input "$LOCAL_IMAGE" \
     --input-color-space sRGB --input-cctf-decoding true \
     --configuration /tmp/spektrafilm-standard-bundle/appearance.json \
@@ -128,23 +169,23 @@ LOCAL_IMAGE=/tmp/spektrafilm-standard-bundle/chart.png
     --seed 0 --seed 42 --seed 99 \
     --out /tmp/spektrafilm-standard-appearance-baseline
 
-./target/release/spektrafilm-lab target \
+./target/release/spektrafilm-f64 target \
     --renderer "$CANDIDATE_RENDERER" --data-dir ./data \
     --backend cpu --out /tmp/spektrafilm-standard-candidate-target.json
-./target/release/spektrafilm-lab run image \
+./target/release/spektrafilm-f64 run image \
     --input "$LOCAL_IMAGE" \
     --input-color-space sRGB --input-cctf-decoding true \
     --configuration /tmp/spektrafilm-standard-bundle/appearance.json \
     --target /tmp/spektrafilm-standard-candidate-target.json \
     --seed 0 --seed 42 --seed 99 \
     --out /tmp/spektrafilm-standard-appearance-candidate
-./target/release/spektrafilm-lab compare runs \
+./target/release/spektrafilm-bench compare runs \
     --baseline /tmp/spektrafilm-standard-appearance-baseline \
     --candidate /tmp/spektrafilm-standard-appearance-candidate \
     --out /tmp/spektrafilm-standard-comparison
-./target/release/spektrafilm-lab inspect \
+./target/release/spektrafilm-bench inspect \
     --comparison /tmp/spektrafilm-standard-comparison --case image
-./target/release/spektrafilm-lab report comparison \
+./target/release/spektrafilm-bench report comparison \
     --comparison /tmp/spektrafilm-standard-comparison \
     --out /tmp/spektrafilm-standard-review
 ```
@@ -173,8 +214,8 @@ The [native observation contract](../specs/instrument/native-observations.md) se
 Dedicated [`experiment run`](../specs/instrument/experiment/spec.md) and [`measure run`](measurement.md#measure-run) retain native observations by attaching the common core observer to their actual CPU f64 execution, not by passing capture flags to `process`. Their replay records identify the owning instrument invocation, dependencies, seed, and observer configuration, never fabricated process argv. Experimental export uses positional bundle input:
 
 ```bash
-spektrafilm-lab experiment run --experiment experiment.json --out research-run
-spektrafilm-lab experiment export research-run/bundle --out research-arrays
+spektrafilm-f64 experiment run --experiment experiment.json --out research-run
+spektrafilm-f64 experiment export research-run/bundle --out research-arrays
 ```
 
 An experiment document declares input identity, parameter sources, and matching case/grid. Its shared process handler attaches a private instrument observer to the same render that supplies the image. `command.json` records the owning experiment invocation, executable and declaration hashes, seed, and native observer configuration; it is not a process command with a retired capture flag. A bundle contains the native buffers actually produced by that execution, with geometry, domain, channel axis, precision, hashes, and explicit skipped-stage reasons. The scientific wire filename remains `stage-evidence.json`. Experiment observation requires the complete film-and-print scan route; measurement may deliberately observe narrower ranges. GPU and preview requests fail rather than changing execution or metering semantics. Human Boolean `--debug` does not capture arrays. A `.sfstage` film/print artifact is a resumable state, not an observation bundle.
@@ -195,7 +236,7 @@ Use `--input-kind raw` for camera RAW and omit the raster color flags. Set dedic
 
 ## Retain a local reference
 
-Add `--reference FILE --reference-info FILE` to retain a local reference. Reference info uses the existing reference declaration without `path` and `sha256`; it must declare color, provenance, processing, and scope. Then select `spektrafilm-lab compare pairs --run DIRECTORY --against reference` or `--against both`. Input/simulation reports describe processing changes; reference/simulation reports describe applicable distances to the reference. Visual and regional references remain separate native views, with explicit limits on pixelwise measurements. Both-pair reports open reference/simulation and provide a selector for input/simulation. No single-run comparison claims acceptance.
+Add `--reference FILE --reference-info FILE` to retain a local reference. Reference info uses the existing reference declaration without `path` and `sha256`; it must declare color, provenance, processing, and scope. Then select `spektrafilm-bench compare pairs --run DIRECTORY --against reference` or `--against both`. Input/simulation reports describe processing changes; reference/simulation reports describe applicable distances to the reference. Visual and regional references remain separate native views, with explicit limits on pixelwise measurements. Both-pair reports open reference/simulation and provide a selector for input/simulation. No single-run comparison claims acceptance.
 
 ## Preserve evidence integrity
 

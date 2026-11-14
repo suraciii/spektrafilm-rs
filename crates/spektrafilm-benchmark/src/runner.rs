@@ -29,15 +29,10 @@ pub fn finalize(root: &Path, name: &str, value: &mut Value) -> Result<()> {
         .ok_or_else(|| Error::new("document_type", "Manifest must be an object"))?
         .remove("id");
     value["id"] = json!(common::digest(value)?);
-    documents::validate_generated_document(
-        if name == "run.json" {
-            "run"
-        } else {
-            "comparison"
-        },
-        value,
-        root,
-    )?;
+    // The record names its own kind, so the published file and the validated
+    // kind cannot drift apart.
+    let kind = value["kind"].as_str().unwrap_or("comparison").to_owned();
+    documents::validate_generated_document(&kind, value, root)?;
     let temp = root.join(format!("{name}.tmp"));
     common::dump(&temp, value)?;
     fs::rename(temp, root.join(name))?;

@@ -2,7 +2,7 @@
 
 ## Authority
 
-This document owns the product behavior for the benchmark's simple offline photo review page. It is separate from the measured comparison report defined by [the instrument machine interface](../../instrument/spec.md) and from the `spektrafilm-lab` instrument interface.
+This document owns the product behavior for the benchmark's simple offline photo review page. It is separate from the measured comparison report defined by [the research machine interface](../../instrument/spec.md) and from the [lab product contract](../../lab/spec.md).
 
 The implementation target is a benchmark-owned command with this form:
 
@@ -10,7 +10,7 @@ The implementation target is a benchmark-owned command with this form:
 spektrafilm-bench report photos --manifest FILE --out DIRECTORY
 ```
 
-The command name is a product boundary. It MUST NOT be registered as a `spektrafilm-lab` endpoint. The benchmark MAY provide the executable entry point in the implementation work that follows.
+The command name is a product boundary. It MUST NOT be registered as a `spektrafilm-lab` or `spektrafilm-f64` endpoint. The benchmark MAY provide the executable entry point in the implementation work that follows.
 
 ## Purpose
 

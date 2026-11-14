@@ -41,7 +41,7 @@ fn raw_image(root: &Path, row: &Value) -> Result<ImageData> {
     );
     image_data::load_image(&declaration)
 }
-fn review_image(
+pub(crate) fn review_image(
     image: &ImageData,
     destination: &Path,
     evidence: &mut Evidence,
@@ -70,7 +70,7 @@ fn review_image(
     evidence.add(destination,role,"image/png",json!({"width":image.width,"height":image.height,"dimensions":image.dimensions(),"source_dimensions":image.dimensions(),"bit_depth":16,"resampling":"none","quantization":"16-bit rounded; no dither","color":{"color_space":"sRGB","transfer":"srgb"},"fit_preview":fit_record["path"],"case_id":case_id,"seed":seed}))
 }
 // All generated readouts refer to immutable artifacts inside the comparison.
-fn relative_paths(value: &mut Value, root: &Path) {
+pub(crate) fn relative_paths(value: &mut Value, root: &Path) {
     match value {
         Value::Object(map) => {
             if let Some(path) = map
@@ -145,7 +145,7 @@ fn retain_color_readouts(
     readouts
 }
 
-fn retain_metrics(
+pub(crate) fn retain_metrics(
     mut measured: Value,
     folder: &Path,
     evidence: &mut Evidence,
@@ -704,7 +704,7 @@ fn publish_failed_render(
 
 /// Rewrites each finding identity with the owning scope and defaults a missing
 /// evidence reference to the published measurement artifact.
-fn publish_measurement_findings(
+pub(crate) fn publish_measurement_findings(
     rows: &mut [Value],
     scope: &[Value],
     measurement_path: &Value,
@@ -965,6 +965,7 @@ fn compare_impl(
                 array(&case, "regions")?,
                 &protocol,
                 &folder,
+                1,
             )?,
             &folder,
             &mut evidence,
@@ -1142,7 +1143,7 @@ fn compare_impl(
         .filter(|c| c["status"] == "completed")
         .filter_map(|c| c["case_id"].as_str())
         .collect();
-    let mut manifest = json!({"schema_version":1,"kind":"comparison","execution_status":if completed{"completed"}else{"failed"},"evaluation_status":evaluation,"baseline":{"id":baseline["id"],"manifest_sha256":common::sha256_file(&left_root.join("run.json"))?},"candidate":{"id":candidate["id"],"manifest_sha256":common::sha256_file(&right_root.join("run.json"))?},"protocol":suite["protocol"],"protocol_digest":documents::protocol_digest(&suite)?,"selection":baseline["selection"],"condition_differences":differences,"cases":cases,"seed_measurements":seed_measurements,"findings":findings,"rules":rules,"artifacts":evidence.values(),"summary":{"selected_cases":baseline["selection"]["case_ids"].as_array().map_or(0,Vec::len),"completed_cases":completed_cases.len(),"completed_results":cases.iter().filter(|c|c["status"]=="completed").count(),"failed_results":cases.iter().filter(|c|c["status"]!="completed").count(),"required_rules":rules.iter().filter(|r|r["required"]==true).count(),"unavailable_rules":rules.iter().filter(|r|r["status"]=="unavailable").count(),"protected_failures":rules.iter().filter(|r|r["status"]=="failed").collect::<Vec<_>>()}});
+    let mut manifest = json!({"schema_version":1,"kind":"comparison","binary":"spektrafilm-bench","execution_status":if completed{"completed"}else{"failed"},"evaluation_status":evaluation,"baseline":{"id":baseline["id"],"manifest_sha256":common::sha256_file(&left_root.join("run.json"))?},"candidate":{"id":candidate["id"],"manifest_sha256":common::sha256_file(&right_root.join("run.json"))?},"protocol":suite["protocol"],"protocol_digest":documents::protocol_digest(&suite)?,"selection":baseline["selection"],"condition_differences":differences,"cases":cases,"seed_measurements":seed_measurements,"findings":findings,"rules":rules,"artifacts":evidence.values(),"summary":{"selected_cases":baseline["selection"]["case_ids"].as_array().map_or(0,Vec::len),"completed_cases":completed_cases.len(),"completed_results":cases.iter().filter(|c|c["status"]=="completed").count(),"failed_results":cases.iter().filter(|c|c["status"]!="completed").count(),"required_rules":rules.iter().filter(|r|r["required"]==true).count(),"unavailable_rules":rules.iter().filter(|r|r["status"]=="unavailable").count(),"protected_failures":rules.iter().filter(|r|r["status"]=="failed").collect::<Vec<_>>()}});
     if let Some(policy) = policy {
         let policy_path =
             policy_path.ok_or_else(|| Error::new("missing_policy", "Missing policy file"))?;
@@ -1396,6 +1397,7 @@ fn compare_single_impl(run_path: &Path, against: &str, out: &Path) -> Result<(Va
                             array(&case, "regions")?,
                             &protocol,
                             &pair_folder,
+                            1,
                         )?,
                         &pair_folder,
                         &mut evidence,
@@ -1569,7 +1571,7 @@ fn compare_single_impl(run_path: &Path, against: &str, out: &Path) -> Result<(Va
         .filter(|case| case["status"] == "completed")
         .filter_map(|case| case["case_id"].as_str())
         .collect();
-    let mut manifest = json!({"schema_version":1,"kind":"comparison","mode":"single_run","run":{"id":run["id"],"manifest_sha256":common::sha256_file(&run_root.join("run.json"))?},"default_pair":if pair_ids.contains(&"reference") {"reference"} else {"input"},"execution_status":if completed {"completed"} else {"failed"},"evaluation_status":"not_evaluated","protocol":suite["protocol"],"protocol_digest":documents::protocol_digest(&suite)?,"selection":run["selection"],"condition_differences":[],"cases":cases,"findings":findings,"summary":{"selected_cases":run["selection"]["case_ids"].as_array().map_or(0,Vec::len),"completed_cases":completed_cases.len(),"required_rules":0,"unavailable_rules":0,"protected_failures":0,"worst_case_findings":[]},"artifacts":evidence.values()});
+    let mut manifest = json!({"schema_version":1,"kind":"comparison","binary":"spektrafilm-bench","mode":"single_run","run":{"id":run["id"],"manifest_sha256":common::sha256_file(&run_root.join("run.json"))?},"default_pair":if pair_ids.contains(&"reference") {"reference"} else {"input"},"execution_status":if completed {"completed"} else {"failed"},"evaluation_status":"not_evaluated","protocol":suite["protocol"],"protocol_digest":documents::protocol_digest(&suite)?,"selection":run["selection"],"condition_differences":[],"cases":cases,"findings":findings,"summary":{"selected_cases":run["selection"]["case_ids"].as_array().map_or(0,Vec::len),"completed_cases":completed_cases.len(),"required_rules":0,"unavailable_rules":0,"protected_failures":0,"worst_case_findings":[]},"artifacts":evidence.values()});
     finish_comparison(
         &root,
         "not_evaluated",

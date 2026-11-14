@@ -172,6 +172,12 @@
         "input",
         "reference"
       ]
+    },
+    "binary": {
+      "enum": [
+        "spektrafilm-lab",
+        "spektrafilm-bench"
+      ]
     }
   },
   "required": [
@@ -179,12 +185,10 @@
     "kind",
     "id",
     "execution_status",
-    "evaluation_status",
     "protocol",
     "selection",
     "condition_differences",
     "cases",
-    "findings",
     "summary",
     "artifacts"
   ],

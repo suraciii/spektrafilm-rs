@@ -8,21 +8,103 @@
 
 use std::path::{Path, PathBuf};
 
+use crate::image_data::{self, ImageData};
 use anyhow::{Context, Result, anyhow, bail};
 use serde_json::{Value, json};
-use spektrafilm_core::image_io;
 use spektrafilm_math::colorspace::{self, RgbColorSpace};
-use spektrafilm_math::image::ImageBuf;
 
-use super::super::cli::MeasureSampleArgs;
-use super::super::report;
-use super::plan::{self, Plan};
-use super::{StageReading, csv_field, number_field, read_stage_bundle, sha256_file, statistics};
+use clap::Args;
+
+use crate::plan::{self, Plan};
+use crate::readings::{
+    MeasureStage, StageReading, csv_field, number_field, read_stage_bundle, sha256_file,
+    statistics, write_measure_named,
+};
+
+#[derive(Args)]
+#[command(group(
+    clap::ArgGroup::new("sample_source").required(true).multiple(false)
+        .args(["source", "from_evidence", "from_run"])
+))]
+pub struct MeasureSampleArgs {
+    /// Raster image to read; requires the input declaration below.
+    #[arg(long, value_name = "PATH", help_heading = "Source")]
+    pub source: Option<PathBuf>,
+    /// Retained stage-capture bundle to read instead of an image.
+    #[arg(
+        long,
+        value_name = "DIR",
+        conflicts_with_all = ["source", "from_run"],
+        help_heading = "Source"
+    )]
+    pub from_evidence: Option<PathBuf>,
+    /// Retained image-domain run directory or RUN.JSON whose selected case owns the stage capture.
+    #[arg(
+        long,
+        value_name = "DIR|RUN.JSON",
+        conflicts_with_all = ["source", "from_evidence"],
+        help_heading = "Source"
+    )]
+    pub from_run: Option<PathBuf>,
+    /// Exact case identity in a retained image-domain run.
+    #[arg(
+        long,
+        value_name = "ID",
+        required_unless_present_any = ["source", "from_evidence"],
+        requires = "from_run",
+        help_heading = "Source"
+    )]
+    pub case: Option<String>,
+    #[arg(
+        long,
+        value_name = "UINT32",
+        required_unless_present_any = ["source", "from_evidence"],
+        requires = "from_run",
+        help_heading = "Source"
+    )]
+    pub seed: Option<u32>,
+    /// Stage to read from a retained source; its declaration governs the reading.
+    #[arg(
+        long,
+        value_enum,
+        value_name = "STAGE",
+        required_unless_present = "source",
+        conflicts_with = "source",
+        help_heading = "Source"
+    )]
+    pub stage: Option<MeasureStage>,
+    /// Source color space of the image, as `process` declares it.
+    #[arg(
+        long,
+        value_name = "NAME",
+        requires = "source",
+        required_unless_present_any = ["from_evidence", "from_run"],
+        help_heading = "Source"
+    )]
+    pub input_color_space: Option<String>,
+    /// Whether the image's stored values are transfer-encoded.
+    #[arg(
+        long,
+        value_name = "true|false",
+        value_parser = clap::value_parser!(bool),
+        requires = "source",
+        required_unless_present_any = ["from_evidence", "from_run"],
+        help_heading = "Source"
+    )]
+    pub input_cctf_decoding: Option<bool>,
+    /// Regions document: explicit windows with stable sample identities.
+    #[arg(long, value_name = "PATH", help_heading = "Measurement")]
+    pub regions: PathBuf,
+    /// Record destination directory; existing artifacts are never replaced.
+    #[arg(long, value_name = "DIR", help_heading = "Measurement")]
+    pub out: PathBuf,
+}
 
 /// The pixels a measurement reads, and the authority that declares them.
 enum Pixels {
-    /// A raster image loaded with the loader `process` uses.
-    Image(ImageBuf),
+    /// A raster image read by the lab reader: no sidecar, no ICC profile, no
+    /// orientation, and no normalization the caller did not declare.
+    Image(ImageData),
     /// One stage buffer read back from a published evidence bundle.
     Evidence(StageReading),
 }
@@ -30,7 +112,7 @@ enum Pixels {
 impl Pixels {
     fn dimensions(&self) -> [u32; 2] {
         match self {
-            Pixels::Image(image) => [image.width, image.height],
+            Pixels::Image(image) => [image.width as u32, image.height as u32],
             Pixels::Evidence(reading) => [reading.width, reading.height],
         }
     }
@@ -38,10 +120,7 @@ impl Pixels {
     /// One stored pixel, before the declared transfer decoding.
     fn pixel(&self, x: u32, y: u32) -> [f64; 3] {
         match self {
-            Pixels::Image(image) => {
-                let base = (y as usize * image.width as usize + x as usize) * 3;
-                [image.data[base], image.data[base + 1], image.data[base + 2]]
-            }
+            Pixels::Image(image) => image.samples[y as usize * image.width + x as usize],
             Pixels::Evidence(reading) => {
                 let base = (y as usize * reading.width as usize + x as usize) * 3;
                 [
@@ -129,11 +208,6 @@ impl Reading {
     }
 }
 
-pub fn sample(args: &MeasureSampleArgs) -> Result<()> {
-    sample_with_result(args).map(|_| ())
-}
-
-/// Read the declared samples and return the command result object.
 pub fn sample_with_result(args: &MeasureSampleArgs) -> Result<(Value, i32)> {
     let plan = plan::load(&args.regions).map_err(anyhow::Error::msg)?;
     let source = select_source(args)?;
@@ -176,14 +250,14 @@ fn image_source(args: &MeasureSampleArgs, path: &Path) -> Result<Source> {
     // An unknown declared space is an error naming it, never a pass-through.
     let space = colorspace::resolve(color_space)
         .map_err(|e| anyhow!("unsupported input color space {color_space:?}: {e}"))?;
-    let loaded =
-        image_io::load(path).map_err(|e| anyhow!("loading image {}: {e}", path.display()))?;
+    let loaded = image_data::decode_raster(path, color_space, cctf_decoding)
+        .map_err(|e| anyhow!("loading image {}: {e}", path.display()))?;
     let sha256 = sha256_file(path)?;
     Ok(Source {
         kind: "image",
         path: path.to_path_buf(),
         sha256,
-        pixels: Pixels::Image(loaded.image),
+        pixels: Pixels::Image(loaded),
         color_space: Some(color_space.to_owned()),
         space: Some(space),
         // The flag carries `process`'s own meaning: true declares that the
@@ -322,15 +396,14 @@ fn run_source(args: &MeasureSampleArgs, run: &Path) -> Result<Source> {
         let manifest_path = run_path.join("run.json");
         (run_path, manifest_path)
     };
-    let record = spektrafilm_benchmark::documents::load_json_document(&manifest_path)
+    let record = crate::documents::load_json_document(&manifest_path)
         .map_err(|error| anyhow!("reading retained run {}: {error}", manifest_path.display()))?;
-    spektrafilm_benchmark::documents::validate_generated_document("run", &record, &run_root)
-        .map_err(|error| {
-            anyhow!(
-                "validating retained run {}: {error}",
-                manifest_path.display()
-            )
-        })?;
+    crate::documents::validate_generated_document("run", &record, &run_root).map_err(|error| {
+        anyhow!(
+            "validating retained run {}: {error}",
+            manifest_path.display()
+        )
+    })?;
     let row = record
         .get("cases")
         .and_then(Value::as_array)
@@ -396,9 +469,8 @@ fn run_source(args: &MeasureSampleArgs, run: &Path) -> Result<Source> {
             manifest_rel
         );
     }
-    let bundle_manifest =
-        spektrafilm_benchmark::documents::safe_artifact_path(&run_root, manifest_rel)
-            .map_err(|error| anyhow!("retained stage manifest path: {error}"))?;
+    let bundle_manifest = crate::documents::safe_artifact_path(&run_root, manifest_rel)
+        .map_err(|error| anyhow!("retained stage manifest path: {error}"))?;
     if bundle_manifest.file_name().and_then(|name| name.to_str()) != Some("stage-evidence.json") {
         bail!(
             "retained stage manifest {} is not the bundle's stage-evidence.json",
@@ -408,7 +480,7 @@ fn run_source(args: &MeasureSampleArgs, run: &Path) -> Result<Source> {
     let bundle_dir = bundle_manifest
         .parent()
         .ok_or_else(|| anyhow!("retained stage manifest has no bundle directory"))?;
-    spektrafilm_benchmark::documents::validate_stage_bundle(bundle_dir)
+    crate::documents::validate_stage_bundle(bundle_dir)
         .map_err(|error| anyhow!("validating retained stage evidence: {error}"))?;
     let stage_id = stage.id().to_owned();
     let (mut readings, availability) =
@@ -686,7 +758,7 @@ fn write_report(
     });
     let measure_text = format!("{}\n", serde_json::to_string_pretty(&measure_json)?);
     let points_text = build_points_csv(plan, source, readings);
-    report::write_measure_named(
+    write_measure_named(
         &args.out,
         &[("run.json", measure_text), ("readings.csv", points_text)],
     )

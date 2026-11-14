@@ -115,7 +115,7 @@ impl Fixture {
     }
 
     fn run(&self, args: &[&str]) -> Output {
-        Command::new(env!("CARGO_BIN_EXE_spektrafilm-lab"))
+        Command::new(env!("CARGO_BIN_EXE_spektrafilm-f64"))
             .args(args)
             .env("RUST_LOG", "off")
             .env("SPEKTRAFILM_DATA_DIR", &self.data)
@@ -822,7 +822,7 @@ fn run_rejects_a_gpu_backend_before_rendering() {
     fixture.write_suite(CHART);
     let experiment = fixture.write_experiment(FULL_PATCH, 2, 2);
     let out = fixture.root.join("gpu");
-    let output = Command::new(env!("CARGO_BIN_EXE_spektrafilm-lab"))
+    let output = Command::new(env!("CARGO_BIN_EXE_spektrafilm-f64"))
         .args([
             "experiment",
             "run",

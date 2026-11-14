@@ -16,9 +16,9 @@ build-cli:
 build-f64:
     cargo build --locked --release -p spektrafilm-cli --bin spektrafilm-f64 --features precision-f64
 
-# Build the lab instrument binary. f64 reference precision; shipped in packages.
+# Build the lab instrument binary. f64 reference precision; links no renderer.
 build-lab:
-    cargo build --locked --release -p spektrafilm-cli --bin spektrafilm-lab --features precision-f64
+    cargo build --locked --release -p spektrafilm-lab --features precision-f64
 
 # Build the benchmark's offline visual-report binary. It owns the photo report
 # command and shares no endpoint with the instrument.

@@ -109,9 +109,9 @@ pub fn load(path: &Path) -> Result<Plan, String> {
         .map_err(|e| format!("reading regions document {}: {e}", path.display()))?;
     let value: serde_json::Value = serde_json::from_slice(&manifest_bytes)
         .map_err(|error| format!("parsing regions document {}: {error}", path.display()))?;
-    spektrafilm_benchmark::documents::validate_shape("regions", &value)
+    crate::documents::validate_shape("regions", &value)
         .map_err(|error| format!("validating regions document {}: {error}", path.display()))?;
-    spektrafilm_benchmark::documents::validate_local_dependencies("regions", &value, path)
+    crate::documents::validate_local_dependencies("regions", &value, path)
         .map_err(|error| format!("validating regions document {}: {error}", path.display()))?;
     let manifest: RawPlan = serde_json::from_value(value)
         .map_err(|error| format!("parsing regions document {}: {error}", path.display()))?;
@@ -156,10 +156,8 @@ pub fn load(path: &Path) -> Result<Plan, String> {
                 raw.id, raw.geometry.height
             ));
         }
-        if !spektrafilm_benchmark::documents::AUTHORING_COORDINATE_SPACES
-            .contains(&raw.geometry.space.as_str())
-            && !spektrafilm_benchmark::documents::NATIVE_COORDINATE_SPACES
-                .contains(&raw.geometry.space.as_str())
+        if !crate::documents::AUTHORING_COORDINATE_SPACES.contains(&raw.geometry.space.as_str())
+            && !crate::documents::NATIVE_COORDINATE_SPACES.contains(&raw.geometry.space.as_str())
         {
             return Err(format!(
                 "region {:?} declares unsupported coordinate space {:?}",

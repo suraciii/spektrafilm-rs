@@ -1,5 +1,5 @@
 use crate::color_readouts;
-use crate::common::{Result, err};
+use crate::common::{Error, Result, err};
 use crate::image_data::{self, ImageData};
 use serde_json::{Value, json};
 use std::{
@@ -12,13 +12,109 @@ mod families;
 mod mask;
 mod math;
 
-pub use evidence::{ArtifactRole, Evidence};
-pub use families::{Map, edge, grain, halation, health, numeric, summary, tone};
+pub use evidence::{ArtifactRole, Evidence, Sides};
+pub use families::{
+    Map, color_noise, edge, grain, halation, health, neutrality, numeric, summary, tone,
+};
 pub use mask::geometry_mask;
 pub use math::{count, luminance, mean, median, number, quantile, selected, spelling};
 
 pub const METRIC_VERSION: &str = "spektrafilm-appearance-spatial-v3";
 pub const COLOR_TRANSFORM: &str = "colour-science-CAT02-srgb-D65-2deg-v1";
+/// Reduce a retained map to one sample per `scale × scale` block.
+///
+/// The map is evidence for inspection. Its measurement population is the
+/// full-resolution values the families computed, so only the retained bytes
+/// are reduced.
+fn box_average(
+    values: &[f64],
+    width: usize,
+    height: usize,
+    scale: u32,
+) -> Result<(Vec<f64>, [usize; 2])> {
+    if values.len() != width * height {
+        return Err(err(
+            "computation_failure",
+            "Difference map does not match its declared shape",
+        ));
+    }
+    let scale = scale as usize;
+    if scale <= 1 {
+        return Ok((values.to_vec(), [height, width]));
+    }
+    let across = width.div_ceil(scale);
+    let down = height.div_ceil(scale);
+    let mut sums = vec![0.0_f64; across * down];
+    let mut counts = vec![0_u32; across * down];
+    for y in 0..height {
+        for x in 0..width {
+            let index = (y / scale) * across + x / scale;
+            sums[index] += values[y * width + x];
+            counts[index] += 1;
+        }
+    }
+    for (sum, count) in sums.iter_mut().zip(&counts) {
+        *sum /= f64::from(*count);
+    }
+    Ok((sums, [down, across]))
+}
+
+/// Retain one difference map under the declared map scale.
+fn difference_map(
+    e: &mut Evidence,
+    name: &str,
+    values: &[f64],
+    width: usize,
+    height: usize,
+    map_scale: u32,
+    metadata: Value,
+) -> Result<String> {
+    let (retained, shape) = box_average(values, width, height, map_scale)?;
+    let mut metadata = metadata;
+    metadata["retained_map"] = json!({
+        "map_scale": map_scale,
+        "dimensions": [shape[1], shape[0]],
+        "estimator": "box average of the full-resolution map",
+    });
+    e.artifact(
+        name,
+        &retained,
+        &shape,
+        ArtifactRole::DifferenceMap,
+        metadata,
+    )
+}
+
+/// One measurement that could not run: an unavailable row and one finding
+/// that names why. A missing probe or too few selected pixels is an
+/// unavailable measurement, not a failed comparison.
+fn unavailable(e: &mut Evidence, region: &str, family: &str, error: &Error, refs: &[String]) {
+    e.scalar(
+        region,
+        family,
+        None,
+        0,
+        "declared_measurement",
+        "unavailable",
+        "selected family execution",
+        &[],
+        Some(&error.code),
+    );
+    e.failure(
+        region,
+        family,
+        error,
+        refs,
+        ![
+            "missing_probe_geometry",
+            "insufficient_samples",
+            "zero_edge_contrast",
+            "incompatible_measurement_role",
+        ]
+        .contains(&error.code.as_str()),
+    );
+}
+
 fn populations(regions: &[Value], protocol: &Value) -> Vec<Value> {
     let mut result = vec![
         json!({"id":"full_image","measurements":protocol.get("measurements").cloned().unwrap_or(json!(["numeric","color","tone"]))}),
@@ -29,20 +125,35 @@ fn populations(regions: &[Value], protocol: &Value) -> Vec<Value> {
 fn compare_inner(
     e: &mut Evidence,
     a: &ImageData,
-    b: &ImageData,
+    b: Option<&ImageData>,
     populations: &[Value],
     protocol: &Value,
+    map_scale: u32,
 ) -> Result<()> {
-    e.extra.insert("numeric_health".into(),json!({"baseline":health(&a.samples,a.dimensions()),"candidate":health(&b.samples,b.dimensions())}));
-    if a.dimensions() != b.dimensions() {
+    let single = b.is_none();
+    let sources = [Some(a), b];
+    let sides: &[(&str, usize)] = if single {
+        &[("", 0)]
+    } else {
+        &[("baseline", 0), ("candidate", 1)]
+    };
+    let mut numeric_health = json!({"baseline":health(&a.samples,a.dimensions())});
+    if let Some(b) = b {
+        numeric_health["candidate"] = health(&b.samples, b.dimensions());
+    }
+    e.extra.insert("numeric_health".into(), numeric_health);
+    if let Some(b) = b
+        && a.dimensions() != b.dimensions()
+    {
         return Err(err(
             "dimension_mismatch",
             "Masters differ in dimensions; no resize performed",
         ));
     }
-    if a.samples
+    if sources
         .iter()
-        .chain(&b.samples)
+        .flatten()
+        .flat_map(|image| image.samples.iter())
         .any(|p| p.iter().any(|x| !x.is_finite()))
     {
         return Err(err(
@@ -51,7 +162,10 @@ fn compare_inner(
         ));
     }
     let (w, h) = (a.width, a.height);
-    let encoded = [image_data::display_rgb(a)?, image_data::display_rgb(b)?];
+    let mut encoded = Vec::with_capacity(sources.len());
+    for image in sources.iter().flatten() {
+        encoded.push(image_data::display_rgb(image)?);
+    }
     if encoded
         .iter()
         .flatten()
@@ -63,30 +177,39 @@ fn compare_inner(
         ));
     }
     let mut display_health = json!({});
-    for (side, image) in ["baseline", "candidate"].into_iter().zip(&encoded) {
+    for (side, image) in sides.iter().map(|(side, index)| (*side, &encoded[*index])) {
         let below = image.iter().flatten().filter(|x| **x < 0.0).count();
         let above = image.iter().flatten().filter(|x| **x > 1.0).count();
         let total = image.len() * 3;
         display_health[side] = json!({"below_zero_fraction":below as f64/total as f64,"above_one_fraction":above as f64/total as f64,"clipped_sample_fraction":(below+above) as f64/total as f64,"sample_count":total,"domain":"unclipped_encoded_srgb"});
     }
     e.extra.insert("display_health".into(), display_health);
-    let labs = std::array::from_fn::<_, 2, _>(|side| {
-        let mut lab = Vec::with_capacity(w * h);
-        for chunk in encoded[side].chunks(65536) {
-            let bounded: Vec<[f64; 3]> =
-                chunk.iter().map(|p| p.map(|x| x.clamp(0.0, 1.0))).collect();
-            lab.extend(image_data::rgb_to_lab(&bounded));
-        }
-        lab
-    });
+    let labs: Vec<Vec<[f64; 3]>> = encoded
+        .iter()
+        .map(|side| {
+            let mut lab = Vec::with_capacity(w * h);
+            for chunk in side.chunks(65536) {
+                let bounded: Vec<[f64; 3]> =
+                    chunk.iter().map(|p| p.map(|x| x.clamp(0.0, 1.0))).collect();
+                lab.extend(image_data::rgb_to_lab(&bounded));
+            }
+            lab
+        })
+        .collect();
+    // A difference map needs a second source. An analysis builds none, and the
+    // families that would read one record why they do not measure.
     let mut maps = Vec::new();
-    for (name, units, component) in [
-        ("delta_e00", "delta E 00", None),
-        ("delta_l_star", "L*", Some(0)),
-        ("delta_a_star", "a*", Some(1)),
-        ("delta_b_star", "b*", Some(2)),
-        ("delta_c_star", "C*", Some(3)),
-    ] {
+    for (name, units, component) in if b.is_none() {
+        Vec::new()
+    } else {
+        vec![
+            ("delta_e00", "delta E 00", None),
+            ("delta_l_star", "L*", Some(0)),
+            ("delta_a_star", "a*", Some(1)),
+            ("delta_b_star", "b*", Some(2)),
+            ("delta_c_star", "C*", Some(3)),
+        ]
+    } {
         let values: Vec<f64> = labs[0]
             .iter()
             .zip(&labs[1])
@@ -96,11 +219,13 @@ fn compare_inner(
                 Some(c) => b[c] - a[c],
             })
             .collect();
-        let artifact = e.artifact(
+        let artifact = difference_map(
+            e,
             name,
             &values,
-            &[h, w],
-            ArtifactRole::DifferenceMap,
+            w,
+            h,
+            map_scale,
             json!({"metric":name,"domain":"bounded_srgb_d65_lab","units":units,"dimensions":[w,h]}),
         )?;
         maps.push(Map {
@@ -110,6 +235,19 @@ fn compare_inner(
             artifact,
         });
     }
+    // A family whose meaning depends on the population's structure and which
+    // declares no probe of its own gets its applicability from the region
+    // role. A family that declares a probe states its own rule where the probe
+    // is read, and a family that measures a declared quantity is meaningful
+    // anywhere; none of those appear here.
+    fn role_of(population: &Value) -> &str {
+        population["role"].as_str().unwrap_or("other")
+    }
+    let applies = |family: &str, role: &str| match family {
+        "neutrality" => role == "neutral",
+        "color_noise" => matches!(role, "flat_field" | "texture"),
+        _ => true,
+    };
     let has_family = |family: &str| {
         populations.iter().any(|p| {
             p["measurements"]
@@ -117,10 +255,20 @@ fn compare_inner(
                 .is_some_and(|x| x.iter().any(|x| x.as_str() == Some(family)))
         })
     };
-    if has_family("flip") {
+    // FLIP is a difference between two sources; an analysis does not build it
+    // and the family records why it stayed unmeasured.
+    if has_family("flip") && b.is_some() {
         let ppd = number(protocol, "pixels_per_degree")?;
         let values = image_data::official_flip(&encoded[0], &encoded[1], w, h, ppd)?;
-        let artifact=e.artifact("flip",&values,&[h,w],ArtifactRole::DifferenceMap,json!({"metric":"flip","domain":"bounded_encoded_srgb","units":"FLIP error","pixels_per_degree":protocol["pixels_per_degree"],"implementation":"NVlabs flip-evaluator 1.7","output_size":[w,h]}))?;
+        let artifact = difference_map(
+            e,
+            "flip",
+            &values,
+            w,
+            h,
+            map_scale,
+            json!({"metric":"flip","domain":"bounded_encoded_srgb","units":"FLIP error","pixels_per_degree":protocol["pixels_per_degree"],"implementation":"NVlabs flip-evaluator 1.7","output_size":[w,h]}),
+        )?;
         maps.push(Map {
             name: "flip",
             units: "FLIP error",
@@ -129,16 +277,20 @@ fn compare_inner(
         });
         e.extra.insert("flip_parameters".into(), json!({"ppd":ppd}));
     }
-    let linear = if ["tone", "grain", "halation", "edge"]
+    let linear: Option<Vec<Vec<[f64; 3]>>> = if ["tone", "grain", "halation", "edge"]
         .iter()
         .any(|f| has_family(f))
     {
-        Some(std::array::from_fn::<_, 2, _>(|side| {
-            encoded[side]
+        Some(
+            encoded
                 .iter()
-                .map(|p| p.map(image_data::srgb_decode))
-                .collect::<Vec<_>>()
-        }))
+                .map(|side| {
+                    side.iter()
+                        .map(|p| p.map(image_data::srgb_decode))
+                        .collect::<Vec<_>>()
+                })
+                .collect(),
+        )
     } else {
         None
     };
@@ -172,9 +324,12 @@ fn compare_inner(
             } else {
                 population["geometry"].clone()
             };
-            if population["measurements"]
-                .as_array()
-                .is_some_and(|families| families.iter().any(|family| family == "color"))
+            // A color readout reports a displacement between two sources, so
+            // an analysis retains none.
+            if !single
+                && population["measurements"]
+                    .as_array()
+                    .is_some_and(|families| families.iter().any(|family| family == "color"))
             {
                 if region != "full_image" {
                     let indices: Vec<usize> = mask
@@ -213,7 +368,7 @@ fn compare_inner(
                         None,
                     )?);
                 }
-            } else if region != "full_image" {
+            } else if !single && region != "full_image" {
                 color_readouts.extend(color_readouts::unavailable_pair(
                     region,
                     "color_family_not_selected",
@@ -221,53 +376,79 @@ fn compare_inner(
             }
             for family in population["measurements"].as_array().into_iter().flatten() {
                 active = family.as_str().unwrap_or("");
-                match active {
-                    "numeric" => numeric(e, region, &mask, a, b),
-                    "color" => {
-                        summary(
-                            e,
-                            region,
-                            "delta_e00",
-                            selected(&maps[0].values, &mask),
-                            std::slice::from_ref(&maps[0].artifact),
-                            "bounded_srgb_d65_lab",
-                            "delta E 00",
-                            false,
-                        );
-                        for m in &maps[1..5] {
-                            let mut values = selected(&m.values, &mask);
-                            let average = mean(&values);
-                            let middle = median(&mut values);
-                            for (label, value) in [("mean", average), ("median", middle)] {
-                                e.scalar(
-                                    region,
-                                    &format!("{}.{label}", m.name),
-                                    value,
-                                    n,
-                                    "bounded_srgb_d65_lab",
-                                    m.units,
-                                    &format!("signed pixel {label} candidate minus baseline"),
-                                    std::slice::from_ref(&m.artifact),
-                                    None,
-                                );
-                            }
+                // One family answers one question. A family that cannot
+                // measure records one unavailable row, and the region's other
+                // families still measure.
+                let family_execution = (|| -> Result<()> {
+                    if !applies(active, role_of(population)) {
+                        return Err(err(
+                            "incompatible_measurement_role",
+                            format!(
+                                "{active} is measured on a {active_role} population, not on a {role}",
+                                active_role = match active {
+                                    "neutrality" => "neutral",
+                                    "color_noise" => "flat_field or texture",
+                                    _ => "any",
+                                },
+                                role = role_of(population),
+                            ),
+                        ));
+                    }
+                    for exclusive in ["color", "flip"] {
+                        if active == exclusive && e.sides == Sides::One {
+                            return Err(err(
+                                "requires_second_source",
+                                format!("{active} measures a difference between two sources"),
+                            ));
                         }
-                        for threshold in protocol["delta_e_thresholds"]
-                            .as_array()
-                            .into_iter()
-                            .flatten()
-                        {
-                            let t = threshold.as_f64().ok_or_else(|| {
-                                err("invalid_protocol", "Threshold must be numeric")
-                            })?;
-                            let label = spelling(threshold);
-                            let above = maps[0]
-                                .values
-                                .iter()
-                                .zip(&mask)
-                                .filter(|(x, m)| **m && **x > t)
-                                .count();
-                            e.scalar(
+                    }
+                    match active {
+                        "numeric" => numeric(e, region, &mask, a, b.unwrap_or(a)),
+                        "color" => {
+                            summary(
+                                e,
+                                region,
+                                "delta_e00",
+                                selected(&maps[0].values, &mask),
+                                std::slice::from_ref(&maps[0].artifact),
+                                "bounded_srgb_d65_lab",
+                                "delta E 00",
+                                false,
+                            );
+                            for m in &maps[1..5] {
+                                let mut values = selected(&m.values, &mask);
+                                let average = mean(&values);
+                                let middle = median(&mut values);
+                                for (label, value) in [("mean", average), ("median", middle)] {
+                                    e.scalar(
+                                        region,
+                                        &format!("{}.{label}", m.name),
+                                        value,
+                                        n,
+                                        "bounded_srgb_d65_lab",
+                                        m.units,
+                                        &format!("signed pixel {label} candidate minus baseline"),
+                                        std::slice::from_ref(&m.artifact),
+                                        None,
+                                    );
+                                }
+                            }
+                            for threshold in protocol["delta_e_thresholds"]
+                                .as_array()
+                                .into_iter()
+                                .flatten()
+                            {
+                                let t = threshold.as_f64().ok_or_else(|| {
+                                    err("invalid_protocol", "Threshold must be numeric")
+                                })?;
+                                let label = spelling(threshold);
+                                let above = maps[0]
+                                    .values
+                                    .iter()
+                                    .zip(&mask)
+                                    .filter(|(x, m)| **m && **x > t)
+                                    .count();
+                                e.scalar(
                                 region,
                                 &format!("delta_e00.fraction_above_{label}"),
                                 Some(above as f64 / n as f64),
@@ -280,105 +461,110 @@ fn compare_inner(
                                 std::slice::from_ref(&maps[0].artifact),
                                 None,
                             );
+                            }
                         }
-                    }
-                    "flip" => {
-                        let map = maps.last().unwrap();
-                        summary(
+                        "flip" => {
+                            let map = maps.last().unwrap();
+                            summary(
+                                e,
+                                region,
+                                "flip",
+                                selected(&map.values, &mask),
+                                std::slice::from_ref(&map.artifact),
+                                "bounded_encoded_srgb",
+                                "FLIP error",
+                                true,
+                            );
+                        }
+                        "tone" => tone(
                             e,
                             region,
-                            "flip",
-                            selected(&map.values, &mask),
-                            std::slice::from_ref(&map.artifact),
-                            "bounded_encoded_srgb",
-                            "FLIP error",
-                            true,
-                        );
+                            &mask,
+                            &labs,
+                            linear.as_ref().unwrap(),
+                            protocol,
+                            w,
+                            h,
+                            maps.get(1)
+                                .map(|m| std::slice::from_ref(&m.artifact))
+                                .unwrap_or(&[]),
+                        )?,
+                        "neutrality" => {
+                            neutrality(e, region, &mask, &labs[0], labs.get(1).unwrap_or(&labs[0]))
+                        }
+                        "color_noise" => color_noise(
+                            e,
+                            region,
+                            &mask,
+                            a,
+                            b.unwrap_or(a),
+                            // The high-pass sigma is a protocol parameter; a
+                            // protocol that omits it measures at eight pixels.
+                            protocol["color_noise"]["sigma"].as_f64().unwrap_or(8.0),
+                        ),
+                        "grain" => grain(
+                            e,
+                            region,
+                            &mask,
+                            linear.as_ref().unwrap(),
+                            w,
+                            h,
+                            &protocol["grain"],
+                            population["role"].as_str() == Some("flat_field")
+                                || protocol["probe"]["kind"].as_str() == Some("flat_field"),
+                        )?,
+                        "halation" => halation(
+                            e,
+                            region,
+                            &mask,
+                            linear.as_ref().unwrap(),
+                            w,
+                            h,
+                            &protocol["halation"],
+                        )?,
+                        "edge" => edge(
+                            e,
+                            region,
+                            &mask,
+                            linear.as_ref().unwrap(),
+                            w,
+                            h,
+                            &protocol["edge"],
+                        )?,
+                        _ => {
+                            return Err(err(
+                                "invalid_protocol",
+                                format!("Unknown family: {active}"),
+                            ));
+                        }
                     }
-                    "tone" => tone(
-                        e,
-                        region,
-                        &mask,
-                        &labs,
-                        linear.as_ref().unwrap(),
-                        protocol,
-                        w,
-                        h,
-                        std::slice::from_ref(&maps[1].artifact),
-                    )?,
-                    "grain" => grain(
-                        e,
-                        region,
-                        &mask,
-                        linear.as_ref().unwrap(),
-                        w,
-                        h,
-                        &protocol["grain"],
-                        population["role"].as_str() == Some("flat_field")
-                            || protocol["probe"]["kind"].as_str() == Some("flat_field"),
-                    )?,
-                    "halation" => halation(
-                        e,
-                        region,
-                        &mask,
-                        linear.as_ref().unwrap(),
-                        w,
-                        h,
-                        &protocol["halation"],
-                    )?,
-                    "edge" => edge(
-                        e,
-                        region,
-                        &mask,
-                        linear.as_ref().unwrap(),
-                        w,
-                        h,
-                        &protocol["edge"],
-                    )?,
-                    _ => return Err(err("invalid_protocol", format!("Unknown family: {active}"))),
+                    Ok(())
+                })();
+                if let Err(error) = family_execution {
+                    unavailable(e, region, active, &error, &refs);
                 }
             }
             Ok(())
         })();
         if let Err(error) = execution {
-            e.scalar(
-                region,
-                active,
-                None,
-                0,
-                "declared_measurement",
-                "unavailable",
-                "selected family execution",
-                &[],
-                Some(&error.code),
-            );
-            e.failure(
-                region,
-                active,
-                &error,
-                &refs,
-                ![
-                    "missing_probe_geometry",
-                    "insufficient_samples",
-                    "zero_edge_contrast",
-                ]
-                .contains(&error.code.as_str()),
-            );
+            unavailable(e, region, active, &error, &refs);
         }
     }
     drop(encoded);
-    let ranking = maps.last().filter(|m| m.name == "flip").unwrap_or(&maps[0]);
-    e.extra.insert(
-        "automatic_regions".into(),
-        json!(select_hotspots(
+    // Navigation hotspots are a difference map's, so an analysis has none.
+    let automatic_regions = match maps.last() {
+        Some(ranking) => select_hotspots(
             &ranking.values,
             w,
             h,
             &protocol["hotspots"],
             ranking.name,
-            std::slice::from_ref(&ranking.artifact)
-        )),
-    );
+            std::slice::from_ref(&ranking.artifact),
+        ),
+        None => Vec::new(),
+    };
+    e.extra
+        .insert("automatic_regions".into(), json!(automatic_regions));
     e.extra
         .insert("region_readouts".into(), json!(color_readouts));
     Ok(())
@@ -389,10 +575,12 @@ pub fn compare_images(
     regions: &[Value],
     protocol: &Value,
     out: &Path,
+    map_scale: u32,
 ) -> Result<Value> {
     let mut evidence = Evidence::new(protocol, out);
     let populations = populations(regions, protocol);
-    if let Err(error) = compare_inner(&mut evidence, a, b, &populations, protocol) {
+    if let Err(error) = compare_inner(&mut evidence, a, Some(b), &populations, protocol, map_scale)
+    {
         evidence.failure("full_image", "image", &error, &[], true);
         let reason = error.code.clone();
         let mut unavailable = Vec::new();
@@ -423,6 +611,39 @@ pub fn compare_images(
     }
     Ok(evidence.finish())
 }
+/// Quantify one source. The families that need a second source record why they
+/// do not measure, and every other selected family measures as it does in a
+/// comparison.
+pub fn analyze_image(
+    image: &ImageData,
+    regions: &[Value],
+    protocol: &Value,
+    out: &Path,
+) -> Result<Value> {
+    let mut evidence = Evidence::new(protocol, out);
+    evidence.sides = Sides::One;
+    let populations = populations(regions, protocol);
+    if let Err(error) = compare_inner(&mut evidence, image, None, &populations, protocol, 1) {
+        evidence.failure("full_image", "image", &error, &[], true);
+        for population in &populations {
+            for family in population["measurements"].as_array().into_iter().flatten() {
+                evidence.scalar(
+                    population["id"].as_str().unwrap_or(""),
+                    family.as_str().unwrap_or(""),
+                    None,
+                    0,
+                    "declared_measurement",
+                    "unavailable",
+                    "selected family boundary failure",
+                    &[],
+                    Some(&error.code),
+                );
+            }
+        }
+    }
+    Ok(evidence.finish())
+}
+
 pub fn select_hotspots(
     values: &[f64],
     width: usize,
@@ -658,6 +879,37 @@ fn metric_definitions(case: &Value, region_id: &str, protocol: &Value) -> HashSe
             definitions.insert(format!("delta_e00.fraction_above_{}", spelling(threshold)));
         }
     }
+    if chosen.contains("neutrality") {
+        for name in [
+            "l_star_mean",
+            "l_star_std",
+            "a_star_mean",
+            "b_star_mean",
+            "chroma_radius_rms",
+            "chroma_radius_max",
+        ] {
+            for side in ["baseline", "candidate", "delta"] {
+                definitions.insert(format!("neutrality.{side}.{name}"));
+            }
+        }
+    }
+    if chosen.contains("color_noise") {
+        for name in [
+            "mean_r",
+            "mean_g",
+            "mean_b",
+            "luma_std",
+            "chroma_rms",
+            "chroma_to_luminance_ratio",
+            "channel_correlation_rg",
+            "radial_frequency_centroid",
+        ] {
+            definitions.insert(format!("color_noise.{name}"));
+            for side in ["baseline", "candidate", "delta"] {
+                definitions.insert(format!("color_noise.{side}.{name}"));
+            }
+        }
+    }
     if chosen.contains("flip") {
         for stat in ["mean", "p95", "p99", "max"] {
             definitions.insert(format!("flip.{stat}"));
@@ -774,6 +1026,18 @@ mod tests {
     use super::families::mtf50;
     use super::*;
     use std::{fs, path::PathBuf};
+
+    /// The tests measure at full resolution. `map_scale` is a retention
+    /// choice that never touches a population, so no test declares one.
+    fn compare_images(
+        a: &ImageData,
+        b: &ImageData,
+        regions: &[Value],
+        protocol: &Value,
+        out: &Path,
+    ) -> Result<Value> {
+        super::compare_images(a, b, regions, protocol, out, 1)
+    }
 
     #[test]
     fn policy_reference_relation_only_accepts_the_measured_pair_anchor() {
@@ -896,6 +1160,207 @@ mod tests {
         );
         fs::remove_dir_all(path).unwrap();
     }
+    /// A declared neutral field that carries a cast reports the cast itself,
+    /// and its chroma radius is that cast rather than a distance from it.
+    #[test]
+    fn neutrality_reports_the_cast_it_measures() {
+        // A uniform +a* bias: raise red and lower green, keep blue.
+        let mut a = image(0.5, 32, 32);
+        a.samples = vec![[0.52, 0.48, 0.5]; 32 * 32];
+        let b = a.clone();
+        let path = output();
+        let regions = [
+            json!({"id":"gray","role":"neutral","measurements":["neutrality"],"geometry":{"x":0,"y":0,"width":32,"height":32,"space":"render"}}),
+        ];
+        let result = compare_images(
+            &a,
+            &b,
+            &regions,
+            &json!({"measurements":["neutrality"]}),
+            &path,
+        )
+        .unwrap();
+        let rows = result["measurements"].as_array().unwrap();
+        let value = |metric: &str| {
+            rows.iter()
+                .find(|r| r["metric"] == metric)
+                .unwrap_or_else(|| panic!("missing {metric}"))["value"]
+                .as_f64()
+                .unwrap()
+        };
+        // Raising red above green is a positive a* cast; the radius is that
+        // same cast expressed as a distance.
+        let a_star = value("neutrality.baseline.a_star_mean");
+        let b_star = value("neutrality.baseline.b_star_mean");
+        assert!(a_star > 2.0, "a* {a_star}");
+        let radius = value("neutrality.baseline.chroma_radius_rms");
+        assert!(
+            (radius - a_star.hypot(b_star)).abs() < 1e-9,
+            "radius {radius} for a* {a_star} b* {b_star}"
+        );
+        // The field is uniform, so its lightness has no spread and every
+        // sample sits at the same radius.
+        assert!(value("neutrality.baseline.l_star_std").abs() < 1e-9);
+        assert!((value("neutrality.baseline.chroma_radius_max") - radius).abs() < 1e-9);
+        // One comparison of one source with itself has no delta.
+        assert_eq!(value("neutrality.delta.a_star_mean"), 0.0);
+        fs::remove_dir_all(path).unwrap();
+    }
+
+    /// A structural family on a role it does not apply to is refused, and the
+    /// region's other families still measure.
+    #[test]
+    fn structural_family_is_refused_on_the_wrong_role() {
+        let a = image(0.4, 16, 16);
+        let path = output();
+        let regions = [
+            json!({"id":"patch","role":"color","measurements":["neutrality","numeric"],"geometry":{"x":0,"y":0,"width":16,"height":16,"space":"render"}}),
+        ];
+        let result = compare_images(
+            &a,
+            &a,
+            &regions,
+            &json!({"measurements":["numeric"]}),
+            &path,
+        )
+        .unwrap();
+        let rows = result["measurements"].as_array().unwrap();
+        let refused = rows
+            .iter()
+            .find(|r| r["metric"] == "neutrality")
+            .expect("the refused family keeps its row");
+        assert_eq!(refused["reason"], "incompatible_measurement_role");
+        assert!(refused["value"].is_null());
+        assert!(
+            rows.iter()
+                .any(|r| r["metric"] == "numeric.rmse" && !r["value"].is_null()),
+            "the region's other family still measures"
+        );
+        fs::remove_dir_all(path).unwrap();
+    }
+
+    /// A dither whose every channel carries the same value has no chroma at
+    /// all, so the chroma axes of its residual vanish identically however the
+    /// high pass treats it.
+    #[test]
+    fn color_noise_sees_no_chroma_in_a_gray_dither() {
+        let mut samples = vec![[0.0; 3]; 32 * 32];
+        for (i, p) in samples.iter_mut().enumerate() {
+            let d = if (i / 32 + i % 32) % 2 == 0 {
+                0.2
+            } else {
+                -0.2
+            };
+            *p = [0.5 + d; 3];
+        }
+        let mut a = image(0.5, 32, 32);
+        a.samples = samples;
+        let path = output();
+        let result = compare_images(
+            &a,
+            &a,
+            &[json!({"id":"field","role":"flat_field","measurements":["color_noise"],"geometry":{"x":0,"y":0,"width":32,"height":32,"space":"render"}})],
+            &json!({"measurements":["color_noise"]}),
+            &path,
+        )
+        .unwrap();
+        let rows = result["measurements"].as_array().unwrap();
+        let value = |metric: &str| {
+            rows.iter()
+                .find(|r| r["metric"] == metric)
+                .unwrap_or_else(|| panic!("missing {metric}"))["value"]
+                .as_f64()
+        };
+        let chroma = value("color_noise.baseline.chroma_rms").unwrap();
+        assert!(chroma.abs() < 1e-12, "chroma_rms {chroma}");
+        let ratio = value("color_noise.baseline.chroma_to_luminance_ratio").unwrap();
+        assert!(ratio.abs() < 1e-12, "ratio {ratio}");
+        let luma = value("color_noise.baseline.luma_std").unwrap();
+        assert!(luma > 0.1, "a dither of amplitude 0.2 has luma_std {luma}");
+        fs::remove_dir_all(path).unwrap();
+    }
+
+    /// The BT.709 chroma axes are deviations from the BT.709 luminance, so a
+    /// field built from a chroma axis alone carries no luminance at all and
+    /// its luminance residual vanishes identically.
+    #[test]
+    fn color_noise_sees_no_luma_in_a_pure_chroma_field() {
+        // (0.7152, -0.2126, 0) is orthogonal to the BT.709 luminance weights.
+        let mut samples = vec![[0.0; 3]; 32 * 32];
+        for (i, p) in samples.iter_mut().enumerate() {
+            let d = if (i / 32 + i % 32) % 2 == 0 {
+                0.1
+            } else {
+                -0.1
+            };
+            *p = [0.5 + 0.7152 * d, 0.5 - 0.2126 * d, 0.5];
+        }
+        let mut a = image(0.5, 32, 32);
+        a.samples = samples;
+        let path = output();
+        let result = compare_images(
+            &a,
+            &a,
+            &[json!({"id":"field","role":"flat_field","measurements":["color_noise"],"geometry":{"x":0,"y":0,"width":32,"height":32,"space":"render"}})],
+            &json!({"measurements":["color_noise"]}),
+            &path,
+        )
+        .unwrap();
+        let rows = result["measurements"].as_array().unwrap();
+        let row = |metric: &str| {
+            rows.iter()
+                .find(|r| r["metric"] == metric)
+                .unwrap_or_else(|| panic!("missing {metric}"))
+        };
+        let luma = row("color_noise.baseline.luma_std")["value"]
+            .as_f64()
+            .unwrap();
+        assert!(luma.abs() < 1e-12, "luma_std {luma}");
+        let chroma = row("color_noise.baseline.chroma_rms")["value"]
+            .as_f64()
+            .unwrap();
+        assert!(chroma > 0.01, "chroma_rms {chroma}");
+        // The ratio cannot exist when its denominator does not.
+        let ratio = row("color_noise.baseline.chroma_to_luminance_ratio");
+        assert_eq!(ratio["reason"], "zero_variance");
+        assert!(ratio["value"].is_null());
+        fs::remove_dir_all(path).unwrap();
+    }
+
+    /// The residual is a grain amplitude and not a gradient: a smooth ramp
+    /// has almost nothing left once its own low pass is subtracted.
+    #[test]
+    fn color_noise_removes_a_gradient() {
+        let mut samples = vec![[0.0; 3]; 64 * 64];
+        for (i, p) in samples.iter_mut().enumerate() {
+            let v = (i % 64) as f64 / 63.0;
+            *p = [v; 3];
+        }
+        let mut a = image(0.5, 64, 64);
+        a.samples = samples;
+        let path = output();
+        let result = compare_images(
+            &a,
+            &a,
+            &[json!({"id":"field","role":"flat_field","measurements":["color_noise"],"geometry":{"x":0,"y":0,"width":32,"height":32,"space":"render"}})],
+            &json!({"measurements":["color_noise"]}),
+            &path,
+        )
+        .unwrap();
+        let luma = result["measurements"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["metric"] == "color_noise.baseline.luma_std")
+            .unwrap()["value"]
+            .as_f64()
+            .unwrap();
+        // A ramp of range 1.0 has a standard deviation near 0.29 before the
+        // high pass; afterwards only its boundary layers remain.
+        assert!(luma < 0.05, "gradient residual luma_std {luma}");
+        fs::remove_dir_all(path).unwrap();
+    }
+
     #[test]
     fn flat_zero_variance_retains_radial_spectrum() {
         let a = image(0.0, 8, 8);

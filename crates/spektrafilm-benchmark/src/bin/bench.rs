@@ -7,15 +7,17 @@
 
 use clap::{Parser, Subcommand};
 use serde_json::{Value, json};
-use spektrafilm_benchmark::{Error, Result, photo_report};
+use spektrafilm_benchmark::{
+    Error, Result, compare, inspect, photo_report, readings_compare, sample,
+};
 use std::path::PathBuf;
 
 #[derive(Parser)]
 #[command(
     name = "spektrafilm-bench",
     version = concat!(env!("CARGO_PKG_VERSION"), " schema-1"),
-    about = "Build benchmark-owned offline visual reports from authored manifests.",
-    after_help = "Publish one offline photo report with `spektrafilm-bench report photos --manifest MANIFEST.json --out REPORT`."
+    about = "SpektraFilm evaluation: compare completed runs, join reading records, and report.",
+    after_help = "Evaluate two completed runs with `spektrafilm-bench compare runs --baseline A --candidate B --policy P.json --gate --out DIR`."
 )]
 struct Cli {
     #[command(subcommand)]
@@ -24,7 +26,32 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Build one benchmark-owned offline report from an authored manifest.
+    /// Compare two completed image-domain runs.
+    Compare {
+        #[command(subcommand)]
+        command: CompareCommand,
+    },
+    /// Read declared sample points from an image or a retained stage capture.
+    Sample {
+        #[command(flatten)]
+        args: sample::MeasureSampleArgs,
+    },
+    /// Project a retained comparison's evidence without presenting it.
+    Inspect {
+        /// Retained comparison directory.
+        #[arg(long, value_name = "DIR")]
+        comparison: PathBuf,
+        /// Exact case identities to select; repeats.
+        #[arg(long = "case", value_name = "ID")]
+        case_ids: Vec<String>,
+        /// Exact region identities to select; repeats.
+        #[arg(long = "region", value_name = "ID")]
+        region_ids: Vec<String>,
+        /// Exact metric identities to select; repeats.
+        #[arg(long = "metric", value_name = "ID")]
+        metrics: Vec<String>,
+    },
+    /// Build one benchmark-owned offline report.
     Report {
         #[command(subcommand)]
         command: ReportCommand,
@@ -32,7 +59,58 @@ enum Command {
 }
 
 #[derive(Subcommand)]
+enum CompareCommand {
+    /// Compare two completed image-domain runs.
+    Runs(RunComparisonArgs),
+    /// Join two retained reading records.
+    Readings(readings_compare::MeasureCompareArgs),
+    /// Select explicit evidence pairs from one retained run.
+    Pairs(PairArgs),
+}
+
+#[derive(clap::Args)]
+struct RunComparisonArgs {
+    /// Baseline retained run directory.
+    #[arg(long, value_name = "DIR")]
+    baseline: PathBuf,
+    /// Candidate retained run directory.
+    #[arg(long, value_name = "DIR")]
+    candidate: PathBuf,
+    /// Policy document.
+    #[arg(long, value_name = "FILE")]
+    policy: Option<PathBuf>,
+    /// Fail the command when the policy does not pass.
+    #[arg(long, requires = "policy")]
+    gate: bool,
+    /// New comparison directory; must not exist.
+    #[arg(long, value_name = "DIR")]
+    out: PathBuf,
+}
+
+#[derive(clap::Args)]
+struct PairArgs {
+    /// Retained run directory.
+    #[arg(long, value_name = "DIR")]
+    run: PathBuf,
+    /// Pair to select.
+    #[arg(long, value_name = "input|reference|both")]
+    against: String,
+    /// New comparison directory; must not exist.
+    #[arg(long, value_name = "DIR")]
+    out: PathBuf,
+}
+
+#[derive(Subcommand)]
 enum ReportCommand {
+    /// Present one retained comparison as an offline page.
+    Comparison {
+        /// Retained comparison directory.
+        #[arg(long, value_name = "DIR")]
+        comparison: PathBuf,
+        /// New report directory; must not exist.
+        #[arg(long, value_name = "DIR")]
+        out: PathBuf,
+    },
     /// Build one offline photo report from a photo manifest.
     Photos {
         /// Authored photo manifest JSON.
@@ -45,8 +123,20 @@ enum ReportCommand {
 }
 
 /// The command name a result object carries.
-fn command_name() -> &'static str {
-    "report photos"
+fn command_name(command: &Command) -> &'static str {
+    match command {
+        Command::Compare { command } => match command {
+            CompareCommand::Runs(_) => "compare runs",
+            CompareCommand::Readings(_) => "compare readings",
+            CompareCommand::Pairs(_) => "compare pairs",
+        },
+        Command::Sample { .. } => "sample",
+        Command::Inspect { .. } => "inspect",
+        Command::Report { command } => match command {
+            ReportCommand::Comparison { .. } => "report comparison",
+            ReportCommand::Photos { .. } => "report photos",
+        },
+    }
 }
 
 /// The structured error the benchmark library reports.
@@ -54,7 +144,34 @@ type BenchError = Error;
 
 fn execute(command: Command) -> Result<(Value, i32)> {
     match command {
+        Command::Compare { command } => match command {
+            CompareCommand::Runs(args) => compare::compare(
+                &args.baseline,
+                &args.candidate,
+                &args.out,
+                args.policy.as_deref(),
+                args.gate,
+            ),
+            CompareCommand::Readings(args) => readings_compare::compare_with_result(&args)
+                .map_err(|error| Error::with_message("operation_failed", error)),
+            CompareCommand::Pairs(args) => {
+                compare::compare_single(&args.run, &args.against, &args.out)
+            }
+        },
+        Command::Sample { args } => sample::sample_with_result(&args)
+            .map_err(|error| Error::with_message("operation_failed", error)),
+        Command::Inspect {
+            comparison,
+            case_ids,
+            region_ids,
+            metrics,
+        } => inspect::inspect(&comparison, &case_ids, &region_ids, &metrics).map(|v| (v, 0)),
         Command::Report { command } => match command {
+            ReportCommand::Comparison { comparison, out } => {
+                spektrafilm_benchmark::documents::normalize_path(&out)
+                    .and_then(|out| spektrafilm_benchmark::report::build_report(&comparison, &out))
+                    .map(|value| (value, 0))
+            }
             ReportCommand::Photos { manifest, out } => {
                 Ok((photo_report::build_report(&manifest, &out)?, 0))
             }
@@ -62,21 +179,54 @@ fn execute(command: Command) -> Result<(Value, i32)> {
     }
 }
 
+/// `compare` takes a retained run record or a reading record, not an image
+/// pair. The image comparison is the lab's, and clap would report it as an
+/// unknown subcommand rather than as a command another binary owns. The guard
+/// runs before parsing so that message stays exact.
+fn reject_lab_subcommand() -> Option<i32> {
+    let mut argv = std::env::args().skip(1);
+    let first = argv.next()?;
+    // (what the caller typed, the lab form that does it)
+    let (typed, replacement) = match first.as_str() {
+        "compare" => match argv.next().as_deref() {
+            // The lab's image comparison takes no subcommand: this binary's
+            // `compare` prefix is the only reason a caller reaches for one.
+            Some(sub @ ("images" | "image" | "pair")) => {
+                (format!("compare {sub}"), "compare".to_owned())
+            }
+            _ => return None,
+        },
+        "analyze" | "regions" | "schema" | "validate" => (first.clone(), first.clone()),
+        _ => return None,
+    };
+    eprintln!(
+        "argument_syntax: `{typed}` belongs to spektrafilm-lab; run `spektrafilm-lab {replacement} ...`"
+    );
+    Some(2)
+}
+
 fn run() -> i32 {
+    if let Some(status) = reject_lab_subcommand() {
+        return status;
+    }
     let cli = Cli::parse();
+    let name = command_name(&cli.command);
     match execute(cli.command) {
         Ok((value, status)) => {
-            emit(&value);
+            emit(&stamp(value, name));
             status
         }
         Err(error) => {
             eprintln!("{error}");
-            emit(&json!({
-                "schema_version": 1,
-                "command": command_name(),
-                "execution_status": "failed",
-                "errors": [error.to_value()]
-            }));
+            emit(&stamp(
+                json!({
+                    "schema_version": 1,
+                    "command": name,
+                    "execution_status": "failed",
+                    "errors": [error.to_value()]
+                }),
+                name,
+            ));
             exit_status_for(&error)
         }
     }
@@ -92,6 +242,15 @@ fn exit_status_for(error: &BenchError) -> i32 {
     } else {
         1
     }
+}
+
+const BINARY: &str = "spektrafilm-bench";
+
+/// The binary and the endpoint that produced a result.
+fn stamp(mut value: Value, endpoint: &str) -> Value {
+    value["binary"] = json!(BINARY);
+    value["endpoint"] = json!(endpoint);
+    value
 }
 
 fn emit(value: &Value) {
@@ -206,6 +365,14 @@ mod tests {
             "a generator failure is not an invocation rejection"
         );
         assert_eq!(exit_status_for(&error), 1);
-        assert_eq!(command_name(), "report photos");
+        assert_eq!(
+            command_name(&Command::Report {
+                command: ReportCommand::Photos {
+                    manifest: scratch.path().join("absent.json"),
+                    out: scratch.path().join("report"),
+                },
+            }),
+            "report photos"
+        );
     }
 }

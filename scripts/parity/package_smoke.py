@@ -65,12 +65,14 @@ def _benchmark_smoke(exporter, data, evidence, environment):
     binaries = {'instrument': exporter.with_name('spektrafilm-lab' + suffix)}
     instrument = binaries['instrument']
     assert instrument.is_file(), f'Installed instrument missing: {instrument}'
+    # The research command surface ships in the f64 build the exporter is.
+    assert exporter.is_file(), f'Installed f64 build missing: {exporter}'
     root = evidence / 'benchmark'
     root.mkdir()
     commands = []
 
-    def invoke(*arguments):
-        argv = [str(instrument), *map(str, arguments)]
+    def invoke(*arguments, binary=None):
+        argv = [str(binary or instrument), *map(str, arguments)]
         result = subprocess.run(argv, cwd=evidence, env=environment,
                                 capture_output=True, text=True, timeout=300)
         commands.append({'argv': argv, 'returncode': result.returncode,
@@ -81,23 +83,23 @@ def _benchmark_smoke(exporter, data, evidence, environment):
 
     fixtures = root / 'fixtures'
     invoke('fixtures', '--renderer', exporter, '--data-dir', data,
-           '--out', fixtures)
+           '--out', fixtures, binary=exporter)
     target = root / 'local-target.json'
     invoke('target', '--renderer', exporter, '--data-dir', data,
-           '--backend', 'cpu', '--out', target)
+           '--backend', 'cpu', '--out', target, binary=exporter)
     invoke('validate', '--kind', 'target', '--file', target)
     preflight = root / 'preflight'
-    invoke('run', '--suite', fixtures / 'complete.json', '--target',
-           target, '--dry-run', '--out', preflight)
+    invoke('run', 'suite', '--suite', fixtures / 'complete.json', '--target',
+           target, '--dry-run', '--out', preflight, binary=exporter)
     preflight_manifest = json.loads((preflight / 'preflight.json').read_text())
     assert preflight_manifest['execution_status'] == 'validated'
     assert not (preflight / 'run.json').exists()
     run = root / 'run'
-    invoke('run', '--suite', fixtures / 'quick.json', '--target',
-           target, '--case', 'color_chart', '--out', run)
+    invoke('run', 'suite', '--suite', fixtures / 'quick.json', '--target',
+           target, '--case', 'color_chart', '--out', run, binary=exporter)
     invoke('validate', '--kind', 'run', '--file', run / 'run.json')
     comparison = root / 'comparison'
-    invoke('compare', '--baseline', run, '--candidate', run,
+    invoke('compare', 'runs', '--baseline', run, '--candidate', run,
            '--out', comparison)
     manifest = json.loads((comparison / 'comparison.json').read_text())
     rows = manifest['cases'][0]['measurements']

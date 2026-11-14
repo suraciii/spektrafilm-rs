@@ -124,6 +124,15 @@ _Avoid_: Reference thumbnail, saved preset image
 
 **Feature profile application**: The operation that resolves one feature profile and replaces exactly that feature's controls. It preserves every control outside the feature and fails transactionally when the resolved values are invalid or incompatible with the active route.
 
+**Delivered image**: A raster file written by a renderer or another tool and measured as it is. It carries an explicit color-space and transfer declaration; the laboratory never infers either from the file.
+_Avoid_: Prepared image, original, reference
+
+**Analysis profile**: A named, versioned generator of one complete measurement protocol and one region family policy. The comparison retains its identity and the protocol it materialized. A profile declares no image, no region, and no acceptance rule.
+_Avoid_: Look preset, protocol
+
+**Comparison report**: The offline page built from one retained comparison. It presents retained identities and values and assigns no new measurement.
+_Avoid_: Review report, photo report
+
 ## Grain engines
 
 **Spektra**: The upstream density-domain particle grain model.

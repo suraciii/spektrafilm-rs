@@ -19,6 +19,9 @@ pub struct MeasurementRecord {
     pub estimator: String,
     pub sample_count: u64,
     pub availability: Availability,
+    /// Absent for a delivered image, which is one realisation and has no seed
+    /// population. A rendered run always states one.
+    #[serde(default)]
     pub seed_population: Vec<u64>,
     pub artifact_refs: Vec<Value>,
     pub value: Option<f64>,
@@ -788,12 +791,15 @@ pub fn validate_generated_document(kind: &str, v: &Value, root: &Path) -> Result
                 "estimator",
                 "sample_count",
                 "availability",
-                "seed_population",
                 "artifact_refs",
             ]
             .iter()
             .any(|k| !r.contains_key(*k))
                 || row["sample_count"].as_u64().is_none()
+                // A delivered image has no seed population; a rendered run
+                // always states one.
+                || (r.contains_key("seed_population")
+                    && !row["seed_population"].is_array())
             {
                 return Err(err(
                     "measurement_fields",
@@ -1340,10 +1346,40 @@ pub fn validate_generated_document(kind: &str, v: &Value, root: &Path) -> Result
                 reference(x)?
             }
         }
+    } else if kind == "analysis" {
+        // One source, one realisation: no seed population, no policy, and no
+        // difference to evaluate.
+        let source = obj(req(obj(v)?, "source")?)?;
+        if source.get("kind") != Some(&json!("images")) {
+            return Err(err(
+                "source_kind",
+                "an analysis source is a delivered image set",
+            ));
+        }
+        for field in ["policy", "run", "mode", "evaluation_status", "findings"] {
+            if v.get(field).is_some() {
+                return Err(err(
+                    "inapplicable_field",
+                    format!("an analysis record carries no {field}"),
+                ));
+            }
+        }
+        for case in v["cases"].as_array().unwrap() {
+            measurements(&case["measurements"])?;
+            if case.get("seed").is_some() {
+                return Err(err(
+                    "inapplicable_field",
+                    "a delivered image is one realisation and carries no seed",
+                ));
+            }
+        }
     } else if kind == "comparison" {
         if let Some(p) = v.get("policy") {
             reference(p)?
-        } else if v["evaluation_status"] != "not_evaluated" {
+        } else if matches!(
+            v.get("evaluation_status").and_then(Value::as_str),
+            Some(status) if status != "not_evaluated"
+        ) {
             return Err(err(
                 "evaluation_status",
                 "comparison without policy must remain not_evaluated",
@@ -1544,9 +1580,18 @@ pub fn validate_generated_document(kind: &str, v: &Value, root: &Path) -> Result
                 ));
             }
         }
-        measurements(&v["seed_measurements"])?;
-        unique(v["findings"].as_array().unwrap(), "id")?;
-        for finding in v["findings"].as_array().unwrap() {
+        if let Some(rows) = v.get("seed_measurements") {
+            measurements(rows)?;
+        }
+        // A comparison either evaluated a policy and states its findings, or
+        // it measured without one and states neither.
+        let findings = v
+            .get("findings")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        unique(&findings, "id")?;
+        for finding in &findings {
             let f = obj(finding)?;
             for k in [
                 "id",

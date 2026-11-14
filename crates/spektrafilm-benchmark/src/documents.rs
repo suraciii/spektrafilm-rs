@@ -613,6 +613,7 @@ pub fn schema_for(kind: &str) -> Result<Value> {
         "policy" => include_str!("../assets/policy.schema.json"),
         "run" => include_str!("../assets/run.schema.json"),
         "comparison" => include_str!("../assets/comparison.schema.json"),
+        "analysis" => include_str!("../assets/analysis.schema.json"),
         "stimuli" => include_str!("../assets/stimuli.schema.json"),
         "experiment" => include_str!("../assets/experiment.schema.json"),
         "preflight" => include_str!("../assets/preflight.schema.json"),

@@ -2,28 +2,34 @@
 
 ## Boundary
 
-- `SpektraFilm` remains the renderer. The instrument (`spektrafilm-lab`) is an external evaluation orchestrator, artifact producer, and in-process chain measurer.
-- It consumes the renderer's public CLI, machine-readable dry-run output, floating image output, and diagnostics, and it shares the renderer's parameter surface and chain execution for readings. It does not import renderer internals or duplicate runtime parameter resolution.
+- `SpektraFilm` remains the renderer.
+- `spektrafilm-f64` is the research renderer: it executes a declaration and publishes retained evidence.
+- `spektrafilm-lab` measures delivered images and retained evidence, and publishes comparisons and reports. The lab never renders.
+- `spektrafilm-bench` applies an evaluation policy and builds visual review.
+- The research renderer consumes the renderer's public CLI, machine-readable dry-run output, floating image output, and diagnostics, and it shares the renderer's parameter surface and chain execution for readings. It does not import renderer internals or duplicate runtime parameter resolution.
 
-- The instrument owns suite selection, target identity, dependency hashing, run isolation, comparison policy, metric execution, region selection, evidence indexing, comparison report generation, and the development measurement of an executed chain. A metric adapter owns one measurement implementation.
-- The report builder owns presentation of an existing comparison only. Prepared-image review and the benchmark-owned Photo Report are outside the instrument boundary; their image inventories and visual-report builders belong to separate benchmark commands.
+- The research renderer owns suite selection, target identity, dependency hashing, run isolation, evidence indexing, and the development measurement of an executed chain.
+- The lab owns image decoding under an explicit declaration, region sampling, metric execution, comparison joins, condition differences, native-stage statistics, and offline reporting over a retained comparison. A metric adapter owns one measurement implementation.
+- The report builder owns presentation of an existing comparison only. Prepared-image review and the benchmark-owned Photo Report are outside the laboratory boundary; their image inventories and visual-report builders belong to separate benchmark commands.
 
-It is one binary over two libraries that stay separate: the evaluation library stays renderer-independent and depends only on the shared mathematics crate, and the command plumbing shared with the user binaries stays a library rather than forked code. A new development command lands in the instrument, not in `spektrafilm`, `spektrafilm-f64`, or the evaluation library.
+The lab and the benchmark product share one evaluation library that stays renderer-independent and depends only on the shared mathematics crate. The command plumbing shared with the user binaries stays a library rather than forked code. A development command lands in `spektrafilm-f64` when it renders, and in `spektrafilm-lab` when it measures.
 
-Ordinary suite/image execution MUST NOT offer optional native capture. Dedicated instrument endpoints own research observation. Human debug diagnostics and resumable film/print artifacts remain separate contracts.
+Ordinary suite/image execution MUST NOT offer optional native capture. Dedicated research endpoints own research observation. Human debug diagnostics and resumable film/print artifacts remain separate contracts.
 
-- The instrument MUST keep rendering and evaluation separate. A run produces immutable render evidence.
-- A comparison reads runs and produces immutable measurements; a report reads a retained comparison and produces review artifacts; the retained comparison selects the builder. This allows an agent to rerun only the failed stage and allows a person to inspect a report when the renderer is unavailable.
+- The laboratory MUST keep rendering and measurement separate. A run produces immutable render evidence.
+- A comparison reads runs, delivered images, or retained readings and produces immutable measurements; a report reads a retained comparison and produces review artifacts; the retained comparison selects the builder. This allows an agent to rerun only the failed stage and allows a person to inspect a report when the renderer is unavailable.
 - Preflight shares renderer configuration resolution with execution and publishes a separate validation record. It never enters the render-evidence lifecycle.
 - Target construction owns executable pinning for both local commands and fixtures. The inspection view reads validated comparison records, projects existing measurements, and leaves metric computation and policy evaluation with their current owners.
+- The lab's dependency set MUST NOT contain the renderer's crates. Independence is a build property and is checked by dependency inspection, not by convention.
 
 ```mermaid
 flowchart LR
-    S[Suite] --> R[Run orchestrator]
+    S[Suite] --> R[Run orchestrator<br/>spektrafilm-f64]
     T[Target] --> R
     R --> X[Renderer CLI]
     X --> M[Render masters and diagnostics]
-    M --> C[Comparison engine]
+    I[Delivered image sets] --> C[Comparison engine<br/>spektrafilm-lab]
+    M --> C
     P[Policy] --> C
     C --> E[Measurements and findings]
     E --> H[Review report]
@@ -189,7 +195,7 @@ The loader parses strict JSON, rejects duplicate keys and unknown authored field
 
 The resolver hashes executable bytes, selected data inventory, source files, presets, sparse parameter files, masks, transforms, references, and protocol inputs. It MUST produce a deterministic sorted inventory. Modification times and directory traversal order MUST NOT affect identity.
 
-### Run orchestrator
+### Run orchestrator (`spektrafilm-f64`)
 
 The orchestrator selects cases, applies target changes after case configuration, invokes the renderer, captures stdout and stderr separately, validates the machine result, and records the actual output and diagnostics. It MUST use unique artifact paths and refuse destination replacement. It MUST remove incomplete case artifacts or mark them incomplete.
 
@@ -205,7 +211,7 @@ The orchestrator MUST retain the command vector after path normalization, select
 
 Comparison retention MUST reuse the run validation already performed for that run. It MUST NOT reload and rehash every case for each selected case or role. Copying requested evidence MUST preserve the bundle's relative dependency layout and artifact identities.
 
-### Comparison engine
+### Comparison engine (`spektrafilm-lab`)
 
 The comparison engine matches results by stable case and seed identities. It verifies protocol, dimensions, source declarations, effective parameter compatibility, and applicable reference scope before computing measurements. It MUST produce an explicit incompatibility result instead of silently aligning incompatible runs.
 

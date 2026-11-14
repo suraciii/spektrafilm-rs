@@ -18,12 +18,11 @@ use crate::select_data_dir;
 
 use super::super::SCENE_RGB_SPACE;
 use super::super::cli::{MeasureEntry, MeasureRunArgs, MeasureStage};
-use super::super::report;
 use super::stimuli::{self, Stimuli};
 use super::{
     InputRequest, Offender, ResolvedChain, StageAvailability, StageReading, csv_field,
-    last_read_stage, number_field, point_wise_offenders, read_stage_bundle, resolve_chain,
-    resolve_range, statistics,
+    last_read_stage, number_field, point_wise_offenders, publish_staged, read_stage_bundle,
+    resolve_chain, resolve_range, statistics, write_measure_named,
 };
 
 pub fn run(args: &MeasureRunArgs, matches: &clap::ArgMatches) -> Result<()> {
@@ -255,7 +254,7 @@ pub fn run_with_result(args: &MeasureRunArgs, matches: &clap::ArgMatches) -> Res
             "summaries": summaries,
         });
         let measure_text = format!("{}\n", serde_json::to_string_pretty(&measure_json)?);
-        report::publish_staged(
+        publish_staged(
             &out,
             &staging,
             &[("run.json", measure_text), ("readings.csv", points_csv)],
@@ -432,7 +431,7 @@ fn require_declaration(
     );
 }
 
-/// The declaration the caller made, so `measure verify` can rebuild this exact
+/// The declaration the caller made, so a reader can rebuild this exact
 /// invocation and re-resolve it. It records the requested chain options, not
 /// the resolved profile names: a resolved film name beside `--preset` would
 /// not reproduce the resolution.
@@ -461,8 +460,8 @@ fn declaration_record(
     }))
 }
 
-/// Replay the same declaration that `measure verify` re-resolves, retaining
-/// the dependency identities already computed by the measurement owner.
+/// Replay the retained declaration, retaining the dependency identities
+/// already computed by the measurement owner.
 fn replay_record(args: &MeasureRunArgs, declaration: &Value, identity: &Value) -> Result<Value> {
     let cwd = std::env::current_dir()?;
     let out = if args.out.is_absolute() {
@@ -757,7 +756,7 @@ fn write_dry_run(
         "summaries": [],
     });
     let measure_text = format!("{}\n", serde_json::to_string_pretty(&measure_json)?);
-    report::write_measure_named(&out, &[("run.json", measure_text)]).map_err(anyhow::Error::msg)?;
+    write_measure_named(&out, &[("run.json", measure_text)]).map_err(anyhow::Error::msg)?;
     eprintln!("Measurement (dry run): {}", out.display());
     eprintln!("Samples: {}", stimulus.sample_count());
     eprintln!("Entry: {}", args.enter.name());

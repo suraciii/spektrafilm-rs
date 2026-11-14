@@ -277,7 +277,7 @@ bundle_native_licenses() {
 cargo build --release -p spektrafilm-gui --target-dir "$BUILD_TARGET_DIR"
 cargo build --release -p spektrafilm-cli --bin spektrafilm --bin decode_raw_gui --target-dir "$BUILD_TARGET_DIR"
 cargo build --release -p spektrafilm-cli --bin spektrafilm-f64 --features precision-f64 --target-dir "$BUILD_TARGET_DIR"
-cargo build --release -p spektrafilm-cli --bin spektrafilm-lab --features precision-f64 --target-dir "$BUILD_TARGET_DIR"
+cargo build --release -p spektrafilm-lab --features precision-f64 --target-dir "$BUILD_TARGET_DIR"
 
 rm -rf "$DIST_DIR"
 mkdir -p "$APP_BUNDLE/Contents/MacOS" "$APP_BUNDLE/Contents/Resources"

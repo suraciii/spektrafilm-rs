@@ -1,13 +1,13 @@
 #![cfg(unix)]
 #![cfg(feature = "precision-f64")]
 
+mod support;
 use serde_json::{Value, json};
 use spektrafilm_benchmark::common;
 use std::{fs, os::unix::fs::PermissionsExt, path::Path, process::Command};
+use support::progress;
 use tempfile::TempDir;
 
-#[path = "support/progress.rs"]
-mod progress;
 fn read(path: &Path) -> Value {
     serde_json::from_slice(&fs::read(path).unwrap()).unwrap()
 }
@@ -72,7 +72,7 @@ printf '{"film_profile":"film","print_profile":"paper","parameters":{"random_see
 }
 
 fn invoke(root: &Path, out: &str, dry: bool, selection: &[&str], code: i32) -> Value {
-    let mut command = Command::new(env!("CARGO_BIN_EXE_spektrafilm-lab"));
+    let mut command = Command::new(env!("CARGO_BIN_EXE_spektrafilm-f64"));
     command
         .arg("run")
         .arg("suite")
@@ -238,21 +238,6 @@ fn preflight_and_run_retain_identical_configuration_for_every_seed() {
     let mut content = manifest.clone();
     content.as_object_mut().unwrap().remove("id");
     assert_eq!(manifest["id"], common::digest(&content).unwrap());
-    let compare = Command::new(env!("CARGO_BIN_EXE_spektrafilm-lab"))
-        .arg("compare")
-        .arg("runs")
-        .arg("--baseline")
-        .arg(root.join("preflight"))
-        .arg("--candidate")
-        .arg(root.join("preflight"))
-        .arg("--out")
-        .arg(root.join("comparison"))
-        .output()
-        .unwrap();
-    assert_eq!(compare.status.code(), Some(1));
-    let rejected: Value = serde_json::from_slice(&compare.stdout).unwrap();
-    assert_eq!(rejected["execution_status"], "failed");
-    assert!(!root.join("comparison").exists());
     // Rendering is deliberately unavailable, but real run retains the same
     // checked configuration for all seeds before its render boundary fails.
     invoke(root, "actual", false, &["first"], 1);
@@ -293,7 +278,7 @@ fn ordinary_preflight_rejects_retired_capture_without_creating_outputs() {
     let mut suite = read(&root.join("suite.json"));
     suite["cases"][0]["configuration"] = json!({"set":["settings.preview_mode=true"]});
     common::dump(&root.join("suite.json"), &suite).unwrap();
-    let output = Command::new(env!("CARGO_BIN_EXE_spektrafilm-lab"))
+    let output = Command::new(env!("CARGO_BIN_EXE_spektrafilm-f64"))
         .arg("run")
         .arg("suite")
         .arg("--suite")
