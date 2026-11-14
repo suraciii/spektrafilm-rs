@@ -203,6 +203,20 @@ fn source_id(path: &Path) -> String {
         .to_owned()
 }
 
+/// The case identity a file name carries: its stem, validated.
+///
+/// Both endpoints name the cases of one directory through this, so a record
+/// written by `analyze` and a record written by `compare` over the same
+/// directory name the same cases.
+fn case_of(name: &str) -> Result<String> {
+    case_identity(
+        Path::new(name)
+            .file_stem()
+            .and_then(|value| value.to_str())
+            .unwrap_or(name),
+    )
+}
+
 fn case_identity(stem: &str) -> Result<String> {
     let valid = stem
         .chars()
@@ -218,6 +232,27 @@ fn case_identity(stem: &str) -> Result<String> {
         ));
     }
     Ok(stem.to_owned())
+}
+
+/// The case identity of every file in a directory, keyed by file name.
+///
+/// Two names that reduce to one identity are one case, so the directory is
+/// refused rather than measured twice. Both endpoints name the cases of one
+/// directory through this, so a record from either names them the same way.
+fn case_ids(files: &BTreeMap<String, PathBuf>) -> Result<BTreeMap<String, String>> {
+    let mut ids = BTreeMap::new();
+    let mut seen = BTreeSet::new();
+    for name in files.keys() {
+        let case_id = case_of(name)?;
+        if !seen.insert(case_id.clone()) {
+            return Err(Error::new(
+                "duplicate_case_identity",
+                format!("two files reduce to {case_id}"),
+            ));
+        }
+        ids.insert(name.clone(), case_id);
+    }
+    Ok(ids)
 }
 
 fn listing(directory: &Path) -> Result<BTreeMap<String, PathBuf>> {
@@ -280,22 +315,11 @@ fn pairs(args: &Args) -> Result<Vec<engine::Pair>> {
                     ),
                 ));
             }
-            let mut seen = BTreeSet::new();
+            let ids = case_ids(&left)?;
             let mut result = Vec::new();
             for (name, path) in &left {
-                let stem = Path::new(name)
-                    .file_stem()
-                    .and_then(|value| value.to_str())
-                    .unwrap_or(name);
-                let case_id = case_identity(stem)?;
-                if !seen.insert(case_id.clone()) {
-                    return Err(Error::new(
-                        "duplicate_case_identity",
-                        format!("two files reduce to {case_id}"),
-                    ));
-                }
                 result.push(engine::Pair {
-                    case_id,
+                    case_id: ids[name].clone(),
                     baseline: path.clone(),
                     candidate: right[name].clone(),
                 });
@@ -404,10 +428,11 @@ fn analysis_files(source: &Path) -> Result<Vec<engine::Pair>> {
         }]);
     }
     let listed = listing(source)?;
+    let ids = case_ids(&listed)?;
     let mut files = Vec::new();
-    for (stem, path) in listed {
+    for (name, path) in listed {
         files.push(engine::Pair {
-            case_id: case_identity(&stem)?,
+            case_id: ids[&name].clone(),
             baseline: path.clone(),
             candidate: path,
         });

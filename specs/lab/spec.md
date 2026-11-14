@@ -113,8 +113,8 @@ whatever content the image happens to contain.
 The other families need no cell. `tone`, `edge`, `grain`, and `halation`
 declare a probe, and the code that reads the probe is the code that refuses a
 missing one; restating that rule as a role table would give it two owners.
-`numeric`, `color`, `flip`, and `distribution` measure a declared quantity and
-are meaningful anywhere.
+`numeric`, `color`, and `flip` measure a declared quantity and are
+meaningful anywhere.
 
 A family declared on a role it does not apply to MUST be refused with
 `incompatible_measurement_role`, naming the family and the role. The refusal
@@ -451,8 +451,9 @@ reason, which is the noise floor of the pipeline that produced the files.
    `incompatible_image_sets` and names both lists.
 9. Two file names that reduce to one case identity fail with
    `duplicate_case_identity`.
-10. A regions document that declares `source` or `render` geometry fails with
-    `unsupported_coordinate_space` before reading a pixel.
+10. A regions document that declares `source` or a native stage space fails
+    with `unsupported_coordinate_space` before reading a pixel, and one that
+    declares `render` is measured.
 11. A generated region outside the image fails with `region_out_of_bounds` and
     names the region.
 12. The same arguments produce byte-identical `analysis.json`,
@@ -460,9 +461,8 @@ reason, which is the noise floor of the pipeline that produced the files.
 13. A family declared on a role it does not apply to fails with
     `incompatible_measurement_role`, naming the family and the role, and the
     region's other families still measure.
-14. `color_error` without a reference retains an unavailable row with
-    `missing_reference`, and `color_noise` and `distribution` still measure on
-    the same region.
+14. `color` without a reference retains an unavailable row with
+    `missing_reference`, and `color_noise` still measures on the same region.
 15. `--map-scale 4` changes no scalar measurement and records the scale.
 16. An EXR and the float TIFF written from the same render decode to the same
     samples.

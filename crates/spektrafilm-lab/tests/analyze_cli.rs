@@ -249,3 +249,65 @@ fn the_published_record_validates_as_an_analysis() {
     assert_eq!(result["kind"], "analysis");
     assert_eq!(result["execution_status"], "completed");
 }
+
+/// The directory form names a case the way the pairing form does, so a record
+/// from either endpoint over the same directory can be joined to the other.
+#[test]
+fn the_directory_form_names_cases_the_way_a_comparison_does() {
+    let temp = tempfile::tempdir().unwrap();
+    let source = temp.path().join("v1").join("field.png");
+    png(&source);
+    let analysis = temp.path().join("analysis");
+    assert!(
+        lab()
+            .args(["analyze", "--source"])
+            .arg(source.parent().unwrap())
+            .args(["--declaration", "sRGB:encoded", "--out"])
+            .arg(&analysis)
+            .output()
+            .unwrap()
+            .status
+            .success()
+    );
+    let comparison = temp.path().join("comparison");
+    assert!(
+        lab()
+            .args(["compare", "--baseline"])
+            .arg(source.parent().unwrap())
+            .args(["--candidate"])
+            .arg(source.parent().unwrap())
+            .args(["--declaration", "sRGB:encoded", "--out"])
+            .arg(&comparison)
+            .output()
+            .unwrap()
+            .status
+            .success()
+    );
+    let alone = read(&analysis.join("analysis.json"));
+    let paired = read(&comparison.join("comparison.json"));
+    assert_eq!(alone["cases"][0]["case_id"], "field");
+    assert_eq!(
+        alone["cases"][0]["case_id"], paired["cases"][0]["case_id"],
+        "one directory, one case identity"
+    );
+}
+
+/// Two names that reduce to one identity are one case, and the record refuses
+/// rather than reporting two cases for one name.
+#[test]
+fn two_names_that_reduce_to_one_identity_are_refused() {
+    let temp = tempfile::tempdir().unwrap();
+    let directory = temp.path().join("v1");
+    png(&directory.join("field.png"));
+    png(&directory.join("field.tif"));
+    let output = lab()
+        .args(["analyze", "--source"])
+        .arg(&directory)
+        .args(["--declaration", "sRGB:encoded", "--out"])
+        .arg(temp.path().join("analysis"))
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let error = String::from_utf8_lossy(&output.stderr);
+    assert!(error.contains("duplicate_case_identity"), "{error}");
+}
