@@ -176,6 +176,37 @@ impl BundleBuilder {
             first.params().output_mix.amount.to_string(),
         );
         provenance.insert("model_version".into(), crate::runtime::MODEL_VERSION.into());
+        let profile = &first.params().scanner.scan_profile;
+        let (film, print) =
+            resolve_profiles(&spec.film_profile, &spec.print_profiles[0], data_dir)?;
+        let scanned = if first.params().io.scan_film {
+            &film
+        } else {
+            &print
+        };
+        let medium_is_positive =
+            scanned.is_paper() || scanned.is_positive() || scanned.is_print_stock();
+        provenance.insert("scan_profile.model".into(), "scan_profile_v1".into());
+        provenance.insert(
+            "scan_profile.kind".into(),
+            match profile.transform.kind {
+                crate::params::scan_profile::ScanTransformKind::Bypass => "bypass",
+                crate::params::scan_profile::ScanTransformKind::Curve => "curve",
+                crate::params::scan_profile::ScanTransformKind::MatrixCurve => "matrix_curve",
+            }
+            .into(),
+        );
+        provenance.insert("scan_profile.strength".into(), profile.strength.to_string());
+        provenance.insert(
+            "scan_profile.included".into(),
+            (crate::finishing::is_applicable(first.params(), medium_is_positive)
+                && profile.is_effective())
+            .to_string(),
+        );
+        provenance.insert(
+            "scan_profile.parameters".into(),
+            serde_json::to_string(profile).map_err(|error| error.to_string())?,
+        );
         if let Some(finishing) = first.telemetry_configuration().finishing {
             provenance.insert("finishing.model".into(), finishing.model);
             provenance.insert("finishing.boundary".into(), finishing.boundary);

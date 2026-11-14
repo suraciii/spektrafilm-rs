@@ -31,6 +31,8 @@
 - Image-specific geometry remains neutralized under the existing LUT contract.
 - Eligible [Tone & Color](../finishing/spec.md#delivery) MUST be included once at the existing scan/final RGB boundary in segmented, collapsed, and complete bakes.
 - The bundle MUST retain the finishing definition and its applied boundary in provenance, including when stages are collapsed.
+- An effective [Scan Profile](../scan-profile/spec.md) MUST be included once at the same boundary and before Tone & Color.
+- The bundle MUST record the Scan Profile transform, strength, and inclusion in provenance, including when stages are collapsed.
 - CMYK ink style MUST run once at its post-scan finishing boundary.
 - The final RGB stage retains its `cmyk_` role and records its definition independently of material stages.
 - Neither a segmented consumer nor a collapsed complete transform MAY reapply CMYK ink style.

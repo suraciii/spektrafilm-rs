@@ -62,7 +62,7 @@ The following commands select the scan output and the scan-stage appearance expl
     --scan-output negative_to_positive --scan-profile sp3000_inspired --data-dir data
 ```
 
-`negative_to_positive` reads each dye record's density like a narrowband lab scanner. It inverts that density through the record's own profile density curve. It then passes through one logistic positive tone curve. A record never borrows density from the others, so saturated negatives do not clip one channel. The inverse is profile-derived and monotone. It has finite endpoint slopes beyond the curves. The tone keeps output within the paper range.
+`negative_to_positive` reconstructs each dye record's exposure from that record's own density. The readout integrates the material under the product illuminant with the CIE 1931 observer. It inverts the record's density through its own profile density curve. It then passes through one logistic positive tone curve. A record never borrows density from the others, so saturated negatives do not clip one channel. The inverse is profile-derived and monotone. It has finite endpoint slopes beyond the curves. The tone keeps output within the paper range.
 
 There is one negative conversion interpretation. It has no selectable method. The tone curve's constants come from a declared conversion style, described below. Zero balance renders a gray lit by the film's reference illuminant neutral. Scanner lens blur acts on transmitted light before the density reading.
 

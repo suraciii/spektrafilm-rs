@@ -30,7 +30,7 @@ const SERIES: [Color32; 3] = [theme::SERIES1, theme::SERIES2, theme::SERIES3];
 const MIN_KNOTS: usize = 2;
 /// One editor step for an input position. Core only requires strictly
 /// increasing inputs; a visible minimum keeps two knots distinguishable.
-const MIN_GAP: f32 = 1.0 / 1024.0;
+use spektrafilm_core::params::scan_profile::MIN_SCAN_PROFILE_KNOT_GAP as MIN_GAP;
 const HIT_RADIUS: f32 = 10.0;
 const KNOT_RADIUS: f32 = 3.0;
 const PLOT_HEIGHT: f32 = 132.0;

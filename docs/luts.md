@@ -17,7 +17,7 @@ Bundles record the full digested parameter tree per print.
 They also record the digest's changed values, a SHA-256 snapshot digest, and resolved input stops and gain.
 `Bundle::baked_params` preserves the actual bake configuration for QA.
 Preview, Scan, Export, and complete source-to-output LUTs use the same overall effect amount. Segmented LUTs require amount `1`; see the [LUT delivery specification](../specs/lut-delivery/spec.md) for the topology rule.
-Tone & Color is included once in eligible scan/final-RGB LUT stages, before output gamut processing. Segmented, collapsed, and complete bakes retain its model, parameters, and boundary in bundle provenance; do not apply the controls again after the emitted LUTs. Existing frame-dependent negative setup and source-mix restrictions remain independent.
+Tone & Color is included once in eligible scan/final-RGB LUT stages, before output gamut processing. An effective Scan Profile is included once at the same boundary and before Tone & Color, and the bundle records its transform, strength, and inclusion; choose **No Scan Profile** for a pure film-stock LUT. Segmented, collapsed, and complete bakes retain its model, parameters, and boundary in bundle provenance; do not apply the controls again after the emitted LUTs. Existing frame-dependent negative setup and source-mix restrictions remain independent.
 Grain and coupler TOML presets override controls when stock specifics are requested.
 Later edits use `apply_stocks_specifics=false`.
 

@@ -1051,6 +1051,64 @@ fn explicit_gpu_deferred_crop_dye_route_matches_cpu() {
     );
 }
 
+/// The scan-stage appearance is a pointwise resident pass. A custom curve and
+/// a preset-carried matrix transform must agree between the device shader and
+/// the CPU reference; default parameters bypass the stage and would not test it.
+#[test]
+fn resident_scan_profile_matches_cpu() {
+    use crate::params::scan_profile::{ScanCurve, ScanProfileParams, ScanProfileTransform};
+    let gpu = spektrafilm_gpu::test_support::explicit_adapter();
+    let dir = data_dir();
+    let film = crate::profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();
+    let print = crate::profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap();
+    let curve = || ScanCurve::new(vec![0.0, 0.5, 1.0], vec![0.05, 0.55, 0.95]);
+    let profiles = [
+        ScanProfileParams {
+            strength: 0.6,
+            transform: ScanProfileTransform::curve([curve(), curve(), curve()]),
+        },
+        ScanProfileParams {
+            strength: 1.0,
+            transform: ScanProfileTransform::matrix_curve(
+                [[1.02, 0.01, 0.0], [0.0, 0.98, 0.01], [0.01, 0.0, 1.01]],
+                [curve(), curve(), curve()],
+            ),
+        },
+    ];
+    for profile in profiles {
+        let mut params = RuntimeParams::default();
+        params.workflow.route = "input > film > scan".into();
+        params.io.scan_film = true;
+        params.scanner.scan_output = "negative_to_positive".into();
+        params.scanner.scan_profile = profile.clone();
+        params.film_render.grain.active = false;
+        params.io.output_gamut_compress.algorithm = "off".into();
+        params.io.output_cctf_encoding = false;
+        let pipeline =
+            Pipeline::new_with_spectral(film.clone(), print.clone(), params, &dir).unwrap();
+        assert!(
+            matches!(pipeline.resident_decision(), ResidentDecision::UseResident),
+            "the scan appearance keeps the resident route"
+        );
+        let image = comparison_image(16);
+        let output = pipeline
+            .clone()
+            .with_params_with_backend(pipeline.params.clone(), gpu.backend())
+            .unwrap()
+            .process(image.clone(), gpu.backend())
+            .unwrap();
+        let reference = pipeline
+            .process(image, &spektrafilm_backend::cpu_backend::CpuBackend)
+            .unwrap();
+        let (mean, max) = parity_metrics(&output, &reference);
+        assert!(
+            mean < 2e-3 && max < 2e-2,
+            "{:?}: mean={mean} max={max}",
+            profile.transform.kind
+        );
+    }
+}
+
 /// An explicit GPU request with a supported active Dye succeeds on the
 /// resident chain: the field is a device pass, so no host stage is left
 /// to fail on (pipe architecture fence policy). The capability output
