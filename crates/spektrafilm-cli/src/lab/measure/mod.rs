@@ -170,9 +170,8 @@ pub fn last_read_stage(read: &[String]) -> Result<MeasureStage> {
 
 /// Apply the measured range to a resolved chain: the entry boundary becomes the
 /// injected tap and the collection boundary is the last requested reading
-/// unless the chain declares one that reaches it. Both `measure run` and
-/// `measure verify` go through this, so a re-verification resolves exactly the
-/// range the run executed.
+/// unless the chain declares one that reaches it. Every measurement endpoint
+/// goes through this, so a retained record names exactly the range that ran.
 pub fn resolve_range(
     params: &mut RuntimeParams,
     entry: MeasureEntry,

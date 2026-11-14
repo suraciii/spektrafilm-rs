@@ -1,4 +1,4 @@
-//! `compare images`: quantify two delivered image sets.
+//! `compare`: quantify two delivered image sets.
 //!
 //! The comparison uses the version shape and the same metric engine as a
 //! version comparison, but its two sides are decoded files instead of
@@ -28,7 +28,7 @@ pub struct Pair {
     pub candidate: PathBuf,
 }
 
-/// One `compare images` invocation.
+/// One `compare` invocation.
 pub struct Request {
     pub baseline_id: String,
     pub candidate_id: String,

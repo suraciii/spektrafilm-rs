@@ -43,6 +43,11 @@ resolved value on the left and the value that disables it on the right. The
 after resolution, so it names the stages the preset, the profile, and your `--set` edits left
 active.
 
+A `negative_to_positive` scan output resolves the whole frame, so a range that
+reaches that RGB output must disable it first with `--set
+scanner.scan_output=false`. Earlier density and exposure boundaries remain
+measurable: the instrument does not treat its point array as a photograph.
+
 The command does not disable a stage on your behalf. Pass the `--set` edits it names.
 
 ## `measure run`

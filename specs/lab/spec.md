@@ -213,13 +213,12 @@ Pairing is by exact file name, never by order, modification time, or
 similarity. Equal dimensions MUST NOT establish correspondence.
 
 A name present on one side only MUST fail as `incompatible_image_sets`, naming
-both lists. A regular file whose extension is not an accepted image extension
-MUST fail as `unsupported_image_file`; the lab MUST NOT skip a file it cannot
-classify.
+both lists. A regular file that is not a container the lab measures MUST fail,
+naming the file; the lab MUST NOT skip a file it cannot classify.
 
-The accepted containers are PNG, TIFF, and EXR. A file whose bytes declare a
-container the lab cannot measure fails as `unsupported_image_file` or
-`lossy_container`, naming the file.
+The accepted containers are PNG, TIFF, and EXR, decided by the file's bytes. A
+container the lab does not measure fails as `unsupported_image_encoding`, and a
+lossy one as `lossy_container`; both name the file.
 
 ### Case identity
 

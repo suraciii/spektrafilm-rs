@@ -431,7 +431,7 @@ fn require_declaration(
     );
 }
 
-/// The declaration the caller made, so `measure verify` can rebuild this exact
+/// The declaration the caller made, so a reader can rebuild this exact
 /// invocation and re-resolve it. It records the requested chain options, not
 /// the resolved profile names: a resolved film name beside `--preset` would
 /// not reproduce the resolution.
@@ -460,8 +460,8 @@ fn declaration_record(
     }))
 }
 
-/// Replay the same declaration that `measure verify` re-resolves, retaining
-/// the dependency identities already computed by the measurement owner.
+/// Replay the retained declaration, retaining the dependency identities
+/// already computed by the measurement owner.
 fn replay_record(args: &MeasureRunArgs, declaration: &Value, identity: &Value) -> Result<Value> {
     let cwd = std::env::current_dir()?;
     let out = if args.out.is_absolute() {

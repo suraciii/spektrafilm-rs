@@ -40,6 +40,17 @@ fn endpoints_of_the_instrument_are_refused() {
     }
 }
 
+/// The replacement a refusal names has to exist: the lab's image comparison
+/// takes no subcommand, so a message that said `spektrafilm-lab compare images`
+/// would send the caller to another refusal.
+#[test]
+fn the_named_replacement_is_a_command_the_lab_accepts() {
+    let output = bench().args(["compare", "images"]).output().unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("`spektrafilm-lab compare ...`"), "{stderr}");
+    assert!(!stderr.contains("compare images ..."), "{stderr}");
+}
+
 /// The endpoints this binary does own still parse, so the guard cannot swallow
 /// them.
 #[test]

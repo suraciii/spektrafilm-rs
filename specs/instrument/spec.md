@@ -7,7 +7,7 @@ They share one document family and one machine-output contract.
 Normal image editing and delivery do not need either binary. They compute and publish evidence; interpretation belongs to the caller and to the policies a document declares.
 
 - This document owns the command grammar of both binaries, the [document registry](#document-registry), the machine-output contract, and the serialized documents. It does not change the renderer's [CLI parameter language](../cli/spec.md).
-- The [lab product specification](../lab/spec.md) owns the lab boundary, its laws, `compare images`, analysis profiles, and the report content contract.
+- The [lab product specification](../lab/spec.md) owns the lab boundary, its laws, `compare`, analysis profiles, and the report content contract.
 - A command name in this document denotes the endpoint of its owning binary, as the [command ownership table](#command-ownership) states. The owning binary is part of the endpoint identity.
 - The [benchmark product specification](../benchmark/spec.md) owns evaluation meaning, the [measurement protocol](../benchmark/metrics/spec.md) owns metric domains and algorithms, the [standard configurations](../benchmark/standard-configurations/spec.md) own their rendering purposes, the [profile authoring contract](../profile-authoring/spec.md) owns profile fitting, and [Rust delivery](../benchmark/rust-delivery/spec.md) owns distribution.
 - Ordinary suite/image execution MUST NOT provide optional native capture. Dedicated experiment/measurement endpoints MUST use the common core observer.
@@ -43,7 +43,7 @@ The supported command families have distinct endpoint roles:
 | `measure run` | execute one declared point-wise stimulus chain | stimuli and chain declarations | execute an image-domain run, sample, compare, or select |
 | `sample` | read declared windows from one source | image or retained stage evidence plus `regions` | render, resize, infer geometry, or score |
 | `analyze` | quantify one delivered image set | one raster image set plus `regions` and a protocol | compare, invoke a renderer, or report |
-| `compare images` | quantify two delivered image sets and join them | two raster image sets plus `regions` and a protocol | invoke a renderer, compare runs, or report |
+| `compare` | quantify two delivered image sets and join them | two raster image sets plus `regions` and a protocol | invoke a renderer, compare runs, or report |
 | `compare runs` | compare two completed image-domain runs | retained run records | compare readings, invoke a renderer, or select a candidate |
 | `compare readings` | compare two retained reading records | retained reading records | compare image-domain runs, invoke a renderer, or select a candidate |
 | `compare pairs` | create explicitly requested pairs from one retained run | one retained run record | compare two runs, infer a default pair, or invoke a renderer |
@@ -53,7 +53,7 @@ The supported command families have distinct endpoint roles:
 
 | Binary | Owns |
 |---|---|
-| `spektrafilm-lab` | `analyze`, `compare images`, `regions grid`, `schema`, `validate` |
+| `spektrafilm-lab` | `analyze`, `compare`, `regions grid`, `schema`, `validate` |
 | `spektrafilm-bench` | `compare runs`, `compare readings`, `compare pairs`, `sample`, `inspect`, `report comparison`, `report photos` |
 | `spektrafilm-f64` | `target`, `fixtures`, `run suite`, `run image`, `measure run`, `experiment run`, `experiment export`, `spectral evaluate`, `fit` |
 
@@ -162,7 +162,7 @@ The command family names are semantic, not workflow steps. `measure run` publish
 - `--preparation` MUST contain `original` with `path` and `sha256`, and a nonempty `operations` array of descriptive strings. The original path MUST resolve relative to that file and enter retained dependencies.
 - `spektrafilm-f64` MUST record but MUST NOT execute these operations. Suite cases MAY contain the same optional `preparation` object.
 - The actual prepared input hash MUST remain authoritative.
-- `compare images` MUST quantify the two delivered image sets the [lab product specification](../lab/spec.md#compare) declares. It MUST NOT load a run, a suite, a target, or a configuration.
+- `compare` MUST quantify the two delivered image sets the [lab product specification](../lab/spec.md#compare) declares. It MUST NOT load a run, a suite, a target, or a configuration.
 - Each case MUST retain the measurements, regions, automatic regions, review artifacts, and difference maps of its one pair. The pair identity MUST be `baseline/candidate` wherever a region readout or a finding names it.
 - An image-source case has no seed: the comparison MUST NOT carry a seed field, and MUST NOT publish a cross-realisation statistic.
 - The comparison MUST use the version shape and MUST NOT carry a `mode` field. Its `baseline` and `candidate` blocks MUST use `kind` equal to `images`, the declared color space, the transfer state, one file per case with its relative artifact path, SHA-256, and dimensions, and the digest of that declaration.
@@ -395,7 +395,7 @@ A regions document declares reading positions. One kind serves both reading doma
 - Mask paths MUST resolve relative to the document that contains them and enter the retained dependency inventory as immutable evidence.
 - Regions MAY overlap: a reading carries its own identity, and a narrower window inside a wider one is a declared intent, not a conflict. Correspondence is never inferred from equal dimensions, labels, or shared region identities.
 - `regions grid` is the only standalone geometry generator. It writes a normal `regions` document and does not read images or produce a review page.
-- `compare images --roi` declares windows inline and materializes the same `regions` shape as its retained geometry authority. It is a declaration carrier, not a second geometry language: it names no image, pair, inventory, or default region.
+- `compare --roi` declares windows inline and materializes the same `regions` shape as its retained geometry authority. It is a declaration carrier, not a second geometry language: it names no image, pair, inventory, or default region.
 - Non-grid geometry is authored directly. A suite case, a sampling command, and a reference MAY consume the same regions shape through one validator.
 - Benchmark image-domain consumers currently accept only `source` and `render`. Native stage values require a producer mapping and are rejected there with `unsupported_coordinate_space` until one exists.
 
@@ -676,7 +676,7 @@ Existing natural-source provenance MUST remain intact. A change to authored stan
 - `experiment export INPUT --out DIRECTORY` consumes a native observation bundle and never treats a `.sfstage` resume state or debug text as scientific observations.
 - `spektrafilm-lab` MUST reject every endpoint the [command ownership table](#command-ownership) assigns to `spektrafilm-f64`, and `spektrafilm-f64` MUST reject every lab endpoint. Each rejection MUST return `argument_syntax` and name the owning binary.
 - `spektrafilm-bench report comparison` MUST succeed on a host with no renderer executable and no graphics device.
-- A `compare images` comparison MUST carry one case per declared pair, source blocks of `kind: images`, and no run, target, suite, or command record.
+- An image-source comparison MUST carry one case per declared pair, source blocks of `kind: images`, and no run, target, suite, or command record.
 - Two identical images MUST produce a comparison whose available deltas are zero and whose unavailable rows carry a reason.
 
 ## Laws

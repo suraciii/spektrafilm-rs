@@ -186,14 +186,21 @@ fn execute(command: Command) -> Result<(Value, i32)> {
 fn reject_lab_subcommand() -> Option<i32> {
     let mut argv = std::env::args().skip(1);
     let first = argv.next()?;
-    let owned = match first.as_str() {
-        "compare" => matches!(argv.next().as_deref(), Some("images" | "image" | "pair"))
-            .then(|| "compare images".to_owned()),
-        "analyze" | "regions" | "schema" | "validate" => Some(first.clone()),
-        _ => None,
-    }?;
+    // (what the caller typed, the lab form that does it)
+    let (typed, replacement) = match first.as_str() {
+        "compare" => match argv.next().as_deref() {
+            // The lab's image comparison takes no subcommand: this binary's
+            // `compare` prefix is the only reason a caller reaches for one.
+            Some(sub @ ("images" | "image" | "pair")) => {
+                (format!("compare {sub}"), "compare".to_owned())
+            }
+            _ => return None,
+        },
+        "analyze" | "regions" | "schema" | "validate" => (first.clone(), first.clone()),
+        _ => return None,
+    };
     eprintln!(
-        "argument_syntax: `{owned}` belongs to spektrafilm-lab; run `spektrafilm-lab {owned} ...`"
+        "argument_syntax: `{typed}` belongs to spektrafilm-lab; run `spektrafilm-lab {replacement} ...`"
     );
     Some(2)
 }

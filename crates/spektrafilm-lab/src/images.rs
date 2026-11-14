@@ -1,4 +1,4 @@
-//! `compare images`: adapt one declaration into one image comparison.
+//! `compare`: adapt one declaration into one image comparison.
 //!
 //! The adapter owns argument shape, pairing, and the analysis profile. It owns
 //! no measurement: the engine quantifies and joins the two sides, and the
