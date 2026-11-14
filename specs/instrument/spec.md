@@ -108,7 +108,7 @@ spektrafilm-f64 spectral evaluate --spectra FILE {--preset NAME ... | --profile 
 spektrafilm-f64 fit [FIT OPTIONS]
 ```
 
-`IMAGE COMPARISON OPTIONS` are defined by the [`compare images` section](../lab/spec.md#compare-images) of the lab product specification.
+`IMAGE COMPARISON OPTIONS` are defined by the [`compare` section](../lab/spec.md#compare) of the lab product specification.
 
 Each canonical leaf has one typed argument group and one semantic handler. The handler MUST NOT select a different contract from optional field presence or from the shape of a retained document.
 
@@ -157,9 +157,9 @@ The command family names are semantic, not workflow steps. `measure run` publish
 - `--preparation` MUST contain `original` with `path` and `sha256`, and a nonempty `operations` array of descriptive strings. The original path MUST resolve relative to that file and enter retained dependencies.
 - `spektrafilm-f64` MUST record but MUST NOT execute these operations. Suite cases MAY contain the same optional `preparation` object.
 - The actual prepared input hash MUST remain authoritative.
-- `compare images` MUST quantify the two delivered image sets the [lab product specification](../lab/spec.md#compare-images) declares. It MUST NOT load a run, a suite, a target, or a configuration.
+- `compare images` MUST quantify the two delivered image sets the [lab product specification](../lab/spec.md#compare) declares. It MUST NOT load a run, a suite, a target, or a configuration.
 - Each case MUST retain the measurements, regions, automatic regions, review artifacts, and difference maps of its one pair. The pair identity MUST be `baseline/candidate` wherever a region readout or a finding names it.
-- Every image-source case declares seed `0`. The comparison MUST NOT carry a seed population or a cross-seed statistic.
+- An image-source case has no seed: the comparison MUST NOT carry a seed field, and MUST NOT publish a cross-realisation statistic.
 - The comparison MUST use the version shape and MUST NOT carry a `mode` field. Its `baseline` and `candidate` blocks MUST use `kind` equal to `images`, the declared color space, the transfer state, one file per case with its relative artifact path, SHA-256, and dimensions, and the digest of that declaration.
 - Those blocks MUST NOT contain a run record, a target record, a suite document, or an executed command.
 - A delivered image has no executed command. The comparison MUST NOT fabricate one, and a reader MUST NOT reconstruct one.
