@@ -4,11 +4,13 @@ This contract owns the readout of developed photographic material. It does not o
 
 ## Readout routes
 
-1. Negative-to-positive readout reconstructs relative log exposure from each record's density. It applies operator correction, then a positive tone; a separate opt-in frame setup MAY measure the frame first.
+1. Negative-to-positive readout reconstructs relative log exposure from each record's density. It applies operator correction, then a positive tone.
 2. Positive transmission readout integrates the material's spectral transmittance under the readout illuminant with the CIE 1931 2° observer.
 3. Paper reflection readout uses the same integration with spectral reflectance instead of transmittance.
 
-The negative-to-positive reconstruction MUST remain per-record. A change in one record MUST NOT change another record's reconstructed exposure. The opt-in frame setup is separate and MAY depend on all pixels and records.
+The negative-to-positive reconstruction MUST remain per-record. A change in one record MUST NOT change another record's reconstructed exposure.
+
+No readout stage MAY derive a parameter from the complete frame's statistics. Every parameter MUST depend only on the material, the readout setting, and the operator values.
 
 ## Readout illuminant
 
@@ -37,85 +39,27 @@ It MUST NOT override the product readout illuminant. The Convert panel and saved
 
 ## Exposure reference and inverse
 
-The negative-film exposure coordinate uses the normalized camera reference: a scene-linear neutral value of `0.184` under the stock reference illuminant maps approximately to `log_e = 0`. The target coordinate for frame setup is
+The negative-film exposure coordinate uses the normalized camera reference: a scene-linear neutral value of `0.184` under the stock reference illuminant maps approximately to `log_e = 0`. The target coordinate is
 
 \[
 x_{aim}=\log_{10}(0.16/0.184).
 \]
 
-This is an exposure target. It does not require the output RGB value to equal `0.16`. The fixed positive tone determines that value.
+This is the operator pivot. It does not require the output RGB value to equal `0.16`. The fixed positive tone determines that value.
 
 The inverse MUST use the density domain the film stage emits: each record over its own curve minimum. It MUST regularize reversals with least-squares isotonic regression. Pooled plateaus use mean log exposure.
 
-Endpoints use finite tangent extrapolation. Setup MUST use the neutral locus and slope from these same regularized axes.
+Endpoints use finite tangent extrapolation.
 
-## Experimental frame setup
+## Retired frame setup
 
-The experimental frame setup has been removed. The default readout is a fixed, frame-independent transform.
+The product MUST NOT execute an automatic frame setup. It has no runtime leaf, no control, and no execution on either backend. Automated exposure, cast, or contrast judgment is the user's [operator correction](#operator-correction).
 
-When enabled it MUST measure the complete frame delivered to the scan acquisition boundary, after transmission-domain scanner lens blur and before the positive tone. It MUST NOT measure separate tiles.
+The retired leaf `scanner.experimental_setup` MUST fail unknown-field validation in runtime parameters, sparse sources, inline assignments, current-schema presets, and imported recipes.
 
-It MUST NOT cache offsets across frames.
+A future frame-dependent measurement requires a new contract. It MUST cite measured evidence on held-out material. It MUST state its effect on [LUT delivery](../../lut-delivery/spec.md).
 
-It MUST require `scan_output = negative_to_positive`. Enabling it on any other output MUST fail validation.
-
-The following constants are declared product choices. They are not calibrated Frontier or Noritsu settings.
-
-| Constant | Value |
-| --- | --- |
-| Exposure correction slope | `0.75` |
-| Color correction slope | `0.9` |
-| Color-weight floor | `0.2` |
-| Color-distance coefficient | `40` |
-| Contrast branch threshold | `1.8` density units |
-
-### Exposure
-
-For each pixel, let `N = (d_C + d_M + d_Y) / 3`. Compute the arithmetic mean `Nave`, minimum `Nmin`, maximum `Nmax`, and fifth percentile `N5`. Use linearly interpolated percentile ranks `(count - 1) * 0.05`.
-
-Select weights `w = (0.33, 0.30, 0.35)` when `Nmax - N5 < 1.8`. Otherwise select `(0.30, 0.35, 0.29)`.
-
-\[
-E_n=\frac{w_0N_{ave}+w_1N_{max}+w_2N_{min}}{w_0+w_1+w_2},\qquad
-\Delta x=0.75\frac{aim-E_n}{\gamma}.
-\]
-
-Here `aim` is the mean neutral density at `x_aim`. `gamma` is the mean local neutral-curve slope there. The branches sum to `0.98` and `0.94`; normalize each by its own sum.
-
-Reject a nonfinite or nonpositive slope.
-
-This estimator uses arithmetic density statistics. It is not the physical LATD statistic `-log10(mean(10^-d))`.
-
-### Color
-
-For each pixel, reconstruct `x_C`, `x_M`, and `x_Y`. Evaluate the stock neutral locus at their mean exposure. Subtract that neutral density from the pixel's record density.
-
-Average those residuals over the frame to obtain `r`.
-
-\[
-u=(r_C-r_M)/\sqrt{2},\quad
-v=(r_C+r_M-2r_Y)/\sqrt{6},\quad
-W=\max(1-40(u^2+v^2),0.2).
-\]
-
-Set `du = -0.9 W u / gamma` and `dv = -0.9 W v / gamma`. The log-exposure offsets are
-
-\[
-\Delta x_c=\Delta x+\left(
- du/\sqrt2+dv/\sqrt6,\;
--du/\sqrt2+dv/\sqrt6,\;
--2dv/\sqrt6\right)_c.
-\]
-
-A neutral ramp MUST NOT acquire a cast solely because the stock's three neutral curves differ. A dominant scene color MUST reduce the correction through `W`. This neutral-locus approximation does not reproduce a stock-specific population average of real negatives.
-
-### Execution
-
-Setup MUST accumulate statistics in f64 in raster order. It MUST reject empty frames, nonfinite densities, and nonfinite corrections. It MUST NOT modify input densities or upstream diagnostic taps.
-
-The same setup implementation MUST serve per-stage CPU execution and the assembled resident scan acquisition fence. It MUST NOT silently switch a requested GPU render to a CPU render. The existing mixed execution fence remains visible in backend reporting.
-
-The enabled setup MUST NOT subtract camera exposure compensation again after measuring. Without it, every style retains the historical camera compensation on simulated film-scan routes. Real captures receive no virtual camera compensation.
+Every style retains the historical camera compensation on simulated film-scan routes. Real captures receive no virtual camera compensation.
 
 ## Operator correction
 
@@ -123,20 +67,22 @@ The enabled setup MUST NOT subtract camera exposure compensation again after mea
 
 Contrast MUST be positive. Editor trial ranges of exposure ±3 EV, warmth/tint ±1 differential EV, and contrast 0.5–2 MUST NOT become schema clamps.
 
-Nondefault operator correction MUST require the built-in tone on `negative_to_positive` and an eligible negative-film scan route; it does not depend on the experimental setup. Declared fixed styles are complete tone definitions and MUST reject explicit nondefault correction, as MUST direct scans, positive film, paper, and scan-minus-base. GUI state MUST retain valid inactive edits and expose their inactive status.
+Nondefault operator correction MUST require the built-in tone on `negative_to_positive` and an eligible negative-film scan route. Declared fixed styles are complete tone definitions and MUST reject explicit nondefault correction, as MUST direct scans, positive film, paper, and scan-minus-base. GUI state MUST retain valid inactive edits and expose their inactive status.
 
 The GUI MUST pass neutral operator values to rendering while those edits are inactive.
 
-Material-producing routes MAY retain otherwise valid pending scanner correction in their stage baseline, but MUST report the operator edits as inactive while no scan executes. Resumed negative `film > scan` MUST use the same setup and correction math as an uninterrupted film scan.
+Material-producing routes MAY retain otherwise valid pending scanner correction in their stage baseline, but MUST report the operator edits as inactive while no scan executes. Resumed negative `film > scan` MUST use the same reconstruction and correction math as an uninterrupted film scan.
 
-Changing that downstream correction MUST NOT redevelop the stored material or reuse an earlier corrected positive as its setup input.
+Changing that downstream correction MUST NOT redevelop the stored material or reuse an earlier corrected positive as its correction input.
 
 `scanner.operator` remains exposure-domain negative conversion, distinct from [Tone & Color](../../finishing/spec.md#controls). Its values and units MUST NOT be migrated or equated with finishing controls.
 
-Let `x_c` be reconstructed log10 exposure and `o_c` the immutable full-frame setup offset. Define `p = log10(0.16 / 0.184)` and `L = log10(2)`. The operator coordinates and correction are:
+Let `x_c` be reconstructed log10 exposure. No frame-level offset exists.
+
+Define `p = log10(0.16 / 0.184)` and `L = log10(2)`. The operator coordinates and correction are:
 
 ```text
-e_c = (x_c + o_c - p) / L
+e_c = (x_c - p) / L
 m = (e_R + e_G + e_B) / 3
 v_c = e_c - m
 q = (W/2 + M/3, -2M/3, -W/2 + M/3)
@@ -153,21 +99,21 @@ Positive values make the image warmer. `M` is `tint_ev`: an increase in mean(R,B
 
 The common exposure `m` is not CIE Y.
 
-Correction MUST NOT alter density, reconstructed exposure taps, camera or Convert acquisition settings, or setup statistics and offsets. Contrast MUST preserve exposure channel differences before tone. The channel-wise nonlinear tone does not guarantee perceptual hue, chroma, or output luminance preservation.
+Correction MUST NOT alter density, reconstructed exposure taps, or camera or Convert acquisition settings. Contrast MUST preserve exposure channel differences before tone. The channel-wise nonlinear tone does not guarantee perceptual hue, chroma, or output luminance preservation.
 
 Default correction MUST bypass the coordinate round trip exactly.
 
 ## Exact preview and prepared baseline
 
-While the experimental setup is enabled, a negative-to-positive preview MUST use the same complete working grid as export, because a reduced grid would measure a different image. With the setup disabled the working grid MAY be reduced to the preview size, since the readout is then frame-independent. Only terminal RGB MAY be reduced afterward in either case.
+A negative-to-positive preview MAY reduce the working grid to the preview size, because the readout is frame-independent. Only terminal RGB MAY be reduced afterward.
 
-Diagnostic density and exposure taps MUST retain their actual grid and meaning. Pan, zoom, and display size MUST NOT remeasure setup.
+Diagnostic density and exposure taps MUST retain their actual grid and meaning. Pan, zoom, and display size MUST NOT change the working grid.
 
-The core MUST own one immutable prepared full-frame baseline shared by operator variants, comparison, preview, and export. Operator-only edits MUST reuse reconstruction and setup when the upstream route exposes reusable preparation. Optical Dye/Fotufilm grain MAY require exact full-route recomputation.
+The core MUST own one immutable prepared full-frame baseline shared by operator variants, comparison, preview, and export. Operator-only edits MUST reuse reconstruction when the upstream route exposes reusable preparation. Optical Dye/Fotufilm grain MAY require exact full-route recomputation.
 
 A new input, crop, upscale, material, upstream processing, acquisition setting, backend, or precision MUST invalidate incompatible preparation. Cancellation and failed preparation MUST NOT publish a cache entry. Stale results MUST NOT replace a newer input epoch, parameter revision, or request.
 
-Cache reuse MUST NOT lock offsets across frames. Insufficient memory MUST cause explicit failure or exact recomputation, not reduced precision or sampled setup. No separate approximate preview engine is introduced.
+Insufficient memory MUST cause explicit failure or exact recomputation, not reduced precision. No separate approximate preview engine is introduced.
 
 ## Output primaries
 
@@ -183,7 +129,7 @@ The runtime model version MUST change; saved carrier versions need not change fo
 
 ## Tone and style names
 
-Apply the existing logistic family to the corrected coordinate `z_c`. Without the setup the offset is zero. `standard` keeps the historical tone constants in all three channels:
+Apply the existing logistic family to the corrected coordinate `z_c`. `standard` keeps the historical tone constants in all three channels:
 
 | `brightness_ev` | `contrast` | `dmax` |
 | --- | --- | --- |
@@ -193,7 +139,7 @@ Apply the existing logistic family to the corrected coordinate `z_c`. Without th
 
 The alias does not preserve the historical fixed-curve pixels.
 
-Any other valid name resolves to `<data-dir>/scan-styles/<name>.json`. A file declares three finite tone triples with positive `contrast` and `dmax`. Styles never run the frame setup; the setup is independent of the name.
+Any other valid name resolves to `<data-dir>/scan-styles/<name>.json`. A file declares three finite tone triples with positive `contrast` and `dmax`.
 
 Invalid or missing style data MUST fail before output publication. Style names MUST NOT contain `/`, `\`, `..`, or `:`. A catalog MUST NOT offer files named `standard` or `neutral` as additional choices.
 
@@ -216,19 +162,19 @@ Current schemas reject `lamp` and retain all unrelated retired-field rejection. 
 
 The additive defaulted `scanner.operator` fields require no additional schema migration. Omitted operator fields MUST receive neutral defaults. Unknown and retired fields MUST remain rejected.
 
-Operator correction MUST NOT revive `conversion_*`, `auto_setup`, or `finish` controls.
+Operator correction MUST NOT revive `conversion_*`, `auto_setup`, `experimental_setup`, or `finish` controls.
 
 Presets, recipes, parameter discovery, CLI `--set`, GUI persistence, and effective render configuration MUST share the typed core model. Automatic offsets MUST NOT enter ordinary saved correction parameters.
 
 ## Acceptance and limits
 
-- With the setup enabled, a uniform 16% neutral patch has a setup offset of zero within precision tolerance.
+- A uniform neutral patch MUST keep its value when the rest of the frame changes.
 - Gray ramps remain neutral, monotone, and finite. Positive and negative exposure shifts remain distinguishable.
 - Exact residual `(1 - slope)` applies to linear response curves, not arbitrary toe/shoulder regions.
-- Repeated execution on the same frame produces identical setup and pixels at the same precision and backend.
+- Repeated execution on the same frame produces identical pixels at the same precision and backend.
 - Every style retains record independence before destination primary conversion.
 - A dominant red field remains red after correction. A dark field MUST NOT be forced to the same result as the neutral aim.
-- A bright background MAY still darken a subject. Setup provides no face detection, subject classification, or local tone correction.
+- A bright background MUST NOT change a subject's result. The readout provides no face detection, subject classification, or local tone correction.
 - Do not weaken this limit into a claim that inverse-lighting scenes are rescued.
 - Backend parity, style changes, canonical alias output, versioned migration, and point-wise rejection require real-consumer tests.
 - No paired real minilab scans are available. Passing these tests does not establish a Frontier/Noritsu match or prove this algorithm best.

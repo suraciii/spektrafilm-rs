@@ -71,7 +71,7 @@ A section is a named set of preset-owned parameter paths. This table is authorit
 - `camera filter`: `camera_diffusion_filter`. Primary module anchor: Input and capture / Camera diffusion.
 - `enlarger filter`: `enlarger.diffusion_filter`. Primary module anchor: Print / Enlarger diffusion.
 - `enlarger`: `enlarger` without `enlarger.diffusion_filter`. Primary module anchor: Print / Enlarger.
-- `scanner`: `scanner.scan_output`, `scanner.white_reference`, `scanner.conversion_style`, `scanner.operator`, `scanner.lens_blur`, `scanner.unsharp_mask`. Primary module anchor: Scan / Scanner.
+- `scanner`: `scanner.scan_output`, `scanner.white_reference`, `scanner.conversion_style`, `scanner.operator`, `scanner.scan_profile`, `scanner.lens_blur`, `scanner.unsharp_mask`. Primary module anchor: Scan / Scanner and Scan / Scan Profile.
 - `cmyk ink style`: `cmyk`. Primary module anchor: Output / CMYK ink style.
 - `print`: `print_render`. Primary module anchor: Print / Chemistry.
 - `output mix`: `output_mix`. Primary module anchor: Output / Simulation blend.
@@ -164,7 +164,7 @@ Candidate preparation MUST branch by preset kind. A Film preset candidate MUST u
 
 Explicit-leaf provenance and omitted-camera preservation MUST remain part of that preparation. A LUT preset candidate MUST use the LUT resolver and LUT file identity and MUST NOT prepare spectral materials. An Effects preset candidate MUST use the Off graph and MUST NOT prepare spectral or LUT data.
 
-Every candidate MUST start from the accepted source and input preparation, not the current Modified image. A Film preset candidate's own metering, frame setup, material preparation, and preset-owned values MUST follow the normal spectral pipeline.
+Every candidate MUST start from the accepted source and input preparation, not the current Modified image. A Film preset candidate's own metering, scan preparation, material preparation, and preset-owned values MUST follow the normal spectral pipeline.
 
 A LUT candidate MUST resolve its LUT file and declaration without spectral preparation. An Effects candidate MUST resolve its Effects groups without a LUT read or spectral preparation. One candidate's derived preparation MUST NOT seed another candidate.
 

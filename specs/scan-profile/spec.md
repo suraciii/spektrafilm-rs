@@ -80,12 +80,13 @@ The Scan Profile transform is one of:
 | Kind | Contents | Editing |
 | --- | --- | --- |
 | `bypass` | No transform | `No Scan Profile` |
-| `curve` | Three per-channel one-dimensional curves | Editable in Advanced |
+| `curve` | Three per-channel one-dimensional curves | Editable in the Scan Profile module |
 | `matrix_curve` | 3×3 matrix plus three per-channel curves | Built-in or preset-carried; read-only |
 
 Curve rules:
 
 - Each channel carries its own knots.
+- A channel MUST carry at least two and at most nine knots.
 - Knot inputs MUST be strictly increasing and span the declared domain endpoints.
 - Knot outputs MUST be monotone.
 - The transform domain is `[0,1]`; values outside the domain use endpoint clamp.
@@ -106,11 +107,27 @@ The transform executes after negative conversion and before Tone & Color.
 
 ### GUI
 
-The Scanner surface MUST provide one Scan Profile selector. It MUST list `No Scan Profile`, built-in entries, and `custom` when effective.
+The Scan stage MUST provide one Scan Profile module. Its placement follows [stage and surface ownership](../gui-workflow/spec.md#stage-and-surface-ownership).
 
-The selector MUST NOT include a second library, import/export surface, or profile management.
+The module MUST provide one selector. It MUST provide one strength control. It MUST provide the curve editor for a `curve` transform.
 
-Advanced editing MUST expose curve controls only. A `matrix_curve` entry or preset-carried matrix transform MUST NOT expose matrix or curve editing.
+The selector MUST list `No Scan Profile`, built-in entries, and `custom` when effective.
+
+The module MUST NOT include a second library, import/export surface, or profile management.
+
+The module MUST expose curve controls only. It MUST expose one editor per channel curve. A `matrix_curve` entry or preset-carried matrix transform MUST NOT expose matrix or curve editing.
+
+The editor MUST display all three channel curves together. An all-channel edit MUST move every channel by the same input and output amount. A single-channel edit MUST change only that channel's curve.
+
+Adding a knot MUST keep that channel's current output at the new input, so adding alone does not change the image.
+
+The editor MUST clamp an edit that would violate a curve invariant. It MUST NOT accept a non-increasing input or a non-monotone output.
+
+The editor MUST add and remove interior knots. It MUST NOT remove a domain endpoint.
+
+The module MUST provide one transient comparison. It MUST bypass only the scan-stage appearance while the primary mouse button or focused Space holds it.
+
+The comparison MUST preserve stored controls, adjustment history, presets, Save output, and Export output.
 
 Saving a custom curve result MUST use the existing look or section preset action.
 

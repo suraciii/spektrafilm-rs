@@ -79,6 +79,8 @@ The sample MUST come from the explicitly selected photographic subject under the
 
 Markers MUST remain distinguishable from distribution traces and reference guides. They MUST NOT imply that the indicated bin contains only the inspected pixel.
 
+The readout MUST also identify the sample's CIE L\*a\*b\* coordinates under the sRGB white point. It MUST state that white so the values can be compared with a reference measurement.
+
 Linked inspection MUST NOT change the population, selection, plot scale, or photographic adjustments. It MUST NOT consume clicks, drags, scrolling, or keyboard commands owned by other viewer operations.
 
 A focusable Pixel cursor control in the analysis toolbar MUST provide keyboard pixel inspection with the same sample values and plot markers as pointer inspection. Arrow keys MUST move the cursor while the control has focus. The control MUST show active and keyboard-focus states and expose accessible help including arrow-key movement.

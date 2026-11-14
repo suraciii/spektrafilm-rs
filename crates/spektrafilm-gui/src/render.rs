@@ -154,6 +154,7 @@ pub(super) enum Comparison {
     None,
     Operator,
     Finishing,
+    ScanProfile,
 }
 
 #[derive(Clone)]
@@ -225,6 +226,7 @@ impl RenderSnapshot {
             Comparison::None => {}
             Comparison::Operator => self.params.scanner.operator = Default::default(),
             Comparison::Finishing => self.params.finishing = Default::default(),
+            Comparison::ScanProfile => self.params.scanner.scan_profile = Default::default(),
         }
         self
     }
@@ -596,6 +598,13 @@ mod tests {
         let operator = snapshot.clone().with_comparison(Comparison::Operator);
         assert_eq!(operator.params.scanner.operator, Default::default());
         assert_eq!(operator.params.finishing, accepted.finishing);
+        let scan_profile = snapshot.clone().with_comparison(Comparison::ScanProfile);
+        assert_eq!(scan_profile.params.scanner.scan_profile, Default::default());
+        assert_eq!(
+            scan_profile.params.scanner.operator,
+            accepted.scanner.operator
+        );
+        assert_eq!(scan_profile.params.finishing, accepted.finishing);
         assert_eq!(snapshot.params, accepted);
     }
 

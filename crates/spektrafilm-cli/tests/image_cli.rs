@@ -653,6 +653,41 @@ fn dye_positive_films_accept_direct_scan_and_preserve_native_polarity() {
 }
 
 #[test]
+fn scan_profile_name_selects_the_builtin_curve_and_rejects_the_effective_state() {
+    let f = Fixture::new();
+    let scan = [
+        "--scan-film",
+        "--scan-output",
+        "negative_to_positive",
+        "--input-color-space",
+        "sRGB",
+        "--input-cctf-decoding",
+        "true",
+    ];
+    let mut args = scan.to_vec();
+    args.extend(["--scan-profile", "sp3000_inspired", "--dry-run"]);
+    let report: Value = f.report(&args);
+    let profile = &report["parameters"]["scanner"]["scan_profile"];
+    assert!((profile["strength"].as_f64().unwrap() - 0.6).abs() < 1e-6);
+    assert_eq!(profile["transform"]["kind"], "curve");
+
+    let mut args = scan.to_vec();
+    args.extend(["--scan-profile", "none", "--dry-run"]);
+    let report: Value = f.report(&args);
+    assert_eq!(
+        report["parameters"]["scanner"]["scan_profile"]["transform"]["kind"],
+        "bypass"
+    );
+
+    let mut args = scan.to_vec();
+    args.extend(["--scan-profile", "custom", "--dry-run"]);
+    let result = f.run_without_output(&args);
+    assert!(!result.status.success());
+    let error = String::from_utf8_lossy(&result.stderr);
+    assert!(error.contains("scan-profile"), "{error}");
+}
+
+#[test]
 fn fotufilm_zero_amount_is_not_reported_as_active() {
     let f = Fixture::new();
     let report = f.report(&[

@@ -118,6 +118,8 @@ pub struct ChangeFlags {
     pub operator_compare: Option<bool>,
     /// Press/hold comparison bypasses only finishing and never edits stored values.
     pub finishing_compare: Option<bool>,
+    /// Press/hold comparison bypasses only the scan appearance.
+    pub scan_profile_compare: Option<bool>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -572,6 +574,7 @@ mod chemistry;
 mod convert;
 mod couplers;
 mod crop;
+mod curve;
 mod display;
 mod filter;
 mod finishing;
@@ -652,6 +655,7 @@ pub(crate) fn inactive_in_workflow(section: &str, mode: WorkflowMode) -> bool {
                 | "Print chemistry"
                 | "Print base"
                 | "Scanner"
+                | "Scan Profile"
                 | "Glare"
                 | "Finishing"
                 | "Convert"
@@ -700,7 +704,10 @@ pub(crate) const STAGE_LAYOUT: &[(Stage, &[&str])] = &[
             "Print base",
         ],
     ),
-    (Stage::Scan, &["Scanner", "Glare", "Finishing"]),
+    (
+        Stage::Scan,
+        &["Scanner", "Scan Profile", "Glare", "Finishing"],
+    ),
     (Stage::Look, &["LUT look"]),
     (Stage::Effects, &["Effects"]),
     (
@@ -931,14 +938,22 @@ pub(crate) fn module_applicability(
             print,
         );
     }
-    if section == "Finishing" {
+    if matches!(section, "Finishing" | "Scan Profile") {
         let scanned = match spektrafilm_core::finishing::scanned_material(params) {
             Some(spektrafilm_core::stage_artifact::MaterialKind::Film) => Some(film),
             Some(spektrafilm_core::stage_artifact::MaterialKind::Print) => print,
             None => None,
         };
-        return (!finishing_applicable(params, scanned.is_some_and(|profile| profile.is_paper() || profile.is_positive())))
-            .then(|| "Tone & Color is inactive: the route does not deliver an eligible positive reading. Stored values are retained.".to_owned());
+        let eligible = finishing_applicable(
+            params,
+            scanned.is_some_and(|profile| profile.is_paper() || profile.is_positive()),
+        );
+        let reason = if section == "Finishing" {
+            "Tone & Color is inactive: the route does not deliver an eligible positive reading. Stored values are retained."
+        } else {
+            "Scan Profile is inactive: the route does not deliver an eligible positive reading. Stored values are retained."
+        };
+        return (!eligible).then(|| reason.to_owned());
     }
     // A module banner states that the whole module has no effect. Reporting
     // the first inactive control would promote an optional subfeature (the
@@ -979,6 +994,7 @@ mod scanner;
 
 pub(crate) use finishing::release_finishing_compare;
 pub(crate) use scanner::release_operator_compare;
+pub(crate) use scanner::release_scan_profile_compare;
 mod search;
 mod upsampling;
 mod widgets;

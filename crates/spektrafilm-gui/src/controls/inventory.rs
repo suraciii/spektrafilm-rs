@@ -45,6 +45,9 @@ pub(crate) enum EditorKind {
     Text,
     Profile,
     Action,
+    /// A composite editor owning one opaque carrier, such as the Scan Profile
+    /// curve transform.
+    Curve,
     /// Supported field not connected to a production editor: a coverage defect.
     Unconnected,
     /// A non-creative core leaf, with its owning source rationale.
@@ -541,6 +544,8 @@ fn runtime_owner(path: &str) -> (ControlOwner, &'static str) {
         (Owner(Stage::Print), "Enlarger diffusion")
     } else if path.starts_with("enlarger.") || path == "settings.print_exposure_ev_tracking" {
         (Owner(Stage::Print), "Enlarger")
+    } else if path.starts_with("scanner.scan_profile.") {
+        (Owner(Stage::Scan), "Scan Profile")
     } else if path.starts_with("scanner.") {
         (Owner(Stage::Scan), "Scanner")
     } else if path.starts_with("finishing.") {
@@ -666,6 +671,24 @@ fn append_nonruntime(entries: &mut Vec<ControlEntry>) {
     }
     entries.push(nonruntime(
         SurfaceEntry {
+            path: "action.scan_profile_compare",
+            label: "Hold Scan Profile comparison",
+            owner: Owner(Stage::Scan),
+            section: "Scan Profile",
+            editor: Action,
+            validator: "controls::scanner::scan_profile_controls",
+            conditions: &[
+                "eligible positive reading; session-only comparison",
+                "bypasses only the scan appearance",
+            ],
+        },
+        &[
+            "scanner.scan_profile.transform",
+            "scanner.scan_profile.strength",
+        ],
+    ));
+    entries.push(nonruntime(
+        SurfaceEntry {
             path: "action.finishing_compare",
             label: "Hold finishing comparison",
             owner: Owner(Stage::Scan),
@@ -731,6 +754,15 @@ fn append_nonruntime(entries: &mut Vec<ControlEntry>) {
 /// Non-runtime paths name their real persisted carrier; action identities do
 /// not pretend to be serialized numeric/boolean parameters.
 const SURFACES: &[SurfaceEntry] = &[
+    SurfaceEntry {
+        path: super::curve::CURVE_PATH,
+        label: "Scan Profile Curve",
+        owner: ControlOwner::Stage(Stage::Scan),
+        section: "Scan Profile",
+        editor: EditorKind::Curve,
+        validator: "core::params::ScanProfileParams::validate_detailed",
+        conditions: &["eligible positive reading; matrix transforms are read-only"],
+    },
     SurfaceEntry {
         path: "viewer.reveal",
         label: "reveal transition",

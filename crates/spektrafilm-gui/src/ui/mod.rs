@@ -37,9 +37,15 @@ impl eframe::App for App {
         if controls::release_finishing_compare(ctx) {
             self.set_finishing_compare(false);
         }
+        if controls::release_scan_profile_compare(ctx) {
+            self.set_scan_profile_compare(false);
+        }
         if self.finishing_compare {
             // A route or stock change may make an already-held comparison inapplicable.
             self.set_finishing_compare(true);
+        }
+        if self.scan_profile_compare {
+            self.set_scan_profile_compare(true);
         }
         // First-paint hook: tag the wgpu Metal layer's colorspace as sRGB.
         // Has to happen here (not in `App::new`) because the CAMetalLayer

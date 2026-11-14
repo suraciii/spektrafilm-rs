@@ -247,6 +247,30 @@ mod telemetry_lifecycle_tests {
     }
 
     #[test]
+    fn scan_profile_comparison_is_mutually_exclusive_and_applicability_bound() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut app = scanner_app(directory.path());
+        assert!(!app.scanned_medium_positive());
+        app.set_scan_profile_compare(true);
+        assert!(!app.scan_profile_compare);
+
+        app.params.workflow.route = "input > film > print > scan".into();
+        app.params.io.scan_film = false;
+        assert!(app.scanned_medium_positive());
+        app.set_scan_profile_compare(true);
+        assert!(app.scan_profile_compare);
+        app.set_finishing_compare(true);
+        assert!(!app.scan_profile_compare);
+        assert!(app.finishing_compare);
+        app.set_scan_profile_compare(true);
+        assert!(app.scan_profile_compare);
+        assert!(!app.finishing_compare);
+        app.params.workflow.route = "input".into();
+        app.set_scan_profile_compare(true);
+        assert!(!app.scan_profile_compare);
+    }
+
+    #[test]
     fn app_manual_scanner_edits_reach_the_render_snapshot() {
         let directory = tempfile::tempdir().unwrap();
         let mut app = scanner_app(directory.path());

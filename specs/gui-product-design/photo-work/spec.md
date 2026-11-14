@@ -64,7 +64,7 @@ Removing an entry MUST NOT delete its source, record, or exported files. Single-
 
 Copy MUST require explicit scope and destination selection. It MUST disclose the controls replaced. Existing preset, section, feature-profile, and operator-correction scopes remain authoritative.
 
-Copy MUST preserve destination source interpretation, RAW settings, geometry, source calibration, and delivery settings. Automatic frame setup MUST use each destination, not copied prepared values. Each destination MUST commit atomically or remain unchanged, with an individual outcome.
+Copy MUST preserve destination source interpretation, RAW settings, geometry, source calibration, and delivery settings. Each destination MUST use its own scan preparation, not copied prepared values. Each destination MUST commit atomically or remain unchanged, with an individual outcome.
 
 Successful application MUST be reversible in that destination's current history.
 

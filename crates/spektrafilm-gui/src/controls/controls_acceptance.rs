@@ -425,6 +425,117 @@ fn conversion_contrast_search_renders_its_operator_editor() {
     assert!(harness.query_by_label("Conversion contrast").is_some());
 }
 
+fn scan_profile(ui: &mut egui::Ui, params: &mut RuntimeParams) {
+    let _ = super::show(
+        ui,
+        params,
+        &mut serde_json::Value::Null,
+        "Scan Profile",
+        super::ScanMedium::Negative,
+        true,
+        "",
+        &mut Default::default(),
+        "D55",
+        &crate::profiles::pick_data_dir(),
+    );
+}
+
+#[test]
+fn scan_profile_module_renders_its_selector_strength_and_curve_editor() {
+    let mut params = scanner_params();
+    params.scanner.scan_profile = spektrafilm_core::params::scan_profile::builtin_sp3000_inspired();
+    let mut harness = Harness::new_ui_state(scan_profile, params);
+    harness.run();
+    assert!(
+        harness
+            .query_by_role_and_label(egui::accesskit::Role::ComboBox, "Scan Profile")
+            .is_some()
+    );
+    assert!(harness.query_by_label("Scan Profile Strength").is_some());
+    assert!(harness.query_by_label("Scan Profile Curve").is_some());
+}
+
+#[test]
+fn dragging_a_scan_profile_knot_edits_every_channel_and_reports_custom() {
+    use spektrafilm_core::params::{ScanCurve, ScanProfileParams, ScanProfileTransform};
+    let mut params = scanner_params();
+    let curve = || ScanCurve::new(vec![0.0, 0.5, 1.0], vec![0.0, 0.5, 1.0]);
+    params.scanner.scan_profile = ScanProfileParams {
+        strength: 0.6,
+        transform: ScanProfileTransform::curve([curve(), curve(), curve()]),
+    };
+    let mut harness = Harness::new_ui_state(scan_profile, params);
+    harness.run();
+    let plot = harness
+        .get_all_by_label("Scan Profile Curve")
+        .map(|node| node.raw_bounds().expect("plot bounds"))
+        .max_by(|left, right| {
+            let area = |rect: &egui::accesskit::Rect| (rect.x1 - rect.x0) * (rect.y1 - rect.y0);
+            area(left).total_cmp(&area(right))
+        })
+        .expect("curve plot");
+    let point = |x: f64, y: f64| {
+        egui::pos2(
+            (plot.x0 + (plot.x1 - plot.x0) * x) as f32,
+            (plot.y1 - (plot.y1 - plot.y0) * y) as f32,
+        )
+    };
+    let start = point(0.5, 0.5);
+    let end = point(0.5, 0.75);
+    harness.input_mut().events.extend([
+        egui::Event::PointerMoved(start),
+        egui::Event::PointerButton {
+            pos: start,
+            button: egui::PointerButton::Primary,
+            pressed: true,
+            modifiers: egui::Modifiers::NONE,
+        },
+    ]);
+    harness.step();
+    harness
+        .input_mut()
+        .events
+        .push(egui::Event::PointerMoved(end));
+    harness.step();
+    harness.input_mut().events.push(egui::Event::PointerButton {
+        pos: end,
+        button: egui::PointerButton::Primary,
+        pressed: false,
+        modifiers: egui::Modifiers::NONE,
+    });
+    harness.step();
+
+    let profile = &harness.state().scanner.scan_profile;
+    assert_eq!(
+        profile.effective_name(),
+        spektrafilm_core::params::ScanProfileName::Custom
+    );
+    for curve in profile.transform.curves.as_ref().unwrap() {
+        assert!(
+            (curve.y[1] - 0.75).abs() < 0.02,
+            "linked knot moved to {}",
+            curve.y[1]
+        );
+    }
+}
+
+#[test]
+fn a_matrix_scan_profile_carries_no_editable_curve() {
+    let mut params = scanner_params();
+    params.scanner.scan_profile.transform =
+        spektrafilm_core::params::ScanProfileTransform::matrix_curve(
+            [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+            spektrafilm_core::params::scan_profile::builtin_sp3000_inspired()
+                .transform
+                .curves
+                .unwrap(),
+        );
+    let mut harness = Harness::new_ui_state(scan_profile, params);
+    harness.run();
+    assert!(harness.query_by_label_contains("fixed matrix").is_some());
+    assert!(harness.query_by_label("Scan Profile Curve").is_none());
+}
+
 #[cfg(test)]
 mod headless {
     use super::*;
@@ -1164,6 +1275,61 @@ mod finishing_interactions {
             });
             h.run();
             assert_eq!(h.state().0.finishing, original);
+        }
+        assert_eq!(h.state().1, [true, false]);
+    }
+}
+
+#[cfg(test)]
+mod scan_profile_interactions {
+    use super::*;
+
+    #[test]
+    fn scan_profile_comparison_is_transient_and_releases() {
+        let mut params = super::scanner_params();
+        params.scanner.scan_profile =
+            spektrafilm_core::params::scan_profile::builtin_sp3000_inspired();
+        let original = params.scanner.scan_profile.clone();
+        let mut h = Harness::builder()
+            .with_size(egui::vec2(720.0, 1400.0))
+            .build_state(
+                |ctx, state: &mut (RuntimeParams, Vec<bool>)| {
+                    if super::super::release_scan_profile_compare(ctx) {
+                        state.1.push(false);
+                    }
+                    egui::CentralPanel::default().show(ctx, |ui| {
+                        let flags = super::super::show(
+                            ui,
+                            &mut state.0,
+                            &mut serde_json::Value::Null,
+                            "Scan Profile",
+                            super::super::ScanMedium::Negative,
+                            true,
+                            "",
+                            &mut Default::default(),
+                            "D55",
+                            &crate::profiles::pick_data_dir(),
+                        );
+                        assert!(!flags.runtime_changed);
+                        if let Some(comparing) = flags.scan_profile_compare {
+                            state.1.push(comparing);
+                        }
+                    });
+                },
+                (params, Vec::new()),
+            );
+        h.get_by_label("Hold Scan Profile comparison").focus();
+        h.run();
+        for pressed in [true, false] {
+            h.input_mut().events.push(egui::Event::Key {
+                key: egui::Key::Space,
+                physical_key: None,
+                pressed,
+                repeat: false,
+                modifiers: egui::Modifiers::NONE,
+            });
+            h.run();
+            assert_eq!(h.state().0.scanner.scan_profile, original);
         }
         assert_eq!(h.state().1, [true, false]);
     }

@@ -688,6 +688,18 @@ mod tests {
             lookup("print_render.development_time").unwrap().section,
             "Print material"
         );
+        assert_eq!(
+            lookup("scanner.scan_profile.strength").unwrap().section,
+            "Scan Profile"
+        );
+        assert_eq!(
+            lookup(super::super::curve::CURVE_PATH).unwrap().section,
+            "Scan Profile"
+        );
+        assert_eq!(
+            lookup(super::super::curve::CURVE_PATH).unwrap().editor,
+            super::super::inventory::EditorKind::Curve
+        );
     }
 
     #[test]
