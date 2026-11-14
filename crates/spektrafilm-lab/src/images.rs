@@ -60,10 +60,6 @@ pub struct Args {
     pub out: std::path::PathBuf,
 }
 
-/// Containers the lab reader decodes. An entry it cannot classify fails the
-/// invocation rather than being skipped.
-const ACCEPTED: &[&str] = &["png", "tif", "tiff", "exr"];
-
 pub fn run(args: &Args) -> Result<(Value, i32)> {
     let map_scale = args.map_scale.unwrap_or(1);
     if map_scale == 0 {
@@ -207,13 +203,6 @@ fn source_id(path: &Path) -> String {
         .to_owned()
 }
 
-fn is_image(path: &Path) -> bool {
-    path.extension()
-        .and_then(|value| value.to_str())
-        .map(|value| value.to_ascii_lowercase())
-        .is_some_and(|value| ACCEPTED.contains(&value.as_str()))
-}
-
 fn case_identity(stem: &str) -> Result<String> {
     let valid = stem
         .chars()
@@ -244,16 +233,6 @@ fn listing(directory: &Path) -> Result<BTreeMap<String, PathBuf>> {
         let path = entry.path();
         if !entry.file_type()?.is_file() {
             continue;
-        }
-        if !is_image(&path) {
-            return Err(Error::new(
-                "unsupported_image_file",
-                format!(
-                    "{} is not a measured container; accepted: {}",
-                    path.display(),
-                    ACCEPTED.join(", ")
-                ),
-            ));
         }
         let name = path
             .file_name()
@@ -427,12 +406,6 @@ fn analysis_files(source: &Path) -> Result<Vec<engine::Pair>> {
     let listed = listing(source)?;
     let mut files = Vec::new();
     for (stem, path) in listed {
-        if !is_image(&path) {
-            return Err(Error::new(
-                "unsupported_image_file",
-                format!("not an accepted image container: {}", path.display()),
-            ));
-        }
         files.push(engine::Pair {
             case_id: case_identity(&stem)?,
             baseline: path.clone(),

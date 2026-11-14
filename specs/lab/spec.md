@@ -217,7 +217,9 @@ both lists. A regular file whose extension is not an accepted image extension
 MUST fail as `unsupported_image_file`; the lab MUST NOT skip a file it cannot
 classify.
 
-Accepted extensions are `.png`, `.tif`, `.tiff`, and `.exr`.
+The accepted containers are PNG, TIFF, and EXR. A file whose bytes declare a
+container the lab cannot measure fails as `unsupported_image_file` or
+`lossy_container`, naming the file.
 
 ### Case identity
 
@@ -308,9 +310,26 @@ which is what the photographer intended the file to be. It therefore MUST NOT
 apply an embedded ICC profile, an EXIF orientation, a RAW interpretation,
 camera metadata, or any other evidence the caller did not declare.
 
+The container is decided by the file's own bytes, not by its name. A PNG named
+`.jpg` is a PNG, and a JPEG named `.png` is a JPEG; the reader MUST NOT let a
+filename convention choose the decoder.
+
 A container type whose normalization the reader cannot state MUST be rejected
 as `unsupported_image_layout`. A silent default is not an acceptable answer for
 a type the lab has not defined.
+
+A lossy container MUST be rejected as `lossy_container`. The reader can state
+what samples a JPEG contains and still not present them as the measured signal.
+Block quantisation and chroma subsampling belong to the codec, so a
+`color_noise` measurement over a flat field would report them instead of the
+grain.
+
+A lossy container is a delivery format: an experiment encodes one after it has
+measured, from the floating master it measured.
+
+WebP shares a signature between its lossy and lossless modes, so the reader
+cannot say which one it has before decoding and refuses it on the same ground
+rather than guessing.
 
 | Container | Normalization |
 |---|---|
@@ -506,11 +525,9 @@ Everything this document states is implemented, with four exceptions.
 - A region is a rectangle. Mask geometry is rejected rather than re-rooted;
   reading a mask file on a delivered raster would introduce a second
   interpretation of the pixels, which the single-reader rule forbids.
-- The lab reader decodes PNG, TIFF, JPEG, WebP, and EXR, and a container layout
-  whose normalization it cannot state is rejected. The command surface accepts
-  `.png`, `.tif`, `.tiff`, and `.exr`: a lossy container is not yet an accepted
-  measurement input, and that is a product decision this document has not made
-  either way.
+- The lab reader decodes PNG, TIFF, and EXR by content. A JPEG or WebP fails
+  as `lossy_container`; a layout whose normalization it cannot state fails as
+  `unsupported_image_layout`.
 - The evaluation library builds its native perceptual-difference evaluator
   with a C++ toolchain, so building the lab requires a C++ compiler. The lab
   selects `flip` in no default profile of its own; the dependency is the

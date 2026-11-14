@@ -106,3 +106,48 @@ fn a_missing_file_is_named_before_decoding() {
     assert_eq!(error.code, "invalid_path");
     assert!(error.message.contains("absent.png"), "{}", error.message);
 }
+
+/// The container decides itself. A name is a convention, and the reader
+/// answers what the file contains, so a PNG called `.jpg` measures and a JPEG
+/// called `.png` is refused for what it is.
+#[test]
+fn the_container_is_read_from_the_bytes_and_not_from_the_name() {
+    let temp = tempfile::tempdir().unwrap();
+    let lying_png = temp.path().join("chart.jpg");
+    // A real PNG under a name that claims JPEG.
+    let mut image = image::RgbImage::new(4, 4);
+    image.put_pixel(0, 0, image::Rgb([10, 20, 30]));
+    image
+        .save_with_format(&lying_png, image::ImageFormat::Png)
+        .unwrap();
+    let decoded =
+        spektrafilm_benchmark::image_data::decode_raster(&lying_png, "sRGB", true).unwrap();
+    assert_eq!((decoded.width, decoded.height), (4, 4));
+
+    let lying_jpeg = temp.path().join("chart.png");
+    std::fs::write(&lying_jpeg, [0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10]).unwrap();
+    let error =
+        spektrafilm_benchmark::image_data::decode_raster(&lying_jpeg, "sRGB", true).unwrap_err();
+    assert_eq!(error.code, "lossy_container", "{}", error.message);
+}
+
+/// A lossy container is decodable but is not the measured signal, and the
+/// refusal says which property it is refusing.
+#[test]
+fn a_lossy_container_is_refused_by_property() {
+    let temp = tempfile::tempdir().unwrap();
+    let jpeg = temp.path().join("web-delivery.png");
+    std::fs::write(&jpeg, [0xFF, 0xD8, 0xFF, 0xDB]).unwrap();
+    let error = spektrafilm_benchmark::image_data::decode_raster(&jpeg, "sRGB", false).unwrap_err();
+    assert_eq!(error.code, "lossy_container");
+    assert!(error.message.contains("JPEG"), "{}", error.message);
+
+    let webp = temp.path().join("web-delivery.tif");
+    let mut riff = b"RIFF".to_vec();
+    riff.extend_from_slice(&[0, 0, 0, 0]);
+    riff.extend_from_slice(b"WEBPVP8 ");
+    std::fs::write(&webp, riff).unwrap();
+    let error = spektrafilm_benchmark::image_data::decode_raster(&webp, "sRGB", false).unwrap_err();
+    assert_eq!(error.code, "lossy_container");
+    assert!(error.message.contains("WebP"), "{}", error.message);
+}

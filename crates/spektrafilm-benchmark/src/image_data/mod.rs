@@ -96,11 +96,86 @@ pub struct DecodeOptions {
     pub sidecar: bool,
 }
 
+/// The container a file's own bytes declare.
+///
+/// A file's name does not decide what it contains, so the reader asks the
+/// bytes. A container with no signature returns `Declared`, and the caller's
+/// declaration decides the rest, as a raw master requires.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Container {
+    Npy,
+    Png,
+    Tiff,
+    Exr,
+    /// Decodable, but the samples are a codec's approximation of a signal the
+    /// lab was never handed. A delivered JPEG is a viewing artifact.
+    Jpeg,
+    WebPhoto,
+    /// No signature: the declared layout decides.
+    Declared,
+}
+
+fn sniff(path: &Path) -> Result<Container> {
+    use std::io::Read;
+    let mut head = [0u8; 16];
+    let mut file = fs::File::open(path).map_err(|error| {
+        err(
+            "invalid_path",
+            format!("{} cannot be read: {error}", path.display()),
+        )
+    })?;
+    let n = file
+        .read(&mut head)
+        .map_err(|error| err("invalid_path", error.to_string()))?;
+    let head = &head[..n];
+    let container = if head.starts_with(b"\x89PNG\r\n\x1a\n") {
+        Container::Png
+    } else if head.starts_with(b"II*\0") || head.starts_with(b"MM\0*") {
+        Container::Tiff
+    } else if head.starts_with(b"v/1\x01") {
+        Container::Exr
+    } else if head.starts_with(b"\x93NUMPY") {
+        Container::Npy
+    } else if head.starts_with(&[0xFF, 0xD8, 0xFF]) {
+        Container::Jpeg
+    } else if head.len() >= 12 && &head[0..4] == b"RIFF" && &head[8..12] == b"WEBP" {
+        Container::WebPhoto
+    } else {
+        Container::Declared
+    };
+    Ok(container)
+}
+
+/// Why a decodable container is not a measurement input.
+///
+/// The reader can state what samples a JPEG contains; what it cannot state is
+/// that those samples are the signal. Block quantisation and chroma
+/// subsampling are the codec's, and a `color_noise` measurement over a flat
+/// field would report them instead of the grain. WebP is refused on the same
+/// ground because its lossless and lossy modes share a signature, so the
+/// reader cannot say which one it is looking at before decoding.
+fn reject_lossy(container: Container, path: &Path) -> Result<()> {
+    let name = match container {
+        Container::Jpeg => "JPEG",
+        Container::WebPhoto => "WebP",
+        _ => return Ok(()),
+    };
+    Err(err(
+        "lossy_container",
+        format!(
+            "{} is a {name} container; a lossy container is a delivery format and not a measured signal",
+            path.display()
+        ),
+    ))
+}
+
 /// Decode one caller-supplied raster under an explicit interpretation.
 ///
 /// This is the lab reader. It never merges a sidecar, never applies an ICC
 /// profile or an orientation, and never reads camera metadata. A container
-/// type whose normalization it cannot state is rejected rather than guessed.
+/// type whose normalization it cannot state is rejected rather than guessed,
+/// and a lossy container is refused because its samples are a codec's
+/// approximation rather than the measured signal.
 pub fn decode_raster(path: &Path, color_space: &str, cctf_decoding: bool) -> Result<ImageData> {
     if !path.is_file() {
         return Err(crate::common::Error::new(
@@ -170,7 +245,19 @@ pub fn load_image_with(source: &Value, options: DecodeOptions) -> Result<ImageDa
         .and_then(|x| x.to_str())
         .unwrap_or("")
         .to_ascii_lowercase();
-    let (w, h, flat) = if ext == "npy" {
+    let container = sniff(&path)?;
+    reject_lossy(container, &path)?;
+    // A declared name addresses a container with no signature; a signature
+    // addresses itself. A PNG named `.jpg` is a PNG.
+    let kind = match container {
+        Container::Npy => "npy",
+        Container::Png => "png",
+        Container::Tiff => "tif",
+        Container::Exr => "exr",
+        Container::Declared => ext.as_str(),
+        Container::Jpeg | Container::WebPhoto => unreachable!("rejected above"),
+    };
+    let (w, h, flat) = if kind == "npy" {
         let (mut values, shape) = read_npy(&path)?;
         if shape.len() != 3 || shape[2] != 3 {
             return Err(err("invalid_image_layout", "NPY must be H x W x 3"));
@@ -207,7 +294,7 @@ pub fn load_image_with(source: &Value, options: DecodeOptions) -> Result<ImageDa
         }
         meta["container_dtype"] = json!(dtype_name(&dtype));
         (shape[1], shape[0], values)
-    } else if ["raw", "bin", "f32", "f64"].contains(&ext.as_str()) {
+    } else if ["raw", "bin", "f32", "f64"].contains(&kind) {
         let l = l.ok_or_else(|| err("missing_raw_metadata", "Raw images require metadata"))?;
         let w = l
             .get("width")
@@ -284,7 +371,7 @@ pub fn load_image_with(source: &Value, options: DecodeOptions) -> Result<ImageDa
             }
         }
         (w, h, v)
-    } else if ["tif", "tiff"].contains(&ext.as_str()) {
+    } else if kind == "tif" {
         let mut decoder =
             tiff::decoder::Decoder::new(std::io::BufReader::new(fs::File::open(&path)?))
                 .map_err(|e| err("image_load_failed", e.to_string()))?;
@@ -354,7 +441,7 @@ pub fn load_image_with(source: &Value, options: DecodeOptions) -> Result<ImageDa
         };
         meta["container_dtype"] = json!(dtype);
         (w as usize, h as usize, expand_rgb(v, channels)?)
-    } else if ext == "exr" {
+    } else if kind == "exr" {
         let image = exr::prelude::read_first_flat_layer_from_file(&path)
             .map_err(|e| err("image_load_failed", e.to_string()))?;
         let size = image.layer_data.size;
@@ -447,13 +534,20 @@ pub fn load_image_with(source: &Value, options: DecodeOptions) -> Result<ImageDa
             expand_rgb(values, channels)?,
         )
     } else {
-        if !["jpg", "jpeg", "webp"].contains(&ext.as_str()) {
+        if kind != "png" {
             return Err(err(
                 "unsupported_image_encoding",
-                "Supported images are NPY, declared raw, TIFF, PNG, JPEG, WebP, and EXR",
+                "Supported containers are NPY, a declared raw master, TIFF, PNG, and EXR",
             ));
         }
-        let im = image::open(&path).map_err(|e| err("image_load_failed", e.to_string()))?;
+        // Resolve the decoder from the bytes, not from the name: the sniff
+        // already decided this file is a PNG whatever it is called.
+        let im = image::ImageReader::open(&path)
+            .map_err(|e| err("image_load_failed", e.to_string()))?
+            .with_guessed_format()
+            .map_err(|e| err("image_load_failed", e.to_string()))?
+            .decode()
+            .map_err(|e| err("image_load_failed", e.to_string()))?;
         let (w, h) = (im.width() as usize, im.height() as usize);
         use image::DynamicImage as D;
         let (dtype, channels, values): (&str, usize, Vec<f64>) = match im {
