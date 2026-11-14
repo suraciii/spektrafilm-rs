@@ -272,7 +272,7 @@ impl DeviceResources {
                         .exposure
                         .iter()
                         .map(|page| &page.buffer)
-                        .chain([&owner.setup, &owner.status])
+                        .chain([&owner.status])
                 })),
         )
     }

@@ -531,7 +531,6 @@ fn portable_owner_inventory_deduplicates_physical_buffers_and_keeps_only_weak_ow
     resources.register_image(&alias);
     let scan = Arc::new(PreparedScan {
         exposure: image.pages.clone(),
-        setup: page.clone(),
         status: page.clone(),
     });
     resources.register_scan(&scan);

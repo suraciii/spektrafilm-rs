@@ -2783,7 +2783,7 @@ fn convert_routes_apply_the_shared_terminal_cmyk_appearance() {
 }
 
 #[test]
-fn frame_setup_reads_the_frame_without_rewriting_density_evidence() {
+fn density_tap_replays_the_scanned_frame_without_mutating_the_input() {
     let dir = data_dir();
     let film = crate::profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();
     let print = crate::profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap();
@@ -2840,7 +2840,7 @@ fn frame_setup_reads_the_frame_without_rewriting_density_evidence() {
         assert_eq!(input.data, original);
         assert_eq!(
             rgb.data, replay.data,
-            "density tap must reproduce the same full-frame setup"
+            "density tap must reproduce the same scanned frame"
         );
         assert!(rgb.data.iter().all(|v| v.is_finite()));
         means.push(rgb.data.iter().map(|v| to_f64(*v)).sum::<f64>() / rgb.data.len() as f64);
@@ -2933,7 +2933,7 @@ fn completed_film_and_print_splits_preserve_exact_cpu_math_and_source_geometry()
 }
 
 #[test]
-fn negative_scan_split_keeps_standard_frame_setup_and_fixed_style_compensation() {
+fn negative_scan_split_keeps_the_conversion_style_output() {
     use crate::stage_execution::{StageResult, continue_stage};
     let backend = spektrafilm_backend::cpu_backend::CpuBackend;
     let input = ImageBuf::from_data(

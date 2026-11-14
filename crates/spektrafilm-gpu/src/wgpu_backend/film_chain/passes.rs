@@ -297,7 +297,6 @@ impl WgpuBackend {
         &self,
         p: &spektrafilm_backend::FilmChainParams<'_>,
         input: &spektrafilm_backend::DeviceImage,
-        setup_context: &spektrafilm_backend::telemetry::ObservationContext,
     ) -> Result<spektrafilm_backend::DeviceImage, String> {
         self.check_cancelled()?;
         let t_start = std::time::Instant::now();
@@ -339,7 +338,6 @@ impl WgpuBackend {
         backend.execute_film_chain(
             p,
             input,
-            setup_context,
             ChainPlan {
                 steps,
                 geometry,
@@ -354,7 +352,6 @@ impl WgpuBackend {
         &self,
         p: &spektrafilm_backend::FilmChainParams<'_>,
         input: &spektrafilm_backend::DeviceImage,
-        setup_context: &spektrafilm_backend::telemetry::ObservationContext,
         plan: ChainPlan,
         t_start: std::time::Instant,
         operation: &super::super::resources::OperationGuard,
@@ -753,16 +750,6 @@ impl WgpuBackend {
                                     execute: Box::new(|| state.submit_optics(backend)),
                                 },
                             ])?;
-                            if state.has_setup() {
-                                backend.pipe.run_chain(vec![
-                                    super::super::pipe::ChainStage::Device {
-                                        name: "frame_setup",
-                                        execute: Box::new(|| {
-                                            state.submit_setup_observed(backend, setup_context)
-                                        }),
-                                    },
-                                ])?;
-                            }
                             state.submit_inverse(backend)?;
                             state.check(
                                 backend,

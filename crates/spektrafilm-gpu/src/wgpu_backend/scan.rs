@@ -9,9 +9,6 @@ use super::grain::{
 use super::page_views::Access;
 use spektrafilm_backend::{ConvertSolverGpuParams, ScannerDensityGpuParams};
 
-#[path = "scan_setup.rs"]
-mod scan_setup;
-
 #[cfg(test)]
 #[path = "scan_tests.rs"]
 mod tests;
@@ -29,7 +26,6 @@ fn validate_dmax(dmax: &[f64; 3]) -> Result<(), String> {
 /// Immutable binary32 reconstruction, with 12 bytes per RGB pixel.
 pub(super) struct PreparedScan {
     pub(super) exposure: Vec<super::paged::ImagePage>,
-    pub(super) setup: wgpu::Buffer,
     pub(super) status: wgpu::Buffer,
 }
 
@@ -45,15 +41,11 @@ impl ConvertInverseState {
 pub(super) struct ScanDensityState {
     pass: RasterCommands,
     reconstruct: Option<RasterCommands>,
-    setup_pass: Option<scan_setup::FrameSetupState>,
     optics: Option<(PointwisePass, GrainBlurState, RasterCommands, PointwisePass)>,
     status: wgpu::Buffer,
     prepared: std::sync::Arc<PreparedScan>,
 }
 impl ScanDensityState {
-    pub(super) fn has_setup(&self) -> bool {
-        self.setup_pass.is_some()
-    }
     pub(super) fn submit_optics(&self, backend: &WgpuBackend) -> Result<(), String> {
         if let Some((transmit, blur, restore, density)) = &self.optics {
             transmit.submit(backend)?;
@@ -62,37 +54,6 @@ impl ScanDensityState {
             density.submit(backend)?;
         }
         Ok(())
-    }
-    pub(super) fn submit_setup_observed(
-        &self,
-        backend: &WgpuBackend,
-        context: &spektrafilm_backend::telemetry::ObservationContext,
-    ) -> Result<(), String> {
-        let Some(setup) = &self.setup_pass else {
-            return Ok(());
-        };
-        backend.check_cancelled()?;
-        if !context.enabled() {
-            return setup.submit(backend);
-        }
-        // Film-chain transport already has a batch. The caller supplies its
-        // Phase/Stage ancestor so this Stage is a sibling, never a batch child.
-        let mut scope = context.scope(
-            "frame_setup",
-            spektrafilm_backend::telemetry::ObservationKind::Stage,
-            context.purpose(),
-        );
-        let mut observed = backend.derived_explicit();
-        observed.explicit = backend.explicit;
-        observed.context_mut(scope.context().clone());
-        // A dedicated child batch preserves actual pass timing and attributes
-        // submitted reduction dispatches to the real setup stage.
-        let result = {
-            let (batch, _guard) = observed.observed_batch("compute");
-            setup.submit(&batch)
-        };
-        scope.set_complete(result.is_ok());
-        result
     }
     pub(super) fn submit_inverse(&self, backend: &WgpuBackend) -> Result<(), String> {
         if let Some(reconstruct) = &self.reconstruct {
@@ -118,15 +79,6 @@ impl ScanDensityState {
         };
         let code = backend.pipe.readback_buffer_cancellable::<u32>(status, 4)?[0];
         backend.check_cancelled()?;
-        if code & 2 != 0 {
-            return Err("standard setup requires finite film record densities".into());
-        }
-        if code & 4 != 0 {
-            return Err("standard setup statistics exceed finite density range".into());
-        }
-        if code & 8 != 0 {
-            return Err("standard setup correction exceeds finite exposure range".into());
-        }
         if code & 16 != 0 {
             return Err(
                 "scanner.operator or negative conversion combined tone coordinate overflow".into(),
@@ -379,7 +331,7 @@ impl WgpuBackend {
         let pixels = width
             .checked_mul(height)
             .filter(|&n| n != 0)
-            .ok_or("standard setup requires a nonempty RGB density frame")?;
+            .ok_or("negative-to-positive acquisition requires a nonempty RGB density frame")?;
         validate_dmax(&p.dmax)?;
         if p.counts
             .iter()
@@ -388,11 +340,6 @@ impl WgpuBackend {
             || p.exposure.len() != p.density.len()
         {
             return Err("negative-to-positive acquisition has invalid calibrated axes".into());
-        }
-        if false {
-            return Err(
-                "standard setup requires a finite positive neutral-curve slope at 16%".into(),
-            );
         }
         #[repr(C)]
         #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
@@ -406,7 +353,6 @@ impl WgpuBackend {
             brightness: [f32; 4],
             denominator: [f32; 4],
             camera: [f32; 4],
-            setup: [f32; 4],
             operator: [f32; 4],
             color: [f32; 4],
             destination: [[f32; 4]; 3],
@@ -430,8 +376,7 @@ impl WgpuBackend {
             dmax: row(p.dmax),
             brightness: row(p.brightness_ev),
             denominator: row(p.denominator),
-            camera: [if false { 0.0 } else { p.camera_ev as f32 }, 0.0, 0.0, 0.0],
-            setup: [0.0, 0.0, 0.0, 0.0],
+            camera: [p.camera_ev as f32, 0.0, 0.0, 0.0],
             operator: [
                 p.operator_pivot as f32,
                 p.operator_contrast_delta as f32,
@@ -501,42 +446,14 @@ impl WgpuBackend {
                 });
                 first += n;
             }
-            let setup = self.device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("scan_fullframe_setup"),
-                size: 88,
-                usage: wgpu::BufferUsages::STORAGE
-                    | wgpu::BufferUsages::COPY_DST
-                    | wgpu::BufferUsages::COPY_SRC,
-                mapped_at_creation: false,
-            });
             std::sync::Arc::new(PreparedScan {
                 exposure: pages,
-                setup,
                 status: status.clone(),
             })
         };
         self.device.resources.register_scan(&prepared);
         let source = src.image_pages();
         let destination = dst.image_pages();
-        let all_params = self.pipe.static_buffer(
-            "density_params",
-            bytemuck::bytes_of(&uniform),
-            wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_SRC,
-        );
-        let setup_pass = if false && !reuse {
-            Some(scan_setup::build(
-                self,
-                &source,
-                &all_params,
-                &density,
-                &exposure,
-                &status,
-                &prepared.setup,
-                pixels,
-            )?)
-        } else {
-            None
-        };
         let optics = if p.lens_blur > 0.0 && !reuse {
             let make = |inverse: u32| {
                 self.scan_pass(
@@ -599,7 +516,6 @@ impl WgpuBackend {
                 S { read_only: true },
                 S { read_only: false },
                 S { read_only: false },
-                S { read_only: true },
             ],
         );
         let window = self.device.create_buffer(&wgpu::BufferDescriptor {
@@ -630,15 +546,7 @@ impl WgpuBackend {
                 );
                 reconstruct.dispatch(
                     &reconstruct_pipeline,
-                    &[
-                        &params,
-                        &window,
-                        &density,
-                        &exposure,
-                        &page.buffer,
-                        &status,
-                        &prepared.setup,
-                    ],
+                    &[&params, &window, &density, &exposure, &page.buffer, &status],
                     page.n_pixels,
                     false,
                     self,
@@ -662,7 +570,6 @@ impl WgpuBackend {
         Ok(ScanDensityState {
             pass,
             reconstruct: (!reuse).then_some(reconstruct),
-            setup_pass,
             optics,
             status,
             prepared,

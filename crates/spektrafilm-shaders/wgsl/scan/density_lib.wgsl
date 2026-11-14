@@ -10,7 +10,6 @@ struct Params {
     brightness: vec4<f32>,
     denominator: vec4<f32>,
     camera: vec4<f32>,
-    setup: vec4<f32>,
     operator_terms: vec4<f32>,
     color: vec4<f32>,
     destination: array<vec4<f32>, 3>,
