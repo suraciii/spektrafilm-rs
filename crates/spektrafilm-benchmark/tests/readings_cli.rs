@@ -4,7 +4,6 @@
 //! the example of retained evidence: a test copies it, so no renderer runs and
 //! the reader's contract is what is on trial.
 
-#![cfg(feature = "precision-f64")]
 use serde_json::{Value, json};
 use spektrafilm_benchmark::common;
 use std::collections::BTreeMap;
@@ -12,7 +11,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 fn lab() -> Command {
-    Command::new(env!("CARGO_BIN_EXE_spektrafilm-lab"))
+    Command::new(env!("CARGO_BIN_EXE_spektrafilm-bench"))
 }
 
 fn retained_bundle() -> PathBuf {

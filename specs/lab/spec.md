@@ -126,11 +126,25 @@ measure a signal the caller never declared.
 
 | Endpoint | Owns | Does not do |
 |---|---|---|
-| `analyze` | quantify one source's color science | compare, render, or present |
-| `compare` | quantify how two sources differ | compare two runs, select a candidate, or present |
-| `sample` | read declared regions from one source | render, resize, infer geometry, or score |
+| `compare` | quantify how two delivered image sets differ | compare two runs, join reading records, select a candidate, or present |
 | `regions` | expand one finite grid declaration into explicit regions | read an image, render, or measure |
+| `schema` | print the authoritative schema of one document kind | validate a document or measure |
 | `validate` | document shape and locally decidable dependencies | measure or guarantee an execution |
+
+`compare` is the product. The other three produce and check the declarations it
+consumes, and a caller who authors those documents another way never needs
+them.
+
+The evaluation workflow and the reading family belong to `spektrafilm-bench`.
+That surface compares two completed runs, joins two reading records, selects
+evidence pairs from one run, projects a retained comparison, and reads declared
+sample points from an image or a retained stage capture.
+
+Those endpoints read a renderer's evidence or evaluate a policy. Neither is a
+color-science measurement of a delivered image set.
+
+A lab invocation of one of them MUST fail with `argument_syntax` naming
+`spektrafilm-bench`. The lab MUST NOT forward it.
 
 ### compare
 
@@ -150,10 +164,8 @@ spektrafilm-lab compare --baseline <FILE_OR_DIR> --candidate <FILE_OR_DIR>
 protocol document; the two are mutually exclusive. `--map-scale` reduces
 retained difference maps only.
 
-`analyze` and `sample` take the same source, declaration, and geometry
-options, and take one source instead of two.
-
-`analyze`, `compare`, and `sample` are the product. `regions` and `validate`
+`compare` takes the same source, declaration, and geometry options in the
+single-pair form as `--baseline FILE --candidate FILE`. `regions` and `validate`
 are authoring tools: they produce and check the declarations the product
 consumes, and a caller who authors those documents another way never needs
 them.
@@ -360,9 +372,8 @@ this document does not have is out of scope.
 
 | # | Case | Command |
 |---|---|---|
-| U1 | Quantify one image set: noise statistics, neutrality, distribution | `analyze` |
+| U1 | Quantify one image set: noise statistics, neutrality, distribution | `compare` over two identical sources |
 | U2 | Quantify how two builds differ: per-patch color error, family deltas, regressions | `compare` |
-| U3 | Read the value at a declared region | `sample` |
 | U4 | Confine a measurement to the regions a change touched | `compare --regions` |
 | U5 | Publish evidence a third party can recompute to the same identity | any, from the record |
 | U6 | Establish a noise floor by comparing a source with itself | `compare` |
@@ -458,10 +469,11 @@ that the renderer's own input route produced, and `sample` reads it.
 
 ## Current implementation gap
 
-- The command surface is `schema`, `validate`, `regions grid`, `sample`,
-  `compare images`, `compare readings`, `compare runs`, `compare pairs`,
-  `inspect`, `report comparison`. This document reduces it to `analyze`,
-  `compare`, `sample`, `regions`, `validate`.
+- The command surface is `compare`, `regions grid`, `schema`, and `validate`.
+  `sample`, `inspect`, `report comparison`, and the run, reading, and pair
+  comparisons belong to `spektrafilm-bench` and are refused here.
+- `regions grid` is still spelled with its subcommand; this document names the
+  endpoint `regions` and leaves the leaf form to the machine interface.
 - `color_noise` and `neutrality` are implemented. The other families in the
   table above are unchanged.
 - The comparison record no longer carries `seed`, `review`,

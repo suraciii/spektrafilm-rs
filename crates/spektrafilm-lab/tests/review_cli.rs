@@ -157,21 +157,21 @@ fn review_kind_and_removed_manifest_inputs_are_rejected() {
     let review = TempDir::new().unwrap();
     let file = review.path().join("review.json");
     fs::write(&file, b"{}").unwrap();
-    for args in [
-        vec!["schema", "--kind", "review"],
-        vec![
-            "validate",
-            "--kind",
-            "review",
-            "--file",
-            file.to_str().unwrap(),
-        ],
-    ] {
-        let output = cli().args(args).output().unwrap();
-        assert_eq!(output.status.code(), Some(1));
-        let value: Value = serde_json::from_slice(&output.stdout).unwrap();
-        assert_eq!(value["errors"][0]["code"], "unsupported_document_kind");
-    }
+    // `schema` takes any kind string, so `review` reaches the registry and is
+    // refused there.
+    let output = cli().args(["schema", "--kind", "review"]).output().unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    let value: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(value["errors"][0]["code"], "unknown_document_kind");
+    // `validate` names its kinds up front, so `review` never leaves the
+    // parser: the lab does not offer a kind it cannot validate.
+    let output = cli()
+        .args(["validate", "--kind", "review", "--file"])
+        .arg(&file)
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(2));
+    assert!(output.stdout.is_empty());
     for args in [
         vec!["report", "--manifest", "review.json", "--out", "report"],
         vec![
@@ -186,21 +186,4 @@ fn review_kind_and_removed_manifest_inputs_are_rejected() {
         assert_eq!(output.status.code(), Some(2));
         assert!(output.stdout.is_empty());
     }
-}
-
-#[test]
-fn report_comparison_is_the_only_report_input_form() {
-    let output = cli()
-        .args([
-            "report",
-            "comparison",
-            "--comparison",
-            "missing",
-            "--out",
-            "report",
-        ])
-        .output()
-        .unwrap();
-    assert_ne!(output.status.code(), Some(2));
-    assert!(!output.stdout.is_empty());
 }

@@ -52,7 +52,8 @@ The supported command families have distinct endpoint roles:
 
 | Binary | Owns |
 |---|---|
-| `spektrafilm-lab` | `schema`, `validate`, `regions grid`, `sample`, `compare images`, `compare runs`, `compare readings`, `compare pairs`, `inspect`, `report comparison` |
+| `spektrafilm-lab` | `compare images`, `regions grid`, `schema`, `validate` |
+| `spektrafilm-bench` | `compare runs`, `compare readings`, `compare pairs`, `sample`, `inspect`, `report comparison`, `report photos` |
 | `spektrafilm-f64` | `target`, `fixtures`, `run suite`, `run image`, `measure run`, `experiment run`, `experiment export`, `spectral evaluate`, `fit` |
 
 An endpoint MUST NOT be accepted by the binary that does not own it. A rejected invocation MUST return `argument_syntax` and name the owning binary. The binaries MUST NOT forward a command to each other, because a forwarded command would hide the dependency that this table makes explicit.
@@ -65,7 +66,7 @@ The parent names `run`, `measure`, and `compare` group leaf endpoints. A parent 
 
 The canonical research pipe is:
 ```text
-declaration → spektrafilm-f64 → images and retained evidence → spektrafilm-lab sample|compare → inspect/report comparison
+declaration → spektrafilm-f64 → images and retained evidence → spektrafilm-lab compare → spektrafilm-bench report comparison
 ```
 
 Each edge is replaceable by a file, a retained directory, or an external tool. A research binary MUST NOT collapse this pipe into a command that renders, samples, scores, selects a candidate, and publishes a report as one hidden operation.
@@ -82,16 +83,16 @@ spektrafilm-lab --help
 spektrafilm-lab --version
 spektrafilm-lab schema --kind KIND
 spektrafilm-lab validate --kind KIND --file FILE
-spektrafilm-lab sample --source IMAGE --input-color-space NAME --input-cctf-decoding true|false --regions FILE --out DIRECTORY
-spektrafilm-lab sample --from-evidence DIRECTORY --stage STAGE --regions FILE --out DIRECTORY
-spektrafilm-lab sample --from-run DIRECTORY|RUN.JSON --case ID --seed UINT32 --stage STAGE --regions FILE --out DIRECTORY
-spektrafilm-lab compare images --baseline FILE --candidate FILE --declaration SPACE:encoded|decoded --out DIRECTORY [IMAGE COMPARISON OPTIONS]
-spektrafilm-lab compare images --baseline DIRECTORY --candidate DIRECTORY --declaration SPACE:encoded|decoded --out DIRECTORY [IMAGE COMPARISON OPTIONS]
-spektrafilm-lab compare runs --baseline DIRECTORY --candidate DIRECTORY --out DIRECTORY [COMPARISON OPTIONS]
-spektrafilm-lab compare readings --baseline DIRECTORY --candidate DIRECTORY --out DIRECTORY [--reference DIRECTORY]
-spektrafilm-lab compare pairs --run DIRECTORY --against input|reference|both --out DIRECTORY
-spektrafilm-lab inspect --comparison DIRECTORY [--case ID ...] [--region ID ...] [--metric ID ...]
-spektrafilm-lab report comparison --comparison DIRECTORY --out DIRECTORY
+spektrafilm-bench sample --source IMAGE --input-color-space NAME --input-cctf-decoding true|false --regions FILE --out DIRECTORY
+spektrafilm-bench sample --from-evidence DIRECTORY --stage STAGE --regions FILE --out DIRECTORY
+spektrafilm-bench sample --from-run DIRECTORY|RUN.JSON --case ID --seed UINT32 --stage STAGE --regions FILE --out DIRECTORY
+spektrafilm-lab compare --baseline FILE --candidate FILE --declaration SPACE:encoded|decoded --out DIRECTORY [IMAGE COMPARISON OPTIONS]
+spektrafilm-lab compare --baseline DIRECTORY --candidate DIRECTORY --declaration SPACE:encoded|decoded --out DIRECTORY [IMAGE COMPARISON OPTIONS]
+spektrafilm-bench compare runs --baseline DIRECTORY --candidate DIRECTORY --out DIRECTORY [COMPARISON OPTIONS]
+spektrafilm-bench compare readings --baseline DIRECTORY --candidate DIRECTORY --out DIRECTORY [--reference DIRECTORY]
+spektrafilm-bench compare pairs --run DIRECTORY --against input|reference|both --out DIRECTORY
+spektrafilm-bench inspect --comparison DIRECTORY [--case ID ...] [--region ID ...] [--metric ID ...]
+spektrafilm-bench report comparison --comparison DIRECTORY --out DIRECTORY
 spektrafilm-lab regions grid --id ID --rows N --columns N --origin X,Y --patch-size WxH --gap X,Y [--sample WxH] [--space SPACE] [--role ROLE] [--measurements FAMILY,...] --out FILE
 ```
 ```text
@@ -359,9 +360,9 @@ spektrafilm-f64 measure run --stimuli PATH --enter BOUNDARY [--read STAGE ...] [
 
 ### `sample`
 ```text
-spektrafilm-lab sample --source IMAGE --input-color-space NAME --input-cctf-decoding true|false --regions FILE --out DIRECTORY
-spektrafilm-lab sample --from-evidence DIRECTORY --stage STAGE --regions FILE --out DIRECTORY
-spektrafilm-lab sample --from-run DIRECTORY|RUN.JSON --case ID --seed UINT32 --stage STAGE --regions FILE --out DIRECTORY
+spektrafilm-bench sample --source IMAGE --input-color-space NAME --input-cctf-decoding true|false --regions FILE --out DIRECTORY
+spektrafilm-bench sample --from-evidence DIRECTORY --stage STAGE --regions FILE --out DIRECTORY
+spektrafilm-bench sample --from-run DIRECTORY|RUN.JSON --case ID --seed UINT32 --stage STAGE --regions FILE --out DIRECTORY
 ```
 
 - `--source` declares a raster image. It MUST require the same input declaration as `process`: a source color space and a transfer state.
@@ -670,7 +671,7 @@ Existing natural-source provenance MUST remain intact. A change to authored stan
 - Dedicated experiment and measurement records retain the owning replayable invocation and actual observer configuration; existing supported `sample --from-evidence` and `sample --from-run` inputs remain readable without restoring a process capture option.
 - `experiment export INPUT --out DIRECTORY` consumes a native observation bundle and never treats a `.sfstage` resume state or debug text as scientific observations.
 - `spektrafilm-lab` MUST reject every endpoint the [command ownership table](#command-ownership) assigns to `spektrafilm-f64`, and `spektrafilm-f64` MUST reject every lab endpoint. Each rejection MUST return `argument_syntax` and name the owning binary.
-- `spektrafilm-lab report comparison` MUST succeed on a host with no renderer executable and no graphics device.
+- `spektrafilm-bench report comparison` MUST succeed on a host with no renderer executable and no graphics device.
 - A `compare images` comparison MUST carry one case per declared pair, source blocks of `kind: images`, and no run, target, suite, or command record.
 - Two identical images MUST produce a comparison whose available deltas are zero and whose unavailable rows carry a reason.
 

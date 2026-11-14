@@ -2,8 +2,8 @@
 
 `spektrafilm-f64` renders immutable evidence and `spektrafilm-lab` compares it and creates the offline review. The lab reports color, tone, official LDR-FLIP, grain, halation, edge response, and numerical health by case and region. The renderer preserves floating masters, full-resolution maps, curves, spectra, and per-seed observations.
 
-- Compare versions: generate one bundle, run baseline and candidate targets, then use `spektrafilm-lab compare runs`, `spektrafilm-lab inspect`, and `spektrafilm-lab report comparison --comparison DIRECTORY --out DIRECTORY`.
-- Compare delivered images: use `spektrafilm-lab compare images --baseline FILE_OR_DIR --candidate FILE_OR_DIR --declaration SPACE:encoded|decoded --out DIRECTORY [--roi name=x,y,w,h]... [--analysis lab-appearance-v1] [--report]` when two renderer builds already wrote the rasters. No suite, target, or renderer is involved.
+- Compare versions: generate one bundle, run baseline and candidate targets, then use `spektrafilm-bench compare runs`, `spektrafilm-bench inspect`, and `spektrafilm-bench report comparison --comparison DIRECTORY --out DIRECTORY`.
+- Compare delivered images: use `spektrafilm-lab compare --baseline FILE_OR_DIR --candidate FILE_OR_DIR --declaration SPACE:encoded|decoded --out DIRECTORY [--roi name=x,y,w,h]... [--analysis lab-appearance-v1] [--report]` when two renderer builds already wrote the rasters. No suite, target, or renderer is involved.
 - Generate measurement geometry independently: use `spektrafilm-lab regions grid --id ID --rows N --columns N --origin X,Y --patch-size WIDTHxHEIGHT --gap X,Y --out REGIONS.json`. It does not read images or create a visual report.
 - Prepared-image visual review, if used, is benchmark-owned. It is not registered as an instrument document and is not accepted by lab `sample`, `compare`, `inspect`, or `report comparison`.
 - Review a small set of photos visually: build one offline page with `spektrafilm-bench report photos --manifest FILE --out DIRECTORY`. It shows no measurements, no scores, and no baseline, candidate, or reference judgment. See [Review a small set of photos](#review-a-small-set-of-photos).
@@ -17,6 +17,30 @@ The agent prepares the evidence and reads the measurements. The reviewer opens `
     --origin 0,0 --patch-size 8x8 --gap 2,2 \
     --out /tmp/spektrafilm-benchmark-regions.json
 ```
+
+## Compare two delivered image sets
+
+The instrument's product case needs no suite, target, or renderer. Two builds
+write their rasters anywhere, and one invocation quantifies the difference.
+
+```bash
+./target/release/spektrafilm-lab compare \
+    --baseline baseline/ --candidate candidate/ \
+    --declaration sRGB:encoded \
+    --regions /tmp/spektrafilm-benchmark-regions.json \
+    --report \
+    --out /tmp/spektrafilm-image-comparison
+```
+
+`--declaration` states the color space and transfer state of both sides, and
+the two sides must declare the same one. Without `--regions` or `--roi` the
+whole image is the only population. `--analysis` selects a built-in profile and
+`--protocol` an authored protocol document; they are mutually exclusive.
+
+The result is `comparison.json` beside `protocol.json`, `regions.json`, the
+per-case evidence, and — with `--report` — one offline page. The record names
+the digest of every file it read, so a third party recomputes the same
+identity without the originals.
 
 ## Generate and compare suite evidence
 
@@ -48,14 +72,14 @@ just build-lab
     --suite /tmp/spektrafilm-benchmark-fixtures/complete.json \
     --target /tmp/spektrafilm-benchmark-fixtures/candidate.json \
     --out /tmp/spektrafilm-benchmark-candidate
-./target/release/spektrafilm-lab compare runs \
+./target/release/spektrafilm-bench compare runs \
     --baseline /tmp/spektrafilm-benchmark-baseline \
     --candidate /tmp/spektrafilm-benchmark-candidate \
     --out /tmp/spektrafilm-benchmark-comparison
-./target/release/spektrafilm-lab inspect \
+./target/release/spektrafilm-bench inspect \
     --comparison /tmp/spektrafilm-benchmark-comparison \
     --case color_chart --region skin --metric delta_e00.p95
-./target/release/spektrafilm-lab report comparison \
+./target/release/spektrafilm-bench report comparison \
     --comparison /tmp/spektrafilm-benchmark-comparison \
     --out /tmp/spektrafilm-benchmark-review
 just benchmark-test
@@ -85,10 +109,10 @@ JSON
     --configuration /tmp/spektrafilm-local-configuration.json \
     --target /tmp/spektrafilm-local-target.json \
     --out /tmp/spektrafilm-local-run
-./target/release/spektrafilm-lab compare pairs \
+./target/release/spektrafilm-bench compare pairs \
     --run /tmp/spektrafilm-local-run --against input \
     --out /tmp/spektrafilm-local-comparison
-./target/release/spektrafilm-lab report comparison \
+./target/release/spektrafilm-bench report comparison \
     --comparison /tmp/spektrafilm-local-comparison \
     --out /tmp/spektrafilm-local-review
 ```
@@ -140,13 +164,13 @@ LOCAL_IMAGE=/tmp/spektrafilm-standard-bundle/chart.png
     --target /tmp/spektrafilm-standard-candidate-target.json \
     --seed 0 --seed 42 --seed 99 \
     --out /tmp/spektrafilm-standard-appearance-candidate
-./target/release/spektrafilm-lab compare runs \
+./target/release/spektrafilm-bench compare runs \
     --baseline /tmp/spektrafilm-standard-appearance-baseline \
     --candidate /tmp/spektrafilm-standard-appearance-candidate \
     --out /tmp/spektrafilm-standard-comparison
-./target/release/spektrafilm-lab inspect \
+./target/release/spektrafilm-bench inspect \
     --comparison /tmp/spektrafilm-standard-comparison --case image
-./target/release/spektrafilm-lab report comparison \
+./target/release/spektrafilm-bench report comparison \
     --comparison /tmp/spektrafilm-standard-comparison \
     --out /tmp/spektrafilm-standard-review
 ```
@@ -197,7 +221,7 @@ Use `--input-kind raw` for camera RAW and omit the raster color flags. Set dedic
 
 ## Retain a local reference
 
-Add `--reference FILE --reference-info FILE` to retain a local reference. Reference info uses the existing reference declaration without `path` and `sha256`; it must declare color, provenance, processing, and scope. Then select `spektrafilm-lab compare pairs --run DIRECTORY --against reference` or `--against both`. Input/simulation reports describe processing changes; reference/simulation reports describe applicable distances to the reference. Visual and regional references remain separate native views, with explicit limits on pixelwise measurements. Both-pair reports open reference/simulation and provide a selector for input/simulation. No single-run comparison claims acceptance.
+Add `--reference FILE --reference-info FILE` to retain a local reference. Reference info uses the existing reference declaration without `path` and `sha256`; it must declare color, provenance, processing, and scope. Then select `spektrafilm-bench compare pairs --run DIRECTORY --against reference` or `--against both`. Input/simulation reports describe processing changes; reference/simulation reports describe applicable distances to the reference. Visual and regional references remain separate native views, with explicit limits on pixelwise measurements. Both-pair reports open reference/simulation and provide a selector for input/simulation. No single-run comparison claims acceptance.
 
 ## Preserve evidence integrity
 

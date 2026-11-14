@@ -1,8 +1,8 @@
 # Measurement
 
 Three commands carry the measurement surface. `spektrafilm-f64 measure run` measures the
-chain on a declared stimulus set. `spektrafilm-lab sample` reads declared regions from an
-image or a retained stage capture, and `spektrafilm-lab compare readings` matches two
+chain on a declared stimulus set. `spektrafilm-bench sample` reads declared regions from an
+image or a retained stage capture, and `spektrafilm-bench compare readings` matches two
 retained measurements: those two read and join what the first one produced. The commands
 run at f64 reference precision. They compute values and write evidence; they do not fit
 parameters, render images, or judge a result. See the [measurement
@@ -187,7 +187,7 @@ command prints its human text on stderr and a result object on stdout whose
 ## `sample`
 
 ```bash
-./target/release/spektrafilm-lab sample \
+./target/release/spektrafilm-bench sample \
     --source chart.tif --input-color-space 'ProPhoto RGB' --input-cctf-decoding false \
     --regions regions.json --out sample-1
 ```
@@ -232,7 +232,7 @@ A region window that leaves the source bounds fails with the region identity. Th
 ## `compare readings`
 
 ```bash
-./target/release/spektrafilm-lab compare readings \
+./target/release/spektrafilm-bench compare readings \
     --baseline run-1 --candidate run-2 \
     --reference run-ref --out compare-1
 ```

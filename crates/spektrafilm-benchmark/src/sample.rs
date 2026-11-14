@@ -8,15 +8,15 @@
 
 use std::path::{Path, PathBuf};
 
+use crate::image_data::{self, ImageData};
 use anyhow::{Context, Result, anyhow, bail};
 use serde_json::{Value, json};
-use spektrafilm_benchmark::image_data::{self, ImageData};
 use spektrafilm_math::colorspace::{self, RgbColorSpace};
 
 use clap::Args;
 
 use crate::plan::{self, Plan};
-use spektrafilm_benchmark::readings::{
+use crate::readings::{
     MeasureStage, StageReading, csv_field, number_field, read_stage_bundle, sha256_file,
     statistics, write_measure_named,
 };
@@ -396,15 +396,14 @@ fn run_source(args: &MeasureSampleArgs, run: &Path) -> Result<Source> {
         let manifest_path = run_path.join("run.json");
         (run_path, manifest_path)
     };
-    let record = spektrafilm_benchmark::documents::load_json_document(&manifest_path)
+    let record = crate::documents::load_json_document(&manifest_path)
         .map_err(|error| anyhow!("reading retained run {}: {error}", manifest_path.display()))?;
-    spektrafilm_benchmark::documents::validate_generated_document("run", &record, &run_root)
-        .map_err(|error| {
-            anyhow!(
-                "validating retained run {}: {error}",
-                manifest_path.display()
-            )
-        })?;
+    crate::documents::validate_generated_document("run", &record, &run_root).map_err(|error| {
+        anyhow!(
+            "validating retained run {}: {error}",
+            manifest_path.display()
+        )
+    })?;
     let row = record
         .get("cases")
         .and_then(Value::as_array)
@@ -470,9 +469,8 @@ fn run_source(args: &MeasureSampleArgs, run: &Path) -> Result<Source> {
             manifest_rel
         );
     }
-    let bundle_manifest =
-        spektrafilm_benchmark::documents::safe_artifact_path(&run_root, manifest_rel)
-            .map_err(|error| anyhow!("retained stage manifest path: {error}"))?;
+    let bundle_manifest = crate::documents::safe_artifact_path(&run_root, manifest_rel)
+        .map_err(|error| anyhow!("retained stage manifest path: {error}"))?;
     if bundle_manifest.file_name().and_then(|name| name.to_str()) != Some("stage-evidence.json") {
         bail!(
             "retained stage manifest {} is not the bundle's stage-evidence.json",
@@ -482,7 +480,7 @@ fn run_source(args: &MeasureSampleArgs, run: &Path) -> Result<Source> {
     let bundle_dir = bundle_manifest
         .parent()
         .ok_or_else(|| anyhow!("retained stage manifest has no bundle directory"))?;
-    spektrafilm_benchmark::documents::validate_stage_bundle(bundle_dir)
+    crate::documents::validate_stage_bundle(bundle_dir)
         .map_err(|error| anyhow!("validating retained stage evidence: {error}"))?;
     let stage_id = stage.id().to_owned();
     let (mut readings, availability) =

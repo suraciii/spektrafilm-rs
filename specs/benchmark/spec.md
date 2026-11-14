@@ -239,4 +239,4 @@ Source attribution and redistribution restrictions MUST accompany external refer
 24. Generate a prepared review page through the benchmark viewer's own command with Chinese captions, a declared default pair, multiple images per set, and distinct grid and explicit-region sets. This viewer contract is independent of `spektrafilm-lab` and `spektrafilm-f64`.
 25. Run `regions grid` with a finite declaration and validate the resulting standalone regions document. Reuse it as sampling geometry without a review manifest.
 26. Reject a sample that does not fit, a coordinate-space mismatch, and an unsafe destination.
-27. Render an offline report from a retained comparison through `spektrafilm-lab report comparison`. The lab report MUST NOT accept a prepared-image manifest or record a manifest source kind.
+27. Render an offline report from a retained comparison through `spektrafilm-bench report comparison`. The lab report MUST NOT accept a prepared-image manifest or record a manifest source kind.

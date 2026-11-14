@@ -1,10 +1,10 @@
-//! `spektrafilm-lab compare images` through the real binary.
+//! `spektrafilm-lab compare` through the real binary.
 //!
 //! The product case: two renderer builds wrote their rasters elsewhere, and the
 //! lab quantifies and reports them without a suite, a target, or a renderer.
 
 use serde_json::json;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::Command;
 
 fn lab() -> Command {
@@ -51,7 +51,7 @@ fn a_single_pair_publishes_a_comparison_and_a_report() {
     chart_changed(&candidate);
     let out = temp.path().join("comparison");
     let output = lab()
-        .args(["compare", "images", "--baseline"])
+        .args(["compare", "--baseline"])
         .arg(&baseline)
         .arg("--candidate")
         .arg(&candidate)
@@ -108,7 +108,7 @@ fn a_directory_pair_compares_every_name() {
     }
     let out = temp.path().join("comparison");
     let output = lab()
-        .args(["compare", "images", "--baseline"])
+        .args(["compare", "--baseline"])
         .arg(temp.path().join("v1"))
         .arg("--candidate")
         .arg(temp.path().join("v2"))
@@ -135,7 +135,7 @@ fn an_unpaired_name_fails_and_names_both_sides() {
     chart(&temp.path().join("v2/b.png"));
     let out = temp.path().join("comparison");
     let output = lab()
-        .args(["compare", "images", "--baseline"])
+        .args(["compare", "--baseline"])
         .arg(temp.path().join("v1"))
         .arg("--candidate")
         .arg(temp.path().join("v2"))
@@ -162,7 +162,7 @@ fn an_unknown_analysis_profile_is_rejected() {
     chart(&baseline);
     chart(&candidate);
     let output = lab()
-        .args(["compare", "images", "--baseline"])
+        .args(["compare", "--baseline"])
         .arg(&baseline)
         .arg("--candidate")
         .arg(&candidate)
@@ -182,41 +182,6 @@ fn an_unknown_analysis_profile_is_rejected() {
     assert_eq!(result["errors"][0]["code"], "unknown_analysis");
     let message = result["errors"][0]["message"].as_str().unwrap();
     assert!(message.contains("lab-appearance-v1"), "{message}");
-}
-
-#[test]
-fn inspect_reads_the_image_comparison_without_an_image() {
-    let temp = tempfile::tempdir().unwrap();
-    let baseline: PathBuf = temp.path().join("a.png");
-    let candidate = temp.path().join("b.png");
-    chart(&baseline);
-    chart_changed(&candidate);
-    let out = temp.path().join("comparison");
-    let built = lab()
-        .args(["compare", "images", "--baseline"])
-        .arg(&baseline)
-        .arg("--candidate")
-        .arg(&candidate)
-        .args(["--declaration", "sRGB:encoded", "--out"])
-        .arg(&out)
-        .output()
-        .unwrap();
-    assert!(built.status.success());
-    std::fs::remove_file(&baseline).unwrap();
-    std::fs::remove_file(&candidate).unwrap();
-    let output = lab()
-        .args(["inspect", "--comparison"])
-        .arg(&out)
-        .output()
-        .unwrap();
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let inspected: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(inspected["execution_status"], "completed");
-    assert!(!inspected["measurements"].as_array().unwrap().is_empty());
 }
 
 #[test]
@@ -242,7 +207,7 @@ fn an_authored_regions_document_must_declare_render_geometry() {
     let run = |space: &str, out: &str| {
         std::fs::write(&regions, serde_json::to_vec(&document(space)).unwrap()).unwrap();
         lab()
-            .args(["compare", "images", "--baseline"])
+            .args(["compare", "--baseline"])
             .arg(&baseline)
             .arg("--candidate")
             .arg(&candidate)
@@ -270,47 +235,4 @@ fn an_authored_regions_document_must_declare_render_geometry() {
         serde_json::from_slice(&std::fs::read(temp.path().join("accepted/regions.json")).unwrap())
             .unwrap();
     assert_eq!(retained["regions"][0]["id"], "patch");
-}
-
-#[test]
-fn a_report_failure_leaves_no_report_and_keeps_the_comparison() {
-    let temp = tempfile::tempdir().unwrap();
-    let baseline = temp.path().join("a.png");
-    let candidate = temp.path().join("b.png");
-    chart(&baseline);
-    chart_changed(&candidate);
-    let out = temp.path().join("comparison");
-    let built = lab()
-        .args(["compare", "images", "--baseline"])
-        .arg(&baseline)
-        .arg("--candidate")
-        .arg(&candidate)
-        .args(["--declaration", "sRGB:encoded", "--out"])
-        .arg(&out)
-        .output()
-        .unwrap();
-    assert!(built.status.success());
-
-    // A comparison whose retained artifact is gone cannot be reported. The
-    // refusal happens before the report destination exists, so a failed
-    // report leaves no report behind and changes no byte of the comparison.
-    let before = std::fs::read(out.join("comparison.json")).unwrap();
-    std::fs::remove_file(out.join("cases/a/baseline-source.png")).unwrap();
-    let report = temp.path().join("report");
-    let refused = lab()
-        .args(["report", "comparison", "--comparison"])
-        .arg(&out)
-        .arg("--out")
-        .arg(&report)
-        .output()
-        .unwrap();
-    assert_eq!(refused.status.code(), Some(1));
-    let result: serde_json::Value = serde_json::from_slice(&refused.stdout).unwrap();
-    assert_eq!(result["errors"][0]["code"], "missing_artifact");
-    assert!(!report.exists(), "a refused report creates no destination");
-    assert_eq!(
-        std::fs::read(out.join("comparison.json")).unwrap(),
-        before,
-        "a refused report does not rewrite the comparison"
-    );
 }

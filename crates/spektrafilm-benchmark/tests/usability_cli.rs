@@ -1,4 +1,3 @@
-#![cfg(feature = "precision-f64")]
 use serde_json::{Value, json};
 use spektrafilm_benchmark::{common, documents};
 use std::{
@@ -9,7 +8,7 @@ use std::{
 use tempfile::TempDir;
 
 fn cli() -> Command {
-    Command::new(env!("CARGO_BIN_EXE_spektrafilm-lab"))
+    Command::new(env!("CARGO_BIN_EXE_spektrafilm-bench"))
 }
 fn success(output: Output) -> Value {
     assert!(

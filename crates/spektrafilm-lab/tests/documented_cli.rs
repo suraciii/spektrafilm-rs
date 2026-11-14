@@ -77,10 +77,10 @@ fn documented_lab_commands_use_supported_flags() {
             command.clear();
         }
     }
-    // Protect the documented workflow, not just an empty extraction.
-    for subcommand in [
-        "validate", "sample", "compare", "inspect", "report", "regions",
-    ] {
+    // Protect the documented workflow, not just an empty extraction. The
+    // evaluation and reading endpoints are another binary's, so they are not
+    // in this list even where a document names them in the same paragraph.
+    for subcommand in ["validate", "compare", "regions"] {
         assert!(checked.contains(&Some(subcommand.into())), "{subcommand}");
     }
 }

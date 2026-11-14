@@ -1,4 +1,3 @@
-#![cfg(feature = "precision-f64")]
 use serde_json::{Value, json};
 use spektrafilm_benchmark::common;
 use std::{
@@ -9,7 +8,7 @@ use std::{
 use tempfile::TempDir;
 
 fn cli() -> Command {
-    Command::new(env!("CARGO_BIN_EXE_spektrafilm-lab"))
+    Command::new(env!("CARGO_BIN_EXE_spektrafilm-bench"))
 }
 
 fn write_json(path: &Path, value: &Value) {
@@ -131,12 +130,14 @@ fn failed_render_remains_failed_through_compare_validation_and_report() {
     assert_eq!(result["evaluation_status"], "not_evaluated");
 
     let manifest = comparison.join("comparison.json");
-    let validated = cli()
-        .args(["validate", "--kind", "comparison", "--file"])
-        .arg(&manifest)
-        .output()
-        .unwrap();
-    success_json(&validated);
+    // The comparison record validates against the schema it declares. The
+    // `validate` CLI is the lab's; this asserts the record, not the wrapper.
+    spektrafilm_benchmark::documents::validate_generated_document(
+        "comparison",
+        &serde_json::from_slice(&fs::read(&manifest).unwrap()).unwrap(),
+        &comparison,
+    )
+    .unwrap();
 
     let report = temp.path().join("report");
     let reported = cli()
@@ -152,15 +153,13 @@ fn failed_render_remains_failed_through_compare_validation_and_report() {
     let mut corrupted: Value = serde_json::from_slice(&fs::read(&manifest).unwrap()).unwrap();
     corrupted["cases"][0]["measurements"] = json!([{"availability":"available"}]);
     let corrupted = identified(corrupted);
-    write_json(&manifest, &corrupted);
-    let rejected = cli()
-        .args(["validate", "--kind", "comparison", "--file"])
-        .arg(&manifest)
-        .output()
-        .unwrap();
-    assert_eq!(rejected.status.code(), Some(1));
-    let result: Value = serde_json::from_slice(&rejected.stdout).unwrap();
-    assert_eq!(result["errors"][0]["code"], "measurement_fields");
+    let error = spektrafilm_benchmark::documents::validate_generated_document(
+        "comparison",
+        &corrupted,
+        &comparison,
+    )
+    .unwrap_err();
+    assert_eq!(error.code, "measurement_fields");
 }
 
 #[test]

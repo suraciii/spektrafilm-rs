@@ -8,21 +8,16 @@
 use std::path::PathBuf;
 
 use clap::{Args, Parser, Subcommand};
-use spektrafilm_benchmark::{
-    Error, common, compare, documents, inspect, local_input, regions, report,
-};
+use spektrafilm_benchmark::{documents, local_input, regions};
 
 mod images;
-mod plan;
-mod readings_compare;
-mod sample;
 
 #[derive(Parser)]
 #[command(
     name = "spektrafilm-lab",
     about = "SpektraFilm measurement instrument: analysis, comparison, and reporting at reference precision",
     version = concat!(env!("CARGO_PKG_VERSION"), " (research documents schema_version 1)"),
-    after_help = "Quantify two delivered image sets with `spektrafilm-lab compare images --baseline A --candidate B --declaration sRGB:encoded --roi name=x,y,w,h --report --out DIR`."
+    after_help = "Quantify two delivered image sets with `spektrafilm-lab compare --baseline A --candidate B --declaration sRGB:encoded --roi name=0,0,64,64:gray --out DIR`."
 )]
 struct Cli {
     #[command(subcommand)]
@@ -31,6 +26,13 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
+    /// Quantify how two delivered image sets differ.
+    Compare(images::Args),
+    /// Generate standalone measurement regions.
+    Regions {
+        #[command(subcommand)]
+        command: RegionsCommand,
+    },
     /// Print the authoritative schema for an authored or retained document.
     Schema {
         /// Document kind.
@@ -46,7 +48,7 @@ enum Commands {
             value_parser = [
                 "suite", "target", "policy", "configuration", "reference", "regions",
                 "preparation", "stimuli", "material_measurement", "correspondence_review",
-                "experiment", "run", "comparison", "review"
+                "experiment", "run", "comparison"
             ]
         )]
         kind: String,
@@ -54,42 +56,7 @@ enum Commands {
         #[arg(long, value_name = "FILE")]
         file: PathBuf,
     },
-    /// Generate standalone measurement regions.
-    Regions {
-        #[command(subcommand)]
-        command: RegionsCommand,
-    },
-    /// Compare two retained or delivered sources.
-    Compare {
-        #[command(subcommand)]
-        command: CompareCommand,
-    },
-    /// Read retained measurements without recomputing.
-    /// Read declared sample points from an image or a retained stage capture.
-    Sample {
-        #[command(flatten)]
-        args: sample::MeasureSampleArgs,
-    },
-    Inspect {
-        /// Retained comparison directory.
-        #[arg(long, value_name = "DIR")]
-        comparison: PathBuf,
-        /// Exact case identities to select; repeats.
-        #[arg(long = "case", value_name = "ID")]
-        case_ids: Vec<String>,
-        /// Exact region identities to select; repeats.
-        #[arg(long = "region", value_name = "ID")]
-        region_ids: Vec<String>,
-        /// Exact metric identities to select; repeats.
-        #[arg(long = "metric", value_name = "ID")]
-        metrics: Vec<String>,
-    },
-    /// Build an offline report from one retained comparison.
-    Report {
-        #[command(subcommand)]
-        command: ReportCommand,
-    },
-    /// A render endpoint that belongs to `spektrafilm-f64`.
+    /// An endpoint that belongs to another binary.
     #[command(external_subcommand)]
     External(Vec<String>),
 }
@@ -135,63 +102,6 @@ struct GridArgs {
     /// New regions document JSON file; must not exist.
     #[arg(long, value_name = "FILE")]
     out: PathBuf,
-}
-
-#[derive(Subcommand)]
-enum CompareCommand {
-    /// Quantify two delivered image sets. No renderer is involved.
-    Images(images::Args),
-    /// Join two retained reading records.
-    Readings(readings_compare::MeasureCompareArgs),
-    /// Compare two completed image-domain runs.
-    Runs(RunComparisonArgs),
-    /// Select explicit evidence pairs from one retained run.
-    Pairs(PairArgs),
-}
-
-#[derive(Args)]
-struct RunComparisonArgs {
-    /// Baseline retained run directory.
-    #[arg(long, value_name = "DIR")]
-    baseline: PathBuf,
-    /// Candidate retained run directory.
-    #[arg(long, value_name = "DIR")]
-    candidate: PathBuf,
-    /// Policy document.
-    #[arg(long, value_name = "FILE")]
-    policy: Option<PathBuf>,
-    /// Fail the command when the policy does not pass.
-    #[arg(long, requires = "policy")]
-    gate: bool,
-    /// New comparison directory; must not exist.
-    #[arg(long, value_name = "DIR")]
-    out: PathBuf,
-}
-
-#[derive(Args)]
-struct PairArgs {
-    /// Retained run directory.
-    #[arg(long, value_name = "DIR")]
-    run: PathBuf,
-    /// Pair to select.
-    #[arg(long, value_name = "input|reference|both")]
-    against: String,
-    /// New comparison directory; must not exist.
-    #[arg(long, value_name = "DIR")]
-    out: PathBuf,
-}
-
-#[derive(Subcommand)]
-enum ReportCommand {
-    /// Present one retained comparison as an offline page.
-    Comparison {
-        /// Retained comparison directory.
-        #[arg(long, value_name = "DIR")]
-        comparison: PathBuf,
-        /// New report directory; must not exist.
-        #[arg(long, value_name = "DIR")]
-        out: PathBuf,
-    },
 }
 
 fn parse_pair(value: &str) -> Result<[u64; 2], String> {
@@ -299,7 +209,7 @@ fn validate(
         "command": "validate",
         "execution_status": "completed",
         "kind": kind,
-        "digest": common::digest(&value)?,
+        "digest": spektrafilm_benchmark::common::digest(&value)?,
         "unchecked": unchecked
     });
     if kind == "suite" {
@@ -324,44 +234,71 @@ fn moved(name: &str) -> Option<String> {
         .then(|| format!("spektrafilm-f64 {name} ..."))
 }
 
-/// Review documents belong to the benchmark's policy surface.
-fn benchmark_owned_review() -> spektrafilm_benchmark::Error {
-    spektrafilm_benchmark::Error::new(
-        "unsupported_document_kind",
-        "review documents are benchmark-owned and unsupported by spektrafilm-lab",
-    )
+/// Endpoints that belong to the benchmark's evaluation surface.
+fn evaluated(name: &str) -> Option<String> {
+    const EVALUATED: &[&str] = &["inspect", "report", "sample"];
+    if EVALUATED.contains(&name) {
+        return Some(format!("spektrafilm-bench {name} ..."));
+    }
+    None
 }
 
 fn emit(value: &serde_json::Value) {
     println!("{}", serde_json::to_string_pretty(value).unwrap());
 }
 
+/// `compare` takes an image pair, not a subcommand. The forms that were
+/// subcommands belong to the benchmark's evaluation surface, and clap would
+/// report them as a missing argument rather than as a command another binary
+/// owns. The guard runs before parsing so that message stays exact.
+fn reject_moved_subcommand() -> Option<i32> {
+    let mut argv = std::env::args().skip(1);
+    if argv.next().as_deref() != Some("compare") {
+        return None;
+    }
+    let subcommand = argv.next()?;
+    if !["runs", "readings", "pairs"].contains(&subcommand.as_str()) {
+        return None;
+    }
+    eprintln!(
+        "argument_syntax: `compare {subcommand}` belongs to spektrafilm-bench; \
+         run `spektrafilm-bench compare {subcommand} ...`"
+    );
+    Some(2)
+}
+
 fn run() -> i32 {
+    if let Some(status) = reject_moved_subcommand() {
+        return status;
+    }
     let cli = Cli::parse();
     if let Commands::External(args) = &cli.command {
         let name = args.first().map(String::as_str).unwrap_or("<unknown>");
-        match moved(name) {
-            Some(replacement) => eprintln!(
-                "argument_syntax: `{name}` belongs to spektrafilm-f64; run `{replacement}`"
+        let owner = moved(name)
+            .map(|replacement| ("spektrafilm-f64", replacement))
+            .or_else(|| evaluated(name).map(|replacement| ("spektrafilm-bench", replacement)));
+        match owner {
+            Some((binary, replacement)) => {
+                eprintln!("argument_syntax: `{name}` belongs to {binary}; run `{replacement}`")
+            }
+            None if name == "compare" => eprintln!(
+                "argument_syntax: `compare` takes no subcommand in spektrafilm-lab; \
+                 `compare runs`, `compare readings`, and `compare pairs` belong to \
+                 spektrafilm-bench compare ..."
             ),
             None => eprintln!("argument_syntax: unknown endpoint `{name}`"),
         }
         return 2;
     }
     let command = match &cli.command {
+        Commands::Compare { .. } => "compare",
+        Commands::Regions { .. } => "regions",
         Commands::Schema { .. } => "schema",
         Commands::Validate { .. } => "validate",
-        Commands::Regions { .. } => "regions",
-        Commands::Compare { .. } => "compare",
-        Commands::Sample { .. } => "sample",
-        Commands::Inspect { .. } => "inspect",
-        Commands::Report { .. } => "report",
         Commands::External(_) => "unknown",
     };
     let result: spektrafilm_benchmark::Result<(serde_json::Value, i32)> = match cli.command {
-        Commands::Schema { kind } if kind == "review" => Err(benchmark_owned_review()),
         Commands::Schema { kind } => documents::schema_for(&kind).map(|schema| (schema, 0)),
-        Commands::Validate { kind, .. } if kind == "review" => Err(benchmark_owned_review()),
         Commands::Validate { kind, file } => documents::normalize_path(&file)
             .and_then(|path| validate(&kind, &path))
             .map(|value| (value, 0)),
@@ -381,36 +318,7 @@ fn run() -> i32 {
             &args.out,
         )
         .map(|value| (value, 0)),
-        Commands::Compare { command } => match command {
-            CompareCommand::Images(args) => images::run(&args),
-            CompareCommand::Readings(args) => readings_compare::compare_with_result(&args)
-                .map_err(|error| Error::with_message("operation_failed", error)),
-            CompareCommand::Runs(args) => compare::compare(
-                &args.baseline,
-                &args.candidate,
-                &args.out,
-                args.policy.as_deref(),
-                args.gate,
-            ),
-            CompareCommand::Pairs(args) => {
-                compare::compare_single(&args.run, &args.against, &args.out)
-            }
-        },
-        Commands::Sample { args } => sample::sample_with_result(&args)
-            .map_err(|error| Error::with_message("operation_failed", error)),
-        Commands::Inspect {
-            comparison,
-            case_ids,
-            region_ids,
-            metrics,
-        } => {
-            inspect::inspect(&comparison, &case_ids, &region_ids, &metrics).map(|value| (value, 0))
-        }
-        Commands::Report {
-            command: ReportCommand::Comparison { comparison, out },
-        } => documents::normalize_path(&out)
-            .and_then(|out| report::build_report(&comparison, &out))
-            .map(|value| (value, 0)),
+        Commands::Compare(args) => images::run(&args),
         Commands::External(_) => unreachable!("handled before dispatch"),
     };
     match result {

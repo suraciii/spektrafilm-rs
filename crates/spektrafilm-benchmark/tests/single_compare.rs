@@ -1,4 +1,3 @@
-#![cfg(feature = "precision-f64")]
 use image::{GrayImage, Luma, Rgb, RgbImage};
 mod support;
 use serde_json::{Value, json};
@@ -234,7 +233,7 @@ fn cli_report_opens_unaligned_reference_as_side_views() {
         (["compare", "pairs"], "--run", &run, &comparison),
         (["report", "comparison"], "comparison", &comparison, &report),
     ] {
-        let mut cli = std::process::Command::new(env!("CARGO_BIN_EXE_spektrafilm-lab"));
+        let mut cli = std::process::Command::new(env!("CARGO_BIN_EXE_spektrafilm-bench"));
         cli.args(command);
         if command[0] == "report" {
             cli.arg("--comparison");

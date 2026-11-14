@@ -1,4 +1,3 @@
-#![cfg(feature = "precision-f64")]
 use image::{GrayImage, Luma, Rgb, RgbImage};
 mod support;
 use serde_json::{Value, json};
@@ -13,7 +12,7 @@ use tempfile::TempDir;
 use fixtures::{record, save_manifest, write};
 
 fn invoke(args: &[&str], paths: &[(&str, &Path)], code: i32) -> Value {
-    let mut command = Command::new(env!("CARGO_BIN_EXE_spektrafilm-lab"));
+    let mut command = Command::new(env!("CARGO_BIN_EXE_spektrafilm-bench"));
     command.args(args);
     for (option, path) in paths {
         command.arg(option).arg(path);
@@ -198,12 +197,38 @@ fn compare(a: &Path, b: &Path, out: &Path, code: i32) -> Value {
         code,
     )
 }
+/// The `comparison` record this binary publishes validates against the schema
+/// it declares. `validate` is the lab's command; asserting the record here
+/// keeps the check on the record rather than on that wrapper.
 fn validate(root: &Path, name: &str, code: i32) -> Value {
-    invoke(
-        &["validate", "--kind", "comparison"],
-        &[("--file", &root.join(name))],
-        code,
-    )
+    let path = root.join(name);
+    let value: Value = read(&path);
+    let result = spektrafilm_benchmark::documents::validate_generated_document(
+        "comparison",
+        &value,
+        path.parent().unwrap(),
+    );
+    match result {
+        Ok(()) => {
+            assert_eq!(
+                code,
+                0,
+                "{} validates but the caller expected {code}",
+                path.display()
+            );
+            json!({"execution_status": "completed"})
+        }
+        Err(error) => {
+            assert_eq!(
+                code,
+                1,
+                "{} should have been rejected: {}",
+                path.display(),
+                error.code
+            );
+            json!({"execution_status": "failed", "errors": [error.to_value()]})
+        }
+    }
 }
 fn measurement(document: &Value, region: &str, metric: &str) -> Value {
     document["cases"][0]["measurements"]
@@ -444,7 +469,7 @@ fn undecodable_master_reports_failed_progress_and_retains_incomplete_destination
     }
     save_manifest(&run, "run.json", manifest);
     let out = temp.path().join("comparison");
-    let output = Command::new(env!("CARGO_BIN_EXE_spektrafilm-lab"))
+    let output = Command::new(env!("CARGO_BIN_EXE_spektrafilm-bench"))
         .args(["compare", "runs"])
         .arg("--baseline")
         .arg(&run)
@@ -696,59 +721,6 @@ fn retained_input_configuration_and_inventory_tampering_are_rejected() {
         );
         assert!(!out.exists());
     }
-}
-
-#[test]
-fn raw_declaration_rejects_raster_fields_and_raster_rejects_raw_controls() {
-    let temp = TempDir::new().unwrap();
-    let a = temp.path().join("a");
-    retained_run(&a, 0.2, false);
-    let path = a.join("suite.json");
-    let mut suite = read(&path);
-    suite["cases"][0]["input"]["kind"] = json!("raw");
-    suite["cases"][0]["input"]["adapter"] = json!("spektrafilm-raw");
-    write(&path, &suite);
-    assert_eq!(
-        invoke(&["validate", "--kind", "suite"], &[("--file", &path)], 1)["errors"][0]["code"],
-        "source_declaration"
-    );
-    suite["cases"][0]["input"]
-        .as_object_mut()
-        .unwrap()
-        .remove("color_space");
-    suite["cases"][0]["input"]
-        .as_object_mut()
-        .unwrap()
-        .remove("cctf_decoding");
-    write(&path, &suite);
-    invoke(&["validate", "--kind", "suite"], &[("--file", &path)], 0);
-    suite["cases"][0]["input"] = json!({"kind":"raster", "path":"input.png", "sha256": common::sha256_file(&a.join("input.png")).unwrap(), "color_space":"sRGB", "cctf_decoding":true});
-    suite["cases"][0]["configuration"]["raw"] =
-        json!({"white_balance":"custom", "temperature":4000});
-    write(&path, &suite);
-    assert_eq!(
-        invoke(&["validate", "--kind", "suite"], &[("--file", &path)], 1)["errors"][0]["code"],
-        "inapplicable_field"
-    );
-}
-
-#[test]
-fn malformed_run_file_record_returns_json_instead_of_panicking() {
-    let temp = TempDir::new().unwrap();
-    let a = temp.path().join("a");
-    retained_run(&a, 0.2, false);
-    let mut run = read(&a.join("run.json"));
-    run["cases"][0]["diagnostics"] = json!("diagnostics.json");
-    save_manifest(&a, "run.json", run);
-    let result = invoke(
-        &["validate", "--kind", "run"],
-        &[("--file", &a.join("run.json"))],
-        1,
-    );
-    assert_eq!(result["execution_status"], "failed");
-    let out = temp.path().join("comparison");
-    assert_eq!(compare(&a, &a, &out, 1)["execution_status"], "failed");
-    assert!(!out.exists());
 }
 
 #[test]

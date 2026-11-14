@@ -15,9 +15,7 @@ use spektrafilm_math::lab;
 
 use clap::Args;
 
-use spektrafilm_benchmark::readings::{
-    csv_field, number_field, sha256_file, statistics, write_measure_named,
-};
+use crate::readings::{csv_field, number_field, sha256_file, statistics, write_measure_named};
 
 /// The comparison a summary describes.
 const SIDE_CANDIDATE_MINUS_BASELINE: &str = "candidate_minus_baseline";
@@ -341,7 +339,7 @@ pub fn compare_with_result(args: &MeasureCompareArgs) -> Result<(Value, i32)> {
         "unavailable": unavailable,
     });
     let mut document = body;
-    document["id"] = json!(spektrafilm_benchmark::common::digest(&document)?);
+    document["id"] = json!(crate::common::digest(&document)?);
 
     let compare_text = format!("{}\n", serde_json::to_string_pretty(&document)?);
     write_measure_named(&args.out, &[("comparison.json", compare_text)])
