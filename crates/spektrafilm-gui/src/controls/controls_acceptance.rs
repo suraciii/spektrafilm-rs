@@ -426,17 +426,73 @@ fn conversion_contrast_search_renders_its_operator_editor() {
 }
 
 fn scan_profile(ui: &mut egui::Ui, params: &mut RuntimeParams) {
+    scan_profile_reading(ui, params, true);
+}
+
+fn scan_profile_reading(ui: &mut egui::Ui, params: &mut RuntimeParams, positive: bool) {
     let _ = super::show(
         ui,
         params,
         &mut serde_json::Value::Null,
         "Scan Profile",
         super::ScanMedium::Negative,
-        true,
+        positive,
         "",
         &mut Default::default(),
         "D55",
         &crate::profiles::pick_data_dir(),
+    );
+}
+
+#[test]
+fn scan_profile_module_follows_the_positive_reading_rule() {
+    // A paper reflection positive is eligible even though the film medium is
+    // not a negative film scan.
+    let mut paper = scanner_params();
+    paper.workflow.route = "input > film > print > scan".into();
+    paper.io.scan_film = false;
+    let mut harness = Harness::new_ui_state(
+        |ui, params: &mut RuntimeParams| scan_profile_reading(ui, params, true),
+        paper,
+    );
+    harness.run();
+    assert!(
+        !harness
+            .get_by_label("Scan Profile Strength")
+            .node()
+            .is_disabled()
+    );
+
+    // A preserved negative is not.
+    let mut preserved = scanner_params();
+    preserved.scanner.scan_output = "direct_scan".into();
+    let mut harness = Harness::new_ui_state(
+        |ui, params: &mut RuntimeParams| scan_profile_reading(ui, params, false),
+        preserved,
+    );
+    harness.run();
+    assert!(
+        harness
+            .get_by_label("Scan Profile Strength")
+            .node()
+            .is_disabled()
+    );
+}
+
+#[test]
+fn scan_profile_bypass_explains_itself_without_naming_a_matrix() {
+    let params = scanner_params();
+    let mut harness = Harness::new_ui_state(scan_profile, params);
+    harness.run();
+    assert!(
+        harness
+            .query_by_label("No Scan Profile is selected; choose one to edit a curve.")
+            .is_some()
+    );
+    assert!(
+        harness
+            .query_by_label("This Scan Profile carries a fixed matrix; it has no editable curve.")
+            .is_none()
     );
 }
 

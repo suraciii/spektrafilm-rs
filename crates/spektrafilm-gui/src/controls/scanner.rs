@@ -201,6 +201,7 @@ pub(crate) fn sections(
     params: &mut RuntimeParams,
     extras: &mut Value,
     film_medium: ScanMedium,
+    scanned_medium_positive: bool,
     section: &str,
     flags: &mut ChangeFlags,
     filter: &mut ControlFilter<'_>,
@@ -208,7 +209,7 @@ pub(crate) fn sections(
     data_dir: &Path,
 ) {
     if section == "Scan Profile" {
-        scan_profile_controls(ui, params, film_medium, flags, filter);
+        scan_profile_controls(ui, params, scanned_medium_positive, flags, filter);
         return;
     }
     if section == "Input" {
@@ -642,18 +643,15 @@ fn preflash_controls(
 fn scan_profile_controls(
     ui: &mut Ui,
     params: &mut RuntimeParams,
-    film_medium: ScanMedium,
+    scanned_medium_positive: bool,
     flags: &mut ChangeFlags,
     filter: &mut ControlFilter<'_>,
 ) {
-    let scan_active =
-        crate::controls::control_inactive_reason(ui.ctx(), "scanner.scan_output", params).is_none();
-    let medium = if scan_active {
-        film_medium.for_route(&params.workflow.route)
-    } else {
-        ScanMedium::None
-    };
-    let profile_active = scan_active && medium.positive_output_eligible(&params.workflow.route);
+    // One rule for the module and its banner: the route must deliver an
+    // eligible positive reading. A converted negative, a paper reflection
+    // positive, and a positive film transmission qualify; a preserved
+    // negative, preserved polarity, or a film-free route does not.
+    let profile_active = crate::controls::finishing_applicable(params, scanned_medium_positive);
     ui.add_enabled_ui(profile_active, |ui| {
         if filter_matches(filter, "Scan Profile") {
             let current_name = params.scanner.scan_profile.effective_name();

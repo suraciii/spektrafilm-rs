@@ -264,10 +264,12 @@ pub(crate) fn editor(
         return false;
     }
     let Some(curves) = editable(transform) else {
-        ui.label(localized(
-            ui.ctx(),
-            "This Scan Profile carries a fixed matrix; it has no editable curve.",
-        ));
+        let message = if transform.is_bypass() {
+            "No Scan Profile is selected; choose one to edit a curve."
+        } else {
+            "This Scan Profile carries a fixed matrix; it has no editable curve."
+        };
+        ui.label(localized(ui.ctx(), message));
         return false;
     };
     let _identity = row_identity(ui.ctx(), CURVE_PATH);

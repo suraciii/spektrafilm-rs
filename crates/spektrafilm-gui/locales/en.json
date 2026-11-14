@@ -1702,5 +1702,6 @@
   "surfaces.lut.export_action": "Export",
   "surfaces.status.lut_exported": "LUT saved: %{path}. Input %{input}; output %{output}. Neutralized: %{neutralized}. The LUT file stays external.",
   "surfaces.status.lut_export_film_only": "Export film look as .cube is available in the film workflow only.",
-  "surfaces.header.no_lut": "No LUT"
+  "surfaces.header.no_lut": "No LUT",
+  "controls.scanner.scan_profile_bypass": "No Scan Profile is selected; choose one to edit a curve."
 }

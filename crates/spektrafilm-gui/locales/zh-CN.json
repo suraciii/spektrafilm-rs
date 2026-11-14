@@ -1702,5 +1702,6 @@
   "surfaces.lut.export_action": "导出",
   "surfaces.status.lut_exported": "LUT 已保存:%{path}。输入 %{input};输出 %{output}。已中和:%{neutralized}。LUT 文件保持外部文件。",
   "surfaces.status.lut_export_film_only": "将胶片外观导出为 .cube 仅在胶片工作流中可用。",
-  "surfaces.header.no_lut": "无 LUT"
+  "surfaces.header.no_lut": "无 LUT",
+  "controls.scanner.scan_profile_bypass": "当前为“无扫描外观”；选择一个外观后才能编辑曲线。"
 }

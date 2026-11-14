@@ -396,6 +396,9 @@ fn key(label: &str) -> Option<&'static str> {
         "Drag a knot to reshape the tone, click empty space to add one, and press Delete to remove the selected knot. Each channel holds up to nine knots." => {
             Some("controls.scanner.scan_profile_editor_help")
         }
+        "No Scan Profile is selected; choose one to edit a curve." => {
+            Some("controls.scanner.scan_profile_bypass")
+        }
         "This Scan Profile carries a fixed matrix; it has no editable curve." => {
             Some("controls.scanner.scan_profile_matrix")
         }
