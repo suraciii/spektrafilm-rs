@@ -86,31 +86,41 @@ Six nouns. A caller holds all six at once, so a seventh displaces one.
 
 ### Region roles
 
-A region carries one role. The role decides which families are meaningful on
-it, so a family that cannot apply to a role is refused rather than silently
-measured on the wrong population. The roles are the closed set the regions
-document already declares; this product introduces no second vocabulary.
+A region carries one role. The roles are the closed set the regions document
+already declares; this product introduces no second vocabulary.
 
-| Role | Population | Families that apply |
+A family whose meaning depends on the population's structure is measured only
+on a role that has that structure. A family that measures a declared quantity
+is meaningful on any population and is not restricted.
+
+| Role | Population | Structure required by |
 |---|---|---|
-| `skin` | a skin patch | color, distribution |
-| `neutral` | a neutral patch or gray step | color, neutrality, tone, distribution |
-| `shadow` | a shadow step | color, tone, distribution |
-| `highlight` | a highlight step | color, tone, distribution |
-| `color` | a color patch | color, distribution |
-| `flat_field` | a uniform field | color_noise, grain, distribution |
-| `texture` | a textured field | color_noise, distribution |
-| `edge` | a slanted or straight edge | edge, distribution |
-| `other` | anything | distribution |
-| `full_image` | the whole raster | flip, distribution |
+| `skin` | a skin patch | — |
+| `neutral` | a neutral patch or gray step | `neutrality` |
+| `shadow` | a shadow step | — |
+| `highlight` | a highlight step | — |
+| `color` | a color patch | — |
+| `flat_field` | a uniform field | `color_noise` |
+| `texture` | a textured field | `color_noise` |
+| `edge` | a slanted or straight edge | — |
+| `other` | anything | — |
+| `full_image` | the whole raster | — |
+
+Only `neutrality` and `color_noise` require a role. A whole image is not a flat
+field, so `color_noise` on `full_image` is refused rather than measured over
+whatever content the image happens to contain.
+
+The other families need no cell. `tone`, `edge`, `grain`, and `halation`
+declare a probe, and the code that reads the probe is the code that refuses a
+missing one; restating that rule as a role table would give it two owners.
+`numeric`, `color`, `flip`, and `distribution` measure a declared quantity and
+are meaningful anywhere.
 
 A family declared on a role it does not apply to MUST be refused with
-`incompatible_measurement_role`, naming the family and the role. The lab MUST
-NOT substitute a family that does apply: the substitution would measure a
-signal the caller never declared.
-
-A probe family is not in this table because its applicability depends on a
-probe the caller declares, not on the role alone.
+`incompatible_measurement_role`, naming the family and the role. The refusal
+retains an unavailable row, and the region's other families still measure. The
+lab MUST NOT substitute a family that does apply: the substitution would
+measure a signal the caller never declared.
 
 ## Command surface
 
@@ -209,33 +219,41 @@ and MUST be rejected rather than re-rooted.
 
 The [measurement protocol](../benchmark/metrics/spec.md) owns each family's
 domain, estimator, and availability rules. This document names the families
-and the roles they apply to; it does not define a second implementation of
-one. The family names are the ones the measurement library already emits, so a
-retained record stays readable.
+and what each measures; it does not define a second implementation of one. The
+family names are the ones the measurement library already emits, so a retained
+record stays readable.
 
-| Family | Measures | Applies to |
-|---|---|---|
-| `numeric` | native-channel statistics: maximum absolute difference, RMSE, out-of-range fractions | any role |
-| `color` | ΔE00 and ΔL\*, Δa\*, Δb\*, ΔC\* against a reference | `skin`, `neutral`, `shadow`, `highlight`, `color` |
-| `neutrality` | gray-axis a\*b\* residual and mid-gray L\* error | `neutral` |
-| `tone` | density or log-exposure response over a declared ramp: slope, shoulder, toe, Dmax | `neutral`, `shadow`, `highlight` |
-| `color_noise` | luminance standard deviation, chroma RMS, chroma-to-luminance ratio, channel correlation, radial spectrum | `flat_field`, `texture` |
-| `edge` | spatial frequency response and MTF50 | `edge` |
-| `flip` | perceptual difference over the whole raster | `full_image` |
-| `grain` | grain residual under a declared probe | `flat_field` |
-| `halation` | halation residual under a declared probe | probe-bound |
+| Family | Measures |
+|---|---|
+| `numeric` | native-channel statistics: maximum absolute difference, RMSE, out-of-range fractions |
+| `color` | ΔE00 and ΔL\*, Δa\*, Δb\*, ΔC\* against a reference |
+| `neutrality` | the gray-axis cast: mean a\* and b\*, the chroma radius of the population, and its lightness spread |
+| `tone` | density or log-exposure response over a declared ramp: slope, shoulder, toe, Dmax |
+| `color_noise` | luminance deviation, chroma RMS, the ratio between them, channel correlation, and the radial centroid of the residual |
+| `edge` | spatial frequency response and MTF50 |
+| `flip` | perceptual difference over the whole raster |
+| `grain` | grain residual under a declared probe |
+| `halation` | halation residual under a declared probe |
+
+`neutrality` reports the cast itself, not a distance from it: the mean `a*` and
+`b*` are the direction of the cast, and the chroma radius is the same quantity
+expressed as a magnitude.
+
+The lightness spread belongs to this family because a neutral field that is not
+flat is not a neutral field, and one number for its lightness would hide that.
 
 `color_noise` is the family this product is most often asked for: a film grain
-that is not neutral is a color error, and the chroma-to-luminance ratio is the
-number that says so.
+that is not neutral is a color error, and the ratio between the chroma RMS and
+the luminance deviation is the number that says so. Its residual is the sample
+minus its own low pass, so the quantity is a grain amplitude and not a
+gradient.
 
 `color` requires a reference. Without one it is unavailable with
 `missing_reference`, and the remaining families still measure.
 
-A probe family is added to the applicability table only with the probe that
-makes it measurable. A family that needs a declared probe MUST refuse without
-one, retain an unavailable row naming the missing probe, and MUST NOT fall
-back to a default probe geometry.
+A probe family is added only with the probe that makes it measurable. A family
+that needs a declared probe MUST refuse without one, retain an unavailable row
+naming the missing probe, and MUST NOT fall back to a default probe geometry.
 
 ### Decoding
 
@@ -444,10 +462,8 @@ that the renderer's own input route produced, and `sample` reads it.
   `compare images`, `compare readings`, `compare runs`, `compare pairs`,
   `inspect`, `report comparison`. This document reduces it to `analyze`,
   `compare`, `sample`, `regions`, `validate`.
-- `color_noise` has no implementation at all. This is the largest gap: the
-  product's most-asked measurement does not exist.
-- `neutrality` has no implementation; the gray-axis residual and the mid-gray
-  error are computed by hand in every experiment that needs them.
+- `color_noise` and `neutrality` are implemented. The other families in the
+  table above are unchanged.
 - The comparison record carries `seed`, `review`, `evaluation_status`, and
   `findings`. This document removes all four; `seed` is currently written as
   `0`, which Law 4 forbids.

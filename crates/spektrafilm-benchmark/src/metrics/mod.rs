@@ -13,7 +13,9 @@ mod mask;
 mod math;
 
 pub use evidence::{ArtifactRole, Evidence};
-pub use families::{Map, color_noise, edge, grain, halation, health, numeric, summary, tone};
+pub use families::{
+    Map, color_noise, edge, grain, halation, health, neutrality, numeric, summary, tone,
+};
 pub use mask::geometry_mask;
 pub use math::{count, luminance, mean, median, number, quantile, selected, spelling};
 
@@ -107,6 +109,7 @@ fn unavailable(e: &mut Evidence, region: &str, family: &str, error: &Error, refs
             "missing_probe_geometry",
             "insufficient_samples",
             "zero_edge_contrast",
+            "incompatible_measurement_role",
         ]
         .contains(&error.code.as_str()),
     );
@@ -206,6 +209,19 @@ fn compare_inner(
             artifact,
         });
     }
+    // A family whose meaning depends on the population's structure and which
+    // declares no probe of its own gets its applicability from the region
+    // role. A family that declares a probe states its own rule where the probe
+    // is read, and a family that measures a declared quantity is meaningful
+    // anywhere; none of those appear here.
+    fn role_of(population: &Value) -> &str {
+        population["role"].as_str().unwrap_or("other")
+    }
+    let applies = |family: &str, role: &str| match family {
+        "neutrality" => role == "neutral",
+        "color_noise" => matches!(role, "flat_field" | "texture"),
+        _ => true,
+    };
     let has_family = |family: &str| {
         populations.iter().any(|p| {
             p["measurements"]
@@ -329,6 +345,20 @@ fn compare_inner(
                 // measure records one unavailable row, and the region's other
                 // families still measure.
                 let family_execution = (|| -> Result<()> {
+                    if !applies(active, role_of(population)) {
+                        return Err(err(
+                            "incompatible_measurement_role",
+                            format!(
+                                "{active} is measured on a {active_role} population, not on a {role}",
+                                active_role = match active {
+                                    "neutrality" => "neutral",
+                                    "color_noise" => "flat_field or texture",
+                                    _ => "any",
+                                },
+                                role = role_of(population),
+                            ),
+                        ));
+                    }
                     match active {
                         "numeric" => numeric(e, region, &mask, a, b),
                         "color" => {
@@ -414,6 +444,7 @@ fn compare_inner(
                             h,
                             std::slice::from_ref(&maps[1].artifact),
                         )?,
+                        "neutrality" => neutrality(e, region, &mask, &labs[0], &labs[1]),
                         "color_noise" => color_noise(
                             e,
                             region,
@@ -765,6 +796,20 @@ fn metric_definitions(case: &Value, region_id: &str, protocol: &Value) -> HashSe
             definitions.insert(format!("delta_e00.fraction_above_{}", spelling(threshold)));
         }
     }
+    if chosen.contains("neutrality") {
+        for name in [
+            "l_star_mean",
+            "l_star_std",
+            "a_star_mean",
+            "b_star_mean",
+            "chroma_radius_rms",
+            "chroma_radius_max",
+        ] {
+            for side in ["baseline", "candidate", "delta"] {
+                definitions.insert(format!("neutrality.{side}.{name}"));
+            }
+        }
+    }
     if chosen.contains("color_noise") {
         for name in [
             "mean_r",
@@ -1032,6 +1077,85 @@ mod tests {
         );
         fs::remove_dir_all(path).unwrap();
     }
+    /// A declared neutral field that carries a cast reports the cast itself,
+    /// and its chroma radius is that cast rather than a distance from it.
+    #[test]
+    fn neutrality_reports_the_cast_it_measures() {
+        // A uniform +a* bias: raise red and lower green, keep blue.
+        let mut a = image(0.5, 32, 32);
+        a.samples = vec![[0.52, 0.48, 0.5]; 32 * 32];
+        let b = a.clone();
+        let path = output();
+        let regions = [
+            json!({"id":"gray","role":"neutral","measurements":["neutrality"],"geometry":{"x":0,"y":0,"width":32,"height":32,"space":"render"}}),
+        ];
+        let result = compare_images(
+            &a,
+            &b,
+            &regions,
+            &json!({"measurements":["neutrality"]}),
+            &path,
+        )
+        .unwrap();
+        let rows = result["measurements"].as_array().unwrap();
+        let value = |metric: &str| {
+            rows.iter()
+                .find(|r| r["metric"] == metric)
+                .unwrap_or_else(|| panic!("missing {metric}"))["value"]
+                .as_f64()
+                .unwrap()
+        };
+        // Raising red above green is a positive a* cast; the radius is that
+        // same cast expressed as a distance.
+        let a_star = value("neutrality.baseline.a_star_mean");
+        let b_star = value("neutrality.baseline.b_star_mean");
+        assert!(a_star > 2.0, "a* {a_star}");
+        let radius = value("neutrality.baseline.chroma_radius_rms");
+        assert!(
+            (radius - a_star.hypot(b_star)).abs() < 1e-9,
+            "radius {radius} for a* {a_star} b* {b_star}"
+        );
+        // The field is uniform, so its lightness has no spread and every
+        // sample sits at the same radius.
+        assert!(value("neutrality.baseline.l_star_std").abs() < 1e-9);
+        assert!((value("neutrality.baseline.chroma_radius_max") - radius).abs() < 1e-9);
+        // One comparison of one source with itself has no delta.
+        assert_eq!(value("neutrality.delta.a_star_mean"), 0.0);
+        fs::remove_dir_all(path).unwrap();
+    }
+
+    /// A structural family on a role it does not apply to is refused, and the
+    /// region's other families still measure.
+    #[test]
+    fn structural_family_is_refused_on_the_wrong_role() {
+        let a = image(0.4, 16, 16);
+        let path = output();
+        let regions = [
+            json!({"id":"patch","role":"color","measurements":["neutrality","numeric"],"geometry":{"x":0,"y":0,"width":16,"height":16,"space":"render"}}),
+        ];
+        let result = compare_images(
+            &a,
+            &a,
+            &regions,
+            &json!({"measurements":["numeric"]}),
+            &path,
+        )
+        .unwrap();
+        let rows = result["measurements"].as_array().unwrap();
+        let refused = rows
+            .iter()
+            .find(|r| r["metric"] == "neutrality")
+            .expect("the refused family keeps its row");
+        assert_eq!(refused["reason"], "incompatible_measurement_role");
+        assert!(refused["value"].is_null());
+        assert!(
+            rows.iter()
+                .any(|r| r["metric"] == "numeric.rmse" && !r["value"].is_null()),
+            "the region's other family still measures"
+        );
+        fs::remove_dir_all(path).unwrap();
+    }
+
     /// A dither whose every channel carries the same value has no chroma at
     /// all, so the chroma axes of its residual vanish identically however the
     /// high pass treats it.
@@ -1049,8 +1173,14 @@ mod tests {
         let mut a = image(0.5, 32, 32);
         a.samples = samples;
         let path = output();
-        let result =
-            compare_images(&a, &a, &[], &json!({"measurements":["color_noise"]}), &path).unwrap();
+        let result = compare_images(
+            &a,
+            &a,
+            &[json!({"id":"field","role":"flat_field","measurements":["color_noise"],"geometry":{"x":0,"y":0,"width":32,"height":32,"space":"render"}})],
+            &json!({"measurements":["color_noise"]}),
+            &path,
+        )
+        .unwrap();
         let rows = result["measurements"].as_array().unwrap();
         let value = |metric: &str| {
             rows.iter()
@@ -1085,8 +1215,14 @@ mod tests {
         let mut a = image(0.5, 32, 32);
         a.samples = samples;
         let path = output();
-        let result =
-            compare_images(&a, &a, &[], &json!({"measurements":["color_noise"]}), &path).unwrap();
+        let result = compare_images(
+            &a,
+            &a,
+            &[json!({"id":"field","role":"flat_field","measurements":["color_noise"],"geometry":{"x":0,"y":0,"width":32,"height":32,"space":"render"}})],
+            &json!({"measurements":["color_noise"]}),
+            &path,
+        )
+        .unwrap();
         let rows = result["measurements"].as_array().unwrap();
         let row = |metric: &str| {
             rows.iter()
@@ -1120,8 +1256,14 @@ mod tests {
         let mut a = image(0.5, 64, 64);
         a.samples = samples;
         let path = output();
-        let result =
-            compare_images(&a, &a, &[], &json!({"measurements":["color_noise"]}), &path).unwrap();
+        let result = compare_images(
+            &a,
+            &a,
+            &[json!({"id":"field","role":"flat_field","measurements":["color_noise"],"geometry":{"x":0,"y":0,"width":32,"height":32,"space":"render"}})],
+            &json!({"measurements":["color_noise"]}),
+            &path,
+        )
+        .unwrap();
         let luma = result["measurements"]
             .as_array()
             .unwrap()

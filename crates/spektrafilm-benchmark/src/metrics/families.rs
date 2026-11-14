@@ -1204,6 +1204,115 @@ pub struct Map {
     pub values: Vec<f64>,
     pub artifact: String,
 }
+/// Neutrality of one population: how far a declared neutral field sits from
+/// the gray axis, and in which direction.
+///
+/// A neutral patch that is not neutral is a color cast, and the mean `a*` and
+/// `b*` are the cast itself rather than a distance from it. The chroma radius
+/// is the same quantity as a distance, so the RMS and the maximum describe the
+/// population's spread and its worst sample.
+///
+/// `l_star_std` is part of neutrality and not of distribution: a neutral field
+/// that is not flat is not a neutral field, and a single number for its
+/// lightness would hide that.
+pub fn neutrality(
+    e: &mut Evidence,
+    region: &str,
+    mask: &[bool],
+    left: &[[f64; 3]],
+    right: &[[f64; 3]],
+) {
+    const ROWS: [(&str, &str, &str); 6] = [
+        (
+            "l_star_mean",
+            "Lab L*",
+            "population mean of the bounded display Lab lightness",
+        ),
+        (
+            "l_star_std",
+            "Lab L*",
+            "population standard deviation of the bounded display Lab lightness",
+        ),
+        (
+            "a_star_mean",
+            "Lab a*",
+            "population mean of the bounded display Lab a* axis",
+        ),
+        (
+            "b_star_mean",
+            "Lab b*",
+            "population mean of the bounded display Lab b* axis",
+        ),
+        (
+            "chroma_radius_rms",
+            "Lab chroma radius",
+            "root mean square of hypot(a*, b*) over the population",
+        ),
+        (
+            "chroma_radius_max",
+            "Lab chroma radius",
+            "largest hypot(a*, b*) in the population",
+        ),
+    ];
+    let n = count(mask);
+    let a = lab_statistics(left, mask);
+    let b = lab_statistics(right, mask);
+    for (index, (name, units, estimator)) in ROWS.into_iter().enumerate() {
+        paired(
+            e,
+            region,
+            "neutrality",
+            name,
+            a[index],
+            b[index],
+            n,
+            "bounded_srgb_d65_lab",
+            units,
+            estimator,
+            &[],
+        );
+    }
+}
+
+/// The neutrality statistics of one population, in the order `neutrality`
+/// reports them. A quantity that does not exist is `None`.
+fn lab_statistics(lab: &[[f64; 3]], mask: &[bool]) -> Vec<Option<f64>> {
+    let mut l_sum = 0.0;
+    let mut l_square = 0.0;
+    let mut a_sum = 0.0;
+    let mut b_sum = 0.0;
+    let mut radius_square = 0.0;
+    let mut radius_max = 0.0_f64;
+    let mut n = 0usize;
+    for (i, selected) in mask.iter().enumerate() {
+        if !selected {
+            continue;
+        }
+        let p = lab[i];
+        n += 1;
+        l_sum += p[0];
+        l_square += p[0] * p[0];
+        a_sum += p[1];
+        b_sum += p[2];
+        let radius = p[1].hypot(p[2]);
+        radius_square += radius * radius;
+        radius_max = radius_max.max(radius);
+    }
+    if n == 0 {
+        return vec![None; 6];
+    }
+    let count = n as f64;
+    let variance = (l_square - l_sum * l_sum / count) / count;
+    vec![
+        Some(l_sum / count),
+        Some(variance.max(0.0).sqrt()),
+        Some(a_sum / count),
+        Some(b_sum / count),
+        Some((radius_square / count).sqrt()),
+        Some(radius_max),
+    ]
+}
+
 /// Color noise over one population: the high-frequency residual of the
 /// samples, split into its luminance part and its chroma part.
 ///
