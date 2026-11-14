@@ -419,7 +419,8 @@ reason, which is the noise floor of the pipeline that produced the files.
    `spektrafilm-model`, `wgpu`.
 2. The lab builds and runs on a host with no GPU, no raw decoder, and no
    renderer installed.
-3. Every record names its binary and its endpoint.
+3. Every command result names its `binary` and its `endpoint`, and every
+   published record names its `kind` and `schema_version`.
 4. `spektrafilm-lab run suite ...` fails with `argument_syntax` and names
    `spektrafilm-f64 run suite`.
 5. Two identical sources produce a record whose every available delta is zero
@@ -499,18 +500,16 @@ that the renderer's own input route produced, and `sample` reads it.
 ## Current implementation gap
 
 - The command surface is `analyze`, `compare`, `regions grid`, `schema`, and
-  `validate`.
-  `sample`, `inspect`, `report comparison`, and the run, reading, and pair
-  comparisons belong to `spektrafilm-bench` and are refused here.
+  `validate`, and the endpoints this document moves to `spektrafilm-bench` are
+  refused here. Implemented.
 - `regions grid` is still spelled with its subcommand; this document names the
   endpoint `regions` and leaves the leaf form to the machine interface.
-- `color_noise` and `neutrality` are implemented. The other families in the
-  table above are unchanged.
-- The comparison record no longer carries `seed`, `review`,
-  `evaluation_status`, or `findings` for an image source, and a measurement of
-  a delivered image carries no `seed_population`. The `comparison` schema
-  still states those fields as optional because a run comparison evaluated by
-  a policy writes them.
+- Every family in the table above is implemented. `color_noise` and
+  `neutrality` are the two the previous revision was missing.
+- An image-source comparison carries no `seed`, `review`, `evaluation_status`,
+  or `findings`, and a measurement of a delivered image carries no
+  `seed_population`. Implemented; the `comparison` schema states those fields
+  as optional because a run comparison evaluated by a policy writes them.
 - The one coordinate space of a delivered raster is called `render`, a name
   that belongs to the renderer's vocabulary. Renaming it is a wire change and
   does not happen here; the name is carried with its meaning stated.

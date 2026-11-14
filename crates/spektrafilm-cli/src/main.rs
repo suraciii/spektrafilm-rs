@@ -206,6 +206,10 @@ fn main() -> Result<()> {
         spektrafilm_core::params::sources::supported_routes().join(", ")
     );
     #[cfg(feature = "precision-f64")]
+    if let Some(status) = research::moved_invocation() {
+        std::process::exit(status);
+    }
+    #[cfg(feature = "precision-f64")]
     let argv = research::normalize_legacy_argv();
     #[cfg(not(feature = "precision-f64"))]
     let argv: Vec<std::ffi::OsString> = std::env::args_os().collect();

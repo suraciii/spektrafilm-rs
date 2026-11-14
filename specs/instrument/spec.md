@@ -57,7 +57,9 @@ The supported command families have distinct endpoint roles:
 | `spektrafilm-bench` | `compare runs`, `compare readings`, `compare pairs`, `sample`, `inspect`, `report comparison`, `report photos` |
 | `spektrafilm-f64` | `target`, `fixtures`, `run suite`, `run image`, `measure run`, `experiment run`, `experiment export`, `spectral evaluate`, `fit` |
 
-An endpoint MUST NOT be accepted by the binary that does not own it. A rejected invocation MUST return `argument_syntax` and name the owning binary. The binaries MUST NOT forward a command to each other, because a forwarded command would hide the dependency that this table makes explicit.
+An endpoint MUST NOT be accepted by the binary that does not own it. A rejected invocation MUST return `argument_syntax` and name the owning binary and the endpoint, so that a caller reading a script's failure learns where the endpoint lives.
+
+`compare` exists in both the lab and the benchmark. A binary MUST therefore reject a subcommand it does not own before its own parser reports it as a missing argument. The binaries MUST NOT forward a command to each other, because a forwarded command would hide the dependency that this table makes explicit.
 
 The `inspect` that this table assigns to the lab projects a retained comparison; the `inspect` that inspects one delivered image is an exporter command outside this surface.
 

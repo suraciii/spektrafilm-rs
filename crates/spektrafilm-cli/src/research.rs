@@ -14,6 +14,15 @@ use spektrafilm_cli::lab::cli::{
 
 use crate::Commands;
 
+const BINARY: &str = "spektrafilm-f64";
+
+/// The binary and the endpoint that produced a result.
+fn stamp(mut value: serde_json::Value, endpoint: &str) -> serde_json::Value {
+    value["binary"] = serde_json::json!(BINARY);
+    value["endpoint"] = serde_json::json!(endpoint);
+    value
+}
+
 fn emit(value: &serde_json::Value) {
     println!("{}", serde_json::to_string_pretty(value).unwrap());
 }
@@ -64,19 +73,19 @@ fn execute(
         Commands::Compare { command } => match command {
             CompareCommand::Readings(_) => Err(BenchError::new(
                 "argument_syntax",
-                "`compare readings` belongs to spektrafilm-lab; run `spektrafilm-lab compare readings`",
+                "`compare readings` belongs to spektrafilm-bench; run `spektrafilm-bench compare readings ...`",
             )),
             CompareCommand::Runs(_) => Err(BenchError::new(
                 "argument_syntax",
-                "`compare runs` belongs to spektrafilm-lab; run `spektrafilm-lab compare runs`",
+                "`compare runs` belongs to spektrafilm-bench; run `spektrafilm-bench compare runs ...`",
             )),
             CompareCommand::Pairs(_) => Err(BenchError::new(
                 "argument_syntax",
-                "`compare pairs` belongs to spektrafilm-lab; run `spektrafilm-lab compare pairs`",
+                "`compare pairs` belongs to spektrafilm-bench; run `spektrafilm-bench compare pairs ...`",
             )),
             CompareCommand::Flat(_) => Err(BenchError::new(
                 "argument_syntax",
-                "the flat compare alias is removed; run `spektrafilm-lab compare runs|images|pairs`",
+                "the flat compare alias is removed; run `spektrafilm-bench compare runs|readings|pairs` or `spektrafilm-lab compare`",
             )),
         },
         Commands::Fixtures {
@@ -166,9 +175,9 @@ pub fn run(command: Commands, matches: &ArgMatches) -> i32 {
     if let Commands::External(args) = &command {
         let name = args.first().map(String::as_str).unwrap_or("<unknown>");
         match moved(name) {
-            Some(replacement) => eprintln!(
-                "argument_syntax: `{name}` belongs to spektrafilm-lab; run `{replacement}`"
-            ),
+            Some((binary, replacement)) => {
+                eprintln!("argument_syntax: `{name}` belongs to {binary}; run `{replacement}`")
+            }
             None => eprintln!("argument_syntax: unknown endpoint `{name}`"),
         }
         return 2;
@@ -180,14 +189,15 @@ pub fn run(command: Commands, matches: &ArgMatches) -> i32 {
     }
     match execute(command, &subcommand) {
         Ok((value, status)) => {
-            emit(&value);
+            emit(&stamp(value, name));
             status
         }
         Err(error) => {
             eprintln!("{error}");
-            emit(
-                &serde_json::json!({"schema_version":1,"command":name,"execution_status":"failed","errors":[error.to_value()]}),
-            );
+            emit(&stamp(
+                serde_json::json!({"schema_version":1,"command":name,"execution_status":"failed","errors":[error.to_value()]}),
+                name,
+            ));
             exit_status_for(&error)
         }
     }
@@ -337,11 +347,37 @@ pub fn normalize_legacy_argv() -> Vec<std::ffi::OsString> {
     args
 }
 /// The lab endpoints, with the binary that owns them.
-pub fn moved(name: &str) -> Option<String> {
-    const MOVED: &[&str] = &["schema", "validate", "regions", "report", "sample"];
-    MOVED
-        .contains(&name)
-        .then(|| format!("spektrafilm-lab {name} ..."))
+/// The endpoints this build does not own, checked before clap parses.
+///
+/// `compare` is the reason the guard exists: this build has one too, so clap
+/// would report `compare runs` as a missing argument instead of as a command
+/// another binary owns.
+pub fn moved_invocation() -> Option<i32> {
+    let argv: Vec<String> = std::env::args().skip(1).collect();
+    let first = argv.first()?;
+    let owned = match first.as_str() {
+        "compare" => match argv.get(1).map(String::as_str) {
+            Some(sub @ ("runs" | "readings" | "pairs")) => {
+                Some((("spektrafilm-bench"), format!("compare {sub}")))
+            }
+            _ => None,
+        },
+        other => moved(other).map(|(binary, _)| (binary, other.to_owned())),
+    }?;
+    let (binary, endpoint) = owned;
+    eprintln!("argument_syntax: `{endpoint}` belongs to {binary}; run `{binary} {endpoint} ...`");
+    Some(2)
+}
+
+pub fn moved(name: &str) -> Option<(&'static str, String)> {
+    // The reading family and the evaluation surface belong to the benchmark;
+    // the measurement endpoints belong to the lab.
+    let (binary, endpoint) = match name {
+        "schema" | "validate" | "regions" | "analyze" => ("spektrafilm-lab", name),
+        "report" | "sample" | "inspect" => ("spektrafilm-bench", name),
+        _ => return None,
+    };
+    Some((binary, format!("{binary} {endpoint} ...")))
 }
 
 #[cfg(test)]

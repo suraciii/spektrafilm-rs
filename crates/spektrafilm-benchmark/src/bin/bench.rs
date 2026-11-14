@@ -179,22 +179,47 @@ fn execute(command: Command) -> Result<(Value, i32)> {
     }
 }
 
+/// `compare` takes a retained run record or a reading record, not an image
+/// pair. The image comparison is the lab's, and clap would report it as an
+/// unknown subcommand rather than as a command another binary owns. The guard
+/// runs before parsing so that message stays exact.
+fn reject_lab_subcommand() -> Option<i32> {
+    let mut argv = std::env::args().skip(1);
+    let first = argv.next()?;
+    let owned = match first.as_str() {
+        "compare" => matches!(argv.next().as_deref(), Some("images" | "image" | "pair"))
+            .then(|| "compare images".to_owned()),
+        "analyze" | "regions" | "schema" | "validate" => Some(first.clone()),
+        _ => None,
+    }?;
+    eprintln!(
+        "argument_syntax: `{owned}` belongs to spektrafilm-lab; run `spektrafilm-lab {owned} ...`"
+    );
+    Some(2)
+}
+
 fn run() -> i32 {
+    if let Some(status) = reject_lab_subcommand() {
+        return status;
+    }
     let cli = Cli::parse();
     let name = command_name(&cli.command);
     match execute(cli.command) {
         Ok((value, status)) => {
-            emit(&value);
+            emit(&stamp(value, name));
             status
         }
         Err(error) => {
             eprintln!("{error}");
-            emit(&json!({
-                "schema_version": 1,
-                "command": name,
-                "execution_status": "failed",
-                "errors": [error.to_value()]
-            }));
+            emit(&stamp(
+                json!({
+                    "schema_version": 1,
+                    "command": name,
+                    "execution_status": "failed",
+                    "errors": [error.to_value()]
+                }),
+                name,
+            ));
             exit_status_for(&error)
         }
     }
@@ -210,6 +235,15 @@ fn exit_status_for(error: &BenchError) -> i32 {
     } else {
         1
     }
+}
+
+const BINARY: &str = "spektrafilm-bench";
+
+/// The binary and the endpoint that produced a result.
+fn stamp(mut value: Value, endpoint: &str) -> Value {
+    value["binary"] = json!(BINARY);
+    value["endpoint"] = json!(endpoint);
+    value
 }
 
 fn emit(value: &Value) {

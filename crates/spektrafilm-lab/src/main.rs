@@ -251,6 +251,8 @@ fn evaluated(name: &str) -> Option<String> {
     None
 }
 
+const BINARY: &str = "spektrafilm-lab";
+
 fn emit(value: &serde_json::Value) {
     println!("{}", serde_json::to_string_pretty(value).unwrap());
 }
@@ -273,6 +275,14 @@ fn reject_moved_subcommand() -> Option<i32> {
          run `spektrafilm-bench compare {subcommand} ...`"
     );
     Some(2)
+}
+
+/// The binary and the endpoint that produced a result. A reader can tell a lab
+/// result from a render result without inspecting the payload.
+fn stamp(mut value: serde_json::Value, endpoint: &str) -> serde_json::Value {
+    value["binary"] = serde_json::json!(BINARY);
+    value["endpoint"] = serde_json::json!(endpoint);
+    value
 }
 
 fn run() -> i32 {
@@ -333,14 +343,15 @@ fn run() -> i32 {
     };
     match result {
         Ok((value, status)) => {
-            emit(&value);
+            emit(&stamp(value, command));
             status
         }
         Err(error) => {
             eprintln!("{error}");
-            emit(
-                &serde_json::json!({"schema_version":1,"command":command,"execution_status":"failed","errors":[error.to_value()]}),
-            );
+            emit(&stamp(
+                serde_json::json!({"schema_version":1,"command":command,"execution_status":"failed","errors":[error.to_value()]}),
+                command,
+            ));
             // A rejected invocation is an argument-syntax error and must not
             // share the exit status of a failure to execute.
             if error.code == "argument_syntax" {
