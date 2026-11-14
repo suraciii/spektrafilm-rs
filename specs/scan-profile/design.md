@@ -15,6 +15,8 @@ negative conversion
   → output
 ```
 
+On a paper readout, viewing glare belongs to the readout and precedes the transform.
+
 The transform MUST NOT change material formation, negative interpretation, Conversion style, operator correction, or output encoding.
 
 ## Runtime group
@@ -74,7 +76,7 @@ Invariants:
 
 1. The union is discriminated by `kind`; `bypass` carries no transform.
 2. Each channel has its own knots; R, G, and B DO NOT share x.
-3. `x` is strictly increasing; `y` is finite and monotone.
+3. `x` is strictly increasing with at least 1/1024 between adjacent knots; `y` is finite, monotone, and within `[0,1]`.
 4. The first and last `x` values cover the domain endpoints.
 5. `matrix_curve` applies a finite 3×3 matrix in linear light before its curves.
 6. `matrix_order` is fixed to `before_curve`; it is not user-selectable.
@@ -85,26 +87,17 @@ The catalog data owner supplies exact curve values. A catalog revision is explic
 
 ## Strength
 
-`strength` is a per-photograph value in `[0,1]`.
-
-- `0` MUST produce the input exactly.
-- `1` MUST apply the full transform.
-- Intermediate values MUST blend in linear light.
-
-The catalog stores a default strength. A preset stores the captured strength. A photograph MAY override it.
+`strength` is a per-photograph value; the [contract](spec.md#transform) owns its domain and blend. The catalog stores a default. A preset stores the captured value, and a photograph MAY override it.
 
 ## Catalog
 
 The built-in catalog is product data. Its wire names are stable; display labels are localizable.
 
-| Name | Transform | Claim | Default strength |
-| --- | --- | --- | ---: |
-| `none` | Bypass | — | — |
-| `sp3000_inspired` | Curve asset | Inspired | `0.6` |
+The catalog entries, names, and user-facing claims are owned by the [contract](spec.md#catalog). A `none` entry is a bypass; the built-in appearance entry carries the curve asset and default strength recorded there.
 
 The catalog MUST NOT be a user-editable library. A catalog revision MUST NOT silently reinterpret stored resolved values.
 
-A future `Matched` entry MAY use a read-only `curve` or `matrix_curve`. It MUST carry provenance and a `Best for` range. It MUST NOT be imported as a user profile.
+A future `Matched` entry MAY use a read-only `curve` or `matrix_curve`. It MUST carry provenance. It MUST NOT be imported as a user profile.
 
 A `matrix_curve` entry is built-in and read-only. Its matrix and curves MUST NOT be exposed as editable controls.
 
@@ -143,8 +136,9 @@ Validation MUST reject:
 
 - unknown catalog names;
 - nonfinite transform or strength values;
-- non-increasing `x`;
+- adjacent `x` closer than 1/1024;
 - non-monotone `y`;
+- `y` outside `[0,1]`;
 - missing domain endpoints;
 - strength outside `[0,1]`;
 - a transform that is not the declared kind.
@@ -182,4 +176,4 @@ Behavioral verification MUST compare a catalog selection with the equivalent exp
 
 ## Evidence boundary
 
-The catalog is a positive-image appearance asset. It is not an SP-3000 calibration, device profile, or claim of scanner equivalence. The `Inspired` claim and `Best for` range remain part of the catalog contract.
+The catalog is a positive-image appearance asset. It is not an SP-3000 calibration, device profile, or claim of scanner equivalence. The `Inspired` claim remains part of the catalog contract.

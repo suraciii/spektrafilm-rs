@@ -30,7 +30,7 @@ const SERIES: [Color32; 3] = [theme::SERIES1, theme::SERIES2, theme::SERIES3];
 const MIN_KNOTS: usize = 2;
 /// One editor step for an input position. Core only requires strictly
 /// increasing inputs; a visible minimum keeps two knots distinguishable.
-const MIN_GAP: f32 = 1.0 / 1024.0;
+use spektrafilm_core::params::scan_profile::MIN_SCAN_PROFILE_KNOT_GAP as MIN_GAP;
 const HIT_RADIUS: f32 = 10.0;
 const KNOT_RADIUS: f32 = 3.0;
 const PLOT_HEIGHT: f32 = 132.0;
@@ -143,6 +143,23 @@ fn insert_at(curves: &mut [ScanCurve; 3], scope: Scope, x: f32) -> bool {
         curve.y.insert(position, y);
     }
     true
+}
+
+/// Knots a linked drag moves. A scope channel without a knot at the grabbed
+/// input receives one at its current output when it has room; a channel
+/// already holding the maximum keeps its own grid.
+fn link_knots(
+    curves: &mut [ScanCurve; 3],
+    scope: Scope,
+    channel: usize,
+    index: usize,
+) -> Vec<(usize, usize)> {
+    let input = curves[channel].x[index];
+    insert_at(curves, scope, input);
+    scope
+        .channels()
+        .filter_map(|candidate| index_at(&curves[candidate], input).map(|i| (candidate, i)))
+        .collect()
 }
 
 /// Remove the knot at `x` from every channel in `scope` that can lose it.
@@ -264,10 +281,12 @@ pub(crate) fn editor(
         return false;
     }
     let Some(curves) = editable(transform) else {
-        ui.label(localized(
-            ui.ctx(),
-            "This Scan Profile carries a fixed matrix; it has no editable curve.",
-        ));
+        let message = if transform.is_bypass() {
+            "No Scan Profile is selected; choose one to edit a curve."
+        } else {
+            "This Scan Profile carries a fixed matrix; it has no editable curve."
+        };
+        ui.label(localized(ui.ctx(), message));
         return false;
     };
     let _identity = row_identity(ui.ctx(), CURVE_PATH);
@@ -351,15 +370,11 @@ fn edit(ui: &mut egui::Ui, curves: &mut [ScanCurve; 3], mark: row_modified::RowM
         let mut knots = Vec::new();
         match hit_test(curves, rect, state.scope, position) {
             Some((channel, index)) => {
-                // A linked drag moves every selected channel that already has a
-                // knot at the grabbed input. A channel with a different input
-                // grid keeps its own knot.
-                let input = curves[channel].x[index];
-                for candidate in state.scope.channels() {
-                    if let Some(index) = index_at(&curves[candidate], input) {
-                        knots.push((candidate, index));
-                    }
-                }
+                // A linked drag moves every selected channel together: a
+                // channel without a knot at the grabbed input receives one
+                // first, holding its current output so the image does not
+                // change until the pointer moves.
+                knots = link_knots(curves, state.scope, channel, index);
             }
             None => {
                 changed |= insert_at(curves, state.scope, target.0);
@@ -686,6 +701,39 @@ mod tests {
         assert!(apply_drag(&down, &mut reversed, (0.5, -5.0)));
         assert!(reversed.iter().all(|curve| curve.y[1] >= 0.0));
         assert!(reversed.iter().all(|curve| curve.y[0] <= curve.y[1]));
+    }
+
+    #[test]
+    fn a_linked_drag_adds_the_grabbed_input_to_every_channel() {
+        let mut curves = curves();
+        curves[2] = ScanCurve {
+            x: vec![0.0, 0.25, 1.0],
+            y: vec![0.0, 0.2, 1.0],
+        };
+        let before = curves.clone();
+        let knots = link_knots(&mut curves, Scope::All, 0, 1);
+        assert_eq!(knots.len(), 3);
+        assert_eq!(curves[2].x.len(), 4);
+        for (after, before) in curves.iter().zip(before.iter()) {
+            for x in [0.0, 0.2, 0.5, 0.8, 1.0] {
+                assert!((sample(after, x) - sample(before, x)).abs() < 1e-6);
+            }
+        }
+        let start = curves.clone();
+        let drag = Drag {
+            knots,
+            start: start.clone(),
+            pointer: (0.5, 0.5),
+        };
+        assert!(apply_drag(&drag, &mut curves, (0.6, 0.7)));
+        for (curve, before) in curves.iter().zip(start.iter()) {
+            let index = index_at(curve, 0.6).unwrap();
+            let previous = index_at(before, 0.5).unwrap();
+            // The same delta, not the same value: the channel keeps its own
+            // offset around the shared move.
+            assert!((curve.y[index] - before.y[previous] - 0.2).abs() < 1e-5);
+            assert!((curve.x[index] - 0.6).abs() < 1e-6);
+        }
     }
 
     #[test]

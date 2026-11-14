@@ -21,7 +21,7 @@ It MUST NOT select film or print, change Conversion style, operator correction, 
 
 The selector provides `No Scan Profile` and built-in entries. `custom` is the effective state when the transform does not exactly equal a catalog entry. `custom` is not a catalog row and has no persisted catalog identity.
 
-The transform supports `curve` and `matrix_curve`. A `matrix_curve` catalog entry is built-in and read-only. A 3D LUT is not a Scan Profile transform; device characterization belongs to a Scanner Profile.
+The transform supports `curve` and `matrix_curve`. A `matrix_curve` catalog entry is built-in and read-only. A 3D LUT is not a Scan Profile transform; device characterization is outside this capability.
 
 A reusable user combination MUST be saved as a look preset or section preset under [Presets](../presets/spec.md). The product MUST NOT add a second Scan Profile library, profile document, import surface, or profile-reference carrier.
 
@@ -42,17 +42,16 @@ Changing to an inactive route MUST preserve stored Scan Profile values and expla
 
 ## Catalog
 
-| Wire name | Display label | Claim | Default strength | Best for | Availability |
-| --- | --- | --- | ---: | --- | --- |
-| `none` | No Scan Profile | — | — | Any eligible reading | Always |
-| `sp3000_inspired` | SP-3000 Inspired | Inspired | `0.6` | Color negative lab scans | Catalog |
+| Wire name | Display label | Claim | Default strength | Availability |
+| --- | --- | --- | ---: | --- |
+| `none` | No Scan Profile | — | — | Always |
+| `sp3000_inspired` | SP-3000 Inspired | Inspired | `0.6` | Catalog |
 
 - Names are stable serialized identifiers; display labels are localizable.
 - `none` is a bypass state, not a transform.
 - `custom` is not a catalog row.
 - Built-in catalog values are versioned product data, not user assets.
-- `Best for` is advisory. A mismatch MUST be shown without blocking the selection.
-- Future `Matched` entries MAY use `curve` or `matrix_curve` as built-in read-only entries. They MUST NOT use `Inspired` or `Calibrated` labels.
+- A future `Matched` entry MAY use `curve` or `matrix_curve` as a built-in read-only entry. It MUST NOT use the `Inspired` or `Calibrated` label.
 - A `matrix_curve` entry MUST expose no editable matrix controls.
 - A preset MAY carry a resolved `matrix_curve` that does not match a catalog entry; it is `custom` and read-only.
 
@@ -71,8 +70,6 @@ Editing any Scan Profile transform leaf MUST make the effective selection `custo
 | No Scan Profile | No | Unused | Bypassed |
 | Built-in or custom | Yes | `0` | No effect; selection is retained |
 
-`Apply to selected` MUST apply the current strength to each selected photograph. Each photograph MAY override the applied strength. Applying a Scan Profile MUST mark the active look as modified and MUST NOT change film, print, Conversion style, operator correction, or Tone & Color.
-
 ## Transform
 
 The Scan Profile transform is one of:
@@ -87,8 +84,8 @@ Curve rules:
 
 - Each channel carries its own knots.
 - A channel MUST carry at least two and at most nine knots.
-- Knot inputs MUST be strictly increasing and span the declared domain endpoints.
-- Knot outputs MUST be monotone.
+- Knot inputs MUST be strictly increasing, differ by at least 1/1024, and span the declared domain endpoints.
+- Knot outputs MUST be monotone and stay within `[0,1]`.
 - The transform domain is `[0,1]`; values outside the domain use endpoint clamp.
 - Strength MUST blend in linear light. `0` is an exact bypass; `1` is the full transform.
 
@@ -117,7 +114,9 @@ The module MUST NOT include a second library, import/export surface, or profile 
 
 The module MUST expose curve controls only. It MUST expose one editor per channel curve. A `matrix_curve` entry or preset-carried matrix transform MUST NOT expose matrix or curve editing.
 
-The editor MUST display all three channel curves together. An all-channel edit MUST move every channel by the same input and output amount. A single-channel edit MUST change only that channel's curve.
+The editor MUST display all three channel curves together. An all-channel edit MUST move every channel by the same input and output amount.
+
+A channel without a knot at the grabbed input MUST receive one at its current output when it has fewer than nine knots. A channel already holding nine knots and no knot at that input MUST retain its curve. A single-channel edit MUST change only that channel's curve.
 
 Adding a knot MUST keep that channel's current output at the new input, so adding alone does not change the image.
 
@@ -125,7 +124,9 @@ The editor MUST clamp an edit that would violate a curve invariant. It MUST NOT 
 
 The editor MUST add and remove interior knots. It MUST NOT remove a domain endpoint.
 
-The module MUST provide one transient comparison. It MUST bypass only the scan-stage appearance while the primary mouse button or focused Space holds it.
+The module MUST disable the strength control while the transform is `bypass`. A stored transform with zero strength MUST report no effect.
+
+The module MUST provide one transient comparison while the transform is effective. It MUST bypass only the scan-stage appearance while the primary mouse button or focused Space holds it.
 
 The comparison MUST preserve stored controls, adjustment history, presets, Save output, and Export output.
 

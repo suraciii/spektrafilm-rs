@@ -390,11 +390,15 @@ fn key(label: &str) -> Option<&'static str> {
         "Scan Profile Curve" => Some("controls.scanner.scan_profile_curve"),
         "Curve" => Some("controls.scanner.scan_profile_curve_row"),
         "Channel" => Some("controls.scanner.scan_profile_channel"),
-        "All edits every channel by the same amount. R, G, or B edits one curve alone." => {
+        "All edits every channel together and gives a channel without a knot here one when it has room. R, G, or B edits one curve alone." => {
             Some("controls.scanner.scan_profile_channel_help")
         }
         "Drag a knot to reshape the tone, click empty space to add one, and press Delete to remove the selected knot. Each channel holds up to nine knots." => {
             Some("controls.scanner.scan_profile_editor_help")
+        }
+        "No effect at strength 0%." => Some("controls.scanner.scan_profile_no_effect"),
+        "No Scan Profile is selected; choose one to edit a curve." => {
+            Some("controls.scanner.scan_profile_bypass")
         }
         "This Scan Profile carries a fixed matrix; it has no editable curve." => {
             Some("controls.scanner.scan_profile_matrix")

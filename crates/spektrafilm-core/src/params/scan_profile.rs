@@ -9,6 +9,10 @@ use super::validation::{ValidationError, ValidationReason};
 /// Maximum number of curve knots accepted by the v1 transform.
 pub const MAX_SCAN_PROFILE_KNOTS: usize = 9;
 
+/// Minimum input spacing the v1 transform accepts between adjacent knots.
+/// The editor uses the same value, so an accepted curve is always editable.
+pub const MIN_SCAN_PROFILE_KNOT_GAP: f32 = 1.0 / 1024.0;
+
 /// One channel of a piecewise-linear scan-stage curve.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -200,8 +204,8 @@ impl ScanProfileParams {
 
 fn validate_curves(curves: &[ScanCurve; 3]) -> Result<(), ValidationError> {
     for (channel, curve) in curves.iter().enumerate() {
-        let x_path = format!("scanner.scan_profile.curves.{channel}.x");
-        let y_path = format!("scanner.scan_profile.curves.{channel}.y");
+        let x_path = format!("scanner.scan_profile.transform.curves.{channel}.x");
+        let y_path = format!("scanner.scan_profile.transform.curves.{channel}.y");
         if curve.x.len() != curve.y.len()
             || curve.x.len() < 2
             || curve.x.len() > MAX_SCAN_PROFILE_KNOTS
@@ -209,35 +213,46 @@ fn validate_curves(curves: &[ScanCurve; 3]) -> Result<(), ValidationError> {
             return Err(ValidationError::new(
                 ValidationReason::NumericRange,
                 x_path,
-                "scanner.scan_profile.curves: x and y must have equal lengths of 2..=9",
+                "scanner.scan_profile.transform.curves: x and y must have equal lengths of 2..=9",
             ));
         }
         if curve.x.first() != Some(&0.0) || curve.x.last() != Some(&1.0) {
             return Err(ValidationError::new(
                 ValidationReason::NumericRange,
                 x_path,
-                "scanner.scan_profile.curves: x must start at 0 and end at 1",
+                "scanner.scan_profile.transform.curves: x must start at 0 and end at 1",
             ));
         }
-        if curve.x.windows(2).any(|pair| pair[1] <= pair[0]) {
+        if curve
+            .x
+            .windows(2)
+            .any(|pair| pair[1] - pair[0] < MIN_SCAN_PROFILE_KNOT_GAP)
+        {
             return Err(ValidationError::new(
                 ValidationReason::NumericRange,
                 x_path,
-                "scanner.scan_profile.curves: x must be strictly increasing",
+                "scanner.scan_profile.transform.curves: x must increase by at least 1/1024",
             ));
         }
         if curve.y.iter().any(|value| !value.is_finite()) {
             return Err(ValidationError::new(
                 ValidationReason::Finite,
                 y_path,
-                "scanner.scan_profile.curves: y must be finite",
+                "scanner.scan_profile.transform.curves: y must be finite",
             ));
         }
         if curve.y.windows(2).any(|pair| pair[1] < pair[0]) {
             return Err(ValidationError::new(
                 ValidationReason::NumericRange,
                 y_path,
-                "scanner.scan_profile.curves: y must be monotone",
+                "scanner.scan_profile.transform.curves: y must be monotone",
+            ));
+        }
+        if curve.y.iter().any(|value| !(0.0..=1.0).contains(value)) {
+            return Err(ValidationError::new(
+                ValidationReason::NumericRange,
+                y_path,
+                "scanner.scan_profile.transform.curves: y must stay within 0..=1",
             ));
         }
     }
@@ -379,6 +394,32 @@ mod tests {
         let curves = profile.transform.curves.as_mut().unwrap();
         curves[1].y[2] = curves[1].y[1] - 0.1;
         assert!(profile.validate_detailed().is_err());
+    }
+
+    #[test]
+    fn curve_validation_bounds_outputs_and_input_spacing() {
+        let curve = |x: Vec<f32>, y: Vec<f32>| ScanCurve::new(x, y);
+        let mut high = ScanProfileParams {
+            strength: 1.0,
+            transform: ScanProfileTransform::curve([
+                curve(vec![0.0, 1.0], vec![0.0, 1.2]),
+                curve(vec![0.0, 1.0], vec![0.0, 1.0]),
+                curve(vec![0.0, 1.0], vec![0.0, 1.0]),
+            ]),
+        };
+        assert!(high.validate_detailed().is_err());
+        high.transform.curves.as_mut().unwrap()[0].y[1] = 1.0;
+
+        let crowded = ScanProfileParams {
+            strength: 1.0,
+            transform: ScanProfileTransform::curve([
+                curve(vec![0.0, 0.0005, 1.0], vec![0.0, 0.5, 1.0]),
+                curve(vec![0.0, 1.0], vec![0.0, 1.0]),
+                curve(vec![0.0, 1.0], vec![0.0, 1.0]),
+            ]),
+        };
+        assert!(crowded.validate_detailed().is_err());
+        assert!(high.validate_detailed().is_ok());
     }
 
     #[test]

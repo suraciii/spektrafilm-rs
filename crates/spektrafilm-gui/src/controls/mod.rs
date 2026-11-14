@@ -547,6 +547,7 @@ pub(crate) fn render_sections(
         params,
         extras,
         film_medium,
+        scanned_medium_positive,
         section,
         flags,
         filter,
