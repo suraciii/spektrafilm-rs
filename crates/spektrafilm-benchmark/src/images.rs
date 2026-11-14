@@ -299,7 +299,6 @@ fn compare_impl(request: &Request, out: &Path) -> Result<(Value, i32)> {
         let protocol = {
             let mut protocol = request.protocol.clone();
             protocol["case_id"] = json!(pair.case_id);
-            protocol["seed_population"] = json!([0]);
             protocol
         };
         let measured = metrics::compare_images(
@@ -313,16 +312,17 @@ fn compare_impl(request: &Request, out: &Path) -> Result<(Value, i32)> {
         let measured = retain_metrics(measured, &folder, &mut evidence, &pair.case_id, 0)?;
         let mut record = json!({
             "case_id": pair.case_id,
-            "seed": 0,
             "status": measured["execution_status"],
             "measurements": measured["measurements"],
             "regions": request.regions,
             "region_readouts": measured["region_readouts"],
             "automatic_regions": measured["automatic_regions"],
-            "review": {},
             "artifacts": measured["artifacts"],
         });
-        record["review"]["baseline"] = review_image(
+        // One display copy per side, retained for inspection. The copy is an
+        // artifact; the record does not present it, so nothing here describes
+        // how it looks.
+        review_image(
             baseline,
             &folder.join("baseline.png"),
             &mut evidence,
@@ -330,7 +330,7 @@ fn compare_impl(request: &Request, out: &Path) -> Result<(Value, i32)> {
             &pair.case_id,
             0,
         )?;
-        record["review"]["candidate"] = review_image(
+        review_image(
             candidate,
             &folder.join("candidate.png"),
             &mut evidence,
@@ -414,7 +414,6 @@ fn compare_impl(request: &Request, out: &Path) -> Result<(Value, i32)> {
         "kind": "comparison",
         "id": format!("{}-{}", request.baseline_id, request.candidate_id),
         "execution_status": "completed",
-        "evaluation_status": "not_evaluated",
         "baseline": baseline,
         "candidate": candidate,
         "protocol": request.protocol,
@@ -424,8 +423,6 @@ fn compare_impl(request: &Request, out: &Path) -> Result<(Value, i32)> {
         "selection": {"case_ids": case_ids, "full_suite": true},
         "condition_differences": differences,
         "cases": cases,
-        "seed_measurements": [],
-        "findings": findings,
         "artifacts": evidence.values(),
         "summary": {
             "selected_cases": request.pairs.len(),

@@ -82,7 +82,12 @@ fn identical_images_measure_zero_and_publish_an_image_source() {
     assert_eq!(document["baseline"]["kind"], "images");
     assert_eq!(document["candidate"]["kind"], "images");
     assert!(document.get("mode").is_none());
-    assert_eq!(document["evaluation_status"], "not_evaluated");
+    // A delivered image is one realisation: no seed, and no judgement.
+    assert!(document.get("evaluation_status").is_none());
+    assert!(document.get("findings").is_none());
+    let case = &document["cases"][0];
+    assert!(case.get("seed").is_none());
+    assert!(case.get("review").is_none());
     assert_eq!(document["baseline"]["declaration"]["color_space"], "sRGB");
     assert_eq!(document["baseline"]["files"][0]["case_id"], "chart");
     assert_eq!(document["baseline"]["files"][0]["width"], 8);
@@ -90,7 +95,14 @@ fn identical_images_measure_zero_and_publish_an_image_source() {
     let case = &document["cases"][0];
     assert_eq!(case["case_id"], "chart");
     assert_eq!(case["status"], "completed");
-    assert!(case["review"]["baseline"]["path"].is_string());
+    // The display copies are retained as artifacts, not described.
+    assert!(
+        document["artifacts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|a| a["path"].as_str().unwrap_or("").ends_with("baseline.png"))
+    );
     let measurements = case["measurements"].as_array().unwrap();
     assert!(!measurements.is_empty());
     let report = temp.path().join("report");

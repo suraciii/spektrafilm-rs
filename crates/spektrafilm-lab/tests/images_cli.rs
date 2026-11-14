@@ -82,7 +82,18 @@ fn a_single_pair_publishes_a_comparison_and_a_report() {
     let comparison = read_json(&out.join("comparison.json"));
     assert_eq!(comparison["baseline"]["kind"], "images");
     assert!(comparison.get("mode").is_none());
-    assert_eq!(comparison["evaluation_status"], "not_evaluated");
+    // One delivered image set is one realisation: the record states no seed
+    // population and no judgement.
+    assert!(comparison.get("evaluation_status").is_none());
+    assert!(comparison.get("findings").is_none());
+    assert!(comparison["cases"][0].get("seed").is_none());
+    assert!(
+        comparison["cases"][0]["measurements"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|r| r.get("seed_population").is_none())
+    );
     let regions = read_json(&out.join("regions.json"));
     assert_eq!(regions["regions"][0]["id"], "skin");
     assert_eq!(regions["regions"][0]["geometry"]["space"], "render");

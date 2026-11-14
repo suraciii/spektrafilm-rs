@@ -36,6 +36,9 @@ pub enum ArtifactRole {
 #[derive(Serialize)]
 struct Measurement {
     case_id: Option<String>,
+    /// A rendered run measures a seed population. A delivered image is one
+    /// realisation and has none, so the field is absent rather than empty.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     seed_population: Vec<Value>,
     #[serde(flatten)]
     shared: common::Measurement,

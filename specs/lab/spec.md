@@ -464,9 +464,11 @@ that the renderer's own input route produced, and `sample` reads it.
   `compare`, `sample`, `regions`, `validate`.
 - `color_noise` and `neutrality` are implemented. The other families in the
   table above are unchanged.
-- The comparison record carries `seed`, `review`, `evaluation_status`, and
-  `findings`. This document removes all four; `seed` is currently written as
-  `0`, which Law 4 forbids.
+- The comparison record no longer carries `seed`, `review`,
+  `evaluation_status`, or `findings` for an image source, and a measurement of
+  a delivered image carries no `seed_population`. The `comparison` schema
+  still states those fields as optional because a run comparison evaluated by
+  a policy writes them.
 - The one coordinate space of a delivered raster is called `render`, a name
   that belongs to the renderer's vocabulary. Renaming it is a wire change and
   does not happen here; the name is carried with its meaning stated.
