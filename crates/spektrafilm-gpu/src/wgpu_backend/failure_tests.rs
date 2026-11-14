@@ -241,3 +241,44 @@ fn optical_trait_hooks_produce_identical_device_pixels_with_telemetry_off_or_sum
         }
     }
 }
+
+/// wgpu panics from its default uncaptured-error handler. A device error must
+/// instead reach the owning operation as an `Err` that names the adapter, and
+/// the device must stay usable for later work (only a lost device is sticky).
+#[test]
+fn a_wgpu_error_becomes_an_attributed_operation_error_instead_of_a_panic() {
+    let gpu = crate::test_support::adapter();
+    let source = gpu.device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("failure_test_source"),
+        size: 16,
+        usage: wgpu::BufferUsages::COPY_SRC,
+        mapped_at_creation: false,
+    });
+    let destination = gpu.device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("failure_test_destination"),
+        size: 16,
+        usage: wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+    let mut encoder = gpu.device.create_command_encoder(&Default::default());
+    // Copies past both buffer bounds: a validation error, not a device loss.
+    encoder.copy_buffer_to_buffer(&source, 0, &destination, 0, 1024);
+    let error = gpu
+        .submit_commands(Some(encoder.finish()))
+        .expect_err("an invalid submission must be reported to its caller");
+    assert!(
+        error.starts_with("GPU device failure: "),
+        "the error must name its boundary: {error}"
+    );
+    assert!(
+        error.contains(&gpu.adapter_description().expect("adapter identity").name),
+        "the error must identify the adapter that failed: {error}"
+    );
+    // The failure was reported once; this device never lost its validity.
+    gpu.check_device()
+        .expect("a validation error must not poison the device");
+    let mut encoder = gpu.device.create_command_encoder(&Default::default());
+    encoder.copy_buffer_to_buffer(&source, 0, &destination, 0, 16);
+    gpu.submit_commands(Some(encoder.finish()))
+        .expect("the device must remain usable after a reported error");
+}

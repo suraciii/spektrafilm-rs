@@ -101,7 +101,9 @@ fn main() -> eframe::Result<()> {
                 println!("Usage: spektrafilm-gui [IMAGE] [--state GUI_STATE.json]");
                 println!(
                     "Performance logs are recorded automatically. Open the session folder in Settings > Diagnostics.\n\
-                     SPEKTRAFILM_GUI_DIAGNOSTICS_DIR overrides the destination with an existing directory."
+                     SPEKTRAFILM_GUI_DIAGNOSTICS_DIR overrides the destination with an existing directory.\n\
+                     Settings > Execution selects the compute backend and, on Windows, the GPU API;\n\
+                     SPEKTRAFILM_BACKEND keeps precedence when it is set."
                 );
                 return Ok(());
             }
@@ -114,8 +116,8 @@ fn main() -> eframe::Result<()> {
             }
         }
     }
-    let backend = match gui_backend() {
-        Ok(backend) => backend,
+    let selection = match gui_backend() {
+        Ok(selection) => selection,
         Err(error) => {
             eprintln!("[spektrafilm] {error}");
             std::process::exit(1);
@@ -174,9 +176,16 @@ fn main() -> eframe::Result<()> {
     eframe::run_native(
         "spektrafilm",
         options,
-        Box::new(|_cc| {
+        Box::new(move |_cc| {
             theme::apply(&_cc.egui_ctx);
-            let app = App::new(backend, initial_image, initial_state, diagnostics_dir);
+            let app = App::new_selected(
+                selection,
+                initial_image,
+                initial_state,
+                diagnostics_dir,
+                state::config_dir().join("preset_browser_state.json"),
+                pick_data_dir(),
+            );
             app.bind_language(&_cc.egui_ctx);
             Ok(Box::new(app))
         }),

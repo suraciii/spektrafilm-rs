@@ -94,9 +94,17 @@ fn fresh_backend(
         },
         timestamp_reason: reason,
     };
+    let capabilities = crate::wgpu_backend::BackendCapabilities {
+        shader_f64: device.features().contains(wgpu::Features::SHADER_F64),
+        shader_int64: device.features().contains(wgpu::Features::SHADER_INT64),
+        max_buffer_size: device.limits().max_buffer_size,
+        max_storage_buffer_binding_size: device.limits().max_storage_buffer_binding_size,
+    };
+    let faults = Arc::new(crate::DeviceFaults::new("test adapter".to_owned()));
     let resources = Arc::new(super::resources::DeviceResources::new(
         device.clone(),
         info.backend == wgpu::Backend::Vulkan,
+        faults.clone(),
     ));
     Some((
         device_guard,
@@ -108,12 +116,14 @@ fn fresh_backend(
                     operation: None,
                     context: ObservationContext::default(),
                     batch: None,
+                    faults: faults.clone(),
                 },
                 ObservedQueue {
                     raw: queue.clone(),
                     resources: resources.clone(),
                     operation: None,
                     context: ObservationContext::default(),
+                    faults: faults.clone(),
                 },
                 Arc::new(PipelineCache::default()),
             ),
@@ -123,16 +133,19 @@ fn fresh_backend(
                 operation: None,
                 context: ObservationContext::default(),
                 batch: None,
+                faults: faults.clone(),
             },
             queue: ObservedQueue {
                 raw: queue,
                 resources,
                 operation: None,
                 context: ObservationContext::default(),
+                faults,
             },
             pipeline_cache: Arc::new(PipelineCache::default()),
             scan_cache: Arc::new(super::scan_cache::ScanCache::default()),
             name: "telemetry_test".into(),
+            capabilities,
             explicit: false,
             adapter: description,
             backend_id: super::film_chain::device_image::next_backend_id(),

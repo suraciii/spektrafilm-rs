@@ -122,7 +122,7 @@ impl App {
         });
         operation.set_revisions(Some(input_epoch), Some(self.parameter_revision));
         operation.set_input_dimensions(image.width(), image.height());
-        operation.set_backend_requested(diagnostics::preview_backend_requested());
+        operation.set_backend_requested(self.backend_requested());
         let params = match self
             .current_state()
             .and_then(|state| state.effective_runtime_params())

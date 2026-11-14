@@ -130,6 +130,13 @@ fn overlay_runtime(target: &mut Value, source: &Value) {
     }
 }
 
+fn execution_state_error(option: &str, selection: &Value) -> anyhow::Error {
+    crate::app::Message::new("operations.state.execution")
+        .arg("option", option)
+        .arg("value", selection)
+        .into()
+}
+
 impl GuiState {
     pub fn factory() -> Self {
         let mut sections: Value =
@@ -158,6 +165,28 @@ impl GuiState {
                 workflow.remove("auto_preview");
             }
         }
+        // Execution preferences are GUI-only, but an unknown spelling is a
+        // state error rather than a silent fallback: the user asked for a
+        // backend this build cannot name.
+        let backend = value
+            .pointer("/rust/backend")
+            .map(|selection| {
+                selection
+                    .as_str()
+                    .and_then(spektrafilm_gpu::BackendChoice::parse)
+                    .ok_or_else(|| execution_state_error("backend", selection))
+            })
+            .transpose()?;
+        let gpu_api = value
+            .pointer("/rust/gpu_api")
+            .map(|selection| {
+                selection
+                    .as_str()
+                    .and_then(spektrafilm_gpu::GpuApi::parse)
+                    .ok_or_else(|| execution_state_error("gpu_api", selection))
+            })
+            .transpose()?;
+        let _ = (backend, gpu_api);
         let version = value["rust"].get("version").and_then(Value::as_u64);
         if value.get("rust").is_some() && !matches!(version, Some(1..=CURRENT_STATE_VERSION)) {
             bail!(
@@ -441,6 +470,41 @@ impl GuiState {
             }
         }
     }
+    /// The compute backend the user selected. `Auto` keeps the automatic
+    /// selection; `SPEKTRAFILM_BACKEND` retains precedence over this value.
+    pub fn backend_choice(&self) -> spektrafilm_gpu::BackendChoice {
+        self.sections["rust"]["backend"]
+            .as_str()
+            .and_then(spektrafilm_gpu::BackendChoice::parse)
+            .unwrap_or_default()
+    }
+
+    pub fn set_backend_choice(&mut self, choice: spektrafilm_gpu::BackendChoice) {
+        self.extension()["backend"] = json!(choice.argument());
+    }
+
+    /// The WGPU API a GPU selection is restricted to. It applies only when a
+    /// GPU backend is selected.
+    pub fn gpu_api(&self) -> spektrafilm_gpu::GpuApi {
+        self.sections["rust"]["gpu_api"]
+            .as_str()
+            .and_then(spektrafilm_gpu::GpuApi::parse)
+            .unwrap_or_default()
+    }
+
+    pub fn set_gpu_api(&mut self, api: spektrafilm_gpu::GpuApi) {
+        self.extension()["gpu_api"] = json!(api.argument());
+    }
+
+    /// The versioned Rust extension. GUI-only preferences live here, beside the
+    /// display profile, so they travel with a saved state.
+    fn extension(&mut self) -> &mut Value {
+        if !self.sections["rust"].is_object() {
+            self.sections["rust"] = json!({"version": CURRENT_STATE_VERSION});
+        }
+        &mut self.sections["rust"]
+    }
+
     pub fn saving_color_space(&self) -> &str {
         self.sections["simulation"]["saving_color_space"]
             .as_str()

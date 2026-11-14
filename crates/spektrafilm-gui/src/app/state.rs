@@ -3,6 +3,14 @@ use crate::*;
 
 pub(crate) struct App {
     pub(crate) backend: Arc<dyn ComputeBackend>,
+    /// The request the running backend serves: the environment request when
+    /// `SPEKTRAFILM_BACKEND` is set, otherwise the persisted preference.
+    pub(crate) backend_choice: spektrafilm_gpu::BackendChoice,
+    /// The GPU API the persisted preference names. Environment requests keep
+    /// automatic API selection.
+    pub(crate) gpu_api: spektrafilm_gpu::GpuApi,
+    /// The claimed GPU device, when the backend runs on one.
+    pub(crate) gpu_selection: Option<spektrafilm_gpu::GpuSelection>,
     pub(crate) data_dir: PathBuf,
     /// Profiles where `info.support == "film"`.
     pub(crate) films: Vec<ProfileEntry>,
@@ -180,22 +188,9 @@ fn default_publication_directory(config_directory: &Path) -> std::result::Result
 }
 
 impl App {
-    pub(crate) fn new(
-        backend: Arc<dyn ComputeBackend>,
-        initial_image: Option<PathBuf>,
-        initial_state: Option<PathBuf>,
-        diagnostics_dir: Option<PathBuf>,
-    ) -> Self {
-        Self::new_with_browser_path(
-            backend,
-            initial_image,
-            initial_state,
-            diagnostics_dir,
-            state::config_dir().join("preset_browser_state.json"),
-            pick_data_dir(),
-        )
-    }
-
+    /// Acceptance construction: the injected backend carries no claimed device
+    /// identity, so the execution surface reports no adapter.
+    #[cfg(test)]
     pub(crate) fn new_with_browser_path(
         backend: Arc<dyn ComputeBackend>,
         initial_image: Option<PathBuf>,
@@ -204,6 +199,28 @@ impl App {
         browser_state_path: PathBuf,
         data_dir: PathBuf,
     ) -> Self {
+        Self::new_selected(
+            (backend, None),
+            initial_image,
+            initial_state,
+            diagnostics_dir,
+            browser_state_path,
+            data_dir,
+        )
+    }
+
+    /// Construct the shell around a selection that already claimed a device.
+    /// The device identity feeds the execution surface; an injected backend
+    /// without one (the CPU acceptance harness) reports no device.
+    pub(crate) fn new_selected(
+        selection: backend::Selected,
+        initial_image: Option<PathBuf>,
+        initial_state: Option<PathBuf>,
+        diagnostics_dir: Option<PathBuf>,
+        browser_state_path: PathBuf,
+        data_dir: PathBuf,
+    ) -> Self {
+        let (mut backend, mut gpu_selection) = selection;
         let explicit_state = initial_state.is_some();
         // Startup state, remembered dialog directories and the preset library
         // share one session directory; the browser state names it.
@@ -273,6 +290,37 @@ impl App {
         } else {
             Vec::new()
         };
+        // The persisted execution preference applies after the state is known.
+        // An environment request owns selection, so it is never overridden.
+        let backend_choice = backend::effective_choice(gui_state.backend_choice());
+        let gpu_api = if backend::environment_value().is_some() {
+            spektrafilm_gpu::GpuApi::Auto
+        } else {
+            gui_state.gpu_api()
+        };
+        if !backend::satisfied(
+            backend.is_gpu(),
+            gpu_selection.as_ref(),
+            backend_choice,
+            gpu_api,
+        ) {
+            match backend::build(backend_choice, gpu_api) {
+                Ok((selected, gpu)) => {
+                    backend = selected;
+                    gpu_selection = gpu;
+                }
+                Err(detail) => {
+                    let message = crate::app::Message::new("operations.backend_unavailable")
+                        .arg("detail", detail);
+                    startup_error = Some(match startup_error {
+                        Some(previous) => crate::app::Message::new("operations.error_chain")
+                            .message_arg("context", previous)
+                            .message_arg("detail", message),
+                        None => message,
+                    });
+                }
+            }
+        }
         let export_options = ExportOptions::from_state(&gui_state.sections);
         let mut presets = presets::Browser::new(
             &gui_state.sections,
@@ -319,6 +367,9 @@ impl App {
         let viewer_backend = Arc::clone(&backend);
         let mut app = Self {
             backend,
+            backend_choice,
+            gpu_api,
+            gpu_selection,
             data_dir,
             films,
             papers,
@@ -831,6 +882,84 @@ impl App {
 }
 
 impl App {
+    /// Apply a compute-backend request from the settings surface.
+    ///
+    /// The preference is stored even when the build fails, so the panel can
+    /// show what was asked for next to what runs. The running backend is
+    /// replaced only on success; a device-owned result of the previous device
+    /// is dropped and the render requested again.
+    pub(crate) fn choose_execution(
+        &mut self,
+        choice: spektrafilm_gpu::BackendChoice,
+        api: spektrafilm_gpu::GpuApi,
+    ) {
+        self.gui_state.set_backend_choice(choice);
+        self.gui_state.set_gpu_api(api);
+        if backend::environment_value().is_some() {
+            // The environment owns selection while it is set. The preference
+            // is remembered for the next launch without it.
+            self.status = crate::app::Message::new("surfaces.status.backend_kept")
+                .arg("backend", self.backend.name());
+            return;
+        }
+        self.backend_choice = choice;
+        self.gpu_api = api;
+        self.apply_execution(false);
+    }
+
+    /// Rebuild the running selection, for example after a driver reset made
+    /// the device fail. Persists nothing; the current request is reused.
+    pub(crate) fn reload_execution(&mut self) {
+        self.apply_execution(true);
+    }
+
+    fn apply_execution(&mut self, force: bool) {
+        let api = self.gpu_api;
+        if !force
+            && backend::satisfied(
+                self.backend.is_gpu(),
+                self.gpu_selection.as_ref(),
+                self.backend_choice,
+                api,
+            )
+        {
+            self.status = crate::app::Message::new("surfaces.status.backend_kept")
+                .arg("backend", self.backend.name());
+            return;
+        }
+        match backend::build(self.backend_choice, api) {
+            Ok((backend, gpu)) => {
+                self.backend = backend;
+                self.gpu_selection = gpu;
+                self.viewer.set_backend(Arc::clone(&self.backend));
+                // Device-owned artifacts belong to the previous device. The
+                // host result stays visible until the new render replaces it.
+                self.output_retained = None;
+                self.viewer.set_retained_output(None);
+                self.source_render = None;
+                self.render_worker.invalidate_runtime_cache();
+                // An accepted-looking result from the previous device must not
+                // arrive after the switch and be published as current. Clearing
+                // the job supersedes it; the cancel stops the work itself.
+                self.render_worker.cancel_active();
+                self.render_job = None;
+                self.dirty = true;
+                self.dirty_since = Some(Instant::now());
+                self.status = crate::app::Message::new("surfaces.status.backend_changed")
+                    .arg("backend", self.backend.name());
+            }
+            Err(detail) => {
+                self.status =
+                    crate::app::Message::new("surfaces.status.backend_error").arg("detail", detail);
+            }
+        }
+    }
+
+    /// The request a recorded operation names, for telemetry.
+    pub(crate) fn backend_requested(&self) -> crate::diagnostics::BackendRequested {
+        backend::requested(self.backend_choice)
+    }
+
     pub(crate) fn sync_display_controls(&mut self) {
         let display = self.viewer.settings.to_json();
         let mut changed = false;

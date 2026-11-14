@@ -300,6 +300,17 @@ impl Viewer {
             ..Self::default()
         }
     }
+    /// Replace the compute backend after the shell selected a new one. Every
+    /// retained device carrier belongs to the previous device and is dropped;
+    /// host-side display rasters stay valid.
+    pub(crate) fn set_backend(&mut self, backend: Arc<dyn ComputeBackend>) {
+        self.backend = Some(backend);
+        self.retained_input = None;
+        self.uploaded_input = None;
+        self.retained_output = None;
+        self.worker.inspect(None);
+        self.revision = self.revision.wrapping_add(1);
+    }
     pub fn set_input(&mut self, raster: DisplayRaster, original_size: [usize; 2]) {
         self.analysis.reset_after_input();
         self.input_size = Some(original_size);

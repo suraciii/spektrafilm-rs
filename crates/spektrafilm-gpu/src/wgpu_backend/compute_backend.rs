@@ -22,6 +22,7 @@ impl ComputeBackend for WgpuBackend {
             "spectral_prepare",
             spektrafilm_backend::telemetry::GpuStage::SpectralPrepare,
         );
+        backend.check_device()?;
         backend.prepare_spectral_table_device(p).map(Some)
     }
     fn prepare_spectral_tc_lut_from_host(
@@ -30,6 +31,7 @@ impl ComputeBackend for WgpuBackend {
         size: u32,
         neutral: [f64; 3],
     ) -> Result<Option<spektrafilm_backend::PreparedTable>, String> {
+        self.check_device()?;
         self.upload_spectral_table_host(table, size, neutral)
             .map(Some)
     }
@@ -46,6 +48,7 @@ impl ComputeBackend for WgpuBackend {
             "gamut_prepare",
             spektrafilm_backend::telemetry::GpuStage::GamutPrepare,
         );
+        backend.check_device()?;
         backend.prepare_gamut_table_device(p).map(Some)
     }
     fn prepare_gamut_table_from_host(
@@ -54,6 +57,7 @@ impl ComputeBackend for WgpuBackend {
         n_l: u32,
         n_h: u32,
     ) -> Result<Option<spektrafilm_backend::PreparedTable>, String> {
+        self.check_device()?;
         self.upload_gamut_table_host(table, n_l, n_h).map(Some)
     }
     fn remap_input_gamut_table(
@@ -65,6 +69,7 @@ impl ComputeBackend for WgpuBackend {
             "gamut_prepare",
             spektrafilm_backend::telemetry::GpuStage::GamutPrepare,
         );
+        backend.check_device()?;
         backend.remap_input_gamut_table_gpu(source, p)
     }
     fn observation_context(&self) -> Option<&ObservationContext> {
@@ -88,12 +93,14 @@ impl ComputeBackend for WgpuBackend {
             batch: None,
             resources: self.device.resources.clone(),
             operation: self.device.operation.clone(),
+            faults: self.device.faults.clone(),
         };
         let queue = ObservedQueue {
             raw: self.queue.raw.clone(),
             context,
             resources: self.queue.resources.clone(),
             operation: self.queue.operation.clone(),
+            faults: self.queue.faults.clone(),
         };
         Some(Box::new(Self {
             pipe: self.pipe.with_observed(device.clone(), queue.clone()),
@@ -103,6 +110,7 @@ impl ComputeBackend for WgpuBackend {
             scan_cache: self.scan_cache.clone(),
             name: self.name.clone(),
             adapter: self.adapter.clone(),
+            capabilities: self.capabilities.clone(),
             explicit: self.explicit,
             backend_id: self.backend_id,
             cancellation: self.cancellation.clone(),
@@ -1001,6 +1009,7 @@ impl ComputeBackend for WgpuBackend {
         sensor: &spektrafilm_backend::RawSensor,
         params: &spektrafilm_backend::RawGpuParams,
     ) -> Result<Option<ImageBuf>, String> {
+        self.check_device()?;
         let scope = self.device.context.scope(
             "raw_sensor",
             ObservationKind::Stage,
@@ -1015,6 +1024,7 @@ impl ComputeBackend for WgpuBackend {
         sensor: &spektrafilm_backend::RawSensor,
         params: &spektrafilm_backend::RawGpuParams,
     ) -> Result<Option<spektrafilm_backend::DeviceImage>, String> {
+        self.check_device()?;
         let scope = self.device.context.scope(
             "raw_sensor",
             ObservationKind::Stage,
@@ -1032,6 +1042,7 @@ impl ComputeBackend for WgpuBackend {
         d: Option<&spektrafilm_backend::DisplayTransformGpuParams>,
         c: Option<&spektrafilm_backend::ViewerIccGpuParams<'_>>,
     ) -> Result<spektrafilm_backend::DeviceImage, String> {
+        self.check_device()?;
         self.viewer_fit_gpu(i, w, h, d, c)
     }
     fn viewer_full_source_retained(
@@ -1039,6 +1050,7 @@ impl ComputeBackend for WgpuBackend {
         i: &spektrafilm_backend::DeviceImage,
         p: &spektrafilm_backend::ViewerFullSourceGpuParams<'_>,
     ) -> Result<spektrafilm_backend::DeviceImage, String> {
+        self.check_device()?;
         self.viewer_full_gpu(i, p)
     }
     fn viewer_compose_retained(
@@ -1049,6 +1061,7 @@ impl ComputeBackend for WgpuBackend {
         native: Option<&spektrafilm_backend::DeviceImage>,
         p: &spektrafilm_backend::ViewerComposeGpuParams,
     ) -> Result<Vec<[u8; 4]>, String> {
+        self.check_device()?;
         self.viewer_compose_gpu(i, paper, previous, native, p)
     }
     fn viewer_paper_retained(
@@ -1059,6 +1072,7 @@ impl ComputeBackend for WgpuBackend {
         lw: u32,
         lh: u32,
     ) -> Result<spektrafilm_backend::DeviceImage, String> {
+        self.check_device()?;
         self.viewer_paper_gpu(w, h, logo, lw, lh)
     }
     fn inspect_retained_pixel(
@@ -1089,6 +1103,7 @@ impl ComputeBackend for WgpuBackend {
         i: &spektrafilm_backend::DeviceImage,
         p: &spektrafilm_backend::ViewerIccGpuParams<'_>,
     ) -> Result<spektrafilm_backend::DeviceImage, String> {
+        self.check_device()?;
         self.viewer_icc_gpu(i, p)
     }
     fn viewer_polaroid_retained(
@@ -1096,6 +1111,7 @@ impl ComputeBackend for WgpuBackend {
         i: &spektrafilm_backend::DeviceImage,
         c: [f32; 9],
     ) -> Result<spektrafilm_backend::DeviceImage, String> {
+        self.check_device()?;
         self.viewer_polaroid_gpu(i, c)
     }
 
@@ -1390,6 +1406,7 @@ impl ComputeBackend for WgpuBackend {
         input: &spektrafilm_backend::DeviceImage,
         params: &spektrafilm_backend::FilmChainParams<'_>,
     ) -> Result<Option<spektrafilm_backend::DeviceImage>, String> {
+        self.check_device()?;
         let required = required_chain_buffers(params);
         let binding_limit = super::bounded::storage_binding_limit(self)?;
         if required.static_bytes > binding_limit {
@@ -1411,6 +1428,7 @@ impl ComputeBackend for WgpuBackend {
         image: &ImageBuf,
         meta: &spektrafilm_backend::RetainedImageMeta,
     ) -> Result<spektrafilm_backend::DeviceImage, String> {
+        self.check_device()?;
         self.upload_retained(image, meta)
     }
 

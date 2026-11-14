@@ -264,7 +264,11 @@ fn error_unwind_retires_work_before_returning_credit() {
 #[test]
 fn concurrent_admission_is_atomic_and_derivatives_share_one_queue_bound() {
     let gpu = crate::test_support::adapter();
-    let mut resources = DeviceResources::new(gpu.device.raw.clone(), false);
+    let mut resources = DeviceResources::new(
+        gpu.device.raw.clone(),
+        false,
+        std::sync::Arc::new(crate::DeviceFaults::new(String::new())),
+    );
     resources.overlap_target = 100;
     let resources = Arc::new(resources);
     let first = resources
@@ -411,7 +415,11 @@ fn cancelled_unused_submission_slot_returns_credit_without_a_device_wait() {
 #[test]
 fn exclusive_admission_attributes_prior_retirement_to_the_request_context() {
     let gpu = crate::test_support::adapter();
-    let mut resources = DeviceResources::new(gpu.device.raw.clone(), false);
+    let mut resources = DeviceResources::new(
+        gpu.device.raw.clone(),
+        false,
+        std::sync::Arc::new(crate::DeviceFaults::new(String::new())),
+    );
     resources.overlap_target = 1;
     let resources = Arc::new(resources);
     let prior = ObservationContext::new(CollectionMode::Summary);
@@ -516,7 +524,11 @@ fn encoded_command_keeps_its_originating_reservation_through_foreign_queue_submi
 #[test]
 fn portable_owner_inventory_deduplicates_physical_buffers_and_keeps_only_weak_owners() {
     let gpu = crate::test_support::adapter();
-    let resources = Arc::new(DeviceResources::new(gpu.device.raw.clone(), false));
+    let resources = Arc::new(DeviceResources::new(
+        gpu.device.raw.clone(),
+        false,
+        std::sync::Arc::new(crate::DeviceFaults::new(String::new())),
+    ));
     assert_eq!(resources.native_buffer_bytes(), None);
     let page = gpu.device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("portable_carrier"),
@@ -539,7 +551,11 @@ fn portable_owner_inventory_deduplicates_physical_buffers_and_keeps_only_weak_ow
         12,
         "views, cloned carriers, and prepared cache aliases name one allocation"
     );
-    let mut small = DeviceResources::new(gpu.device.raw.clone(), false);
+    let mut small = DeviceResources::new(
+        gpu.device.raw.clone(),
+        false,
+        std::sync::Arc::new(crate::DeviceFaults::new(String::new())),
+    );
     small.overlap_target = 20;
     let small = Arc::new(small);
     small.register_image(&image);
@@ -591,7 +607,11 @@ fn portable_admission_counts_readbacks_after_their_image_owner_drops() {
     gpu.device.raw.poll(wgpu::Maintain::Wait);
     let cached = gpu.pipe.retained_cache_bytes().unwrap();
     assert!(cached >= 48);
-    let mut resources = DeviceResources::new(gpu.device.raw.clone(), false);
+    let mut resources = DeviceResources::new(
+        gpu.device.raw.clone(),
+        false,
+        std::sync::Arc::new(crate::DeviceFaults::new(String::new())),
+    );
     resources.overlap_target = cached + 11;
     let resources = Arc::new(resources);
     let mut backend = gpu.derived_explicit();
@@ -613,7 +633,11 @@ fn portable_admission_counts_readbacks_after_their_image_owner_drops() {
 #[test]
 fn oversized_owners_block_both_normal_and_oversized_admission_until_owner_release() {
     let gpu = crate::test_support::adapter();
-    let mut resources = DeviceResources::new(gpu.device.raw.clone(), false);
+    let mut resources = DeviceResources::new(
+        gpu.device.raw.clone(),
+        false,
+        std::sync::Arc::new(crate::DeviceFaults::new(String::new())),
+    );
     resources.overlap_target = 100;
     let resources = Arc::new(resources);
     let first = resources
@@ -671,7 +695,11 @@ fn oversized_owners_block_both_normal_and_oversized_admission_until_owner_releas
 #[test]
 fn cancelled_admission_waits_drop_priority_without_releasing_another_owner() {
     let gpu = crate::test_support::adapter();
-    let mut resources = DeviceResources::new(gpu.device.raw.clone(), false);
+    let mut resources = DeviceResources::new(
+        gpu.device.raw.clone(),
+        false,
+        std::sync::Arc::new(crate::DeviceFaults::new(String::new())),
+    );
     resources.overlap_target = 100;
     let resources = Arc::new(resources);
     for requested in [60, 150] {
