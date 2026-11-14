@@ -189,17 +189,17 @@ fn grain_look_control_search_survives_language_switch_without_changing_the_recip
         (
             LanguagePreference::English,
             "Search controls",
-            "Grain strength",
+            "Grain strength (×)",
         ),
         (
             LanguagePreference::SimplifiedChinese,
             "搜索控件",
-            "颗粒强度",
+            "颗粒强度 (×)",
         ),
         (
             LanguagePreference::English,
             "Search controls",
-            "Grain strength",
+            "Grain strength (×)",
         ),
     ] {
         language(h, preference);

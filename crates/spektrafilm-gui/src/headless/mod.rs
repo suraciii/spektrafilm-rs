@@ -1082,7 +1082,7 @@ fn fotufilm_engine_selection_reaches_the_native_app_runtime() {
         GrainEngine::Fotufilm
     );
     assert_eq!(h.state().film_name, "kodak_portra_400");
-    assert!(h.query_by_label("Layer amounts").is_some());
+    assert!(h.query_by_label("Layer amounts (relative)").is_some());
     // The harness deactivates stochastic effects, so the selected engine must
     // remain an exact bypass; the release-binary CLI smoke exercises the
     // prepared bank and residual sampling.

@@ -21,6 +21,8 @@ Dye diagnostics use `SPEKTRAFILM_GRAIN_DYE_*`. Historical numbered diagnostic na
 - Fotufilm Film is an adapted appearance population model fitted to resolved film curves. It is opt-in. `film_render.grain.fotufilm.*` controls it.
 - Exposure Grain is a reconstructed post-scan encoded-RGB gradient-noise appearance model. It is opt-in. `film_render.grain.exposure.*` controls it.
 
+GUI labels carry the unit where one exists, for example `Amount (%)`, `Size (relative)`, `Grain scale (×)`, `RMS density (D)`, and `Density minimum · R/G/B (D)`; labels are presentation only and serialized keys are unchanged.
+
 Explicit engines in existing looks remain unchanged. To keep the historical engine in a sparse source, set `film_render.grain.engine = spektra`. See [default compatibility](../specs/film-grain/spec.md#defaults-and-compatibility) for omitted-engine and GUI state migration rules.
 
 ## Spektra
@@ -32,6 +34,8 @@ Spektra follows upstream experimental `apply_grain`, pinned to commit `28bf883e1
 The pinned experimental branch is a different grain model from the older 0.3.4 `main` branch: `main` derives particle populations from `particle_area_um2`, while experimental derives them from `rms_granularity` and adds multiplicative unsharp masking. Their stock values and rendered grain are not interchangeable, and a comparison must name the branch or commit.
 
 `rms_granularity` controls particle-population sizing through the profile's peak summed variance at a 48 µm diameter aperture. It is not a direct particle area or a guarantee of final RGB granularity. Stock values come from `data/presets/grain_spektra.toml`. `particle_scale_sublayers`, `density_min`, `uniformity`, dye-cloud blur, lognormal micro-structure, and multiplicative unsharp masking retain their separate roles.
+
+`density_min` is calibration, not a look control: it is expressed in density units (D), Spektra reads it as its grain density floor, and an executing film-scanner or enlarger LUT reads it as its interpolation bound. The GUI presents it once under "Material & LUT calibration" for every engine and keeps it reachable while grain is off.
 
 CLI sources and complete looks that select Spektra but omit RMS start with `[6, 8, 10]` before stock defaults apply. Explicit RMS values take precedence. GUI engine changes retain the existing shared material controls rather than reset their strength.
 
@@ -62,7 +66,7 @@ The composite is tone-neutral: it subtracts the displacement its zoned bases pro
 
 Presets supply the grain configuration. Amount remains adjustable through `procedural_amount` (0–100).
 
-Select `"custom"` to edit these controls:
+Select `"custom"` to edit these controls, or edit any of them in the GUI: the first edit copies the selected profile into Custom; the GUI labels the option `Custom · from 35mm250`, the profile whose values fill omitted custom fields. `procedural_amount` and `procedural_timer` stay independent overrides and do not switch the profile.
 
 - `procedural_mode`: `"analogue"` or `"noise"`.
 - `procedural_size`: 1–48.

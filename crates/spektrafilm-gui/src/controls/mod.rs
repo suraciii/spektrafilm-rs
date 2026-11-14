@@ -480,6 +480,13 @@ fn sub_section_summary(title: &str) -> Option<&'static str> {
         "Spectral upsampling" => Some("Spectral reconstruction: method, adaptation, blur"),
         "Input" => Some("Input decoding: color space and cctf"),
         "Crop and upscale" => Some("Geometry: crop toggle, center, size, upscale factor"),
+        "Material & LUT calibration" => Some("Density minimum · R/G/B (D)"),
+        "Spektra Advanced" => {
+            Some("Post blur, dye-cloud blur, density sharpening, micro structure")
+        }
+        "Procedural Advanced" => Some("Zone amounts, chroma, film resolution, phase timer"),
+        "Fotufilm Advanced" => Some("RMS density, cloud radius, layers, shares, fog"),
+        "Exposure Advanced" => Some("Roughness, zone amounts, push, color variation"),
         _ => None,
     })
 }

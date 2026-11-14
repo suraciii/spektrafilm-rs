@@ -304,11 +304,11 @@ mod tests {
     fn canonical_path_and_label_queries_retain_inactive_engines() {
         let (params, extras) = factory();
         for (query, label) in [
-            ("FILM_RENDER.GRAIN.FOTUFILM.SIZE", "Size"),
-            ("rms granularity", "rms granularity"),
+            ("FILM_RENDER.GRAIN.FOTUFILM.SIZE", "Size (×)"),
+            ("rms granularity", "RMS granularity (relative)"),
             (
                 "film_render.grain.procedural_resolution_factor",
-                "Film Resolution",
+                "Film resolution (%)",
             ),
             ("halation spatial scale", "halation spatial scale"),
         ] {
