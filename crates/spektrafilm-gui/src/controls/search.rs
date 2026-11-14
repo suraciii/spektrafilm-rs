@@ -238,6 +238,49 @@ mod tests {
     }
 
     #[test]
+    fn scan_profile_discovery_finds_the_catalog_names_in_both_languages() {
+        let (mut params, extras) = factory();
+        params.workflow.route = "input > film > scan".into();
+        params.scanner.scan_output = "negative_to_positive".into();
+        params.scanner.scan_profile =
+            spektrafilm_core::params::scan_profile::builtin_sp3000_inspired();
+        for query in [
+            "SP-3000",
+            "sp3000",
+            "SP-3000 Inspired",
+            "Custom",
+            "Scan Profile",
+            "扫描外观",
+            "灵感源自 SP-3000",
+        ] {
+            let found = build_filtered(query, &params, &extras, false);
+            assert!(
+                found.iter().any(|result| result.section == "Scan Profile"),
+                "{query}"
+            );
+        }
+
+        // The curve editor is one composite row; an edited transform must
+        // still appear under the only-modified filter.
+        let mut edited = params.clone();
+        edited
+            .scanner
+            .scan_profile
+            .transform
+            .curves
+            .as_mut()
+            .unwrap()[0]
+            .y[4] += 0.01;
+        let found = build_filtered("", &edited, &extras, true);
+        assert!(found.iter().any(|result| {
+            result
+                .paths
+                .iter()
+                .any(|path| path == "scanner.scan_profile.transform")
+        }));
+    }
+
+    #[test]
     fn canonical_destination_and_uppercase_custom_rows_use_the_same_identity() {
         let (params, extras) = factory();
         let found = build_filtered("film_render.grain.fotufilm.size", &params, &extras, false);

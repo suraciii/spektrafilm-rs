@@ -653,10 +653,7 @@ fn scan_profile_controls(
     // negative, preserved polarity, or a film-free route does not.
     let profile_active = crate::controls::finishing_applicable(params, scanned_medium_positive);
     ui.add_enabled_ui(profile_active, |ui| {
-        if filter_matches(filter, "Scan Profile")
-            || filter_matches(filter, "SP-3000 Inspired")
-            || filter_matches(filter, "Custom")
-        {
+        if filter_matches(filter, "Scan Profile") {
             let current_name = params.scanner.scan_profile.effective_name();
             let mut selected = current_name.as_str().to_owned();
             let entries: Vec<(&str, &str)> = vec![
