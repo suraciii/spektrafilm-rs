@@ -178,7 +178,7 @@ Black-and-white Spektra MUST show only record 0 for RMS or relative strength, de
 
 The three numerical-component scales MUST remain independent editors for Spektra; they are not RGB lanes.
 
-Procedural Grain Profiles MUST appear ordinarily only for Procedural. Named profiles MUST retain the allowed Amount override. Custom-only controls MUST appear only after explicit Custom selection.
+Procedural Grain Profiles MUST appear ordinarily only for Procedural. Named profiles MUST retain the allowed Amount override. Editing a profile-owned control MUST copy the profile into Custom before committing, so the named profile never receives a silent override and Amount and Phase timer remain independent overrides.
 
 Noise MUST hide Film Resolution and Resolution Type. Film Type metadata MUST NOT appear as a creative editor.
 

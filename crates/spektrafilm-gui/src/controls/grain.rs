@@ -14,6 +14,31 @@ fn engine_label(engine: GrainEngine) -> &'static str {
     }
 }
 
+/// Fields a Procedural named profile owns. Amount, Timer, Resolution Type and
+/// Film Type stay independent overrides, so they never force a Custom copy.
+#[derive(Clone, Copy, PartialEq)]
+struct ProceduralCustomFields {
+    mode: ProceduralGrainMode,
+    size: Option<f32>,
+    shadows: Option<f32>,
+    midtones: Option<f32>,
+    highlights: Option<f32>,
+    chroma: Option<f32>,
+    resolution_factor: Option<f32>,
+}
+
+fn procedural_custom_fields(grain: &GrainParams) -> ProceduralCustomFields {
+    ProceduralCustomFields {
+        mode: grain.procedural_mode,
+        size: grain.procedural_size,
+        shadows: grain.procedural_shadows,
+        midtones: grain.procedural_midtones,
+        highlights: grain.procedural_highlights,
+        chroma: grain.procedural_chroma,
+        resolution_factor: grain.procedural_resolution_factor,
+    }
+}
+
 /// Applicability is core-owned, including loaded material capabilities. Search
 /// reveals stored requests without changing their engine, profile or values.
 fn control(
@@ -84,7 +109,7 @@ pub(super) fn fotufilm_sublayer_shares(
     filter: &mut ControlFilter<'_>,
 ) -> bool {
     if filter_matches(filter, "sublayer shares") {
-        ui.label(super::localized(ui.ctx(), "Sublayer shares")).on_hover_text(super::localized(ui.ctx(), "Edit the first three shares; the fourth is the remaining share so the authored total stays one. All four shares must be positive."));
+        ui.label(super::localized(ui.ctx(), "Sublayer shares (relative)")).on_hover_text(super::localized(ui.ctx(), "Edit the first three shares; the fourth is the remaining share so the authored total stays one. All four shares must be positive."));
     }
     let mut changed = false;
     for index in 0..3 {
@@ -224,7 +249,7 @@ fn feature_profile_selector(
         .iter()
         .copied()
         .map(|name| (name, name))
-        .chain(std::iter::once(("custom", "Custom")));
+        .chain(std::iter::once(("custom", "Custom · from 35mm250")));
     if choice_tip_entries(
         ui,
         label,
@@ -290,20 +315,10 @@ pub(crate) fn sections(
             "Select the grain engine: Spektra for material grain in developed film density, Procedural for post-scan grain appearance in encoded RGB, Dye for material grain formed in a film-coordinate dye field, Fotufilm Film for effective-appearance film population grain model, Exposure Grain for reconstructed post-scan grain appearance in encoded RGB.",
         );
     }
-    flags.runtime_changed |= vector!(
-        ui,
-        params,
-        filter,
-        density_min,
-        "density min",
-        "Minimum grain density for Spektra; also sets bounds for executing film-scanner and enlarger LUTs."
-    );
     if !params.film_render.grain.active && !filter.active() {
         notice(ui, engine_description(params.film_render.grain.engine));
         notice(ui, "controls.grain.off");
-        return;
-    }
-    if filter.active() {
+    } else if filter.active() {
         for engine in [
             GrainEngine::Dye,
             GrainEngine::Spektra,
@@ -319,6 +334,36 @@ pub(crate) fn sections(
     } else {
         let engine = params.film_render.grain.engine;
         notice(ui, engine_description(engine));
+        // Engine rows are hidden when the engine cannot run here. When the
+        // module still has an effective control (the shared density minimum),
+        // state the reason instead of leaving an empty-looking panel.
+        let probe = match engine {
+            GrainEngine::Dye => "film_render.grain.dye_strength",
+            GrainEngine::Spektra => "film_render.grain.blur",
+            GrainEngine::Procedural => "film_render.grain.procedural_amount",
+            GrainEngine::Fotufilm => "film_render.grain.fotufilm.amount",
+            GrainEngine::Exposure => "film_render.grain.exposure.strength",
+        };
+        if let Some(reason) =
+            crate::controls::grain_control_inactive_reason(ui.ctx(), probe, params, None)
+            && crate::controls::grain_control_inactive_reason(
+                ui.ctx(),
+                "film_render.grain.density_min",
+                params,
+                None,
+            )
+            .is_none()
+        {
+            ui.label(
+                egui::RichText::new(crate::tr!(
+                    ui.ctx(),
+                    "surfaces.section.inactive",
+                    reason = localized(ui.ctx(), reason)
+                ))
+                .small()
+                .color(theme::FG_MUTED),
+            );
+        }
         ui.push_id(("grain", engine_label(engine)), |ui| {
             flags.runtime_changed |= engine_controls(ui, params, filter, engine);
         });
@@ -327,14 +372,35 @@ pub(crate) fn sections(
             if params.film_render.grain.monochrome {
                 notice(ui, "controls.grain.single_record_notice");
             }
-        } else if engine == GrainEngine::Procedural {
-            if params.film_render.grain.procedural_profile != "custom" {
-                notice(ui, "controls.grain.named_profile_custom_controls");
-            } else if params.film_render.grain.procedural_mode == ProceduralGrainMode::Noise {
-                notice(ui, "controls.grain.noise_notice");
-            }
+        } else if engine == GrainEngine::Procedural
+            && params.film_render.grain.procedural_profile != "custom"
+        {
+            notice(ui, "controls.grain.named_profile_custom_controls");
+        } else if engine == GrainEngine::Procedural
+            && params.film_render.grain.procedural_mode == ProceduralGrainMode::Noise
+        {
+            notice(ui, "controls.grain.noise_notice");
         }
     }
+    // Calibration rather than engine appearance: density minimum is read by
+    // Spektra and by executing scanner/enlarger LUTs, so it stays reachable
+    // while grain is off and is never repeated in an engine panel.
+    flags.runtime_changed |= advanced(
+        ui,
+        params,
+        filter,
+        "Material & LUT calibration",
+        |ui, params, filter| {
+            vector!(
+                ui,
+                params,
+                filter,
+                density_min,
+                "Density minimum (D)",
+                "Minimum grain density in D for Spektra; also sets bounds for executing film-scanner and enlarger LUTs."
+            )
+        },
+    );
 }
 
 fn engine_description(engine: GrainEngine) -> &'static str {
@@ -366,7 +432,7 @@ fn shared_controls(
         params,
         filter,
         rms_granularity,
-        "rms granularity",
+        "RMS granularity (relative)",
         "Per-channel granularity G: Spektra derives statistical particle area from the film density curves using upstream granularity. It is not a certified optical RMS target. Distinct from Procedural Amount."
     );
     changed |= vector!(
@@ -374,7 +440,7 @@ fn shared_controls(
         params,
         filter,
         uniformity,
-        "uniformity",
+        "Uniformity (relative)",
         "Per-channel grain uniformity for Spektra."
     );
     changed |= vector!(
@@ -382,7 +448,7 @@ fn shared_controls(
         params,
         filter,
         particle_scale_sublayers,
-        "particle scale sublayers",
+        "Particle scale (relative)",
         "Positive scale per component: Spektra uses relative particle scales per emulsion sublayer."
     );
     changed
@@ -402,7 +468,7 @@ fn engine_controls(
                 params,
                 filter,
                 dye_strength,
-                "Grain strength",
+                "Grain strength (×)",
                 "Relative Dye grain amplitude: 1 keeps the delivered look; 0 removes random grain, including residual count noise. The density response and the inter-record ratio stay unchanged, and this is not a certified optical RMS target."
             );
             changed |= number!(
@@ -410,12 +476,19 @@ fn engine_controls(
                 params,
                 filter,
                 dye_scale,
-                "Grain scale",
+                "Grain scale (×)",
                 "Relative Dye grain scale in film coordinates: 1 keeps the delivered correlation length, and the texture's octaves and band limit scale together. Not a crystal diameter, scanner blur, or output-pixel size."
             );
         }
         GrainEngine::Spektra => {
-            changed |= number!(ui, params, filter, blur, "blur", "Post-blur sigma.");
+            changed |= number!(
+                ui,
+                params,
+                filter,
+                blur,
+                "Post blur (px)",
+                "Post-blur sigma."
+            );
             changed |= advanced(
                 ui,
                 params,
@@ -431,7 +504,7 @@ fn engine_controls(
                         params,
                         filter,
                         blur_dye_clouds_um,
-                        "dye-cloud blur",
+                        "Dye-cloud blur (µm)",
                         "Dye-cloud blur in micrometers."
                     );
                     changed |= number!(
@@ -439,7 +512,7 @@ fn engine_controls(
                         params,
                         filter,
                         mult_usm_amount,
-                        "mult usm amount",
+                        "Density sharpening amount (relative)",
                         "Density unsharp-mask amount."
                     );
                     changed |= number!(
@@ -447,7 +520,7 @@ fn engine_controls(
                         params,
                         filter,
                         mult_usm_sigma,
-                        "mult usm sigma",
+                        "Density sharpening sigma (px)",
                         "Density unsharp-mask radius."
                     );
                     changed |= vector!(
@@ -455,7 +528,7 @@ fn engine_controls(
                         params,
                         filter,
                         micro_structure,
-                        "micro structure",
+                        "Micro structure (µm, mm)",
                         "Micro-structure scale and clump size."
                     );
                     changed
@@ -463,7 +536,7 @@ fn engine_controls(
             );
         }
         GrainEngine::Procedural => {
-            changed |= control(
+            let profile_changed = control(
                 ui,
                 params,
                 filter,
@@ -484,17 +557,36 @@ fn engine_controls(
                     flags.runtime_changed
                 },
             );
+            changed |= profile_changed;
+            if profile_changed {
+                // The selected profile owns the controls; render them next
+                // frame rather than editing a profile that just changed.
+                return changed;
+            }
             let resolved = params.film_render.grain.resolved_grain_procedural();
             changed |= optional!(
                 ui,
                 params,
                 filter,
                 procedural_amount,
-                "Amount",
+                "Amount (%)",
                 resolved.amount * 100.0,
                 "Overall grain amount."
             );
-            changed |= control(
+            // A named profile already owns these values. Render them against a
+            // Custom copy so the first edit never needs a separate Customize
+            // action; commit the copy only when one of its fields changes, so
+            // Amount and Timer keep their independent overrides.
+            let stash = (params.film_render.grain.procedural_profile != "custom").then(|| {
+                let mut scoped = params.film_render.grain.clone();
+                scoped.select_custom_grain_procedural();
+                std::mem::replace(&mut params.film_render.grain, scoped)
+            });
+            let baseline = stash
+                .as_ref()
+                .map(|_| procedural_custom_fields(&params.film_render.grain));
+            let mut scoped_changed = false;
+            scoped_changed |= control(
                 ui,
                 params,
                 filter,
@@ -513,16 +605,16 @@ fn engine_controls(
                     )
                 },
             );
-            changed |= optional!(
+            scoped_changed |= optional!(
                 ui,
                 params,
                 filter,
                 procedural_size,
-                "Size",
+                "Size (relative)",
                 resolved.size,
                 "Grain particle size."
             );
-            changed |= advanced(
+            scoped_changed |= advanced(
                 ui,
                 params,
                 filter,
@@ -535,7 +627,7 @@ fn engine_controls(
                         params,
                         filter,
                         procedural_shadows,
-                        "Shadows",
+                        "Shadows (%)",
                         resolved.shadows * 100.0,
                         "Shadow grain amount."
                     );
@@ -544,7 +636,7 @@ fn engine_controls(
                         params,
                         filter,
                         procedural_midtones,
-                        "Midtones",
+                        "Midtones (%)",
                         resolved.midtones * 100.0,
                         "Midtone grain amount."
                     );
@@ -553,7 +645,7 @@ fn engine_controls(
                         params,
                         filter,
                         procedural_highlights,
-                        "Highlights",
+                        "Highlights (%)",
                         resolved.highlights * 100.0,
                         "Highlight grain amount."
                     );
@@ -562,7 +654,7 @@ fn engine_controls(
                         params,
                         filter,
                         procedural_chroma,
-                        "Chroma",
+                        "Chroma (%)",
                         resolved.color * 100.0,
                         "Chromatic grain amount."
                     );
@@ -571,7 +663,7 @@ fn engine_controls(
                         params,
                         filter,
                         procedural_resolution_factor,
-                        "Film Resolution",
+                        "Film resolution (%)",
                         resolved.resolution_factor,
                         "Resolution component of the post-scan Procedural appearance algorithm; this does not set scanner lens resolution."
                     );
@@ -588,14 +680,14 @@ fn engine_controls(
                         params,
                         filter,
                         procedural_timer,
-                        "Timer",
+                        "Phase timer",
                         "Explicit Grain Procedural phase timer; 0 uses the seed-derived phase."
                     );
                     changed
                 },
             );
             if filter.active() {
-                changed |= control(
+                scoped_changed |= control(
                     ui,
                     params,
                     filter,
@@ -615,6 +707,21 @@ fn engine_controls(
                     },
                 );
             }
+            changed |= scoped_changed;
+            if let Some(real) = stash {
+                let scoped = std::mem::replace(&mut params.film_render.grain, real);
+                let mut committed = params.film_render.grain.clone();
+                // Engine-level overrides rendered inside the scoped view.
+                committed.procedural_resolution_type = scoped.procedural_resolution_type;
+                committed.procedural_timer = scoped.procedural_timer;
+                committed.procedural_film_type = scoped.procedural_film_type;
+                if scoped_changed
+                    && procedural_custom_fields(&scoped) != baseline.expect("scoped baseline")
+                {
+                    committed = scoped;
+                }
+                params.film_render.grain = committed;
+            }
         }
         GrainEngine::Fotufilm => {
             changed |= number!(
@@ -622,7 +729,7 @@ fn engine_controls(
                 params,
                 filter,
                 fotufilm.amount,
-                "Amount",
+                "Amount (×)",
                 "Effective Fotufilm grain amount."
             );
             changed |= number!(
@@ -630,7 +737,7 @@ fn engine_controls(
                 params,
                 filter,
                 fotufilm.size,
-                "Size",
+                "Size (×)",
                 "Effective Fotufilm particle size multiplier."
             );
             changed |= number!(
@@ -638,7 +745,7 @@ fn engine_controls(
                 params,
                 filter,
                 fotufilm.softness,
-                "Softness",
+                "Softness (×)",
                 "Effective Fotufilm particle softness."
             );
             changed |= number!(
@@ -646,7 +753,7 @@ fn engine_controls(
                 params,
                 filter,
                 fotufilm.color,
-                "Color",
+                "Color (relative)",
                 "Effective chromatic grain amount."
             );
             changed |= vector!(
@@ -654,7 +761,7 @@ fn engine_controls(
                 params,
                 filter,
                 fotufilm.layers,
-                "Layer amounts",
+                "Layer amounts (relative)",
                 "Effective grain amount per emulsion layer."
             );
             changed |= advanced(
@@ -669,7 +776,7 @@ fn engine_controls(
                         params,
                         filter,
                         fotufilm.rms_density,
-                        "RMS density",
+                        "RMS density (D)",
                         "Authored effective RMS optical-density target; not measured stock calibration."
                     );
                     changed |= number!(
@@ -685,7 +792,7 @@ fn engine_controls(
                         params,
                         filter,
                         fotufilm.layer_weights,
-                        "Layer weights",
+                        "Layer weights (relative)",
                         "Authored effective relative population weight per layer."
                     );
                     changed |= vector!(
@@ -693,7 +800,7 @@ fn engine_controls(
                         params,
                         filter,
                         fotufilm.layer_size_ratio,
-                        "Layer size ratio",
+                        "Layer size ratio (×)",
                         "Effective relative particle size per layer."
                     );
                     changed |= number!(
@@ -701,14 +808,14 @@ fn engine_controls(
                         params,
                         filter,
                         fotufilm.radius_span,
-                        "Radius span",
+                        "Radius span (×)",
                         "Effective population radius span."
                     );
                     changed |= control(
                         ui,
                         params,
                         filter,
-                        "Sublayer shares",
+                        "Sublayer shares (relative)",
                         "film_render.grain.fotufilm.sublayer_shares",
                         |ui, params| {
                             let mut cache = SectionLabelCache::default();
@@ -727,7 +834,7 @@ fn engine_controls(
                         params,
                         filter,
                         fotufilm.coating_density_scale,
-                        "Coating density scale",
+                        "Coating density scale (×)",
                         "Effective coating density scale."
                     );
                     changed |= number!(
@@ -735,7 +842,7 @@ fn engine_controls(
                         params,
                         filter,
                         fotufilm.fog_density,
-                        "Fog density",
+                        "Fog density (D)",
                         "Effective fog density."
                     );
                     changed |= control(
@@ -774,7 +881,7 @@ fn engine_controls(
                 params,
                 filter,
                 exposure.strength,
-                "Grain strength",
+                "Grain strength (%)",
                 "Overall Exposure grain amplitude in encoded RGB; post-scan appearance, not material formation."
             );
             changed |= number!(
@@ -782,8 +889,8 @@ fn engine_controls(
                 params,
                 filter,
                 exposure.size,
-                "Grain size",
-                "Exposure grain particle size in output pixels; the authored grain scale."
+                "Grain size (px)",
+                "Exposure grain size at the 1920x1080 reference; the effective sampling scale grows with output resolution."
             );
             changed |= control(
                 ui,
@@ -840,7 +947,7 @@ fn engine_controls(
                         params,
                         filter,
                         exposure.roughness,
-                        "Roughness",
+                        "Roughness (%)",
                         "Exposure grain shape; 50 keeps the reference gradient-noise shape."
                     );
                     changed |= number!(
@@ -848,7 +955,7 @@ fn engine_controls(
                         params,
                         filter,
                         exposure.shadows,
-                        "Shadows",
+                        "Shadows (%)",
                         "Exposure grain amplitude in the shadows."
                     );
                     changed |= number!(
@@ -856,7 +963,7 @@ fn engine_controls(
                         params,
                         filter,
                         exposure.midtones,
-                        "Midtones",
+                        "Midtones (%)",
                         "Exposure grain amplitude in the midtones."
                     );
                     changed |= number!(
@@ -864,7 +971,7 @@ fn engine_controls(
                         params,
                         filter,
                         exposure.highlights,
-                        "Highlights",
+                        "Highlights (%)",
                         "Exposure grain amplitude in the highlights."
                     );
                     changed |= number!(
@@ -872,7 +979,7 @@ fn engine_controls(
                         params,
                         filter,
                         exposure.push,
-                        "Push",
+                        "Push (relative)",
                         "Additional Exposure grain amplitude added to the resolved zone amounts."
                     );
                     changed |= number!(
@@ -880,7 +987,7 @@ fn engine_controls(
                         params,
                         filter,
                         exposure.color_variation,
-                        "Color variation",
+                        "Color variation (%)",
                         "Per-channel grain decorrelation; zero keeps the grain monochrome."
                     );
                     changed
@@ -948,7 +1055,7 @@ mod tests {
             harness.run();
             assert_eq!(
                 harness
-                    .query_all_by_label("Size")
+                    .query_all_by_label("Size (×)")
                     .filter(|node| node.role() == egui::accesskit::Role::TextInput)
                     .count(),
                 1
@@ -960,8 +1067,30 @@ mod tests {
     }
 
     #[test]
+    fn inactive_engine_panel_states_the_reason() {
+        let mut params = RuntimeParams::default();
+        params.workflow.route = "input > film > scan".into();
+        params.settings.use_scanner_lut = true;
+        params.debug.deactivate_stochastic_effects = true;
+        let harness = Harness::new_ui_state(
+            grain_ui,
+            GrainUi {
+                params,
+                query: String::new(),
+            },
+        );
+        assert!(harness.query_by_label("Grain strength (×)").is_none());
+        assert!(
+            harness
+                .query_by_label_contains("Inactive controls")
+                .is_some(),
+            "hidden engine controls must state their reason"
+        );
+    }
+
+    #[test]
     fn component_queries_reveal_the_owning_production_vector() {
-        for query in ["rms granularity R", "Sublayer 1"] {
+        for query in ["RMS granularity (relative) R", "Sublayer 1"] {
             let harness = Harness::new_ui_state(
                 |ui, state: &mut GrainUi| {
                     show(
@@ -992,10 +1121,18 @@ mod tests {
     #[test]
     fn search_reveals_inactive_engines_without_changing_values_or_selection() {
         for (selected, query, label) in [
-            (GrainEngine::Procedural, "dye-cloud blur", "dye-cloud blur"),
-            (GrainEngine::Spektra, "shadows", "Shadows"),
-            (GrainEngine::Spektra, "Grain strength", "Grain strength"),
-            (GrainEngine::Spektra, "rms density", "RMS density"),
+            (
+                GrainEngine::Procedural,
+                "dye-cloud blur",
+                "Dye-cloud blur (µm)",
+            ),
+            (GrainEngine::Spektra, "shadows", "Shadows (%)"),
+            (
+                GrainEngine::Spektra,
+                "Grain strength (×)",
+                "Grain strength (×)",
+            ),
+            (GrainEngine::Spektra, "rms density", "RMS density (D)"),
             (GrainEngine::Spektra, "sublayer shares", "Sublayer 1"),
         ] {
             let mut params = RuntimeParams::default();
@@ -1029,10 +1166,10 @@ mod tests {
             GrainEngine::Exposure,
         ] {
             for (query, label) in [
-                ("rms granularity", "rms granularity R"),
-                ("density min", "density min R"),
-                ("uniformity", "uniformity R"),
-                ("particle scale sublayers", "particle scale sublayers 0"),
+                ("RMS granularity (relative)", "RMS granularity (relative) R"),
+                ("density min", "Density minimum (D) R"),
+                ("Uniformity (relative)", "Uniformity (relative) R"),
+                ("Particle scale (relative)", "Particle scale (relative) 0"),
             ] {
                 let mut params = RuntimeParams::default();
                 params.film_render.grain.engine = selected;
@@ -1072,14 +1209,25 @@ mod tests {
                     query: String::new(),
                 },
             );
-            assert!(!harness.get_by_label("density min R").node().is_disabled());
-            for label in ["density min G", "density min B"] {
+            harness
+                .get_by_label("Material & LUT calibration")
+                .simulate_click();
+            harness.run();
+            assert!(
+                !harness
+                    .get_by_label("Density minimum (D) R")
+                    .node()
+                    .is_disabled()
+            );
+            for label in ["Density minimum (D) G", "Density minimum (D) B"] {
                 assert!(harness.query_by_label(label).is_none());
             }
-            harness.get_by_label("density min R").focus();
+            harness.get_by_label("Density minimum (D) R").focus();
             harness.run();
             harness.press_key_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
-            harness.get_by_label("density min R").type_text("0.4");
+            harness
+                .get_by_label("Density minimum (D) R")
+                .type_text("0.4");
             harness.run();
             let grain = &harness.state().params.film_render.grain;
             assert_eq!(grain.density_min, [0.4, 0.2, 0.3]);
@@ -1088,10 +1236,15 @@ mod tests {
 
             harness.state_mut().params.settings.use_scanner_lut = false;
             harness.run();
-            assert!(harness.query_by_label("density min R").is_none());
+            assert!(harness.query_by_label("Density minimum (D) R").is_none());
             harness.state_mut().params.settings.use_scanner_lut = true;
             harness.run();
-            assert!(!harness.get_by_label("density min R").node().is_disabled());
+            assert!(
+                !harness
+                    .get_by_label("Density minimum (D) R")
+                    .node()
+                    .is_disabled()
+            );
             assert_eq!(
                 harness.state().params.film_render.grain.density_min,
                 [0.4, 0.2, 0.3]
@@ -1100,10 +1253,11 @@ mod tests {
     }
 
     #[test]
-    fn named_profile_retains_custom_controls_but_allows_amount_override() {
+    fn named_profile_edits_copy_the_profile_into_custom() {
         let mut params = RuntimeParams::default();
         params.film_render.grain.engine = GrainEngine::Procedural;
         params.film_render.grain.procedural_shadows = Some(72.0);
+        let resolved = params.film_render.grain.resolved_grain_procedural();
         let mut harness = Harness::new_ui_state(
             grain_ui,
             GrainUi {
@@ -1111,22 +1265,56 @@ mod tests {
                 query: "shadows".into(),
             },
         );
-        assert!(
-            harness
-                .query_all_by_label("Shadows")
-                .filter(|node| node.node().value() == Some("72.0".to_owned()))
-                .all(|node| node.node().is_disabled()),
-            "the stored Procedural request stays discoverable and inactive"
+        // Rendering a named profile changes neither its identity nor its request.
+        assert_eq!(
+            harness.state().params.film_render.grain.procedural_profile,
+            "35mm250"
         );
         assert_eq!(
             harness.state().params.film_render.grain.procedural_shadows,
             Some(72.0)
         );
-        harness.state_mut().query = "amount".into();
+        // The stored request is operable without a separate Customize step.
+        let shadows: Vec<_> = harness
+            .query_all_by_label("Shadows (%)")
+            .filter(|node| !node.node().is_disabled())
+            .collect();
+        assert_eq!(shadows.len(), 1, "Procedural's Shadows owns the edit");
+        shadows[0].focus();
+        drop(shadows);
         harness.run();
+        harness.press_key_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+        let shadows: Vec<_> = harness
+            .query_all_by_label("Shadows (%)")
+            .filter(|node| !node.node().is_disabled())
+            .collect();
+        shadows[0].type_text("60");
+        drop(shadows);
+        harness.run();
+        let grain = &harness.state().params.film_render.grain;
+        assert_eq!(grain.procedural_profile, "custom");
+        assert_eq!(grain.procedural_shadows, Some(60.0));
+        // The first edit copies the profile's other values into Custom.
+        assert_eq!(grain.procedural_size, Some(resolved.size));
+        assert_eq!(grain.procedural_midtones, Some(resolved.midtones * 100.0));
+        assert_eq!(grain.procedural_chroma, Some(resolved.color * 100.0));
+        assert!((grain.resolved_grain_procedural().shadows - 0.60).abs() < 1e-6);
+    }
+
+    #[test]
+    fn named_profile_keeps_amount_override_without_switching_to_custom() {
+        let mut params = RuntimeParams::default();
+        params.film_render.grain.engine = GrainEngine::Procedural;
+        let mut harness = Harness::new_ui_state(
+            grain_ui,
+            GrainUi {
+                params,
+                query: "amount".into(),
+            },
+        );
         // Fotufilm's independent Amount is also discoverable, but inactive.
         let amounts: Vec<_> = harness
-            .query_all_by_label("Amount")
+            .query_all_by_label("Amount (%)")
             .filter(|node| !node.node().is_disabled())
             .collect();
         assert_eq!(amounts.len(), 1);
@@ -1135,7 +1323,7 @@ mod tests {
         harness.run();
         harness.press_key_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
         let amounts: Vec<_> = harness
-            .query_all_by_label("Amount")
+            .query_all_by_label("Amount (%)")
             .filter(|node| !node.node().is_disabled())
             .collect();
         amounts[0].type_text("42");
@@ -1143,23 +1331,33 @@ mod tests {
         harness.run();
         let grain = &harness.state().params.film_render.grain;
         assert_eq!(grain.procedural_amount, Some(42.0));
-        assert_eq!(grain.procedural_profile, "35mm250");
+        assert_eq!(
+            grain.procedural_profile, "35mm250",
+            "Amount is an independent override, not a Custom conversion"
+        );
         assert!((grain.resolved_grain_procedural().amount - 0.42).abs() < 1e-6);
-        harness
-            .state_mut()
-            .params
-            .film_render
-            .grain
-            .procedural_profile = "custom".into();
+        // A later profile-owned edit keeps the independent Amount request.
         harness.state_mut().query = "shadows".into();
         harness.run();
-        assert!(
-            harness
-                .query_all_by_label("Shadows")
-                .filter(|node| node.node().value() == Some("72.0".to_owned()))
-                .any(|node| !node.node().is_disabled()),
-            "the custom profile makes the stored Procedural request editable"
-        );
+        let shadows: Vec<_> = harness
+            .query_all_by_label("Shadows (%)")
+            .filter(|node| !node.node().is_disabled())
+            .collect();
+        shadows[0].focus();
+        drop(shadows);
+        harness.run();
+        harness.press_key_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+        let shadows: Vec<_> = harness
+            .query_all_by_label("Shadows (%)")
+            .filter(|node| !node.node().is_disabled())
+            .collect();
+        shadows[0].type_text("60");
+        drop(shadows);
+        harness.run();
+        let grain = &harness.state().params.film_render.grain;
+        assert_eq!(grain.procedural_profile, "custom");
+        assert_eq!(grain.procedural_amount, Some(42.0));
+        assert_eq!(grain.procedural_shadows, Some(60.0));
     }
 
     #[test]
@@ -1216,13 +1414,18 @@ mod tests {
             },
         );
         assert!(harness.query_by_label("Dye Advanced").is_none());
-        assert!(harness.query_by_label("density min R").is_none());
+        assert!(harness.query_by_label("Density minimum (D) R").is_none());
         assert!(harness.query_by_label("Channel correlation").is_none());
-        assert!(!harness.get_by_label("Grain strength").node().is_disabled());
-        harness.get_by_label("Grain strength").focus();
+        assert!(
+            !harness
+                .get_by_label("Grain strength (×)")
+                .node()
+                .is_disabled()
+        );
+        harness.get_by_label("Grain strength (×)").focus();
         harness.run();
         harness.press_key_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
-        harness.get_by_label("Grain strength").type_text("0.5");
+        harness.get_by_label("Grain strength (×)").type_text("0.5");
         harness.run();
         assert_eq!(harness.state().params.film_render.grain.dye_strength, 0.5);
         // Hidden shared requests stay stored without editors.
@@ -1251,7 +1454,12 @@ mod tests {
                 query: "film resolution".into(),
             },
         );
-        assert!(harness.get_by_label("Film Resolution").node().is_disabled());
+        assert!(
+            harness
+                .get_by_label("Film resolution (%)")
+                .node()
+                .is_disabled()
+        );
         harness.state_mut().query = "resolution type".into();
         harness.run();
         assert!(harness.get_by_label("Resolution Type").node().is_disabled());
@@ -1291,9 +1499,18 @@ mod tests {
         // engine's material or procedural rows.
         assert!(harness.query_by_label("Exposure Grain").is_none());
         assert!(harness.query_by_label("Procedural").is_none());
-        assert!(harness.query_by_label("Layer amounts").is_none());
-        assert!(harness.query_by_label("rms granularity").is_none());
-        assert!(!harness.get_by_label("Grain strength").node().is_disabled());
+        assert!(harness.query_by_label("Layer amounts (relative)").is_none());
+        assert!(
+            harness
+                .query_by_label("RMS granularity (relative)")
+                .is_none()
+        );
+        assert!(
+            !harness
+                .get_by_label("Grain strength (%)")
+                .node()
+                .is_disabled()
+        );
         assert!(
             !harness
                 .get_by_role_and_label(egui::accesskit::Role::ComboBox, "Film format")
@@ -1308,18 +1525,18 @@ mod tests {
         // Automatic size is on, so the absolute size is hidden from ordinary
         // browsing but stays stored.
         assert!(harness.query_by_label("Absolute size (px)").is_none());
-        harness.get_by_label("Grain strength").focus();
+        harness.get_by_label("Grain strength (%)").focus();
         harness.run();
         harness.press_key_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
-        harness.get_by_label("Grain strength").type_text("64");
+        harness.get_by_label("Grain strength (%)").type_text("64");
         harness.run();
         harness.get_by_label("Exposure Advanced").simulate_click();
         harness.run();
-        assert!(!harness.get_by_label("Roughness").node().is_disabled());
-        harness.get_by_label("Roughness").focus();
+        assert!(!harness.get_by_label("Roughness (%)").node().is_disabled());
+        harness.get_by_label("Roughness (%)").focus();
         harness.run();
         harness.press_key_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
-        harness.get_by_label("Roughness").type_text("35");
+        harness.get_by_label("Roughness (%)").type_text("35");
         harness.run();
         let edited = harness.state().params.film_render.grain.clone();
         assert_eq!(edited.exposure.strength, 64.0);

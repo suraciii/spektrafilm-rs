@@ -206,7 +206,7 @@ fn key(label: &str) -> Option<&'static str> {
         "Aligns the scan's overall brightness to the model (gain = 2^ev). Brighter input -> less recovered film density." => {
             Some("controls.convert.exposure_compensation_help")
         }
-        "Amount" => Some("controls.grain.amount"),
+        "Amount (%)" => Some("controls.grain.amount"),
         "Analogue" => Some("controls.grain.analogue"),
         "Applied preset '%{name}'" => Some("surfaces.status.preset_applied"),
         "Apply lens corrections" => Some("controls.scanner.lens_correction_help"),
@@ -302,7 +302,7 @@ fn key(label: &str) -> Option<&'static str> {
         "Choose an ICC profile for the display transform applied to the viewer raster only. It never reaches retained, saved or exported pixels." => {
             Some("surfaces.display.select_help")
         }
-        "Chroma" => Some("controls.grain.chroma"),
+        "Chroma (%)" => Some("controls.grain.chroma"),
         "Chromatic grain amount." => Some("controls.grain.chroma_help"),
         "Clear film base" => Some("controls.scanner.clear_film_base"),
         "Clear preset search" => Some("surfaces.presets.clear_search"),
@@ -315,9 +315,9 @@ fn key(label: &str) -> Option<&'static str> {
         }
         "Close settings" => Some("surfaces.settings.close"),
         "Cloud radius (µm)" => Some("controls.grain.cloud_radius"),
-        "Coating density scale" => Some("controls.grain.coating_density_scale"),
+        "Coating density scale (×)" => Some("controls.grain.coating_density_scale"),
         "Collapse or expand Presets" => Some("surfaces.presets.toggle"),
-        "Color" => Some("controls.grain.color"),
+        "Color (relative)" => Some("controls.grain.color"),
         "Color space and transfer encoding of the file Export writes. This is file conversion, distinct from the output color space of the runtime digital output and from the display transform, which is viewer-only." => {
             Some("surfaces.export.space_help")
         }
@@ -494,15 +494,15 @@ fn key(label: &str) -> Option<&'static str> {
         "Dye" => Some("controls.grain.dye"),
         "Dye negative" => Some("controls.grain.dye_negative"),
         "Dye reversal" => Some("controls.grain.dye_reversal"),
-        "Grain strength" => Some("controls.grain.dye_strength"),
-        "Grain scale" => Some("controls.grain.dye_scale"),
-        "Grain size" => Some("controls.grain.grain_size"),
+        "Grain strength (×)" => Some("controls.grain.dye_strength"),
+        "Grain scale (×)" => Some("controls.grain.dye_scale"),
+        "Grain size (px)" => Some("controls.grain.grain_size"),
         "Automatic size" => Some("controls.grain.automatic_size"),
         "Film format" => Some("controls.grain.film_format"),
         "Absolute size (px)" => Some("controls.grain.absolute_size_px"),
-        "Roughness" => Some("controls.grain.roughness"),
-        "Push" => Some("controls.grain.push"),
-        "Color variation" => Some("controls.grain.color_variation"),
+        "Roughness (%)" => Some("controls.grain.roughness"),
+        "Push (relative)" => Some("controls.grain.push"),
+        "Color variation (%)" => Some("controls.grain.color_variation"),
         "35mm" => Some("controls.grain.format_35mm"),
         "Medium format" => Some("controls.grain.format_medium"),
         "Large format" => Some("controls.grain.format_large"),
@@ -636,7 +636,7 @@ fn key(label: &str) -> Option<&'static str> {
         "Effect controls" => Some("surfaces.effects.controls"),
         "Look" => Some("controls.label.look"),
         "Film Format" => Some("controls.scanner.film_format"),
-        "Film Resolution" => Some("controls.grain.film_resolution"),
+        "Film resolution (%)" => Some("controls.grain.film_resolution"),
         "Film Type" => Some("controls.grain.film_type"),
         "Film base" => Some("controls.label.film_base"),
         "Film chemistry" => Some("controls.chemistry.film_section"),
@@ -660,7 +660,7 @@ fn key(label: &str) -> Option<&'static str> {
         "Fit the retained image in the viewer, leaving pan unchanged. Viewer only." => {
             Some("surfaces.viewer.fit_help")
         }
-        "Fog density" => Some("controls.grain.fog_density"),
+        "Fog density (D)" => Some("controls.grain.fog_density"),
         "Format" => Some("controls.label.format"),
         "Fotufilm Film" => Some("controls.grain.fotufilm"),
         "Fotufilm Advanced" => Some("controls.grain.fotufilm_advanced"),
@@ -695,7 +695,7 @@ fn key(label: &str) -> Option<&'static str> {
         "Overall Exposure grain amplitude in encoded RGB; post-scan appearance, not material formation." => {
             Some("controls.grain.exposure_strength_help")
         }
-        "Exposure grain particle size in output pixels; the authored grain scale." => {
+        "Exposure grain size at the 1920x1080 reference; the effective sampling scale grows with output resolution." => {
             Some("controls.grain.exposure_size_help")
         }
         "Derive the grain size from the film format; off reveals the absolute size in pixels." => {
@@ -772,7 +772,7 @@ fn key(label: &str) -> Option<&'static str> {
         "Highlight scatter and back-reflection; source response and RGB controls" => {
             Some("surfaces.summary.halation")
         }
-        "Highlights" => Some("controls.grain.highlights"),
+        "Highlights (%)" => Some("controls.grain.highlights"),
         "Hold automatic comparison" => Some("controls.scanner.hold_comparison"),
         "Hold the primary mouse button or focused Space to view this same frame with default operator values. Release to restore the corrected view. Saved and exported corrections are unchanged." => {
             Some("controls.scanner.hold_comparison_help")
@@ -863,9 +863,9 @@ fn key(label: &str) -> Option<&'static str> {
             Some("surfaces.export.format_help")
         }
         "Largest nonnested phase: %{phase} · %{ms} ms" => Some("surfaces.diagnostics.phase"),
-        "Layer amounts" => Some("controls.grain.layer_amounts"),
-        "Layer size ratio" => Some("controls.grain.layer_size_ratio"),
-        "Layer weights" => Some("controls.grain.layer_weights"),
+        "Layer amounts (relative)" => Some("controls.grain.layer_amounts"),
+        "Layer size ratio (×)" => Some("controls.grain.layer_size_ratio"),
+        "Layer weights (relative)" => Some("controls.grain.layer_weights"),
         "Leave at daylight (D65): it is the colorimetric reference the rest of the pipeline assumes, and should not be changed. Do not use it to neutralize a colour cast — fix white balance downstream with the enlarger filters instead. (custom exposes temperature/tint for special cases.)" => {
             Some("controls.scanner.white_balance_help")
         }
@@ -918,8 +918,8 @@ fn key(label: &str) -> Option<&'static str> {
         }
         "Micro-structure scale and clump size." => Some("controls.grain.micro_structure_help"),
         "Midtone grain amount." => Some("controls.grain.midtones_help"),
-        "Midtones" => Some("controls.grain.midtones"),
-        "Minimum grain density for Spektra; also sets bounds for executing film-scanner and enlarger LUTs." => {
+        "Midtones (%)" => Some("controls.grain.midtones"),
+        "Minimum grain density in D for Spektra; also sets bounds for executing film-scanner and enlarger LUTs." => {
             Some("controls.grain.density_min_help")
         }
         "Multiplier on the cross-layer (off-diagonal) inhibition. Controls saturation enhancement from interlayer DIR effects." => {
@@ -1103,8 +1103,8 @@ fn key(label: &str) -> Option<&'static str> {
             Some("controls.condition.raw_custom")
         }
         "RAW source; explicit Reprocess RAW" => Some("controls.condition.raw_reprocess"),
-        "RMS density" => Some("controls.grain.rms_density"),
-        "Radius span" => Some("controls.grain.radius_span"),
+        "RMS density (D)" => Some("controls.grain.rms_density"),
+        "Radius span (×)" => Some("controls.grain.radius_span"),
         "Open exact 100%, 200%, and 400% zoom choices. The button shows the current fit scale or source-pixel-to-device-pixel percentage. Viewer only." => {
             Some("surfaces.viewer.zoom_help")
         }
@@ -1219,7 +1219,7 @@ fn key(label: &str) -> Option<&'static str> {
         }
         "Settings" => Some("surfaces.settings.title"),
         "Shadow grain amount." => Some("controls.grain.shadows_help"),
-        "Shadows" => Some("controls.grain.shadows"),
+        "Shadows (%)" => Some("controls.grain.shadows"),
         "Show controls that differ from their factory baseline, independently of an applied preset." => {
             Some("surfaces.search.modified_help")
         }
@@ -1248,9 +1248,9 @@ fn key(label: &str) -> Option<&'static str> {
         }
         "Silver" => Some("controls.grain.silver"),
         "Simulation blend" => Some("controls.output.simulation_blend"),
-        "Size" => Some("controls.grain.size"),
+        "Size (relative)" => Some("controls.grain.size"),
         "Slide" => Some("controls.scanner.slide"),
-        "Softness" => Some("controls.grain.softness"),
+        "Softness (×)" => Some("controls.grain.softness"),
         "Software compute adapter — not a hardware GPU." => Some("surfaces.diagnostics.software"),
         "Black-and-white print contrast cannot be calibrated by color neutralization." => {
             Some("controls.convert.bw_neutralization_inactive")
@@ -1298,7 +1298,7 @@ fn key(label: &str) -> Option<&'static str> {
             Some("controls.scanner.temperature_help")
         }
         "Text" => Some("controls.metadata.text"),
-        "Timer" => Some("controls.grain.timer"),
+        "Phase timer" => Some("controls.grain.timer"),
         "Tint value for the custom white balance, not used for the other white balance settings" => {
             Some("controls.scanner.raw_tint_help")
         }
@@ -1391,7 +1391,7 @@ fn key(label: &str) -> Option<&'static str> {
         "blind calibration" => Some("controls.convert.blind_calibration"),
         "bloom intensity" => Some("controls.label.bloom_intensity"),
         "bloom size" => Some("controls.label.bloom_size"),
-        "blur" => Some("controls.grain.blur"),
+        "Post blur (px)" => Some("controls.grain.blur"),
         "boost ev" => Some("controls.halation.boost_ev"),
         "boost range" => Some("controls.halation.boost_range"),
         "boundary" => Some("controls.gamut.boundary"),
@@ -1405,16 +1405,13 @@ fn key(label: &str) -> Option<&'static str> {
         "ccw rotate" => Some("surfaces.source.rotate_ccw"),
         "center_weighted" => Some("controls.scanner.metering_center"),
         "channel permutation" => Some("controls.label.channel_permutation"),
-        "chroma" => Some("controls.grain.chroma"),
         "clear" => Some("surfaces.action.clear"),
         "clear filter" => Some("surfaces.search.clear"),
         "cloud radius (µm)" => Some("controls.grain.cloud_radius"),
         "clump" => Some("controls.label.clump"),
         "cmyk.active = true" => Some("controls.condition.cmyk_active"),
         "cmyk.strength > 0" => Some("controls.condition.cmyk_strength"),
-        "coating density scale" => Some("controls.grain.coating_density_scale"),
         "collected" => Some("surfaces.diagnostics.collected"),
-        "color" => Some("controls.grain.color"),
         "color component transfer function" => Some("controls.output.cctf_expansion"),
         "color filter" => Some("controls.scanner.color_filter"),
         "confirmation required" => Some("controls.condition.confirm"),
@@ -1444,13 +1441,31 @@ fn key(label: &str) -> Option<&'static str> {
         "Profile gamma changes the profile density curve; Morph gamma shapes the density-curve sub-layer response. They compose." => {
             Some("controls.chemistry.curve_response_help")
         }
-        "density min" => Some("controls.grain.density_min"),
+        "Density minimum (D)" => Some("controls.grain.density_min"),
+        "Amount (×)" => Some("controls.grain.fotufilm_amount"),
+        "Size (×)" => Some("controls.grain.fotufilm_size"),
+        "Grain strength (%)" => Some("controls.grain.exposure_strength"),
+        "Custom · from 35mm250" => Some("controls.grain.custom_from_35mm250"),
+        "Post blur, dye-cloud blur, density sharpening, micro structure" => {
+            Some("controls.grain.advanced_spektra_summary")
+        }
+        "Zone amounts, chroma, film resolution, phase timer" => {
+            Some("controls.grain.advanced_procedural_summary")
+        }
+        "RMS density, cloud radius, layers, shares, fog" => {
+            Some("controls.grain.advanced_fotufilm_summary")
+        }
+        "Roughness, zone amounts, push, color variation" => {
+            Some("controls.grain.advanced_exposure_summary")
+        }
+        "Density minimum in D: Spektra D-min and executing scanner/enlarger LUT bounds" => {
+            Some("controls.grain.calibration_summary")
+        }
+        "Material & LUT calibration" => Some("controls.grain.calibration_section"),
         "detect base" => Some("controls.convert.detect_base"),
         "automatic size" => Some("controls.grain.automatic_size"),
         "absolute size (px)" => Some("controls.grain.absolute_size_px"),
         "film format" => Some("controls.grain.film_format"),
-        "grain size" => Some("controls.grain.grain_size"),
-        "push" => Some("controls.grain.push"),
         "developer exhaustion" => Some("controls.chemistry.developer_exhaustion"),
         "development time" => Some("controls.label.development_time"),
         "diffusion size um" => Some("controls.couplers.diffusion_size"),
@@ -1458,7 +1473,7 @@ fn key(label: &str) -> Option<&'static str> {
         "diffusion tail weight" => Some("controls.couplers.diffusion_tail_weight"),
         "dimensionless" => Some("controls.unit.dimensionless"),
         "duration unavailable" => Some("surfaces.diagnostics.duration_missing"),
-        "dye-cloud blur" => Some("controls.grain.dye_cloud_blur"),
+        "Dye-cloud blur (µm)" => Some("controls.grain.dye_cloud_blur"),
         "enable CMYK ink style" => Some("controls.cmyk.enable"),
         "enable dir couplers" => Some("controls.couplers.enable"),
         "enable film base" => Some("controls.base.enable_film"),
@@ -1480,7 +1495,6 @@ fn key(label: &str) -> Option<&'static str> {
         "Conversion exposure compensation ev" => Some("controls.convert.exposure_compensation"),
         "exposure ×" => Some("controls.unit.exposure"),
         "film profile" => Some("controls.label.film_profile"),
-        "film resolution" => Some("controls.grain.film_resolution"),
         "film type" => Some("controls.grain.film_type"),
         "film-exposure route that converts scene RGB to film exposure" => {
             Some("controls.condition.capture_illuminant")
@@ -1511,7 +1525,6 @@ fn key(label: &str) -> Option<&'static str> {
         "filter family" => Some("controls.label.filter_family"),
         "finished exposure" => Some("controls.scanner.finished_exposure"),
         "fit" => Some("surfaces.viewer.fit"),
-        "fog density" => Some("controls.grain.fog_density"),
         "follow_mode" => Some("controls.scanner.follow_mode"),
         "format-dependent" => Some("controls.condition.format"),
         "format-dependent color spaces" => Some("controls.condition.color_space"),
@@ -1540,7 +1553,6 @@ fn key(label: &str) -> Option<&'static str> {
         "hanatos2025 adaptation surface" => Some("controls.upsampling.adaptation_surface"),
         "hanatos2025 adaptation window" => Some("controls.upsampling.adaptation_window"),
         "highlight_weighted" => Some("controls.scanner.metering_highlight"),
-        "highlights" => Some("controls.grain.highlights"),
         "hold automatic comparison" => Some("controls.scanner.hold_comparison"),
         "hull detail" => Some("controls.gamut.hull_detail"),
         "inherit (film profile)" => Some("controls.scanner.capture_inherit"),
@@ -1556,9 +1568,6 @@ fn key(label: &str) -> Option<&'static str> {
         "knee" => Some("controls.gamut.knee"),
         "langmuir donor k rgb" => Some("controls.couplers.langmuir_donor"),
         "langmuir receiver k rgb" => Some("controls.couplers.langmuir_receiver"),
-        "layer amounts" => Some("controls.grain.layer_amounts"),
-        "layer size ratio" => Some("controls.grain.layer_size_ratio"),
-        "layer weights" => Some("controls.grain.layer_weights"),
         "lens blur (readout optics)" => Some("controls.scanner.lens_blur"),
         "lens correction" => Some("controls.scanner.lens_correction"),
         "limit" => Some("controls.label.limit"),
@@ -1577,13 +1586,12 @@ fn key(label: &str) -> Option<&'static str> {
         }
         "maximum" => Some("controls.metadata.maximum"),
         "median" => Some("controls.scanner.metering_median"),
-        "micro structure" => Some("controls.grain.micro_structure"),
-        "midtones" => Some("controls.grain.midtones"),
+        "Micro structure (µm, mm)" => Some("controls.grain.micro_structure"),
         "minimum" => Some("controls.metadata.minimum"),
         "missing" => Some("surfaces.presets.missing"),
         "modified" => Some("surfaces.presets.modified"),
-        "mult usm amount" => Some("controls.grain.unsharp_amount"),
-        "mult usm sigma" => Some("controls.grain.unsharp_sigma"),
+        "Density sharpening amount (relative)" => Some("controls.grain.unsharp_amount"),
+        "Density sharpening sigma (px)" => Some("controls.grain.unsharp_sigma"),
         "multi_zone" => Some("controls.scanner.metering_multizone"),
         "negative film; eligible negative-to-positive route; standard conversion style" => {
             Some("controls.condition.operator_route")
@@ -1607,7 +1615,7 @@ fn key(label: &str) -> Option<&'static str> {
         "output color space" => Some("controls.output.output_color_space"),
         "output interpolation" => Some("surfaces.viewer.interpolation"),
         "partial" => Some("controls.scanner.metering_partial"),
-        "particle scale sublayers" => Some("controls.grain.particle_scale_sublayers"),
+        "Particle scale (relative)" => Some("controls.grain.particle_scale_sublayers"),
         "paste operator correction" => Some("controls.scanner.paste_correction"),
         "percent" => Some("controls.label.percent"),
         "pixels" => Some("controls.unit.pixels"),
@@ -1632,7 +1640,6 @@ fn key(label: &str) -> Option<&'static str> {
         }
         "processing mode" => Some("controls.grain.processing_mode"),
         "protect ev" => Some("controls.halation.protect_ev"),
-        "radius span" => Some("controls.grain.radius_span"),
         "relative" => Some("controls.unit.relative"),
         "reset" => Some("surfaces.state.reset"),
         "reset %{section}" => Some("surfaces.section.reset_name"),
@@ -1641,8 +1648,7 @@ fn key(label: &str) -> Option<&'static str> {
         "restore automatic" => Some("controls.scanner.restore_automatic"),
         "retained output; viewer-only" => Some("controls.condition.retained"),
         "reveal transition" => Some("surfaces.viewer.reveal"),
-        "rms density" => Some("controls.grain.rms_density"),
-        "rms granularity" => Some("controls.grain.rms_granularity"),
+        "RMS granularity (relative)" => Some("controls.grain.rms_granularity"),
         "roughness" => Some("controls.label.roughness"),
         "sRGB for web · Adobe RGB for print · ACES2065-1 for archival" => {
             Some("surfaces.export.space_hint")
@@ -1667,11 +1673,8 @@ fn key(label: &str) -> Option<&'static str> {
             Some("controls.condition.missing_model")
         }
         "selected report" => Some("controls.condition.report"),
-        "shadows" => Some("controls.grain.shadows"),
         "sigma" => Some("controls.label.sigma"),
         "simulation blend" => Some("controls.output.simulation_blend"),
-        "size" => Some("controls.grain.size"),
-        "softness" => Some("controls.grain.softness"),
         "source compression" => Some("controls.halation.source_compression"),
         "spatial effects enabled" => Some("controls.condition.spatial"),
         "spatial scale" => Some("controls.label.spatial_scale"),
@@ -1685,16 +1688,15 @@ fn key(label: &str) -> Option<&'static str> {
             Some("controls.condition.operator_retained")
         }
         "strength" => Some("controls.cmyk.strength"),
-        "sublayer shares" => Some("controls.grain.sublayer_shares"),
+        "Sublayer shares (relative)" => Some("controls.grain.sublayer_shares"),
         "temperature" => Some("controls.scanner.temperature"),
         "threshold" => Some("controls.label.threshold"),
         "tilt" => Some("controls.base.tilt"),
-        "timer" => Some("controls.grain.timer"),
         "tint" => Some("controls.scanner.raw_tint"),
         "tungsten" => Some("controls.scanner.tungsten"),
         "type" => Some("controls.metadata.type"),
         "unavailable" => Some("surfaces.diagnostics.value_unavailable"),
-        "uniformity" => Some("controls.grain.uniformity"),
+        "Uniformity (relative)" => Some("controls.grain.uniformity"),
         "unit" => Some("controls.metadata.unit"),
         "unsharp mask (digital sharpening)" => Some("controls.scanner.unsharp_mask"),
         "unsubmitted export draft" => Some("controls.condition.draft"),
@@ -1726,13 +1728,13 @@ pub(crate) fn localized<'a>(ctx: &egui::Context, label: &'a str) -> Cow<'a, str>
 /// The explicit base/component pairs keep names supplied by profiles, standards
 /// and users from being recomposed just because they contain a space.
 const COMPOSITE_LABELS: &[(&str, &[&str])] = &[
-    ("Layer amounts", &["0", "1", "2"]),
-    ("Layer size ratio", &["0", "1", "2"]),
-    ("Layer weights", &["0", "1", "2"]),
+    ("Layer amounts (relative)", &["0", "1", "2"]),
+    ("Layer size ratio (×)", &["0", "1", "2"]),
+    ("Layer weights (relative)", &["0", "1", "2"]),
     ("Unsharp mask (digital sharpening)", &["amount", "sigma"]),
     ("crop center", &["x", "y"]),
     ("crop size", &["x", "y"]),
-    ("density min", &["B", "G", "R"]),
+    ("Density minimum (D)", &["B", "G", "R"]),
     ("gamma interlayer b to rg", &["G", "R"]),
     ("gamma interlayer g to rb", &["B", "R"]),
     ("gamma interlayer r to gb", &["B", "G"]),
@@ -1742,13 +1744,13 @@ const COMPOSITE_LABELS: &[(&str, &[&str])] = &[
     ("knee", &["limit", "power", "threshold"]),
     ("langmuir donor k rgb", &["B", "G", "R"]),
     ("langmuir receiver k rgb", &["B", "G", "R"]),
-    ("micro structure", &["blur", "clump"]),
-    ("particle scale sublayers", &["0", "1", "2"]),
-    ("rms granularity", &["B", "G", "R"]),
+    ("Micro structure (µm, mm)", &["blur", "clump"]),
+    ("Particle scale (relative)", &["0", "1", "2"]),
+    ("RMS granularity (relative)", &["B", "G", "R"]),
     ("scatter core um", &["B", "G", "R"]),
     ("scatter tail um", &["B", "G", "R"]),
     ("scatter tail weight", &["B", "G", "R"]),
-    ("uniformity", &["B", "G", "R"]),
+    ("Uniformity (relative)", &["B", "G", "R"]),
 ];
 
 fn composite_label(locale: crate::i18n::Locale, label: &str) -> Option<Cow<'static, str>> {
@@ -1879,7 +1881,11 @@ mod tests {
     #[test]
     fn composite_labels_reuse_the_component_name_rule() {
         for (locale, label, display) in [
-            (Locale::SimplifiedChinese, "Layer amounts 0", "各层颗粒量 0"),
+            (
+                Locale::SimplifiedChinese,
+                "Layer amounts (relative) 0",
+                "图层颗粒量 (相对) 0",
+            ),
             (
                 Locale::SimplifiedChinese,
                 "Unsharp mask (digital sharpening) amount",
