@@ -62,7 +62,11 @@ impl DeviceFaults {
         }
     }
 
-    pub(crate) fn record(&self, message: String) {
+    /// Record a failure wgpu reported for this device. The device constructor
+    /// installs the sink on the wgpu error and device-lost callbacks; the
+    /// manual path exists for tests and for a frontend that observes a failure
+    /// wgpu did not route through those callbacks.
+    pub fn record(&self, message: String) {
         let mut first = self.first.lock();
         if first.is_none() {
             *first = Some(message.clone());
@@ -74,7 +78,9 @@ impl DeviceFaults {
         }
     }
 
-    pub(crate) fn record_lost(&self, reason: String, message: String) {
+    /// Record that wgpu lost the device. A lost device stays failed for every
+    /// later operation.
+    pub fn record_lost(&self, reason: String, message: String) {
         self.lost.store(true, Ordering::Release);
         self.record(format!("device lost ({reason}): {message}"));
     }
@@ -350,7 +356,7 @@ pub fn select_backend_for(
     #[cfg(not(feature = "wgpu-backend"))]
     {
         let _ = api;
-        return Err(SelectionError::WgpuUncompiled);
+        Err(SelectionError::WgpuUncompiled)
     }
 
     #[cfg(feature = "wgpu-backend")]
@@ -388,9 +394,9 @@ pub fn select_backend_for(
         if explicit || api_restricted {
             return Err(SelectionError::WgpuUnavailable);
         }
+        tracing::info!(backend = CpuBackend.name(), "using CPU backend");
+        Ok(SelectedBackend::cpu(CpuBackend))
     }
-    tracing::info!(backend = CpuBackend.name(), "using CPU backend");
-    Ok(SelectedBackend::cpu(CpuBackend))
 }
 
 /// The selection an environment request makes: no API restriction.
