@@ -40,6 +40,8 @@ The midtone and highlight thresholds are controls. `midtone_threshold` MUST be g
 
 The threshold defaults preserve the reconstructed zone partition.
 
+Threshold ordering MUST hold at the f32 representation used by both executors.
+
 `seed` MUST be an integer from 0 to 2147483647 and default to 0. It is an authored offset added to the shared `random_seed`; zero keeps the render seed unchanged.
 
 The Rec.709 appearance luma is an authored SpektraFilm choice. The frozen scalar reference does not establish vendor channel weights. The three channel fields MUST read consecutive gradient-table slots at the same lattice corner.

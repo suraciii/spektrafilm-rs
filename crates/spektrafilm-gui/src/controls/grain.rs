@@ -1031,7 +1031,16 @@ fn engine_controls(
                         "film_render.grain.exposure.midtone_threshold",
                         |ui, params| {
                             let exposure = &mut params.film_render.grain.exposure;
-                            let max = (exposure.highlight_threshold - 0.0001).max(0.0001);
+                            let (floor, _, step, _) =
+                                editor_range_for("film_render.grain.exposure.midtone_threshold");
+                            let max = exposure.highlight_threshold - step;
+                            // A stored valid highlight can sit below the
+                            // editor floor. Hide the midtone row rather than
+                            // letting any edit clamp to floor and author an
+                            // out-of-order pair; raise highlight first.
+                            if max < floor {
+                                return false;
+                            }
                             param_numeric_capped(
                                 ui,
                                 "Midtone threshold",
@@ -1050,7 +1059,9 @@ fn engine_controls(
                         "film_render.grain.exposure.highlight_threshold",
                         |ui, params| {
                             let exposure = &mut params.film_render.grain.exposure;
-                            let min = (exposure.midtone_threshold + 0.0001).min(1.0);
+                            let (_, max, step, _) =
+                                editor_range_for("film_render.grain.exposure.highlight_threshold");
+                            let min = (exposure.midtone_threshold + step).min(max);
                             param_numeric_floored(
                                 ui,
                                 "Highlight threshold",
@@ -1742,6 +1753,35 @@ mod tests {
         );
         assert_eq!(reopened.film_render.grain.engine, GrainEngine::Exposure);
         assert_ne!(reopened.film_render.grain.exposure, stored);
+    }
+
+    #[test]
+    fn exposure_midtone_editor_hides_when_highlight_is_below_the_editor_floor() {
+        let mut params = RuntimeParams::default();
+        params.film_render.grain.engine = GrainEngine::Exposure;
+        params.film_render.grain.exposure.midtone_threshold = 0.00005;
+        params.film_render.grain.exposure.highlight_threshold = 0.00008;
+        let stored = params.film_render.grain.exposure.clone();
+        let mut harness = Harness::new_ui_state(
+            grain_ui,
+            GrainUi {
+                params,
+                query: String::new(),
+            },
+        );
+        harness.get_by_label("Exposure Advanced").simulate_click();
+        harness.run();
+        assert!(
+            harness.query_by_label("Midtone threshold").is_none(),
+            "no editor-valid midtone exists below the stored highlight"
+        );
+        assert!(
+            !harness
+                .get_by_label("Highlight threshold")
+                .node()
+                .is_disabled()
+        );
+        assert_eq!(harness.state().params.film_render.grain.exposure, stored);
     }
 
     /// Exposure's request must survive the state document's own serialization

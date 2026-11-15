@@ -196,17 +196,20 @@ impl ExposureGrainParams {
                 value,
             )?;
         }
-        if self.midtone_threshold >= self.highlight_threshold {
+        let midtone_f32 = self.midtone_threshold as f32;
+        let highlight_f32 = self.highlight_threshold as f32;
+        if midtone_f32 <= 0.0 || highlight_f32 > 1.0 || midtone_f32 >= highlight_f32 {
             return Err(super::ValidationError::new(
                 super::ValidationReason::NumericRange,
                 "film_render.grain.exposure.highlight_threshold",
                 format!(
-                    "film_render.grain.exposure.highlight_threshold: must exceed midtone_threshold (got {} <= {})",
-                    self.highlight_threshold, self.midtone_threshold
+                    "film_render.grain.exposure.highlight_threshold: must exceed midtone_threshold at f32 executor precision (got {highlight_f32} <= {midtone_f32})"
                 ),
             )
             .arg("midtone_threshold", self.midtone_threshold)
-            .arg("highlight_threshold", self.highlight_threshold));
+            .arg("highlight_threshold", self.highlight_threshold)
+            .arg("midtone_f32", midtone_f32)
+            .arg("highlight_f32", highlight_f32));
         }
         if self.seed > 2_147_483_647 {
             return Err(super::ValidationError::new(
@@ -764,6 +767,19 @@ mod fotufilm_tests {
         assert!(params.exposure.validate().is_err());
         params.exposure.midtone_threshold = 0.3;
         assert!(params.exposure.validate().is_ok());
+        params.exposure.highlight_threshold = 0.300_000_000_000_000_04;
+        assert!(
+            params.exposure.validate().is_err(),
+            "an f64-ordered pair that collapses at f32 must be rejected"
+        );
+        params.exposure.midtone_threshold = 1e-300;
+        params.exposure.highlight_threshold = 0.3;
+        assert!(
+            params.exposure.validate().is_err(),
+            "a positive f64 threshold that underflows to zero at f32 must be rejected"
+        );
+        params.exposure.midtone_threshold = 0.3;
+        params.exposure.highlight_threshold = 0.7;
 
         let base = params.resolved_grain_exposure(11);
         assert_eq!(base.midtone_threshold, 0.3);

@@ -1759,6 +1759,6 @@
   "controls.grain.advanced_spektra_summary": "后期模糊、染料云模糊、密度锐化、微结构",
   "controls.grain.advanced_procedural_summary": "分区颗粒量、色度、胶片分辨率、相位计时器",
   "controls.grain.advanced_fotufilm_summary": "RMS 密度、云团半径、图层、占比、灰雾",
-  "controls.grain.advanced_exposure_summary": "粗糙度、分区颗粒量、推冲、色彩变化",
+  "controls.grain.advanced_exposure_summary": "粗糙度、分区颗粒量、阈值、种子、推冲、色彩变化",
   "controls.grain.custom_from_35mm250": "自定义 · 来自 35mm250"
 }

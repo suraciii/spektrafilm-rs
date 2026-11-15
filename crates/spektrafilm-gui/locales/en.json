@@ -1759,6 +1759,6 @@
   "controls.grain.advanced_spektra_summary": "Post blur, dye-cloud blur, density sharpening, micro structure",
   "controls.grain.advanced_procedural_summary": "Zone amounts, chroma, film resolution, phase timer",
   "controls.grain.advanced_fotufilm_summary": "RMS density, cloud radius, layers, shares, fog",
-  "controls.grain.advanced_exposure_summary": "Roughness, zone amounts, push, color variation",
+  "controls.grain.advanced_exposure_summary": "Roughness, zone amounts, thresholds, seed, push, color variation",
   "controls.grain.custom_from_35mm250": "Custom · from 35mm250"
 }

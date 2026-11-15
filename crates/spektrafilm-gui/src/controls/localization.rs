@@ -1473,7 +1473,7 @@ fn key(label: &str) -> Option<&'static str> {
         "RMS density, cloud radius, layers, shares, fog" => {
             Some("controls.grain.advanced_fotufilm_summary")
         }
-        "Roughness, zone amounts, push, color variation" => {
+        "Roughness, zone amounts, thresholds, seed, push, color variation" => {
             Some("controls.grain.advanced_exposure_summary")
         }
         "Density minimum in D: Spektra D-min and executing scanner/enlarger LUT bounds" => {
@@ -1874,6 +1874,28 @@ mod tests {
             assert_eq!(localized_for(locale, "Profile gamma"), profile);
             assert_eq!(localized_for(locale, "Morph gamma"), morph);
             assert_eq!(localized_for(locale, "Curve response"), response);
+        }
+    }
+
+    #[test]
+    fn exposure_advanced_summary_is_localized_in_both_languages() {
+        for (locale, expected) in [
+            (
+                Locale::English,
+                "Roughness, zone amounts, thresholds, seed, push, color variation",
+            ),
+            (
+                Locale::SimplifiedChinese,
+                "粗糙度、分区颗粒量、阈值、种子、推冲、色彩变化",
+            ),
+        ] {
+            assert_eq!(
+                localized_for(
+                    locale,
+                    "Roughness, zone amounts, thresholds, seed, push, color variation"
+                ),
+                expected
+            );
         }
     }
 
