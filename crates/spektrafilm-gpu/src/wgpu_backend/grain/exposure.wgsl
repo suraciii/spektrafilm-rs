@@ -4,6 +4,7 @@ struct Params {
  dims: vec4<u32>,      // width, height, page pixels, 0
  coeff: vec4<f32>,     // shadow, midtone, highlight amplitude, frequency gain
  shape: vec4<f32>,     // roughness effective, size_high (fy), colorvar, size_low (fx + amp)
+ zone: vec4<f32>,      // midtone threshold, highlight threshold, 0, 0
  page: vec4<u32>,      // first absolute pixel
 }
 @group(0) @binding(0) var<uniform> p: Params;
@@ -69,9 +70,7 @@ fn noise_rgb_color(x: f32, y: f32) -> vec3<f32> {
  return noise_rgb_at(x, y, 516u, 8192u);
 }
 
-fn zone_weights(luma: f32) -> vec3<f32> {
- let mid = 0.424672424793243;
- let high = 0.849344849586487;
+fn zone_weights(luma: f32, mid: f32, high: f32) -> vec3<f32> {
  let lo = select(1.0, smoothstep01((luma + 0.5) / 0.5), luma < 0.0);
  let middle = smoothstep01(luma / mid);
  let hi = smoothstep01((luma - mid) / (high - mid));
@@ -99,7 +98,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_workgroups) 
  let y = f32(absolute / p.dims.x);
  let rgb = vec3<f32>(source_rgb[i], source_rgb[i + 1u], source_rgb[i + 2u]);
  let luma = dot(rgb, vec3<f32>(0.2126, 0.7152, 0.0722));
- let weights = zone_weights(luma);
+ let weights = zone_weights(luma, p.zone.x, p.zone.y);
  let displacement = dot(weights, vec3<f32>(p.coeff.x, p.coeff.y, p.coeff.z));
  let base = displacement * p.coeff.w;
  let fields = noise_rgb(x, y);

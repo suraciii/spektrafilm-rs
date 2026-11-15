@@ -44,8 +44,12 @@ pub struct ExposureGrainParams {
     /// Per-channel grain decorrelation, `0.0..=100.0`. Zero keeps the frozen
     /// monochrome scalar field exactly.
     pub color_variation: f32,
-    /// The reference seed domain. Use [`exposure_seed`] to reduce the shared
-    /// 64-bit runtime seed without introducing a second phase input.
+    /// Display-luma boundary between the shadow and midtone zones.
+    pub midtone_threshold: f32,
+    /// Display-luma boundary between the midtone and highlight zones.
+    pub highlight_threshold: f32,
+    /// The reference seed domain. Core adds the authored Exposure seed offset
+    /// to the shared 64-bit runtime seed before reducing it.
     pub seed: u32,
     pub render_scale: f32,
 }
@@ -64,6 +68,8 @@ impl Default for ExposureGrainParams {
             highlights: 30.0,
             push: 0.0,
             color_variation: 20.0,
+            midtone_threshold: 0.424_672_424_793_243,
+            highlight_threshold: 0.849_344_849_586_487,
             seed: 0,
             render_scale: 1.0,
         }
@@ -150,7 +156,7 @@ pub fn apply_cpu(input: &ImageBuf, mut params: ExposureGrainParams) -> ImageBuf 
             let rgb = [to_f32(pixel[0]), to_f32(pixel[1]), to_f32(pixel[2])];
             let luma = 0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2];
             let [shadow, middle, highlight] =
-                zone_weights(luma, 0.424_672_424_793_243, 0.849_344_849_586_487);
+                zone_weights(luma, params.midtone_threshold, params.highlight_threshold);
             let displacement = shadow * coefficients.shadow_amplitude
                 + middle * coefficients.midtone_amplitude
                 + highlight * coefficients.highlight_amplitude;
@@ -207,6 +213,46 @@ mod tests {
                 .sum();
             assert!((sum - 1.0).abs() < 2e-3);
         }
+    }
+
+    #[test]
+    fn authored_zone_thresholds_change_the_partition_and_output() {
+        for (midtone, highlight) in [(0.2, 0.5), (0.35, 0.7), (0.5, 0.9)] {
+            for luma in [0.0, midtone, highlight, 1.0] {
+                let sum: f32 = zone_weights(luma, midtone, highlight).iter().sum();
+                assert!(
+                    (sum - 1.0).abs() < 2e-3,
+                    "mid {midtone} high {highlight} luma {luma}: {sum}"
+                );
+            }
+        }
+        let image = ImageBuf::from_data(
+            8,
+            8,
+            (0..8 * 8 * 3)
+                .map(|index| from_f32(0.15 + (index % 17) as f32 / 25.0))
+                .collect(),
+        );
+        let base = ExposureGrainParams {
+            auto_size: false,
+            absolute_size_px: 1.5,
+            seed: 3,
+            color_variation: 0.0,
+            ..Default::default()
+        };
+        let default = apply_cpu(&image, base);
+        let shifted = apply_cpu(
+            &image,
+            ExposureGrainParams {
+                midtone_threshold: 0.25,
+                highlight_threshold: 0.6,
+                ..base
+            },
+        );
+        assert_ne!(
+            default.data, shifted.data,
+            "authored thresholds must move the zone partition"
+        );
     }
 
     #[test]

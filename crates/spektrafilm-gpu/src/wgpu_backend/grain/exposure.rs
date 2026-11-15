@@ -14,6 +14,7 @@ struct ShaderParams {
     dims: [u32; 4],
     coeff: [f32; 4],
     shape: [f32; 4],
+    zone: [f32; 4],
     page: [u32; 4],
 }
 
@@ -61,6 +62,8 @@ fn validate(params: &ExposureGrainGpuParams) -> Result<(), String> {
         params.highlights,
         params.push,
         params.color_variation,
+        params.midtone_threshold,
+        params.highlight_threshold,
         params.render_scale,
     ]
     .iter()
@@ -68,7 +71,17 @@ fn validate(params: &ExposureGrainGpuParams) -> Result<(), String> {
         || params.format_mm <= 0.0
         || params.render_scale <= 0.0
     {
-        return Err("grain_exposure: controls must be finite and size/format positive".into());
+        return Err(
+            "grain_exposure: controls must be finite and size/format must be positive".into(),
+        );
+    }
+    if params.midtone_threshold <= 0.0
+        || params.highlight_threshold > 1.0
+        || params.midtone_threshold >= params.highlight_threshold
+    {
+        return Err(
+            "grain_exposure: zone thresholds must satisfy 0 < midtone < highlight <= 1".into(),
+        );
     }
     Ok(())
 }
@@ -176,6 +189,12 @@ impl WgpuBackend {
                     coefficients.size_high,
                     coefficients.colorvar,
                     coefficients.size_low,
+                ],
+                zone: [
+                    params.midtone_threshold,
+                    params.highlight_threshold,
+                    0.0,
+                    0.0,
                 ],
                 page: [(page_index * page_pixels) as u32, 0, 0, 0],
             };
@@ -406,6 +425,12 @@ pub(in crate::wgpu_backend) fn build_grain_exposure_state(
                     coefficients.colorvar,
                     coefficients.size_low,
                 ],
+                zone: [
+                    params.midtone_threshold,
+                    params.highlight_threshold,
+                    0.0,
+                    0.0,
+                ],
                 page: [first, 0, 0, 0],
             },
         );
@@ -470,11 +495,15 @@ mod tests {
         // Exercise both the monochrome scalar path (colorvar 0, CPU `noise`) and
         // the chroma path (colorvar 60, `noise_rgb`), so the CPU mono branch stays
         // parity-tested against the device's always-`noise_rgb` evaluation.
-        for color_variation in [0.0f32, 60.0] {
+        for (color_variation, midtone_threshold, highlight_threshold) in
+            [(0.0f32, 0.424_672_42, 0.849_344_85), (60.0, 0.3, 0.7)]
+        {
             let cpu_params = ExposureGrainParams {
                 auto_size: false,
                 absolute_size_px: 0.5,
                 color_variation,
+                midtone_threshold,
+                highlight_threshold,
                 seed: 7,
                 ..Default::default()
             };
@@ -490,6 +519,8 @@ mod tests {
                 highlights: cpu_params.highlights,
                 push: cpu_params.push,
                 color_variation: cpu_params.color_variation,
+                midtone_threshold: cpu_params.midtone_threshold,
+                highlight_threshold: cpu_params.highlight_threshold,
                 seed: cpu_params.seed,
                 render_scale: cpu_params.render_scale,
             };
@@ -523,6 +554,8 @@ mod tests {
             highlights: 30.0,
             push: 0.0,
             color_variation: 50.0,
+            midtone_threshold: 0.424_672_42,
+            highlight_threshold: 0.849_344_85,
             seed: 11,
             render_scale: 1.0,
         };

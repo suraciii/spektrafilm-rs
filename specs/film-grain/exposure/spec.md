@@ -36,7 +36,11 @@ Zero MUST reproduce the frozen monochrome scalar field exactly. Nonzero values M
 
 The per-zone amplitude is `0.4 * colorvar` for shadow and midtone and `0.8 * colorvar` for highlight. The law is recovered from the Exposure X7 binary.
 
-The midtone and highlight thresholds are engine constants. The midtone threshold MUST be `0.424672424793243` and the highlight threshold MUST be `0.849344849586487`.
+The midtone and highlight thresholds are controls. `midtone_threshold` MUST be greater than 0 and default to `0.424672424793243`. `highlight_threshold` MUST be greater than `midtone_threshold` and at most 1, MUST default to `0.849344849586487`, and invalid ordering MUST be rejected before rendering.
+
+The threshold defaults preserve the reconstructed zone partition.
+
+`seed` MUST be an integer from 0 to 2147483647 and default to 0. It is an authored offset added to the shared `random_seed`; zero keeps the render seed unchanged.
 
 The Rec.709 appearance luma is an authored SpektraFilm choice. The frozen scalar reference does not establish vendor channel weights. The three channel fields MUST read consecutive gradient-table slots at the same lattice corner.
 
@@ -95,7 +99,7 @@ Each channel MUST be clamped to the encoded range. The pixel-format flags rotate
 
 The random field MUST use the reconstructed minstd permutation and gradient-noise tables. The three spectral tables MUST share one phase draw and one shuffle index per entry, with T1 and T2 identical and T3 carrying the same components swapped at half amplitude. The same input, seed, parameters, dimensions, and executor MUST produce the same realization.
 
-The seed is the shared `random_seed`; Exposure's additional run counter MUST NOT introduce a second phase input. The shared 64-bit seed MUST be reduced to the reference's nonnegative 31-bit domain by taking its low 31 bits and clamping to `0x7ffffffe`; reference vectors MUST use a seed in that domain.
+The effective seed is the shared `random_seed` plus the authored `seed`, reduced to the reference's nonnegative 31-bit domain by taking its low 31 bits and clamping to `0x7ffffffe`. The default `seed = 0` MUST reproduce the shared seed exactly. Reference vectors MUST identify the effective seed.
 
 ## Geometry and execution
 

@@ -103,6 +103,39 @@ fn param_numeric_capped<T: egui::emath::Numeric>(
     changed
 }
 
+/// `param_numeric` whose effective minimum is additionally raised at
+/// `min_floor`; the Exposure zone thresholds keep their declared order.
+fn param_numeric_floored<T: egui::emath::Numeric>(
+    ui: &mut Ui,
+    label: &str,
+    value: &mut T,
+    path: &str,
+    min_floor: f64,
+    tooltip: &str,
+) -> bool {
+    if !super::row_path_matches(ui.ctx(), path) {
+        return false;
+    }
+    let _identity = super::row_identity(ui.ctx(), path);
+    let (min, max, step, decimals) = editor_range_for(path);
+    let changed = numeric(
+        ui,
+        label,
+        value,
+        min.max(min_floor),
+        max,
+        step,
+        decimals,
+        tooltip,
+        crate::numeric::unit_suffix(path),
+        false,
+    );
+    if changed {
+        super::record_edited_path(ui.ctx(), path);
+    }
+    changed
+}
+
 pub(super) fn fotufilm_sublayer_shares(
     ui: &mut Ui,
     shares: &mut [f64; 4],
@@ -667,13 +700,21 @@ fn engine_controls(
                         resolved.resolution_factor,
                         "Resolution component of the post-scan Procedural appearance algorithm; this does not set scanner lens resolution."
                     );
-                    changed |= number!(
+                    changed |= control(
                         ui,
                         params,
                         filter,
-                        procedural_resolution_type,
                         "Resolution Type",
-                        "Post-scan Procedural appearance resolution method: 0 = Optical Resolution; 1 = Fast Blur. This does not change scanner readout optics."
+                        "film_render.grain.procedural_resolution_type",
+                        |ui, params| {
+                            enum_choice(
+                                ui,
+                                "Resolution Type",
+                                &mut params.film_render.grain.procedural_resolution_type,
+                                &[(0, "Optical"), (1, "Fast")],
+                                "Post-scan Procedural appearance resolution method. It does not change scanner readout optics.",
+                            )
+                        },
                     );
                     changed |= number!(
                         ui,
@@ -889,8 +930,8 @@ fn engine_controls(
                 params,
                 filter,
                 exposure.size,
-                "Grain size (px)",
-                "Exposure grain size at the 1920x1080 reference; the effective sampling scale grows with output resolution."
+                "Grain size (relative)",
+                "Relative grain scale: the effective size is derived from the output short edge and the selected film format, then increased by Push. It is not a fixed pixel size."
             );
             changed |= control(
                 ui,
@@ -980,7 +1021,53 @@ fn engine_controls(
                         filter,
                         exposure.push,
                         "Push (relative)",
-                        "Additional Exposure grain amplitude added to the resolved zone amounts."
+                        "Exposure push response: scales grain size by 1 + 0.4*push/3, raises every zone gain by 0.2*push/3, and raises roughness_effective by 0.3*push/3. Express it in Exposure push units, not exposure stops."
+                    );
+                    changed |= control(
+                        ui,
+                        params,
+                        filter,
+                        "Midtone threshold",
+                        "film_render.grain.exposure.midtone_threshold",
+                        |ui, params| {
+                            let exposure = &mut params.film_render.grain.exposure;
+                            let max = (exposure.highlight_threshold - 0.0001).max(0.0001);
+                            param_numeric_capped(
+                                ui,
+                                "Midtone threshold",
+                                &mut exposure.midtone_threshold,
+                                "film_render.grain.exposure.midtone_threshold",
+                                max,
+                                "Display-luma boundary between the shadow and midtone zones; it must stay below the highlight threshold.",
+                            )
+                        },
+                    );
+                    changed |= control(
+                        ui,
+                        params,
+                        filter,
+                        "Highlight threshold",
+                        "film_render.grain.exposure.highlight_threshold",
+                        |ui, params| {
+                            let exposure = &mut params.film_render.grain.exposure;
+                            let min = (exposure.midtone_threshold + 0.0001).min(1.0);
+                            param_numeric_floored(
+                                ui,
+                                "Highlight threshold",
+                                &mut exposure.highlight_threshold,
+                                "film_render.grain.exposure.highlight_threshold",
+                                min,
+                                "Display-luma boundary between the midtone and highlight zones; it must stay above the midtone threshold.",
+                            )
+                        },
+                    );
+                    changed |= number!(
+                        ui,
+                        params,
+                        filter,
+                        exposure.seed,
+                        "Random seed",
+                        "Authored offset added to the shared render seed. Zero uses the render seed unchanged; nonzero values select another deterministic Exposure realization."
                     );
                     changed |= number!(
                         ui,
@@ -1462,7 +1549,12 @@ mod tests {
         );
         harness.state_mut().query = "resolution type".into();
         harness.run();
-        assert!(harness.get_by_label("Resolution Type").node().is_disabled());
+        assert!(
+            harness
+                .get_by_role_and_label(egui::accesskit::Role::ComboBox, "Resolution Type")
+                .node()
+                .is_disabled()
+        );
         harness.state_mut().query = "film type".into();
         harness.run();
         let mut metadata = harness.query_all_by_label("Film Type");
@@ -1511,6 +1603,13 @@ mod tests {
                 .node()
                 .is_disabled()
         );
+        assert!(harness.query_by_label("Grain size (px)").is_none());
+        assert!(
+            !harness
+                .get_by_label("Grain size (relative)")
+                .node()
+                .is_disabled()
+        );
         assert!(
             !harness
                 .get_by_role_and_label(egui::accesskit::Role::ComboBox, "Film format")
@@ -1538,9 +1637,23 @@ mod tests {
         harness.press_key_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
         harness.get_by_label("Roughness (%)").type_text("35");
         harness.run();
+        for (label, text) in [
+            ("Midtone threshold", "0.3"),
+            ("Highlight threshold", "0.7"),
+            ("Random seed", "42"),
+        ] {
+            harness.get_by_label(label).focus();
+            harness.run();
+            harness.press_key_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+            harness.get_by_label(label).type_text(text);
+            harness.run();
+        }
         let edited = harness.state().params.film_render.grain.clone();
         assert_eq!(edited.exposure.strength, 64.0);
         assert_eq!(edited.exposure.roughness, 35.0);
+        assert_eq!(edited.exposure.midtone_threshold, 0.3);
+        assert_eq!(edited.exposure.highlight_threshold, 0.7);
+        assert_eq!(edited.exposure.seed, 42);
         assert_eq!(edited.exposure.absolute_size_px, 2.25);
         assert_eq!(edited.exposure.format, ExposureGrainFormat::ThirtyFive);
         assert_eq!(edited.engine, GrainEngine::Exposure);
@@ -1649,6 +1762,9 @@ mod tests {
             highlights: 44.0,
             push: 1.5,
             color_variation: 30.0,
+            midtone_threshold: 0.3,
+            highlight_threshold: 0.7,
+            seed: 42,
         };
         let document = serde_json::to_value(&params).unwrap();
         assert_eq!(

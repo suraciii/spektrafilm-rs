@@ -980,7 +980,11 @@ fn procedural_named_amount_custom_and_noise_follow_effective_controls() {
             .is_disabled()
     );
     click(h, "Procedural Advanced");
-    assert!(!h.get_by_label("Resolution Type").node().is_disabled());
+    assert!(
+        !h.get_by_role_and_label(egui::accesskit::Role::ComboBox, "Resolution Type")
+            .node()
+            .is_disabled()
+    );
     assert!(!h.get_by_label("Phase timer").node().is_disabled());
     assert!(!h.get_by_label("Shadows (%)").node().is_disabled());
     assert!(!h.get_by_label("Film resolution (%)").node().is_disabled());
@@ -996,7 +1000,7 @@ fn procedural_named_amount_custom_and_noise_follow_effective_controls() {
         "Amount stays an independent override"
     );
     edit(h, "Film resolution (%)", "88");
-    edit(h, "Resolution Type", "0");
+    choose(h, "Resolution Type", "Optical");
     edit(h, "Shadows (%)", "42");
     choose(h, "Processing Mode", "Noise");
     assert_eq!(
@@ -1019,7 +1023,12 @@ fn procedural_named_amount_custom_and_noise_follow_effective_controls() {
         ),
     ] {
         reveal_control(h, path);
-        assert!(h.get_by_label(label).node().is_disabled());
+        let nodes: Vec<_> = h.query_all_by_label(label).collect();
+        assert!(!nodes.is_empty(), "{label}");
+        assert!(
+            nodes.iter().all(|node| node.node().is_disabled()),
+            "{label}"
+        );
         assert_eq!(h.state().params.film_render.grain, noise);
     }
     open_grain(h);

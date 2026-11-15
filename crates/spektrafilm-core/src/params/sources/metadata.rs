@@ -388,6 +388,8 @@ fn unit(path: &str) -> Option<&'static str> {
         })
     } else if path == "film_render.grain.exposure.absolute_size_px" {
         Some("px")
+    } else if path.ends_with(".seed") {
+        None
     } else if path.starts_with("film_render.grain.exposure.") {
         Some("dimensionless")
     } else if path.ends_with("_ev") {

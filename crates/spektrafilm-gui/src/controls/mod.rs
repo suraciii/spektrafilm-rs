@@ -486,7 +486,9 @@ fn sub_section_summary(title: &str) -> Option<&'static str> {
         }
         "Procedural Advanced" => Some("Zone amounts, chroma, film resolution, phase timer"),
         "Fotufilm Advanced" => Some("RMS density, cloud radius, layers, shares, fog"),
-        "Exposure Advanced" => Some("Roughness, zone amounts, push, color variation"),
+        "Exposure Advanced" => {
+            Some("Roughness, zone amounts, thresholds, seed, push, color variation")
+        }
         _ => None,
     })
 }
