@@ -498,11 +498,14 @@ fn key(label: &str) -> Option<&'static str> {
         "Dye reversal" => Some("controls.grain.dye_reversal"),
         "Grain strength (×)" => Some("controls.grain.dye_strength"),
         "Grain scale (×)" => Some("controls.grain.dye_scale"),
-        "Grain size (px)" => Some("controls.grain.grain_size"),
+        "Grain size (relative)" => Some("controls.grain.grain_size"),
         "Automatic size" => Some("controls.grain.automatic_size"),
         "Film format" => Some("controls.grain.film_format"),
         "Absolute size (px)" => Some("controls.grain.absolute_size_px"),
         "Roughness (%)" => Some("controls.grain.roughness"),
+        "Midtone threshold" => Some("controls.grain.midtone_threshold"),
+        "Highlight threshold" => Some("controls.grain.highlight_threshold"),
+        "Random seed" => Some("controls.grain.random_seed"),
         "Push (relative)" => Some("controls.grain.push"),
         "Color variation (%)" => Some("controls.grain.color_variation"),
         "35mm" => Some("controls.grain.format_35mm"),
@@ -699,7 +702,7 @@ fn key(label: &str) -> Option<&'static str> {
         "Overall Exposure grain amplitude in encoded RGB; post-scan appearance, not material formation." => {
             Some("controls.grain.exposure_strength_help")
         }
-        "Exposure grain size at the 1920x1080 reference; the effective sampling scale grows with output resolution." => {
+        "Relative grain scale: the effective size is derived from the output short edge and the selected film format, then increased by Push. It is not a fixed pixel size." => {
             Some("controls.grain.exposure_size_help")
         }
         "Derive the grain size from the film format; off reveals the absolute size in pixels." => {
@@ -721,7 +724,16 @@ fn key(label: &str) -> Option<&'static str> {
         "Exposure grain amplitude in the highlights." => {
             Some("controls.grain.exposure_highlights_help")
         }
-        "Additional Exposure grain amplitude added to the resolved zone amounts." => {
+        "Display-luma boundary between the shadow and midtone zones; it must stay below the highlight threshold." => {
+            Some("controls.grain.midtone_threshold_help")
+        }
+        "Display-luma boundary between the midtone and highlight zones; it must stay above the midtone threshold." => {
+            Some("controls.grain.highlight_threshold_help")
+        }
+        "Authored offset added to the shared render seed. Zero uses the render seed unchanged; nonzero values select another deterministic Exposure realization." => {
+            Some("controls.grain.random_seed_help")
+        }
+        "Exposure push response: scales grain size by 1 + 0.4*push/3, raises every zone gain by 0.2*push/3, and raises roughness_effective by 0.3*push/3. Express it in Exposure push units, not exposure stops." => {
             Some("controls.grain.push_help")
         }
         "Per-channel grain decorrelation; zero keeps the grain monochrome." => {
@@ -1048,7 +1060,7 @@ fn key(label: &str) -> Option<&'static str> {
             Some("controls.grain.particle_scale_sublayers_help")
         }
         "Post-blur sigma." => Some("controls.grain.blur_help"),
-        "Post-scan Procedural appearance resolution method: 0 = Optical Resolution; 1 = Fast Blur. This does not change scanner readout optics." => {
+        "Post-scan Procedural appearance resolution method. It does not change scanner readout optics." => {
             Some("controls.grain.resolution_type_help")
         }
         "Preflash" => Some("controls.label.preflash"),
@@ -1154,6 +1166,8 @@ fn key(label: &str) -> Option<&'static str> {
         }
         "Resident route declined: %{reason}" => Some("surfaces.diagnostics.declined"),
         "Resolution Type" => Some("controls.grain.resolution_type"),
+        "Optical" => Some("controls.grain.optical"),
+        "Fast" => Some("controls.grain.fast"),
         "Resolution component of the post-scan Procedural appearance algorithm; this does not set scanner lens resolution." => {
             Some("controls.grain.film_resolution_help")
         }
@@ -1459,7 +1473,7 @@ fn key(label: &str) -> Option<&'static str> {
         "RMS density, cloud radius, layers, shares, fog" => {
             Some("controls.grain.advanced_fotufilm_summary")
         }
-        "Roughness, zone amounts, push, color variation" => {
+        "Roughness, zone amounts, thresholds, seed, push, color variation" => {
             Some("controls.grain.advanced_exposure_summary")
         }
         "Density minimum in D: Spektra D-min and executing scanner/enlarger LUT bounds" => {
@@ -1860,6 +1874,28 @@ mod tests {
             assert_eq!(localized_for(locale, "Profile gamma"), profile);
             assert_eq!(localized_for(locale, "Morph gamma"), morph);
             assert_eq!(localized_for(locale, "Curve response"), response);
+        }
+    }
+
+    #[test]
+    fn exposure_advanced_summary_is_localized_in_both_languages() {
+        for (locale, expected) in [
+            (
+                Locale::English,
+                "Roughness, zone amounts, thresholds, seed, push, color variation",
+            ),
+            (
+                Locale::SimplifiedChinese,
+                "粗糙度、分区颗粒量、阈值、种子、推冲、色彩变化",
+            ),
+        ] {
+            assert_eq!(
+                localized_for(
+                    locale,
+                    "Roughness, zone amounts, thresholds, seed, push, color variation"
+                ),
+                expected
+            );
         }
     }
 

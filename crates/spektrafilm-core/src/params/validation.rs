@@ -248,6 +248,9 @@ pub(crate) fn leaf_numeric_bounds(path: &str) -> Option<(f64, Option<f64>)> {
         | "film_render.grain.exposure.highlights" => Some((0.0, Some(100.0))),
         "film_render.grain.exposure.push" => Some((0.0, Some(3.0))),
         "film_render.grain.exposure.color_variation" => Some((0.0, Some(100.0))),
+        "film_render.grain.exposure.midtone_threshold"
+        | "film_render.grain.exposure.highlight_threshold" => Some((0.0, Some(1.0))),
+        "film_render.grain.exposure.seed" => Some((0.0, Some(2_147_483_647.0))),
         "film_render.grain.dye_support_um" | "film_render.grain.dye_event_area_um2" => {
             Some((0.0, None))
         }
@@ -306,6 +309,8 @@ pub(crate) fn validate_scalar_detailed(path: &str, value: f64) -> Result<(), Val
             path,
             "film_render.grain.dye_support_um"
                 | "film_render.grain.dye_event_area_um2"
+                | "film_render.grain.exposure.midtone_threshold"
+                | "film_render.grain.exposure.highlight_threshold"
                 | "io.input_gamut_compress.hull_detail"
         );
     if !value.is_finite() {

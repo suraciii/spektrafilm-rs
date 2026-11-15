@@ -12,7 +12,7 @@ The reconstruction does not claim pixel parity with Exposure X7 or its presets. 
 
 The selected engine resolves its own nested controls before rendering. The default engine remains Dye. An omitted engine MUST NOT be rewritten to Exposure.
 
-The source-preset values used for defaults are the reconstructed Regular Grain 100 percent values. The fixed zone thresholds are those default thresholds; vendor presets that varied the threshold keys are outside this contract.
+The source-preset values used for defaults are the reconstructed Regular Grain 100 percent values. The zone thresholds are authored controls whose defaults are those source-preset thresholds; they preserve the reconstructed partition. The authored seed offset defaults to zero and therefore preserves the shared render seed's phase.
 
 The format constants are engine values; they do not read `camera.film_format_mm`. The product control ranges include every observed factory value; they are authoring bounds, not vendor calibration.
 
@@ -20,13 +20,13 @@ Automatic size MUST be resolved from the actual output dimensions. A full-frame 
 
 The effective size and amplitude are image-dimension dependent. Prepared tables depend on the seed and the effective frequency size, not on image pixels.
 
-A change to seed, automatic-size mode, size controls, format, render scale, or push MUST invalidate prepared tables. A pure strength change MUST NOT require table regeneration.
+A change to seed, automatic-size mode, size controls, format, render scale, or push MUST invalidate prepared tables. A pure strength change MUST NOT require table regeneration. Zone threshold changes MUST NOT invalidate prepared tables; they reweight the existing field.
 
 ## Noise construction
 
 The scalar field uses the frozen 516-entry spectral tables and two 8192-entry permutation tables.
 
-The minstd state advances with Schrage's recurrence. The shared 64-bit seed is reduced to the reference domain by taking its low 31 bits and clamping to `0x7ffffffe`; the constructor adds one and advances once.
+The minstd state advances with Schrage's recurrence. The effective 64-bit seed, the shared render seed plus the authored Exposure seed offset, is reduced to the reference domain by taking its low 31 bits and clamping to `0x7ffffffe`; the constructor adds one and advances once.
 
 Table phase draws use the canonical unit value; shuffle indices use the integer remainder. The spectral shuffle uses bound `515` (`N - 1`), and the permutation shuffle uses bound `8192`; this off-by-one is part of the frozen reference.
 

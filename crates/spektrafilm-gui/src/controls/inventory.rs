@@ -1646,7 +1646,7 @@ const LABELS: &[(&str, &str)] = &[
     ("film_render.grain.dye_strength", "Grain strength (×)"),
     ("film_render.grain.dye_scale", "Grain scale (×)"),
     ("film_render.grain.exposure.strength", "Grain strength (%)"),
-    ("film_render.grain.exposure.size", "Grain size (px)"),
+    ("film_render.grain.exposure.size", "Grain size (relative)"),
     ("film_render.grain.exposure.auto_size", "Automatic size"),
     ("film_render.grain.exposure.format", "Film format"),
     (
@@ -1657,6 +1657,15 @@ const LABELS: &[(&str, &str)] = &[
     ("film_render.grain.exposure.shadows", "Shadows (%)"),
     ("film_render.grain.exposure.midtones", "Midtones (%)"),
     ("film_render.grain.exposure.highlights", "Highlights (%)"),
+    (
+        "film_render.grain.exposure.midtone_threshold",
+        "Midtone threshold",
+    ),
+    (
+        "film_render.grain.exposure.highlight_threshold",
+        "Highlight threshold",
+    ),
+    ("film_render.grain.exposure.seed", "Random seed"),
     ("film_render.grain.exposure.push", "Push (relative)"),
     (
         "film_render.grain.exposure.color_variation",

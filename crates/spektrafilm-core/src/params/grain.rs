@@ -142,6 +142,13 @@ pub struct ExposureGrainParams {
     pub highlights: f64,
     pub push: f64,
     pub color_variation: f64,
+    /// Display-luma boundary between the shadow and midtone zones.
+    pub midtone_threshold: f64,
+    /// Display-luma boundary between the midtone and highlight zones.
+    pub highlight_threshold: f64,
+    /// Authored offset added to the shared runtime seed. Zero preserves the
+    /// runtime seed's phase.
+    pub seed: u32,
 }
 
 impl Default for ExposureGrainParams {
@@ -158,6 +165,9 @@ impl Default for ExposureGrainParams {
             highlights: 30.0,
             push: 0.0,
             color_variation: 20.0,
+            midtone_threshold: 0.424_672_424_793_243,
+            highlight_threshold: 0.849_344_849_586_487,
+            seed: 0,
         }
     }
 }
@@ -178,11 +188,41 @@ impl ExposureGrainParams {
             ("highlights", self.highlights),
             ("push", self.push),
             ("color_variation", self.color_variation),
+            ("midtone_threshold", self.midtone_threshold),
+            ("highlight_threshold", self.highlight_threshold),
         ] {
             super::validation::validate_scalar_detailed(
                 &format!("film_render.grain.exposure.{name}"),
                 value,
             )?;
+        }
+        let midtone_f32 = self.midtone_threshold as f32;
+        let highlight_f32 = self.highlight_threshold as f32;
+        if midtone_f32 <= 0.0 || highlight_f32 > 1.0 || midtone_f32 >= highlight_f32 {
+            return Err(super::ValidationError::new(
+                super::ValidationReason::NumericRange,
+                "film_render.grain.exposure.highlight_threshold",
+                format!(
+                    "film_render.grain.exposure.highlight_threshold: must exceed midtone_threshold at f32 executor precision (got {highlight_f32} <= {midtone_f32})"
+                ),
+            )
+            .arg("midtone_threshold", self.midtone_threshold)
+            .arg("highlight_threshold", self.highlight_threshold)
+            .arg("midtone_f32", midtone_f32)
+            .arg("highlight_f32", highlight_f32));
+        }
+        if self.seed > 2_147_483_647 {
+            return Err(super::ValidationError::new(
+                super::ValidationReason::NumericRange,
+                "film_render.grain.exposure.seed",
+                format!(
+                    "film_render.grain.exposure.seed: value {} outside [0, 2147483647]",
+                    self.seed
+                ),
+            )
+            .arg("min", 0u32)
+            .arg("max", 2_147_483_647u32)
+            .arg("value", self.seed));
         }
         Ok(())
     }
@@ -515,7 +555,9 @@ impl GrainParams {
             highlights: self.exposure.highlights as f32,
             push: self.exposure.push as f32,
             color_variation: self.exposure.color_variation as f32,
-            seed: spektrafilm_model::grain::exposure::exposure_seed(random_seed),
+            midtone_threshold: self.exposure.midtone_threshold as f32,
+            highlight_threshold: self.exposure.highlight_threshold as f32,
+            seed: self.exposure_effective_seed(random_seed),
             render_scale: 1.0,
         }
     }
@@ -544,9 +586,19 @@ impl GrainParams {
             highlights: self.exposure.highlights as f32,
             push: self.exposure.push as f32,
             color_variation: self.exposure.color_variation as f32,
-            seed: spektrafilm_model::grain::exposure::exposure_seed(random_seed),
+            midtone_threshold: self.exposure.midtone_threshold as f32,
+            highlight_threshold: self.exposure.highlight_threshold as f32,
+            seed: self.exposure_effective_seed(random_seed),
             render_scale: 1.0,
         }
+    }
+
+    /// Author the per-engine seed offset on top of the shared runtime seed.
+    /// Default zero preserves the runtime seed's exact phase.
+    fn exposure_effective_seed(&self, random_seed: u64) -> u32 {
+        spektrafilm_model::grain::exposure::exposure_seed(
+            random_seed.wrapping_add(u64::from(self.exposure.seed)),
+        )
     }
 
     /// Custom starts with the values of the last selected preset.
@@ -665,7 +717,10 @@ mod fotufilm_tests {
                 "midtones": 80.0,
                 "highlights": 44.0,
                 "push": 2.0,
-                "color_variation": 35.0
+                "color_variation": 35.0,
+                "midtone_threshold": 0.31,
+                "highlight_threshold": 0.72,
+                "seed": 91
             }
         });
         let parsed: GrainParams = serde_json::from_value(source.clone()).unwrap();
@@ -697,6 +752,45 @@ mod fotufilm_tests {
         assert!(params.validate().is_ok());
         params.strength = 150.1;
         assert!(params.validate().is_err());
+    }
+
+    #[test]
+    fn exposure_threshold_order_and_seed_offset_are_authoritative() {
+        let mut params = GrainParams::default();
+        params.exposure.midtone_threshold = 0.6;
+        params.exposure.highlight_threshold = 0.5;
+        assert!(params.exposure.validate().is_err());
+        params.exposure.highlight_threshold = 0.6;
+        assert!(params.exposure.validate().is_err());
+        params.exposure.midtone_threshold = 0.0;
+        params.exposure.highlight_threshold = 0.7;
+        assert!(params.exposure.validate().is_err());
+        params.exposure.midtone_threshold = 0.3;
+        assert!(params.exposure.validate().is_ok());
+        params.exposure.highlight_threshold = 0.300_000_000_000_000_04;
+        assert!(
+            params.exposure.validate().is_err(),
+            "an f64-ordered pair that collapses at f32 must be rejected"
+        );
+        params.exposure.midtone_threshold = 1e-300;
+        params.exposure.highlight_threshold = 0.3;
+        assert!(
+            params.exposure.validate().is_err(),
+            "a positive f64 threshold that underflows to zero at f32 must be rejected"
+        );
+        params.exposure.midtone_threshold = 0.3;
+        params.exposure.highlight_threshold = 0.7;
+
+        let base = params.resolved_grain_exposure(11);
+        assert_eq!(base.midtone_threshold, 0.3);
+        assert_eq!(base.highlight_threshold, 0.7);
+        assert_eq!(base.seed, 11);
+        params.exposure.seed = 2_147_483_648;
+        assert!(params.exposure.validate().is_err());
+        params.exposure.seed = 5;
+        let offset = params.resolved_grain_exposure(11);
+        assert_eq!(offset.seed, 16);
+        assert_eq!(params.gpu_params_exposure(11).seed, 16);
     }
 
     #[test]

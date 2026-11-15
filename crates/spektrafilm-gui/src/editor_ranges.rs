@@ -106,6 +106,9 @@ pub static ALL_PATHS: &[&str] = &[
     "film_render.grain.exposure.shadows",
     "film_render.grain.exposure.midtones",
     "film_render.grain.exposure.highlights",
+    "film_render.grain.exposure.midtone_threshold",
+    "film_render.grain.exposure.highlight_threshold",
+    "film_render.grain.exposure.seed",
     "film_render.grain.exposure.push",
     "film_render.grain.exposure.color_variation",
     "film_render.dir_couplers.amount",
@@ -323,6 +326,9 @@ pub fn editor_range(path: &str) -> Option<EditorRange> {
         "film_render.grain.exposure.shadows" => Some((0.0, 100.0, 1.0, 1)),
         "film_render.grain.exposure.midtones" => Some((0.0, 100.0, 1.0, 1)),
         "film_render.grain.exposure.highlights" => Some((0.0, 100.0, 1.0, 1)),
+        "film_render.grain.exposure.midtone_threshold"
+        | "film_render.grain.exposure.highlight_threshold" => Some((0.0001, 1.0, 0.0001, 4)),
+        "film_render.grain.exposure.seed" => Some((0.0, 2_147_483_647.0, 1.0, 0)),
         "film_render.grain.exposure.push" => Some((0.0, 3.0, 0.05, 2)),
         "film_render.grain.exposure.color_variation" => Some((0.0, 100.0, 1.0, 1)),
 

@@ -184,11 +184,13 @@ Controls live in `film_render.grain.exposure`:
 - `size` (0.25–4.5, default 1) sets the relative grain scale.
 - `auto_size` (default `true`) derives the absolute grain size from `format` and the actual output dimensions. Setting it to `false` uses `absolute_size_px` (0.5–64, default 1.5).
 - `format` chooses `35mm`, `medium_format`, or `large_format` for automatic sizing.
-- `roughness`, `shadows`, `midtones`, and `highlights` (each 0–100) set the roughness S curve and zone partition.
-- `push` (0–3, default 0) applies the reconstructed push response.
+- `roughness`, `shadows`, `midtones`, and `highlights` (each 0–100) set the roughness S curve and zone amplitudes.
+- `midtone_threshold` (default 0.424672424793243) and `highlight_threshold` (default 0.849344849586487) set the display-luma zone boundaries. Each is greater than 0 and at most 1, and the highlight threshold must exceed the midtone threshold.
+- `push` (0–3, default 0) applies the reconstructed push response to size, zone gain, and roughness.
 - `color_variation` (0–100, default 20) controls per-channel grain decorrelation; zero keeps the grain monochrome.
+- `seed` (0–2147483647, default 0) is an authored offset added to the shared render seed.
 
-The shared `random_seed` drives the reconstruction; Exposure adds no second phase input. CPU and GPU use the reconstructed minstd permutation and gradient-noise tables, with deterministic repeatability at the same seed and declared dimensions. The GPU path runs the complete Exposure stage on the selected device and does not claim pixel parity with Exposure X7 or its presets. Color Variation is a reconstructed per-channel decorrelation control, not a vendor channel-parity claim.
+The shared `random_seed` plus `seed` drives the reconstruction. A zero `seed` uses the shared render seed unchanged. CPU and GPU use the reconstructed minstd permutation and gradient-noise tables, with deterministic repeatability at the same effective seed and declared dimensions. The GPU path runs the complete Exposure stage on the selected device and does not claim pixel parity with Exposure X7 or its presets. Color Variation is a reconstructed per-channel decorrelation control, not a vendor channel-parity claim.
 
 ## See also
 

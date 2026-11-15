@@ -197,6 +197,10 @@ pub struct ExposureGrainGpuParams {
     pub highlights: f32,
     pub push: f32,
     pub color_variation: f32,
+    /// Display-luma boundary between the shadow and midtone zones.
+    pub midtone_threshold: f32,
+    /// Display-luma boundary between the midtone and highlight zones.
+    pub highlight_threshold: f32,
     /// Already reduced to the reference's nonnegative 31-bit domain.
     pub seed: u32,
     pub render_scale: f32,

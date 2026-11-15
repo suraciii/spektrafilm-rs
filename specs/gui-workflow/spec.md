@@ -186,7 +186,7 @@ Spektra MUST hide Dye-only RMS strength. Composite and sublayer controls MUST fo
 
 Missing profile layer data MUST NOT imply a composite fallback while sublayers are requested. An unsupported request MUST retain an explicit reason and the control that permits an explicit correction.
 
-Exposure Grain MUST expose strength, size, automatic size, format, absolute size, roughness, shadows, midtones, highlights, push, and color variation. Automatic size MUST hide absolute size while active.
+Exposure Grain MUST expose strength, size, automatic size, format, absolute size, roughness, shadows, midtones, highlights, midtone threshold, highlight threshold, push, color variation, and seed. Automatic size MUST hide absolute size while active. The zone thresholds MUST remain ordered and the size control MUST be presented as a relative scale, not a fixed pixel size.
 
 Fotufilm Film MUST preserve the constrained sublayer-share editor and read-only fourth remainder. An unsupported material selection MUST state its reason without changing the requested material or engine.
 
