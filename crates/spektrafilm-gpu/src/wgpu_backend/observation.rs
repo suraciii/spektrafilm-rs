@@ -13,6 +13,7 @@ pub(super) struct ObservedDevice {
     pub operation: Option<Arc<resources::OperationState>>,
     pub context: ObservationContext,
     pub batch: Option<Arc<Mutex<BatchState>>>,
+    pub faults: Arc<crate::DeviceFaults>,
 }
 impl Deref for ObservedDevice {
     type Target = wgpu::Device;
@@ -26,6 +27,7 @@ pub(super) struct ObservedQueue {
     pub resources: Arc<resources::DeviceResources>,
     pub operation: Option<Arc<resources::OperationState>>,
     pub context: ObservationContext,
+    pub faults: Arc<crate::DeviceFaults>,
 }
 impl Deref for ObservedQueue {
     type Target = wgpu::Queue;
@@ -194,12 +196,14 @@ impl WgpuBackend {
                     operation: self.device.operation.clone(),
                     context: context.clone(),
                     batch: state.clone(),
+                    faults: self.device.faults.clone(),
                 },
                 ObservedQueue {
                     raw: self.queue.raw.clone(),
                     resources: self.queue.resources.clone(),
                     operation: self.queue.operation.clone(),
                     context: context.clone(),
+                    faults: self.queue.faults.clone(),
                 },
             ),
             device: ObservedDevice {
@@ -208,17 +212,20 @@ impl WgpuBackend {
                 operation: self.device.operation.clone(),
                 context: context.clone(),
                 batch: state.clone(),
+                faults: self.device.faults.clone(),
             },
             queue: ObservedQueue {
                 raw: self.queue.raw.clone(),
                 resources: self.queue.resources.clone(),
                 operation: self.queue.operation.clone(),
                 context,
+                faults: self.queue.faults.clone(),
             },
             pipeline_cache: self.pipeline_cache.clone(),
             scan_cache: self.scan_cache.clone(),
             name: self.name.clone(),
             adapter: self.adapter.clone(),
+            capabilities: self.capabilities.clone(),
             explicit: self.explicit,
             backend_id: self.backend_id,
             cancellation: self.cancellation.clone(),
@@ -287,6 +294,14 @@ fn upload_category(d: &wgpu::util::BufferInitDescriptor<'_>) -> UploadCategory {
     }
 }
 impl ObservedDevice {
+    /// `Err` when wgpu has reported a device failure. Callers that would
+    /// otherwise reach a wgpu fatal path (`poll`, `get_mapped_range`) or
+    /// construct resources on an invalid device check this first. A lost
+    /// device keeps reporting the cause; an ordinary error reports once.
+    pub(super) fn check_device(&self) -> Result<(), String> {
+        self.faults.check()
+    }
+
     fn resource<T>(&self, create: impl FnOnce() -> T) -> T {
         let start = self.context.enabled().then(Instant::now);
         let result = create();
@@ -461,6 +476,10 @@ impl ObservedDevice {
     }
 }
 impl ObservedQueue {
+    pub(super) fn check_device(&self) -> Result<(), String> {
+        self.faults.check()
+    }
+
     pub fn write_buffer(&self, b: &wgpu::Buffer, offset: u64, data: &[u8]) {
         let start = self.context.enabled().then(Instant::now);
         self.raw.write_buffer(b, offset, data);
@@ -495,6 +514,7 @@ impl ObservedQueue {
         commands: impl IntoIterator<Item = ObservedCommand>,
         cancellation: Option<&Arc<AtomicBool>>,
     ) -> Result<wgpu::SubmissionIndex, String> {
+        self.check_device()?;
         // Commands carry their originating context and owner across backend derivatives.
         // Only a successful submission registers executed work or starts a map.
         let mut owners: Vec<Arc<resources::OperationState>> = Vec::new();
@@ -521,6 +541,9 @@ impl ObservedQueue {
             cancellation,
             &self.context,
         )?;
+        // A submission reports an invalid device to the error sink instead of
+        // returning it from `submit`; surface the recorded failure here.
+        self.check_device()?;
         for owner in &owners {
             owner.retain_submission(result.clone());
         }

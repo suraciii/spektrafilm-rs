@@ -177,8 +177,11 @@ impl Drop for SubmissionSlot<'_> {
             if self.raw_submit_started {
                 // A validation/error callback can unwind raw submit. Retire any
                 // work it accepted before command-origin owners unwind. An
-                // unused slot needs no device wait when cancellation wins.
-                self.resources.device.poll(wgpu::Maintain::Wait);
+                // unused slot needs no device wait when cancellation wins, and
+                // a lost device has nothing left to wait for.
+                if !self.resources.faults.lost() {
+                    self.resources.device.poll(wgpu::Maintain::Wait);
+                }
                 self.context.record_work(&WorkCounters {
                     host_wait_count: Some(1),
                     ..Default::default()
@@ -197,6 +200,9 @@ struct RetainedOwners {
 pub(super) struct DeviceResources {
     device: wgpu::Device,
     native_buffer_counter: bool,
+    /// Shared failure sink: a lost device makes `Device::poll` a wgpu fatal
+    /// path, and this cleanup poll has no caller to report to.
+    faults: Arc<crate::DeviceFaults>,
     overlap_target: u64,
     reserved: Mutex<AdmissionState>,
     released: Condvar,
@@ -207,10 +213,17 @@ pub(super) struct DeviceResources {
 }
 
 impl DeviceResources {
-    pub(super) fn new(device: wgpu::Device, native_buffer_counter: bool) -> Self {
+    /// The resource ledger shares the backend's failure sink so its cleanup
+    /// polls never enter a wgpu fatal path.
+    pub(super) fn new(
+        device: wgpu::Device,
+        native_buffer_counter: bool,
+        faults: Arc<crate::DeviceFaults>,
+    ) -> Self {
         Self {
             device,
             native_buffer_counter,
+            faults,
             overlap_target: OVERLAP_TARGET_BYTES,
             reserved: Mutex::new(AdmissionState::default()),
             released: Condvar::new(),
@@ -361,10 +374,15 @@ impl DeviceResources {
         // No application lock is held while wgpu runs map/completion callbacks.
         // Cancellation never bypasses this ownership boundary. This raw poll
         // intentionally does not publish observation batch/image readiness.
+        // A lost device makes `Device::poll` a wgpu fatal path and cannot
+        // complete the submission, so retire without waiting. An ordinary
+        // recorded error still requires the wait: its work is queued.
         let start = context.enabled().then(std::time::Instant::now);
-        self.device.poll(wgpu::Maintain::WaitForSubmissionIndex(
-            retirement.index.clone(),
-        ));
+        if !self.faults.lost() {
+            self.device.poll(wgpu::Maintain::WaitForSubmissionIndex(
+                retirement.index.clone(),
+            ));
+        }
         if let Some(start) = start {
             context.record_host_timing(
                 HostTimingKind::SubmissionWait,
@@ -542,6 +560,7 @@ impl OperationGuard {
             scan_cache: backend.scan_cache.clone(),
             name: backend.name.clone(),
             adapter: backend.adapter.clone(),
+            capabilities: backend.capabilities.clone(),
             explicit: backend.explicit,
             backend_id: backend.backend_id,
             cancellation: backend.cancellation.clone(),

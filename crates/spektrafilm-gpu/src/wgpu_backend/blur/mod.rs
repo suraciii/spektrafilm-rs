@@ -338,7 +338,9 @@ impl WgpuBackend {
             .iter()
             .map(|buffer| (self.pipe.start_readback_mapping(buffer), false))
             .collect();
+        self.device.check_device()?;
         self.device.poll(wgpu::Maintain::Wait);
+        self.device.check_device()?;
         let mut failure = None;
         for (completion, mapped) in &mut completions {
             match super::pipe::GpuPipe::readback_mapping_result(completion) {

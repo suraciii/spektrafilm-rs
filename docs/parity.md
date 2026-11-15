@@ -34,6 +34,10 @@ GUI Preview and Scan prefer GPU execution. A selected GPU operation must fail be
 
 Backend selection in a `precision-f64` binary defaults to genuine CPU f64 arithmetic. `SPEKTRAFILM_BACKEND=wgpu` explicitly requests f32 WGPU preview arithmetic. Backend initialization reports `precision=f32` and `reference=false`.
 
+The GUI persists the same three requests as **Settings → Execution → Compute backend** (`rust.backend` = `auto`, `gpu`, or `cpu`) and can restrict GPU selection to one WGPU API (`rust.gpu_api`); `SPEKTRAFILM_BACKEND` keeps precedence over the saved value. Replacing the running backend drops device-owned results of the previous device and requests a new render. A failed replacement keeps the running backend and reports the selector's reason. See [application configuration](gui.md#application-configuration).
+
+A device failure is reported as an operation error carrying the adapter identity and the driver message, not a panic; the execution surface shows the last failure and offers **Reload device**. After wgpu marks a device invalid, every later operation reports the cause until the backend is replaced. A GPU API the user names explicitly fails when it has no usable adapter instead of selecting another driver.
+
 An explicit `SPEKTRAFILM_BACKEND=wgpu` request that cannot be served — an unavailable adapter, or a build compiled without the `wgpu-backend` feature — must fail before output publication. Automatic selection without usable hardware may initially choose CPU and must report its reason. After GPU selection, either mode must fail on unsupported work or device failure without a CPU restart. An automatic CPU path is not evidence of a GPU pass.
 
 GPU-to-host mapping and completion-channel failures return operation errors. They do not trigger CPU fallback or publish partial batch results. See [readback completion](../specs/gpu-execution/design.md#readback-completion).

@@ -6,6 +6,7 @@ use spektrafilm_backend::cpu_backend::CpuBackend;
 use tempfile::TempDir;
 mod calibration;
 mod dialogs;
+mod execution;
 mod files;
 mod history_ui;
 mod i18n;

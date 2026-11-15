@@ -303,7 +303,13 @@ impl App {
                     ui.spacing_mut().item_spacing = egui::vec2(theme::SPACE_2, theme::SPACE_2);
                     // Search opens this owner without filtering its contents. A
                     // canonical target scrolls its actual response, not the header.
-                    for section in ["Session", "State and startup", "Display", "Diagnostics"] {
+                    for section in [
+                        "Session",
+                        "Execution",
+                        "State and startup",
+                        "Display",
+                        "Diagnostics",
+                    ] {
                         let reveal = self.pending_scroll.as_deref() == Some(section);
                         let canonical_target = ctx.data(|data| {
                             data.get_temp::<(String, String)>(egui::Id::new("control_focus_request"))
@@ -405,6 +411,7 @@ impl App {
                                     self.viewer.interpolation_control(ui);
                                     self.sync_display_controls();
                                 }
+                                "Execution" => self.execution_panel(ui),
                                 "Diagnostics" => self.diagnostics_panel(ui),
                                 _ => unreachable!(),
                             }
@@ -468,6 +475,153 @@ impl App {
         }
     }
 
+    /// The compute backend a user asks for and the device it claimed.
+    ///
+    /// This is the surface a GPU problem is reported from: the running
+    /// selection, its adapter identity and capabilities, and the last failure
+    /// wgpu reported are visible without a console. `SPEKTRAFILM_BACKEND` keeps
+    /// precedence and makes the controls read-only.
+    fn execution_panel(&mut self, ui: &mut egui::Ui) {
+        let context = ui.ctx().clone();
+        let ctx = &context;
+        ui.label(crate::tr!(
+            ctx,
+            "surfaces.execution.running",
+            backend = self.backend.name()
+        ));
+        if let Some(gpu) = self.gpu_selection.clone() {
+            ui.label(crate::tr!(
+                ctx,
+                "surfaces.execution.adapter",
+                api = gpu.adapter.api.as_str(),
+                name = gpu.adapter.name.as_str(),
+                kind = device_kind(ctx, gpu.adapter.device_type)
+            ));
+            ui.label(crate::tr!(
+                ctx,
+                "surfaces.execution.precision",
+                f64 = yes_no(ctx, gpu.capabilities.shader_f64),
+                int64 = yes_no(ctx, gpu.capabilities.shader_int64),
+                timestamps = yes_no(ctx, gpu.adapter.timestamp_enabled)
+            ));
+            ui.label(crate::tr!(
+                ctx,
+                "surfaces.execution.limits",
+                buffer = mib(gpu.capabilities.max_buffer_size),
+                binding = mib(u64::from(gpu.capabilities.max_storage_buffer_binding_size))
+            ));
+            if let Some(fault) = gpu.fault() {
+                // Selectable so the driver message can be copied into a report;
+                // the color marks it as an error without being a status line.
+                ui.add(
+                    egui::Label::new(
+                        egui::RichText::new(crate::tr!(
+                            ctx,
+                            "surfaces.execution.fault",
+                            detail = fault
+                        ))
+                        .color(theme::ERROR),
+                    )
+                    .selectable(true)
+                    .wrap(),
+                );
+            }
+        }
+        let environment = crate::backend::environment_value();
+        let mut choice = self.backend_choice;
+        let mut api = self.gpu_api;
+        let before = (choice, api);
+        let backend_label = crate::i18n::text(ctx, "surfaces.execution.backend").into_owned();
+        let backend_help = crate::i18n::text(ctx, "surfaces.execution.backend_help").into_owned();
+        let choices = [
+            (
+                spektrafilm_gpu::BackendChoice::Auto,
+                crate::i18n::text(ctx, "surfaces.execution.auto").into_owned(),
+            ),
+            (
+                spektrafilm_gpu::BackendChoice::Gpu,
+                crate::i18n::text(ctx, "surfaces.execution.gpu").into_owned(),
+            ),
+            (
+                spektrafilm_gpu::BackendChoice::Cpu,
+                crate::i18n::text(
+                    ctx,
+                    if cfg!(feature = "precision-f64") {
+                        "surfaces.execution.cpu_f64"
+                    } else {
+                        "surfaces.execution.cpu_f32"
+                    },
+                )
+                .into_owned(),
+            ),
+        ];
+        ui.add_enabled_ui(environment.is_none(), |ui| {
+            choice_row(
+                ui,
+                &backend_label,
+                &mut choice,
+                &choices,
+                "extras.rust.backend",
+            )
+            .on_hover_text(&backend_help);
+            let api_label = crate::i18n::text(ui.ctx(), "surfaces.execution.gpu_api").into_owned();
+            let api_help =
+                crate::i18n::text(ui.ctx(), "surfaces.execution.gpu_api_help").into_owned();
+            let api_label_key = |api: spektrafilm_gpu::GpuApi| match api {
+                spektrafilm_gpu::GpuApi::Auto => "surfaces.execution.api_auto",
+                spektrafilm_gpu::GpuApi::Vulkan => "surfaces.execution.api_vulkan",
+                spektrafilm_gpu::GpuApi::Dx12 => "surfaces.execution.api_dx12",
+                spektrafilm_gpu::GpuApi::Metal => "surfaces.execution.api_metal",
+            };
+            let api_choices: Vec<_> = spektrafilm_gpu::GpuApi::available()
+                .iter()
+                .map(|api| {
+                    (
+                        *api,
+                        crate::i18n::text(ui.ctx(), api_label_key(*api)).into_owned(),
+                    )
+                })
+                .collect();
+            if api_choices.len() > 1 {
+                choice_row(
+                    ui,
+                    &api_label,
+                    &mut api,
+                    &api_choices,
+                    "extras.rust.gpu_api",
+                )
+                .on_hover_text(&api_help);
+            }
+        });
+        // The selector mutates the bound value; the popup's own rows carry the
+        // change response, so the row compares the request before and after.
+        let changed = (choice, api) != before;
+        if let Some(value) = &environment {
+            ui.label(crate::tr!(
+                ctx,
+                "surfaces.execution.environment",
+                value = value
+            ));
+        }
+        if !crate::backend::satisfied(
+            self.backend.is_gpu(),
+            self.gpu_selection.as_ref(),
+            self.backend_choice,
+            self.gpu_api,
+        ) {
+            ui.label(crate::i18n::text(ctx, "surfaces.execution.not_applied"));
+        }
+        let reload = ui.button(crate::i18n::text(ctx, "surfaces.execution.reload"));
+        controls::locate_row(ui, "action.reload_backend", &reload);
+        let reload = reload.on_hover_text(crate::i18n::text(ctx, "surfaces.execution.reload_help"));
+        ui.small(crate::i18n::text(ctx, "surfaces.execution.session"));
+        if changed {
+            self.choose_execution(choice, api);
+        } else if reload.clicked() {
+            self.reload_execution();
+        }
+    }
+
     fn settings_parameter_controls(&mut self, ui: &mut egui::Ui, section: &str) {
         let scanned_medium_positive = self.scanned_medium_positive();
         let cache = self.section_labels.entry(section.to_owned()).or_default();
@@ -488,4 +642,77 @@ impl App {
             self.dirty_since = Some(Instant::now());
         }
     }
+}
+
+/// One labelled choice row that participates in control search. The row
+/// returns the selector response so its tooltip and locator stay on the real
+/// widget.
+fn choice_row<T: Copy + PartialEq>(
+    ui: &mut egui::Ui,
+    label: &str,
+    value: &mut T,
+    choices: &[(T, String)],
+    path: &str,
+) -> egui::Response {
+    let selected = choices
+        .iter()
+        .find(|(choice, _)| choice == value)
+        .map(|(_, label)| label.as_str())
+        .unwrap_or("");
+    let response = ui
+        .horizontal(|ui| {
+            let width = ui
+                .available_width()
+                .clamp(theme::WIDTH_COMBO_MIN, theme::WIDTH_COMBO_MAX);
+            let label_width = (ui.available_width() - width - ui.spacing().item_spacing.x).max(0.0);
+            ui.allocate_ui_with_layout(
+                egui::vec2(label_width, theme::HEIGHT_CONTROL),
+                egui::Layout::top_down(egui::Align::Min),
+                |ui| ui.label(label),
+            );
+            egui::ComboBox::from_id_salt(path)
+                .selected_text(selected)
+                .width(width)
+                .show_ui(ui, |ui| {
+                    for (choice, label) in choices {
+                        ui.selectable_value(value, *choice, label);
+                    }
+                })
+                .response
+        })
+        .inner;
+    ui.ctx().accesskit_node_builder(response.id, |node| {
+        node.set_label(label);
+    });
+    response
+}
+
+fn device_kind(
+    ctx: &egui::Context,
+    kind: spektrafilm_backend::telemetry::AdapterDeviceType,
+) -> std::borrow::Cow<'static, str> {
+    use spektrafilm_backend::telemetry::AdapterDeviceType;
+    let key = match kind {
+        AdapterDeviceType::Cpu => "surfaces.execution.device_cpu",
+        AdapterDeviceType::Integrated => "surfaces.execution.device_integrated",
+        AdapterDeviceType::Discrete => "surfaces.execution.device_discrete",
+        AdapterDeviceType::Virtual => "surfaces.execution.device_virtual",
+        AdapterDeviceType::Other => "surfaces.execution.device_other",
+    };
+    crate::i18n::text(ctx, key)
+}
+
+fn yes_no(ctx: &egui::Context, value: bool) -> std::borrow::Cow<'static, str> {
+    crate::i18n::text(
+        ctx,
+        if value {
+            "surfaces.execution.yes"
+        } else {
+            "surfaces.execution.no"
+        },
+    )
+}
+
+fn mib(bytes: u64) -> String {
+    format!("{:.0}", bytes as f64 / (1024.0 * 1024.0))
 }

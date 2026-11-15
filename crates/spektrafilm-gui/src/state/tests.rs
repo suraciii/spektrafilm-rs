@@ -1843,3 +1843,37 @@ fn cross_carrier_grain_aliases_retain_top_level_precedence_and_ownership() {
         ["film_render.grain.procedural_amount"]
     );
 }
+
+#[test]
+fn execution_preferences_round_trip_and_reject_unknown_spellings() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("state.json");
+    let mut state = GuiState::factory();
+    // Absent preferences keep automatic selection on both axes.
+    assert_eq!(state.backend_choice(), spektrafilm_gpu::BackendChoice::Auto);
+    assert_eq!(state.gpu_api(), spektrafilm_gpu::GpuApi::Auto);
+    state.set_backend_choice(spektrafilm_gpu::BackendChoice::Cpu);
+    state.set_gpu_api(spektrafilm_gpu::GpuApi::Dx12);
+    assert_eq!(state.sections["rust"]["backend"], "cpu");
+    assert_eq!(state.sections["rust"]["gpu_api"], "dx12");
+    state.save(&path).unwrap();
+    let restored = GuiState::load(&path).unwrap();
+    assert_eq!(
+        restored.backend_choice(),
+        spektrafilm_gpu::BackendChoice::Cpu
+    );
+    assert_eq!(restored.gpu_api(), spektrafilm_gpu::GpuApi::Dx12);
+
+    // A spelling this build cannot name is a state error, not a silent
+    // fallback to automatic selection.
+    for (key, value) in [("backend", "opencl"), ("gpu_api", "gl")] {
+        let mut broken = state.sections.clone();
+        broken["rust"][key] = json!(value);
+        let error = GuiState::from_value(broken)
+            .expect_err("an unknown execution preference must be rejected");
+        assert!(
+            error.to_string().contains(key),
+            "the error must name the rejected option: {error}"
+        );
+    }
+}

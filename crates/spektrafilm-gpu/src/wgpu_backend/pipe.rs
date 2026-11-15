@@ -630,8 +630,12 @@ impl GpuPipe {
         buffer: &wgpu::Buffer,
         bytes: u64,
     ) -> Result<Vec<T>, String> {
+        // `Device::poll` and `Buffer::get_mapped_range` are wgpu fatal paths: a
+        // failed device must be reported here, never reached by them.
+        self.device.check_device()?;
         let receiver = self.start_readback_mapping(buffer);
         self.device.poll(wgpu::Maintain::Wait);
+        self.device.check_device()?;
         Self::readback_mapping_result(&receiver)?;
         Ok(self.mapped_samples(buffer, bytes))
     }

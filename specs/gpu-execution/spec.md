@@ -74,6 +74,12 @@ Explicit GPU selection in an f64 build MUST still identify actual GPU precision;
 
 Existing backend flags, environment precedence, GUI selection, and recipe values MUST retain their syntax. This capability adds no backend-specific photographic parameters. Output depth MUST NOT choose computation precision.
 
+The production GUI MUST expose the backend request and a GPU API restriction as preferences saved with the GUI state. It MUST resolve them with the same selection rule as `SPEKTRAFILM_BACKEND`, and a set variable MUST retain precedence and leave the surface read-only.
+
+Changing the request MUST replace a running selection that does not serve it. A failed replacement MUST keep the running backend, MUST NOT claim a device, and MUST report the selection error. A named GPU API is a demand: an adapter for another API MUST NOT serve it.
+
+The execution surface MUST report the claimed adapter identity, its capabilities, and the last device failure. A device failure MUST reach the operation as a named error with the adapter identity and driver message, never a panic. A replaced selection MUST NOT reuse device-owned carriers minted by the previous device.
+
 Selecting a grain engine or negative conversion MUST NOT select CPU implicitly.
 
 Hardware and software WGPU adapters MUST remain distinguishable. An explicit WGPU request MAY use a software adapter for portability checks. Software execution MUST NOT satisfy hardware-GPU availability, performance, or full-platform acceptance claims.

@@ -104,6 +104,10 @@ pub struct WgpuBackend {
     pipe: GpuPipe,
     name: String,
     adapter: AdapterDescription,
+    /// Capabilities of the claimed device, reported to the frontend's execution
+    /// surface. Device selection is fixed for the lifetime of this backend; a
+    /// different device is a different backend.
+    capabilities: BackendCapabilities,
     explicit: bool,
     /// Identity of the device this backend owns, shared with every backend
     /// derived from it. Retained carriers record it so a consumer refuses a
@@ -115,12 +119,20 @@ pub struct WgpuBackend {
 #[cfg(feature = "wgpu-backend")]
 impl WgpuBackend {
     pub fn new() -> Option<Self> {
+        Self::new_with(wgpu::Backends::PRIMARY)
+    }
+
+    /// Construct on the adapter of a restricted API set. The compute backend
+    /// frontend uses this to let a user choose between the APIs one platform
+    /// exposes (for example Vulkan and DX12 on Windows) without a second
+    /// adapter-selection rule.
+    pub fn new_with(backends: wgpu::Backends) -> Option<Self> {
         #[cfg(test)]
         {
             crate::test_support::assert_device_allowed();
         }
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::PRIMARY,
+            backends,
             ..Default::default()
         });
 
@@ -228,9 +240,35 @@ impl WgpuBackend {
             "wgpu backend initialized"
         );
 
+        // Replace wgpu's fatal default handler: a lost device or a resource
+        // failure must reach the owning operation as an `Err`, and the adapter
+        // identity must travel with it (spec compute-backend §image-stage
+        // failure propagation).
+        let faults = std::sync::Arc::new(crate::DeviceFaults::new(format!(
+            "{:?} · {} ({:?})",
+            adapter_info.backend, adapter_info.name, adapter_info.device_type
+        )));
+        {
+            let sink = std::sync::Arc::clone(&faults);
+            device.on_uncaptured_error(Box::new(move |error| sink.record(error.to_string())));
+        }
+        {
+            let sink = std::sync::Arc::clone(&faults);
+            device.set_device_lost_callback(move |reason, message| {
+                sink.record_lost(format!("{reason:?}"), message)
+            });
+        }
+        let capabilities = BackendCapabilities {
+            shader_f64: device.features().contains(wgpu::Features::SHADER_F64),
+            shader_int64: device.features().contains(wgpu::Features::SHADER_INT64),
+            max_buffer_size: device.limits().max_buffer_size,
+            max_storage_buffer_binding_size: device.limits().max_storage_buffer_binding_size,
+        };
+
         let resources = std::sync::Arc::new(resources::DeviceResources::new(
             device.clone(),
             adapter_info.backend == wgpu::Backend::Vulkan,
+            std::sync::Arc::clone(&faults),
         ));
         let device = ObservedDevice {
             raw: device,
@@ -238,12 +276,14 @@ impl WgpuBackend {
             operation: None,
             context: ObservationContext::default(),
             batch: None,
+            faults: std::sync::Arc::clone(&faults),
         };
         let queue = ObservedQueue {
             raw: queue,
             resources,
             operation: None,
             context: ObservationContext::default(),
+            faults: std::sync::Arc::clone(&faults),
         };
         let pipeline_cache = std::sync::Arc::new(PipelineCache::default());
         Some(Self {
@@ -261,10 +301,25 @@ impl WgpuBackend {
             pipeline_cache,
             scan_cache: std::sync::Arc::new(scan_cache::ScanCache::default()),
             adapter: description,
+            capabilities,
             explicit: false,
             backend_id: film_chain::device_image::next_backend_id(),
             cancellation: None,
         })
+    }
+
+    /// What the claimed device can execute, for the frontend's execution
+    /// surface. Identity is `adapter_description`; this adds capability facts.
+    pub fn capabilities(&self) -> &BackendCapabilities {
+        &self.capabilities
+    }
+
+    /// Fail before starting device work when wgpu has already reported a
+    /// failure. Every choke point that crosses a device operation calls this,
+    /// so the operation reports the failure instead of constructing resources
+    /// on an invalid device.
+    pub(super) fn check_device(&self) -> Result<(), String> {
+        self.device.check_device()
     }
 
     /// Construct an explicitly requested backend
@@ -272,10 +327,21 @@ impl WgpuBackend {
     /// export "GPU" selection): capability-missing stages must fail at
     /// assembly instead of silently demoting the route to CPU.
     pub fn new_explicit() -> Option<Self> {
-        Self::new().map(|mut b| {
+        Self::new_explicit_with(wgpu::Backends::PRIMARY)
+    }
+
+    /// Explicit construction restricted to an API set (frontend GPU API choice).
+    pub fn new_explicit_with(backends: wgpu::Backends) -> Option<Self> {
+        Self::new_with(backends).map(|mut b| {
             b.explicit = true;
             b
         })
+    }
+
+    /// The device failure sink, shared with every derived backend and with the
+    /// frontend that reports the execution surface.
+    pub fn faults(&self) -> std::sync::Arc<crate::DeviceFaults> {
+        self.device.faults.clone()
     }
 
     /// Derive an explicitly requested backend sharing this backend's device,
@@ -290,12 +356,14 @@ impl WgpuBackend {
             operation: self.device.operation.clone(),
             context: self.device.context.clone(),
             batch: None,
+            faults: self.device.faults.clone(),
         };
         let queue = ObservedQueue {
             raw: self.queue.raw.clone(),
             resources: self.queue.resources.clone(),
             operation: self.queue.operation.clone(),
             context: self.queue.context.clone(),
+            faults: self.queue.faults.clone(),
         };
         Self {
             pipe: self.pipe.with_observed(device.clone(), queue.clone()),
@@ -305,6 +373,7 @@ impl WgpuBackend {
             scan_cache: std::sync::Arc::clone(&self.scan_cache),
             name: self.name.clone(),
             adapter: self.adapter.clone(),
+            capabilities: self.capabilities.clone(),
             explicit: true,
             backend_id: self.backend_id,
             cancellation: self.cancellation.clone(),
@@ -462,6 +531,7 @@ mod glare;
 #[cfg(feature = "wgpu-backend")]
 pub mod grain;
 
+pub use crate::BackendCapabilities;
 pub use spektrafilm_backend::dye_params::{DyeGpuParams, DyeReadoutGrid};
 #[cfg(feature = "wgpu-backend")]
 mod halation;

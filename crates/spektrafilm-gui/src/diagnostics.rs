@@ -33,19 +33,6 @@ pub(crate) fn color_space(value: &str) -> ColorSpaceRole {
     ColorSpaceRole::parse(value)
 }
 
-pub(crate) fn preview_backend_requested() -> BackendRequested {
-    match std::env::var("SPEKTRAFILM_BACKEND")
-        .ok()
-        .as_deref()
-        .map(str::to_ascii_lowercase)
-        .as_deref()
-    {
-        Some("cpu") => BackendRequested::Cpu,
-        Some("wgpu") => BackendRequested::Wgpu,
-        _ => BackendRequested::Auto,
-    }
-}
-
 impl Diagnostics {
     /// Publish live progress and completed reports in `directory`.
     ///

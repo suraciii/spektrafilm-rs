@@ -243,6 +243,7 @@ fn key(label: &str) -> Option<&'static str> {
             Some("controls.scanner.print_exposure_mode_help")
         }
         "Collection mode" => Some("surfaces.diagnostics.mode"),
+        "Compute backend" => Some("surfaces.execution.backend"),
         "Backend" => Some("controls.label.backend"),
         "Base" => Some("controls.base.print_section"),
         "Base density: scale and per-channel masks" => Some("surfaces.summary.print_base"),
@@ -460,6 +461,7 @@ fn key(label: &str) -> Option<&'static str> {
         }
         "Diagnostic report save error: %{error}" => Some("surfaces.status.report_error"),
         "Diagnostics" => Some("surfaces.diagnostics.title"),
+        "Reload device" => Some("surfaces.execution.reload"),
         "Dialog directory persistence error: %{error}" => Some("surfaces.status.directory_error"),
         "Digital scan sharpening after interpretation and output gamut processing: [sigma in pixels, amount]." => {
             Some("controls.scanner.unsharp_mask_help")
@@ -668,6 +670,8 @@ fn key(label: &str) -> Option<&'static str> {
             Some("controls.couplers.diffusion_tail_weight_help")
         }
         "Frame Long Edge" => Some("controls.scanner.frame_long_edge"),
+        "Execution" => Some("surfaces.settings.execution"),
+        "GPU API" => Some("surfaces.execution.gpu_api"),
         "GPU passes and measurement availability" => Some("surfaces.diagnostics.gpu"),
         "GPU timing" => Some("surfaces.diagnostics.gpu_timing"),
         "State and startup" => Some("controls.label.state_and_startup"),
