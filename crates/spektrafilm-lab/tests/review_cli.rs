@@ -26,7 +26,6 @@ fn regions_grid_writes_an_explicit_regions_document() {
         cli()
             .args([
                 "regions",
-                "grid",
                 "--id",
                 "chart",
                 "--rows",
@@ -39,8 +38,6 @@ fn regions_grid_writes_an_explicit_regions_document() {
                 "16x12",
                 "--gap",
                 "2,4",
-                "--sample",
-                "8x6",
                 "--role",
                 "color",
                 "--measurements",
@@ -54,7 +51,6 @@ fn regions_grid_writes_an_explicit_regions_document() {
             .unwrap(),
     );
     assert_eq!(value["command"], "regions");
-    assert_eq!(value["operation"], "grid");
     assert_eq!(value["region_count"], 6);
     let regions: Value = serde_json::from_slice(&fs::read(&out).unwrap()).unwrap();
     assert_eq!(regions["id"], "chart");
@@ -63,7 +59,7 @@ fn regions_grid_writes_an_explicit_regions_document() {
     assert_eq!(regions["regions"][3]["id"], "A2");
     assert_eq!(
         regions["regions"][0]["geometry"],
-        json!({"x": 14, "y": 23, "width": 8, "height": 6, "space": "render"})
+        json!({"x": 10, "y": 20, "width": 16, "height": 12, "space": "render"})
     );
     let validated = result(
         cli()
@@ -79,14 +75,15 @@ fn regions_grid_writes_an_explicit_regions_document() {
 fn regions_grid_refuses_invalid_geometry_and_existing_destinations() {
     let dir = TempDir::new().unwrap();
     let out = dir.path().join("regions.json");
+    // Zero rows is a declaration the generator cannot expand, and a refused
+    // expansion claims no destination.
     let invalid = cli()
         .args([
             "regions",
-            "grid",
             "--id",
             "chart",
             "--rows",
-            "1",
+            "0",
             "--columns",
             "1",
             "--origin",
@@ -95,10 +92,12 @@ fn regions_grid_refuses_invalid_geometry_and_existing_destinations() {
             "4x4",
             "--gap",
             "0,0",
-            "--sample",
-            "5x4",
             "--space",
             "render",
+            "--role",
+            "color",
+            "--measurements",
+            "color",
             "--out",
         ])
         .arg(&out)
@@ -111,7 +110,6 @@ fn regions_grid_refuses_invalid_geometry_and_existing_destinations() {
         cli()
             .args([
                 "regions",
-                "grid",
                 "--id",
                 "chart",
                 "--rows",
@@ -126,6 +124,10 @@ fn regions_grid_refuses_invalid_geometry_and_existing_destinations() {
                 "0,0",
                 "--space",
                 "render",
+                "--role",
+                "color",
+                "--measurements",
+                "color",
                 "--out",
             ])
             .arg(&out)
@@ -135,7 +137,6 @@ fn regions_grid_refuses_invalid_geometry_and_existing_destinations() {
     let duplicate = cli()
         .args([
             "regions",
-            "grid",
             "--id",
             "chart",
             "--rows",
@@ -150,6 +151,10 @@ fn regions_grid_refuses_invalid_geometry_and_existing_destinations() {
             "0,0",
             "--space",
             "render",
+            "--role",
+            "color",
+            "--measurements",
+            "color",
             "--out",
         ])
         .arg(&out)

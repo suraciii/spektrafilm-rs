@@ -1,9 +1,10 @@
-//! `spektrafilm-lab`: quantify delivered images, compare, and report.
+//! `spektrafilm-lab`: quantify the color science of delivered images.
 //!
-//! The lab renders nothing. It decodes delivered rasters with the measurement
-//! library's reader, runs the shared metric implementations, and publishes
-//! immutable comparison and report records. Rendering endpoints live in
-//! `spektrafilm-f64`.
+//! The lab renders nothing and presents nothing. It decodes delivered rasters
+//! with the measurement library's reader, runs the shared metric
+//! implementations, and publishes immutable analysis and comparison records.
+//! Rendering endpoints live in `spektrafilm-f64`; evaluation and presentation
+//! live in `spektrafilm-bench`.
 
 use std::path::PathBuf;
 
@@ -15,9 +16,13 @@ mod images;
 #[derive(Parser)]
 #[command(
     name = "spektrafilm-lab",
-    about = "SpektraFilm measurement instrument: analysis, comparison, and reporting at reference precision",
+    about = "SpektraFilm measurement instrument: color science of delivered images, at reference precision",
     version = concat!(env!("CARGO_PKG_VERSION"), " (research documents schema_version 1)"),
-    after_help = "Quantify two delivered image sets with `spektrafilm-lab compare --baseline A --candidate B --declaration sRGB:encoded --roi name=0,0,64,64:gray --out DIR`."
+    after_help = "Quantify one delivered image with \n  \
+                  spektrafilm-lab analyze --source IMAGE --declaration sRGB:encoded --out DIR\n\
+                  \n\
+                  Quantify how two differ, and measure noise on a flat field, with \n  \
+                  spektrafilm-lab compare --baseline A --candidate B --declaration sRGB:encoded --roi name=0,0,64,64:flat_field --out DIR"
 )]
 struct Cli {
     #[command(subcommand)]
@@ -30,11 +35,8 @@ enum Commands {
     Analyze(images::AnalyzeArgs),
     /// Quantify how two delivered image sets differ.
     Compare(images::Args),
-    /// Generate standalone measurement regions.
-    Regions {
-        #[command(subcommand)]
-        command: RegionsCommand,
-    },
+    /// Expand one finite grid declaration into explicit regions.
+    Regions(GridArgs),
     /// Print the authoritative schema for an authored or retained document.
     Schema {
         /// Document kind.
@@ -63,12 +65,6 @@ enum Commands {
     External(Vec<String>),
 }
 
-#[derive(Subcommand)]
-enum RegionsCommand {
-    /// Expand one finite grid declaration into explicit regions.
-    Grid(GridArgs),
-}
-
 #[derive(Args)]
 struct GridArgs {
     /// Regions document identity.
@@ -89,18 +85,37 @@ struct GridArgs {
     /// Gap as X,Y.
     #[arg(long, value_name = "X,Y", value_parser = parse_pair)]
     gap: [u64; 2],
-    /// Centered sample size as WIDTHxHEIGHT.
-    #[arg(long, value_name = "WIDTHxHEIGHT", value_parser = parse_size)]
-    sample: Option<[u64; 2]>,
     /// Coordinate space for generated rectangles. Required: a generator does
-    /// not decide which pixels a rectangle addresses.
+    /// not decide which pixels a rectangle addresses. `render` is what the lab
+    /// measures; the other spaces address a stage capture and belong to
+    /// `spektrafilm-bench sample`.
     #[arg(long, value_name = "SPACE")]
     space: String,
-    /// Region role.
-    #[arg(long, value_name = "ROLE", default_value = "other")]
+    /// What the generated regions are populations of. Required: a generator
+    /// does not decide what a region measures.
+    #[arg(
+        long,
+        value_name = "ROLE",
+        value_parser = [
+            "skin", "neutral", "shadow", "highlight", "color",
+            "flat_field", "texture", "edge", "other"
+        ]
+    )]
     role: String,
-    /// Measurement families, separated by commas.
-    #[arg(long, value_name = "FAMILY,...", value_delimiter = ',', action = clap::ArgAction::Append)]
+    /// Measurement families, separated by commas. Required: a generator does
+    /// not decide what is measured. A family the role cannot support measures
+    /// nothing and says so.
+    #[arg(
+        long,
+        value_name = "FAMILY,...",
+        value_delimiter = ',',
+        required = true,
+        value_parser = [
+            "numeric", "color", "tone", "flip", "grain",
+            "halation", "edge", "color_noise", "neutrality"
+        ],
+        action = clap::ArgAction::Append
+    )]
     measurements: Vec<String>,
     /// New regions document JSON file; must not exist.
     #[arg(long, value_name = "FILE")]
@@ -322,16 +337,13 @@ fn run() -> i32 {
         Commands::Validate { kind, file } => documents::normalize_path(&file)
             .and_then(|path| validate(&kind, &path))
             .map(|value| (value, 0)),
-        Commands::Regions {
-            command: RegionsCommand::Grid(args),
-        } => regions::generate_grid(
+        Commands::Regions(args) => regions::generate_grid(
             &args.id,
             args.rows,
             args.columns,
             args.origin,
             args.patch_size,
             args.gap,
-            args.sample,
             &args.space,
             &args.role,
             &args.measurements,

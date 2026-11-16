@@ -34,7 +34,7 @@ _Avoid_: Metric group, suite, category, dimension
 **Measurement**: One measured quantity: its metric identity, its availability, and either its value or the reason it does not exist.
 _Avoid_: Readout, result, statistic, row, number
 
-**Metric**: The stable identity of one measurement, such as `delta_e00.p95`. It is versioned, and a reader may cite it across records.
+**Metric**: The stable identity of one measurement, such as `delta_e00.p95`. It is versioned, and a reader can cite it across records.
 _Avoid_: Key, field, name, label
 
 **Protocol**: The materialized measurement recipe a record retains and digests, so the numbers are reproducible from the record alone. An analysis profile generates it.

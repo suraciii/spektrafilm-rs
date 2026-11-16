@@ -50,20 +50,6 @@ fn regions(root: &Path) -> PathBuf {
     path
 }
 
-fn protocol(root: &Path) -> PathBuf {
-    let path = root.join("protocol.json");
-    std::fs::write(
-        &path,
-        serde_json::to_vec(&serde_json::json!({
-            "id": "color-noise-check",
-            "measurements": ["color_noise"],
-        }))
-        .unwrap(),
-    )
-    .unwrap();
-    path
-}
-
 #[test]
 fn one_image_is_quantified_without_a_second_one() {
     let temp = tempfile::tempdir().unwrap();
@@ -75,8 +61,6 @@ fn one_image_is_quantified_without_a_second_one() {
         .arg(&source)
         .args(["--declaration", "sRGB:encoded", "--regions"])
         .arg(regions(temp.path()))
-        .arg("--protocol")
-        .arg(protocol(temp.path()))
         .arg("--out")
         .arg(&out)
         .output()
@@ -126,7 +110,6 @@ fn analysis_and_comparison_report_the_same_measurement() {
     let source = temp.path().join("v1").join("field.png");
     png(&source);
     let regions = regions(temp.path());
-    let protocol = protocol(temp.path());
     let analysis = temp.path().join("analysis");
     assert!(
         lab()
@@ -134,8 +117,6 @@ fn analysis_and_comparison_report_the_same_measurement() {
             .arg(&source)
             .args(["--declaration", "sRGB:encoded", "--regions"])
             .arg(&regions)
-            .arg("--protocol")
-            .arg(&protocol)
             .arg("--out")
             .arg(&analysis)
             .output()
@@ -152,8 +133,6 @@ fn analysis_and_comparison_report_the_same_measurement() {
             .arg(&source)
             .args(["--declaration", "sRGB:encoded", "--regions"])
             .arg(&regions)
-            .arg("--protocol")
-            .arg(&protocol)
             .arg("--out")
             .arg(&comparison)
             .output()

@@ -53,7 +53,7 @@ The supported command families have distinct endpoint roles:
 
 | Binary | Owns |
 |---|---|
-| `spektrafilm-lab` | `analyze`, `compare`, `regions grid`, `schema`, `validate` |
+| `spektrafilm-lab` | `analyze`, `compare`, `regions`, `schema`, `validate` |
 | `spektrafilm-bench` | `compare runs`, `compare readings`, `compare pairs`, `sample`, `inspect`, `report comparison`, `report photos` |
 | `spektrafilm-f64` | `target`, `fixtures`, `run suite`, `run image`, `measure run`, `experiment run`, `experiment export`, `spectral evaluate`, `fit` |
 
@@ -97,7 +97,7 @@ spektrafilm-bench compare readings --baseline DIRECTORY --candidate DIRECTORY --
 spektrafilm-bench compare pairs --run DIRECTORY --against input|reference|both --out DIRECTORY
 spektrafilm-bench inspect --comparison DIRECTORY [--case ID ...] [--region ID ...] [--metric ID ...]
 spektrafilm-bench report comparison --comparison DIRECTORY --out DIRECTORY
-spektrafilm-lab regions grid --id ID --rows N --columns N --origin X,Y --patch-size WxH --gap X,Y [--sample WxH] [--space SPACE] [--role ROLE] [--measurements FAMILY,...] --out FILE
+spektrafilm-lab regions --id ID --rows N --columns N --origin X,Y --patch-size WxH --gap X,Y --space SPACE --role ROLE --measurements FAMILY,... --out FILE
 ```
 ```text
 spektrafilm-f64 --help
@@ -186,12 +186,12 @@ The command family names are semantic, not workflow steps. `measure run` publish
 - It MUST make a non-pass evaluation produce a failing command status after the comparison has been published. Without `--gate`, a successfully published comparison MUST NOT fail solely because its evaluation is non-pass.
 - The comparison source MUST derive its views from the comparison and cited artifacts. It MUST NOT recompute metrics.
 - Its output MUST remain usable without the run directories by copying required review artifacts and retaining their provenance. An external original that cannot be redistributed MUST remain excluded from a distributable report; the report MUST identify the omission rather than substitute another image.
-- `regions grid` MUST expand one finite grid declaration into a normal `regions` document without reading an image, invoking a renderer, computing measurements, or generating HTML. It MUST validate positive dimensions, nonnegative origin and gap, checked arithmetic, sample-window containment, coordinate-space selection, role, and measurement families before publication.
+- `regions` MUST expand one finite grid declaration into a normal `regions` document without reading an image, invoking a renderer, computing measurements, or generating a page. Before publication it MUST validate dimensions, origin and gap arithmetic, the coordinate space, the role, and the families, and it MUST require the last three, because a generator decides none of them.
 - The generated document is the only input geometry consumed by later `sample`, `compare`, and run endpoints; downstream endpoints MUST NOT interpret a grid declaration.
 
 Irregular geometry MUST be authored directly as a `regions` document, or declared with `--roi` on a comparison. The lab MUST NOT replace a removed review manifest with repeated `--image`, `--pair`, or `--default-pair` options. `--roi` declares windows on one source and names no image, pair, or default.
 
-Prepared-image visual review, if provided, belongs to the benchmark product's separate command and document contract. It is not a research endpoint, is not registered as a research document kind, and is not accepted by `report comparison` or `regions grid`.
+Prepared-image visual review, if provided, belongs to the benchmark product's separate command and document contract. It is not a research endpoint, is not registered as a research document kind, and is not accepted by `report comparison` or `regions`.
 
 - `inspect` MUST validate and read a retained comparison without invoking a renderer or computing measurements. It MUST emit the retained comparison identity, execution and evaluation states, conditions, summary, failures, findings, and compact measurements.
 - The compact measurements MUST be one top-level `measurements` array in version and single-run comparisons. Rows in both modes MUST carry the same fields, except that a single-run row MUST add `pair_id` to identify its pair.
@@ -394,7 +394,7 @@ A regions document declares reading positions. One kind serves both reading doma
 - Every geometry MUST declare its coordinate space. `source` names the declared source image's pixels; `render` names a completed simulation's output pixels; native stage names are `source_pixels`, `working_pixels`, `film_frame_pixels`, `grain_aperture_pixels`, or `output_pixels`.
 - Mask paths MUST resolve relative to the document that contains them and enter the retained dependency inventory as immutable evidence.
 - Regions MAY overlap: a reading carries its own identity, and a narrower window inside a wider one is a declared intent, not a conflict. Correspondence is never inferred from equal dimensions, labels, or shared region identities.
-- `regions grid` is the only standalone geometry generator. It writes a normal `regions` document and does not read images or produce a review page.
+- `regions` is the only standalone geometry generator. It writes a normal `regions` document and does not read images or produce a review page.
 - `compare --roi` declares windows inline and materializes the same `regions` shape as its retained geometry authority. It is a declaration carrier, not a second geometry language: it names no image, pair, inventory, or default region.
 - Non-grid geometry is authored directly. A suite case, a sampling command, and a reference MAY consume the same regions shape through one validator.
 - Benchmark image-domain consumers currently accept only `source` and `render`. Native stage values require a producer mapping and are rejected there with `unsupported_coordinate_space` until one exists.

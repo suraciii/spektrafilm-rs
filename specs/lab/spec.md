@@ -159,7 +159,7 @@ A lab invocation of one of them MUST fail with `argument_syntax` naming
 spektrafilm-lab compare --baseline <FILE_OR_DIR> --candidate <FILE_OR_DIR>
   --declaration <SPACE:encoded|decoded>
   (--roi ID=X,Y,W,H[:ROLE] ... | --regions FILE)
-  [--analysis ID | --protocol FILE]
+  [--analysis ID]
   [--map-scale N]
   --out <DIR>
 ```
@@ -167,8 +167,8 @@ spektrafilm-lab compare --baseline <FILE_OR_DIR> --candidate <FILE_OR_DIR>
 `--declaration` states the color space and the transfer state of both sides.
 `--roi` and `--regions` are alternative geometry authorities.
 
-`--analysis` selects a built-in analysis profile and `--protocol` an authored
-protocol document; the two are mutually exclusive. `--map-scale` reduces
+`--analysis` selects a built-in analysis profile. The profile materializes the
+protocol the record retains, so a profile id is all a caller states. `--map-scale` reduces
 retained difference maps only.
 
 ### analyze
@@ -177,7 +177,7 @@ retained difference maps only.
 spektrafilm-lab analyze --source <FILE_OR_DIR>
   --declaration <SPACE:encoded|decoded>
   (--roi ID=X,Y,W,H[:ROLE] ... | --regions FILE)
-  [--analysis ID | --protocol FILE]
+  [--analysis ID]
   --out <DIR>
 ```
 
@@ -525,8 +525,6 @@ that the renderer's own input route produced, and `sample` reads it.
 
 Everything this document states is implemented, with four exceptions.
 
-- `regions grid` is spelled with its subcommand. This document names the
-  endpoint `regions` and leaves the leaf form to the machine interface.
 - A region is a rectangle. Mask geometry is rejected rather than re-rooted;
   reading a mask file on a delivered raster would introduce a second
   interpretation of the pixels, which the single-reader rule forbids.
