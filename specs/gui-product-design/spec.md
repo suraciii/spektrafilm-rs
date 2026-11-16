@@ -114,7 +114,7 @@ Original, Modified, and Paper back remain viewer presentations. Zoom, pan, layer
 
 The viewer MUST retain the last accepted frame while work runs. It MUST identify when that frame does not represent the current controls. A delayed result MUST NOT appear to satisfy a newer edit.
 
-Save MUST write retained output without rerendering. Export MUST capture an independent full-resolution render request. Export MUST expose format, bit depth, encoding, compression, saving color space, and backend according to the [photo-export contract](../photo-export/spec.md).
+Save MUST write retained output without rerendering. Export MUST capture an independent full-resolution render request. Export MUST expose format, bit depth, encoding, compression, and saving color space according to the [photo-export contract](../photo-export/spec.md), and MUST use the execution backend selected in Settings.
 
 Canceling its settings MUST discard the draft; canceling an active export MUST use the existing worker cancellation path.
 

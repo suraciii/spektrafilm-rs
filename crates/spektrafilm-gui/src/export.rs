@@ -736,41 +736,37 @@ impl ExportDialog {
                 // the same presentation, state, and accessible naming an
                 // inspector boolean gets. Its response keeps the row
                 // locatable by canonical path through the draft's real owner.
-                let advanced_requested = ui.ctx().data(|data| {
-                    data.get_temp::<(String, String)>(egui::Id::new("control_focus_request"))
-                })
-                .is_some_and(|(section, target)| {
-                    (section == "Export" || section == "Export options")
-                        && matches!(
-                            target.as_str(),
-                            "extras.rust.export_saving_cctf_encoding"
-                                | "extras.rust.export_backend"
-                        )
-                });
-                let advanced_id = ui.make_persistent_id("export-advanced");
-                let mut advanced =
-                    egui::collapsing_header::CollapsingState::load_with_default_open(
-                        ui.ctx(),
-                        advanced_id,
-                        false,
-                    );
-                if advanced_requested {
-                    advanced.set_open(true);
-                }
-                let advanced_label = crate::controls::localized(ui.ctx(), "Advanced");
-                let header = ui.horizontal(|ui| {
-                    if crate::controls::disclosure_header(
-                        ui,
-                        advanced_label.as_ref(),
-                        advanced.is_open(),
-                    )
-                    .clicked()
-                    {
-                        advanced.toggle(ui);
+                if draft.format == ExportFormat::Tiff {
+                    let advanced_requested = ui.ctx().data(|data| {
+                        data.get_temp::<(String, String)>(egui::Id::new("control_focus_request"))
+                    })
+                    .is_some_and(|(section, target)| {
+                        (section == "Export" || section == "Export options")
+                            && target == "extras.rust.export_saving_cctf_encoding"
+                    });
+                    let advanced_id = ui.make_persistent_id("export-advanced");
+                    let mut advanced =
+                        egui::collapsing_header::CollapsingState::load_with_default_open(
+                            ui.ctx(),
+                            advanced_id,
+                            false,
+                        );
+                    if advanced_requested {
+                        advanced.set_open(true);
                     }
-                });
-                advanced.show_body_indented(&header.response, ui, |ui| {
-                    if draft.format == ExportFormat::Tiff {
+                    let advanced_label = crate::controls::localized(ui.ctx(), "Advanced");
+                    let header = ui.horizontal(|ui| {
+                        if crate::controls::disclosure_header(
+                            ui,
+                            advanced_label.as_ref(),
+                            advanced.is_open(),
+                        )
+                        .clicked()
+                        {
+                            advanced.toggle(ui);
+                        }
+                    });
+                    advanced.show_body_indented(&header.response, ui, |ui| {
                         let cctf_help =
                             crate::i18n::text(ui.ctx(), "surfaces.export.cctf_help");
                         let encoding = controls::toggle_row(
@@ -784,17 +780,8 @@ impl ExportDialog {
                             "extras.rust.export_saving_cctf_encoding",
                             &encoding,
                         );
-                    }
-                    let cpu_label: &str = if cfg!(feature = "precision-f64") {
-                        "CPU (f64)"
-                    } else {
-                        "CPU (f32)"
-                    };
-                    enum_choice(ui, "Backend", &mut draft.backend, &[
-                        (ExportBackend::Cpu, cpu_label),
-                        (ExportBackend::Gpu, "GPU (WGPU f32)"),
-                    ], "CPU: highest precision, slower. GPU: faster, f32 precision.");
-                });
+                    });
+                }
                 draft.normalize();
                 let depth_label = match draft.depth {
                     BitDepth::Eight => "8 bit",

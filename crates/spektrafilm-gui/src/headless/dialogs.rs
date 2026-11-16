@@ -462,12 +462,6 @@ fn change_export_format(h: &mut Harness<'_, App>, next: &str) {
 
 /// Move the Export draft away from the committed baseline.
 fn edit_export_draft(h: &mut Harness<'_, App>) {
-    if h.query_by_role_and_label(egui::accesskit::Role::ComboBox, "Backend")
-        .is_none()
-    {
-        click(h, "Advanced");
-    }
-    choose(h, "Backend", export::ExportBackend::Cpu.label());
     choose(h, "Format", "PNG");
     choose(h, "Saving color space", "Display P3");
 }
@@ -781,16 +775,31 @@ fn export_advanced_locator_opens_hidden_computation_rows() {
     let mut s = session();
     let h = &mut s.harness;
     open_export_dialog(h);
+    choose(h, "Format", "TIFF");
     assert!(
         h.query_by_role_and_label(egui::accesskit::Role::ComboBox, "Backend")
+            .is_none(),
+        "Export must follow Settings instead of exposing a second backend choice"
+    );
+    assert!(
+        h.query_by_role_and_label(egui::accesskit::Role::Switch, "Apply saving CCTF encoding",)
             .is_none()
     );
-    controls::request_focus(&h.ctx, "Export options", "extras.rust.export_backend");
+    controls::request_focus(
+        &h.ctx,
+        "Export options",
+        "extras.rust.export_saving_cctf_encoding",
+    );
     h.run_steps(3);
     assert!(
-        h.query_by_role_and_label(egui::accesskit::Role::ComboBox, "Backend")
+        h.query_by_role_and_label(egui::accesskit::Role::Switch, "Apply saving CCTF encoding")
             .is_some(),
-        "a canonical locator opens Advanced and focuses Backend"
+        "a canonical locator opens Advanced and focuses the TIFF encoding switch"
+    );
+    assert!(
+        h.query_by_role_and_label(egui::accesskit::Role::ComboBox, "Backend")
+            .is_none(),
+        "Advanced must not reintroduce a separate export backend"
     );
 }
 

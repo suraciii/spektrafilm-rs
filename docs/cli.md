@@ -95,7 +95,7 @@ GPU selection does not disable grain, optical effects, or requested spectral LUT
 Software Vulkan adapters can also execute the WGPU path.
 Speed depends on the adapter and active effects.
 
-An explicit GPU request — `--backend gpu`, `SPEKTRAFILM_BACKEND=wgpu`, or the GUI Export "GPU" selection — requires the complete computation scope on WGPU or failure before publication. Automatic selection may initially choose CPU when no usable hardware GPU is available and must report that selection and its reason. After GPU selection, unsupported work or device failure must fail the operation without CPU fences or a CPU restart. `SPEKTRAFILM_BACKEND=cpu` stays an explicit CPU request.
+An explicit GPU request — `--backend gpu`, `SPEKTRAFILM_BACKEND=wgpu`, or the GUI **Settings → Execution** GPU selection — requires the complete computation scope on WGPU or failure before publication. Automatic selection may initially choose CPU when no usable hardware GPU is available and must report that selection and its reason. After GPU selection, unsupported work or device failure must fail the operation without CPU fences or a CPU restart. `SPEKTRAFILM_BACKEND=cpu` stays an explicit CPU request.
 
 ## Runtime edits and dry runs
 

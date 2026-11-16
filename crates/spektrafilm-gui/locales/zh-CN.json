@@ -1100,7 +1100,6 @@
   "surfaces.profiles.time_help": "黑白显影时间系列的显影时间：选择用于渲染的密度曲线及片基加灰雾。“—”使用具有代表性的中间显影；单曲线及彩色材料忽略此项。",
   "surfaces.profiles.film_help": "要模拟的胶片材料",
   "surfaces.profiles.print_help": "要模拟的印相材料",
-  "surfaces.export.backend_help": "CPU：最高精度，较慢。GPU：更快，f32 精度。",
   "surfaces.export.format_help": "JPEG：适合网页的有损 8-bit。PNG：无损 8-bit。TIFF：8/16-bit 整数或 32-bit 浮点，ZIP 或不压缩。EXR：适合合成的 16/32-bit 线性格式。",
   "surfaces.export.depth_help": "选择位深。",
   "surfaces.export.subsampling_help": "选择 JPEG 色度子采样。",

@@ -264,7 +264,7 @@ def export_controls(driver):
     # header-opened dialog. Its draft must not mutate committed preferences.
     before = saved(driver, driver.root, 'before-export-draft')
     driver.click('Export', header=True)
-    for label in ('Backend', 'Format', 'Bit depth', 'Saving color space', 'Export file', 'Cancel'):
+    for label in ('Format', 'Bit depth', 'Saving color space', 'Export file', 'Cancel'):
         require(driver.locate(label), f'Export dialog lacks {label}')
     driver.snap('header-export-options')
     driver.choose('Format', 'PNG')
@@ -284,9 +284,10 @@ def export_image(driver, path):
     driver.exported(path, 'independent-export-completed')
     report = driver.last_export_report
     state = saved(driver, driver.root, 'independent-export-state')
-    expected = 'gpu' if driver.export_backend_requested == 'wgpu' else 'cpu'
+    selected = report['execution']['backend_selected']
+    expected = 'gpu' if selected == 'wgpu' else 'cpu'
     require(state['rust']['export_backend'] == expected,
-            f'Independent export did not retain its selected backend: {expected}')
+            f'Independent export did not retain its execution backend: {expected}')
     driver.records.append({'independent_export_operation': report['operation'],
                            'export_backend': expected})
 
