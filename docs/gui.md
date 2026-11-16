@@ -89,7 +89,7 @@ Input color-space and CCTF controls reinterpret the accepted samples; they do no
 
 ### Film Format
 
-**Input and capture → Camera → Capture setup → Film Format** offers **35mm**, **120**, **4×5**, and **Custom**. These choices set the physical film scale for grain and other film effects. They do not crop, resize, or change the image's aspect ratio.
+**Input and capture → Camera → Film Format** offers **35mm**, **120**, **4×5**, and **Custom**. These choices set the physical film scale for grain and other film effects. They do not crop, resize, or change the image's aspect ratio.
 
 **35mm** uses the standard 135-format exposed-image long edge of 36 mm; **120** uses a representative 56 mm; **4×5** uses 127 mm. **120** does not select a square crop. **Custom** reveals **Frame Long Edge** for precise millimeter input. Opening Custom alone does not change the photograph. A preset selection hides the manual edge; only Custom shows it.
 
@@ -141,9 +141,9 @@ The left browser owns whole-look presets. Modules do not have section-preset men
 - The readout illuminant is a fixed product value selected by the material category, not an editable scanner lamp.
 - **Lens blur (readout optics)** and **Unsharp mask (digital sharpening)** describe readout optics and digital sharpening. On a route without scanning, these controls remain readable but inactive, with stored values retained.
 
-**Scan Profile** changes the appearance of an eligible completed positive after negative conversion and before Tone & Color. It offers **No Scan Profile** and **SP-3000 Inspired**. It reports **Custom** when the stored curve does not equal a built-in entry. **Strength** blends the profile with the unmodified positive in linear light: 0% is no effect and 100% is the full profile. The built-in is an appearance starting point fitted on lab-scan comparisons, not a scanner calibration or device profile.
+**Scan Profile** changes the appearance of an eligible completed positive after negative conversion and before Tone & Color. It offers **No Scan Profile** and **SP-3000 Inspired**. It reports **Edited** when the stored curve does not equal a built-in entry; **Edited** is a derived status, not a menu choice. **Strength** blends the profile with the unmodified positive in linear light: 0% is no effect and 100% is the full profile. The built-in is an appearance starting point fitted on lab-scan comparisons, not a scanner calibration or device profile.
 
-**Scan Profile → Curve** shows the three channel curves. Drag a knot to reshape the tone, click empty space to add a knot, and press Delete to remove the selected knot; each channel holds up to nine. **Channel** selects one curve or all three, and an all-channel edit moves every channel by the same amount, adding the missing knot to a channel that has room. A curve edit makes the selection custom, and the result travels in a look preset. The module is read-only for a profile that carries a matrix. **Hold Scan Profile comparison** shows the same frame without the scan appearance while the primary mouse button or focused Space is held; stored controls, Tone & Color, and saved output are unchanged. See [Scan Profile](../specs/scan-profile/spec.md).
+**Scan Profile → Curve** shows the three channel curves. Drag a knot to reshape the tone, click empty space to add a knot, and press Delete to remove the selected knot; each channel holds up to nine. **Channel** selects one curve or all three, and an all-channel edit moves every channel by the same amount, adding the missing knot to a channel that has room. A curve edit makes the selection **Edited**, and the result travels in a look preset. The module is read-only for a profile that carries a matrix. **Hold Scan Profile comparison** shows the same frame without the scan appearance while the primary mouse button or focused Space is held; stored controls, Tone & Color, and saved output are unchanged. See [Scan Profile](../specs/scan-profile/spec.md).
 
 **Scan → Scanner → Negative conversion (exposure domain)** is a collapsed specialized group containing operator correction. It adjusts the finished positive before the fixed tone curve. **Finished exposure** is ±3 EV (positive is brighter); **Warmth** and **Green–magenta tint** are ±1 differential EV (positive is warmer and more magenta respectively, not Kelvin); **Conversion contrast** spans 0.5–2 (1 is unchanged). These are editor ranges, not document limits. The controls are disabled outside eligible negative-to-positive scans, with their stored values retained. This exposure-domain operation is distinct from Tone & Color and its values are not converted to tone and color adjustments.
 
@@ -375,7 +375,7 @@ Export's saving color space and transfer encoding are independent of Save's curr
 | TIFF | 8-bit, 16-bit, or 32-bit float | Optional CCTF | ZIP or none |
 | OpenEXR | 16-bit half or 32-bit float | Linear | ZIP |
 
-Fixed rows show their effective values and reasons instead of one-choice selectors. JPEG quality and subsampling remain readable with their stored preferences in other formats, marked not applicable. Every row remains locatable by its canonical control identity; locating it does not alter the draft.
+Fixed rows show their effective values and reasons instead of one-choice selectors. JPEG quality and subsampling are summarized in one inactive note in other formats; locating either canonical row reveals its stored value and inapplicability reason. Every row remains locatable by its canonical control identity; locating it does not alter the draft.
 
 The header reports Export status and elapsed time. **Cancel export** discards the result before publication through the active worker's cancellation path. Cancellation may wait for active computation or writing.
 

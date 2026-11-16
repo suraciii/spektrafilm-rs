@@ -384,6 +384,7 @@ fn key(label: &str) -> Option<&'static str> {
         }
         "Current look: %{group} / %{name} • %{state}" => Some("surfaces.presets.current"),
         "Custom" => Some("controls.scanner.custom"),
+        "Edited" => Some("controls.scanner.edited"),
         "Scan Profile" => Some("controls.scanner.scan_profile"),
         "Scan Profile Strength" => Some("controls.scanner.scan_profile_strength"),
         "No Scan Profile" => Some("controls.scanner.scan_profile_none"),

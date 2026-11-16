@@ -108,7 +108,7 @@ The Scan stage MUST provide one Scan Profile module. Its placement follows [stag
 
 The module MUST provide one selector. It MUST provide one strength control. It MUST provide the curve editor for a `curve` transform.
 
-The selector MUST list `No Scan Profile`, built-in entries, and `custom` when effective.
+The selector MUST display `Edited` when `custom` is effective. `Edited` is a derived status, not a selectable menu row.
 
 The module MUST NOT include a second library, import/export surface, or profile management.
 
@@ -164,6 +164,6 @@ Invalid transform or strength values MUST leave accepted controls, history, sour
 
 ## Acceptance
 
-1. Every eligible positive exposes `No Scan Profile`, `SP-3000 Inspired`, and `Custom` for editable curves; selecting one changes only scan-stage appearance.
+1. Every eligible positive exposes `No Scan Profile` and `SP-3000 Inspired` for editable curves; an edited curve displays `Edited`, and selecting a built-in changes only scan-stage appearance.
 2. Curve and matrix-curve results preserve the resolved transform and strength without a Scan Profile asset dependency or catalog reinterpretation.
 3. Inactive routes preserve stored values; user reuse uses look or section presets; no second Scan Profile library or import surface exists.

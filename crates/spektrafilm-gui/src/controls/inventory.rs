@@ -296,10 +296,20 @@ pub(crate) fn inventory() -> &'static [ControlEntry] {
                     text.push_str(&super::localized_for(locale, "Frame Long Edge"));
                 }
                 if entry.path.starts_with("scanner.scan_profile") {
-                    for label in ["No Scan Profile", "SP-3000 Inspired", "SP3000", "Custom"] {
+                    for label in [
+                        "No Scan Profile",
+                        "SP-3000 Inspired",
+                        "SP3000",
+                        "Edited",
+                        "Custom",
+                    ] {
                         text.push('\n');
                         text.push_str(&super::localized_for(locale, label));
                     }
+                }
+                if entry.path.starts_with("film_render.halation") {
+                    text.push('\n');
+                    text.push_str(&super::localized_for(locale, "Edited"));
                 }
                 if entry.path == "preference.interface_language" {
                     text.push_str("\nGeneral\n通用\nLanguage\n语言");

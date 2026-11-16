@@ -2158,6 +2158,13 @@ fn halation_feature_profile_retains_other_controls_and_rgb_edit_undo_restores_id
         feature_profiles::effective_name(family, &h.state().params),
         "custom"
     );
+    assert_eq!(
+        h.get_by_role_and_label(egui::accesskit::Role::ComboBox, "Halation Profiles")
+            .value()
+            .as_deref(),
+        Some("Edited"),
+        "an edited Halation profile is named Edited, not a dead Custom choice"
+    );
     click(h, "Undo");
     assert_eq!(
         h.state().params,

@@ -242,12 +242,15 @@ pub(crate) fn sections(
             if filter_matches(filter, "auto exposure") {
                 flags.runtime_changed |= applicable_control(ui, params, "camera.auto_exposure", |ui, params| toggle(ui, "auto exposure", &mut params.camera.auto_exposure, "Use the auto-exposure feature of the virtual camera."));
             }
+            // Film Format is a camera-wide physical scale, not an auto-exposure
+            // sub-setting. Keep it at the module's first level so the Capture
+            // setup disclosure cannot hide it.
+            if filter_matches(filter, "Film Format") {
+                flags.runtime_changed |= film_format(ui, &mut params.camera.film_format_mm, filter.active());
+            }
             section_header(ui, filter, "Capture setup", |ui, filter| {
             if !capture_active {
                 ui.label(localized(ui.ctx(), "Capture illuminant inactive on this route; stored values are retained."));
-            }
-            if filter_matches(filter, "Film Format") {
-                flags.runtime_changed |= film_format(ui, &mut params.camera.film_format_mm, filter.active());
             }
             if filter_matches(filter, "auto exposure method") {
                 flags.runtime_changed |= applicable_control(ui, params, "camera.auto_exposure_method", |ui, params| choice_tip(ui, "auto exposure method", &mut params.camera.auto_exposure_method, &["center_weighted", "matrix", "multi_zone", "partial", "highlight_weighted", "median", "average"], "Metering method used by the virtual camera's auto-exposure."));
@@ -695,23 +698,18 @@ fn scan_profile_controls(
             let entries: Vec<(&str, &str)> = vec![
                 ("none", "No Scan Profile"),
                 ("sp3000_inspired", "SP-3000 Inspired"),
-                ("custom", "Custom"),
             ];
-            let visible_entries: Vec<(&str, &str)> = if current_name
-                == spektrafilm_core::params::ScanProfileName::Custom
-            {
-                entries
-            } else {
-                entries
-                    .into_iter()
-                    .filter(|(name, _)| *name != "custom")
-                    .collect()
-            };
-            if widgets::choice_tip_entries(
+            // `custom` is the stored effective state, not a choice: editing a
+            // built-in produces an edited look. Name that state in the closed
+            // field and leave the menu with only the real selectable profiles.
+            let edited = current_name == spektrafilm_core::params::ScanProfileName::Custom;
+            let edited_label = edited.then(|| localized(ui.ctx(), "Edited"));
+            if widgets::choice_tip_entries_displaying(
                 ui,
                 "Scan Profile",
                 &mut selected,
-                visible_entries.into_iter(),
+                entries.into_iter(),
+                edited_label.as_deref(),
                 "Change how the scan looks after negative conversion and before Tone & Color. Film and negative conversion stay the same.",
             ) {
                 flags.runtime_changed = true;
@@ -724,7 +722,7 @@ fn scan_profile_controls(
                     "none" => {
                         params.scanner.scan_profile.set_bypass();
                     }
-                    _ => {} // "custom" is an effective state; no action.
+                    _ => {}
                 }
             }
         }
