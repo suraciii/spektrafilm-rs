@@ -10,7 +10,7 @@ else.
 It answers three questions:
 
 - What are the color-science properties of this image, in a declared domain,
-  unit, and population?
+  unit, and region?
 - How do two images differ in color error, neutrality, tone response, and
   color noise?
 - What retained evidence supports those numbers?
@@ -32,7 +32,7 @@ the lab and receives one structured comparison.
 - This document owns the lab product boundary: its scope, its laws, its
   concepts, its command surface, and the record each command publishes.
 - The [measurement protocol](../benchmark/metrics/spec.md) owns metric
-  meaning, domains, estimators, populations, and availability reasons. This
+  meaning, domains, estimators, regions, and availability reasons. This
   document names the families it selects; it does not define a second
   implementation of one.
 - The [research machine interface](../instrument/spec.md) owns the shared
@@ -73,25 +73,31 @@ other capabilities. A question that needs one of them is not a lab question.
 
 ## Concepts
 
-Six nouns. A caller holds all six at once, so a seventh displaces one.
+Six nouns. Every one appears in what a caller declares or in what the record
+publishes, so a seventh displaces one. The definitions are in [the context
+glossary](CONTEXT.md); this section states only what each one is for.
+
+A comparison's second source is a source in the candidate role, not a seventh
+concept: color error is relative, and an analysis that has no second source
+records that it has none instead of inventing one.
 
 | Concept | What it is | Why it is irreducible |
 |---|---|---|
 | **Source** | One delivered image set, read under one declaration | The thing being measured |
 | **Declaration** | Color space and transfer state of the samples | Law 5 forbids inferring it, so the caller states it |
-| **Region** | A named rectangle in delivered-pixel space, with a role | Color science is measured on populations, never on a whole image by accident |
+| **Region** | A named rectangle in delivered-pixel space, with a role | Color science is measured on regions, never on a whole image by accident |
 | **Family** | One of the measurement families below | Decides what is computed |
+| **Measurement** | One measured quantity, available or unavailable with a reason | The number the record exists to publish |
 | **Record** | The structured result of one invocation | The product |
-| **Reference** | A second source, or declared reference values | Color error is relative; absolute analysis does not need one |
 
 ### Region roles
 
 A region carries one role. The roles are the closed set the regions document
 already declares; this product introduces no second vocabulary.
 
-A family whose meaning depends on the population's structure is measured only
+A family whose meaning depends on the region's structure is measured only
 on a role that has that structure. A family that measures a declared quantity
-is meaningful on any population and is not restricted.
+is meaningful on any region and is not restricted.
 
 | Role | Population | Structure required by |
 |---|---|---|
@@ -209,8 +215,8 @@ declaration. Both sides of one `compare` declare the same color space and
 transfer state, because one invocation measures one pipeline. A caller that
 measures different declarations runs two invocations.
 
-Pairing is by exact file name, never by order, modification time, or
-similarity. Equal dimensions MUST NOT establish correspondence.
+A comparison pairs cases by exact file name, never by order, modification
+time, or similarity. Equal dimensions MUST NOT establish correspondence.
 
 A name present on one side only MUST fail as `incompatible_image_sets`, naming
 both lists. A regular file that is not a container the lab measures MUST fail,
@@ -222,8 +228,8 @@ lossy one as `lossy_container`; both name the file.
 
 ### Case identity
 
-One pair is one case. The case identity is the file stem in the directory form
-and the baseline file stem in the single-pair form.
+One case is one file name. The case identity is the file stem in the directory
+form and the baseline file stem in the single-file form.
 
 The identity MUST match `^[A-Za-z0-9][A-Za-z0-9_.-]*$`. A stem that does not
 match MUST fail as `invalid_case_identity`, naming the file. The lab MUST NOT
@@ -247,7 +253,7 @@ lab was handed.
 `--regions FILE` declares the geometry as an authored regions document. The two
 are mutually exclusive, because one measurement has one geometry authority.
 
-Omitting both measures the implicit `full_image` population only.
+Omitting both measures the implicit `full_image` region only.
 
 `X` and `Y` are nonnegative integers; `W` and `H` are positive integers.
 `ROLE` defaults to `other`. `full_image` is reserved and MUST be rejected as an
@@ -269,7 +275,7 @@ record stays readable.
 |---|---|
 | `numeric` | native-channel statistics: maximum absolute difference, RMSE, out-of-range fractions |
 | `color` | ΔE00 and ΔL\*, Δa\*, Δb\*, ΔC\* against a reference |
-| `neutrality` | the gray-axis cast: mean a\* and b\*, the chroma radius of the population, and its lightness spread |
+| `neutrality` | the gray-axis cast: mean a\* and b\*, the chroma radius of the region's samples, and its lightness spread |
 | `tone` | density or log-exposure response over a declared ramp: slope, shoulder, toe, Dmax |
 | `color_noise` | luminance deviation, chroma RMS, the ratio between them, channel correlation, and the radial centroid of the residual |
 | `edge` | spatial frequency response and MTF50 |
@@ -353,11 +359,11 @@ domain explicitly is the exception and records the encoding it measured.
 ### Images
 
 Each side MUST decode once and retain one display copy per case as an
-artifact. The measurement population keeps the decoded floating samples; the
+artifact. The measurement region keeps the decoded floating samples; the
 display copy exists only for inspection, and a reader of the record MUST NOT
 be given it as a measurement input.
 
-The two sides of one pair MUST have identical dimensions. A mismatch MUST fail
+The two sides of one case MUST have identical dimensions. A mismatch MUST fail
 as `dimension_mismatch`, naming the case. The lab MUST NOT resize, crop, or
 pad to reconcile a mismatch.
 
@@ -390,15 +396,15 @@ Every record MUST carry:
 - the materialized protocol and its digest, so the numbers are reproducible
   from the record alone;
 - the regions document and its role per region;
-- for every measurement: its domain, unit, population, estimator, and sample
+- for every measurement: its domain, unit, region, estimator, and sample
   count, beside the value;
 - every unavailable value with its stable reason;
 - the identity of the comparison as a digest over its inputs and its protocol.
 
 The record MUST NOT carry a value that the measurement did not compute. A
 quantity that does not exist for a source is unavailable with the reason it
-does not exist. In particular, a delivered image is one realisation and has no
-seed population: the record MUST carry no seed field, and MUST NOT publish a
+does not exist. A delivered image is one realisation, so it has no seed
+population: the record MUST carry no seed field, and MUST NOT publish a
 cross-realisation statistic.
 
 A record MUST be byte-identical for identical inputs and protocol on every
@@ -408,8 +414,8 @@ duration.
 
 A retained comparison MAY be reduced for inspection: difference maps MAY be
 box-averaged by `--map-scale N` to one sample per `N × N` block. Measurement
-populations MUST NOT be sampled, reduced, or aggregated by it, every scalar
-MUST be computed from the full-resolution population, and the scale MUST be
+regions MUST NOT be sampled, reduced, or aggregated by it, every scalar MUST
+be computed from the full-resolution region, and the scale MUST be
 recorded.
 
 ## Use cases
@@ -445,9 +451,9 @@ reason, which is the noise floor of the pipeline that produced the files.
    and whose every unavailable row carries a reason.
 6. A record that would need a seed carries none, and no value is written as
    zero to stand for a quantity that does not exist.
-7. A pair whose dimensions differ fails with `dimension_mismatch` and writes
+7. A case whose dimensions differ fails with `dimension_mismatch` and writes
    no record.
-8. A directory pair with a name on one side only fails with
+8. A directory comparison with a name on one side only fails with
    `incompatible_image_sets` and names both lists.
 9. Two file names that reduce to one case identity fail with
    `duplicate_case_identity`.
