@@ -1600,6 +1600,21 @@ fn american_reminiscence_browser_restores_virtual_exposure_and_render() {
         h.query_by_label("American Reminiscence • applied")
             .is_some()
     );
+    let card = h
+        .get_by_label("American Reminiscence • applied")
+        .raw_bounds()
+        .unwrap();
+    // The active state must stay inside the card's bottom border. This caught
+    // the compact-card height estimate clipping the descenders.
+    let state = h
+        .query_all_by_label("applied")
+        .filter_map(|node| node.raw_bounds())
+        .find(|rect| rect.x0 >= card.x0 && rect.y0 >= card.y0)
+        .expect("active preset state label");
+    assert!(
+        state.y1 <= card.y1,
+        "active preset state is clipped: {state:?} vs card {card:?}"
+    );
     let initial = preview(h);
     assert!(edge_difference(&initial) > 0.01);
     reveal_control(h, "camera.exposure_compensation_ev");
