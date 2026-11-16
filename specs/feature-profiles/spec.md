@@ -83,9 +83,11 @@ The catalog exposes existing Halation parameter arrays without claiming a separa
 
 ### GUI
 
-Each applicable feature section MUST provide one profile selector. The selector MUST list built-in entries in stable order and `custom`. It MUST NOT repeat numeric controls owned by the same section.
+Each applicable feature section MUST provide one profile selector. The selector MUST list built-in entries in stable order and MUST NOT repeat numeric controls owned by the same section.
 
-The selector MUST show `custom` when current scoped values do not equal a built-in entry. It MUST NOT store a second persisted identity for Halation. Procedural retains its existing `procedural_profile` wire field.
+Procedural MAY list `custom` as an explicit operation. A derived family such as Halation MUST display `Edited` instead of offering `custom` as a row.
+
+The selector MUST display `Edited` when a derived family's scoped values do not equal a built-in entry, while the serialized effective name remains `custom`. It MUST NOT store a second persisted identity for Halation. Procedural retains its existing `procedural_profile` wire field.
 
 Selecting an entry MUST update only its profile scope and mark the feature section as edited. The selector MUST explain inactive route or engine conditions without clearing stored values.
 

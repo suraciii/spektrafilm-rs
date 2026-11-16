@@ -396,6 +396,9 @@ pub(crate) struct ExportDialog {
     /// Set while a freshly opened draft still owes the dialog its one-time
     /// initial focus. A canonical locator request owns the focus instead.
     initial_focus: bool,
+    /// A locator request for an inactive JPEG row opens the individual
+    /// read-only rows for the rest of this dialog session.
+    codec_revealed: bool,
 }
 impl ExportDialog {
     pub(crate) fn open(&mut self, committed: &ExportOptions) {
@@ -403,6 +406,7 @@ impl ExportDialog {
         draft.normalize();
         self.draft = Some(draft);
         self.initial_focus = true;
+        self.codec_revealed = false;
     }
     pub(crate) fn is_open(&self) -> bool {
         self.draft.is_some()
@@ -576,28 +580,62 @@ impl ExportDialog {
                     ], "Select the JPEG chroma subsampling.");
                 } else {
                     // Another container's codec options are not editable here.
-                    // The two canonical targets keep ordinary read-only rows:
-                    // retained value, visible applicability reason, and the
-                    // same locator behavior as every other Export option.
-                    let inactive = crate::i18n::text(ui.ctx(), "surfaces.export.jpeg_inactive");
+                    // One quiet summary keeps the stored preferences visible
+                    // without repeating the same reason twice. A canonical
+                    // locator request still reveals the individual rows with
+                    // their values and the inapplicability reason.
                     let subsampling_value = match draft.jpeg_subsampling {
                         JpegSubsampling::Yuv444 => "4:4:4",
                         JpegSubsampling::Yuv420 => "4:2:0",
                     };
-                    readonly_row(
-                        ui,
-                        "JPEG quality",
-                        &draft.jpeg_quality.to_string(),
-                        inactive.as_ref(),
-                        "extras.rust.jpeg_quality",
-                    );
-                    readonly_row(
-                        ui,
-                        "JPEG subsampling",
-                        subsampling_value,
-                        inactive.as_ref(),
-                        "extras.rust.jpeg_subsampling",
-                    );
+                    let codec_located = ui.ctx().data(|data| {
+                        data.get_temp::<(String, String)>(egui::Id::new(
+                            "control_focus_request",
+                        ))
+                    })
+                    .is_some_and(|(section, target)| {
+                        (section == "Export" || section == "Export options")
+                            && (target == "extras.rust.jpeg_quality"
+                                || target == "extras.rust.jpeg_subsampling"
+                                || target.eq_ignore_ascii_case("JPEG quality")
+                                || target.eq_ignore_ascii_case("JPEG subsampling"))
+                    });
+                    if codec_located {
+                        self.codec_revealed = true;
+                    }
+                    if self.codec_revealed {
+                        let inactive =
+                            crate::i18n::text(ui.ctx(), "surfaces.export.jpeg_inactive");
+                        readonly_row(
+                            ui,
+                            "JPEG quality",
+                            &draft.jpeg_quality.to_string(),
+                            inactive.as_ref(),
+                            "extras.rust.jpeg_quality",
+                        );
+                        readonly_row(
+                            ui,
+                            "JPEG subsampling",
+                            subsampling_value,
+                            inactive.as_ref(),
+                            "extras.rust.jpeg_subsampling",
+                        );
+                    } else {
+                        let summary = crate::tr!(
+                            ui.ctx(),
+                            "surfaces.export.jpeg_inactive_summary",
+                            quality = draft.jpeg_quality,
+                            subsampling = subsampling_value
+                        );
+                        ui.add(
+                            egui::Label::new(
+                                egui::RichText::new(summary)
+                                    .size(theme::SIZE_HINT)
+                                    .color(theme::FG_SECONDARY),
+                            )
+                            .wrap(),
+                        );
+                    }
                 }
                 match draft.format {
                     ExportFormat::Tiff => {

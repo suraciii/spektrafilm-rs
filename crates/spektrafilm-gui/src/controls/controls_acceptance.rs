@@ -94,16 +94,18 @@ fn camera_rows_follow_route_without_losing_values() {
     params.camera.exposure_compensation_ev = 0.75;
     params.camera.film_format_mm = 50.0;
     let mut harness = Harness::new_ui_state(camera, params);
-    assert!(harness.query_by_label("Frame Long Edge").is_none());
-    harness.get_by_label("Capture setup").simulate_click();
-    harness.run();
+    // Film Format is a Camera-level row, not a child of the collapsed Capture
+    // setup disclosure. A custom edge is visible and editable immediately.
+    assert!(harness.query_by_label("Frame Long Edge").is_some());
+    assert!(!harness.get_by_label("Frame Long Edge").node().is_disabled());
     assert!(
         harness
             .get_by_label("Exposure compensation")
             .node()
             .is_disabled()
     );
-    assert!(!harness.get_by_label("Frame Long Edge").node().is_disabled());
+    harness.get_by_label("Capture setup").simulate_click();
+    harness.run();
     harness.state_mut().workflow.route = "input > film > scan".into();
     harness.run();
     assert!(
@@ -568,6 +570,22 @@ fn dragging_a_scan_profile_knot_edits_every_channel_and_reports_custom() {
     };
     let mut harness = Harness::new_ui_state(scan_profile, params);
     harness.run();
+    assert_eq!(
+        harness
+            .get_by_role_and_label(egui::accesskit::Role::ComboBox, "Scan Profile")
+            .value()
+            .as_deref(),
+        Some("Edited"),
+        "a derived scan-profile state is named Edited, not offered as a Custom choice"
+    );
+    harness
+        .get_by_role_and_label(egui::accesskit::Role::ComboBox, "Scan Profile")
+        .simulate_click();
+    harness.run();
+    assert!(
+        harness.query_by_label("Custom").is_none(),
+        "Edited is a derived status, not a selectable Custom row"
+    );
     let plot = harness
         .get_all_by_label("Scan Profile Curve")
         .map(|node| node.raw_bounds().expect("plot bounds"))

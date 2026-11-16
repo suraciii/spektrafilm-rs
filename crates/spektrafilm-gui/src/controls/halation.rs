@@ -26,17 +26,18 @@ pub(crate) fn sections(
                 }
                 let current = feature_profiles::effective_name(FeatureProfileFamily::Halation, params);
                 let mut selected = current.to_owned();
-                let custom = current == "custom";
+                let edited = current == "custom";
+                let edited_label = edited.then(|| localized(ui.ctx(), "Edited"));
                 let choices = feature_profiles::names(FeatureProfileFamily::Halation)
                     .iter()
                     .copied()
-                    .map(|name| (name, name))
-                    .chain(custom.then_some(("custom", "Custom")));
-                if choice_tip_entries(
+                    .map(|name| (name, name));
+                if widgets::choice_tip_entries_displaying(
                     ui,
                     "Halation Profiles",
                     &mut selected,
                     choices,
+                    edited_label.as_deref(),
                     "Built-in feature profile; selecting it changes only Halation profile leaves.",
                 ) {
                     let mut candidate = params.clone();

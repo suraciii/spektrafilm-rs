@@ -987,6 +987,30 @@ pub fn choice_tip_entries<'a>(
     choice_tip_options(ui, label, value, choices, tooltip, false, true)
 }
 
+/// A selector whose closed field names a derived state that is not itself a
+/// choice. The menu keeps only real options; `selected_display` gives the
+/// read-only state its own name (for example, `Edited`) instead of exposing an
+/// internal value such as `custom` or offering a dead menu entry.
+pub(crate) fn choice_tip_entries_displaying<'a>(
+    ui: &mut Ui,
+    label: &str,
+    value: &mut String,
+    choices: impl Iterator<Item = (&'a str, &'a str)> + Clone,
+    selected_display: Option<&str>,
+    tooltip: &str,
+) -> bool {
+    choice_tip_options_displaying(
+        ui,
+        label,
+        value,
+        choices,
+        tooltip,
+        selected_display,
+        false,
+        true,
+    )
+}
+
 /// User/profile identities are not product-language choice labels.
 pub(crate) fn choice_tip_profile_entries<'a>(
     ui: &mut Ui,
@@ -1007,12 +1031,38 @@ pub(crate) fn choice_tip_options<'a>(
     experimental: bool,
     translate_options: bool,
 ) -> bool {
-    let selected_label = choices
-        .clone()
-        .find(|&(option, _)| option == value.as_str())
-        .map(|(_, display_label)| display_label)
-        .unwrap_or_else(|| value.as_str())
-        .to_owned();
+    choice_tip_options_displaying(
+        ui,
+        label,
+        value,
+        choices,
+        tooltip,
+        None,
+        experimental,
+        translate_options,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn choice_tip_options_displaying<'a>(
+    ui: &mut Ui,
+    label: &str,
+    value: &mut String,
+    choices: impl Iterator<Item = (&'a str, &'a str)> + Clone,
+    tooltip: &str,
+    selected_display: Option<&str>,
+    experimental: bool,
+    translate_options: bool,
+) -> bool {
+    let selected_label = selected_display
+        .map(str::to_owned)
+        .or_else(|| {
+            choices
+                .clone()
+                .find(|&(option, _)| option == value.as_str())
+                .map(|(_, display_label)| display_label.to_owned())
+        })
+        .unwrap_or_else(|| value.clone());
     let prev = value.clone();
     let selected_text = if translate_options {
         crate::controls::localized(ui.ctx(), &selected_label)
@@ -1069,6 +1119,10 @@ pub(crate) fn choice_tip_options<'a>(
             })
             .response
             .on_hover_text(crate::controls::localized(ui.ctx(), tooltip));
+        let selected_value = selected_text.to_string();
+        ui.ctx().accesskit_node_builder(response.id, |node| {
+            node.set_value(selected_value);
+        });
         super::focus_response(ui, label, &response);
         name_choice(ui, label);
     };

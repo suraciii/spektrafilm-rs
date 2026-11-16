@@ -639,10 +639,14 @@ impl App {
                         // reserved scrollbar is not part of the usable width. A
                         // narrow panel keeps one reachable column.
                         let usable = (ui.clip_rect().width() - 2.0 * theme::SPACE_2).max(120.0);
-                        let columns = if usable >= 230.0 { 2 } else { 1 };
+                        // The default narrow browser uses one readable row per
+                        // preset. Two-image cards return only when the panel
+                        // itself is wide enough to give each name real room.
+                        let columns = if usable >= 460.0 { 2 } else { 1 };
                         let card_width = ((usable - theme::SPACE_2 * (columns - 1) as f32)
                             / columns as f32)
                             .max(110.0);
+                        let compact = columns == 1;
                         let mut action = None;
                         egui::Grid::new(("preset cards", group == PresetGroup::User))
                             .num_columns(columns)
@@ -656,6 +660,7 @@ impl App {
                                         keys[*index].as_ref(),
                                         nav,
                                         card_width,
+                                        compact,
                                         &mut demand,
                                     ) {
                                         action = Some((*index, selected));
@@ -779,13 +784,15 @@ impl App {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn preset_card(
         &self,
         ui: &mut egui::Ui,
         index: usize,
         key: Option<&ThumbnailKey>,
-        nav: [Option<egui::Id>; 2],
+        navigation: [Option<egui::Id>; 2],
         card_width: f32,
+        compact: bool,
         demand: &mut Vec<(ThumbnailKey, Preset)>,
     ) -> Option<PresetAction> {
         let entry = &self.presets.entries[index];
@@ -812,7 +819,21 @@ impl App {
         let context = preset_context(ui, entry, &self.films);
         let switch = preset_switch(ui, entry, self.params.workflow.mode);
         let inner = (card_width - 2.0 * theme::SPACE_1).max(0.0);
-        let thumbnail_height = (inner * 2.0 / 3.0).max(44.0);
+        // At the default narrow browser width a two-column card leaves too
+        // little room for the name and makes every pending thumbnail dominate
+        // the panel. Switch to a compact horizontal row: a small preview at
+        // the left, the complete name and materials at the right.
+        let compact = compact && inner >= 180.0;
+        let thumbnail_width = if compact {
+            (inner * 0.28).clamp(56.0, 76.0)
+        } else {
+            inner
+        };
+        let thumbnail_height = if compact {
+            thumbnail_width * 2.0 / 3.0
+        } else {
+            (inner * 2.0 / 3.0).max(44.0)
+        };
         // Two name lines keep same-prefix stocks distinguishable at the
         // default two-column browser width.
         let name_row_height = 2.0 * theme::SIZE_LABEL + 4.0;
@@ -825,10 +846,13 @@ impl App {
         } else {
             0.0
         } + if active { 2.0 + theme::SIZE_HINT } else { 0.0 };
-        // Reserve the whole card before laying out its rows: the full-width
-        // thumbnail consumes the cell, so the later rows need their own region.
-        let card_height =
-            2.0 * theme::SPACE_1 + thumbnail_height + 2.0 + name_row_height + details_height;
+        let text_height = name_row_height + details_height;
+        let content_height = if compact {
+            thumbnail_height.max(text_height + 2.0)
+        } else {
+            thumbnail_height + 2.0 + text_height
+        };
+        let card_height = 2.0 * theme::SPACE_1 + content_height;
         let (card_rect, _) =
             ui.allocate_exact_size(egui::vec2(card_width, card_height), egui::Sense::hover());
         if active {
@@ -844,6 +868,7 @@ impl App {
                 egui::StrokeKind::Inside,
             );
         }
+        let status_text;
         {
             let mut card = ui.new_child(
                 egui::UiBuilder::new()
@@ -852,67 +877,42 @@ impl App {
             );
             let ui = &mut card;
             ui.spacing_mut().item_spacing = egui::vec2(theme::SPACE_1, 2.0);
-            let (rect, _) =
-                ui.allocate_exact_size(egui::vec2(inner, thumbnail_height), egui::Sense::hover());
-            ui.painter()
-                .rect_filled(rect, egui::CornerRadius::same(2), theme::SURFACE3);
-            let status_text = match key {
-                Some(key) => {
-                    let text = match self.presets.thumbnails.status(key) {
-                        Status::Ready(texture) => {
-                            let available = rect.size();
-                            let size = texture.size_vec2();
-                            let scale = (available.x / size.x).min(available.y / size.y).min(1.0);
-                            let target = egui::Rect::from_center_size(rect.center(), size * scale);
-                            ui.painter().image(
-                                texture.id(),
-                                target,
-                                egui::Rect::from_min_max(
-                                    egui::pos2(0.0, 0.0),
-                                    egui::pos2(1.0, 1.0),
-                                ),
-                                egui::Color32::WHITE,
-                            );
-                            None
-                        }
-                        Status::Pending => {
-                            let pending =
-                                crate::i18n::text(ui.ctx(), "surfaces.presets.thumbnail_pending");
-                            paint_status_owned(ui, rect, pending.as_ref());
-                            Some(pending.to_string())
-                        }
-                        Status::Failed(message) => {
-                            let unavailable = crate::i18n::text(
-                                ui.ctx(),
-                                "surfaces.presets.thumbnail_unavailable",
-                            );
-                            paint_status_owned(ui, rect, unavailable.as_ref());
-                            Some(format!("{unavailable}: {}", message.localized(ui.ctx())))
-                        }
-                    };
-                    if ui.is_rect_visible(rect)
-                        && let Some(preset) = &entry.preset
-                    {
-                        demand.push((key.clone(), preset.clone()));
-                    }
-                    text
-                }
-                None => {
-                    let text = crate::i18n::text(ui.ctx(), "surfaces.presets.thumbnail_no_photo")
-                        .to_string();
-                    paint_status_owned(ui, rect, &text);
-                    Some(text)
-                }
+            let inner_rect = card_rect.shrink(theme::SPACE_1);
+            let (thumbnail_rect, text_rect) = if compact {
+                let thumbnail_rect = egui::Rect::from_min_size(
+                    inner_rect.min,
+                    egui::vec2(thumbnail_width, thumbnail_height),
+                );
+                let text_rect = egui::Rect::from_min_max(
+                    egui::pos2(thumbnail_rect.right() + theme::SPACE_2, inner_rect.top()),
+                    inner_rect.max,
+                );
+                (thumbnail_rect, text_rect)
+            } else {
+                let thumbnail_rect =
+                    egui::Rect::from_min_size(inner_rect.min, egui::vec2(inner, thumbnail_height));
+                let text_rect = egui::Rect::from_min_max(
+                    egui::pos2(inner_rect.left(), thumbnail_rect.bottom() + 2.0),
+                    inner_rect.max,
+                );
+                (thumbnail_rect, text_rect)
             };
-            // Thumbnail and name row are one activation surface; the actions
-            // control is drawn later and therefore stays on top.
-            let hit_rect = egui::Rect::from_min_size(
-                rect.min,
-                egui::vec2(
-                    inner,
-                    thumbnail_height + 2.0 + name_row_height + details_height,
-                ),
+            status_text = Self::paint_preset_thumbnail(
+                ui,
+                thumbnail_rect,
+                key,
+                &self.presets.thumbnails,
+                entry,
+                compact,
+                demand,
             );
+            // Thumbnail and text are one activation surface; the actions
+            // control is drawn later and therefore stays on top.
+            let hit_rect = if compact {
+                inner_rect
+            } else {
+                egui::Rect::from_min_max(inner_rect.min, text_rect.max)
+            };
             let card_click = ui.interact(hit_rect, card_id(index), egui::Sense::click());
             crate::controls::locate_row(ui, "presets.card", &card_click);
             crate::controls::focus_feedback(ui, &card_click);
@@ -933,9 +933,9 @@ impl App {
                     (previous, next)
                 });
                 let target = if previous {
-                    nav[0]
+                    navigation[0]
                 } else if next {
-                    nav[1]
+                    navigation[1]
                 } else {
                     None
                 };
@@ -953,9 +953,17 @@ impl App {
                     action = Some(selected);
                 }
             });
+            let mut text = ui.new_child(
+                egui::UiBuilder::new()
+                    .max_rect(text_rect)
+                    .layout(egui::Layout::top_down(egui::Align::Min)),
+            );
+            let ui = &mut text;
+            ui.spacing_mut().item_spacing = egui::vec2(theme::SPACE_1, 2.0);
             let controls = theme::HEIGHT_CONTROL + ui.spacing().item_spacing.x * 2.0;
             let name_width =
-                (inner - controls - if active { CHECK_ICON + 2.0 } else { 0.0 }).max(20.0);
+                (ui.available_width() - controls - if active { CHECK_ICON + 2.0 } else { 0.0 })
+                    .max(20.0);
             ui.horizontal(|ui| {
                 if active {
                     let (slot, _) = ui.allocate_exact_size(
@@ -1105,7 +1113,7 @@ impl App {
                 .as_ref()
                 .is_some_and(|(group, name)| *group == entry.group && name == &entry.name)
             {
-                ui.scroll_to_rect(rect, Some(egui::Align::Center));
+                ui.scroll_to_rect(card_rect, Some(egui::Align::Center));
             }
         }
         if active {
@@ -1124,6 +1132,71 @@ impl App {
             );
         }
         action
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn paint_preset_thumbnail(
+        ui: &mut egui::Ui,
+        rect: egui::Rect,
+        key: Option<&ThumbnailKey>,
+        thumbnails: &super::thumbnails::Thumbnails,
+        entry: &LibraryEntry,
+        compact: bool,
+        demand: &mut Vec<(ThumbnailKey, Preset)>,
+    ) -> Option<String> {
+        ui.painter()
+            .rect_filled(rect, egui::CornerRadius::same(2), theme::SURFACE3);
+        match key {
+            Some(key) => {
+                let status_text = match thumbnails.status(key) {
+                    Status::Ready(texture) => {
+                        let available = rect.size();
+                        let size = texture.size_vec2();
+                        let scale = (available.x / size.x).min(available.y / size.y).min(1.0);
+                        let target = egui::Rect::from_center_size(rect.center(), size * scale);
+                        ui.painter().image(
+                            texture.id(),
+                            target,
+                            egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                            egui::Color32::WHITE,
+                        );
+                        None
+                    }
+                    Status::Pending => {
+                        let pending =
+                            crate::i18n::text(ui.ctx(), "surfaces.presets.thumbnail_pending");
+                        if compact {
+                            let short = crate::i18n::text(
+                                ui.ctx(),
+                                "surfaces.presets.thumbnail_pending_short",
+                            );
+                            paint_status_owned(ui, rect, short.as_ref());
+                        } else {
+                            paint_status_owned(ui, rect, pending.as_ref());
+                        }
+                        Some(pending.to_string())
+                    }
+                    Status::Failed(message) => {
+                        let unavailable =
+                            crate::i18n::text(ui.ctx(), "surfaces.presets.thumbnail_unavailable");
+                        paint_status_owned(ui, rect, unavailable.as_ref());
+                        Some(format!("{unavailable}: {}", message.localized(ui.ctx())))
+                    }
+                };
+                if ui.is_rect_visible(rect)
+                    && let Some(preset) = &entry.preset
+                {
+                    demand.push((key.clone(), preset.clone()));
+                }
+                status_text
+            }
+            None => {
+                let text =
+                    crate::i18n::text(ui.ctx(), "surfaces.presets.thumbnail_no_photo").to_string();
+                paint_status_owned(ui, rect, &text);
+                Some(text)
+            }
+        }
     }
 
     fn preset_actions_button(

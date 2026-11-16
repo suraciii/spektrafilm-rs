@@ -720,7 +720,7 @@
   "controls.scanner.scan_profile_strength": "扫描外观强度",
   "controls.scanner.scan_profile_none": "无扫描外观",
   "controls.scanner.scan_profile_inspired": "灵感源自 SP-3000",
-  "controls.scanner.scan_profile_edit_custom": "编辑曲线会将该外观切换为“自定义”。",
+  "controls.scanner.scan_profile_edit_custom": "编辑曲线会将该外观标记为“已编辑”。",
   "controls.scanner.scan_profile_curve": "扫描外观曲线",
   "controls.scanner.scan_profile_curve_row": "曲线",
   "controls.scanner.scan_profile_channel": "通道",
@@ -1770,5 +1770,8 @@
   "controls.grain.advanced_procedural_summary": "分区颗粒量、色度、胶片分辨率、相位计时器",
   "controls.grain.advanced_fotufilm_summary": "RMS 密度、云团半径、图层、占比、灰雾",
   "controls.grain.advanced_exposure_summary": "粗糙度、分区颗粒量、阈值、种子、推冲、色彩变化",
-  "controls.grain.custom_from_35mm250": "自定义 · 来自 35mm250"
+  "controls.grain.custom_from_35mm250": "自定义 · 来自 35mm250",
+  "controls.scanner.edited": "已编辑",
+  "surfaces.presets.thumbnail_pending_short": "…",
+  "surfaces.export.jpeg_inactive_summary": "JPEG 质量 %{quality} 与色度抽样 %{subsampling} 仅适用于 JPEG；已保留存储值。"
 }

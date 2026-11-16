@@ -720,7 +720,7 @@
   "controls.scanner.scan_profile_strength": "Scan Profile Strength",
   "controls.scanner.scan_profile_none": "No Scan Profile",
   "controls.scanner.scan_profile_inspired": "SP-3000 Inspired",
-  "controls.scanner.scan_profile_edit_custom": "Editing the curve changes this look to Custom.",
+  "controls.scanner.scan_profile_edit_custom": "Editing the curve changes this look to Edited.",
   "controls.scanner.scan_profile_curve": "Scan Profile Curve",
   "controls.scanner.scan_profile_curve_row": "Curve",
   "controls.scanner.scan_profile_channel": "Channel",
@@ -1770,5 +1770,8 @@
   "controls.grain.advanced_procedural_summary": "Zone amounts, chroma, film resolution, phase timer",
   "controls.grain.advanced_fotufilm_summary": "RMS density, cloud radius, layers, shares, fog",
   "controls.grain.advanced_exposure_summary": "Roughness, zone amounts, thresholds, seed, push, color variation",
-  "controls.grain.custom_from_35mm250": "Custom · from 35mm250"
+  "controls.grain.custom_from_35mm250": "Custom · from 35mm250",
+  "controls.scanner.edited": "Edited",
+  "surfaces.presets.thumbnail_pending_short": "…",
+  "surfaces.export.jpeg_inactive_summary": "JPEG quality %{quality} and subsampling %{subsampling} apply only to JPEG; stored values are kept."
 }

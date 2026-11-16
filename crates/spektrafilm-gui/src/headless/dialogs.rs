@@ -164,30 +164,20 @@ fn assert_codec_inactive(h: &Harness<'_, App>) {
         h.query_by_role_and_label(egui::accesskit::Role::ComboBox, "JPEG subsampling")
             .is_none()
     );
-    let inactive = crate::i18n::text(&h.ctx, "surfaces.export.jpeg_inactive");
     // The draft explicitly selected 4:2:0 while JPEG was active; changing the
     // container must retain that uncommitted preference, not the committed 4:4:4.
     let subsampling = "4:2:0";
-    for (label, value) in [
-        (
-            "JPEG quality",
-            h.state().export_options.jpeg_quality.to_string(),
-        ),
-        ("JPEG subsampling", subsampling.to_owned()),
-    ] {
-        assert!(
-            h.query_by_label(label).is_some(),
-            "{label} must remain an ordinary named row"
-        );
-        assert!(
-            h.query_by_label(value.as_str()).is_some(),
-            "{label} must keep its stored value visible: {value}"
-        );
-    }
-    assert_eq!(
-        h.query_all_by_label(inactive.as_ref()).count(),
-        2,
-        "each inapplicable row must present the reason as visible text"
+    assert!(h.query_by_label("JPEG quality").is_none());
+    assert!(h.query_by_label("JPEG subsampling").is_none());
+    let summary = crate::tr!(
+        &h.ctx,
+        "surfaces.export.jpeg_inactive_summary",
+        quality = h.state().export_options.jpeg_quality,
+        subsampling = subsampling
+    );
+    assert!(
+        h.query_by_label(summary.as_ref()).is_some(),
+        "inactive codec values must remain summarized in one quiet note: {summary}"
     );
 }
 fn assert_quality_controls(h: &Harness<'_, App>) {
@@ -606,6 +596,35 @@ fn settings_locators_reveal_actual_rows_after_scrolling_without_toggling_section
     click(h, "Save current as default");
     assert!(s.directory.path().join("gui_default_state.json").is_file());
     assert_eq!(h.state().params, params);
+}
+
+#[test]
+fn inactive_jpeg_locator_reveals_stored_rows_beyond_the_summary() {
+    let mut s = session();
+    let h = &mut s.harness;
+    open_export_dialog(h);
+    change_export_format(h, "JPEG");
+    choose(h, "JPEG subsampling", "4:2:0");
+    change_export_format(h, "TIFF");
+    assert_codec_inactive(h);
+    // Keep the committed container on TIFF, then use the real locator path.
+    h.state_mut().export_options.format = crate::export::ExportFormat::Tiff;
+    reveal_control(h, "extras.rust.jpeg_quality");
+    h.run_steps(6);
+    assert!(h.state().export_dialog.is_open());
+    assert!(
+        h.query_by_label("JPEG quality").is_some(),
+        "a canonical locator reveals the individual read-only row"
+    );
+    let inactive = crate::i18n::text(&h.ctx, "surfaces.export.jpeg_inactive");
+    // The reveal persists after the locator request is consumed, so the row
+    // cannot vanish on the next frame.
+    h.run_steps(3);
+    assert!(h.query_by_label("JPEG quality").is_some());
+    assert!(
+        h.query_all_by_label(inactive.as_ref()).count() >= 1,
+        "the revealed row keeps its inapplicability reason"
+    );
 }
 
 #[test]
