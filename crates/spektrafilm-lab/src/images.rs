@@ -22,14 +22,15 @@ use spektrafilm_benchmark::{
 #[derive(ClapArgs)]
 pub struct Args {
     /// Baseline file, or a directory of delivered images.
-    #[arg(long, value_name = "FILE_OR_DIR")]
+    #[arg(long, value_name = "PATH")]
     pub baseline: std::path::PathBuf,
     /// Candidate file, or a directory of delivered images.
-    #[arg(long, value_name = "FILE_OR_DIR")]
+    #[arg(long, value_name = "PATH")]
     pub candidate: std::path::PathBuf,
-    /// Declared color space and transfer state of both sides.
-    #[arg(long, value_name = "SPACE:encoded|decoded")]
-    pub declaration: String,
+    /// Declared color space and transfer state of both sides; the space is one
+    /// the instrument reads and the state is encoded or decoded.
+    #[arg(long, value_name = "SPACE:STATE")]
+    pub declaration: Declaration,
     /// Declared region: name=x,y,w,h[:role]. Repeats. A role is one of skin,
     /// neutral, shadow, highlight, color, flat_field, texture, edge, other; it
     /// decides which families can be measured there.
@@ -70,7 +71,10 @@ pub fn run(args: &Args) -> Result<(Value, i32)> {
             "--map-scale requires a positive integer",
         ));
     }
-    let (color_space, cctf_decoding) = declaration(&args.declaration)?;
+    let Declaration {
+        space: color_space,
+        decoding: cctf_decoding,
+    } = args.declaration;
     let profile = analysis::profile(args.analysis.as_deref().unwrap_or("lab-appearance-v1"))?;
     let protocol = analysis::protocol(profile);
     let regions = match (&args.regions, args.roi.is_empty()) {
@@ -91,7 +95,7 @@ pub fn run(args: &Args) -> Result<(Value, i32)> {
     let request = engine::Request {
         baseline_id: source_id(&args.baseline),
         candidate_id: source_id(&args.candidate),
-        color_space,
+        color_space: color_space.to_owned(),
         cctf_decoding,
         pairs,
         regions,
@@ -102,30 +106,44 @@ pub fn run(args: &Args) -> Result<(Value, i32)> {
 }
 
 /// `SPACE:encoded|decoded` carries both facts one declaration needs.
-fn declaration(value: &str) -> Result<(String, bool)> {
-    let (space, state) = value.rsplit_once(':').ok_or_else(|| {
-        Error::new(
-            "argument_syntax",
-            "--declaration must be SPACE:encoded or SPACE:decoded",
-        )
-    })?;
-    let decoding = match state {
-        "encoded" => true,
-        "decoded" => false,
-        other => {
-            return Err(Error::new(
-                "argument_syntax",
-                format!("--declaration state must be encoded or decoded, not {other}"),
-            ));
-        }
-    };
-    if space.is_empty() {
-        return Err(Error::new(
-            "argument_syntax",
-            "--declaration must name a color space",
-        ));
+///
+/// Both halves are closed vocabularies, and both are decided here: the space
+/// comes from the measurement library's one list, and the transfer state has
+/// two values. A typo is a usage error, so it is refused while the arguments
+/// are read, before any destination exists.
+#[derive(Clone, Copy, Debug)]
+pub struct Declaration {
+    pub space: &'static str,
+    pub decoding: bool,
+}
+
+impl std::str::FromStr for Declaration {
+    type Err = String;
+
+    fn from_str(value: &str) -> std::result::Result<Self, Self::Err> {
+        let (space, state) = value
+            .rsplit_once(':')
+            .ok_or_else(|| "--declaration must be SPACE:encoded or SPACE:decoded".to_owned())?;
+        let decoding = match state {
+            "encoded" => true,
+            "decoded" => false,
+            other => {
+                return Err(format!(
+                    "--declaration state must be encoded or decoded, not {other}"
+                ));
+            }
+        };
+        let space = spektrafilm_benchmark::image_data::COLOR_SPACES
+            .iter()
+            .find(|candidate| **candidate == space)
+            .ok_or_else(|| {
+                format!(
+                    "--declaration color space must be one of: {}",
+                    spektrafilm_benchmark::image_data::COLOR_SPACES.join(", ")
+                )
+            })?;
+        Ok(Self { space, decoding })
     }
-    Ok((space.to_owned(), decoding))
 }
 
 /// Parse `ID=X,Y,W,H[:ROLE]` declarations in order.
@@ -331,11 +349,12 @@ fn pairs(args: &Args) -> Result<Vec<engine::Pair>> {
 #[derive(ClapArgs)]
 pub struct AnalyzeArgs {
     /// One delivered image, or a directory of delivered images.
-    #[arg(long, value_name = "FILE_OR_DIR")]
+    #[arg(long, value_name = "PATH")]
     pub source: std::path::PathBuf,
-    /// Declared color space and transfer state of the source.
-    #[arg(long, value_name = "SPACE:encoded|decoded")]
-    pub declaration: String,
+    /// Declared color space and transfer state of the source; the space is one
+    /// the instrument reads and the state is encoded or decoded.
+    #[arg(long, value_name = "SPACE:STATE")]
+    pub declaration: Declaration,
     /// Declared region: name=x,y,w,h[:role]. Repeats. A role is one of skin,
     /// neutral, shadow, highlight, color, flat_field, texture, edge, other; it
     /// decides which families can be measured there.
@@ -358,7 +377,10 @@ pub struct AnalyzeArgs {
 }
 
 pub fn analyze_run(args: &AnalyzeArgs) -> Result<(Value, i32)> {
-    let (color_space, cctf_decoding) = declaration(&args.declaration)?;
+    let Declaration {
+        space: color_space,
+        decoding: cctf_decoding,
+    } = args.declaration;
     let profile = analysis::profile(args.analysis.as_deref().unwrap_or("lab-analysis-v1"))?;
     let protocol = analysis::protocol(profile);
     let regions = match (&args.regions, args.roi.is_empty()) {
@@ -378,7 +400,7 @@ pub fn analyze_run(args: &AnalyzeArgs) -> Result<(Value, i32)> {
     let files = analysis_files(&args.source)?;
     let request = engine::AnalysisRequest {
         source_id: source_id(&args.source),
-        color_space,
+        color_space: color_space.to_owned(),
         cctf_decoding,
         files,
         regions,

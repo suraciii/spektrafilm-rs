@@ -53,7 +53,7 @@ The supported command families have distinct endpoint roles:
 
 | Binary | Owns |
 |---|---|
-| `spektrafilm-lab` | `analyze`, `compare`, `regions`, `schema`, `validate` |
+| `spektrafilm-lab` | `analyze`, `compare`, `regions`, `document` |
 | `spektrafilm-bench` | `compare runs`, `compare readings`, `compare pairs`, `sample`, `inspect`, `report comparison`, `report photos` |
 | `spektrafilm-f64` | `target`, `fixtures`, `run suite`, `run image`, `measure run`, `experiment run`, `experiment export`, `spectral evaluate`, `fit` |
 
@@ -84,8 +84,8 @@ The executables MUST accept the following canonical command grammar:
 ```text
 spektrafilm-lab --help
 spektrafilm-lab --version
-spektrafilm-lab schema --kind KIND
-spektrafilm-lab validate --kind KIND --file FILE
+spektrafilm-lab document --kind KIND
+spektrafilm-lab document --kind KIND --check FILE
 spektrafilm-bench sample --source IMAGE --input-color-space NAME --input-cctf-decoding true|false --regions FILE --out DIRECTORY
 spektrafilm-bench sample --from-evidence DIRECTORY --stage STAGE --regions FILE --out DIRECTORY
 spektrafilm-bench sample --from-run DIRECTORY|RUN.JSON --case ID --seed UINT32 --stage STAGE --regions FILE --out DIRECTORY
@@ -128,7 +128,7 @@ The command family names are semantic, not workflow steps. `measure run` publish
 - Every option of both binaries, including the `fixtures` command, MUST have a nonempty help description.
 - Version MUST identify the binary implementation and supported document versions. Every binary's help MUST identify the endpoint families it owns.
 - `fixtures` help MUST name the command that consumes the generated bundle. The research binaries MUST satisfy [Rust delivery](../benchmark/rust-delivery/spec.md).
-- `schema` MUST emit the authoritative JSON Schema for one document kind. For the `metrics` vocabulary it MUST emit the metric-identity vocabulary instead of a JSON Schema.
+- `document` without `--check` MUST emit the authoritative JSON Schema for one document kind. For the `metrics` vocabulary it MUST emit the metric-identity vocabulary instead of a JSON Schema.
 - It MUST describe the required nested records and explain fields whose units, coordinate space, or applicability are not evident from their type. `validate` MUST validate a document and resolve the local dependencies needed for that kind.
 - It MUST NOT render images. Standalone policy validation MUST NOT imply that selectors, measurement selection, or protocol binding have been checked against a suite.
 - A valid target document MUST NOT imply that a GPU is available. `run suite` MUST resolve one suite and one target before rendering.
@@ -212,7 +212,7 @@ Prepared-image visual review, if provided, belongs to the benchmark product's se
 - Report location links MUST use `#case=ENCODED_ID&seed=UINT32[&pair=ENCODED_ID[&region=ENCODED_ID]]`, with percent-encoded exact identities. Version pairs use `baseline/candidate`; single-run pairs use their retained IDs.
 - A location MUST select the matching case/seed/pair, open the requested region, and scroll to it after layout. Navigation MUST update the fragment and support reload and browser history offline.
 - Detail disclosures MUST expose keyboard-operable, accessible controls. Malformed or unknown locations MUST show an accessible error without displaying an unrelated selected result.
-`schema --kind review` and `validate --kind review` MUST return a stable unsupported-kind error. A report command MUST accept only retained comparison evidence. The removed manifest source MUST NOT be represented as a compatibility alias or a second result kind.
+`document --kind review` MUST return a stable unsupported-kind error. A report command MUST accept only retained comparison evidence. The removed manifest source MUST NOT be represented as a compatibility alias or a second result kind.
 
 - `sample` MUST validate coordinate-space compatibility before reading any region. Equal dimensions do not establish compatibility.
 - A `source` region is compatible with a declared raster or `source_pixels`; a `render` region is compatible with `output_pixels`; a native stage region is compatible only with the same native stage name. The sampler MUST NOT resize, crop, pad, translate, or silently map a mismatch.
@@ -221,7 +221,7 @@ Prepared-image visual review, if provided, belongs to the benchmark product's se
 
 ## Machine output
 
-- Every command result MUST identify `schema_version`, `command`, `execution_status`, and the terminal artifact when one exists. `schema --kind` emits one schema object without a result wrapper.
+- Every command result MUST identify `schema_version`, `command`, `execution_status`, and the terminal artifact when one exists. `document --kind` without `--check` emits one schema object without a result wrapper.
 - A result MUST name the binary and the endpoint that produced it, so a reader can tell a lab result from a render result without inspecting the payload.
 - An execution failure MUST identify `execution_status` as `failed` and MUST contain structured errors. A published failed manifest MUST remain linked from the result; its detailed errors MUST NOT replace the command's structured error summary.
 - Human error text MUST NOT be the only machine discriminator.
@@ -256,7 +256,9 @@ All documents MUST use UTF-8 JSON and MUST carry `schema_version` equal to `1`, 
 
 Every JSON document a research binary reads or writes has one kind and one owning section. Every document carries `schema_version`.
 
-`schema --kind KIND` MUST emit the authoritative JSON Schema for every kind, including the nested records a consumer MUST read to diagnose a result: measurement rows, findings, summaries, failure records, and artifact references. `validate --kind KIND` MUST accept every authored kind and resolve the local dependencies that kind needs.
+`document --kind KIND` MUST emit the authoritative JSON Schema for every kind, including the nested records a consumer MUST read to diagnose a result: measurement rows, findings, summaries, failure records, and artifact references.
+
+`document --kind KIND --check FILE` MUST accept every authored kind and resolve the local dependencies that kind needs. A kind this binary prints but cannot decide MUST be refused with `unvalidatable_document_kind`, not reported as unknown.
 
 | Kind | State | Owner |
 |---|---|---|
@@ -451,7 +453,7 @@ A `visual` reference MAY provide explicit reference-region geometries for crop i
 Reference transforms, masks, review records, and derivatives MUST be hashed dependencies. Their geometry and purpose MUST be explicit. The evaluator MUST NOT fit a new transform during `compare`.
 ## Prepared-image review boundary
 
-The research binaries do not define or accept a prepared-image review manifest. `review` is not a document-registry kind, and `schema --kind review` and `validate --kind review` MUST return a stable unsupported-kind error. The lab's report source is a retained comparison only.
+The research binaries do not define or accept a prepared-image review manifest. `review` is not a document-registry kind, and `document --kind review` MUST return a stable unsupported-kind error. The lab's report source is a retained comparison only.
 
 The benchmark product MAY retain a separate prepared-image viewer for local visual inspection. Its image inventory, per-image geometry, default pair, captions, display conversion, and report builder belong to the benchmark command and its own contract. The research binaries MUST NOT import that manifest, derive regions from it, shape-dispatch on it, or expose aliases for it.
 

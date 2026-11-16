@@ -38,20 +38,20 @@ enum Commands {
     Compare(images::Args),
     /// Expand one finite grid declaration into explicit regions.
     Regions(GridArgs),
-    /// Print the authoritative schema for an authored or retained document.
-    Schema {
-        /// Document kind.
+    /// Print a document's authoritative schema, or decide one document.
+    ///
+    /// Without `--check` the packaged schema is printed verbatim. With it the
+    /// file is decided against that schema and its locally decidable
+    /// dependencies. One endpoint owns one document vocabulary, so a kind this
+    /// binary can print but not decide says so in one message instead of
+    /// disappearing from a second list.
+    Document {
+        /// Document kind; run `document --help` for the list.
         #[arg(long, value_name = "KIND", value_parser = documents::schema_kinds())]
         kind: String,
-    },
-    /// Validate document shape and locally decidable dependencies.
-    Validate {
-        /// Document kind.
-        #[arg(long, value_name = "KIND", value_parser = documents::validatable_kinds())]
-        kind: String,
-        /// JSON document to validate.
+        /// JSON document to decide. Without it the schema is printed.
         #[arg(long, value_name = "FILE")]
-        file: PathBuf,
+        check: Option<PathBuf>,
     },
     /// An endpoint that belongs to another binary.
     #[command(external_subcommand)]
@@ -73,7 +73,7 @@ struct GridArgs {
     #[arg(long, value_name = "X,Y", value_parser = parse_pair)]
     origin: [u64; 2],
     /// Patch size as WIDTHxHEIGHT.
-    #[arg(long, value_name = "WIDTHxHEIGHT", value_parser = parse_size)]
+    #[arg(long, value_name = "SIZE", value_parser = parse_size)]
     patch_size: [u64; 2],
     /// Gap as X,Y.
     #[arg(long, value_name = "X,Y", value_parser = parse_pair)]
@@ -135,10 +135,7 @@ fn parse_size(value: &str) -> Result<[u64; 2], String> {
     Ok([width, height])
 }
 
-fn validate(
-    kind: &str,
-    file: &std::path::Path,
-) -> spektrafilm_benchmark::Result<serde_json::Value> {
+fn decide(kind: &str, file: &std::path::Path) -> spektrafilm_benchmark::Result<serde_json::Value> {
     let display = file.display().to_string();
     let value = if matches!(kind, "run" | "comparison" | "analysis") {
         let root = file.parent().ok_or_else(|| {
@@ -159,8 +156,19 @@ fn validate(
             "stimuli" | "material_measurement" | "correspondence_review" | "experiment" => {
                 documents::validate_authored_document(kind, file)
             }
-            // `--kind` already rejects a kind `validate` has no rule for, so
-            // this arm is the registry's own gap, not a caller mistake.
+            // `document` prints any packaged schema; deciding one needs a rule.
+            // A kind with a schema and no rule says exactly that, because the
+            // alternative is a vocabulary that silently differs between the two
+            // halves of one endpoint.
+            _ if documents::schema_kinds().contains(&kind) => {
+                Err(spektrafilm_benchmark::Error::new(
+                    "unvalidatable_document_kind",
+                    format!(
+                        "`document` has no rule for `{kind}`; the packaged schema is still \
+                         printed by `document --kind {kind}`"
+                    ),
+                ))
+            }
             _ => Err(spektrafilm_benchmark::Error::new(
                 "unknown_document_kind",
                 format!("unknown document kind: {kind}"),
@@ -209,7 +217,7 @@ fn validate(
     };
     let mut result = serde_json::json!({
         "schema_version": 1,
-        "command": "validate",
+        "command": "document",
         "execution_status": "completed",
         "kind": kind,
         "digest": spektrafilm_benchmark::common::digest(&value)?,
@@ -222,7 +230,17 @@ fn validate(
 }
 
 /// The endpoints this binary owns, in help order.
-const OWNED: &[&str] = &["analyze", "compare", "regions", "schema", "validate"];
+const OWNED: &[&str] = &["analyze", "compare", "regions", "document"];
+
+/// Endpoints this binary used to own, by their new name.
+fn renamed(name: &str) -> Option<String> {
+    let kind = match name {
+        "schema" => "KIND",
+        "validate" => "KIND --check FILE",
+        _ => return None,
+    };
+    Some(format!("spektrafilm-lab document --kind {kind} ..."))
+}
 
 /// Endpoints that belong to the research renderer.
 fn moved(name: &str) -> Option<String> {
@@ -260,9 +278,20 @@ fn usage(error: clap::Error) -> i32 {
         print!("{error}");
         return 0;
     }
-    let code = match kind {
-        ErrorKind::InvalidValue | ErrorKind::ValueValidation => "unknown_document_kind",
-        _ => "argument_syntax",
+    // A bad value is only a question about the document vocabulary when the
+    // argument is `--kind`; every other rejected value is syntax.
+    let invalid_argument = error
+        .context()
+        .find_map(|(context, value)| {
+            matches!(context, clap::error::ContextKind::InvalidArg).then(|| value.to_string())
+        })
+        .unwrap_or_default();
+    let code = if matches!(kind, ErrorKind::InvalidValue | ErrorKind::ValueValidation)
+        && invalid_argument.contains("--kind")
+    {
+        "unknown_document_kind"
+    } else {
+        "argument_syntax"
     };
     let message = error.render().to_string();
     let message = message.trim_end().to_owned();
@@ -323,7 +352,27 @@ fn run() -> i32 {
     // A usage error is a refusal like any other, so it reaches the caller in
     // the same shape. Clap's own exit would print prose and no record, which
     // makes a pipeline special-case it.
-    let cli = match Cli::try_parse() {
+    let kinds = documents::schema_kinds().join("\n  ");
+    let command = <Cli as clap::CommandFactory>::command()
+        .max_term_width(96)
+        // Every endpoint states a description below its flag: the two layouts
+        // clap picks by width make one binary read as two.
+        .mut_subcommands(|sub| {
+            let sub = sub.max_term_width(96).next_line_help(true);
+            if sub.get_name() == "document" {
+                // The kind list is generated from the one registry and printed
+                // one per line, so it cannot drift and cannot overflow a row.
+                sub.hide_possible_values(true)
+                    .after_help(format!("Document kinds:\n  {kinds}"))
+            } else {
+                sub
+            }
+        });
+    let matches = match command.try_get_matches() {
+        Ok(matches) => matches,
+        Err(error) => return usage(error),
+    };
+    let cli = match <Cli as clap::FromArgMatches>::from_arg_matches(&matches) {
         Ok(cli) => cli,
         Err(error) => return usage(error),
     };
@@ -331,7 +380,8 @@ fn run() -> i32 {
         let name = args.first().map(String::as_str).unwrap_or("<unknown>");
         let owner = moved(name)
             .map(|replacement| ("spektrafilm-f64", replacement))
-            .or_else(|| evaluated(name).map(|replacement| ("spektrafilm-bench", replacement)));
+            .or_else(|| evaluated(name).map(|replacement| ("spektrafilm-bench", replacement)))
+            .or_else(|| renamed(name).map(|replacement| ("spektrafilm-lab", replacement)));
         let message = match owner {
             Some((binary, replacement)) => {
                 format!("`{name}` belongs to {binary}; run `{replacement}`")
@@ -363,22 +413,24 @@ fn run() -> i32 {
         Commands::Analyze { .. } => "analyze",
         Commands::Compare { .. } => "compare",
         Commands::Regions { .. } => "regions",
-        Commands::Schema { .. } => "schema",
-        Commands::Validate { .. } => "validate",
+        Commands::Document { .. } => "document",
         Commands::External(_) => "unknown",
     };
     let result: spektrafilm_benchmark::Result<(serde_json::Value, i32)> = match cli.command {
-        // The payload is the schema itself, so it is printed verbatim rather
-        // than stamped: a caller may diff it against the packaged asset.
-        Commands::Schema { kind } => match documents::schema_for(&kind) {
+        // The printed payload is the schema itself, so it is not stamped: a
+        // caller may diff it against the packaged asset.
+        Commands::Document { kind, check: None } => match documents::schema_for(&kind) {
             Ok(schema) => {
                 emit(&schema);
                 return 0;
             }
             Err(error) => Err(error),
         },
-        Commands::Validate { kind, file } => documents::normalize_path(&file)
-            .and_then(|path| validate(&kind, &path))
+        Commands::Document {
+            kind,
+            check: Some(file),
+        } => documents::normalize_path(&file)
+            .and_then(|path| decide(&kind, &path))
             .map(|value| (value, 0)),
         Commands::Regions(args) => regions::generate_grid(
             &args.id,

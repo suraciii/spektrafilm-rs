@@ -156,8 +156,7 @@ disagree.
 | `analyze` | quantify one delivered image set | compare, evaluate a policy, or present |
 | `compare` | quantify how two delivered image sets differ | compare two runs, join reading records, select a candidate, or present |
 | `regions` | expand one finite grid declaration into explicit regions | read an image, render, or measure |
-| `schema` | print the authoritative schema of one document kind | validate a document or measure |
-| `validate` | document shape and locally decidable dependencies | measure or guarantee an execution |
+| `document` | print the authoritative schema of one document kind, or decide one document | measure or guarantee an execution |
 
 `analyze` and `compare` are the product. The other three produce and check the
 declarations they consume, and a caller who authors those documents another way
@@ -222,7 +221,7 @@ field.
 two-source form as `--baseline FILE --candidate FILE`.
 
 Both endpoints measure the same quantity for the same source. An analysis and
-the baseline side of a comparison of that source MUST report equal values. `regions` and `validate`
+the baseline side of a comparison of that source MUST report equal values. `regions` and `document`
 are authoring tools: they produce and check the declarations the product
 consumes, and a caller who authors those documents another way never needs
 them.
@@ -471,7 +470,7 @@ reason, which is the noise floor of the pipeline that produced the files.
 3. Every command result names its `binary` and its `endpoint`, and every
    published record names its `kind` and `schema_version`. A usage error is a
    command result too: it carries the same `binary`, `endpoint`,
-   `execution_status`, and `errors`, with exit status 2. `schema` is the one
+   `execution_status`, and `errors`, with exit status 2. `document --kind` is the one
    exception, because its payload is the packaged document and a caller can diff
    it against the asset.
 4. `spektrafilm-lab run suite ...` fails with `argument_syntax` and names
