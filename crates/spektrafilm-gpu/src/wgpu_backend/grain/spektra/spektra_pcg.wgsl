@@ -152,15 +152,30 @@ fn pcg_log_factorial(k: f32) -> f32 {
   return (x - 0.5) * log(x) - x + 0.91893853320467274
     + 1.0 / (12.0 * x) - 1.0 / (360.0 * x * x * x);
 }
+// Every rejection loop below is bounded. A shader that never returns spins the
+// GPU until the driver's watchdog resets the device, and the reset loses the
+// device for every later call in the process. The caps sit far above the
+// iteration count any finite rate reaches, so valid draws are unchanged; a
+// degenerate rate (NaN, infinity) takes the same deterministic fallback as the
+// host mirror in `spektrafilm-math::numpy_rng`.
+const PCG_MAX_REJECTION_STEPS: u32 = 512u;
+const PCG_MAX_MULTIPLICATION_STEPS: u32 = 4096u;
+
 fn pcg_poisson(lam: f32, rng: ptr<function, Pcg>) -> f32 {
-  if lam <= 0.0 { return 0.0; }
+  // NaN and non-positive rates have no count; only +inf needs the explicit
+  // check because `!(lam > 0.0)` already rejects NaN.
+  if !(lam > 0.0) { return 0.0; }
+  if !(lam < bitcast<f32>(0x7f800000u)) { return 0.0; }
   if lam < 10.0 {
     let enlam = exp(-lam);
     var x = 0.0;
     var prod = 1.0;
+    var steps = 0u;
     loop {
+      steps += 1u;
       prod *= pcg_uniform(rng);
       if prod > enlam { x += 1.0; } else { return x; }
+      if steps >= PCG_MAX_MULTIPLICATION_STEPS { return x; }
     }
   }
   let slam = sqrt(lam);
@@ -169,7 +184,10 @@ fn pcg_poisson(lam: f32, rng: ptr<function, Pcg>) -> f32 {
   let a = -0.059 + 0.02483 * b;
   let invalpha = 1.1239 + 1.1328 / (b - 3.4);
   let vr = 0.9277 - 3.6224 / (b - 2.0);
+  var steps = 0u;
   loop {
+    steps += 1u;
+    if steps >= PCG_MAX_REJECTION_STEPS { return round(lam); }
     let u = pcg_uniform(rng) - 0.5;
     let v = pcg_uniform(rng);
     let us = 0.5 - abs(u);
@@ -183,6 +201,9 @@ fn pcg_poisson(lam: f32, rng: ptr<function, Pcg>) -> f32 {
   return 0.0;
 }
 fn pcg_binomial_inversion(n: f32, p: f32, rng: ptr<function, Pcg>) -> f32 {
+  if !(n > 0.0) || !(n < bitcast<f32>(0x7f800000u)) { return 0.0; }
+  if !(p > 0.0) { return 0.0; }
+  if p >= 1.0 { return n; }
   let q = 1.0 - p;
   let qn = exp(n * log(q));
   let np = n * p;
@@ -190,7 +211,10 @@ fn pcg_binomial_inversion(n: f32, p: f32, rng: ptr<function, Pcg>) -> f32 {
   var x = 0.0;
   var px = qn;
   var u = pcg_uniform(rng);
+  var steps = 0u;
   loop {
+    steps += 1u;
+    if steps >= PCG_MAX_REJECTION_STEPS { return clamp(round(n * p), 0.0, n); }
     if u <= px { return x; }
     x += 1.0;
     if x > bound { x = 0.0; px = qn; u = pcg_uniform(rng); }
@@ -203,6 +227,9 @@ fn pcg_stirling(x: f32) -> f32 {
   return (13680.0 - (462.0 - (132.0 - (99.0 - 140.0 / x2) / x2) / x2) / x2) / x / 166320.0;
 }
 fn pcg_binomial_btpe(n: f32, p: f32, rng: ptr<function, Pcg>) -> f32 {
+  if !(n > 0.0) || !(n < bitcast<f32>(0x7f800000u)) { return 0.0; }
+  if !(p > 0.0) { return 0.0; }
+  if p >= 1.0 { return n; }
   let r = p;
   let q = 1.0 - r;
   let fm = n * r + r;
@@ -271,7 +298,9 @@ fn pcg_binomial_btpe(n: f32, p: f32, rng: ptr<function, Pcg>) -> f32 {
   return 0.0;
 }
 fn pcg_binomial(n: f32, p: f32, rng: ptr<function, Pcg>) -> f32 {
-  if n <= 0.0 { return 0.0; }
+  if !(n > 0.0) || !(n < bitcast<f32>(0x7f800000u)) { return 0.0; }
+  if !(p > 0.0) { return 0.0; }
+  if p >= 1.0 { return n; }
   if p <= 0.5 {
     if p * n <= 30.0 { return pcg_binomial_inversion(n, p, rng); }
     return pcg_binomial_btpe(n, p, rng);

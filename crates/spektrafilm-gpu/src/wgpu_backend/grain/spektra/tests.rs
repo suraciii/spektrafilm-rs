@@ -129,6 +129,94 @@ fn pcg_is_deterministic_across_storage_windows() {
     );
 }
 
+/// A particle rate that degrades to NaN must take the bounded fallback instead
+/// of spinning the shader. Before the caps existed the rejection loop never
+/// returned, the GPU stopped making progress, and the driver watchdog reset the
+/// device for the whole process.
+#[test]
+fn degenerate_particle_rates_fall_back_without_spinning_the_device() {
+    let gpu = crate::test_support::adapter();
+    assert!(
+        gpu.device
+            .features()
+            .contains(wgpu::Features::SHADER_F64 | wgpu::Features::SHADER_INT64)
+    );
+    let (width, height) = (3u32, 2u32);
+    let curve: Vec<[f64; 3]> = [[0.0; 3], [0.3; 3], [1.0; 3]].to_vec();
+    let layers: Vec<[[f64; 3]; 3]> = curve.iter().map(|row| [*row, [0.0; 3], [0.0; 3]]).collect();
+    let prepared = spektrafilm_model::grain::spektra::prepare_grain(
+        &layers,
+        1,
+        2.0,
+        [6.0, 8.0, 10.0],
+        [2.0, 1.0, 0.5],
+        [0.03, 0.05, 0.07],
+        [0.97, 0.99, 0.95],
+    )
+    .unwrap();
+    let params = SpektraGrainGpuParams {
+        base_seed: 7,
+        layer_count: 1,
+        density_min: prepared.density_min,
+        uniformity: prepared.uniformity,
+        density_min_layers: std::array::from_fn(|i| prepared.density_min_layers[i / 3][i % 3]),
+        density_max_adj: std::array::from_fn(|i| prepared.density_max_adj[i / 3][i % 3]),
+        n_particles: [f64::NAN; 9],
+        monochrome: false,
+        lookup_sign: 1.0,
+        blur_dye_clouds: 0.0,
+        reference_f64: std::mem::size_of::<spektrafilm_math::precision::Scalar>() == 8,
+        micro_sigma: 0.2,
+        micro_blur_px: 1.0,
+        grain_blur: 0.0,
+        usm_sigma: 0.0,
+        usm_amount: 0.0,
+        curve_x: curve.iter().flatten().copied().collect(),
+        curve_layers: layers.iter().flatten().flatten().copied().collect(),
+    };
+    let input: Vec<f32> = vec![0.4; (width * height * 3) as usize];
+    let bytes = input.len() as u64 * 4;
+    let density = gpu
+        .device
+        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("degenerate_spektra_density"),
+            contents: bytemuck::cast_slice(&input),
+            usage: wgpu::BufferUsages::STORAGE
+                | wgpu::BufferUsages::COPY_SRC
+                | wgpu::BufferUsages::COPY_DST,
+        });
+    let state = build_spektra_grain_state(&gpu.device, width, height, &density, &params, &gpu)
+        .expect("degenerate rates still build a state");
+    let readback = gpu.device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("degenerate_spektra_readback"),
+        size: bytes,
+        usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+    state
+        .submit(&gpu)
+        .expect("degenerate rates must not spin the device");
+    let mut encoder = gpu.device.create_command_encoder(&Default::default());
+    encoder.copy_buffer_to_buffer(&density, 0, &readback, 0, bytes);
+    gpu.queue.submit(Some(encoder.finish()));
+    let first = gpu.read_mapped_f32(&readback, bytes).unwrap();
+
+    // The fallback is deterministic: repeating the request reproduces the same
+    // bits, so the bounded path is a defined value and not a race.
+    gpu.queue
+        .write_buffer(&density, 0, bytemuck::cast_slice(&input));
+    state.submit(&gpu).unwrap();
+    let mut encoder = gpu.device.create_command_encoder(&Default::default());
+    encoder.copy_buffer_to_buffer(&density, 0, &readback, 0, bytes);
+    gpu.queue.submit(Some(encoder.finish()));
+    let second = gpu.read_mapped_f32(&readback, bytes).unwrap();
+    assert_eq!(
+        bytemuck::cast_slice::<f32, u32>(&first),
+        bytemuck::cast_slice::<f32, u32>(&second),
+        "the degenerate fallback must be deterministic"
+    );
+}
+
 #[test]
 fn spektra_reports_the_missing_f64_and_int64_capability() {
     let gpu = crate::test_support::restricted_adapter();
