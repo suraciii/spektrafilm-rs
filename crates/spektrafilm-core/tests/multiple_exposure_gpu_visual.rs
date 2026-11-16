@@ -12,7 +12,6 @@ use spektrafilm_backend::cpu_backend::CpuBackend;
 use spektrafilm_core::params::{RuntimeParams, Tap};
 use spektrafilm_core::pipeline::{ExposureShot, Pipeline, ShotMetering};
 use spektrafilm_core::profile;
-use spektrafilm_gpu::wgpu_backend::WgpuBackend;
 use spektrafilm_math::image::ImageBuf;
 use spektrafilm_math::precision::from_f64;
 
@@ -108,10 +107,7 @@ fn metrics(cpu: &ImageBuf, gpu: &ImageBuf) -> (f64, f64, f64, f64, f64) {
 
 #[test]
 fn fully_resident_gpu_matches_cpu_within_visual_gate() {
-    let Some(gpu) = WgpuBackend::new_explicit() else {
-        eprintln!("skipping GPU visual gate: no WGPU adapter");
-        return;
-    };
+    let gpu = spektrafilm_gpu::test_support::explicit_adapter();
     let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data");
     let film = profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();
     let print = profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap();
@@ -123,7 +119,7 @@ fn fully_resident_gpu_matches_cpu_within_visual_gate() {
     let cpu =
         Pipeline::new_with_spectral(film.clone(), print.clone(), params.clone(), &dir).unwrap();
     let gpu_pipeline =
-        Pipeline::new_with_spectral_backend(film, print, params, &dir, &gpu).unwrap();
+        Pipeline::new_with_spectral_backend(film, print, params, &dir, gpu.backend()).unwrap();
     let a = synthetic(1024, 1024, 0.0);
     let b = synthetic(1024, 1024, 0.08);
     let shots = [
@@ -144,7 +140,7 @@ fn fully_resident_gpu_matches_cpu_within_visual_gate() {
         .process_exposures(&shots, &CpuBackend, Tap::RgbOut)
         .unwrap();
     let gpu_out = gpu_pipeline
-        .process_exposures_gpu(&shots, &gpu, Tap::RgbOut)
+        .process_exposures_gpu(&shots, gpu.backend(), Tap::RgbOut)
         .unwrap()
         .0;
     let (max, p99, psnr, lowpass_psnr, grain_ratio) = metrics(&cpu_out, &gpu_out);
