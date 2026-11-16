@@ -483,6 +483,53 @@ impl Runtime {
         result
     }
 
+    /// Begin a streaming multiple-exposure stack. Load one shot, add it, and
+    /// drop it before loading the next; call `finish` once.
+    pub fn begin_exposures<'a>(
+        &'a self,
+        backend: &'a dyn ComputeBackend,
+        metering: crate::pipeline::ShotMetering,
+        collect: Tap,
+    ) -> Result<crate::pipeline::ExposureAccumulator<'a>, String> {
+        self.pipeline.begin_exposures(backend, metering, collect)
+    }
+
+    /// Compose multiple exposures at the film log-exposure boundary, then run
+    /// the remaining chain once. See [`crate::pipeline::ExposureShot`].
+    pub fn process_exposures(
+        &self,
+        shots: &[crate::pipeline::ExposureShot<'_>],
+        backend: &dyn ComputeBackend,
+        collect: Tap,
+    ) -> Result<ImageBuf, String> {
+        self.process_exposures_with_report(shots, backend, collect)
+            .map(|(image, _report)| image)
+    }
+
+    /// Compose multiple exposures and return per-shot diagnostics.
+    pub fn process_exposures_gpu(
+        &self,
+        shots: &[crate::pipeline::ExposureShot<'_>],
+        backend: &dyn ComputeBackend,
+        collect: Tap,
+    ) -> Result<(ImageBuf, crate::pipeline::MultipleExposureReport), String> {
+        self.pipeline.process_exposures_gpu(shots, backend, collect)
+    }
+
+    pub fn process_exposures_with_report(
+        &self,
+        shots: &[crate::pipeline::ExposureShot<'_>],
+        backend: &dyn ComputeBackend,
+        collect: Tap,
+    ) -> Result<(ImageBuf, crate::pipeline::MultipleExposureReport), String> {
+        let started = Instant::now();
+        let result = self
+            .pipeline
+            .process_exposures_with_report(shots, backend, collect);
+        self.record_elapsed(started, Some(BTreeMap::new()));
+        result
+    }
+
     /// Process with an explicit operation context while capturing the native
     /// stage evidence of the executed render. The capture observes the run;
     /// it must not change its route, parameters or output pixels.

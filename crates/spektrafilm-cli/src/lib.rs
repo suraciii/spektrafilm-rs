@@ -11,6 +11,7 @@ pub mod fit;
 #[cfg(feature = "precision-f64")]
 pub mod lab;
 pub mod lut;
+pub mod multiple_exposure;
 pub mod preset;
 pub mod process;
 mod process_report;

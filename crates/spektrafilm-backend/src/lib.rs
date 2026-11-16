@@ -381,6 +381,31 @@ pub trait ComputeBackend: Send + Sync {
         ))
     }
 
+    /// Accumulate one retained `log_e_film` carrier into a device-side
+    /// multiple-exposure accumulator.
+    ///
+    /// `accumulator == None` creates the accumulator from the first shot;
+    /// otherwise the shader adds `weight * 10^shot` in place. The returned
+    /// carrier is an intermediate linear-exposure buffer. `Ok(None)` means the
+    /// backend has no device composition; a selected GPU must not silently
+    /// fall back to host arithmetic.
+    fn log_e_accumulate(
+        &self,
+        _accumulator: Option<&DeviceImage>,
+        _shot: &DeviceImage,
+        _weight: f32,
+    ) -> Result<Option<DeviceImage>, String> {
+        Ok(None)
+    }
+
+    /// Convert a device-side linear-exposure accumulator to `log10` exposure.
+    /// This logically consumes the accumulator: callers MUST NOT call
+    /// `log_e_accumulate` on it afterwards. `Ok(None)` means no device
+    /// composition.
+    fn log_e_finalize(&self, _accumulator: &DeviceImage) -> Result<Option<DeviceImage>, String> {
+        Ok(None)
+    }
+
     /// log_raw → density_cmy via per-channel curve interpolation.
     ///
     /// Called twice per render (filming.develop + printing.develop). GPU

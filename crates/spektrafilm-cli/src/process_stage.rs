@@ -7,7 +7,7 @@ pub(super) fn run(args: &ProcessArgs, data: &DataSelection) -> Result<()> {
     if args.iters == 0 {
         bail!("--iters must be at least 1");
     }
-    if args.input.is_dir() {
+    if args.input_path().is_dir() {
         validate_read_only_input(args)?;
     }
     let profile_sources: Vec<PathBuf> = args
@@ -16,7 +16,7 @@ pub(super) fn run(args: &ProcessArgs, data: &DataSelection) -> Result<()> {
         .chain(args.paper.iter())
         .map(|name| data.path.join("profiles").join(format!("{name}.json")))
         .collect();
-    let mut protected = vec![args.input.as_path()];
+    let mut protected = vec![args.input_path()];
     protected.extend(args.params.as_deref());
     protected.extend(args.raw_out.as_deref());
     protected.extend(
@@ -55,8 +55,8 @@ fn execute(
     invocation: &mut telemetry::Invocation,
     protected: &[&Path],
 ) -> Result<()> {
-    let header = if args.input.is_dir() {
-        Some(stage_artifact::read_header(&args.input)?)
+    let header = if args.input_path().is_dir() {
+        Some(stage_artifact::read_header(&args.input_path())?)
     } else {
         None
     };
@@ -91,12 +91,15 @@ fn execute(
         if args.workflow.film_channel_swap != "none" || args.workflow.print_channel_swap != "none" {
             bail!("channel swaps reinterpret frozen material; regenerate from the earlier input");
         }
-    } else if !args.input.is_file() {
-        bail!("input is not a regular file: {}", args.input.display());
+    } else if !args.input_path().is_file() {
+        bail!(
+            "input is not a regular file: {}",
+            args.input_path().display()
+        );
     }
-    let input_is_raw = header.is_none() && image_io::is_raw(&args.input);
+    let input_is_raw = header.is_none() && image_io::is_raw(&args.input_path());
     if header.is_none() && !input_is_raw {
-        image_io::ImageFormat::detect(&args.input)?;
+        image_io::ImageFormat::detect(&args.input_path())?;
     }
     let raw = raw_options(&args.workflow);
     if input_is_raw {
@@ -340,16 +343,16 @@ fn execute(
         .context("--output is required for execution")?;
     // Complete required member verification precedes compute-device creation.
     let mut restored = if header.is_some() {
-        Some(stage_artifact::read(&args.input)?)
+        Some(stage_artifact::read(&args.input_path())?)
     } else {
         None
     };
     let input_identity = if artifact_output {
         Some(content_identity(
             if header.is_some() {
-                args.input.join("stage.json")
+                args.input_path().join("stage.json")
             } else {
-                args.input.clone()
+                args.input_path().to_path_buf()
             }
             .as_path(),
         )?)
@@ -437,11 +440,11 @@ fn execute(
         }
     } else {
         let image = if input_is_raw {
-            spektrafilm_raw::load(&args.input, &raw)
+            spektrafilm_raw::load(&args.input_path(), &raw)
                 .map_err(anyhow::Error::msg)?
                 .image
         } else {
-            let loaded = image_io::load(&args.input)?;
+            let loaded = image_io::load(&args.input_path())?;
             metadata = loaded.metadata;
             loaded.image
         };
@@ -733,8 +736,8 @@ fn dry_report(
 }
 
 fn validate_read_only_input(args: &ProcessArgs) -> Result<()> {
-    let root = std::fs::canonicalize(&args.input)?;
-    let header = stage_artifact::read_header(&args.input)?;
+    let root = std::fs::canonicalize(&args.input_path())?;
+    let header = stage_artifact::read_header(&args.input_path())?;
     let mut members = vec![root.join("stage.json")];
     members.extend(
         header
@@ -775,7 +778,7 @@ fn validate_read_only_input(args: &ProcessArgs) -> Result<()> {
         if resolved == root || resolved.starts_with(&root) {
             bail!(
                 "stage artifact input is read-only; destination is inside {}",
-                args.input.display()
+                args.input_path().display()
             );
         }
     }

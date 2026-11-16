@@ -3,6 +3,7 @@ use std::time::Instant;
 
 use anyhow::{Context, Result, bail};
 use clap::{ArgMatches, ValueEnum};
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 use spektrafilm_core::ScannerProvenance;
 use spektrafilm_core::image_io::{self, BitDepth, Compression, JpegSubsampling, SaveOptions};
@@ -28,8 +29,83 @@ pub struct ProcessArgs {
     #[arg(long, value_enum, help_heading = "Execution and diagnostics")]
     pub(crate) backend: Option<Backend>,
     /// Input raster, camera RAW image, or stage artifact directory.
+    /// Optional when --expose or --recipe supplies the stack.
     #[arg(help_heading = "Input and RAW loading")]
-    pub(crate) input: PathBuf,
+    pub(crate) input: Option<PathBuf>,
+    /// Add one multiple-exposure shot; repeat 2–8 times. Mutually exclusive
+    /// with a positional input and with --recipe.
+    #[arg(
+        long = "expose",
+        value_name = "PATH",
+        action = clap::ArgAction::Append,
+        help_heading = "Multiple exposure"
+    )]
+    pub(crate) expose: Vec<PathBuf>,
+    /// Per-shot physical exposure offset in stops; repeat once per --expose.
+    #[arg(
+        long = "expose-ev",
+        value_name = "EV",
+        action = clap::ArgAction::Append,
+        allow_negative_numbers = true,
+        help_heading = "Multiple exposure"
+    )]
+    pub(crate) expose_ev: Vec<f64>,
+    /// Per-shot linear composition weight; repeat once per --expose.
+    #[arg(
+        long = "expose-weight",
+        value_name = "W",
+        action = clap::ArgAction::Append,
+        help_heading = "Multiple exposure"
+    )]
+    pub(crate) expose_weight: Vec<f64>,
+    /// Metering mode for the multiple-exposure stack.
+    #[arg(
+        long = "multiple-exposure-meter",
+        value_enum,
+        help_heading = "Multiple exposure"
+    )]
+    pub(crate) multiple_exposure_meter: Option<MeteringArg>,
+    /// Output-space crop X,Y,W,H applied after rendering; inputs are not cropped.
+    #[arg(
+        long = "output-crop",
+        value_name = "X,Y,W,H",
+        help_heading = "Multiple exposure"
+    )]
+    pub(crate) output_crop: Option<String>,
+    /// Load a multiple-exposure recipe JSON.
+    #[arg(
+        long = "recipe",
+        value_name = "FILE",
+        help_heading = "Multiple exposure"
+    )]
+    pub(crate) recipe: Option<PathBuf>,
+    /// Write the resolved multiple-exposure recipe JSON.
+    #[arg(
+        long = "recipe-out",
+        value_name = "FILE",
+        help_heading = "Multiple exposure"
+    )]
+    pub(crate) recipe_out: Option<PathBuf>,
+    /// Render a reduced preview; same composite math and seed.
+    #[arg(long, help_heading = "Multiple exposure")]
+    pub(crate) preview: bool,
+    /// Long-edge size for --preview.
+    #[arg(
+        long = "preview-max-size",
+        default_value = "1024",
+        help_heading = "Multiple exposure"
+    )]
+    pub(crate) preview_max_size: u32,
+    /// Maximum host memory for a multiple-exposure render: bytes, KiB/MiB/GiB,
+    /// or "auto". Checked before the first shot is exposed; no output is
+    /// written on failure.
+    #[arg(
+        long = "max-memory",
+        value_name = "BYTES|auto",
+        default_value = "auto",
+        help_heading = "Multiple exposure"
+    )]
+    pub(crate) max_memory: String,
     /// Raster color space; discover with describe --field io.input_color_space.
     #[arg(long, help_heading = "Input and RAW loading")]
     pub(crate) input_color_space: Option<String>,
@@ -136,6 +212,24 @@ pub struct ProcessArgs {
     pub(crate) data_dir: PathBuf,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub(crate) enum MeteringArg {
+    Each,
+    LockToFirst,
+    Manual,
+}
+
+impl MeteringArg {
+    pub(crate) fn core(self) -> spektrafilm_core::pipeline::ShotMetering {
+        match self {
+            Self::Each => spektrafilm_core::pipeline::ShotMetering::Each,
+            Self::LockToFirst => spektrafilm_core::pipeline::ShotMetering::LockToFirst,
+            Self::Manual => spektrafilm_core::pipeline::ShotMetering::Manual,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
 pub(crate) enum OutputFormat {
     Jpeg,
@@ -144,7 +238,7 @@ pub(crate) enum OutputFormat {
     Exr,
 }
 impl OutputFormat {
-    fn image_format(self) -> image_io::ImageFormat {
+    pub(crate) fn image_format(self) -> image_io::ImageFormat {
         match self {
             Self::Jpeg => image_io::ImageFormat::Jpeg,
             Self::Png => image_io::ImageFormat::Png,
@@ -164,7 +258,17 @@ impl Default for ProcessArgs {
     fn default() -> Self {
         Self {
             backend: None,
-            input: PathBuf::new(),
+            input: None,
+            expose: Vec::new(),
+            expose_ev: Vec::new(),
+            expose_weight: Vec::new(),
+            multiple_exposure_meter: None,
+            output_crop: None,
+            recipe: None,
+            recipe_out: None,
+            preview: false,
+            preview_max_size: 1024,
+            max_memory: "auto".to_owned(),
             input_color_space: None,
             input_cctf_decoding: None,
             output: None,
@@ -193,6 +297,14 @@ impl Default for ProcessArgs {
             iters: 1,
             data_dir: PathBuf::from("data"),
         }
+    }
+}
+
+impl ProcessArgs {
+    /// The positional input, or an empty path when --expose/--recipe is used.
+    /// Callers that require an input must check `input.is_some()` first.
+    pub(crate) fn input_path(&self) -> &Path {
+        self.input.as_deref().unwrap_or_else(|| Path::new(""))
     }
 }
 
@@ -512,7 +624,15 @@ pub fn run(mut args: ProcessArgs, command_matches: &ArgMatches) -> Result<()> {
     // workers, so install the switch here instead of mutating the process
     // environment after the pool exists.
     spektrafilm_backend::timing::set_stage_timings(args.timings);
-    if args.input.is_dir() {
+    let data_dir = std::mem::take(&mut args.data_dir);
+    let data = select_data_dir(data_dir, command_matches)?;
+    if !args.expose.is_empty() || args.recipe.is_some() {
+        return crate::multiple_exposure::run(&args, &data);
+    }
+    if args.input.is_none() {
+        bail!("input image is required unless --expose or --recipe is used");
+    }
+    if args.input.as_deref().is_some_and(Path::is_dir) {
         for id in [
             "raw_white_balance",
             "raw_temperature",
@@ -527,14 +647,15 @@ pub fn run(mut args: ProcessArgs, command_matches: &ArgMatches) -> Result<()> {
             }
         }
     }
-    let data_dir = std::mem::take(&mut args.data_dir);
-    let data = select_data_dir(data_dir, command_matches)?;
     run_with_data_dir(args, data)
 }
 
 /// Run the process pipeline with an already-resolved data directory.
 /// Shared with the lab module, which cannot construct `ArgMatches`.
 pub(crate) fn run_with_data_dir(args: ProcessArgs, data: DataSelection) -> Result<()> {
+    if !args.expose.is_empty() || args.recipe.is_some() {
+        return crate::multiple_exposure::run(&args, &data);
+    }
     run_with_capture(args, data, None)
 }
 
@@ -556,7 +677,7 @@ fn run_with_capture(
     // Legacy complete baselines may retain an image-input partial route. Do not
     // infer artifact continuation: that input always requires explicit --route.
     if args.workflow.route.is_none()
-        && !args.input.is_dir()
+        && !args.input.as_deref().is_some_and(Path::is_dir)
         && !args.scan_film
         && let Some(path) = &args.params
     {
@@ -569,7 +690,7 @@ fn run_with_capture(
         .route
         .as_deref()
         .map(spektrafilm_core::WorkflowRoute::parse);
-    if args.input.is_dir()
+    if args.input.as_deref().is_some_and(Path::is_dir)
         || route.is_some_and(|route| {
             route.artifact_input().is_some() || route.artifact_output().is_some()
         })
@@ -592,7 +713,7 @@ fn run_with_capture(
             paths
         })
         .unwrap_or_default();
-    let mut protected = vec![args.input.as_path()];
+    let mut protected = vec![args.input_path()];
     if let Some(output) = args.output.as_deref() {
         protected.push(output);
     }
@@ -641,7 +762,7 @@ fn cmd_process(
     evidence_paths: &[PathBuf],
     capture: Option<&Path>,
 ) -> Result<()> {
-    let input = args.input.as_path();
+    let input = args.input.as_deref().context("input image is required")?;
     let output = args.output.as_deref();
     let workflow = &args.workflow;
     let format = args.format;
