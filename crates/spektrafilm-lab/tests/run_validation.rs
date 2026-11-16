@@ -14,7 +14,7 @@ fn read(path: &Path) -> Value {
 
 fn validate_run(root: &Path) -> (Value, i32) {
     let output = Command::new(env!("CARGO_BIN_EXE_spektrafilm-lab"))
-        .args(["validate", "--kind", "run", "--file"])
+        .args(["document", "--kind", "run", "--check"])
         .arg(root.join("run.json"))
         .output()
         .unwrap();

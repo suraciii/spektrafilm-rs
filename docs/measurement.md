@@ -1,6 +1,8 @@
 # Measurement
 
-Three commands carry the measurement surface. `spektrafilm-f64 measure run` measures the
+This page covers chain measurement on a retained run. The instrument that measures
+finished images is documented in [Measure delivered images](lab.md). Three commands
+carry this surface. `spektrafilm-f64 measure run` measures the
 chain on a declared stimulus set. `spektrafilm-bench sample` reads declared regions from an
 image or a retained stage capture, and `spektrafilm-bench compare readings` matches two
 retained measurements: those two read and join what the first one produced. The commands

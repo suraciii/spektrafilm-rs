@@ -61,7 +61,7 @@ fn regions_grid_writes_an_explicit_regions_document() {
     );
     let validated = result(
         cli()
-            .args(["validate", "--kind", "regions", "--file"])
+            .args(["document", "--kind", "regions", "--check"])
             .arg(&out)
             .output()
             .unwrap(),
@@ -164,15 +164,12 @@ fn review_kind_and_removed_manifest_inputs_are_rejected() {
     fs::write(&file, b"{}").unwrap();
     // Both endpoints read one registry, so an unknown kind reaches the caller
     // the same way from either: one code, one exit status, one record shape.
-    for arguments in [
-        vec!["schema", "--kind", "review"],
-        vec!["validate", "--kind", "review", "--file"],
-    ] {
+    // A kind outside the vocabulary is refused before it is read, from the one
+    // endpoint that owns the vocabulary.
+    {
+        let arguments = ["document", "--kind", "review"];
         let mut command = cli();
-        command.args(&arguments);
-        if arguments[0] == "validate" {
-            command.arg(&file);
-        }
+        command.args(arguments);
         let output = command.output().unwrap();
         assert_eq!(output.status.code(), Some(2), "{arguments:?}");
         let value: Value = serde_json::from_slice(&output.stdout).unwrap();

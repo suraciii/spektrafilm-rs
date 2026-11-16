@@ -15,7 +15,8 @@ Contracts live in [../specs/](../specs/). Domain terms live in [../CONTEXT.md](.
 - [Grain engines](grain.md) — Spektra, Procedural, Dye, Fotufilm Film and Exposure Grain, with their controls.
 - [RAW decoding](raw.md) — the shared LibRaw and Lensfun decoder, white balance modes, and the RAW helper.
 - [Profile fitting](profile-fitting.md) — deriving surface terms and conversion tone from reference patch data.
-- [Measurement](measurement.md) — the instrument's stimulus documents, point-wise readings, reading comparison, and verification.
+- [Measure delivered images](lab.md) — the `spektrafilm-lab` instrument: declarations, regions, measurement rows, and reading a record.
+- [Measurement](measurement.md) — chain measurement on a retained run: stimulus documents, point-wise readings, reading comparison, and verification.
 - [LUT delivery](luts.md) — the bundle format, the LUT baker, OCIO output and QA artifacts.
 - [Appearance benchmark](benchmark.md) — rendering version-comparison evidence, the offline review, and the benchmark-owned photo report.
 - [Parity and backends](parity.md) — the pinned Python target, measurement budgets, and backend/fallback behavior.

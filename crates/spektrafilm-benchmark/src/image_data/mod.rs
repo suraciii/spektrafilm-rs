@@ -703,6 +703,22 @@ pub fn load_image_with(source: &Value, options: DecodeOptions) -> Result<ImageDa
     })
 }
 
+/// The color spaces this instrument reads and converts.
+///
+/// One list owns the vocabulary: the transform below accepts exactly these, and
+/// a command line that names a space validates against the same list, so a typo
+/// is refused where it is written rather than where it is used.
+pub const COLOR_SPACES: &[&str] = &[
+    "sRGB",
+    "Display P3",
+    "DCI-P3",
+    "Adobe RGB (1998)",
+    "ProPhoto RGB",
+    "ITU-R BT.2020",
+    "ACEScg",
+    "ACES2065-1",
+];
+
 pub fn display_rgb(image: &ImageData) -> Result<Vec<[f64; 3]>> {
     if image.metadata.get("icc").is_some()
         || image
@@ -719,18 +735,7 @@ pub fn display_rgb(image: &ImageData) -> Result<Vec<[f64; 3]>> {
             "Color space and transfer must be explicit",
         ));
     }
-    if ![
-        "sRGB",
-        "Display P3",
-        "DCI-P3",
-        "Adobe RGB (1998)",
-        "ProPhoto RGB",
-        "ITU-R BT.2020",
-        "ACEScg",
-        "ACES2065-1",
-    ]
-    .contains(&image.color_space.as_str())
-    {
+    if !COLOR_SPACES.contains(&image.color_space.as_str()) {
         return Err(err(
             "unsupported_color_transform",
             format!("Unknown color space: {}", image.color_space),

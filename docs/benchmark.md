@@ -74,8 +74,8 @@ just build-lab
     --renderer ./target/release/spektrafilm-f64 --data-dir ./data \
     --out /tmp/spektrafilm-benchmark-fixtures --download-natural
 
-./target/release/spektrafilm-lab validate --kind suite \
-    --file /tmp/spektrafilm-benchmark-fixtures/complete.json
+./target/release/spektrafilm-lab document --kind suite \
+    --check /tmp/spektrafilm-benchmark-fixtures/complete.json
 ./target/release/spektrafilm-f64 run suite \
     --suite /tmp/spektrafilm-benchmark-fixtures/complete.json \
     --target /tmp/spektrafilm-benchmark-fixtures/baseline.json \
@@ -117,8 +117,8 @@ JSON
 ./target/release/spektrafilm-f64 target \
     --renderer ./target/release/spektrafilm-f64 --data-dir ./data \
     --backend cpu --out /tmp/spektrafilm-local-target.json
-./target/release/spektrafilm-lab validate --kind configuration \
-    --file /tmp/spektrafilm-local-configuration.json
+./target/release/spektrafilm-lab document --kind configuration \
+    --check /tmp/spektrafilm-local-configuration.json
 ./target/release/spektrafilm-f64 run image \
     --input /tmp/spektrafilm-benchmark-fixtures/chart.png \
     --input-color-space sRGB --input-cctf-decoding true \
@@ -147,10 +147,10 @@ just build-lab
     --renderer ./target/release/spektrafilm-f64 --data-dir ./data \
     --out /tmp/spektrafilm-standard-bundle
 
-./target/release/spektrafilm-lab validate --kind configuration \
-    --file /tmp/spektrafilm-standard-bundle/color-tone.json
-./target/release/spektrafilm-lab validate --kind configuration \
-    --file /tmp/spektrafilm-standard-bundle/appearance.json
+./target/release/spektrafilm-lab document --kind configuration \
+    --check /tmp/spektrafilm-standard-bundle/color-tone.json
+./target/release/spektrafilm-lab document --kind configuration \
+    --check /tmp/spektrafilm-standard-bundle/appearance.json
 ./target/release/spektrafilm-f64 target \
     --renderer ./target/release/spektrafilm-f64 --data-dir ./data \
     --backend cpu --out /tmp/spektrafilm-standard-baseline-target.json

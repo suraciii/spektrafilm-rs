@@ -229,7 +229,7 @@ fn the_published_record_validates_as_an_analysis() {
             .success()
     );
     let output = lab()
-        .args(["validate", "--kind", "analysis", "--file"])
+        .args(["document", "--kind", "analysis", "--check"])
         .arg(out.join("analysis.json"))
         .output()
         .unwrap();
@@ -521,54 +521,62 @@ fn every_measurement_names_its_family() {
     }
 }
 
-/// One vocabulary, one list: the kinds `schema` prints and the kinds `validate`
-/// decides come from the same table, and a kind outside it fails the same way
-/// from either endpoint.
+/// One vocabulary, one list: the kind printed and the kind decided come from
+/// the same registry, and a kind that has a schema but no rule says so.
 #[test]
 fn the_document_vocabulary_has_one_owner() {
-    let schema_list = lab().args(["schema", "--help"]).output().unwrap();
-    let schema_list = String::from_utf8_lossy(&schema_list.stdout).to_string();
-    let validate_list = lab().args(["validate", "--help"]).output().unwrap();
-    let validate_list = String::from_utf8_lossy(&validate_list.stdout).to_string();
-    // `validate` is a subset of `schema`: a document can be printed without a
-    // rule to decide it, but not decided without a schema to check it against.
+    let help = lab().args(["document", "--help"]).output().unwrap();
+    let help = String::from_utf8_lossy(&help.stdout).to_string();
     for kind in ["regions", "analysis", "comparison", "suite", "target"] {
-        assert!(schema_list.contains(kind), "schema cannot print {kind}");
-        assert!(
-            validate_list.contains(kind),
-            "validate cannot decide {kind}"
-        );
+        assert!(help.contains(kind), "the kind list omits {kind}");
     }
-    // A kind that is printable but not decidable appears in one list only.
-    assert!(schema_list.contains("preflight"), "{schema_list}");
-    assert!(!validate_list.contains("preflight"), "{validate_list}");
+    // A kind that is printable but not decidable is still listed, because the
+    // list is the vocabulary, not the subset this binary can rule on.
+    assert!(help.contains("preflight"), "{help}");
 
-    // A kind in neither list fails from both endpoints with the same code and
-    // the same record shape, so a caller needs no second vocabulary.
-    for (endpoint, arguments) in [
-        ("schema", vec!["schema", "--kind", "not_a_kind"]),
-        (
-            "validate",
-            vec!["validate", "--kind", "not_a_kind", "--file", "x.json"],
-        ),
+    let out = lab()
+        .args(["document", "--kind", "not_a_kind", "--check", "x.json"])
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(2));
+    let record: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(record["errors"][0]["code"], "unknown_document_kind");
+
+    // A kind with a schema and no rule names that fact instead of pretending
+    // the kind does not exist.
+    let file = tempfile::NamedTempFile::new().unwrap();
+    std::fs::write(file.path(), b"{}").unwrap();
+    // The invocation is well formed and the kind exists, so the failure is an
+    // execution failure (1), not a refused invocation (2).
+    let out = lab()
+        .args(["document", "--kind", "preflight", "--check"])
+        .arg(file.path())
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    let record: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(record["errors"][0]["code"], "unvalidatable_document_kind");
+    let message = record["errors"][0]["message"].as_str().unwrap();
+    assert!(message.contains("no rule"), "{message}");
+
+    // The old endpoints teach their replacement rather than reading as typos.
+    for (old, replacement) in [
+        ("schema", "document --kind"),
+        ("validate", "document --kind"),
     ] {
-        let out = lab().args(arguments).output().unwrap();
-        assert_eq!(
-            out.status.code(),
-            Some(2),
-            "{endpoint} accepted a bogus kind"
-        );
+        let out = lab().args([old, "--kind", "regions"]).output().unwrap();
+        assert_eq!(out.status.code(), Some(2));
         let record: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
-        assert_eq!(record["execution_status"], "failed", "{endpoint}");
-        assert_eq!(
-            record["errors"][0]["code"], "unknown_document_kind",
-            "{endpoint} named the refusal differently"
+        assert!(
+            record["errors"][0]["message"]
+                .as_str()
+                .unwrap()
+                .contains(replacement),
+            "{record}"
         );
     }
 }
 
-/// A measurement that did not run has no count to report. Writing zero would
-/// state a fact about the population that the code never established.
 #[test]
 fn an_unavailable_measurement_reports_no_sample_count() {
     let temp = tempfile::tempdir().unwrap();
