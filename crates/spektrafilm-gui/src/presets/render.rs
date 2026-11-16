@@ -835,18 +835,24 @@ impl App {
             (inner * 2.0 / 3.0).max(44.0)
         };
         // Two name lines keep same-prefix stocks distinguishable at the
-        // default two-column browser width.
-        let name_row_height = 2.0 * theme::SIZE_LABEL + 4.0;
+        // default two-column browser width. Measure the real font rows rather
+        // than assuming the nominal size: the compact card's fixed height must
+        // include the active-state line and cannot clip its descenders.
+        let label_row_height =
+            ui.fonts(|fonts| fonts.row_height(&egui::FontId::proportional(theme::SIZE_LABEL)));
+        let hint_row_height =
+            ui.fonts(|fonts| fonts.row_height(&egui::FontId::proportional(theme::SIZE_HINT)));
+        let name_row_height = 2.0 * label_row_height + 4.0;
         let details_height = if context.is_some() {
-            2.0 + theme::SIZE_HINT
+            2.0 + hint_row_height
         } else {
             0.0
         } + if switch.is_some() {
-            2.0 + theme::SIZE_HINT
+            2.0 + hint_row_height
         } else {
             0.0
-        } + if active { 2.0 + theme::SIZE_HINT } else { 0.0 };
-        let text_height = name_row_height + details_height;
+        } + if active { 2.0 + hint_row_height } else { 0.0 };
+        let text_height = name_row_height + details_height + 2.0;
         let content_height = if compact {
             thumbnail_height.max(text_height + 2.0)
         } else {
