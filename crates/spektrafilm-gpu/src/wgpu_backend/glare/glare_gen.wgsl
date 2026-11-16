@@ -23,6 +23,11 @@ struct MtSlot {
 @group(0) @binding(1) var<storage, read_write> glare_buf: array<f32>;
 @group(0) @binding(2) var<storage, read_write> mt: array<MtSlot>;
 
+// Bounded polar rejection: an unbounded loop would spin the GPU until the
+// driver's watchdog resets the device. Acceptance is pi/4, so 64 attempts are
+// unreachable for a working stream.
+const RK_MAX_GAUSS_STEPS: u32 = 64u;
+
 // Keep centered integer numerators until the normal transform splits them.
 fn rk_signed_uniform() -> vec2<i32> {
     let a = i32(mt_next(0u) >> 5u) - 67108864;
@@ -37,7 +42,7 @@ fn rk_gauss() -> f32 {
         mt[0].gauss = 0.0;
         return value;
     }
-    loop {
+    for (var steps = 0u; steps < RK_MAX_GAUSS_STEPS; steps = steps + 1u) {
         let x = rk_signed_uniform();
         let y = rk_signed_uniform();
         // Split the 27-bit numerator on a 2^-12 grid before conversion.

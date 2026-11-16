@@ -39,20 +39,25 @@ fn pcg_uniform(rng: ptr<function, Pcg>) -> f64 {
   return (f64(hi) * 67108864.0 + f64(lo)) / 9007199254740992.0;
 }
 
+// The rejection loop below is bounded. A shader that never returns spins the
+// GPU until the driver's watchdog resets the device, and the reset loses the
+// device for every later call in the process. Rejection accepts with
+// probability pi/4, so this many attempts are unreachable for a working stream;
+// exhaustion returns the defined fallback instead of hanging.
+const PCG_MAX_NORMAL_STEPS: u32 = 64u;
+
 /// Marsaglia polar normal. The rejection loop keeps clear of sin/cos and
 /// preserves the same normal law as the reference.
 fn pcg_normal(rng: ptr<function, Pcg>) -> f64 {
-  var result: f64 = 0.0;
-  loop {
+  for (var steps = 0u; steps < PCG_MAX_NORMAL_STEPS; steps++) {
     let u = 2.0 * pcg_uniform(rng) - 1.0;
     let v = 2.0 * pcg_uniform(rng) - 1.0;
     let s = u * u + v * v;
     if s > 0.0 && s < 1.0 {
-      result = u * sqrt(-2.0 * sf64_log(s) / s);
-      break;
+      return u * sqrt(-2.0 * sf64_log(s) / s);
     }
   }
-  return result;
+  return f64(0.0);
 }
 
 fn make_rng(global_i: u32, channel: u32) -> Pcg {

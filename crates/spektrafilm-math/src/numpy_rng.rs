@@ -65,7 +65,11 @@ impl GaussRng {
             self.gauss = 0.0;
             return v;
         }
-        loop {
+        // Bounded rejection: the device kernel caps the same loop so a
+        // degenerate stream cannot spin forever (a spinning shader trips the
+        // driver watchdog and loses the device). Acceptance is pi/4, so 64
+        // attempts are unreachable for a working stream.
+        for _ in 0..MAX_REJECTION_STEPS {
             let x1 = 2.0 * rk_double(&mut self.rng) - 1.0;
             let x2 = 2.0 * rk_double(&mut self.rng) - 1.0;
             let r2 = x1 * x1 + x2 * x2;
@@ -76,8 +80,17 @@ impl GaussRng {
                 return f * x2;
             }
         }
+        0.0
     }
 }
+
+/// Bounds shared with the device kernels: every rejection loop must terminate
+/// even when a rate or probability degrades to NaN or infinity, because a
+/// spinning shader stops returning commands and the driver watchdog then resets
+/// the device. The caps are far above any reachable count for a finite input,
+/// so ordinary draws are unchanged.
+const MAX_REJECTION_STEPS: u32 = 512;
+const MAX_MULTIPLICATION_STEPS: u32 = 4096;
 
 /// Numpy's Poisson sampler. Dispatches between two algorithms depending
 /// on the rate. Matches `numpy.random.RandomState.poisson` bit-exactly.
@@ -97,7 +110,7 @@ fn rk_poisson_mult(rng: &mut Mt, lam: f64) -> u64 {
     let enlam = (-lam).exp();
     let mut x: u64 = 0;
     let mut prod = 1.0_f64;
-    loop {
+    for _ in 0..MAX_MULTIPLICATION_STEPS {
         let u = rk_double(rng);
         prod *= u;
         if prod > enlam {
@@ -106,6 +119,7 @@ fn rk_poisson_mult(rng: &mut Mt, lam: f64) -> u64 {
             return x;
         }
     }
+    x
 }
 
 /// Hörmann 1993 PTRS algorithm for λ ≥ 10. Verbatim port of numpy.
@@ -116,7 +130,7 @@ fn rk_poisson_ptrs(rng: &mut Mt, lam: f64) -> u64 {
     let a = -0.059 + 0.02483 * b;
     let invalpha = 1.1239 + 1.1328 / (b - 3.4);
     let vr = 0.9277 - 3.6224 / (b - 2.0);
-    loop {
+    for _ in 0..MAX_REJECTION_STEPS {
         let u = rk_double(rng) - 0.5;
         let v = rk_double(rng);
         let us = 0.5 - u.abs();
@@ -142,6 +156,7 @@ fn rk_poisson_ptrs(rng: &mut Mt, lam: f64) -> u64 {
             return k as u64;
         }
     }
+    lam.max(0.0).round() as u64
 }
 
 /// Numpy's binomial sampler. Dispatches by both `p` and `n*p`. Returns
@@ -173,7 +188,12 @@ fn rk_binomial_inversion(rng: &mut Mt, n: u64, p: f64) -> u64 {
     let mut x: u64 = 0;
     let mut px = qn;
     let mut u = rk_double(rng);
+    let mut steps = 0u32;
     while u > px {
+        steps += 1;
+        if steps > MAX_REJECTION_STEPS {
+            return (np.round() as u64).min(n);
+        }
         x += 1;
         if x > bound {
             x = 0;
@@ -213,7 +233,12 @@ fn rk_binomial_btpe(rng: &mut Mt, n: u64, p: f64) -> u64 {
     let nrq = nf * r * q;
 
     let y: i64;
+    let mut steps = 0u32;
     'outer: loop {
+        steps += 1;
+        if steps > MAX_REJECTION_STEPS {
+            return ((nf * r).round() as i64).clamp(0, n as i64) as u64;
+        }
         let u = rk_double(rng) * p4;
         let mut v = rk_double(rng);
 
@@ -321,6 +346,24 @@ fn lgamma(x: f64) -> f64 {
 mod tests {
     use super::*;
     use rand_mt::Mt;
+
+    /// A rate or probability that degrades to NaN must consume the bounded
+    /// budget instead of spinning. Before the caps existed this test never
+    /// returned; the device kernel with the same loop shapes would trip the
+    /// driver watchdog and lose the device for the whole process.
+    #[test]
+    fn degenerate_rates_take_the_bounded_fallback() {
+        let mut rng = Mt::new(11u32);
+        // NaN skips both dispatch comparisons and falls into the multiplication
+        // branch, whose `prod > NaN` test is false on the first draw.
+        assert_eq!(rk_poisson(&mut rng, f64::NAN), 0);
+        // The BTPE rejection loop cannot accept a NaN candidate; the bounded
+        // fallback returns the (NaN-rounded) mean instead of looping.
+        let nan_binomial = rk_binomial(&mut rng, 64, f64::NAN);
+        assert!(nan_binomial <= 64);
+        // An infinite rate reaches the same bounded fallback.
+        assert!(rk_binomial(&mut rng, 64, f64::INFINITY) <= 64);
+    }
 
     /// Reference values from `numpy.random.RandomState(0)`. Verified by
     /// running `np.random.seed(0); np.random.randint(0, 2**32, dtype=np.uint32)`
