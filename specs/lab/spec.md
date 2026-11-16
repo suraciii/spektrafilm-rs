@@ -129,9 +129,9 @@ A refusal would be an answer to a question nobody asked.
 the probe is the code that refuses a missing one. `numeric`, `color`, and `flip`
 measure a declared quantity and are meaningful on any region.
 
-Every measurement row names its family, because a metric identity need not carry
-the family as a prefix and a reader groups by concept rather than by naming
-habit.
+Every measurement row of an analysis or a comparison names its family, because a
+metric identity need not carry the family as a prefix and a reader groups by
+concept rather than by naming habit.
 
 ## Command surface
 

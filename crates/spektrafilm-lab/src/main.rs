@@ -83,8 +83,8 @@ struct GridArgs {
     /// stage capture and belong to `spektrafilm-bench sample`.
     #[arg(long, value_name = "SPACE")]
     space: String,
-    /// What the generated regions are populations of. Required: a generator
-    /// does not decide what a region measures.
+    /// What each generated region is a population of. Required: a generator
+    /// does not decide what a region is for.
     #[arg(
         long,
         value_name = "ROLE",
