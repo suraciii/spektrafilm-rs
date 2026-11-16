@@ -55,10 +55,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         } else {
             dims = Some((image.width, image.height));
-            accum = Some(vec![
-                0.0;
-                (image.width as usize * image.height as usize * 3)
-            ]);
+            accum = Some(vec![0.0; image.width as usize * image.height as usize * 3]);
         }
         let shot = ExposureShot {
             image: &image,

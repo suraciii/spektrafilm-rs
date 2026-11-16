@@ -162,3 +162,41 @@ fn fully_resident_gpu_matches_cpu_within_visual_gate() {
         "grain std ratio {grain_ratio:.4} outside [0.90, 1.10]"
     );
 }
+
+#[test]
+fn gpu_rejects_all_zero_weights_like_cpu() {
+    let gpu = spektrafilm_gpu::test_support::explicit_adapter();
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data");
+    let film = profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();
+    let print = profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap();
+    let mut params = RuntimeParams::default();
+    params.io.input_color_space = "sRGB".into();
+    params.io.input_cctf_decoding = false;
+    params.camera.auto_exposure = false;
+    params.camera.film_format_mm = 3.8912;
+    let pipeline =
+        Pipeline::new_with_spectral_backend(film, print, params, &dir, gpu.backend()).unwrap();
+    let a = synthetic(64, 64, 0.0);
+    let b = synthetic(64, 64, 0.08);
+    let shots = [
+        ExposureShot {
+            image: &a,
+            exposure_ev: -1.0,
+            weight: 0.0,
+            metering: ShotMetering::Manual,
+        },
+        ExposureShot {
+            image: &b,
+            exposure_ev: -1.0,
+            weight: 0.0,
+            metering: ShotMetering::Manual,
+        },
+    ];
+    let error = pipeline
+        .process_exposures_gpu(&shots, gpu.backend(), Tap::RgbOut)
+        .expect_err("all-zero weights must be rejected");
+    assert!(
+        error.contains("positive finite total weight"),
+        "unexpected GPU error: {error}"
+    );
+}

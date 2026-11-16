@@ -14,7 +14,6 @@ use sha2::{Digest, Sha256};
 use spektrafilm_backend::ComputeBackend;
 use spektrafilm_core::image_io::{self, BitDepth, Compression, JpegSubsampling, SaveOptions};
 use spektrafilm_core::params::{PrintExposureEvTracking, PrintExposureMode, RuntimeParams, Tap};
-use spektrafilm_core::pipeline::ExposureShot;
 use spektrafilm_core::profile;
 use spektrafilm_core::runtime::{DigestMode, RuntimePhotoParams};
 use spektrafilm_math::image::ImageBuf;
@@ -134,15 +133,18 @@ fn parse_memory_limit(value: &str) -> Result<Option<u64>> {
 
 fn estimate_peak_bytes(width: u32, height: u32) -> u64 {
     // CPU host estimate, calibrated against the measured f32 streaming runs:
-    // 61 MP / 4 shots 6.45 GiB and 100 MP / 4-8 shots 10.46 GiB. It does not
-    // scale with shot count. GPU host/VRAM is intentionally unguarded.
+    // 61 MP / 4 shots 6.45 GiB and 100 MP / 4-8 shots 10.46 GiB. The estimate
+    // must cover the accumulator plus the pipeline's working f32 images, not
+    // just one three-channel buffer; 37 bytes/sample is conservative for the
+    // measured runs, and 80 bytes/sample covers the f64 reference lane. It
+    // does not scale with shot count. GPU host/VRAM is intentionally unguarded.
     let samples = (width as u64)
         .saturating_mul(height as u64)
         .saturating_mul(3);
     let factor = if cfg!(feature = "precision-f64") {
-        8.0
+        80.0
     } else {
-        9.0
+        37.0
     };
     (samples as f64 * factor) as u64 + 512 * 1024_u64.pow(2)
 }
@@ -357,6 +359,19 @@ fn reject_unsupported(args: &ProcessArgs) -> Result<()> {
     if args.scan_film || args.workflow.route.is_some() || args.workflow.scan_output.is_some() {
         bail!("multiple-exposure.unsupported: route/scan_film/scan_output are not supported yet");
     }
+    if args.lut.is_some()
+        || args.workflow.scan_profile.is_some()
+        || args.workflow.raw_white_balance != "as-shot"
+        || args.workflow.raw_temperature.is_some()
+        || args.workflow.raw_tint.is_some()
+        || args.workflow.lens_correction
+        || args.workflow.film_channel_swap != "none"
+        || args.workflow.print_channel_swap != "none"
+    {
+        bail!(
+            "multiple-exposure.unsupported: LUT, scan profile, RAW loading, lens correction and channel swaps are not supported"
+        );
+    }
     if args.dry_run {
         bail!("multiple-exposure.unsupported: --dry-run is not implemented for multiple exposure");
     }
@@ -376,10 +391,14 @@ fn reject_unsupported(args: &ProcessArgs) -> Result<()> {
             || args.paper.is_some()
             || args.output_crop.is_some()
             || args.seed.is_some()
-            || args.multiple_exposure_meter.is_some())
+            || args.multiple_exposure_meter.is_some()
+            || args.input_color_space.is_some()
+            || args.input_cctf_decoding.is_some()
+            || !args.expose_ev.is_empty()
+            || !args.expose_weight.is_empty())
     {
         bail!(
-            "multiple-exposure.recipe-schema: --recipe carries film/paper/crop/seed/metering; do not combine those flags with --recipe"
+            "multiple-exposure.recipe-schema: --recipe carries film/paper/crop/seed/metering/input interpretation; do not combine those flags with --recipe"
         );
     }
     Ok(())
@@ -723,6 +742,24 @@ mod tests {
         assert_eq!(parse_memory_limit("4096").unwrap(), Some(4096));
         assert!(parse_memory_limit("nope").is_err());
         assert!(parse_memory_limit("999999999999999999999GiB").is_err());
+    }
+
+    #[test]
+    fn peak_estimate_covers_measured_high_res_cpu_runs() {
+        // Measured f32 streaming peaks: 6.45 GiB at 61 MP and 10.46 GiB at
+        // 100 MP. Both builds must estimate at least those peaks; the old
+        // 9-bytes/sample formula only estimated 2.0/3.0 GiB.
+        let gib = 1024_u64.pow(3);
+        let e61 = estimate_peak_bytes(9568, 6376) as f64 / gib as f64;
+        let e100 = estimate_peak_bytes(10000, 10000) as f64 / gib as f64;
+        assert!(
+            e61 >= 6.4,
+            "61 MP estimate {e61:.3} GiB below measured peak"
+        );
+        assert!(
+            e100 >= 10.4,
+            "100 MP estimate {e100:.3} GiB below measured peak"
+        );
     }
 
     #[test]

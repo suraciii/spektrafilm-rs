@@ -48,11 +48,16 @@ pub struct ExposureShot<'a> {
 /// A streaming multiple-exposure stack. Create it with
 /// [`Pipeline::begin_exposures`], add one shot at a time, then call `finish`.
 ///
-/// CPU stacks keep one f64 accumulator. GPU stacks keep one device-side
+/// CPU stacks keep one accumulator (`f64` in the `precision-f64` reference
+/// build, `f32` in the default product build). GPU stacks keep one device-side
 /// accumulator; the caller can drop each host image immediately after
 /// `add_shot`. This is the product streaming path; the slice APIs below are
 /// thin wrappers over it.
-pub enum ExposureAccumulator<'a> {
+pub struct ExposureAccumulator<'a> {
+    inner: AccumulatorKind<'a>,
+}
+
+enum AccumulatorKind<'a> {
     Cpu(CpuAccumulator<'a>),
     Gpu(GpuAccumulator<'a>),
 }
@@ -66,17 +71,17 @@ impl<'a> ExposureAccumulator<'a> {
         exposure_ev: f64,
         weight: f64,
     ) -> Result<(), String> {
-        match self {
-            Self::Cpu(stack) => stack.add_shot(image, exposure_ev, weight),
-            Self::Gpu(stack) => stack.add_shot(image, exposure_ev, weight),
+        match &mut self.inner {
+            AccumulatorKind::Cpu(stack) => stack.add_shot(image, exposure_ev, weight),
+            AccumulatorKind::Gpu(stack) => stack.add_shot(image, exposure_ev, weight),
         }
     }
 
     /// Finalize the stack and run develop/print/scan once.
     pub fn finish(self) -> Result<(ImageBuf, MultipleExposureReport), String> {
-        match self {
-            Self::Cpu(stack) => stack.finish(),
-            Self::Gpu(stack) => stack.finish(),
+        match self.inner {
+            AccumulatorKind::Cpu(stack) => stack.finish(),
+            AccumulatorKind::Gpu(stack) => stack.finish(),
         }
     }
 }
@@ -449,6 +454,9 @@ impl GpuAccumulator<'_> {
         if !self.dims_set || self.reports.is_empty() {
             return Err("multiple exposure requires at least one shot".into());
         }
+        if !self.total_weight.is_finite() || self.total_weight <= 0.0 {
+            return Err("multiple exposure requires a positive finite total weight".into());
+        }
         let accumulator = self
             .accumulator
             .ok_or("multiple exposure has no GPU accumulator")?;
@@ -515,35 +523,39 @@ impl Pipeline {
     ) -> Result<ExposureAccumulator<'a>, String> {
         validate_stack(self, collect)?;
         if backend.is_gpu() {
-            Ok(ExposureAccumulator::Gpu(GpuAccumulator {
-                pipeline: self,
-                backend,
-                metering,
-                collect,
-                width: 0,
-                height: 0,
-                dims_set: false,
-                total_weight: 0.0,
-                reports: Vec::new(),
-                locked_ae: None,
-                accumulator: None,
-            }))
+            Ok(ExposureAccumulator {
+                inner: AccumulatorKind::Gpu(GpuAccumulator {
+                    pipeline: self,
+                    backend,
+                    metering,
+                    collect,
+                    width: 0,
+                    height: 0,
+                    dims_set: false,
+                    total_weight: 0.0,
+                    reports: Vec::new(),
+                    locked_ae: None,
+                    accumulator: None,
+                }),
+            })
         } else {
-            Ok(ExposureAccumulator::Cpu(CpuAccumulator {
-                pipeline: self,
-                backend,
-                metering,
-                collect,
-                width: 0,
-                height: 0,
-                dims_set: false,
-                pitch: None,
-                total_weight: 0.0,
-                reports: Vec::new(),
-                locked_ae: None,
-                shift: None,
-                values: Vec::new(),
-            }))
+            Ok(ExposureAccumulator {
+                inner: AccumulatorKind::Cpu(CpuAccumulator {
+                    pipeline: self,
+                    backend,
+                    metering,
+                    collect,
+                    width: 0,
+                    height: 0,
+                    dims_set: false,
+                    pitch: None,
+                    total_weight: 0.0,
+                    reports: Vec::new(),
+                    locked_ae: None,
+                    shift: None,
+                    values: Vec::new(),
+                }),
+            })
         }
     }
 
