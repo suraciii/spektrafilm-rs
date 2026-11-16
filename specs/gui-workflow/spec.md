@@ -148,6 +148,8 @@ General and Display MUST start open in Settings. A control locator MUST reveal, 
 
 Export MUST keep its format, depth, saving color, active codec, and applicable compression rows readable and canonically locatable. Its destination MUST be visible before submission or immediately after the native chooser confirms it.
 
+Switching format MUST restore that container's previous draft or normalize a new one. It MUST NOT silently carry an incompatible bit depth, encoding, or compression choice into the new container.
+
 When JPEG is inapplicable, its quality and subsampling rows MUST stay out of the ordinary view. Locating either canonical row MUST reveal it read-only with an accessible inapplicability reason. Fixed capability values MUST stay visible without repeating their reason as a second paragraph.
 
 An inapplicable JPEG option MUST retain its stored preference. Writer capabilities remain owned by [photo export](../photo-export/spec.md) and [saving conversion](../cli/spec.md#export-and-execution-options); presentation MUST NOT offer an unsupported combination or change writer behavior.

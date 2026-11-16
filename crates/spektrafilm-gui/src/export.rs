@@ -112,6 +112,15 @@ impl ExportFormat {
     }
 }
 
+fn format_index(format: ExportFormat) -> usize {
+    match format {
+        ExportFormat::Jpeg => 0,
+        ExportFormat::Png => 1,
+        ExportFormat::Tiff => 2,
+        ExportFormat::Exr => 3,
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) enum ExportCompression {
     #[default]
@@ -365,6 +374,9 @@ fn readonly_row(ui: &mut egui::Ui, label: &str, value: &str, help: &str, path: &
 #[derive(Default)]
 pub(crate) struct ExportDialog {
     draft: Option<ExportOptions>,
+    /// Last edited draft per container, so switching containers does not
+    /// silently discard choices that are valid when the user returns.
+    format_drafts: [Option<ExportOptions>; 4],
     /// Chosen before submitting; the native chooser still runs when absent.
     destination: Option<PathBuf>,
     /// Set while a freshly opened draft still owes the dialog its one-time
@@ -383,6 +395,8 @@ impl ExportDialog {
     pub(crate) fn open(&mut self, committed: &ExportOptions) {
         let mut draft = committed.clone();
         draft.normalize();
+        self.format_drafts = Default::default();
+        self.format_drafts[format_index(draft.format)] = Some(draft.clone());
         self.draft = Some(draft);
         self.destination = None;
         self.initial_focus = true;
@@ -416,6 +430,7 @@ impl ExportDialog {
         source: Option<&Path>,
     ) -> Option<ExportDialogResult> {
         let draft = self.draft.as_mut()?;
+        let mut format_drafts = self.format_drafts.clone();
         let mut destination = self.destination.clone();
         let mut submit = false;
         let mut choose_destination = false;
@@ -511,6 +526,7 @@ impl ExportDialog {
                 ui.spacing_mut().item_spacing = egui::vec2(theme::SPACE_3, theme::SPACE_2);
                 section_heading(ui, "File and container");
                 let previous_format = draft.format;
+                let previous_draft = draft.clone();
                 enum_choice(ui, "Format", &mut draft.format, &[
                     (ExportFormat::Jpeg, ExportFormat::Jpeg.label()),
                     (ExportFormat::Png, ExportFormat::Png.label()),
@@ -519,6 +535,21 @@ impl ExportDialog {
                 ], "JPEG: lossy 8-bit for web. PNG: lossless 8-bit. TIFF: 8/16-bit integer or 32-bit float, ZIP or uncompressed. EXR: 16/32-bit linear for compositing.");
                 draft.normalize();
                 if draft.format != previous_format {
+                    format_drafts[format_index(previous_format)] =
+                        Some(previous_draft.clone());
+                    let backend = draft.backend;
+                    if let Some(saved) = format_drafts[format_index(draft.format)].clone() {
+                        *draft = saved;
+                        draft.normalize();
+                    } else {
+                        let mut next = previous_draft;
+                        next.format = draft.format;
+                        next.normalize();
+                        *draft = next;
+                    }
+                    // Backend is a session-wide execution choice, not a
+                    // container preference.
+                    draft.backend = backend;
                     // A path chosen through the native save sheet was confirmed
                     // for the previous container. Reusing or rewriting its
                     // extension could overwrite a different existing file
@@ -526,6 +557,7 @@ impl ExportDialog {
                     destination = None;
                     self.destination = None;
                 }
+                self.format_drafts = format_drafts;
                 ui.horizontal(|ui| {
                     ui.label(
                         egui::RichText::new(crate::i18n::text(ui.ctx(), "surfaces.export.destination"))
