@@ -707,6 +707,31 @@ fn export_dialog_format_controls_are_conditional_and_both_cancel_paths_write_not
 }
 
 #[test]
+fn switching_formats_restores_the_previous_container_draft() {
+    let mut s = session();
+    let h = &mut s.harness;
+    let mut custom = h.state().export_options.clone();
+    custom.format = export::ExportFormat::Tiff;
+    custom.depth = BitDepth::ThirtyTwo;
+    custom.compression = export::ExportCompression::None;
+    custom.saving_cctf_encoding = false;
+    h.state_mut().export_options = custom;
+    open_export_dialog(h);
+
+    choose(h, "Format", "PNG");
+    assert_eq!(
+        h.state().export_dialog.draft().unwrap().depth,
+        BitDepth::Eight,
+        "PNG normalization still applies in its own draft"
+    );
+    choose(h, "Format", "TIFF");
+    let restored = h.state().export_dialog.draft().unwrap();
+    assert_eq!(restored.depth, BitDepth::ThirtyTwo);
+    assert_eq!(restored.compression, export::ExportCompression::None);
+    assert!(!restored.saving_cctf_encoding);
+}
+
+#[test]
 fn export_destination_is_chosen_before_submission_and_used_without_a_second_prompt() {
     let mut s = session();
     let h = &mut s.harness;

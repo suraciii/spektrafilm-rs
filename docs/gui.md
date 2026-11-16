@@ -358,7 +358,7 @@ On macOS, the Metal surface is tagged sRGB.
 
 Header **Export** opens the modal **Export options** dialog. Choose **Format**, **Bit depth**, **Saving color space**, and the applicable codec/compression settings. **Backend** and **Apply saving CCTF encoding** are under **Advanced**. Choose **Destination** inline, or leave it for the native chooser after **Export file…**. Export renders a snapshot of the full input and simulation parameters independently of retained preview output. **Cancel**, an explicit close action, or Escape when Export is the topmost modal discards its unsubmitted draft without changing accepted adjustments or retained output. A backdrop click does not dismiss it.
 
-Locating another Export control while the dialog is open preserves its draft. The locator changes focus, not the selected delivery options.
+Locating another Export control while the dialog is open preserves its draft. Switching **Format** restores that container's last draft instead of carrying incompatible bit-depth or compression choices. The locator changes focus, not the selected delivery options.
 
 Export uses the in-memory input pixels with the simulation parameters. It runs at the build's precision; see [parity and backends](parity.md#backend-selection). GUI Export does not launch `spektrafilm-f64`; use that CLI separately for CPU f64 reference output. Output metadata uses the current orientation and dimensions.
 
