@@ -839,6 +839,11 @@ pub fn aggregate_seed_measurements(results: &[Value]) -> Vec<Value> {
     output
 }
 
+/// The metric identities a case and region can produce.
+///
+/// `case` is a suite case, which is the only document that declares its own
+/// measurement set beside the protocol. A result case names its *rows* under the
+/// same key, so it must never be passed here.
 fn metric_definitions(case: &Value, region_id: &str, protocol: &Value) -> HashSet<String> {
     let mut definitions = HashSet::new();
     let region = case["regions"]
@@ -850,8 +855,13 @@ fn metric_definitions(case: &Value, region_id: &str, protocol: &Value) -> HashSe
     // A run case declares its own measurement set beside the protocol, because
     // one run may measure different cases differently. The case is the nearer
     // declaration, so it answers first; a lab protocol has no such field and
-    // falls through to the table.
-    let families = match case.get("measurements") {
+    // falls through to the table. Only a declaration is a list of names.
+    let declared = case.get("measurements").filter(|value| {
+        value
+            .as_array()
+            .is_some_and(|names| names.iter().all(Value::is_string))
+    });
+    let families = match declared {
         Some(declared) => declared
             .as_array()
             .into_iter()
