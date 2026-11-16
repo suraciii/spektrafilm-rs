@@ -1,8 +1,8 @@
 //! `compare`: adapt one declaration into one image comparison.
 //!
 //! The adapter owns argument shape, pairing, and the analysis profile. It owns
-//! no measurement: the engine quantifies and joins the two sides, and the
-//! report builder presents the retained comparison.
+//! no measurement: the engine quantifies and joins the two sides. It presents
+//! nothing; a page is one reading of the record and belongs to its reader.
 //!
 //! A delivered image has no executed command. This adapter therefore writes no
 //! run record, no target, and no argv; its comparison names the files by digest
@@ -16,7 +16,7 @@ use serde_json::Value;
 use spektrafilm_benchmark::{Error, Result};
 use spektrafilm_benchmark::{
     analysis::{self, Region},
-    documents, images as engine, local_input, report,
+    images as engine, local_input,
 };
 
 #[derive(ClapArgs)]
@@ -30,7 +30,9 @@ pub struct Args {
     /// Declared color space and transfer state of both sides.
     #[arg(long, value_name = "SPACE:encoded|decoded")]
     pub declaration: String,
-    /// Declared region: name=x,y,w,h[:role]. Repeats.
+    /// Declared region: name=x,y,w,h[:role]. Repeats. A role is one of skin,
+    /// neutral, shadow, highlight, color, flat_field, texture, edge, other; it
+    /// decides which families can be measured there.
     #[arg(
         long = "roi",
         value_name = "ID=X,Y,W,H[:ROLE]",
@@ -41,23 +43,23 @@ pub struct Args {
     #[arg(long, value_name = "FILE")]
     pub regions: Option<std::path::PathBuf>,
     /// Built-in analysis profile.
-    #[arg(long, value_name = "ID", conflicts_with = "protocol")]
+    #[arg(long, value_name = "ID", value_parser = profiles())]
     pub analysis: Option<String>,
-    /// Authored protocol document.
-    #[arg(long, value_name = "FILE")]
-    pub protocol: Option<std::path::PathBuf>,
-    /// Box-average retained difference maps to one sample per NxN block.
+    /// Box-average retained difference maps to one sample per NxN block. It
+    /// changes no measured value.
     #[arg(long, value_name = "N")]
     pub map_scale: Option<u32>,
-    /// Build the offline report inside the comparison directory.
-    #[arg(long)]
-    pub report: bool,
-    /// Case identity for the single-pair form.
-    #[arg(long, value_name = "ID")]
-    pub case_id: Option<String>,
     /// New comparison directory; must not exist.
     #[arg(long, value_name = "DIR")]
     pub out: std::path::PathBuf,
+}
+
+/// The profile ids, with one owner: the profile table.
+///
+/// A caller picks a named recipe; the vocabulary is the table's, not a second
+/// literal that drifts from it.
+fn profiles() -> clap::builder::PossibleValuesParser {
+    clap::builder::PossibleValuesParser::new(analysis::PROFILES.iter().map(|profile| profile.id))
 }
 
 pub fn run(args: &Args) -> Result<(Value, i32)> {
@@ -70,11 +72,7 @@ pub fn run(args: &Args) -> Result<(Value, i32)> {
     }
     let (color_space, cctf_decoding) = declaration(&args.declaration)?;
     let profile = analysis::profile(args.analysis.as_deref().unwrap_or("lab-appearance-v1"))?;
-    let protocol = match &args.protocol {
-        Some(path) => documents::load_json_document(path)
-            .map_err(|error| error.at(path.display().to_string()))?,
-        None => analysis::protocol(profile),
-    };
+    let protocol = analysis::protocol(profile);
     let regions = match (&args.regions, args.roi.is_empty()) {
         (Some(path), _) => {
             let document = local_input::load("regions", path)
@@ -86,7 +84,7 @@ pub fn run(args: &Args) -> Result<(Value, i32)> {
                 )
             })?
         }
-        (None, false) => analysis::regions(profile, &declared_regions(&args.roi)?),
+        (None, false) => analysis::regions(&declared_regions(&args.roi)?),
         (None, true) => Vec::new(),
     };
     let pairs = pairs(args)?;
@@ -100,21 +98,7 @@ pub fn run(args: &Args) -> Result<(Value, i32)> {
         protocol,
         map_scale,
     };
-    let (result, status) = engine::compare(&request, &args.out)?;
-    if !args.report {
-        return Ok((result, status));
-    }
-    let destination = args.out.join("report");
-    let built = match report::build_report(&args.out, &destination) {
-        Ok(value) => value,
-        Err(error) => {
-            std::fs::remove_dir_all(&destination).ok();
-            return Err(error);
-        }
-    };
-    let mut result = result;
-    result["report"] = built;
-    Ok((result, status))
+    engine::compare(&request, &args.out)
 }
 
 /// `SPACE:encoded|decoded` carries both facts one declaration needs.
@@ -138,7 +122,7 @@ fn declaration(value: &str) -> Result<(String, bool)> {
     if space.is_empty() {
         return Err(Error::new(
             "argument_syntax",
-            "--declaration must name a colour space",
+            "--declaration must name a color space",
         ));
     }
     Ok((space.to_owned(), decoding))
@@ -155,6 +139,12 @@ fn declared_regions(values: &[String]) -> Result<Vec<Region>> {
             )
         })?;
         analysis::validate_identity(id)?;
+        if regions.iter().any(|region: &Region| region.id == id) {
+            return Err(Error::new(
+                "duplicate_region_identity",
+                format!("--roi declares {id} twice"),
+            ));
+        }
         let (numbers, role) = match rest.split_once(':') {
             Some((numbers, role)) => (numbers, role),
             None => (rest, "other"),
@@ -287,12 +277,6 @@ fn listing(directory: &Path) -> Result<BTreeMap<String, PathBuf>> {
 fn pairs(args: &Args) -> Result<Vec<engine::Pair>> {
     match (args.baseline.is_dir(), args.candidate.is_dir()) {
         (true, true) => {
-            if args.case_id.is_some() {
-                return Err(Error::new(
-                    "argument_syntax",
-                    "--case-id applies only to the single-pair form",
-                ));
-            }
             let left = listing(&args.baseline)?;
             let right = listing(&args.candidate)?;
             let names: BTreeSet<&String> = left.keys().collect();
@@ -332,17 +316,11 @@ fn pairs(args: &Args) -> Result<Vec<engine::Pair>> {
             }
             Ok(result)
         }
-        (false, false) => {
-            let stem = args
-                .case_id
-                .clone()
-                .unwrap_or_else(|| source_id(&args.baseline));
-            Ok(vec![engine::Pair {
-                case_id: case_identity(&stem)?,
-                baseline: args.baseline.clone(),
-                candidate: args.candidate.clone(),
-            }])
-        }
+        (false, false) => Ok(vec![engine::Pair {
+            case_id: case_identity(&source_id(&args.baseline))?,
+            baseline: args.baseline.clone(),
+            candidate: args.candidate.clone(),
+        }]),
         _ => Err(Error::new(
             "argument_syntax",
             "--baseline and --candidate must both be files or both be directories",
@@ -358,7 +336,9 @@ pub struct AnalyzeArgs {
     /// Declared color space and transfer state of the source.
     #[arg(long, value_name = "SPACE:encoded|decoded")]
     pub declaration: String,
-    /// Declared region: name=x,y,w,h[:role]. Repeats.
+    /// Declared region: name=x,y,w,h[:role]. Repeats. A role is one of skin,
+    /// neutral, shadow, highlight, color, flat_field, texture, edge, other; it
+    /// decides which families can be measured there.
     #[arg(
         long = "roi",
         value_name = "ID=X,Y,W,H[:ROLE]",
@@ -368,12 +348,10 @@ pub struct AnalyzeArgs {
     /// Authored regions document in render coordinates.
     #[arg(long, value_name = "FILE")]
     pub regions: Option<std::path::PathBuf>,
-    /// Built-in analysis profile.
-    #[arg(long, value_name = "ID", conflicts_with = "protocol")]
+    /// Built-in analysis profile. It materializes the protocol the record
+    /// retains, so a profile id is all a caller states.
+    #[arg(long, value_name = "ID", value_parser = profiles())]
     pub analysis: Option<String>,
-    /// Authored protocol document.
-    #[arg(long, value_name = "FILE")]
-    pub protocol: Option<std::path::PathBuf>,
     /// New analysis directory; must not exist.
     #[arg(long, value_name = "DIR")]
     pub out: std::path::PathBuf,
@@ -382,11 +360,7 @@ pub struct AnalyzeArgs {
 pub fn analyze_run(args: &AnalyzeArgs) -> Result<(Value, i32)> {
     let (color_space, cctf_decoding) = declaration(&args.declaration)?;
     let profile = analysis::profile(args.analysis.as_deref().unwrap_or("lab-analysis-v1"))?;
-    let protocol = match &args.protocol {
-        Some(path) => documents::load_json_document(path)
-            .map_err(|error| error.at(path.display().to_string()))?,
-        None => analysis::protocol(profile),
-    };
+    let protocol = analysis::protocol(profile);
     let regions = match (&args.regions, args.roi.is_empty()) {
         (Some(path), _) => {
             let document = local_input::load("regions", path)
@@ -398,7 +372,7 @@ pub fn analyze_run(args: &AnalyzeArgs) -> Result<(Value, i32)> {
                 )
             })?
         }
-        (None, false) => analysis::regions(profile, &declared_regions(&args.roi)?),
+        (None, false) => analysis::regions(&declared_regions(&args.roi)?),
         (None, true) => Vec::new(),
     };
     let files = analysis_files(&args.source)?;

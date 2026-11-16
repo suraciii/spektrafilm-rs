@@ -45,7 +45,7 @@ fn read_json(path: &Path) -> serde_json::Value {
 }
 
 #[test]
-fn a_single_pair_publishes_a_comparison_and_a_report() {
+fn a_single_pair_publishes_a_comparison_record() {
     let temp = tempfile::tempdir().unwrap();
     let baseline = temp.path().join("v1/portrait.png");
     let candidate = temp.path().join("v2/portrait.png");
@@ -64,7 +64,6 @@ fn a_single_pair_publishes_a_comparison_and_a_report() {
             "skin=2,2,6,6",
             "--analysis",
             "lab-color-tone-v1",
-            "--report",
             "--out",
         ])
         .arg(&out)
@@ -79,7 +78,9 @@ fn a_single_pair_publishes_a_comparison_and_a_report() {
     assert_eq!(result["command"], "compare");
     assert_eq!(result["execution_status"], "completed");
     assert_eq!(result["cases"], 1);
-    assert!(out.join("report/index.html").is_file());
+    // The lab publishes a record and no page: a page is one reading of the
+    // record, owned by whoever reads it.
+    assert!(!out.join("report").exists());
 
     let comparison = read_json(&out.join("comparison.json"));
     assert_eq!(comparison["baseline"]["kind"], "images");
@@ -178,12 +179,11 @@ fn an_unknown_analysis_profile_is_rejected() {
         .arg(temp.path().join("comparison"))
         .output()
         .unwrap();
-    assert_eq!(output.status.code(), Some(1));
-    let result: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(result["execution_status"], "failed");
-    assert_eq!(result["errors"][0]["code"], "unknown_analysis");
-    let message = result["errors"][0]["message"].as_str().unwrap();
-    assert!(message.contains("lab-appearance-v1"), "{message}");
+    // The profile vocabulary is now the parser's, so an unknown profile is a
+    // usage error: no result document, and the answer lists the real ids.
+    assert_eq!(output.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("lab-appearance-v1"), "{stderr}");
 }
 
 #[test]
@@ -201,7 +201,6 @@ fn an_authored_regions_document_must_declare_render_geometry() {
             "regions": [{
                 "id": "patch",
                 "role": "other",
-                "measurements": [],
                 "geometry": {"x": 1, "y": 1, "width": 4, "height": 4, "space": space}
             }]
         })

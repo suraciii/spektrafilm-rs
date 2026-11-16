@@ -59,10 +59,8 @@ pub fn generate_grid(
     origin: [u64; 2],
     patch_size: [u64; 2],
     gap: [u64; 2],
-    sample: Option<[u64; 2]>,
     space: &str,
     role: &str,
-    measurements: &[String],
     out: &Path,
 ) -> Result<Value> {
     if !valid_identifier(id) {
@@ -90,21 +88,6 @@ pub fn generate_grid(
     if !documents::region_roles()?.iter().any(|value| value == role) {
         return Err(invalid(format!("unknown region role {role:?}")));
     }
-    let families = documents::measurement_families()?;
-    if let Some(unknown) = measurements
-        .iter()
-        .find(|value| !families.iter().any(|known| known == *value))
-    {
-        return Err(invalid(format!("unknown measurement family {unknown:?}")));
-    }
-    if let Some(sample) = sample {
-        if sample[0] == 0 || sample[1] == 0 {
-            return Err(invalid("sample width and height must be positive"));
-        }
-        if sample[0] > patch_size[0] || sample[1] > patch_size[1] {
-            return Err(invalid("sample window must fit inside every patch"));
-        }
-    }
     let grid_width = checked_span(columns, patch_size[0], gap[0])
         .and_then(|span| span.checked_add(origin[0]))
         .ok_or_else(|| invalid("grid width overflows 64-bit geometry"))?;
@@ -126,24 +109,13 @@ pub fn generate_grid(
                 .ok_or_else(|| invalid("grid x coordinate overflows 64-bit geometry"))?;
             let y = checked_position(origin[1], row - 1, patch_size[1], gap[1])
                 .ok_or_else(|| invalid("grid y coordinate overflows 64-bit geometry"))?;
-            let (x, y, width, height) = match sample {
-                Some([width, height]) => (
-                    x.checked_add((patch_size[0] - width) / 2)
-                        .ok_or_else(|| invalid("sample x coordinate overflows 64-bit geometry"))?,
-                    y.checked_add((patch_size[1] - height) / 2)
-                        .ok_or_else(|| invalid("sample y coordinate overflows 64-bit geometry"))?,
-                    width,
-                    height,
-                ),
-                None => (x, y, patch_size[0], patch_size[1]),
-            };
+            let (width, height) = (patch_size[0], patch_size[1]);
             let region_id = format!("{}{row}", column_label(column));
             regions.push(json!({
                 "id": region_id,
                 "label": region_id,
                 "role": role,
                 "geometry": {"x": x, "y": y, "width": width, "height": height, "space": space},
-                "measurements": measurements,
             }));
         }
     }
@@ -194,7 +166,6 @@ pub fn generate_grid(
     Ok(json!({
         "schema_version": 1,
         "command": "regions",
-        "operation": "grid",
         "execution_status": "completed",
         "artifact": root,
         "region_count": region_count,

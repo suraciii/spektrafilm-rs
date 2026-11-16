@@ -176,12 +176,13 @@ impl<'a> Comparison<'a> {
                 seed_population: self.seeds.clone(),
                 shared: common::Measurement {
                     region_id: region.into(),
+                    family: None,
                     metric: format!("{metric}.{side}"),
                     metric_version: METRIC_VERSION,
                     domain: domain.into(),
                     units: units.into(),
                     estimator: estimator.into(),
-                    sample_count: count,
+                    sample_count: available.then_some(count),
                     artifact_refs: refs.to_vec(),
                     availability: if available {
                         Availability::Available
@@ -245,12 +246,13 @@ impl<'a> Comparison<'a> {
             seed_population: self.seeds.clone(),
             shared: common::Measurement {
                 region_id: region.into(),
+                family: None,
                 metric: full.clone(),
                 metric_version: METRIC_VERSION,
                 domain: domain.into(),
                 units: units.into(),
                 estimator: estimator.into(),
-                sample_count: count,
+                sample_count: Some(count),
                 artifact_refs: refs.to_vec(),
                 availability: if available {
                     Availability::Available

@@ -163,7 +163,7 @@ Geometry used for measurement MUST be authored or generated as a standalone `reg
 
 The viewer's image declarations, grid arithmetic, explicit-region rules, display conversion, offline packaging, and browser interaction remain benchmark concerns. They MUST NOT be duplicated in the lab command grammar.
 
-A benchmark command MAY preserve the legacy prepared-image manifest during migration, but it MUST use its own validator and report builder and MUST NOT rely on lab schema discovery or lab `regions grid`. The simpler flat-photo input and explicit-pair report is defined by the [Photo Report specification](photo-report/spec.md).
+A benchmark command MAY preserve the legacy prepared-image manifest during migration, but it MUST use its own validator and report builder and MUST NOT rely on lab schema discovery or lab `regions`. The simpler flat-photo input and explicit-pair report is defined by the [Photo Report specification](photo-report/spec.md).
 
 It is a benchmark-owned visual report and does not replace this prepared-image viewer contract.
 
@@ -237,6 +237,6 @@ Source attribution and redistribution restrictions MUST accompany external refer
 22. Open a report location for a case, seed, pair, and region offline. Reload and use browser history on desktop and narrow layouts; activate detail controls by keyboard and expose invalid locations clearly.
 23. Run a multi-seed suite and compare it while capturing stderr. Identify every started and completed case-seed item and end with completed and failed counts and total elapsed time.
 24. Generate a prepared review page through the benchmark viewer's own command with Chinese captions, a declared default pair, multiple images per set, and distinct grid and explicit-region sets. This viewer contract is independent of `spektrafilm-lab` and `spektrafilm-f64`.
-25. Run `regions grid` with a finite declaration and validate the resulting standalone regions document. Reuse it as sampling geometry without a review manifest.
+25. Run `regions` with a finite declaration and validate the resulting standalone regions document. Reuse it as sampling geometry without a review manifest.
 26. Reject a sample that does not fit, a coordinate-space mismatch, and an unsafe destination.
 27. Render an offline report from a retained comparison through `spektrafilm-bench report comparison`. The lab report MUST NOT accept a prepared-image manifest or record a manifest source kind.

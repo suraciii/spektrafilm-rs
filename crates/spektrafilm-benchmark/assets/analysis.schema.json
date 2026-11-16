@@ -37,9 +37,6 @@
     "protocol": {
       "type": "object"
     },
-    "analysis": {
-      "type": "object"
-    },
     "protocol_digest": {
       "type": "string",
       "pattern": "^[0-9a-f]{64}$"

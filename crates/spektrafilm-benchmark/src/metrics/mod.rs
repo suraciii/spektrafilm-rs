@@ -19,7 +19,26 @@ pub use families::{
 pub use mask::geometry_mask;
 pub use math::{count, luminance, mean, median, number, quantile, selected, spelling};
 
+/// Every measurement family the engine implements.
+///
+/// A profile selects from this list and a document may declare from it; neither
+/// owns it. `halation` and `edge` are here although no lab profile selects them,
+/// because a renderer suite and a policy still can.
+pub const FAMILIES: &[&str] = &[
+    "numeric",
+    "color",
+    "tone",
+    "flip",
+    "grain",
+    "halation",
+    "edge",
+    "color_noise",
+    "neutrality",
+];
+
 pub const METRIC_VERSION: &str = "spektrafilm-appearance-spatial-v3";
+/// The transform a retained record names. It is a serialized identity, so its
+/// spelling is frozen: changing it would change every published digest.
 pub const COLOR_TRANSFORM: &str = "colour-science-CAT02-srgb-D65-2deg-v1";
 /// Reduce a retained map to one sample per `scale × scale` block.
 ///
@@ -100,28 +119,85 @@ fn unavailable(e: &mut Evidence, region: &str, family: &str, error: &Error, refs
         &[],
         Some(&error.code),
     );
-    e.failure(
-        region,
-        family,
-        error,
-        refs,
-        ![
-            "missing_probe_geometry",
-            "insufficient_samples",
-            "zero_edge_contrast",
-            "incompatible_measurement_role",
-        ]
-        .contains(&error.code.as_str()),
-    );
+    e.failure(region, family, error, refs, is_fatal(&error.code));
 }
 
+/// Whether a family failure ends the case or only that family.
+///
+/// A region that selects nothing, a probe without geometry, and an edge with no
+/// contrast are answers about the population, not failures of the run.
+pub fn is_fatal(code: &str) -> bool {
+    ![
+        "missing_probe_geometry",
+        "insufficient_samples",
+        "zero_edge_contrast",
+    ]
+    .contains(&code)
+}
+
+/// The families a population measures.
+///
+/// A lab protocol carries one table keyed by role, because a role is the only
+/// thing that decides what a delivered image is measured for. A renderer suite
+/// protocol carries one flat list plus a list per declared region, because a run
+/// declares its measurement set per case. Both are the same question, so both
+/// are answered here and nowhere else.
+fn families_of(protocol: &Value, region: Option<&Value>, role: &str) -> Vec<String> {
+    let from_list = |value: Option<&Value>| -> Vec<String> {
+        value
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+            .map(str::to_owned)
+            .collect()
+    };
+    if let Some(table) = protocol.get("families").and_then(Value::as_object) {
+        return from_list(table.get(role));
+    }
+    let declared = region.and_then(|region| region.get("measurements"));
+    if declared.is_some() {
+        return from_list(declared);
+    }
+    from_list(protocol.get("measurements"))
+}
+
+/// Whether a family has any meaning on a population of this role.
+///
+/// A lab profile's table already excludes what a role cannot carry, so this is a
+/// no-op there. A renderer suite declares flat lists instead, and one flat list
+/// cannot know that a neutral patch is the only place a cast is meaningful, so
+/// the question is asked in one place for both.
+fn applies(family: &str, role: &str) -> bool {
+    match family {
+        "neutrality" => role == "neutral",
+        "color_noise" => matches!(role, "flat_field" | "texture"),
+        _ => true,
+    }
+}
+
+/// Every population and the families it measures.
 fn populations(regions: &[Value], protocol: &Value) -> Vec<Value> {
-    let mut result = vec![
-        json!({"id":"full_image","measurements":protocol.get("measurements").cloned().unwrap_or(json!(["numeric","color","tone"]))}),
-    ];
-    result.extend_from_slice(regions);
+    let of = |region: Option<&Value>, role: &str| -> Vec<String> {
+        families_of(protocol, region, role)
+            .into_iter()
+            .filter(|family| applies(family, role))
+            .collect()
+    };
+    let mut result = vec![json!({
+        "id": "full_image",
+        "role": "full_image",
+        "families": of(None, "full_image"),
+    })];
+    for region in regions {
+        let role = region["role"].as_str().unwrap_or("other");
+        let mut population = region.clone();
+        population["families"] = json!(of(Some(region), role));
+        result.push(population);
+    }
     result
 }
+
 fn compare_inner(
     e: &mut Evidence,
     a: &ImageData,
@@ -235,22 +311,11 @@ fn compare_inner(
             artifact,
         });
     }
-    // A family whose meaning depends on the population's structure and which
-    // declares no probe of its own gets its applicability from the region
-    // role. A family that declares a probe states its own rule where the probe
-    // is read, and a family that measures a declared quantity is meaningful
-    // anywhere; none of those appear here.
-    fn role_of(population: &Value) -> &str {
-        population["role"].as_str().unwrap_or("other")
-    }
-    let applies = |family: &str, role: &str| match family {
-        "neutrality" => role == "neutral",
-        "color_noise" => matches!(role, "flat_field" | "texture"),
-        _ => true,
-    };
+    // The profile's table never selects a family a role cannot carry, so this
+    // loop asks no second question about applicability.
     let has_family = |family: &str| {
         populations.iter().any(|p| {
-            p["measurements"]
+            p["families"]
                 .as_array()
                 .is_some_and(|x| x.iter().any(|x| x.as_str() == Some(family)))
         })
@@ -303,11 +368,14 @@ fn compare_inner(
     for population in populations {
         let region = population["id"].as_str().unwrap_or("");
         let mut active = "region";
+        // A row produced before any family runs belongs to no family. Clearing
+        // here keeps the previous population's last family out of it.
+        e.in_family("");
         let execution = (|| -> Result<()> {
             if !seen.insert(region) {
                 return Err(err(
-                    "invalid_region",
-                    "Duplicate or reserved full_image region",
+                    "duplicate_region_identity",
+                    format!("Two regions share the identity {region}"),
                 ));
             }
             let mask = if region == "full_image" {
@@ -327,7 +395,7 @@ fn compare_inner(
             // A color readout reports a displacement between two sources, so
             // an analysis retains none.
             if !single
-                && population["measurements"]
+                && population["families"]
                     .as_array()
                     .is_some_and(|families| families.iter().any(|family| family == "color"))
             {
@@ -374,26 +442,15 @@ fn compare_inner(
                     "color_family_not_selected",
                 ));
             }
-            for family in population["measurements"].as_array().into_iter().flatten() {
+            for family in population["families"].as_array().into_iter().flatten() {
                 active = family.as_str().unwrap_or("");
+                // The row states the family it belongs to, so a reader groups
+                // numbers without parsing a metric name.
+                e.in_family(active);
                 // One family answers one question. A family that cannot
                 // measure records one unavailable row, and the region's other
                 // families still measure.
                 let family_execution = (|| -> Result<()> {
-                    if !applies(active, role_of(population)) {
-                        return Err(err(
-                            "incompatible_measurement_role",
-                            format!(
-                                "{active} is measured on a {active_role} population, not on a {role}",
-                                active_role = match active {
-                                    "neutrality" => "neutral",
-                                    "color_noise" => "flat_field or texture",
-                                    _ => "any",
-                                },
-                                role = role_of(population),
-                            ),
-                        ));
-                    }
                     for exclusive in ["color", "flip"] {
                         if active == exclusive && e.sides == Sides::One {
                             return Err(err(
@@ -585,7 +642,9 @@ pub fn compare_images(
         let reason = error.code.clone();
         let mut unavailable = Vec::new();
         for population in populations {
-            for family in population["measurements"].as_array().into_iter().flatten() {
+            for family in population["families"].as_array().into_iter().flatten() {
+                // The row names the family it stands for, so it states it.
+                evidence.in_family(family.as_str().unwrap_or(""));
                 evidence.scalar(
                     population["id"].as_str().unwrap_or(""),
                     family.as_str().unwrap_or(""),
@@ -626,7 +685,7 @@ pub fn analyze_image(
     if let Err(error) = compare_inner(&mut evidence, image, None, &populations, protocol, 1) {
         evidence.failure("full_image", "image", &error, &[], true);
         for population in &populations {
-            for family in population["measurements"].as_array().into_iter().flatten() {
+            for family in population["families"].as_array().into_iter().flatten() {
                 evidence.scalar(
                     population["id"].as_str().unwrap_or(""),
                     family.as_str().unwrap_or(""),
@@ -823,24 +882,46 @@ pub fn aggregate_seed_measurements(results: &[Value]) -> Vec<Value> {
     output
 }
 
+/// The metric identities a case and region can produce.
+///
+/// `case` is a suite case, which is the only document that declares its own
+/// measurement set beside the protocol. A result case names its *rows* under the
+/// same key, so it must never be passed here.
 fn metric_definitions(case: &Value, region_id: &str, protocol: &Value) -> HashSet<String> {
     let mut definitions = HashSet::new();
-    let families = if region_id == "full_image" {
-        case.get("measurements")
-            .or_else(|| protocol.get("measurements"))
-    } else {
-        case["regions"]
+    let region = case["regions"]
+        .as_array()
+        .and_then(|regions| regions.iter().find(|r| r["id"].as_str() == Some(region_id)));
+    let role = region
+        .and_then(|r| r["role"].as_str())
+        .unwrap_or("full_image");
+    // The engine measures a region by that region's own declaration, and the
+    // whole image by the case's, because a run measures different cases
+    // differently. Definitions must come from the same place, or a policy would
+    // be accepted for a metric the comparison cannot produce.
+    let declared = case.get("measurements").filter(|value| {
+        value
             .as_array()
-            .and_then(|regions| regions.iter().find(|r| r["id"].as_str() == Some(region_id)))
-            .and_then(|r| r.get("measurements"))
+            .is_some_and(|names| names.iter().all(Value::is_string))
+    });
+    let families: Vec<String> = if region_id == "full_image" {
+        match declared {
+            Some(declared) => declared
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+                .map(str::to_owned)
+                .collect(),
+            None => families_of(protocol, None, role),
+        }
+    } else {
+        families_of(protocol, region, role)
     };
-    let default_families = json!(["numeric", "color", "tone"]);
     let chosen: HashSet<&str> = families
-        .or_else(|| (region_id == "full_image").then_some(&default_families))
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(Value::as_str)
+        .iter()
+        .map(String::as_str)
+        .filter(|family| applies(family, role))
         .collect();
     if chosen.contains("numeric") {
         for name in ["max_abs_difference", "rmse"] {
@@ -1027,6 +1108,25 @@ mod tests {
     use super::*;
     use std::{fs, path::PathBuf};
 
+    /// Add the viewing parameter an appearance family reads.
+    fn with_ppd(protocol: &Value, ppd: f64) -> Value {
+        let mut protocol = protocol.clone();
+        protocol["pixels_per_degree"] = json!(ppd);
+        protocol
+    }
+
+    /// A protocol whose table gives every role the same families.
+    ///
+    /// A test that cares about one role's families states them through the
+    /// table, because the table is the only place the engine reads them.
+    fn every_role(families: &[&str]) -> Value {
+        let mut table = serde_json::Map::new();
+        for role in crate::documents::region_roles().unwrap() {
+            table.insert(role, json!(families));
+        }
+        json!({"families": Value::Object(table)})
+    }
+
     /// The tests measure at full resolution. `map_scale` is a retention
     /// choice that never touches a population, so no test declares one.
     fn compare_images(
@@ -1103,25 +1203,102 @@ mod tests {
                 .as_nanos()
         ))
     }
+    /// A policy's definitions and the engine's populations read the same
+    /// declaration, or a policy is accepted for a metric no row can produce.
+    ///
+    /// A suite declares a flat list for the case and may override it per region;
+    /// the region's own list is what that region measures.
+    #[test]
+    fn definitions_follow_the_declaration_the_engine_reads() {
+        let protocol = json!({"measurements": ["tone"]});
+        let case = json!({
+            "measurements": ["color"],
+            "regions": [{"id": "skin", "role": "skin", "measurements": ["numeric"]}],
+        });
+
+        let region = metric_definitions(&case, "skin", &protocol);
+        assert!(region.contains("numeric.rmse"));
+        assert!(!region.contains("delta_e00.p95"));
+
+        let whole = metric_definitions(&case, "full_image", &protocol);
+        assert!(whole.contains("delta_e00.p95"));
+        assert!(!whole.contains("numeric.rmse"));
+
+        // A comparison materializes the case's list onto the protocol before
+        // measuring, so the whole image reads it there.
+        let mut measured = protocol.clone();
+        measured["measurements"] = case["measurements"].clone();
+        let populations = populations(&case["regions"].as_array().unwrap().clone(), &measured);
+        assert_eq!(populations[1]["families"], json!(["numeric"]));
+        assert_eq!(populations[0]["families"], json!(["color"]));
+    }
+
+    /// One flat family list cannot know which role carries a family, so the
+    /// question is still asked for a suite that declares one.
+    #[test]
+    fn a_family_a_role_cannot_carry_is_never_measured() {
+        let protocol = json!({"measurements": ["neutrality", "color_noise", "numeric"]});
+        let regions = json!([
+            {"id": "skin", "role": "skin", "geometry": {"x": 0, "y": 0, "width": 4, "height": 4}},
+            {"id": "neutral", "role": "neutral", "geometry": {"x": 0, "y": 0, "width": 4, "height": 4}},
+        ]);
+        let populations = populations(regions.as_array().unwrap(), &protocol);
+        assert_eq!(populations[1]["families"], json!(["numeric"]));
+        assert_eq!(populations[2]["families"], json!(["neutrality", "numeric"]));
+        let skin = metric_definitions(&json!({"regions": regions}), "skin", &protocol);
+        assert!(!skin.contains("neutrality"));
+    }
+
+    /// A row states the family it belongs to and no other.
+    ///
+    /// A population's own failure happens before its first family runs, so it
+    /// must not inherit the family the previous population ended on.
+    #[test]
+    fn a_population_failure_names_no_family() {
+        let a = image(0.5, 8, 8);
+        let out = output();
+        let protocol = every_role(&["numeric", "tone"]);
+        // Two populations with one identity: the second fails before its first
+        // family runs, so its row must not report the family the first ended on.
+        let regions = json!([
+            {"id": "patch", "role": "other", "geometry": {"x": 0, "y": 0, "width": 4, "height": 4}},
+            {"id": "patch", "role": "other", "geometry": {"x": 4, "y": 4, "width": 4, "height": 4}},
+        ]);
+        let result = compare_images(&a, &a, regions.as_array().unwrap(), &protocol, &out).unwrap();
+        assert_eq!(result["execution_status"], "failed");
+        let rows = result["measurements"].as_array().unwrap();
+        let failed: Vec<&Value> = rows
+            .iter()
+            .filter(|row| row["metric"] == "region")
+            .collect();
+        assert!(
+            !failed.is_empty(),
+            "the duplicate population recorded nothing"
+        );
+        assert!(
+            failed.iter().all(|row| row["family"].is_null()),
+            "a failed population claimed a family"
+        );
+        assert!(
+            rows.iter()
+                .filter(|row| row["metric"] != "region")
+                .all(|row| row["family"].is_string()),
+            "a measured population must state its family"
+        );
+    }
+
     #[test]
     fn structured_boundary_failure() {
         let a = image(0.4, 4, 4);
         let b = image(0.4, 5, 4);
-        let result = compare_images(
-            &a,
-            &b,
-            &[],
-            &json!({"measurements":["numeric","color"]}),
-            &output(),
-        )
-        .unwrap();
+        let result =
+            compare_images(&a, &b, &[], &every_role(&["numeric", "color"]), &output()).unwrap();
         assert_eq!(result["execution_status"], "failed");
         assert_eq!(result["measurements"][0]["reason"], "dimension_mismatch");
         assert_eq!(result["region_readouts"], json!([]));
         let mut b = a.clone();
         b.samples[3][1] = f64::NAN;
-        let result =
-            compare_images(&a, &b, &[], &json!({"measurements":["numeric"]}), &output()).unwrap();
+        let result = compare_images(&a, &b, &[], &every_role(&["numeric"]), &output()).unwrap();
         assert_eq!(
             result["numeric_health"]["candidate"]["nonfinite_pixel_count"],
             1
@@ -1132,7 +1309,7 @@ mod tests {
     fn identical_and_signed_official_flip() {
         let a = image(0.4, 16, 16);
         let path = output();
-        let protocol = json!({"measurements":["numeric","color","flip"],"pixels_per_degree":67});
+        let protocol = with_ppd(&every_role(&["numeric", "color", "flip"]), 67.0);
         let result = compare_images(&a, &a, &[], &protocol, &path).unwrap();
         assert_eq!(result["execution_status"], "completed");
         for row in result["measurements"].as_array().unwrap() {
@@ -1170,16 +1347,9 @@ mod tests {
         let b = a.clone();
         let path = output();
         let regions = [
-            json!({"id":"gray","role":"neutral","measurements":["neutrality"],"geometry":{"x":0,"y":0,"width":32,"height":32,"space":"render"}}),
+            json!({"id":"gray","role":"neutral","geometry":{"x":0,"y":0,"width":32,"height":32,"space":"render"}}),
         ];
-        let result = compare_images(
-            &a,
-            &b,
-            &regions,
-            &json!({"measurements":["neutrality"]}),
-            &path,
-        )
-        .unwrap();
+        let result = compare_images(&a, &b, &regions, &every_role(&["neutrality"]), &path).unwrap();
         let rows = result["measurements"].as_array().unwrap();
         let value = |metric: &str| {
             rows.iter()
@@ -1207,34 +1377,33 @@ mod tests {
         fs::remove_dir_all(path).unwrap();
     }
 
-    /// A structural family on a role it does not apply to is refused, and the
-    /// region's other families still measure.
+    /// A region measures what its role's table names, and nothing else.
+    ///
+    /// There is no second declaration to contradict the table, so a structural
+    /// family the role cannot carry is never attempted and leaves no row. A
+    /// refusal would be a refusal of a question nobody asked.
     #[test]
-    fn structural_family_is_refused_on_the_wrong_role() {
+    fn a_role_measures_only_the_families_its_table_names() {
         let a = image(0.4, 16, 16);
         let path = output();
         let regions = [
-            json!({"id":"patch","role":"color","measurements":["neutrality","numeric"],"geometry":{"x":0,"y":0,"width":16,"height":16,"space":"render"}}),
+            json!({"id":"patch","role":"color","geometry":{"x":0,"y":0,"width":16,"height":16,"space":"render"}}),
         ];
-        let result = compare_images(
-            &a,
-            &a,
-            &regions,
-            &json!({"measurements":["numeric"]}),
-            &path,
-        )
-        .unwrap();
+        let protocol = json!({"families": {
+            "full_image": ["numeric"],
+            "color": ["numeric"],
+            "neutral": ["numeric", "neutrality"],
+        }});
+        let result = compare_images(&a, &a, &regions, &protocol, &path).unwrap();
         let rows = result["measurements"].as_array().unwrap();
-        let refused = rows
-            .iter()
-            .find(|r| r["metric"] == "neutrality")
-            .expect("the refused family keeps its row");
-        assert_eq!(refused["reason"], "incompatible_measurement_role");
-        assert!(refused["value"].is_null());
+        assert!(
+            rows.iter().all(|r| r["metric"] != "neutrality"),
+            "a color region must not be asked for neutrality"
+        );
         assert!(
             rows.iter()
                 .any(|r| r["metric"] == "numeric.rmse" && !r["value"].is_null()),
-            "the region's other family still measures"
+            "the role's own family measures"
         );
         fs::remove_dir_all(path).unwrap();
     }
@@ -1259,8 +1428,8 @@ mod tests {
         let result = compare_images(
             &a,
             &a,
-            &[json!({"id":"field","role":"flat_field","measurements":["color_noise"],"geometry":{"x":0,"y":0,"width":32,"height":32,"space":"render"}})],
-            &json!({"measurements":["color_noise"]}),
+            &[json!({"id":"field","role":"flat_field","geometry":{"x":0,"y":0,"width":32,"height":32,"space":"render"}})],
+            &every_role(&["color_noise"]),
             &path,
         )
         .unwrap();
@@ -1301,8 +1470,8 @@ mod tests {
         let result = compare_images(
             &a,
             &a,
-            &[json!({"id":"field","role":"flat_field","measurements":["color_noise"],"geometry":{"x":0,"y":0,"width":32,"height":32,"space":"render"}})],
-            &json!({"measurements":["color_noise"]}),
+            &[json!({"id":"field","role":"flat_field","geometry":{"x":0,"y":0,"width":32,"height":32,"space":"render"}})],
+            &every_role(&["color_noise"]),
             &path,
         )
         .unwrap();
@@ -1342,8 +1511,8 @@ mod tests {
         let result = compare_images(
             &a,
             &a,
-            &[json!({"id":"field","role":"flat_field","measurements":["color_noise"],"geometry":{"x":0,"y":0,"width":32,"height":32,"space":"render"}})],
-            &json!({"measurements":["color_noise"]}),
+            &[json!({"id":"field","role":"flat_field","geometry":{"x":0,"y":0,"width":32,"height":32,"space":"render"}})],
+            &every_role(&["color_noise"]),
             &path,
         )
         .unwrap();
@@ -1365,7 +1534,11 @@ mod tests {
     fn flat_zero_variance_retains_radial_spectrum() {
         let a = image(0.0, 8, 8);
         let path = output();
-        let result=compare_images(&a,&a,&[],&json!({"measurements":["grain"],"probe":{"kind":"flat_field"},"grain":{"residual":{"method":"flat_mean"},"spectrum":{"window":"boxcar"}}}),&path).unwrap();
+        let mut protocol = every_role(&["grain"]);
+        protocol["probe"] = json!({"kind":"flat_field"});
+        protocol["grain"] =
+            json!({"residual":{"method":"flat_mean"},"spectrum":{"window":"boxcar"}});
+        let result = compare_images(&a, &a, &[], &protocol, &path).unwrap();
         let row = result["measurements"]
             .as_array()
             .unwrap()
@@ -1384,10 +1557,10 @@ mod tests {
     }
     #[test]
     fn missing_seed_precedes_insufficient_seeds() {
-        let row = json!({"case_id":"a","region_id":"full_image","metric":"numeric.rmse","domain":"native","units":"sample","estimator":"rmse","availability":"available","value":1.0,"seed_population":[1],"artifact_refs":[]});
+        let _row = json!({"case_id":"a","region_id":"full_image","metric":"numeric.rmse","domain":"native","units":"sample","estimator":"rmse","availability":"available","value":1.0,"seed_population":[1],"artifact_refs":[]});
         let result = aggregate_seed_measurements(&[
-            json!({"case_id":"a","seed":1,"measurements":[row]}),
-            json!({"case_id":"a","seed":2,"measurements":[]}),
+            json!({"case_id":"a","seed":1}),
+            json!({"case_id":"a","seed":2}),
         ]);
         assert!(
             result
@@ -1442,8 +1615,12 @@ mod tests {
         let result = compare_images(
             &image(0.5, 4, 4),
             &b,
-            &[json!({"id":"patch","geometry":{"rectangle":[0,0,2,2]},"measurements":["color"]})],
-            &json!({"measurements":["numeric","color"],"color":{"hue_chroma_floor":0.5}}),
+            &[json!({"id":"patch","role":"color","geometry":{"rectangle":[0,0,2,2]}})],
+            &{
+                let mut protocol = every_role(&["color"]);
+                protocol["color"] = json!({"hue_chroma_floor":0.5});
+                protocol
+            },
             &path,
         )
         .unwrap();
@@ -1490,8 +1667,8 @@ mod tests {
         let result = compare_images(
             &image(0.5, 4, 4),
             &image(0.5, 4, 4),
-            &[json!({"id":"patch","geometry":{"rectangle":[0,0,2,2]},"measurements":["numeric"]})],
-            &json!({"measurements":["numeric", "color"],"color":{"hue_chroma_floor":0.5}}),
+            &[json!({"id":"patch","geometry":{"rectangle":[0,0,2,2]}})],
+            &json!({"color":{"hue_chroma_floor":0.5}}),
             &path,
         )
         .unwrap();

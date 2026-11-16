@@ -1406,7 +1406,7 @@ pub fn color_noise(
     }
 }
 
-/// Every colour-noise quantity of one pair, in the order the report shows
+/// Every color-noise quantity of one pair, in the order the report shows
 /// them. Each entry is one metric name, its two sides, its units and its
 /// estimator; `paired` derives the delta and the availability reason.
 /// One metric of a pair: its name, its two sides, its units and its estimator.
@@ -1485,7 +1485,7 @@ fn noise_statistics(
         .collect()
 }
 
-/// The colour-noise statistics of one image over one population. A quantity
+/// The color-noise statistics of one image over one population. A quantity
 /// that cannot be computed is `None`, and `paired` reports why.
 fn residual_statistics(image: &ImageData, mask: &[bool], sigma: f64) -> Vec<Option<f64>> {
     let width = image.width;

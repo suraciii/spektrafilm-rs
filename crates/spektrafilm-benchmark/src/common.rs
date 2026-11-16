@@ -25,6 +25,10 @@ pub struct Error {
     pub message: String,
     pub path: Option<String>,
     pub boundary: Option<String>,
+    /// What the caller can do about it. Kept apart from `message` so the cause
+    /// reads as the cause and the remedy reads as an instruction. Boxed so the
+    /// error stays inside the bound clippy places on a returned error.
+    pub remedy: Option<Box<str>>,
     /// The file the offending value lives in and the JSON Pointer (RFC 6901) of
     /// that value, when the error can name both exactly. Boxed as one allocation
     /// so adding the pair does not enlarge the `Result` error variant, which
@@ -47,6 +51,7 @@ impl Error {
             message: message.into(),
             path: None,
             boundary: None,
+            remedy: None,
             location: None,
         }
     }
@@ -69,6 +74,11 @@ impl Error {
         self.boundary = Some(boundary.into());
         self
     }
+    /// State what the caller can do, without repeating the cause.
+    pub fn remedy(mut self, remedy: impl Into<String>) -> Self {
+        self.remedy = Some(remedy.into().into_boxed_str());
+        self
+    }
     pub fn to_value(&self) -> Value {
         let mut value = json!({"code":self.code,"message":self.message});
         if let Some(path) = &self.path {
@@ -76,6 +86,9 @@ impl Error {
         }
         if let Some(boundary) = &self.boundary {
             value["boundary"] = json!(boundary);
+        }
+        if let Some(remedy) = &self.remedy {
+            value["remedy"] = json!(&**remedy);
         }
         if let Some(location) = &self.location {
             if let Some(file) = &location.file {
@@ -90,7 +103,11 @@ impl Error {
 }
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}: {}", self.code, self.message)
+        write!(f, "{}: {}", self.code, self.message)?;
+        if let Some(remedy) = &self.remedy {
+            write!(f, "\n  {remedy}")?;
+        }
+        Ok(())
     }
 }
 impl std::error::Error for Error {}
@@ -247,11 +264,9 @@ pub fn dump(path: &Path, value: &Value) -> Result<()> {
 pub fn destination_exists(path: &Path) -> Error {
     Error::new(
         "destination_exists",
-        format!(
-            "Destination already exists: {}; choose a new destination or remove the existing destination before retrying",
-            path.display()
-        ),
+        format!("Destination already exists: {}", path.display()),
     )
+    .remedy("choose a new destination, or remove the existing one before retrying")
     .at(path.display().to_string())
     .boundary("publication")
 }
@@ -268,11 +283,18 @@ pub fn incomplete_destination(mut error: Error, root: &Path, manifest: &str) -> 
     let terminal = root.join(manifest);
     if root.is_dir() && !terminal.is_file() {
         error.message = format!(
-            "{}; destination {} is incomplete evidence because {} was not published; partial evidence was retained. Remove it or choose a new destination before retrying",
+            "{}; {} was not published, so {} holds partial evidence",
             error.message,
-            root.display(),
             manifest,
+            root.display(),
         );
+        error.remedy.get_or_insert_with(|| {
+            format!(
+                "remove {} or choose a new destination before retrying",
+                root.display()
+            )
+            .into_boxed_str()
+        });
     }
     error
 }
@@ -401,12 +423,21 @@ pub enum TerminalState {
 #[derive(Serialize)]
 pub struct Measurement {
     pub region_id: String,
+    /// The family this quantity belongs to. The metric name is its identity and
+    /// need not carry the family as a prefix, so the row states it rather than
+    /// leaving a reader to infer it from a naming habit.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub family: Option<String>,
     pub metric: String,
     pub metric_version: &'static str,
     pub domain: String,
     pub units: String,
     pub estimator: String,
-    pub sample_count: usize,
+    /// How many samples the quantity was computed over. A measurement that did
+    /// not run has no count to report, so the field is absent rather than zero:
+    /// law 4 forbids writing a value for a quantity that does not exist.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sample_count: Option<usize>,
     pub artifact_refs: Vec<String>,
     pub availability: Availability,
     #[serde(skip_serializing_if = "Option::is_none")]

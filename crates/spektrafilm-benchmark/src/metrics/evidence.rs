@@ -80,14 +80,23 @@ pub struct Evidence {
     case_id: Option<String>,
     pub sides: Sides,
     seeds: Vec<Value>,
+    /// The family being measured. A measurement row states it, because the
+    /// concept exists in the protocol and must exist in the record too.
+    family: Option<String>,
     body: EvidenceBuilder<Measurement, Finding, Artifact>,
     pub extra: BTreeMap<String, Value>,
 }
 impl Evidence {
+    /// State the family the next measurements belong to.
+    pub fn in_family(&mut self, family: &str) {
+        self.family = (!family.is_empty()).then(|| family.to_owned());
+    }
+
     pub fn new(protocol: &Value, out: &Path) -> Self {
         Self {
             out: out.into(),
             sides: Sides::Two,
+            family: None,
             case_id: protocol
                 .get("case_id")
                 .and_then(Value::as_str)
@@ -152,12 +161,13 @@ impl Evidence {
             seed_population: self.seeds.clone(),
             shared: SharedMeasurement {
                 region_id: region.into(),
+                family: self.family.clone(),
                 metric: metric.into(),
                 metric_version: METRIC_VERSION,
                 domain: domain.into(),
                 units: units.into(),
                 estimator: estimator.into(),
-                sample_count: count,
+                sample_count: valid.then_some(count),
                 artifact_refs: refs.to_vec(),
                 availability: if valid {
                     Availability::Available

@@ -26,7 +26,6 @@ fn regions_grid_writes_an_explicit_regions_document() {
         cli()
             .args([
                 "regions",
-                "grid",
                 "--id",
                 "chart",
                 "--rows",
@@ -39,12 +38,8 @@ fn regions_grid_writes_an_explicit_regions_document() {
                 "16x12",
                 "--gap",
                 "2,4",
-                "--sample",
-                "8x6",
                 "--role",
                 "color",
-                "--measurements",
-                "color,tone",
                 "--space",
                 "render",
                 "--out",
@@ -54,7 +49,6 @@ fn regions_grid_writes_an_explicit_regions_document() {
             .unwrap(),
     );
     assert_eq!(value["command"], "regions");
-    assert_eq!(value["operation"], "grid");
     assert_eq!(value["region_count"], 6);
     let regions: Value = serde_json::from_slice(&fs::read(&out).unwrap()).unwrap();
     assert_eq!(regions["id"], "chart");
@@ -63,7 +57,7 @@ fn regions_grid_writes_an_explicit_regions_document() {
     assert_eq!(regions["regions"][3]["id"], "A2");
     assert_eq!(
         regions["regions"][0]["geometry"],
-        json!({"x": 14, "y": 23, "width": 8, "height": 6, "space": "render"})
+        json!({"x": 10, "y": 20, "width": 16, "height": 12, "space": "render"})
     );
     let validated = result(
         cli()
@@ -79,14 +73,15 @@ fn regions_grid_writes_an_explicit_regions_document() {
 fn regions_grid_refuses_invalid_geometry_and_existing_destinations() {
     let dir = TempDir::new().unwrap();
     let out = dir.path().join("regions.json");
+    // Zero rows is a declaration the generator cannot expand, and a refused
+    // expansion claims no destination.
     let invalid = cli()
         .args([
             "regions",
-            "grid",
             "--id",
             "chart",
             "--rows",
-            "1",
+            "0",
             "--columns",
             "1",
             "--origin",
@@ -95,10 +90,10 @@ fn regions_grid_refuses_invalid_geometry_and_existing_destinations() {
             "4x4",
             "--gap",
             "0,0",
-            "--sample",
-            "5x4",
             "--space",
             "render",
+            "--role",
+            "color",
             "--out",
         ])
         .arg(&out)
@@ -111,7 +106,6 @@ fn regions_grid_refuses_invalid_geometry_and_existing_destinations() {
         cli()
             .args([
                 "regions",
-                "grid",
                 "--id",
                 "chart",
                 "--rows",
@@ -126,6 +120,8 @@ fn regions_grid_refuses_invalid_geometry_and_existing_destinations() {
                 "0,0",
                 "--space",
                 "render",
+                "--role",
+                "color",
                 "--out",
             ])
             .arg(&out)
@@ -135,7 +131,6 @@ fn regions_grid_refuses_invalid_geometry_and_existing_destinations() {
     let duplicate = cli()
         .args([
             "regions",
-            "grid",
             "--id",
             "chart",
             "--rows",
@@ -150,6 +145,8 @@ fn regions_grid_refuses_invalid_geometry_and_existing_destinations() {
             "0,0",
             "--space",
             "render",
+            "--role",
+            "color",
             "--out",
         ])
         .arg(&out)
@@ -165,21 +162,23 @@ fn review_kind_and_removed_manifest_inputs_are_rejected() {
     let review = TempDir::new().unwrap();
     let file = review.path().join("review.json");
     fs::write(&file, b"{}").unwrap();
-    // `schema` takes any kind string, so `review` reaches the registry and is
-    // refused there.
-    let output = cli().args(["schema", "--kind", "review"]).output().unwrap();
-    assert_eq!(output.status.code(), Some(1));
-    let value: Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(value["errors"][0]["code"], "unknown_document_kind");
-    // `validate` names its kinds up front, so `review` never leaves the
-    // parser: the lab does not offer a kind it cannot validate.
-    let output = cli()
-        .args(["validate", "--kind", "review", "--file"])
-        .arg(&file)
-        .output()
-        .unwrap();
-    assert_eq!(output.status.code(), Some(2));
-    assert!(output.stdout.is_empty());
+    // Both endpoints read one registry, so an unknown kind reaches the caller
+    // the same way from either: one code, one exit status, one record shape.
+    for arguments in [
+        vec!["schema", "--kind", "review"],
+        vec!["validate", "--kind", "review", "--file"],
+    ] {
+        let mut command = cli();
+        command.args(&arguments);
+        if arguments[0] == "validate" {
+            command.arg(&file);
+        }
+        let output = command.output().unwrap();
+        assert_eq!(output.status.code(), Some(2), "{arguments:?}");
+        let value: Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(value["errors"][0]["code"], "unknown_document_kind");
+        assert_eq!(value["endpoint"], arguments[0]);
+    }
     for args in [
         vec!["report", "--manifest", "review.json", "--out", "report"],
         vec![
@@ -190,8 +189,11 @@ fn review_kind_and_removed_manifest_inputs_are_rejected() {
             "regions.json",
         ],
     ] {
-        let output = cli().args(args).output().unwrap();
-        assert_eq!(output.status.code(), Some(2));
-        assert!(output.stdout.is_empty());
+        let output = cli().args(&args).output().unwrap();
+        assert_eq!(output.status.code(), Some(2), "{args:?}");
+        // A usage error reaches the caller in the record shape too, so a
+        // pipeline handles it like every other refusal.
+        let value: Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(value["errors"][0]["code"], "argument_syntax", "{args:?}");
     }
 }

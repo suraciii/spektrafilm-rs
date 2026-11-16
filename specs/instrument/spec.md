@@ -53,7 +53,7 @@ The supported command families have distinct endpoint roles:
 
 | Binary | Owns |
 |---|---|
-| `spektrafilm-lab` | `analyze`, `compare`, `regions grid`, `schema`, `validate` |
+| `spektrafilm-lab` | `analyze`, `compare`, `regions`, `schema`, `validate` |
 | `spektrafilm-bench` | `compare runs`, `compare readings`, `compare pairs`, `sample`, `inspect`, `report comparison`, `report photos` |
 | `spektrafilm-f64` | `target`, `fixtures`, `run suite`, `run image`, `measure run`, `experiment run`, `experiment export`, `spectral evaluate`, `fit` |
 
@@ -97,7 +97,7 @@ spektrafilm-bench compare readings --baseline DIRECTORY --candidate DIRECTORY --
 spektrafilm-bench compare pairs --run DIRECTORY --against input|reference|both --out DIRECTORY
 spektrafilm-bench inspect --comparison DIRECTORY [--case ID ...] [--region ID ...] [--metric ID ...]
 spektrafilm-bench report comparison --comparison DIRECTORY --out DIRECTORY
-spektrafilm-lab regions grid --id ID --rows N --columns N --origin X,Y --patch-size WxH --gap X,Y [--sample WxH] [--space SPACE] [--role ROLE] [--measurements FAMILY,...] --out FILE
+spektrafilm-lab regions --id ID --rows N --columns N --origin X,Y --patch-size WxH --gap X,Y --space SPACE --role ROLE --out FILE
 ```
 ```text
 spektrafilm-f64 --help
@@ -186,12 +186,17 @@ The command family names are semantic, not workflow steps. `measure run` publish
 - It MUST make a non-pass evaluation produce a failing command status after the comparison has been published. Without `--gate`, a successfully published comparison MUST NOT fail solely because its evaluation is non-pass.
 - The comparison source MUST derive its views from the comparison and cited artifacts. It MUST NOT recompute metrics.
 - Its output MUST remain usable without the run directories by copying required review artifacts and retaining their provenance. An external original that cannot be redistributed MUST remain excluded from a distributable report; the report MUST identify the omission rather than substitute another image.
-- `regions grid` MUST expand one finite grid declaration into a normal `regions` document without reading an image, invoking a renderer, computing measurements, or generating HTML. It MUST validate positive dimensions, nonnegative origin and gap, checked arithmetic, sample-window containment, coordinate-space selection, role, and measurement families before publication.
+- `regions` MUST expand one finite grid declaration into a normal `regions`
+  document without reading an image, invoking a renderer, computing
+  measurements, or generating a page. It MUST require the coordinate space and
+  the role, because a generator decides neither, and it MUST validate dimensions,
+  origin and gap arithmetic before publishing. A region names no measurement
+  family, because the analysis profile owns the table from role to families.
 - The generated document is the only input geometry consumed by later `sample`, `compare`, and run endpoints; downstream endpoints MUST NOT interpret a grid declaration.
 
 Irregular geometry MUST be authored directly as a `regions` document, or declared with `--roi` on a comparison. The lab MUST NOT replace a removed review manifest with repeated `--image`, `--pair`, or `--default-pair` options. `--roi` declares windows on one source and names no image, pair, or default.
 
-Prepared-image visual review, if provided, belongs to the benchmark product's separate command and document contract. It is not a research endpoint, is not registered as a research document kind, and is not accepted by `report comparison` or `regions grid`.
+Prepared-image visual review, if provided, belongs to the benchmark product's separate command and document contract. It is not a research endpoint, is not registered as a research document kind, and is not accepted by `report comparison` or `regions`.
 
 - `inspect` MUST validate and read a retained comparison without invoking a renderer or computing measurements. It MUST emit the retained comparison identity, execution and evaluation states, conditions, summary, failures, findings, and compact measurements.
 - The compact measurements MUST be one top-level `measurements` array in version and single-run comparisons. Rows in both modes MUST carry the same fields, except that a single-run row MUST add `pair_id` to identify its pair.
@@ -387,14 +392,17 @@ spektrafilm-bench sample --from-run DIRECTORY|RUN.JSON --case ID --seed UINT32 -
 
 A regions document declares reading positions. One kind serves both reading domains: an image-domain case, a sampling command, and a reference declare regions in it.
 
-- A regions document MUST contain `schema_version`, an `id`, and a nonempty `regions` array. A region MUST contain `id`, `geometry`, `role`, and `measurements`, and MAY contain `label`, `source`, and `partition`.
-- `role` MUST identify `skin`, `neutral`, `shadow`, `highlight`, `color`, `flat_field`, `edge`, `texture`, or `other`. `measurements` MUST select applicable measurement families.
+- A regions document MUST contain `schema_version`, an `id`, and a nonempty `regions` array. A region MUST contain `id`, `geometry`, and `role`, MAY contain `label`, `source`, and `partition`, and MUST NOT declare measurement families, because an analysis profile owns the one table from role to families and a second declaration could disagree with it.
+- `role` MUST identify `skin`, `neutral`, `shadow`, `highlight`, `color`,
+  `flat_field`, `edge`, `texture`, or `other`. Only a renderer suite case MAY
+  declare the families a region measures, because one run measures different
+  cases differently; a standalone regions document MUST NOT.
 - `source` and `partition` are group labels for reporting. Identities MUST be unique within the document, MUST match `^[A-Za-z0-9][A-Za-z0-9_.-]*$`, and `full_image` stays reserved for the whole declared source.
 - `geometry` MUST be either a half-open rectangle with the named fields `x`, `y`, `width`, `height`, or a lossless mask with its `path`, `sha256`, and declared `width` and `height`. Widths and heights MUST be positive integers.
 - Every geometry MUST declare its coordinate space. `source` names the declared source image's pixels; `render` names a completed simulation's output pixels; native stage names are `source_pixels`, `working_pixels`, `film_frame_pixels`, `grain_aperture_pixels`, or `output_pixels`.
 - Mask paths MUST resolve relative to the document that contains them and enter the retained dependency inventory as immutable evidence.
 - Regions MAY overlap: a reading carries its own identity, and a narrower window inside a wider one is a declared intent, not a conflict. Correspondence is never inferred from equal dimensions, labels, or shared region identities.
-- `regions grid` is the only standalone geometry generator. It writes a normal `regions` document and does not read images or produce a review page.
+- `regions` is the only standalone geometry generator. It writes a normal `regions` document and does not read images or produce a review page.
 - `compare --roi` declares windows inline and materializes the same `regions` shape as its retained geometry authority. It is a declaration carrier, not a second geometry language: it names no image, pair, inventory, or default region.
 - Non-grid geometry is authored directly. A suite case, a sampling command, and a reference MAY consume the same regions shape through one validator.
 - Benchmark image-domain consumers currently accept only `source` and `render`. Native stage values require a producer mapping and are rejected there with `unsupported_coordinate_space` until one exists.
@@ -421,7 +429,8 @@ A regions document declares reading positions. One kind serves both reading doma
 - Bounds MUST be validated against the actual master. Fixed regions MUST NOT be silently resized to fit a changed render.
 - Tone-response probe geometries MAY be declared in `protocol.probe.tone_response` or overridden by a case's `probe.tone_response`. Both locations MUST use the same rectangle or hashed-mask validation.
 - Mask paths MUST resolve relative to the suite document, enter the run's dependency inventory, and be retained as immutable evidence. Comparison MUST resolve the effective probe geometry only from retained dependencies, without requiring original mask files or the invocation working directory.
-- The case's `measurements` MUST select full-image measurement families from `numeric`, `color`, `tone`, `flip`, `grain`, `halation`, and `edge`. Region `measurements` MUST select applicable families in that region.
+- The case's `measurements` MUST select full-image measurement families from `numeric`, `color`, `tone`, `flip`, `grain`, `halation`, `edge`, `color_noise`, and `neutrality`. A region MAY declare its own list, which overrides the case's for that region.
+- A family that has no meaning on a region's role MUST NOT be measured there and MUST NOT produce a row. A cast outside a neutral patch and noise outside a flat or textured surface are not measurements a region can fail.
 - The protocol MUST resolve each family to explicit scalar identities, maps, curves, or spectra. A family selector MUST NOT request a hidden aggregate quality score.
 - A case MAY contain `region_pairs`, an array of objects with `id`, `label`, `left`, and `right`. Pair identities MUST be unique and MUST NOT collide with region identities.
 - Both endpoints MUST name distinct existing regions in that case. A pair MUST NOT infer correspondence across cases or image sets.

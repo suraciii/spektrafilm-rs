@@ -1,21 +1,22 @@
 # Appearance benchmark
 
-`spektrafilm-f64` renders immutable evidence and `spektrafilm-lab` compares it and creates the offline review. The lab reports color, tone, official LDR-FLIP, grain, halation, edge response, and numerical health by case and region. The renderer preserves floating masters, full-resolution maps, curves, spectra, and per-seed observations.
+`spektrafilm-f64` renders immutable evidence, `spektrafilm-lab` measures the delivered images, and `spektrafilm-bench` evaluates and presents. The lab reports color, tone, official LDR-FLIP, grain, halation, edge response, and numerical health by case and region, and it presents nothing. The renderer preserves floating masters, full-resolution maps, curves, spectra, and per-seed observations.
 
 - Compare versions: generate one bundle, run baseline and candidate targets, then use `spektrafilm-bench compare runs`, `spektrafilm-bench inspect`, and `spektrafilm-bench report comparison --comparison DIRECTORY --out DIRECTORY`.
-- Compare delivered images: use `spektrafilm-lab compare --baseline FILE_OR_DIR --candidate FILE_OR_DIR --declaration SPACE:encoded|decoded --out DIRECTORY [--roi name=x,y,w,h]... [--analysis lab-appearance-v1] [--report]` when two renderer builds already wrote the rasters. No suite, target, or renderer is involved.
-- Generate measurement geometry independently: use `spektrafilm-lab regions grid --id ID --rows N --columns N --origin X,Y --patch-size WIDTHxHEIGHT --gap X,Y --space render --out REGIONS.json`. It does not read images or create a visual report, and it does not decide the coordinate space: a lab endpoint reads only `render` geometry, and a generator that guessed another space would produce a declaration the caller never made.
-- Prepared-image visual review, if used, is benchmark-owned. It is not registered as an instrument document and is not accepted by lab `sample`, `compare`, `inspect`, or `report comparison`.
+- Compare delivered images: use `spektrafilm-lab compare --baseline FILE_OR_DIR --candidate FILE_OR_DIR --declaration SPACE:encoded|decoded --out DIRECTORY [--roi name=x,y,w,h[:role]]... [--analysis lab-appearance-v1]` when two renderer builds already wrote the rasters. No suite, target, or renderer is involved.
+- Measure one delivered image: use `spektrafilm-lab analyze --source FILE_OR_DIR --declaration SPACE:encoded|decoded --out DIRECTORY [--roi name=x,y,w,h[:role]]...`. A family that measures a difference between two sources is recorded as unavailable rather than computed against the image itself.
+- Generate measurement geometry independently: use `spektrafilm-lab regions --id ID --rows N --columns N --origin X,Y --patch-size WIDTHxHEIGHT --gap X,Y --space render --role ROLE --out REGIONS.json`. It does not read images, and it decides neither the coordinate space nor the role: a lab endpoint reads only `render` geometry, and a generator that guessed the rest would produce a declaration the caller never made. The analysis profile decides what each role measures.
+- Prepared-image visual review, if used, is benchmark-owned. It is not registered as an instrument document and is not accepted by any lab endpoint.
 - Review a small set of photos visually: build one offline page with `spektrafilm-bench report photos --manifest FILE --out DIRECTORY`. It shows no measurements, no scores, and no baseline, candidate, or reference judgment. See [Review a small set of photos](#review-a-small-set-of-photos).
 - Check a new configuration: use `spektrafilm-f64 run suite --dry-run` before rendering. Read its grouped errors and retained renderer logs before changing the configuration.
 
 The agent prepares the evidence and reads the measurements. The reviewer opens `index.html` to inspect full images and native crops. Baseline selection and calibrated policy budgets remain explicit decisions.
 
 ```bash
-./target/release/spektrafilm-lab regions grid \
+./target/release/spektrafilm-lab regions \
     --id chart-regions --rows 6 --columns 4 \
     --origin 0,0 --patch-size 8x8 --gap 2,2 \
-    --space render \
+    --space render --role flat_field \
     --out /tmp/spektrafilm-benchmark-regions.json
 ```
 
@@ -43,17 +44,17 @@ write their rasters anywhere, and one invocation quantifies the difference.
     --baseline baseline/ --candidate candidate/ \
     --declaration sRGB:encoded \
     --regions /tmp/spektrafilm-benchmark-regions.json \
-    --report \
     --out /tmp/spektrafilm-image-comparison
 ```
 
 `--declaration` states the color space and transfer state of both sides, and
 the two sides must declare the same one. Without `--regions` or `--roi` the
-whole image is the only population. `--analysis` selects a built-in profile and
-`--protocol` an authored protocol document; they are mutually exclusive.
+whole image is the only region. `--analysis` selects a built-in profile, which
+materializes the protocol the record retains.
 
-The result is `comparison.json` beside `protocol.json`, `regions.json`, the
-per-case evidence, and — with `--report` — one offline page. The record names
+The result is `comparison.json` beside `protocol.json`, `regions.json`, and the
+per-case evidence. The lab writes no page: a page is one reading of the record
+and is owned by whoever reads it. The record names
 the digest of every file it read, so a third party recomputes the same
 identity without the originals.
 

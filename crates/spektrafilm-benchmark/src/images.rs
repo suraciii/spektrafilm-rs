@@ -71,6 +71,33 @@ fn artifact_extension(path: &Path) -> String {
         .unwrap_or_default()
 }
 
+/// The cause of a case failure: the fatal finding's code and message.
+///
+/// A failure records a finding; measurement rows also carry reasons, but a row
+/// reason may belong to a metric that was expected to be unavailable. A finding
+/// that only answers a question about its population is not the cause either.
+fn failure_cause(measured: &Value) -> (String, String) {
+    let findings = measured["findings"].as_array().into_iter().flatten();
+    let finding = findings
+        .clone()
+        .find(|finding| {
+            finding["code"]
+                .as_str()
+                .is_some_and(crate::metrics::is_fatal)
+        })
+        .or_else(|| findings.clone().next());
+    match finding {
+        Some(finding) => (
+            finding["code"]
+                .as_str()
+                .unwrap_or("measurement_failure")
+                .to_owned(),
+            finding["message"].as_str().unwrap_or("").trim().to_owned(),
+        ),
+        None => ("measurement_failure".into(), String::new()),
+    }
+}
+
 /// A pseudo-suite identity: the protocol digest covers the protocol, the
 /// regions, and the selected families, exactly as it does for a run.
 fn protocol_digest(request: &Request) -> Result<String> {
@@ -82,7 +109,6 @@ fn protocol_digest(request: &Request) -> Result<String> {
                 "id": pair.case_id,
                 "seeds": [0],
                 "regions": request.regions,
-                "measurements": request.protocol["measurements"],
             })
         })
         .collect();
@@ -186,11 +212,28 @@ pub fn compare(request: &Request, out: &Path) -> Result<(Value, i32)> {
     }
 }
 
+/// Refuse an input this instrument cannot measure before claiming a destination.
+///
+/// Nothing is published yet at this point, so the refusal must not leave a
+/// directory that the caller then has to remove before retrying the same path.
+fn classify_request<'a>(paths: impl Iterator<Item = &'a std::path::PathBuf>) -> Result<()> {
+    for path in paths {
+        image_data::classify_delivered(path)?;
+    }
+    Ok(())
+}
+
 fn compare_impl(request: &Request, out: &Path) -> Result<(Value, i32)> {
     if request.pairs.is_empty() {
         return Err(Error::new("missing_image", "No image pair declared"));
     }
     validate_regions(&request.regions)?;
+    classify_request(
+        request
+            .pairs
+            .iter()
+            .flat_map(|pair| [&pair.baseline, &pair.candidate]),
+    )?;
     let root = documents::normalize_path(out)?;
     common::create_destination(&root)?;
     let mut evidence = Evidence::new(&root);
@@ -369,16 +412,10 @@ fn compare_impl(request: &Request, out: &Path) -> Result<(Value, i32)> {
             )?);
         }
         if record["status"] == "failed" {
-            // A failed population records why; that reason is the code a
-            // caller has to act on, so it replaces the generic failure.
-            let reason = measured["measurements"]
-                .as_array()
-                .and_then(|rows| rows.iter().find_map(|row| row["reason"].as_str()))
-                .unwrap_or("measurement_failure")
-                .to_owned();
+            let (reason, cause) = failure_cause(&measured);
             return Err(Error::new(
                 reason,
-                format!("Measurements failed for case {}", pair.case_id),
+                format!("Measurements failed for case {}: {cause}", pair.case_id),
             )
             .at(&pair.case_id));
         }
@@ -420,7 +457,6 @@ fn compare_impl(request: &Request, out: &Path) -> Result<(Value, i32)> {
         "baseline": baseline,
         "candidate": candidate,
         "protocol": request.protocol,
-        "analysis": {"id": request.protocol["id"]},
         "map_scale": request.map_scale,
         "protocol_digest": digest,
         "selection": {"case_ids": case_ids, "full_suite": true},
@@ -447,7 +483,7 @@ fn compare_impl(request: &Request, out: &Path) -> Result<(Value, i32)> {
         "comparison_id": manifest["id"],
         "protocol_digest": manifest["protocol_digest"],
         "cases": request.pairs.len(),
-        "regions": request.regions.len() + 1,
+        "regions": request.regions.len(),
     });
     result["summary"] = manifest["summary"].clone();
     Ok((result, 0))
@@ -485,6 +521,7 @@ fn analyze_impl(request: &AnalysisRequest, out: &Path) -> Result<(Value, i32)> {
         return Err(Error::new("missing_image", "No image declared"));
     }
     validate_regions(&request.regions)?;
+    classify_request(request.files.iter().map(|file| &file.baseline))?;
     let root = documents::normalize_path(out)?;
     common::create_destination(&root)?;
     let mut evidence = Evidence::new(&root);
@@ -552,15 +589,12 @@ fn analyze_impl(request: &AnalysisRequest, out: &Path) -> Result<(Value, i32)> {
             "source": source.clone(),
         });
         if record["status"] == "failed" {
-            let reason = measured["measurements"]
-                .as_array()
-                .and_then(|rows| rows.iter().find_map(|row| row["reason"].as_str()))
-                .unwrap_or("measurement_failure")
-                .to_owned();
-            return Err(
-                Error::new(reason, format!("Case {} did not measure", file.case_id))
-                    .at(&file.case_id),
-            );
+            let (reason, cause) = failure_cause(&measured);
+            return Err(Error::new(
+                reason,
+                format!("Case {} did not measure: {cause}", file.case_id),
+            )
+            .at(&file.case_id));
         }
         record["source"] = source.clone();
         cases.push(record);
@@ -599,7 +633,6 @@ fn analyze_impl(request: &AnalysisRequest, out: &Path) -> Result<(Value, i32)> {
         "cases": request.files.iter().map(|file| json!({
             "id": file.case_id,
             "regions": request.regions,
-            "measurements": request.protocol["measurements"],
         })).collect::<Vec<_>>(),
     }))?;
     let mut manifest = json!({
@@ -610,7 +643,6 @@ fn analyze_impl(request: &AnalysisRequest, out: &Path) -> Result<(Value, i32)> {
         "execution_status": "completed",
         "source": source,
         "protocol": request.protocol,
-        "analysis": {"id": request.protocol["id"]},
         "protocol_digest": digest,
         "selection": {"case_ids": case_ids, "full_suite": true},
         "cases": cases,
@@ -631,7 +663,7 @@ fn analyze_impl(request: &AnalysisRequest, out: &Path) -> Result<(Value, i32)> {
         "analysis_id": manifest["id"],
         "protocol_digest": manifest["protocol_digest"],
         "cases": request.files.len(),
-        "regions": request.regions.len() + 1,
+        "regions": request.regions.len(),
     });
     result["summary"] = manifest["summary"].clone();
     Ok((result, 0))

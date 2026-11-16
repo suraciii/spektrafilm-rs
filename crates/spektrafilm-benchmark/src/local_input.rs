@@ -108,7 +108,21 @@ impl LocalInput {
                 .unwrap_or_else(|| json!([])),
             None => json!([]),
         };
-        let mut case = json!({"id":"image","kind":"scene","input":input,"configuration":configuration,"seeds":seeds,"regions":regions,"measurements":["numeric","color","tone","flip"]});
+        // A regions document names geometry and role; a suite case also declares
+        // what that case measures, because a run may measure two cases
+        // differently. The case takes the suite's own set.
+        let families = json!(["numeric", "color", "tone", "flip"]);
+        let regions: Vec<Value> = regions
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(|region| {
+                let mut region = region.clone();
+                region["measurements"] = families.clone();
+                region
+            })
+            .collect();
+        let mut case = json!({"id":"image","kind":"scene","input":input,"configuration":configuration,"seeds":seeds,"regions":regions,"measurements":families});
         match (&self.reference, &self.reference_info) {
             (Some(image), Some(info)) => {
                 let mut reference = load("reference", info)?;

@@ -337,10 +337,12 @@ fn renderer_export_failure_returns_structured_error_without_provenance() {
             .contains("export deliberately rejected")
     );
     let message = failure["errors"][0]["message"].as_str().unwrap();
-    assert!(message.contains("incomplete"));
+    assert!(message.contains("partial evidence"), "{message}");
     assert!(message.contains(root.join("failed-bundle").to_str().unwrap()));
-    assert!(message.contains("Remove") && message.contains("destination"));
-    assert!(String::from_utf8_lossy(&output.stderr).contains(message));
+    let remedy = failure["errors"][0]["remedy"].as_str().unwrap();
+    assert!(remedy.contains("destination"), "{remedy}");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains(message) && stderr.contains(remedy));
     assert!(!root.join("failed-bundle/provenance.json").exists());
     assert_eq!(fs::read(root.join("renderer.calls")).unwrap(), b"preset\n");
 }

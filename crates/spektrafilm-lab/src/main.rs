@@ -1,9 +1,10 @@
-//! `spektrafilm-lab`: quantify delivered images, compare, and report.
+//! `spektrafilm-lab`: quantify the color science of delivered images.
 //!
-//! The lab renders nothing. It decodes delivered rasters with the measurement
-//! library's reader, runs the shared metric implementations, and publishes
-//! immutable comparison and report records. Rendering endpoints live in
-//! `spektrafilm-f64`.
+//! The lab renders nothing and presents nothing. It decodes delivered rasters
+//! with the measurement library's reader, runs the shared metric
+//! implementations, and publishes immutable analysis and comparison records.
+//! Rendering endpoints live in `spektrafilm-f64`; evaluation and presentation
+//! live in `spektrafilm-bench`.
 
 use std::path::PathBuf;
 
@@ -15,9 +16,14 @@ mod images;
 #[derive(Parser)]
 #[command(
     name = "spektrafilm-lab",
-    about = "SpektraFilm measurement instrument: analysis, comparison, and reporting at reference precision",
+    about = "SpektraFilm measurement instrument: color science of delivered images, at reference precision",
+    max_term_width = 100,
     version = concat!(env!("CARGO_PKG_VERSION"), " (research documents schema_version 1)"),
-    after_help = "Quantify two delivered image sets with `spektrafilm-lab compare --baseline A --candidate B --declaration sRGB:encoded --roi name=0,0,64,64:gray --out DIR`."
+    after_help = "Quantify one delivered image with \n  \
+                  spektrafilm-lab analyze --source IMAGE --declaration sRGB:encoded --out DIR\n\
+                  \n\
+                  Quantify how two differ, and measure noise on a flat field, with \n  \
+                  spektrafilm-lab compare --baseline A --candidate B --declaration sRGB:encoded --roi name=0,0,64,64:flat_field --out DIR"
 )]
 struct Cli {
     #[command(subcommand)]
@@ -30,29 +36,18 @@ enum Commands {
     Analyze(images::AnalyzeArgs),
     /// Quantify how two delivered image sets differ.
     Compare(images::Args),
-    /// Generate standalone measurement regions.
-    Regions {
-        #[command(subcommand)]
-        command: RegionsCommand,
-    },
+    /// Expand one finite grid declaration into explicit regions.
+    Regions(GridArgs),
     /// Print the authoritative schema for an authored or retained document.
     Schema {
         /// Document kind.
-        #[arg(long, value_name = "KIND")]
+        #[arg(long, value_name = "KIND", value_parser = documents::schema_kinds())]
         kind: String,
     },
     /// Validate document shape and locally decidable dependencies.
     Validate {
         /// Document kind.
-        #[arg(
-            long,
-            value_name = "KIND",
-            value_parser = [
-                "suite", "target", "policy", "configuration", "reference", "regions",
-                "preparation", "stimuli", "material_measurement", "correspondence_review",
-                "experiment", "run", "comparison", "analysis"
-            ]
-        )]
+        #[arg(long, value_name = "KIND", value_parser = documents::validatable_kinds())]
         kind: String,
         /// JSON document to validate.
         #[arg(long, value_name = "FILE")]
@@ -61,12 +56,6 @@ enum Commands {
     /// An endpoint that belongs to another binary.
     #[command(external_subcommand)]
     External(Vec<String>),
-}
-
-#[derive(Subcommand)]
-enum RegionsCommand {
-    /// Expand one finite grid declaration into explicit regions.
-    Grid(GridArgs),
 }
 
 #[derive(Args)]
@@ -89,19 +78,22 @@ struct GridArgs {
     /// Gap as X,Y.
     #[arg(long, value_name = "X,Y", value_parser = parse_pair)]
     gap: [u64; 2],
-    /// Centered sample size as WIDTHxHEIGHT.
-    #[arg(long, value_name = "WIDTHxHEIGHT", value_parser = parse_size)]
-    sample: Option<[u64; 2]>,
-    /// Coordinate space for generated rectangles. Required: a generator does
-    /// not decide which pixels a rectangle addresses.
+    /// Required: a generator does not decide which pixels a rectangle
+    /// addresses. `render` is what the lab measures; other spaces address a
+    /// stage capture and belong to `spektrafilm-bench sample`.
     #[arg(long, value_name = "SPACE")]
     space: String,
-    /// Region role.
-    #[arg(long, value_name = "ROLE", default_value = "other")]
+    /// What each generated region is a population of. Required: a generator
+    /// does not decide what a region is for.
+    #[arg(
+        long,
+        value_name = "ROLE",
+        value_parser = [
+            "skin", "neutral", "shadow", "highlight", "color",
+            "flat_field", "texture", "edge", "other"
+        ]
+    )]
     role: String,
-    /// Measurement families, separated by commas.
-    #[arg(long, value_name = "FAMILY,...", value_delimiter = ',', action = clap::ArgAction::Append)]
-    measurements: Vec<String>,
     /// New regions document JSON file; must not exist.
     #[arg(long, value_name = "FILE")]
     out: PathBuf,
@@ -167,6 +159,8 @@ fn validate(
             "stimuli" | "material_measurement" | "correspondence_review" | "experiment" => {
                 documents::validate_authored_document(kind, file)
             }
+            // `--kind` already rejects a kind `validate` has no rule for, so
+            // this arm is the registry's own gap, not a caller mistake.
             _ => Err(spektrafilm_benchmark::Error::new(
                 "unknown_document_kind",
                 format!("unknown document kind: {kind}"),
@@ -227,6 +221,9 @@ fn validate(
     Ok(result)
 }
 
+/// The endpoints this binary owns, in help order.
+const OWNED: &[&str] = &["analyze", "compare", "regions", "schema", "validate"];
+
 /// Endpoints that belong to the research renderer.
 fn moved(name: &str) -> Option<String> {
     const MOVED: &[&str] = &[
@@ -250,6 +247,39 @@ fn evaluated(name: &str) -> Option<String> {
         return Some(format!("spektrafilm-bench {name} ..."));
     }
     None
+}
+
+/// Report a usage error in the record shape every other refusal uses.
+///
+/// A bad `--kind` is a question about the document vocabulary, so it carries
+/// that fact's own code; every other usage error is `argument_syntax`.
+fn usage(error: clap::Error) -> i32 {
+    use clap::error::ErrorKind;
+    let kind = error.kind();
+    if matches!(kind, ErrorKind::DisplayHelp | ErrorKind::DisplayVersion) {
+        print!("{error}");
+        return 0;
+    }
+    let code = match kind {
+        ErrorKind::InvalidValue | ErrorKind::ValueValidation => "unknown_document_kind",
+        _ => "argument_syntax",
+    };
+    let message = error.render().to_string();
+    let message = message.trim_end().to_owned();
+    eprintln!("{code}: {message}");
+    let endpoint = std::env::args()
+        .skip(1)
+        .find(|argument| !argument.starts_with('-'))
+        .unwrap_or_else(|| "usage".to_owned());
+    emit(&stamp(
+        serde_json::json!({
+            "schema_version": 1,
+            "execution_status": "failed",
+            "errors": [{"code": code, "message": message}],
+        }),
+        &endpoint,
+    ));
+    2
 }
 
 const BINARY: &str = "spektrafilm-lab";
@@ -290,23 +320,43 @@ fn run() -> i32 {
     if let Some(status) = reject_moved_subcommand() {
         return status;
     }
-    let cli = Cli::parse();
+    // A usage error is a refusal like any other, so it reaches the caller in
+    // the same shape. Clap's own exit would print prose and no record, which
+    // makes a pipeline special-case it.
+    let cli = match Cli::try_parse() {
+        Ok(cli) => cli,
+        Err(error) => return usage(error),
+    };
     if let Commands::External(args) = &cli.command {
         let name = args.first().map(String::as_str).unwrap_or("<unknown>");
         let owner = moved(name)
             .map(|replacement| ("spektrafilm-f64", replacement))
             .or_else(|| evaluated(name).map(|replacement| ("spektrafilm-bench", replacement)));
-        match owner {
+        let message = match owner {
             Some((binary, replacement)) => {
-                eprintln!("argument_syntax: `{name}` belongs to {binary}; run `{replacement}`")
+                format!("`{name}` belongs to {binary}; run `{replacement}`")
             }
-            None if name == "compare" => eprintln!(
-                "argument_syntax: `compare` takes no subcommand in spektrafilm-lab; \
+            None if name == "compare" => "`compare` takes no subcommand in spektrafilm-lab; \
                  `compare runs`, `compare readings`, and `compare pairs` belong to \
                  spektrafilm-bench compare ..."
+                .to_owned(),
+            None => format!(
+                "unknown endpoint `{name}`; this binary owns {}",
+                OWNED.join(", ")
             ),
-            None => eprintln!("argument_syntax: unknown endpoint `{name}`"),
-        }
+        };
+        // A refused endpoint names its owner and reaches the caller in the
+        // record shape, so a script learns where the endpoint lives from the
+        // same document it parses everywhere else.
+        eprintln!("argument_syntax: {message}");
+        emit(&stamp(
+            serde_json::json!({
+                "schema_version": 1,
+                "execution_status": "failed",
+                "errors": [{"code": "argument_syntax", "message": message}],
+            }),
+            name,
+        ));
         return 2;
     }
     let command = match &cli.command {
@@ -318,23 +368,27 @@ fn run() -> i32 {
         Commands::External(_) => "unknown",
     };
     let result: spektrafilm_benchmark::Result<(serde_json::Value, i32)> = match cli.command {
-        Commands::Schema { kind } => documents::schema_for(&kind).map(|schema| (schema, 0)),
+        // The payload is the schema itself, so it is printed verbatim rather
+        // than stamped: a caller may diff it against the packaged asset.
+        Commands::Schema { kind } => match documents::schema_for(&kind) {
+            Ok(schema) => {
+                emit(&schema);
+                return 0;
+            }
+            Err(error) => Err(error),
+        },
         Commands::Validate { kind, file } => documents::normalize_path(&file)
             .and_then(|path| validate(&kind, &path))
             .map(|value| (value, 0)),
-        Commands::Regions {
-            command: RegionsCommand::Grid(args),
-        } => regions::generate_grid(
+        Commands::Regions(args) => regions::generate_grid(
             &args.id,
             args.rows,
             args.columns,
             args.origin,
             args.patch_size,
             args.gap,
-            args.sample,
             &args.space,
             &args.role,
-            &args.measurements,
             &args.out,
         )
         .map(|value| (value, 0)),

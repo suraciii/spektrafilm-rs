@@ -10,7 +10,7 @@ else.
 It answers three questions:
 
 - What are the color-science properties of this image, in a declared domain,
-  unit, and population?
+  unit, and region?
 - How do two images differ in color error, neutrality, tone response, and
   color noise?
 - What retained evidence supports those numbers?
@@ -32,7 +32,7 @@ the lab and receives one structured comparison.
 - This document owns the lab product boundary: its scope, its laws, its
   concepts, its command surface, and the record each command publishes.
 - The [measurement protocol](../benchmark/metrics/spec.md) owns metric
-  meaning, domains, estimators, populations, and availability reasons. This
+  meaning, domains, estimators, regions, and availability reasons. This
   document names the families it selects; it does not define a second
   implementation of one.
 - The [research machine interface](../instrument/spec.md) owns the shared
@@ -58,6 +58,9 @@ the lab and receives one structured comparison.
 6. A comparison reports change. It ranks no candidate, selects no winner, and
    asserts no accuracy.
 7. Independence is a build property. The lab binary links no renderer.
+8. A refusal claims nothing. An input the lab cannot measure is refused before
+   it creates a destination, and a refusal says what is wrong before it says
+   what to do about it.
 
 ## Scope
 
@@ -73,25 +76,31 @@ other capabilities. A question that needs one of them is not a lab question.
 
 ## Concepts
 
-Six nouns. A caller holds all six at once, so a seventh displaces one.
+Six nouns. Every one appears in what a caller declares or in what the record
+publishes, so a seventh displaces one. The definitions are in [the context
+glossary](CONTEXT.md); this section states only what each one is for.
+
+A comparison's second source is a source in the candidate role, not a seventh
+concept: color error is relative, and an analysis that has no second source
+records that it has none instead of inventing one.
 
 | Concept | What it is | Why it is irreducible |
 |---|---|---|
 | **Source** | One delivered image set, read under one declaration | The thing being measured |
 | **Declaration** | Color space and transfer state of the samples | Law 5 forbids inferring it, so the caller states it |
-| **Region** | A named rectangle in delivered-pixel space, with a role | Color science is measured on populations, never on a whole image by accident |
+| **Region** | A named rectangle in delivered-pixel space, with a role | Color science is measured on regions, never on a whole image by accident |
 | **Family** | One of the measurement families below | Decides what is computed |
+| **Measurement** | One measured quantity, available or unavailable with a reason | The number the record exists to publish |
 | **Record** | The structured result of one invocation | The product |
-| **Reference** | A second source, or declared reference values | Color error is relative; absolute analysis does not need one |
 
 ### Region roles
 
 A region carries one role. The roles are the closed set the regions document
 already declares; this product introduces no second vocabulary.
 
-A family whose meaning depends on the population's structure is measured only
+A family whose meaning depends on the region's structure is measured only
 on a role that has that structure. A family that measures a declared quantity
-is meaningful on any population and is not restricted.
+is meaningful on any region and is not restricted.
 
 | Role | Population | Structure required by |
 |---|---|---|
@@ -106,21 +115,23 @@ is meaningful on any population and is not restricted.
 | `other` | anything | — |
 | `full_image` | the whole raster | — |
 
-Only `neutrality` and `color_noise` require a role. A whole image is not a flat
-field, so `color_noise` on `full_image` is refused rather than measured over
-whatever content the image happens to contain.
+A region declares its geometry and its role. It MUST NOT declare families. The
+analysis profile owns one table from role to families, and the protocol retains
+it, so no region can ask for a family its role cannot support and no second
+declaration can disagree with the first.
 
-The other families need no cell. `tone`, `edge`, `grain`, and `halation`
-declare a probe, and the code that reads the probe is the code that refuses a
-missing one; restating that rule as a role table would give it two owners.
-`numeric`, `color`, and `flip` measure a declared quantity and are
-meaningful anywhere.
+A whole image is not a flat field, so `color_noise` is never selected on
+`full_image`. That is a property of the table, not a refusal at measurement
+time: a family the role does not carry is never attempted, so it leaves no row.
+A refusal would be an answer to a question nobody asked.
 
-A family declared on a role it does not apply to MUST be refused with
-`incompatible_measurement_role`, naming the family and the role. The refusal
-retains an unavailable row, and the region's other families still measure. The
-lab MUST NOT substitute a family that does apply: the substitution would
-measure a signal the caller never declared.
+`tone`, `edge`, `grain`, and `halation` declare a probe, and the code that reads
+the probe is the code that refuses a missing one. `numeric`, `color`, and `flip`
+measure a declared quantity and are meaningful on any region.
+
+Every measurement row of an analysis or a comparison names its family, because a
+metric identity need not carry the family as a prefix and a reader groups by
+concept rather than by naming habit.
 
 ## Command surface
 
@@ -153,7 +164,7 @@ A lab invocation of one of them MUST fail with `argument_syntax` naming
 spektrafilm-lab compare --baseline <FILE_OR_DIR> --candidate <FILE_OR_DIR>
   --declaration <SPACE:encoded|decoded>
   (--roi ID=X,Y,W,H[:ROLE] ... | --regions FILE)
-  [--analysis ID | --protocol FILE]
+  [--analysis ID]
   [--map-scale N]
   --out <DIR>
 ```
@@ -161,8 +172,8 @@ spektrafilm-lab compare --baseline <FILE_OR_DIR> --candidate <FILE_OR_DIR>
 `--declaration` states the color space and the transfer state of both sides.
 `--roi` and `--regions` are alternative geometry authorities.
 
-`--analysis` selects a built-in analysis profile and `--protocol` an authored
-protocol document; the two are mutually exclusive. `--map-scale` reduces
+`--analysis` selects a built-in analysis profile. The profile materializes the
+protocol the record retains, so a profile id is all a caller states. `--map-scale` reduces
 retained difference maps only.
 
 ### analyze
@@ -171,7 +182,7 @@ retained difference maps only.
 spektrafilm-lab analyze --source <FILE_OR_DIR>
   --declaration <SPACE:encoded|decoded>
   (--roi ID=X,Y,W,H[:ROLE] ... | --regions FILE)
-  [--analysis ID | --protocol FILE]
+  [--analysis ID]
   --out <DIR>
 ```
 
@@ -209,8 +220,8 @@ declaration. Both sides of one `compare` declare the same color space and
 transfer state, because one invocation measures one pipeline. A caller that
 measures different declarations runs two invocations.
 
-Pairing is by exact file name, never by order, modification time, or
-similarity. Equal dimensions MUST NOT establish correspondence.
+A comparison pairs cases by exact file name, never by order, modification
+time, or similarity. Equal dimensions MUST NOT establish correspondence.
 
 A name present on one side only MUST fail as `incompatible_image_sets`, naming
 both lists. A regular file that is not a container the lab measures MUST fail,
@@ -222,8 +233,8 @@ lossy one as `lossy_container`; both name the file.
 
 ### Case identity
 
-One pair is one case. The case identity is the file stem in the directory form
-and the baseline file stem in the single-pair form.
+One case is one file name. The case identity is the file stem in the directory
+form and the baseline file stem in the single-file form.
 
 The identity MUST match `^[A-Za-z0-9][A-Za-z0-9_.-]*$`. A stem that does not
 match MUST fail as `invalid_case_identity`, naming the file. The lab MUST NOT
@@ -247,7 +258,7 @@ lab was handed.
 `--regions FILE` declares the geometry as an authored regions document. The two
 are mutually exclusive, because one measurement has one geometry authority.
 
-Omitting both measures the implicit `full_image` population only.
+Omitting both measures the implicit `full_image` region only.
 
 `X` and `Y` are nonnegative integers; `W` and `H` are positive integers.
 `ROLE` defaults to `other`. `full_image` is reserved and MUST be rejected as an
@@ -269,7 +280,7 @@ record stays readable.
 |---|---|
 | `numeric` | native-channel statistics: maximum absolute difference, RMSE, out-of-range fractions |
 | `color` | ΔE00 and ΔL\*, Δa\*, Δb\*, ΔC\* against a reference |
-| `neutrality` | the gray-axis cast: mean a\* and b\*, the chroma radius of the population, and its lightness spread |
+| `neutrality` | the gray-axis cast: mean a\* and b\*, the chroma radius of the region's samples, and its lightness spread |
 | `tone` | density or log-exposure response over a declared ramp: slope, shoulder, toe, Dmax |
 | `color_noise` | luminance deviation, chroma RMS, the ratio between them, channel correlation, and the radial centroid of the residual |
 | `edge` | spatial frequency response and MTF50 |
@@ -353,11 +364,11 @@ domain explicitly is the exception and records the encoding it measured.
 ### Images
 
 Each side MUST decode once and retain one display copy per case as an
-artifact. The measurement population keeps the decoded floating samples; the
+artifact. The measurement region keeps the decoded floating samples; the
 display copy exists only for inspection, and a reader of the record MUST NOT
 be given it as a measurement input.
 
-The two sides of one pair MUST have identical dimensions. A mismatch MUST fail
+The two sides of one case MUST have identical dimensions. A mismatch MUST fail
 as `dimension_mismatch`, naming the case. The lab MUST NOT resize, crop, or
 pad to reconcile a mismatch.
 
@@ -388,17 +399,19 @@ Every record MUST carry:
 - each source's name, declared color space and transfer state, dimensions per
   case, and the sha256 of every file it read;
 - the materialized protocol and its digest, so the numbers are reproducible
-  from the record alone;
+  from the record alone; the protocol identity is the analysis profile identity,
+  so the record names the profile once;
 - the regions document and its role per region;
-- for every measurement: its domain, unit, population, estimator, and sample
-  count, beside the value;
+- for every measurement: its family, domain, unit, region, estimator, and sample
+  count, beside the value. A measurement that did not run states no sample
+  count, because a refusal has no count to report;
 - every unavailable value with its stable reason;
 - the identity of the comparison as a digest over its inputs and its protocol.
 
 The record MUST NOT carry a value that the measurement did not compute. A
 quantity that does not exist for a source is unavailable with the reason it
-does not exist. In particular, a delivered image is one realisation and has no
-seed population: the record MUST carry no seed field, and MUST NOT publish a
+does not exist. A delivered image is one realisation, so it has no seed
+population: the record MUST carry no seed field, and MUST NOT publish a
 cross-realisation statistic.
 
 A record MUST be byte-identical for identical inputs and protocol on every
@@ -408,8 +421,8 @@ duration.
 
 A retained comparison MAY be reduced for inspection: difference maps MAY be
 box-averaged by `--map-scale N` to one sample per `N × N` block. Measurement
-populations MUST NOT be sampled, reduced, or aggregated by it, every scalar
-MUST be computed from the full-resolution population, and the scale MUST be
+regions MUST NOT be sampled, reduced, or aggregated by it, every scalar MUST
+be computed from the full-resolution region, and the scale MUST be
 recorded.
 
 ## Use cases
@@ -438,16 +451,20 @@ reason, which is the noise floor of the pipeline that produced the files.
 2. The lab builds and runs on a host with no GPU, no raw decoder, and no
    renderer installed.
 3. Every command result names its `binary` and its `endpoint`, and every
-   published record names its `kind` and `schema_version`.
+   published record names its `kind` and `schema_version`. A usage error is a
+   command result too: it carries the same `binary`, `endpoint`,
+   `execution_status`, and `errors`, with exit status 2. `schema` is the one
+   exception, because its payload is the packaged document and a caller can diff
+   it against the asset.
 4. `spektrafilm-lab run suite ...` fails with `argument_syntax` and names
    `spektrafilm-f64 run suite`.
 5. Two identical sources produce a record whose every available delta is zero
    and whose every unavailable row carries a reason.
 6. A record that would need a seed carries none, and no value is written as
    zero to stand for a quantity that does not exist.
-7. A pair whose dimensions differ fails with `dimension_mismatch` and writes
+7. A case whose dimensions differ fails with `dimension_mismatch` and writes
    no record.
-8. A directory pair with a name on one side only fails with
+8. A directory comparison with a name on one side only fails with
    `incompatible_image_sets` and names both lists.
 9. Two file names that reduce to one case identity fail with
    `duplicate_case_identity`.
@@ -458,11 +475,11 @@ reason, which is the noise floor of the pipeline that produced the files.
     names the region.
 12. The same arguments produce byte-identical `analysis.json`,
     `comparison.json`, `protocol.json`, and `regions.json`.
-13. A family declared on a role it does not apply to fails with
-    `incompatible_measurement_role`, naming the family and the role, and the
-    region's other families still measure.
-14. `color` without a reference retains an unavailable row with
-    `missing_reference`, and `color_noise` still measures on the same region.
+13. A region that declares families fails with `unknown_field`, and the profile
+    table decides what each role measures: a role the table gives no entry
+    measures nothing and leaves no refusal row.
+14. Every measurement row names the family it belongs to, and the family is one
+    the protocol's table selects for that row's region role.
 15. `--map-scale 4` changes no scalar measurement and records the scale.
 16. An EXR and the float TIFF written from the same render decode to the same
     samples.
@@ -474,6 +491,10 @@ reason, which is the noise floor of the pipeline that produced the files.
     protocol it materialized, so a third party recomputes the same identity.
 20. `spektrafilm-f64 compare runs ...` fails with `argument_syntax` and names
     the owning binary.
+21. A source that does not exist, a container the lab does not measure, and a
+    repeated `--roi` identity each fail without creating the destination.
+22. A refusal states its cause in `message` and its remedy in `remedy`; the
+    human line and the JSON record carry both.
 
 ## Independence
 
@@ -519,8 +540,6 @@ that the renderer's own input route produced, and `sample` reads it.
 
 Everything this document states is implemented, with four exceptions.
 
-- `regions grid` is spelled with its subcommand. This document names the
-  endpoint `regions` and leaves the leaf form to the machine interface.
 - A region is a rectangle. Mask geometry is rejected rather than re-rooted;
   reading a mask file on a delivered raster would introduce a second
   interpretation of the pixels, which the single-reader rule forbids.

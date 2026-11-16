@@ -40,23 +40,8 @@ fn regions(root: &Path) -> PathBuf {
             "regions": [{
                 "id": "field",
                 "role": "flat_field",
-                "measurements": ["color_noise"],
                 "geometry": {"x": 0, "y": 0, "width": 32, "height": 32, "space": "render"},
             }],
-        }))
-        .unwrap(),
-    )
-    .unwrap();
-    path
-}
-
-fn protocol(root: &Path) -> PathBuf {
-    let path = root.join("protocol.json");
-    std::fs::write(
-        &path,
-        serde_json::to_vec(&serde_json::json!({
-            "id": "color-noise-check",
-            "measurements": ["color_noise"],
         }))
         .unwrap(),
     )
@@ -75,8 +60,6 @@ fn one_image_is_quantified_without_a_second_one() {
         .arg(&source)
         .args(["--declaration", "sRGB:encoded", "--regions"])
         .arg(regions(temp.path()))
-        .arg("--protocol")
-        .arg(protocol(temp.path()))
         .arg("--out")
         .arg(&out)
         .output()
@@ -126,7 +109,6 @@ fn analysis_and_comparison_report_the_same_measurement() {
     let source = temp.path().join("v1").join("field.png");
     png(&source);
     let regions = regions(temp.path());
-    let protocol = protocol(temp.path());
     let analysis = temp.path().join("analysis");
     assert!(
         lab()
@@ -134,8 +116,6 @@ fn analysis_and_comparison_report_the_same_measurement() {
             .arg(&source)
             .args(["--declaration", "sRGB:encoded", "--regions"])
             .arg(&regions)
-            .arg("--protocol")
-            .arg(&protocol)
             .arg("--out")
             .arg(&analysis)
             .output()
@@ -152,8 +132,9 @@ fn analysis_and_comparison_report_the_same_measurement() {
             .arg(&source)
             .args(["--declaration", "sRGB:encoded", "--regions"])
             .arg(&regions)
-            .arg("--protocol")
-            .arg(&protocol)
+            // The endpoints hold equal values for one profile, so the test
+            // pins the profile rather than relying on each default.
+            .args(["--analysis", "lab-analysis-v1"])
             .arg("--out")
             .arg(&comparison)
             .output()
@@ -312,4 +293,318 @@ fn two_names_that_reduce_to_one_identity_are_refused() {
     assert!(!output.status.success());
     let error = String::from_utf8_lossy(&output.stderr);
     assert!(error.contains("duplicate_case_identity"), "{error}");
+}
+
+/// A refusal claims nothing: the destination the caller named is still free
+/// afterwards, so the same invocation can be retried once the input is fixed.
+#[test]
+fn a_refused_input_leaves_the_destination_unclaimed() {
+    let temp = tempfile::tempdir().unwrap();
+    let out = temp.path().join("analysis");
+    let missing = temp.path().join("v1").join("absent.png");
+    let output = lab()
+        .args(["analyze", "--source"])
+        .arg(&missing)
+        .args(["--declaration", "sRGB:encoded", "--out"])
+        .arg(&out)
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(!out.exists(), "a refusal must not claim a destination");
+
+    // The same path works once the input exists, which is the point.
+    png(&missing);
+    assert!(
+        lab()
+            .args(["analyze", "--source"])
+            .arg(&missing)
+            .args(["--declaration", "sRGB:encoded", "--out"])
+            .arg(&out)
+            .output()
+            .unwrap()
+            .status
+            .success()
+    );
+}
+
+/// A container the instrument does not measure is refused by name, and no
+/// destination is created for it.
+#[test]
+fn an_unmeasured_container_is_refused_by_name_and_claims_nothing() {
+    let temp = tempfile::tempdir().unwrap();
+    let source = temp.path().join("v1").join("field.png");
+    png(&source);
+    std::fs::write(source.parent().unwrap().join("notes.txt"), b"not an image").unwrap();
+    let out = temp.path().join("analysis");
+    let output = lab()
+        .args(["analyze", "--source"])
+        .arg(source.parent().unwrap())
+        .args(["--declaration", "sRGB:encoded", "--out"])
+        .arg(&out)
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(!out.exists(), "a refusal must not claim a destination");
+    let error = String::from_utf8_lossy(&output.stderr).to_string();
+    assert!(error.contains("notes.txt"), "{error}");
+    // The cause is the cause; the remedy is its own line.
+    assert!(
+        error.contains("not a container this instrument measures"),
+        "{error}"
+    );
+}
+
+/// A repeated region identity is refused where it is declared, not discovered
+/// later as a measurement failure.
+#[test]
+fn a_repeated_region_identity_is_refused_before_measuring() {
+    let temp = tempfile::tempdir().unwrap();
+    let source = temp.path().join("v1").join("field.png");
+    png(&source);
+    let out = temp.path().join("comparison");
+    let output = lab()
+        .args(["compare", "--baseline"])
+        .arg(&source)
+        .arg("--candidate")
+        .arg(&source)
+        .args([
+            "--declaration",
+            "sRGB:encoded",
+            "--roi",
+            "field=0,0,16,16:flat_field",
+            "--roi",
+            "field=16,16,16,16:texture",
+            "--out",
+        ])
+        .arg(&out)
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(!out.exists());
+    let result: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(result["errors"][0]["code"], "duplicate_region_identity");
+}
+
+/// A refusal a caller must act on states the cause and the remedy apart, and
+/// both reach the human line and the machine record.
+#[test]
+fn a_refusal_states_its_cause_and_its_remedy_apart() {
+    let temp = tempfile::tempdir().unwrap();
+    let source = temp.path().join("v1").join("field.png");
+    png(&source);
+    let out = temp.path().join("analysis");
+    assert!(
+        lab()
+            .args(["analyze", "--source"])
+            .arg(&source)
+            .args(["--declaration", "sRGB:encoded", "--out"])
+            .arg(&out)
+            .output()
+            .unwrap()
+            .status
+            .success()
+    );
+    let repeat = lab()
+        .args(["analyze", "--source"])
+        .arg(&source)
+        .args(["--declaration", "sRGB:encoded", "--out"])
+        .arg(&out)
+        .output()
+        .unwrap();
+    assert_eq!(repeat.status.code(), Some(1));
+    let result: Value = serde_json::from_slice(&repeat.stdout).unwrap();
+    let error = &result["errors"][0];
+    assert_eq!(error["code"], "destination_exists");
+    let message = error["message"].as_str().unwrap();
+    let remedy = error["remedy"].as_str().unwrap();
+    assert!(message.contains("already exists"), "{message}");
+    assert!(
+        !message.contains("choose"),
+        "the cause must not carry the remedy"
+    );
+    assert!(remedy.contains("choose"), "{remedy}");
+    let stderr = String::from_utf8_lossy(&repeat.stderr);
+    assert!(stderr.contains(message) && stderr.contains(remedy));
+}
+
+/// A region declares where it is and what it is a population of. It cannot
+/// declare families, because the profile owns the one table that decides them.
+#[test]
+fn a_region_cannot_declare_the_families_it_measures() {
+    let temp = tempfile::tempdir().unwrap();
+    let source = temp.path().join("v1").join("field.png");
+    png(&source);
+    let regions = temp.path().join("declared.json");
+    std::fs::write(
+        &regions,
+        serde_json::to_vec(&serde_json::json!({
+            "schema_version": 1,
+            "id": "declared",
+            "regions": [{
+                "id": "field",
+                "role": "flat_field",
+                "measurements": ["color_noise"],
+                "geometry": {"x": 0, "y": 0, "width": 32, "height": 32, "space": "render"},
+            }],
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let out = temp.path().join("analysis");
+    let output = lab()
+        .args(["analyze", "--source"])
+        .arg(&source)
+        .args(["--declaration", "sRGB:encoded", "--regions"])
+        .arg(&regions)
+        .arg("--out")
+        .arg(&out)
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(!out.exists(), "a refused document claims no destination");
+    let error = String::from_utf8_lossy(&output.stderr);
+    assert!(error.contains("measurements"), "{error}");
+}
+
+/// The family a number belongs to is in the record, so a reader groups by
+/// concept instead of by a metric-name prefix.
+#[test]
+fn every_measurement_names_its_family() {
+    let temp = tempfile::tempdir().unwrap();
+    let source = temp.path().join("v1").join("field.png");
+    png(&source);
+    let out = temp.path().join("comparison");
+    assert!(
+        lab()
+            .args(["compare", "--baseline"])
+            .arg(&source)
+            .arg("--candidate")
+            .arg(&source)
+            .args(["--declaration", "sRGB:encoded", "--roi"])
+            .arg("field=0,0,32,32:flat_field")
+            .arg("--out")
+            .arg(&out)
+            .output()
+            .unwrap()
+            .status
+            .success()
+    );
+    let record = read(&out.join("comparison.json"));
+    let protocol = &record["protocol"]["families"];
+    let rows = record["cases"][0]["measurements"].as_array().unwrap();
+    assert!(!rows.is_empty());
+    for row in rows {
+        let family = row["family"]
+            .as_str()
+            .unwrap_or_else(|| panic!("row names no family: {row}"));
+        // The family's metric names are its own; a colour row is `delta_*`,
+        // which is exactly why the prefix cannot be the answer.
+        assert!(
+            protocol["full_image"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .chain(protocol["flat_field"].as_array().unwrap())
+                .any(|name| name == family),
+            "{family} is not a family this protocol selects"
+        );
+    }
+}
+
+/// One vocabulary, one list: the kinds `schema` prints and the kinds `validate`
+/// decides come from the same table, and a kind outside it fails the same way
+/// from either endpoint.
+#[test]
+fn the_document_vocabulary_has_one_owner() {
+    let schema_list = lab().args(["schema", "--help"]).output().unwrap();
+    let schema_list = String::from_utf8_lossy(&schema_list.stdout).to_string();
+    let validate_list = lab().args(["validate", "--help"]).output().unwrap();
+    let validate_list = String::from_utf8_lossy(&validate_list.stdout).to_string();
+    // `validate` is a subset of `schema`: a document can be printed without a
+    // rule to decide it, but not decided without a schema to check it against.
+    for kind in ["regions", "analysis", "comparison", "suite", "target"] {
+        assert!(schema_list.contains(kind), "schema cannot print {kind}");
+        assert!(
+            validate_list.contains(kind),
+            "validate cannot decide {kind}"
+        );
+    }
+    // A kind that is printable but not decidable appears in one list only.
+    assert!(schema_list.contains("preflight"), "{schema_list}");
+    assert!(!validate_list.contains("preflight"), "{validate_list}");
+
+    // A kind in neither list fails from both endpoints with the same code and
+    // the same record shape, so a caller needs no second vocabulary.
+    for (endpoint, arguments) in [
+        ("schema", vec!["schema", "--kind", "not_a_kind"]),
+        (
+            "validate",
+            vec!["validate", "--kind", "not_a_kind", "--file", "x.json"],
+        ),
+    ] {
+        let out = lab().args(arguments).output().unwrap();
+        assert_eq!(
+            out.status.code(),
+            Some(2),
+            "{endpoint} accepted a bogus kind"
+        );
+        let record: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+        assert_eq!(record["execution_status"], "failed", "{endpoint}");
+        assert_eq!(
+            record["errors"][0]["code"], "unknown_document_kind",
+            "{endpoint} named the refusal differently"
+        );
+    }
+}
+
+/// A measurement that did not run has no count to report. Writing zero would
+/// state a fact about the population that the code never established.
+#[test]
+fn an_unavailable_measurement_reports_no_sample_count() {
+    let temp = tempfile::tempdir().unwrap();
+    let source = temp.path().join("v1").join("field.png");
+    png(&source);
+    let out = temp.path().join("analysis");
+    assert!(
+        lab()
+            .args(["analyze", "--source"])
+            .arg(&source)
+            .args(["--declaration", "sRGB:encoded", "--out"])
+            .arg(&out)
+            .output()
+            .unwrap()
+            .status
+            .success()
+    );
+    let record = read(&out.join("analysis.json"));
+    let rows = record["cases"][0]["measurements"].as_array().unwrap();
+    let unavailable: Vec<_> = rows
+        .iter()
+        .filter(|row| row["availability"] != "available")
+        .collect();
+    assert!(!unavailable.is_empty(), "the record states a refusal");
+    for row in unavailable {
+        assert!(
+            row.get("sample_count").is_none(),
+            "a refusal has no sample count: {row}"
+        );
+    }
+    // The command result counts the regions the caller declared; the implicit
+    // whole image is an identity, not a region anyone wrote.
+    let result = read(&out.join("analysis.json"));
+    assert_eq!(result["kind"], "analysis");
+}
+
+/// A refused endpoint is a command result too, so a script learns where the
+/// endpoint lives from the same document it parses everywhere else.
+#[test]
+fn a_refused_endpoint_reaches_the_caller_as_a_record() {
+    let output = lab().args(["report", "--out", "x"]).output().unwrap();
+    assert_eq!(output.status.code(), Some(2));
+    let value: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(value["binary"], "spektrafilm-lab");
+    assert_eq!(value["endpoint"], "report");
+    assert_eq!(value["execution_status"], "failed");
+    let message = value["errors"][0]["message"].as_str().unwrap();
+    assert!(message.contains("spektrafilm-bench"), "{message}");
 }

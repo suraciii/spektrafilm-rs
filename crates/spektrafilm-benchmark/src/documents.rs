@@ -554,12 +554,16 @@ pub fn region_roles() -> Result<Vec<String>> {
     )
 }
 
-/// Measurement family names accepted by case and region records.
+/// Measurement family names a document may declare.
+///
+/// The vocabulary belongs to the measurement library, not to a profile: a
+/// profile selects from it, and a lab profile that selects none of a family does
+/// not make that family invalid elsewhere.
 pub fn measurement_families() -> Result<Vec<String>> {
-    enum_names(
-        &schema_for("regions")?["properties"]["regions"]["items"]["properties"]["measurements"]["items"]
-            ["enum"],
-    )
+    Ok(crate::metrics::FAMILIES
+        .iter()
+        .map(|family| (*family).to_owned())
+        .collect())
 }
 
 fn enum_names(value: &Value) -> Result<Vec<String>> {
@@ -573,6 +577,50 @@ fn enum_names(value: &Value) -> Result<Vec<String>> {
                 .collect()
         })
         .ok_or_else(|| err("schema_asset", "enum schema is missing its names"))
+}
+
+/// Every document kind this project names, and whether `validate` can decide it.
+///
+/// One list. `schema` prints a kind a caller may only inspect; `validate`
+/// checks a kind it has a rule for. Both read this table, so the two never drift
+/// apart and neither hides a kind the other accepts.
+pub const DOCUMENT_KINDS: &[(&str, bool)] = &[
+    ("suite", true),
+    ("target", true),
+    ("policy", true),
+    ("configuration", true),
+    ("reference", true),
+    ("regions", true),
+    ("preparation", true),
+    ("stimuli", true),
+    ("material_measurement", true),
+    ("correspondence_review", true),
+    ("experiment", true),
+    ("run", true),
+    ("comparison", true),
+    ("analysis", true),
+    ("metrics", false),
+    ("preflight", false),
+    ("provenance", false),
+    ("report", false),
+    ("resolved", false),
+    ("command", false),
+    ("export", false),
+    ("evidence", false),
+];
+
+/// The kinds `schema` prints.
+pub fn schema_kinds() -> Vec<&'static str> {
+    DOCUMENT_KINDS.iter().map(|(kind, _)| *kind).collect()
+}
+
+/// The kinds `validate` decides.
+pub fn validatable_kinds() -> Vec<&'static str> {
+    DOCUMENT_KINDS
+        .iter()
+        .filter(|(_, validatable)| *validatable)
+        .map(|(kind, _)| *kind)
+        .collect()
 }
 
 pub fn schema_for(kind: &str) -> Result<Value> {
@@ -703,7 +751,7 @@ pub fn validate_local_dependencies(kind: &str, value: &Value, document: &Path) -
             unique(regions, "id")?;
             for region in regions {
                 if region["id"] == "full_image" {
-                    return Err(err("reserved_region", "full_image is reserved"));
+                    return Err(err("invalid_region_identity", "full_image is reserved"));
                 }
                 geometry(&region["geometry"], document)?;
             }
@@ -957,7 +1005,7 @@ pub fn validate_suite(v: &Value, path: &Path) -> Result<()> {
         unique(c["regions"].as_array().unwrap(), "id")?;
         for r in &parsed.regions {
             if r.id == "full_image" {
-                return Err(err("reserved_region", "full_image is reserved"));
+                return Err(err("invalid_region_identity", "full_image is reserved"));
             }
             consumer_geometry(&r.geometry)?;
             geometry(&r.geometry, path)?
@@ -1351,5 +1399,35 @@ mod tests {
         document["cases"] = json!([document["cases"][0].clone(), duplicate]);
         let error = validate_suite(&document, Path::new("suite.json")).unwrap_err();
         assert_eq!(error.code, "duplicate_id");
+    }
+}
+
+#[cfg(test)]
+mod registry_tests {
+    use super::*;
+
+    /// The table is the only list, so every name in it must resolve. A kind a
+    /// caller can ask for and the registry cannot answer is a table that lies.
+    #[test]
+    fn every_declared_kind_resolves_to_a_schema() {
+        for (kind, _) in DOCUMENT_KINDS {
+            assert!(
+                schema_for(kind).is_ok(),
+                "{kind} is listed but has no schema"
+            );
+        }
+    }
+
+    /// `validate` decides a subset of what `schema` prints, never a kind the
+    /// schema registry does not have.
+    #[test]
+    fn every_validatable_kind_is_also_printable() {
+        let printable = schema_kinds();
+        for kind in validatable_kinds() {
+            assert!(
+                printable.contains(&kind),
+                "{kind} is validated but not printed"
+            );
+        }
     }
 }
