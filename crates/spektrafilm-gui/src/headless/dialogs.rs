@@ -734,6 +734,24 @@ fn export_destination_is_chosen_before_submission_and_used_without_a_second_prom
 }
 
 #[test]
+fn changing_format_drops_a_destination_chosen_for_the_previous_container() {
+    let mut s = session();
+    let h = &mut s.harness;
+    let destination = s.directory.path().join("old-container.png");
+    open_export_dialog(h);
+    script(h, chooser::Chooser::chooser_path(&destination));
+    click(h, "Choose…");
+    h.run_steps(3);
+    assert!(h.state().export_dialog.destination().is_some());
+    choose(h, "Format", "TIFF");
+    h.run_steps(3);
+    assert!(
+        h.state().export_dialog.destination().is_none(),
+        "a destination confirmed for PNG must not be reused for TIFF"
+    );
+}
+
+#[test]
 fn export_advanced_locator_opens_hidden_computation_rows() {
     let mut s = session();
     let h = &mut s.harness;

@@ -519,12 +519,12 @@ impl ExportDialog {
                 ], "JPEG: lossy 8-bit for web. PNG: lossless 8-bit. TIFF: 8/16-bit integer or 32-bit float, ZIP or uncompressed. EXR: 16/32-bit linear for compositing.");
                 draft.normalize();
                 if draft.format != previous_format {
-                    // Keep the chosen stem but move it to the new container's
-                    // extension instead of silently losing the destination.
-                    if let Some(path) = destination.as_mut() {
-                        path.set_extension(draft.format.extension());
-                    }
-                    self.destination = destination.clone();
+                    // A path chosen through the native save sheet was confirmed
+                    // for the previous container. Reusing or rewriting its
+                    // extension could overwrite a different existing file
+                    // without a prompt, so make the user choose again.
+                    destination = None;
+                    self.destination = None;
                 }
                 ui.horizontal(|ui| {
                     ui.label(
