@@ -1,6 +1,6 @@
 //! Multiple-exposure CLI entry point.
 //!
-//! This is the Phase 1b surface for the core `process_exposures` API. It stays
+//! This is the CLI surface for the core `process_exposures` API. It stays
 //! separate from the single-image `process` path so the existing route,
 //! telemetry and stage-artifact behavior is untouched.
 
@@ -39,7 +39,6 @@ struct RecipeShot {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     sha256: Option<String>,
     exposure_ev: f64,
-    weight: f64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     transform: Option<TransformRecipe>,
 }
@@ -99,7 +98,7 @@ struct Resolved {
     paper: Option<String>,
     seed: u32,
     metering: MeteringArg,
-    shots: Vec<(PathBuf, Option<String>, f64, f64)>,
+    shots: Vec<(PathBuf, Option<String>, f64)>,
     output_crop: Option<CropSpec>,
     print: Option<PrintRecipe>,
     input_color_space: Option<String>,
@@ -263,7 +262,7 @@ pub(crate) fn run(args: &ProcessArgs, data: &DataSelection) -> Result<()> {
         .begin_exposures(backend.as_ref(), metering, Tap::RgbOut)
         .map_err(anyhow::Error::msg)?;
     let mut full_dims = None;
-    for (index, (path, hash, ev, weight)) in resolved.shots.iter().enumerate() {
+    for (index, (path, hash, ev)) in resolved.shots.iter().enumerate() {
         if let Some(expected) = hash {
             verify_sha256(path, expected)
                 .with_context(|| format!("verifying shot {index}: {}", path.display()))?;
@@ -293,9 +292,7 @@ pub(crate) fn run(args: &ProcessArgs, data: &DataSelection) -> Result<()> {
                 );
             }
         }
-        stack
-            .add_shot(&image, *ev, *weight)
-            .map_err(anyhow::Error::msg)?;
+        stack.add_shot(&image, *ev).map_err(anyhow::Error::msg)?;
         drop(image);
     }
     let (rendered, report) = stack.finish().map_err(anyhow::Error::msg)?;
@@ -339,8 +336,8 @@ pub(crate) fn run(args: &ProcessArgs, data: &DataSelection) -> Result<()> {
     );
     for shot in &report.shots {
         eprintln!(
-            "  shot {}: metered_ev={:.3} exposure_ev={:.3} final_ev={:.3} weight={:.3}",
-            shot.index, shot.metered_ev, shot.exposure_ev, shot.final_ev, shot.weight
+            "  shot {}: metered_ev={:.3} exposure_ev={:.3} final_ev={:.3}",
+            shot.index, shot.metered_ev, shot.exposure_ev, shot.final_ev
         );
     }
     Ok(())
@@ -394,8 +391,7 @@ fn reject_unsupported(args: &ProcessArgs) -> Result<()> {
             || args.multiple_exposure_meter.is_some()
             || args.input_color_space.is_some()
             || args.input_cctf_decoding.is_some()
-            || !args.expose_ev.is_empty()
-            || !args.expose_weight.is_empty())
+            || !args.expose_ev.is_empty())
     {
         bail!(
             "multiple-exposure.recipe-schema: --recipe carries film/paper/crop/seed/metering/input interpretation; do not combine those flags with --recipe"
@@ -414,16 +410,14 @@ fn resolve_flags(args: &ProcessArgs) -> Result<Resolved> {
     if !args.expose_ev.is_empty() && args.expose_ev.len() != args.expose.len() {
         bail!("multiple-exposure.ev-count: --expose-ev count must equal --expose count");
     }
-    if !args.expose_weight.is_empty() && args.expose_weight.len() != args.expose.len() {
-        bail!("multiple-exposure.weight-count: --expose-weight count must equal --expose count");
-    }
-    let metering = args.multiple_exposure_meter.unwrap_or(MeteringArg::Each);
+    // Manual is the explicit physical default: auto-exposure normalizes each
+    // shot and can change the relative exposure the user is trying to make.
+    let metering = args.multiple_exposure_meter.unwrap_or(MeteringArg::Manual);
     let mut shots = Vec::with_capacity(args.expose.len());
     for (index, path) in args.expose.iter().enumerate() {
         let ev = args.expose_ev.get(index).copied().unwrap_or(0.0);
-        let weight = args.expose_weight.get(index).copied().unwrap_or(1.0);
-        validate_shot(index, ev, weight)?;
-        shots.push((path.clone(), None, ev, weight));
+        validate_shot(index, ev)?;
+        shots.push((path.clone(), None, ev));
     }
     let output_crop = args.output_crop.as_deref().map(parse_crop).transpose()?;
     Ok(Resolved {
@@ -459,10 +453,10 @@ fn read_recipe(path: &Path) -> Result<Resolved> {
     let parent = path.parent().map(Path::to_path_buf);
     let mut shots = Vec::with_capacity(recipe.shots.len());
     for (index, shot) in recipe.shots.iter().enumerate() {
-        validate_shot(index, shot.exposure_ev, shot.weight)?;
+        validate_shot(index, shot.exposure_ev)?;
         if shot.transform.is_some() {
             bail!(
-                "multiple-exposure.unsupported: per-shot transform is Phase 2; remove transform from shot {index}"
+                "multiple-exposure.unsupported: per-shot transform is not implemented; remove transform from shot {index}"
             );
         }
         let shot_path = if Path::new(&shot.path).is_absolute() {
@@ -473,12 +467,7 @@ fn read_recipe(path: &Path) -> Result<Resolved> {
                 .map(|p| p.join(&shot.path))
                 .unwrap_or_else(|| PathBuf::from(&shot.path))
         };
-        shots.push((
-            shot_path,
-            shot.sha256.clone(),
-            shot.exposure_ev,
-            shot.weight,
-        ));
+        shots.push((shot_path, shot.sha256.clone(), shot.exposure_ev));
     }
     Ok(Resolved {
         film: recipe.film,
@@ -494,15 +483,10 @@ fn read_recipe(path: &Path) -> Result<Resolved> {
     })
 }
 
-fn validate_shot(index: usize, ev: f64, weight: f64) -> Result<()> {
+fn validate_shot(index: usize, ev: f64) -> Result<()> {
     if !ev.is_finite() || !(-10.0..=10.0).contains(&ev) {
         bail!(
             "multiple-exposure.ev-range: shot {index} exposure_ev must be finite and in [-10, 10]"
-        );
-    }
-    if !weight.is_finite() || weight < 0.0 {
-        bail!(
-            "multiple-exposure.weight-invalid: shot {index} weight must be finite and non-negative"
         );
     }
     Ok(())
@@ -688,11 +672,11 @@ fn verify_sha256(path: &Path, expected: &str) -> Result<()> {
 
 fn resolved_to_recipe(
     resolved: &Resolved,
-    shots: &[(PathBuf, Option<String>, f64, f64)],
+    shots: &[(PathBuf, Option<String>, f64)],
     _args: &ProcessArgs,
 ) -> Result<Recipe> {
     let mut recipe_shots = Vec::with_capacity(shots.len());
-    for (path, sha256, ev, weight) in shots {
+    for (path, sha256, ev) in shots {
         let recipe_path = match &resolved.recipe_parent {
             Some(parent) => path
                 .strip_prefix(parent)
@@ -708,7 +692,6 @@ fn resolved_to_recipe(
             path: recipe_path,
             sha256: Some(hash),
             exposure_ev: *ev,
-            weight: *weight,
             transform: None,
         });
     }
@@ -819,11 +802,46 @@ mod tests {
           "seed": 0,
           "metering": "manual",
           "shots": [
-            {"path": "a.png", "exposure_ev": 0.0, "weight": 1.0, "crop": {"x":0,"y":0,"width":1,"height":1}},
-            {"path": "b.png", "exposure_ev": 0.0, "weight": 1.0}
+            {"path": "a.png", "exposure_ev": 0.0, "crop": {"x":0,"y":0,"width":1,"height":1}},
+            {"path": "b.png", "exposure_ev": 0.0}
           ]
         }"#;
         assert!(serde_json::from_str::<Recipe>(json).is_err());
+    }
+
+    #[test]
+    fn rejects_recipe_with_removed_weight_field() {
+        let json = r#"{
+          "schema": "spektrafilm.multiple-exposure/1",
+          "film": "kodak_portra_400",
+          "seed": 0,
+          "metering": "manual",
+          "shots": [
+            {"path": "a.png", "exposure_ev": -1.0, "weight": 0.5},
+            {"path": "b.png", "exposure_ev": -1.0, "weight": 0.5}
+          ]
+        }"#;
+        let error = serde_json::from_str::<Recipe>(json)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("weight"), "unexpected recipe error: {error}");
+    }
+
+    #[test]
+    fn default_flag_metering_is_manual() {
+        let mut args = ProcessArgs::default();
+        args.expose = vec![PathBuf::from("a.png"), PathBuf::from("b.png")];
+        args.film = Some("kodak_portra_400".into());
+        let resolved = resolve_flags(&args).unwrap();
+        assert_eq!(resolved.metering, MeteringArg::Manual);
+    }
+
+    #[test]
+    fn validate_shot_rejects_out_of_range_ev() {
+        assert!(validate_shot(0, -1.0).is_ok());
+        assert!(validate_shot(1, 10.0).is_ok());
+        assert!(validate_shot(2, 10.01).is_err());
+        assert!(validate_shot(3, f64::NAN).is_err());
     }
 
     #[test]
@@ -839,14 +857,12 @@ mod tests {
                     path: "a.png".into(),
                     sha256: None,
                     exposure_ev: -1.0,
-                    weight: 1.0,
                     transform: None,
                 },
                 RecipeShot {
                     path: "b.png".into(),
                     sha256: None,
                     exposure_ev: -1.0,
-                    weight: 1.0,
                     transform: None,
                 },
             ],
@@ -861,6 +877,7 @@ mod tests {
             input_cctf_decoding: Some(false),
         };
         let text = serde_json::to_string(&recipe).unwrap();
+        assert!(!text.contains("weight"));
         let back: Recipe = serde_json::from_str(&text).unwrap();
         assert_eq!(back.input_color_space.as_deref(), Some("ProPhoto RGB"));
         assert_eq!(back.input_cctf_decoding, Some(false));

@@ -143,7 +143,6 @@ fn run(args: &ExperimentRunArgs) -> Result<()> {
         input: Some(input_path),
         expose: Vec::new(),
         expose_ev: Vec::new(),
-        expose_weight: Vec::new(),
         multiple_exposure_meter: None,
         output_crop: None,
         recipe: None,

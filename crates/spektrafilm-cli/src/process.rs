@@ -46,19 +46,12 @@ pub struct ProcessArgs {
         long = "expose-ev",
         value_name = "EV",
         action = clap::ArgAction::Append,
+        allow_hyphen_values = true,
         allow_negative_numbers = true,
         help_heading = "Multiple exposure"
     )]
     pub(crate) expose_ev: Vec<f64>,
-    /// Per-shot linear composition weight; repeat once per --expose.
-    #[arg(
-        long = "expose-weight",
-        value_name = "W",
-        action = clap::ArgAction::Append,
-        help_heading = "Multiple exposure"
-    )]
-    pub(crate) expose_weight: Vec<f64>,
-    /// Metering mode for the multiple-exposure stack.
+    /// Metering mode for the multiple-exposure stack; defaults to manual.
     #[arg(
         long = "multiple-exposure-meter",
         value_enum,
@@ -261,7 +254,6 @@ impl Default for ProcessArgs {
             input: None,
             expose: Vec::new(),
             expose_ev: Vec::new(),
-            expose_weight: Vec::new(),
             multiple_exposure_meter: None,
             output_crop: None,
             recipe: None,
@@ -656,7 +648,6 @@ fn reject_multiple_only_flags(args: &ProcessArgs) -> Result<()> {
         || args.preview
         || args.recipe_out.is_some()
         || !args.expose_ev.is_empty()
-        || !args.expose_weight.is_empty()
         || args.multiple_exposure_meter.is_some()
         || args.max_memory != "auto"
         || args.preview_max_size != 1024

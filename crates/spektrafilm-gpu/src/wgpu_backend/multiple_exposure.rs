@@ -2,9 +2,9 @@
 //!
 //! The film boundary is `log10` exposure. A real multiple exposure adds light
 //! before development, so the device accumulator stores linear exposure:
-//! `S = sum_i weight_i * 10^L_i`, then `log_e_finalize` converts back to
-//! `log10(S)`. This is the same formula as the CPU accumulator; f32 device
-//! arithmetic is the current device limitation.
+//! `S = sum_i 10^L_i`, then `log_e_finalize` converts back to `log10(S)`.
+//! This is the same formula as the CPU accumulator; f32 device arithmetic is
+//! the current device limitation.
 
 use super::page_views::{Access, ViewPlan};
 use super::paged::ImagePage;
@@ -14,9 +14,9 @@ use spektrafilm_backend::{DeviceImage, SampleDomain};
 const INIT_SHADER: &str = r#"
 struct Params {
     n_pixels: u32,
-    weight: f32,
     shot_base: u32,
     acc_base: u32,
+    _pad: u32,
 }
 @group(0) @binding(0) var<uniform> params: Params;
 @group(0) @binding(1) var<storage, read> shot: array<f32>;
@@ -29,7 +29,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_workgroups) 
     let base = idx * 3u;
     for (var c = 0u; c < 3u; c += 1u) {
         let i = base + c;
-        acc[params.acc_base + i] = params.weight * exp2(shot[params.shot_base + i] * 3.321928094887362);
+        acc[params.acc_base + i] = exp2(shot[params.shot_base + i] * 3.321928094887362);
     }
 }
 "#;
@@ -37,9 +37,9 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_workgroups) 
 const ADD_SHADER: &str = r#"
 struct Params {
     n_pixels: u32,
-    weight: f32,
     shot_base: u32,
     acc_base: u32,
+    _pad: u32,
 }
 @group(0) @binding(0) var<uniform> params: Params;
 @group(0) @binding(1) var<storage, read> shot: array<f32>;
@@ -53,7 +53,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_workgroups) 
     for (var c = 0u; c < 3u; c += 1u) {
         let i = base + c;
         acc[params.acc_base + i] = acc[params.acc_base + i]
-            + params.weight * exp2(shot[params.shot_base + i] * 3.321928094887362);
+            + exp2(shot[params.shot_base + i] * 3.321928094887362);
     }
 }
 "#;
@@ -61,9 +61,9 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_workgroups) 
 const FINALIZE_SHADER: &str = r#"
 struct Params {
     n_pixels: u32,
-    _pad0: u32,
-    _pad1: u32,
+    _shot_base: u32,
     acc_base: u32,
+    _pad: u32,
 }
 @group(0) @binding(0) var<uniform> params: Params;
 @group(0) @binding(1) var<storage, read_write> acc: array<f32>;
@@ -85,9 +85,9 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_workgroups) 
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 struct ComposeParams {
     n_pixels: u32,
-    weight: f32,
     shot_base: u32,
     acc_base: u32,
+    _pad: u32,
 }
 
 impl WgpuBackend {
@@ -97,7 +97,6 @@ impl WgpuBackend {
         bindings: &[wgpu::BufferBindingType],
         shot_pages: Option<&Vec<ImagePage>>,
         acc_pages: &Vec<ImagePage>,
-        weight: f32,
         acc_access: Access,
         label: &str,
     ) -> Result<(), String> {
@@ -126,9 +125,9 @@ impl WgpuBackend {
                     label: Some(label),
                     contents: bytemuck::bytes_of(&ComposeParams {
                         n_pixels: chunk.count,
-                        weight,
                         shot_base,
                         acc_base,
+                        _pad: 0,
                     }),
                     usage: wgpu::BufferUsages::UNIFORM,
                 });
@@ -162,11 +161,7 @@ impl WgpuBackend {
         &self,
         accumulator: Option<&DeviceImage>,
         shot: &DeviceImage,
-        weight: f32,
     ) -> Result<Option<DeviceImage>, String> {
-        if !weight.is_finite() || weight < 0.0 {
-            return Err("multiple exposure weight must be finite and non-negative".into());
-        }
         if shot.width() == 0 || shot.height() == 0 {
             return Err("multiple exposure shot is empty".into());
         }
@@ -188,7 +183,6 @@ impl WgpuBackend {
                 ],
                 Some(&shot_payload.pages),
                 &acc_payload.pages,
-                weight,
                 Access::ReadWrite,
                 "multiple_exposure_add",
             )?;
@@ -206,7 +200,6 @@ impl WgpuBackend {
             ],
             Some(&shot_payload.pages),
             &pages,
-            weight,
             Access::Write,
             "multiple_exposure_init",
         )?;
@@ -238,7 +231,6 @@ impl WgpuBackend {
             ],
             None,
             &payload.pages,
-            1.0,
             Access::ReadWrite,
             "multiple_exposure_finalize",
         )?;
@@ -297,21 +289,19 @@ mod tests {
         let images: Vec<ImageBuf> = (0..4)
             .map(|i| log_image(width, height, i as f32 * 0.15))
             .collect();
-        let weights = [1.0f32, 0.75, 0.5, 1.25];
-
         let mut reference = vec![0.0f64; (width * height * 3) as usize];
-        for (image, &weight) in images.iter().zip(&weights) {
+        for image in &images {
             for (slot, &value) in reference.iter_mut().zip(&image.data) {
-                *slot += f64::from(weight) * 10.0_f64.powf(value as f64);
+                *slot += 10.0_f64.powf(value as f64);
             }
         }
         let reference: Vec<f32> = reference.iter().map(|value| value.log10() as f32).collect();
 
         let mut accumulator = None;
-        for (image, &weight) in images.iter().zip(&weights) {
+        for image in &images {
             let retained = upload(&gpu, image);
             accumulator = Some(
-                gpu.log_e_accumulate(accumulator.as_ref(), &retained, weight)
+                gpu.log_e_accumulate(accumulator.as_ref(), &retained)
                     .unwrap()
                     .unwrap(),
             );
