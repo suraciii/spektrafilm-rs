@@ -20,29 +20,56 @@ pub(crate) fn sections(
                     "Method to upsample the spectral resolution of the image, hanatos2025 works on the full visible locus, mallett2019 works only on sRGB (will clip input).",
                 );
             }
-            if filter_matches(filter, "hanatos2025 adaptation window") {
-                flags.runtime_changed |= toggle(
+            // Another method never reads the adaptation, so its rows leave the
+            // section entirely; a search that names them still reveals them with
+            // the reason, the way every other inapplicable row behaves.
+            let adaptation =
+                spektrafilm_core::params::sources::hanatos2025_adaptation_applicable(params)
+                    || filter.active();
+            if adaptation && filter_matches(filter, "hanatos2025 adaptation window") {
+                flags.runtime_changed |= applicable_control(
                     ui,
-                    "hanatos2025 adaptation window",
-                    &mut params.settings.apply_hanatos2025_adaptation_window,
-                    "Apply the hanatos2025 bandpass adaptation window when reconstructing spectra.",
+                    params,
+                    "settings.apply_hanatos2025_adaptation_window",
+                    |ui, params| {
+                        toggle(
+                            ui,
+                            "hanatos2025 adaptation window",
+                            &mut params.settings.apply_hanatos2025_adaptation_window,
+                            "Apply the hanatos2025 bandpass adaptation window when reconstructing spectra.",
+                        )
+                    },
                 );
             }
-            if filter_matches(filter, "hanatos2025 adaptation surface") {
-                flags.runtime_changed |= toggle(
+            if adaptation && filter_matches(filter, "hanatos2025 adaptation surface") {
+                flags.runtime_changed |= applicable_control(
                     ui,
-                    "hanatos2025 adaptation surface",
-                    &mut params.settings.apply_hanatos2025_adaptation_surface,
-                    "Apply the hanatos2025 surface adaptation polynomial when reconstructing spectra.",
+                    params,
+                    "settings.apply_hanatos2025_adaptation_surface",
+                    |ui, params| {
+                        toggle(
+                            ui,
+                            "hanatos2025 adaptation surface",
+                            &mut params.settings.apply_hanatos2025_adaptation_surface,
+                            "Apply the hanatos2025 surface adaptation polynomial when reconstructing spectra.",
+                        )
+                    },
                 );
             }
-            if filter_matches(filter, "spectral gaussian blur") {
-                flags.runtime_changed |= param_numeric(
+            if adaptation && filter_matches(filter, "spectral gaussian blur") {
+                flags.runtime_changed |= applicable_control(
                     ui,
-                    "spectral gaussian blur",
-                    &mut params.settings.spectral_gaussian_blur,
+                    params,
                     "settings.spectral_gaussian_blur",
-                    "Sigma in nm for Gaussian blur applied to reconstructed spectra.",
+                    |ui, params| {
+                        param_numeric(
+                            ui,
+                            "spectral gaussian blur",
+                            &mut params.settings.spectral_gaussian_blur,
+                            "settings.spectral_gaussian_blur",
+                            "Sigma in nm for Gaussian blur applied to reconstructed spectra.",
+                        )
+                    },
                 );
             }
             if filter_matches(filter, "use cat16") {

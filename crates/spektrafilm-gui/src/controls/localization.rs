@@ -1687,10 +1687,17 @@ fn key(label: &str) -> Option<&'static str> {
         "scatter tail weight" => Some("controls.halation.scatter_tail_weight"),
         "select ICC profile…" => Some("surfaces.display.select_profile"),
         "selected ICC profile" => Some("controls.condition.display_profile"),
+        "selected film profile carries fitted hanatos2025 adaptation surface parameters" => {
+            Some("controls.condition.hanatos_surface_fit")
+        }
+        "selected film profile carries fitted hanatos2025 adaptation window parameters" => {
+            Some("controls.condition.hanatos_window_fit")
+        }
         "selected material has no supported fitted density_curves_model; chemistry values remain stored and inactive" => {
             Some("controls.condition.missing_model")
         }
         "selected report" => Some("controls.condition.report"),
+        "settings.rgb_to_raw_method = hanatos2025" => Some("controls.condition.hanatos_method"),
         "sigma" => Some("controls.label.sigma"),
         "simulation blend" => Some("controls.output.simulation_blend"),
         "source compression" => Some("controls.halation.source_compression"),

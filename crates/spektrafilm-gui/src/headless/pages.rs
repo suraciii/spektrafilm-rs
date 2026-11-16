@@ -496,6 +496,148 @@ fn disabled_glare_is_not_an_inactive_module_banner() {
 }
 
 #[test]
+fn adaptation_surface_switch_changes_the_render_and_survives_reload() {
+    let mut s = session();
+    let h = &mut s.harness;
+    set_route(h, "input > film > print > scan");
+    let before = preview(h);
+    assert!(
+        !h.state()
+            .params
+            .settings
+            .apply_hanatos2025_adaptation_surface
+    );
+    toggle_control(
+        h,
+        "settings.apply_hanatos2025_adaptation_surface",
+        "hanatos2025 adaptation surface",
+    );
+    assert!(
+        h.state()
+            .params
+            .settings
+            .apply_hanatos2025_adaptation_surface
+    );
+    let after = preview(h);
+    let delta = before
+        .data
+        .iter()
+        .zip(&after.data)
+        .map(|(&a, &b)| (a as f64 - b as f64).abs())
+        .sum::<f64>()
+        / before.data.len() as f64;
+    assert!(
+        delta > 1e-3,
+        "the surface switch must reach the filming spectral transform: mean |delta| = {delta}"
+    );
+
+    toggle_control(
+        h,
+        "settings.apply_hanatos2025_adaptation_surface",
+        "hanatos2025 adaptation surface",
+    );
+    assert!(
+        !h.state()
+            .params
+            .settings
+            .apply_hanatos2025_adaptation_surface
+    );
+    assert_eq!(
+        preview(h).data,
+        before.data,
+        "toggling the surface back must restore the exact render"
+    );
+
+    // The row is reachable by its Simplified Chinese label through search.
+    toggle_control(
+        h,
+        "settings.apply_hanatos2025_adaptation_surface",
+        "hanatos2025 adaptation surface",
+    );
+    search_controls(h, "曲面");
+    assert!(
+        h.query_by_label("hanatos2025 adaptation surface").is_some(),
+        "searching the Chinese label must locate the surface row"
+    );
+    search_controls(h, "");
+    save_mutate_and_reload(&mut s, "adaptation-surface.json", |h| {
+        toggle_control(
+            h,
+            "settings.apply_hanatos2025_adaptation_surface",
+            "hanatos2025 adaptation surface",
+        );
+        assert!(
+            !h.state()
+                .params
+                .settings
+                .apply_hanatos2025_adaptation_surface
+        );
+    });
+    assert!(
+        s.harness
+            .state()
+            .params
+            .settings
+            .apply_hanatos2025_adaptation_surface,
+        "the enabled surface must survive a state save and reload"
+    );
+}
+
+#[test]
+fn adaptation_switches_follow_the_film_profile_fitted_parameters() {
+    let mut s = session();
+    let h = &mut s.harness;
+    set_route(h, "input > film > print > scan");
+    let trix = profile::load_profile_by_name(&data_dir(), "kodak_trix").unwrap();
+    select_film(h, trix.info.name.as_deref().unwrap_or("kodak_trix"));
+    assert_eq!(h.state().film_name, "kodak_trix");
+
+    reveal_control(h, "settings.apply_hanatos2025_adaptation_surface");
+    assert!(
+        h.get_by_role_and_label(
+            egui::accesskit::Role::Switch,
+            "hanatos2025 adaptation surface"
+        )
+        .node()
+        .is_disabled()
+    );
+    assert!(
+        h.query_by_label_contains("no adaptation surface").is_some(),
+        "the unavailable surface must name the missing fitted parameters"
+    );
+    reveal_control(h, "settings.apply_hanatos2025_adaptation_window");
+    assert!(
+        h.get_by_role_and_label(
+            egui::accesskit::Role::Switch,
+            "hanatos2025 adaptation window"
+        )
+        .node()
+        .is_disabled()
+    );
+
+    // Method and blur stay applicable: only the fitted adaptation rows follow
+    // the profile's parameters, so the module is not reported inactive.
+    reveal_control(h, "settings.rgb_to_raw_method");
+    assert!(
+        !h.get_by_role_and_label(egui::accesskit::Role::ComboBox, "spectral upsampling")
+            .node()
+            .is_disabled()
+    );
+    reveal_control(h, "settings.spectral_gaussian_blur");
+    edit_control(
+        h,
+        "settings.spectral_gaussian_blur",
+        "spectral gaussian blur",
+        "2.5",
+    );
+    assert_eq!(h.state().params.settings.spectral_gaussian_blur, 2.5);
+    assert!(
+        !h.query_by_label_contains("Inactive controls").is_some(),
+        "one applicable row keeps the module active"
+    );
+}
+
+#[test]
 fn spectral_cmyk_and_gamut_controls_accept_edits_and_persist() {
     let mut s = session();
     let h = &mut s.harness;
@@ -504,6 +646,51 @@ fn spectral_cmyk_and_gamut_controls_accept_edits_and_persist() {
         "settings.rgb_to_raw_method",
         "spectral upsampling",
         "mallett2019",
+    );
+    // Another method never reads the adaptation, so its rows leave the section
+    // entirely; a search that names one still reveals it with the reason.
+    search_controls(h, "");
+    click(h, "Spectral upsampling");
+    for label in [
+        "hanatos2025 adaptation window",
+        "hanatos2025 adaptation surface",
+        "spectral gaussian blur",
+    ] {
+        assert!(
+            h.query_by_label(label).is_none(),
+            "{label} must not render under another method"
+        );
+    }
+    search_controls(h, "hanatos2025 adaptation window");
+    assert!(
+        h.get_by_role_and_label(
+            egui::accesskit::Role::Switch,
+            "hanatos2025 adaptation window"
+        )
+        .node()
+        .is_disabled(),
+        "a searched row must stay disabled under another method"
+    );
+    assert!(
+        h.query_by_label("Requires the hanatos2025 spectral upsampling method")
+            .is_some(),
+        "a searched row must name the method condition"
+    );
+    choose_control(
+        h,
+        "settings.rgb_to_raw_method",
+        "spectral upsampling",
+        "hanatos2025",
+    );
+    search_controls(h, "hanatos2025 adaptation window");
+    assert!(
+        !h.get_by_role_and_label(
+            egui::accesskit::Role::Switch,
+            "hanatos2025 adaptation window"
+        )
+        .node()
+        .is_disabled(),
+        "the row returns with its method"
     );
     let adaptation_window = h
         .state()
@@ -521,7 +708,7 @@ fn spectral_cmyk_and_gamut_controls_accept_edits_and_persist() {
         "spectral gaussian blur",
         "2.5",
     );
-    assert_eq!(h.state().params.settings.rgb_to_raw_method, "mallett2019");
+    assert_eq!(h.state().params.settings.rgb_to_raw_method, "hanatos2025");
     assert_eq!(
         h.state()
             .params

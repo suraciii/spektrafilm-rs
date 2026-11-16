@@ -2,8 +2,9 @@ mod discovery;
 mod effects;
 mod metadata;
 pub use effects::{
-    grain_control_inactive_reason, grain_control_inactive_reason_with_profile, inactive_reason,
-    inactive_reason_with_materials, inactive_reason_without_profiles,
+    grain_control_inactive_reason, grain_control_inactive_reason_with_profile,
+    hanatos2025_adaptation_applicable, inactive_reason, inactive_reason_with_materials,
+    inactive_reason_without_profiles,
 };
 
 use discovery::schema_value;

@@ -54,6 +54,9 @@ pub(super) enum Condition {
     NegativeScan,
     SpectralReference,
     FilmCurve,
+    HanatosMethod,
+    HanatosWindowFit,
+    HanatosSurfaceFit,
 }
 impl Condition {
     pub(super) fn description(self) -> &'static str {
@@ -151,6 +154,13 @@ impl Condition {
             }
             Self::FilmCurve => {
                 "film development or a downstream calibrated film-curve reference required"
+            }
+            Self::HanatosMethod => "settings.rgb_to_raw_method = hanatos2025",
+            Self::HanatosWindowFit => {
+                "selected film profile carries fitted hanatos2025 adaptation window parameters"
+            }
+            Self::HanatosSurfaceFit => {
+                "selected film profile carries fitted hanatos2025 adaptation surface parameters"
             }
         }
     }
@@ -303,6 +313,17 @@ impl Condition {
                         crate::pipeline_calibration::validate_scan_output(p, film).is_ok()
                     })
             }
+            // The filming TC LUT gates every hanatos2025 adaptation control on
+            // the selected method and on the profile's fitted coefficients;
+            // `spectral_service` applies the same predicates.
+            Self::HanatosMethod => hanatos2025_adaptation_applicable(p),
+            Self::HanatosWindowFit => {
+                film.is_some_and(|film| film.data.hanatos2025_adaptation_window_params.len() == 4)
+            }
+            Self::HanatosSurfaceFit => film.is_some_and(|film| {
+                let surface = &film.data.hanatos2025_adaptation_surface_params;
+                surface.len() == 3 && surface.iter().all(|row| row.len() == 15)
+            }),
         }
     }
 
@@ -559,16 +580,22 @@ pub(super) fn conditions(path: &str) -> Vec<Condition> {
         path,
         "camera.filter_uv" | "camera.filter_ir" | "camera.color_filter"
     ) || path.starts_with("io.input_gamut_compress.")
-        || matches!(
-            path,
-            "settings.rgb_to_raw_method"
-                | "settings.apply_hanatos2025_adaptation_window"
-                | "settings.apply_hanatos2025_adaptation_surface"
-                | "settings.spectral_gaussian_blur"
-                | "settings.use_cat16"
-        )
+        || matches!(path, "settings.rgb_to_raw_method" | "settings.use_cat16")
     {
         out.push(SpectralReference);
+    } else if matches!(
+        path,
+        "settings.apply_hanatos2025_adaptation_window"
+            | "settings.apply_hanatos2025_adaptation_surface"
+            | "settings.spectral_gaussian_blur"
+    ) {
+        out.push(SpectralReference);
+        out.push(HanatosMethod);
+        match path {
+            "settings.apply_hanatos2025_adaptation_window" => out.push(HanatosWindowFit),
+            "settings.apply_hanatos2025_adaptation_surface" => out.push(HanatosSurfaceFit),
+            _ => {}
+        }
     } else if path.starts_with("scanner.") {
         out.push(Scan);
         if matches!(path, "scanner.conversion_style") {
@@ -588,6 +615,13 @@ pub(super) fn conditions(path: &str) -> Vec<Condition> {
         }
     }
     out
+}
+
+/// Whether the hanatos2025 sensitivity-adaptation controls apply at all: the
+/// filming TC LUT only carries them under the hanatos2025 method, so another
+/// method leaves the whole group unread by the pipeline.
+pub fn hanatos2025_adaptation_applicable(params: &RuntimeParams) -> bool {
+    params.settings.rgb_to_raw_method == "hanatos2025"
 }
 
 /// Configured applicability when material data is not available. A missing
@@ -783,6 +817,62 @@ mod tests {
                 inactive_reason_without_profiles(path, &params).is_some(),
                 "{path}"
             );
+        }
+    }
+
+    #[test]
+    fn hanatos_adaptation_rows_follow_the_method_and_the_fitted_profile() {
+        let data = crate::test_support::data_dir();
+        let fitted = crate::profile::load_profile_by_name(&data, "kodak_gold_200").unwrap();
+        let unfitted = crate::profile::load_profile_by_name(&data, "kodak_trix").unwrap();
+        let mut params = RuntimeParams::default();
+        params.workflow.route = "input > film > print > scan".into();
+        params.settings.rgb_to_raw_method = "hanatos2025".into();
+        for path in [
+            "settings.apply_hanatos2025_adaptation_window",
+            "settings.apply_hanatos2025_adaptation_surface",
+        ] {
+            assert!(
+                inactive_reason(path, &params, &fitted, &fitted).is_none(),
+                "{path}"
+            );
+            params.settings.rgb_to_raw_method = "mallett2019".into();
+            assert_eq!(
+                inactive_reason(path, &params, &fitted, &fitted).as_deref(),
+                Some(Condition::HanatosMethod.description()),
+                "{path}"
+            );
+            params.settings.rgb_to_raw_method = "hanatos2025".into();
+            let fit = if path.ends_with("window") {
+                Condition::HanatosWindowFit
+            } else {
+                Condition::HanatosSurfaceFit
+            };
+            assert_eq!(
+                inactive_reason(path, &params, &unfitted, &unfitted).as_deref(),
+                Some(fit.description()),
+                "{path}"
+            );
+        }
+        // The method selector stays applicable, and the blur row depends on the
+        // method alone, so a profile without fitted parameters leaves them live.
+        for path in [
+            "settings.rgb_to_raw_method",
+            "settings.spectral_gaussian_blur",
+        ] {
+            assert!(
+                inactive_reason(path, &params, &unfitted, &unfitted).is_none(),
+                "{path}"
+            );
+            params.settings.rgb_to_raw_method = "mallett2019".into();
+            let expected = (path == "settings.spectral_gaussian_blur")
+                .then(|| Condition::HanatosMethod.description());
+            assert_eq!(
+                inactive_reason(path, &params, &unfitted, &unfitted).as_deref(),
+                expected,
+                "{path}"
+            );
+            params.settings.rgb_to_raw_method = "hanatos2025".into();
         }
     }
 
