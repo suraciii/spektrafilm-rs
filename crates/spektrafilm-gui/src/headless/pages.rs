@@ -200,21 +200,31 @@ fn material_edits_refresh_automatic_preview_and_scan() {
 fn film_chemistry_material_and_capture_controls_accept_edits_and_persist() {
     let mut s = session();
     let h = &mut s.harness;
+    // These tests exercise the editors, not the deterministic preview bypass.
+    h.state_mut().params.debug.deactivate_spatial_effects = false;
+    h.state_mut().params.debug.deactivate_stochastic_effects = false;
     let double_x = profile::load_profile_by_name(&data_dir(), "kodak_doublex").unwrap();
     select_film(h, double_x.info.name.as_deref().unwrap_or("kodak_doublex"));
     assert_eq!(h.state().film_name, "kodak_doublex");
     set_route(h, "input > film > scan");
 
     let base_active = h.state().params.film_render.base.active;
-    toggle_control(h, "film_render.base.active", "Enable film base");
+    if !base_active {
+        toggle_control(h, "film_render.base.active", "Enable film base");
+    }
     edit_control(h, "film_render.base.scale", "scale", "1.25");
     edit_control(h, "film_render.base.tilt", "tilt", "0.75");
-    assert_eq!(h.state().params.film_render.base.active, !base_active);
+    toggle_control(h, "film_render.base.active", "Enable film base");
+    assert!(!h.state().params.film_render.base.active);
     assert_eq!(h.state().params.film_render.base.scale, 1.25);
     assert_eq!(h.state().params.film_render.base.tilt, 0.75);
+    toggle_control(h, "film_render.base.active", "Enable film base");
+    assert!(h.state().params.film_render.base.active);
 
     let halation_active = h.state().params.film_render.halation.active;
-    toggle_control(h, "film_render.halation.active", "Enable halation");
+    if !halation_active {
+        toggle_control(h, "film_render.halation.active", "Enable halation");
+    }
     edit_control(
         h,
         "film_render.halation.scatter_amount",
@@ -222,15 +232,17 @@ fn film_chemistry_material_and_capture_controls_accept_edits_and_persist() {
         "0.25",
     );
     edit_control(h, "film_render.halation.boost_ev", "boost ev", "1.5");
-    assert_eq!(
-        h.state().params.film_render.halation.active,
-        !halation_active
-    );
+    toggle_control(h, "film_render.halation.active", "Enable halation");
+    assert!(!h.state().params.film_render.halation.active);
     assert_eq!(h.state().params.film_render.halation.scatter_amount, 0.25);
     assert_eq!(h.state().params.film_render.halation.boost_ev, 1.5);
+    toggle_control(h, "film_render.halation.active", "Enable halation");
+    assert!(h.state().params.film_render.halation.active);
 
     let couplers_active = h.state().params.film_render.dir_couplers.active;
-    toggle_control(h, "film_render.dir_couplers.active", "Enable DIR couplers");
+    if !couplers_active {
+        toggle_control(h, "film_render.dir_couplers.active", "Enable DIR couplers");
+    }
     edit_control(
         h,
         "film_render.dir_couplers.amount",
@@ -243,10 +255,8 @@ fn film_chemistry_material_and_capture_controls_accept_edits_and_persist() {
         "inhibition samelayer",
         "0.75",
     );
-    assert_eq!(
-        h.state().params.film_render.dir_couplers.active,
-        !couplers_active
-    );
+    toggle_control(h, "film_render.dir_couplers.active", "Enable DIR couplers");
+    assert!(!h.state().params.film_render.dir_couplers.active);
     assert_eq!(h.state().params.film_render.dir_couplers.amount, 1.5);
     assert_eq!(
         h.state()
@@ -256,6 +266,8 @@ fn film_chemistry_material_and_capture_controls_accept_edits_and_persist() {
             .inhibition_samelayer,
         0.75
     );
+    toggle_control(h, "film_render.dir_couplers.active", "Enable DIR couplers");
+    assert!(h.state().params.film_render.dir_couplers.active);
 
     let diffusion_active = h.state().params.camera.diffusion_filter.active;
     toggle_control(h, "camera.diffusion_filter.active", "Camera diffusion");
@@ -352,6 +364,9 @@ fn film_chemistry_material_and_capture_controls_accept_edits_and_persist() {
 fn print_chemistry_base_glare_and_diffusion_controls_accept_edits_and_persist() {
     let mut s = session();
     let h = &mut s.harness;
+    // These tests exercise the editors, not the deterministic preview bypass.
+    h.state_mut().params.debug.deactivate_spatial_effects = false;
+    h.state_mut().params.debug.deactivate_stochastic_effects = false;
     set_route(h, "input > film > print > scan");
     let chemistry_active = h.state().params.print_render.density_curves_morph.active;
     if !chemistry_active {
@@ -412,12 +427,17 @@ fn print_chemistry_base_glare_and_diffusion_controls_accept_edits_and_persist() 
     assert_eq!(h.state().params.print_render.base.active, base_active);
 
     let glare_active = h.state().params.print_render.glare.active;
-    toggle_control(h, "print_render.glare.active", "Simulate viewing glare");
+    if !glare_active {
+        toggle_control(h, "print_render.glare.active", "Simulate viewing glare");
+    }
     edit_control(h, "print_render.glare.percent", "percent", "0.25");
     edit_control(h, "print_render.glare.roughness", "roughness", "0.5");
-    assert_eq!(h.state().params.print_render.glare.active, !glare_active);
+    toggle_control(h, "print_render.glare.active", "Simulate viewing glare");
+    assert!(!h.state().params.print_render.glare.active);
     assert_eq!(h.state().params.print_render.glare.percent, 0.25);
     assert_eq!(h.state().params.print_render.glare.roughness, 0.5);
+    toggle_control(h, "print_render.glare.active", "Simulate viewing glare");
+    assert!(h.state().params.print_render.glare.active);
 
     let diffusion_active = h.state().params.enlarger.diffusion_filter.active;
     toggle_control(h, "enlarger.diffusion_filter.active", "Enlarger diffusion");
@@ -719,11 +739,13 @@ fn spectral_cmyk_and_gamut_controls_accept_edits_and_persist() {
     assert_eq!(h.state().params.settings.spectral_gaussian_blur, 2.5);
 
     let compress_active = h.state().params.io.input_gamut_compress.active;
-    toggle_control(
-        h,
-        "io.input_gamut_compress.active",
-        "Enable input gamut compress",
-    );
+    if !compress_active {
+        toggle_control(
+            h,
+            "io.input_gamut_compress.active",
+            "Enable input gamut compress",
+        );
+    }
     edit_control(h, "io.input_gamut_compress.knee", "knee threshold", "0.75");
     edit_control(h, "io.input_gamut_compress.knee", "knee power", "1.5");
     edit_control(
@@ -731,6 +753,22 @@ fn spectral_cmyk_and_gamut_controls_accept_edits_and_persist() {
         "io.input_gamut_compress.hull_detail",
         "hull detail",
         "12",
+    );
+    choose_control(h, "io.input_gamut_compress.algorithm", "algorithm", "oklch");
+    search_controls(h, "");
+    assert!(
+        h.query_by_label("boundary").is_none(),
+        "the xy boundary leaves the ordinary list under oklch"
+    );
+    assert!(
+        h.query_by_label("hull detail").is_none(),
+        "the xy hull detail leaves the ordinary list under oklch"
+    );
+    choose_control(h, "io.input_gamut_compress.algorithm", "algorithm", "xy");
+    toggle_control(
+        h,
+        "io.input_gamut_compress.active",
+        "Enable input gamut compress",
     );
     assert_eq!(
         h.state().params.io.input_gamut_compress.active,
@@ -744,6 +782,15 @@ fn spectral_cmyk_and_gamut_controls_accept_edits_and_persist() {
     assert_eq!(h.state().params.io.output_gamut_compress.knee[0], 0.5);
     assert_eq!(h.state().params.io.output_gamut_compress.knee[2], 4.5);
 
+    if !h.state().params.cmyk.active {
+        toggle_control(h, "cmyk.active", "Enable CMYK ink style");
+    }
+    edit_control(h, "cmyk.strength", "strength", "0.0");
+    assert_eq!(h.state().params.cmyk.strength, 0.0);
+    assert!(
+        !h.get_by_label("strength").node().is_disabled(),
+        "strength is the amount that brings CMYK back from zero"
+    );
     edit_control(h, "cmyk.strength", "strength", "0.75");
     assert_eq!(h.state().params.cmyk.strength, 0.75);
     let before_reject = h.state().params.clone();
@@ -758,9 +805,50 @@ fn spectral_cmyk_and_gamut_controls_accept_edits_and_persist() {
         0.75
     );
     save_mutate_and_reload(&mut s, "spectral-controls.json", |h| {
+        if !h.state().params.cmyk.active {
+            toggle_control(h, "cmyk.active", "Enable CMYK ink style");
+        }
         edit_control(h, "cmyk.strength", "strength", "0.25");
         assert_eq!(h.state().params.cmyk.strength, 0.25);
     });
+}
+
+#[test]
+fn parent_owned_rows_leave_the_list_and_search_reveals_the_condition() {
+    let mut s = session();
+    let h = &mut s.harness;
+    navigate_stage(h, controls::Stage::Input);
+    click(h, "Crop and upscale");
+    assert!(h.query_by_label("crop center").is_none());
+    search_controls(h, "crop center");
+    assert!(
+        h.get_by_label("crop center x").node().is_disabled(),
+        "search reveals the stored row with its Crop condition"
+    );
+    assert!(
+        h.query_by_role_and_label(egui::accesskit::Role::Switch, "crop")
+            .is_some(),
+        "the parent switch stays reachable while the child row is revealed"
+    );
+    search_controls(h, "");
+    click(h, "crop");
+    assert!(h.query_by_label("crop center").is_some());
+    click(h, "crop");
+    assert!(
+        h.query_by_label("crop center").is_none(),
+        "switching the parent off returns the row to the hidden state"
+    );
+
+    navigate_stage(h, controls::Stage::Film);
+    click(h, "Film base");
+    if h.state().params.film_render.base.active {
+        click(h, "Enable film base");
+    }
+    assert!(h.query_by_label("tilt").is_none());
+    click(h, "Enable film base");
+    assert!(h.query_by_label("tilt").is_some());
+    click(h, "Enable film base");
+    assert!(h.query_by_label("tilt").is_none());
 }
 
 #[test]
@@ -821,12 +909,12 @@ fn camera_enlarger_crop_upscale_and_cmyk_controls_edit_params_geometry_and_persi
     assert_eq!(h.state().params.enlarger.preflash_y_filter_shift, 1.5);
     assert_eq!(h.state().params.enlarger.preflash_m_filter_shift, -0.75);
 
+    toggle_control(h, "io.crop", "crop");
+    assert!(h.state().params.io.crop);
     edit_control(h, "io.crop_center", "crop center x", "0.25");
     edit_control(h, "io.crop_center", "crop center y", "0.5");
     edit_control(h, "io.crop_size", "crop size x", "0.5");
     edit_control(h, "io.crop_size", "crop size y", "0.5");
-    toggle_control(h, "io.crop", "crop");
-    assert!(h.state().params.io.crop);
     assert_eq!(h.state().params.io.crop_center, [0.25, 0.5]);
     assert_eq!(h.state().params.io.crop_size, [0.5, 0.5]);
     set_route(h, "input");
@@ -869,6 +957,30 @@ fn camera_enlarger_crop_upscale_and_cmyk_controls_edit_params_geometry_and_persi
 }
 
 #[test]
+fn film_format_default_is_135_and_presets_hide_the_edge() {
+    let mut s = session();
+    let h = &mut s.harness;
+    navigate_stage(h, controls::Stage::Input);
+    click(h, "Capture setup");
+    assert_eq!(h.state().params.camera.film_format_mm, 36.0);
+    assert!(
+        h.query_by_label("Frame Long Edge").is_none(),
+        "the factory default is the named 135-format preset"
+    );
+    choose(h, "Film Format", "Custom");
+    assert!(
+        h.query_by_label("Frame Long Edge").is_some(),
+        "Custom reveals the manual long edge"
+    );
+    choose(h, "Film Format", "35mm");
+    assert!(
+        h.query_by_label("Frame Long Edge").is_none(),
+        "choosing the 35mm preset hides the manual long edge"
+    );
+    assert_eq!(h.state().params.camera.film_format_mm, 36.0);
+}
+
+#[test]
 fn film_format_specs_change_only_physical_scale_and_preserve_custom_values() {
     let mut s = session();
     let h = &mut s.harness;
@@ -877,7 +989,7 @@ fn film_format_specs_change_only_physical_scale_and_preserve_custom_values() {
     assert_eq!(
         h.state().params,
         original,
-        "opening must retain legacy 35 mm"
+        "locating the row must not change the stored physical scale"
     );
     assert!(h.query_by_label("Frame Long Edge").is_some());
     for query in ["Frame Long Edge", "long edge"] {
@@ -889,7 +1001,7 @@ fn film_format_specs_change_only_physical_scale_and_preserve_custom_values() {
         assert!(h.query_by_label("Frame Long Edge").is_some());
     }
     reveal_control(h, "camera.film_format_mm");
-    for (name, mm) in [("35mm", 36.0), ("120", 56.0), ("4×5", 127.0)] {
+    for (name, mm) in [("120", 56.0), ("4×5", 127.0), ("35mm", 36.0)] {
         choose(h, "Film Format", name);
         let mut expected = original.clone();
         expected.camera.film_format_mm = mm;
@@ -906,9 +1018,9 @@ fn film_format_specs_change_only_physical_scale_and_preserve_custom_values() {
         assert!(h.query_by_label("Frame Long Edge").is_some());
     }
     click(h, "Undo");
-    assert_eq!(h.state().params.camera.film_format_mm, 56.0);
-    click(h, "Redo");
     assert_eq!(h.state().params.camera.film_format_mm, 127.0);
+    click(h, "Redo");
+    assert_eq!(h.state().params.camera.film_format_mm, 36.0);
     let revision = h.state().parameter_revision;
     choose(h, "Film Format", "Custom");
     assert_eq!(
@@ -1083,11 +1195,25 @@ fn preflash_zero_and_nonprinting_route_retain_independent_filters_and_main_expos
     set_route(h, "input > film > print > scan");
     reveal_control(h, "enlarger.preflash_y_filter_shift");
     assert!(
-        !h.get_by_label("preflash y filter shift")
+        h.get_by_label("preflash y filter shift")
             .node()
-            .is_disabled()
+            .is_disabled(),
+        "zero exposure owns the filter values"
+    );
+    assert!(
+        h.query_by_label_contains("Requires positive preflash exposure")
+            .is_some(),
+        "the revealed filter names the zero-exposure condition"
     );
     assert_eq!(h.state().params.enlarger, retained);
+    edit_control(h, "enlarger.preflash_exposure", "preflash exposure", "1");
+    reveal_control(h, "enlarger.preflash_y_filter_shift");
+    assert!(
+        !h.get_by_label("preflash y filter shift")
+            .node()
+            .is_disabled(),
+        "positive exposure returns the filter editor"
+    );
 }
 
 #[test]
@@ -1158,14 +1284,16 @@ fn procedural_named_amount_custom_and_noise_follow_effective_controls() {
         h.state().params.film_render.grain.procedural_amount,
         Some(44.0)
     );
-    // A named profile exposes its profile-owned controls: the first edit
-    // copies the preset into Custom instead of requiring a Customize step.
+    // A named profile owns its profile fields; the independent overrides
+    // remain available, and Custom is the explicit way to expose the rest.
     assert!(h.query_by_label("Film Type").is_none());
     assert!(
-        !h.get_by_role_and_label(egui::accesskit::Role::ComboBox, "Processing Mode")
-            .node()
-            .is_disabled()
+        h.query_by_role_and_label(egui::accesskit::Role::ComboBox, "Processing Mode")
+            .is_none()
     );
+    assert!(h.query_all_by_label("Size (relative)").next().is_none());
+    assert!(h.query_all_by_label("Shadows (%)").next().is_none());
+    assert!(h.query_all_by_label("Film resolution (%)").next().is_none());
     click(h, "Procedural Advanced");
     assert!(
         !h.get_by_role_and_label(egui::accesskit::Role::ComboBox, "Resolution Type")
@@ -1173,14 +1301,19 @@ fn procedural_named_amount_custom_and_noise_follow_effective_controls() {
             .is_disabled()
     );
     assert!(!h.get_by_label("Phase timer").node().is_disabled());
-    assert!(!h.get_by_label("Shadows (%)").node().is_disabled());
-    assert!(!h.get_by_label("Film resolution (%)").node().is_disabled());
-    edit(h, "Size (relative)", "18");
+    choose(h, "Procedural Grain Profiles", "Custom");
     assert_eq!(
         h.state().params.film_render.grain.procedural_profile,
-        "custom",
-        "the first profile-owned edit copies the preset into Custom"
+        "custom"
     );
+    assert!(
+        h.query_by_role_and_label(egui::accesskit::Role::ComboBox, "Processing Mode")
+            .is_some()
+    );
+    assert!(h.query_all_by_label("Size (relative)").next().is_some());
+    assert!(h.query_all_by_label("Shadows (%)").next().is_some());
+    assert!(h.query_all_by_label("Film resolution (%)").next().is_some());
+    edit(h, "Size (relative)", "18");
     assert_eq!(
         h.state().params.film_render.grain.procedural_amount,
         Some(44.0),

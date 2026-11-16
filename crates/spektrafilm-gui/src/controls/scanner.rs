@@ -503,7 +503,7 @@ pub(crate) fn sections(
 fn film_format<T: egui::emath::Numeric>(ui: &mut Ui, value: &mut T, reveal_edge: bool) -> bool {
     const PATH: &str = "camera.film_format_mm";
     const FORMATS: [(&str, f64); 3] = [("35mm", 36.0), ("120", 56.0), ("4×5", 127.0)];
-    const HELP: &str = "Sets the physical film scale for grain and other film effects. Does not crop, resize, or change the image's aspect ratio. 35mm uses a 36 mm frame long edge; 120 uses a representative 56 mm; 4×5 uses 127 mm.";
+    const HELP: &str = "Sets the physical film scale for grain and other film effects. Does not crop, resize, or change the image's aspect ratio. 35mm uses a 36 mm exposed-image frame long edge; 120 uses a representative 56 mm; 4×5 uses 127 mm.";
     if !row_path_matches(ui.ctx(), PATH) {
         return false;
     }
@@ -541,13 +541,16 @@ fn film_format<T: egui::emath::Numeric>(ui: &mut Ui, value: &mut T, reveal_edge:
                 .selected_text(if custom {
                     localized(ui.ctx(), "Custom")
                 } else {
-                    std::borrow::Cow::Borrowed(FORMATS[preset.unwrap()].0)
+                    localized(ui.ctx(), FORMATS[preset.unwrap()].0)
                 })
                 .width(width)
                 .show_ui(ui, |ui| {
                     for (index, (name, _)) in FORMATS.iter().enumerate() {
                         if ui
-                            .selectable_label(!custom && preset == Some(index), *name)
+                            .selectable_label(
+                                !custom && preset == Some(index),
+                                localized(ui.ctx(), name),
+                            )
                             .clicked()
                         {
                             selected = Some(index);
@@ -626,14 +629,47 @@ fn preflash_controls(
         ));
     }
     ui.add_enabled_ui(active, |ui| {
-        if filter_matches(filter, "preflash exposure") {
+        if parent_selector_visible(filter, "preflash exposure") {
             flags.runtime_changed |= param_numeric(ui, "preflash exposure", &mut params.enlarger.preflash_exposure, "enlarger.preflash_exposure", "Linear multiplier of the integrated spectral flash, not EV. Zero disables flash and retains its filters. For negative-to-photographic-paper printing, flash can bring weak highlight exposure differences into a responsive part of the paper curve; it cannot recover absent detail. Excess may lower paper white, add fog, alter midtones and change color. Other print materials retain their own polarity.");
         }
-        if filter_matches(filter, "preflash y filter shift") {
-            flags.runtime_changed |= param_numeric(ui, "preflash y filter shift", &mut params.enlarger.preflash_y_filter_shift, "enlarger.preflash_y_filter_shift", "Independent preflash Yellow shift around the calibrated neutral filter pack, in Kodak CC units.");
+        let flash_on = params.enlarger.preflash_exposure > 0.0;
+        if filter_matches(filter, "preflash y filter shift")
+            && parent_owned_control(
+                ui,
+                params,
+                filter,
+                flash_on,
+                "enlarger.preflash_y_filter_shift",
+                |ui, params| {
+                    param_numeric(ui, "preflash y filter shift", &mut params.enlarger.preflash_y_filter_shift, "enlarger.preflash_y_filter_shift", "Independent preflash Yellow shift around the calibrated neutral filter pack, in Kodak CC units.")
+                },
+            )
+        {
+            flags.runtime_changed = true;
         }
-        if filter_matches(filter, "preflash m filter shift") {
-            flags.runtime_changed |= param_numeric(ui, "preflash m filter shift", &mut params.enlarger.preflash_m_filter_shift, "enlarger.preflash_m_filter_shift", "Independent preflash Magenta shift around the calibrated neutral filter pack, in Kodak CC units.");
+        if filter_matches(filter, "preflash m filter shift")
+            && parent_owned_control(
+                ui,
+                params,
+                filter,
+                flash_on,
+                "enlarger.preflash_m_filter_shift",
+                |ui, params| {
+                    param_numeric(ui, "preflash m filter shift", &mut params.enlarger.preflash_m_filter_shift, "enlarger.preflash_m_filter_shift", "Independent preflash Magenta shift around the calibrated neutral filter pack, in Kodak CC units.")
+                },
+            )
+        {
+            flags.runtime_changed = true;
+        }
+        if active && !flash_on && !filter.active() {
+            ui.label(
+                egui::RichText::new(crate::i18n::text(
+                    ui.ctx(),
+                    "controls.scanner.preflash_off_status",
+                ))
+                .small()
+                .color(theme::FG_MUTED),
+            );
         }
     });
 }
@@ -653,8 +689,8 @@ fn scan_profile_controls(
     // negative, preserved polarity, or a film-free route does not.
     let profile_active = crate::controls::finishing_applicable(params, scanned_medium_positive);
     ui.add_enabled_ui(profile_active, |ui| {
-        if filter_matches(filter, "Scan Profile") {
-            let current_name = params.scanner.scan_profile.effective_name();
+        let current_name = params.scanner.scan_profile.effective_name();
+        if parent_selector_visible(filter, "Scan Profile") {
             let mut selected = current_name.as_str().to_owned();
             let entries: Vec<(&str, &str)> = vec![
                 ("none", "No Scan Profile"),
@@ -691,6 +727,18 @@ fn scan_profile_controls(
                     _ => {} // "custom" is an effective state; no action.
                 }
             }
+        }
+        if current_name != spektrafilm_core::params::ScanProfileName::Custom
+            && !params.scanner.scan_profile.is_bypass()
+        {
+            ui.label(
+                egui::RichText::new(crate::i18n::text(
+                    ui.ctx(),
+                    "controls.scanner.scan_profile_edit_custom",
+                ))
+                .small()
+                .color(theme::FG_MUTED),
+            );
         }
         if filter_matches(filter, "Scan Profile Strength") {
             let bypass = params.scanner.scan_profile.is_bypass();

@@ -14,31 +14,6 @@ fn engine_label(engine: GrainEngine) -> &'static str {
     }
 }
 
-/// Fields a Procedural named profile owns. Amount, Timer, Resolution Type and
-/// Film Type stay independent overrides, so they never force a Custom copy.
-#[derive(Clone, Copy, PartialEq)]
-struct ProceduralCustomFields {
-    mode: ProceduralGrainMode,
-    size: Option<f32>,
-    shadows: Option<f32>,
-    midtones: Option<f32>,
-    highlights: Option<f32>,
-    chroma: Option<f32>,
-    resolution_factor: Option<f32>,
-}
-
-fn procedural_custom_fields(grain: &GrainParams) -> ProceduralCustomFields {
-    ProceduralCustomFields {
-        mode: grain.procedural_mode,
-        size: grain.procedural_size,
-        shadows: grain.procedural_shadows,
-        midtones: grain.procedural_midtones,
-        highlights: grain.procedural_highlights,
-        chroma: grain.procedural_chroma,
-        resolution_factor: grain.procedural_resolution_factor,
-    }
-}
-
 /// Applicability is core-owned, including loaded material capabilities. Search
 /// reveals stored requests without changing their engine, profile or values.
 fn control(
@@ -282,7 +257,7 @@ fn feature_profile_selector(
         .iter()
         .copied()
         .map(|name| (name, name))
-        .chain(std::iter::once(("custom", "Custom · from 35mm250")));
+        .chain(std::iter::once(("custom", "Custom")));
     if choice_tip_entries(
         ui,
         label,
@@ -322,7 +297,7 @@ pub(crate) fn sections(
     if section != "Grain" {
         return;
     }
-    if filter_matches(filter, "Enable grain") {
+    if parent_selector_visible(filter, "Enable grain") {
         flags.runtime_changed |= toggle(
             ui,
             "Enable grain",
@@ -330,7 +305,7 @@ pub(crate) fn sections(
             "Add grain to the negative",
         );
     }
-    if filter_matches(filter, "Engine") {
+    if parent_selector_visible(filter, "Engine") {
         flags.runtime_changed |= enum_choice(
             ui,
             "Engine",
@@ -569,27 +544,40 @@ fn engine_controls(
             );
         }
         GrainEngine::Procedural => {
-            let profile_changed = control(
-                ui,
-                params,
-                filter,
-                "Procedural Grain Profiles",
-                "film_render.grain.procedural_profile",
-                |ui, params| {
-                    let mut cache = SectionLabelCache::default();
-                    let mut profile_filter = ControlFilter::new("", &mut cache);
-                    let mut flags = ChangeFlags::default();
-                    feature_profile_selector(
-                        ui,
-                        params,
-                        &mut profile_filter,
-                        &mut flags,
-                        FeatureProfileFamily::GrainProcedural,
-                        "Procedural Grain Profiles",
-                    );
-                    flags.runtime_changed
-                },
-            );
+            // The profile selector owns the profile fields. Keep it reachable
+            // when a child-only search reveals one of those fields.
+            let profile_visible = filter_matches(filter, "Procedural Grain Profiles")
+                || filter_matches(filter, "Processing Mode")
+                || filter_matches(filter, "Size (relative)")
+                || filter_matches(filter, "Shadows (%)")
+                || filter_matches(filter, "Midtones (%)")
+                || filter_matches(filter, "Highlights (%)")
+                || filter_matches(filter, "Chroma (%)")
+                || filter_matches(filter, "Film resolution (%)")
+                || filter_matches(filter, "Film Type")
+                || filter_matches(filter, "Procedural Advanced");
+            let mut profile_changed = false;
+            if profile_visible {
+                profile_changed = applicable_control(
+                    ui,
+                    params,
+                    "film_render.grain.procedural_profile",
+                    |ui, params| {
+                        let mut cache = SectionLabelCache::default();
+                        let mut profile_filter = ControlFilter::new("", &mut cache);
+                        let mut flags = ChangeFlags::default();
+                        feature_profile_selector(
+                            ui,
+                            params,
+                            &mut profile_filter,
+                            &mut flags,
+                            FeatureProfileFamily::GrainProcedural,
+                            "Procedural Grain Profiles",
+                        );
+                        flags.runtime_changed
+                    },
+                );
+            }
             changed |= profile_changed;
             if profile_changed {
                 // The selected profile owns the controls; render them next
@@ -606,20 +594,10 @@ fn engine_controls(
                 resolved.amount * 100.0,
                 "Overall grain amount."
             );
-            // A named profile already owns these values. Render them against a
-            // Custom copy so the first edit never needs a separate Customize
-            // action; commit the copy only when one of its fields changes, so
-            // Amount and Timer keep their independent overrides.
-            let stash = (params.film_render.grain.procedural_profile != "custom").then(|| {
-                let mut scoped = params.film_render.grain.clone();
-                scoped.select_custom_grain_procedural();
-                std::mem::replace(&mut params.film_render.grain, scoped)
-            });
-            let baseline = stash
-                .as_ref()
-                .map(|_| procedural_custom_fields(&params.film_render.grain));
-            let mut scoped_changed = false;
-            scoped_changed |= control(
+            // A named profile owns the profile fields. They leave the
+            // ordinary list; search reveals them with the Custom reason, and
+            // choosing Custom copies the profile into an explicit custom one.
+            changed |= control(
                 ui,
                 params,
                 filter,
@@ -638,7 +616,7 @@ fn engine_controls(
                     )
                 },
             );
-            scoped_changed |= optional!(
+            changed |= optional!(
                 ui,
                 params,
                 filter,
@@ -647,7 +625,7 @@ fn engine_controls(
                 resolved.size,
                 "Grain particle size."
             );
-            scoped_changed |= advanced(
+            changed |= advanced(
                 ui,
                 params,
                 filter,
@@ -728,7 +706,7 @@ fn engine_controls(
                 },
             );
             if filter.active() {
-                scoped_changed |= control(
+                changed |= control(
                     ui,
                     params,
                     filter,
@@ -747,21 +725,6 @@ fn engine_controls(
                         )
                     },
                 );
-            }
-            changed |= scoped_changed;
-            if let Some(real) = stash {
-                let scoped = std::mem::replace(&mut params.film_render.grain, real);
-                let mut committed = params.film_render.grain.clone();
-                // Engine-level overrides rendered inside the scoped view.
-                committed.procedural_resolution_type = scoped.procedural_resolution_type;
-                committed.procedural_timer = scoped.procedural_timer;
-                committed.procedural_film_type = scoped.procedural_film_type;
-                if scoped_changed
-                    && procedural_custom_fields(&scoped) != baseline.expect("scoped baseline")
-                {
-                    committed = scoped;
-                }
-                params.film_render.grain = committed;
             }
         }
         GrainEngine::Fotufilm => {
@@ -933,21 +896,26 @@ fn engine_controls(
                 "Grain size (relative)",
                 "Relative grain scale: the effective size is derived from the output short edge and the selected film format, then increased by Push. It is not a fixed pixel size."
             );
-            changed |= control(
-                ui,
-                params,
-                filter,
-                "Automatic size",
-                "film_render.grain.exposure.auto_size",
-                |ui, params| {
-                    toggle(
-                        ui,
-                        "Automatic size",
-                        &mut params.film_render.grain.exposure.auto_size,
-                        "Derive the grain size from the film format; off reveals the absolute size in pixels.",
-                    )
-                },
-            );
+            // Automatic size owns both the absolute size and the film
+            // format. Keep it reachable when either child row is searched.
+            let auto_size_visible = filter_matches(filter, "Automatic size")
+                || filter_matches(filter, "Absolute size (px)")
+                || filter_matches(filter, "Film format");
+            if auto_size_visible {
+                changed |= applicable_control(
+                    ui,
+                    params,
+                    "film_render.grain.exposure.auto_size",
+                    |ui, params| {
+                        toggle(
+                            ui,
+                            "Automatic size",
+                            &mut params.film_render.grain.exposure.auto_size,
+                            "Derive the grain size from the film format; off reveals the absolute size in pixels.",
+                        )
+                    },
+                );
+            }
             changed |= control(
                 ui,
                 params,
@@ -1350,34 +1318,89 @@ mod tests {
         }
     }
 
+    fn choose_custom_grain(harness: &mut Harness<'_, GrainUi>) {
+        harness.state_mut().query.clear();
+        harness.run();
+        harness
+            .get_by_role_and_label(egui::accesskit::Role::ComboBox, "Procedural Grain Profiles")
+            .focus();
+        harness.run();
+        harness.press_key(egui::Key::Space);
+        harness.run();
+        harness
+            .get_by_role_and_label(egui::accesskit::Role::Button, "Custom")
+            .click();
+        harness.run_steps(3);
+        if harness.ctx.memory(|memory| memory.any_popup_open()) {
+            harness.press_key(egui::Key::Escape);
+            harness.run_steps(2);
+        }
+    }
+
     #[test]
-    fn named_profile_edits_copy_the_profile_into_custom() {
+    fn named_profile_owns_custom_fields_until_custom_is_chosen() {
         let mut params = RuntimeParams::default();
         params.film_render.grain.engine = GrainEngine::Procedural;
-        params.film_render.grain.procedural_shadows = Some(72.0);
         let resolved = params.film_render.grain.resolved_grain_procedural();
         let mut harness = Harness::new_ui_state(
             grain_ui,
             GrainUi {
                 params,
-                query: "shadows".into(),
+                query: String::new(),
             },
         );
-        // Rendering a named profile changes neither its identity nor its request.
         assert_eq!(
             harness.state().params.film_render.grain.procedural_profile,
             "35mm250"
         );
+        assert!(
+            harness.query_by_label("Shadows (%)").is_none(),
+            "a named profile owns the custom fields in the ordinary list"
+        );
+
+        // Search reveals the stored row with the Custom condition, not an
+        // editable control that silently detaches the profile.
+        harness.state_mut().query = "shadows".into();
+        harness.run();
+        let expected_shadows = format!("{:.1}", resolved.shadows * 100.0);
+        assert!(
+            harness
+                .query_by_role_and_label(
+                    egui::accesskit::Role::ComboBox,
+                    "Procedural Grain Profiles"
+                )
+                .is_some(),
+            "the owning profile selector stays reachable while the child row is revealed"
+        );
+        let shadows = harness
+            .query_all_by_label("Shadows (%)")
+            .find(|node| node.node().value().as_deref() == Some(expected_shadows.as_str()))
+            .expect("Procedural's stored Shadows request");
+        assert!(
+            shadows.node().is_disabled(),
+            "the revealed profile-owned row names the Custom condition"
+        );
+
+        choose_custom_grain(&mut harness);
+        assert_eq!(
+            harness.state().params.film_render.grain.procedural_profile,
+            "custom"
+        );
         assert_eq!(
             harness.state().params.film_render.grain.procedural_shadows,
-            Some(72.0)
+            Some(resolved.shadows * 100.0)
         );
-        // The stored request is operable without a separate Customize step.
+        let grain = &harness.state().params.film_render.grain;
+        assert_eq!(grain.procedural_size, Some(resolved.size));
+        assert_eq!(grain.procedural_midtones, Some(resolved.midtones * 100.0));
+        assert_eq!(grain.procedural_chroma, Some(resolved.color * 100.0));
+        harness.state_mut().query = "shadows".into();
+        harness.run();
         let shadows: Vec<_> = harness
             .query_all_by_label("Shadows (%)")
             .filter(|node| !node.node().is_disabled())
             .collect();
-        assert_eq!(shadows.len(), 1, "Procedural's Shadows owns the edit");
+        assert_eq!(shadows.len(), 1, "Custom exposes Procedural's fields");
         shadows[0].focus();
         drop(shadows);
         harness.run();
@@ -1389,14 +1412,22 @@ mod tests {
         shadows[0].type_text("60");
         drop(shadows);
         harness.run();
-        let grain = &harness.state().params.film_render.grain;
-        assert_eq!(grain.procedural_profile, "custom");
-        assert_eq!(grain.procedural_shadows, Some(60.0));
-        // The first edit copies the profile's other values into Custom.
-        assert_eq!(grain.procedural_size, Some(resolved.size));
-        assert_eq!(grain.procedural_midtones, Some(resolved.midtones * 100.0));
-        assert_eq!(grain.procedural_chroma, Some(resolved.color * 100.0));
-        assert!((grain.resolved_grain_procedural().shadows - 0.60).abs() < 1e-6);
+        assert_eq!(
+            harness.state().params.film_render.grain.procedural_shadows,
+            Some(60.0)
+        );
+        assert!(
+            (harness
+                .state()
+                .params
+                .film_render
+                .grain
+                .resolved_grain_procedural()
+                .shadows
+                - 0.60)
+                .abs()
+                < 1e-6
+        );
     }
 
     #[test]
@@ -1410,7 +1441,6 @@ mod tests {
                 query: "amount".into(),
             },
         );
-        // Fotufilm's independent Amount is also discoverable, but inactive.
         let amounts: Vec<_> = harness
             .query_all_by_label("Amount (%)")
             .filter(|node| !node.node().is_disabled())
@@ -1434,28 +1464,24 @@ mod tests {
             "Amount is an independent override, not a Custom conversion"
         );
         assert!((grain.resolved_grain_procedural().amount - 0.42).abs() < 1e-6);
-        // A later profile-owned edit keeps the independent Amount request.
+
+        choose_custom_grain(&mut harness);
+        assert_eq!(
+            harness.state().params.film_render.grain.procedural_amount,
+            Some(42.0)
+        );
+        assert_eq!(
+            harness.state().params.film_render.grain.procedural_profile,
+            "custom"
+        );
         harness.state_mut().query = "shadows".into();
         harness.run();
-        let shadows: Vec<_> = harness
-            .query_all_by_label("Shadows (%)")
-            .filter(|node| !node.node().is_disabled())
-            .collect();
-        shadows[0].focus();
-        drop(shadows);
-        harness.run();
-        harness.press_key_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
-        let shadows: Vec<_> = harness
-            .query_all_by_label("Shadows (%)")
-            .filter(|node| !node.node().is_disabled())
-            .collect();
-        shadows[0].type_text("60");
-        drop(shadows);
-        harness.run();
-        let grain = &harness.state().params.film_render.grain;
-        assert_eq!(grain.procedural_profile, "custom");
-        assert_eq!(grain.procedural_amount, Some(42.0));
-        assert_eq!(grain.procedural_shadows, Some(60.0));
+        assert!(
+            harness
+                .query_all_by_label("Shadows (%)")
+                .any(|node| !node.node().is_disabled()),
+            "Custom exposes the profile fields"
+        );
     }
 
     #[test]
@@ -1731,7 +1757,15 @@ mod tests {
                 .absolute_size_px,
             6.5
         );
-        // The film-format selector writes the nested enum through the GUI.
+        // The film-format selector drives automatic size; turn it back on
+        // before changing the format.
+        harness.state_mut().query = "automatic size".into();
+        harness.run();
+        harness.get_by_label("Automatic size").simulate_click();
+        harness.run();
+        assert!(harness.state().params.film_render.grain.exposure.auto_size);
+        harness.state_mut().query = String::new();
+        harness.run();
         harness
             .get_by_role_and_label(egui::accesskit::Role::ComboBox, "Film format")
             .click();

@@ -1232,7 +1232,7 @@ fn key(label: &str) -> Option<&'static str> {
         "Session only. Changes apply to the next accepted operation; they do not render." => {
             Some("surfaces.diagnostics.session")
         }
-        "Sets the physical film scale for grain and other film effects. Does not crop, resize, or change the image's aspect ratio. 35mm uses a 36 mm frame long edge; 120 uses a representative 56 mm; 4×5 uses 127 mm." => {
+        "Sets the physical film scale for grain and other film effects. Does not crop, resize, or change the image's aspect ratio. 35mm uses a 36 mm exposed-image frame long edge; 120 uses a representative 56 mm; 4×5 uses 127 mm." => {
             Some("controls.scanner.film_format_help")
         }
         "Settings" => Some("surfaces.settings.title"),
@@ -1530,6 +1530,16 @@ fn key(label: &str) -> Option<&'static str> {
         }
         "film_render.grain.engine = exposure" => Some("controls.condition.exposure"),
         "film_render.grain.exposure.auto_size = false" => Some("controls.condition.auto_size"),
+        "film_render.grain.exposure.auto_size = true" => Some("controls.condition.auto_size_on"),
+        "io.input_gamut_compress.active = true and algorithm != off" => {
+            Some("controls.condition.input_gamut")
+        }
+        "io.input_gamut_compress.algorithm = xy" => Some("controls.condition.input_gamut_xy"),
+        "io.input_gamut_compress.algorithm = xy and boundary = inscribed_hull" => {
+            Some("controls.condition.input_gamut_hull")
+        }
+        "io.output_gamut_compress.algorithm != off" => Some("controls.condition.output_gamut"),
+
         "film_render.grain.engine = fotufilm" => Some("controls.condition.fotufilm"),
         "film_render.grain.engine = procedural" => Some("controls.condition.procedural"),
         "film_render.grain.engine = spektra" => Some("controls.condition.spektra"),

@@ -813,6 +813,9 @@ impl App {
         let switch = preset_switch(ui, entry, self.params.workflow.mode);
         let inner = (card_width - 2.0 * theme::SPACE_1).max(0.0);
         let thumbnail_height = (inner * 2.0 / 3.0).max(44.0);
+        // Two name lines keep same-prefix stocks distinguishable at the
+        // default two-column browser width.
+        let name_row_height = 2.0 * theme::SIZE_LABEL + 4.0;
         let details_height = if context.is_some() {
             2.0 + theme::SIZE_HINT
         } else {
@@ -825,7 +828,7 @@ impl App {
         // Reserve the whole card before laying out its rows: the full-width
         // thumbnail consumes the cell, so the later rows need their own region.
         let card_height =
-            2.0 * theme::SPACE_1 + thumbnail_height + 2.0 + theme::HEIGHT_CONTROL + details_height;
+            2.0 * theme::SPACE_1 + thumbnail_height + 2.0 + name_row_height + details_height;
         let (card_rect, _) =
             ui.allocate_exact_size(egui::vec2(card_width, card_height), egui::Sense::hover());
         if active {
@@ -907,7 +910,7 @@ impl App {
                 rect.min,
                 egui::vec2(
                     inner,
-                    thumbnail_height + 2.0 + theme::HEIGHT_CONTROL + details_height,
+                    thumbnail_height + 2.0 + name_row_height + details_height,
                 ),
             );
             let card_click = ui.interact(hit_rect, card_id(index), egui::Sense::click());
@@ -974,11 +977,11 @@ impl App {
                     },
                 );
                 job.wrap.max_width = name_width;
-                job.wrap.max_rows = 1;
-                job.wrap.break_anywhere = true;
+                job.wrap.max_rows = 2;
+                job.wrap.break_anywhere = false;
                 let galley = ui.fonts(|fonts| fonts.layout_job(job));
                 let (name_rect, _) = ui.allocate_exact_size(
-                    egui::vec2(name_width, theme::SIZE_LABEL + 4.0),
+                    egui::vec2(name_width, name_row_height),
                     egui::Sense::hover(),
                 );
                 ui.painter().galley(name_rect.min, galley, theme::FG);

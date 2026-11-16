@@ -224,6 +224,9 @@ fn export_guidance_and_written_file_follow_crop_and_upscale() {
     let mut s = session();
     let h = &mut s.harness;
     choose(h, "Film route", "input");
+    reveal_control(h, "io.crop");
+    click(h, "crop");
+    assert!(h.state().params.io.crop);
     for (path, label, value) in [
         ("io.crop_size", "crop size x", "0.5"),
         ("io.crop_size", "crop size y", "0.25"),
@@ -232,9 +235,6 @@ fn export_guidance_and_written_file_follow_crop_and_upscale() {
         reveal_control(h, path);
         edit(h, label, value);
     }
-    reveal_control(h, "io.crop");
-    click(h, "crop");
-    assert!(h.state().params.io.crop);
     open_export(h);
     assert!(h.query_by_label("Export dimensions: 120 × 60 px").is_some());
     let destination = s.directory.path().join("crop-upscale.png");

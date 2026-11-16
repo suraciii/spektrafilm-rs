@@ -296,6 +296,10 @@ The interface MUST NOT impose a blanket Custom-only restriction on a parameter w
 
 Module disable, unsupported material capability, source type, route, and selected engine are different applicability reasons. The GUI MUST name the actual reason and retain readable values. Expanding an inactive group MUST NOT activate it.
 
+A control whose value is owned or ignored by a parent enable switch, named profile, preset, or mode MUST leave the ordinary inspector list while the parent makes it ineffective. Its value MUST remain stored and validated. Control search or a canonical locator MUST reveal the row with its actual reason, disabled.
+
+This conditional disclosure is separate from route or material inoperability, which remains visible, disabled, and explained. The parent switch or selector MUST remain visible.
+
 Runtime control values MUST follow [shared value validity](../cli/spec.md#parameter-value-validity) after existing GUI-state normalization. Valid inactive values remain storable; an invalid loaded or edited value MUST NOT be repaired by clamping, clearing, or enabling another control. Rejection follows the existing accepted-state and history transaction.
 
 A higher-precedence runtime mirror MUST NOT conceal invalid enlarger values in another supplied mirror. Validation MUST retain the existing normalization and precedence for valid mirrors.
@@ -372,7 +376,9 @@ The header actions MUST name the next undoable or redoable operation and be disa
 
 ## Film format selection
 
-The Camera module MUST expose one **Film Format** selector with **35mm**, **120**, **4×5**, and **Custom**. These are specification labels, not numeric roll-width values. The first three choices MUST set `camera.film_format_mm` to exposed-image long edges of 36, 56, and 127 mm respectively.
+The Camera module MUST expose one **Film Format** selector with **35mm**, **120**, **4×5**, and **Custom**. These are specification labels, not numeric roll-width values. The three presets MUST set `camera.film_format_mm` to exposed-image long edges of 36, 56, and 127 mm respectively.
+
+The 35 mm film width is not the frame long edge; the factory default is the 36 mm 135-format value, and a legacy nominal 35.0 mm value displays as Custom.
 
 The 120 choice uses a fixed representative 56 mm scale.
 
@@ -467,7 +473,9 @@ The validator MUST require exactly three indices in `0..2` that form a permutati
 
 The GUI MUST NOT present a selector that offers one choice. A parameter that no control can change and that no pipeline stage reads MUST NOT own a GUI section under the [preset section rule](../presets/design.md).
 
-Every parameter carried by a complete or section preset MUST have one visible GUI control or named action that writes the canonical runtime leaf; inactive conditions retain the value and explain why editing is disabled. GUI controls and canonical CLI `--set` paths MUST share the same type, validator, units, and conditions.
+Every parameter carried by a complete or section preset MUST have one GUI control or named action that writes the canonical runtime leaf. A parent-owned control MAY be conditionally hidden under the disclosure rule above, with search and its canonical locator supplying the visible editor.
+
+Inactive conditions retain the value and explain why editing is disabled. GUI controls and canonical CLI `--set` paths MUST share the same type, validator, units, and conditions.
 
 Calibration baselines, derived values, and internal state are not preset-owned controls.
 

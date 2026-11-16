@@ -11,6 +11,11 @@ pub(super) enum Condition {
     Procedural,
     Exposure,
     AutoSize,
+    AutomaticFormat,
+    InputGamut,
+    InputGamutBoundary,
+    InputGamutHull,
+    OutputGamut,
     Dye,
     Retained,
     DensityMinimum(Option<usize>),
@@ -79,6 +84,13 @@ impl Condition {
             Self::Procedural => "film_render.grain.engine = procedural",
             Self::Exposure => "film_render.grain.engine = exposure",
             Self::AutoSize => "film_render.grain.exposure.auto_size = false",
+            Self::AutomaticFormat => "film_render.grain.exposure.auto_size = true",
+            Self::InputGamut => "io.input_gamut_compress.active = true and algorithm != off",
+            Self::InputGamutBoundary => "io.input_gamut_compress.algorithm = xy",
+            Self::InputGamutHull => {
+                "io.input_gamut_compress.algorithm = xy and boundary = inscribed_hull"
+            }
+            Self::OutputGamut => "io.output_gamut_compress.algorithm != off",
             Self::Dye => "film_render.grain.engine = dye; supported stock, format and route",
             Self::Retained => "retained legacy Dye value; the delivered Dye law does not read it",
             Self::DensityMinimum(_) => {
@@ -184,6 +196,16 @@ impl Condition {
             Self::Procedural => g.engine == GrainEngine::Procedural,
             Self::Exposure => g.engine == GrainEngine::Exposure,
             Self::AutoSize => !g.exposure.auto_size,
+            Self::AutomaticFormat => g.exposure.auto_size,
+            Self::InputGamut => {
+                p.io.input_gamut_compress.active && p.io.input_gamut_compress.algorithm != "off"
+            }
+            Self::InputGamutBoundary => p.io.input_gamut_compress.algorithm == "xy",
+            Self::InputGamutHull => {
+                p.io.input_gamut_compress.algorithm == "xy"
+                    && p.io.input_gamut_compress.boundary == "inscribed_hull"
+            }
+            Self::OutputGamut => p.io.output_gamut_compress.algorithm != "off",
             Self::Dye => g.engine == GrainEngine::Dye,
             Self::DensityMinimum(component) => {
                 (Self::density_min_lut(p)
@@ -361,6 +383,9 @@ fn grain_conditions(path: &str, component: Option<usize>) -> [Option<Condition>;
         out[1] = Some(Exposure);
         if path.ends_with(".absolute_size_px") {
             out[2] = Some(AutoSize);
+        }
+        if path.ends_with(".format") {
+            out[2] = Some(AutomaticFormat);
         }
     } else if path.contains(".procedural_") {
         out[1] = Some(Procedural);
@@ -583,6 +608,21 @@ pub(super) fn conditions(path: &str) -> Vec<Condition> {
         || matches!(path, "settings.rgb_to_raw_method" | "settings.use_cat16")
     {
         out.push(SpectralReference);
+        if path.starts_with("io.input_gamut_compress.")
+            && !path.ends_with(".active")
+            && !path.ends_with(".algorithm")
+        {
+            out.push(InputGamut);
+            if path.ends_with(".boundary") {
+                out.push(InputGamutBoundary);
+            } else if path.ends_with(".hull_detail") {
+                out.push(InputGamutHull);
+            }
+        }
+    } else if path.starts_with("io.output_gamut_compress.") {
+        if path.ends_with(".knee") {
+            out.push(OutputGamut);
+        }
     } else if matches!(
         path,
         "settings.apply_hanatos2025_adaptation_window"
@@ -1803,6 +1843,75 @@ mod tests {
         assert_eq!(
             reason("film_render.light_leak.active", &params).as_deref(),
             Some(Condition::FilmExposure.description())
+        );
+    }
+    #[test]
+    fn input_gamut_subcontrols_follow_their_mode() {
+        let mut params = RuntimeParams::default();
+        params.io.input_gamut_compress.active = true;
+        params.io.input_gamut_compress.algorithm = "xy".into();
+        params.io.input_gamut_compress.boundary = "inscribed_hull".into();
+        for path in [
+            "io.input_gamut_compress.knee",
+            "io.input_gamut_compress.boundary",
+            "io.input_gamut_compress.hull_detail",
+        ] {
+            assert_eq!(
+                inactive_reason_without_profiles(path, &params),
+                None,
+                "{path}"
+            );
+        }
+        params.io.input_gamut_compress.boundary = "locus".into();
+        assert_eq!(
+            inactive_reason_without_profiles("io.input_gamut_compress.hull_detail", &params),
+            Some(Condition::InputGamutHull.description())
+        );
+        params.io.input_gamut_compress.algorithm = "oklch".into();
+        assert_eq!(
+            inactive_reason_without_profiles("io.input_gamut_compress.boundary", &params),
+            Some(Condition::InputGamutBoundary.description())
+        );
+        assert_eq!(
+            inactive_reason_without_profiles("io.input_gamut_compress.hull_detail", &params),
+            Some(Condition::InputGamutHull.description())
+        );
+        assert_eq!(
+            inactive_reason_without_profiles("io.input_gamut_compress.knee", &params),
+            None
+        );
+    }
+
+    #[test]
+    fn exposure_size_controls_follow_automatic_size() {
+        let mut params = RuntimeParams::default();
+        params.film_render.grain.engine = GrainEngine::Exposure;
+        params.film_render.grain.active = true;
+        params.film_render.grain.exposure.auto_size = true;
+        assert!(
+            grain_control_inactive_reason(
+                "film_render.grain.exposure.absolute_size_px",
+                &params,
+                None
+            )
+            .is_some()
+        );
+        assert!(
+            grain_control_inactive_reason("film_render.grain.exposure.format", &params, None)
+                .is_none()
+        );
+        params.film_render.grain.exposure.auto_size = false;
+        assert!(
+            grain_control_inactive_reason(
+                "film_render.grain.exposure.absolute_size_px",
+                &params,
+                None
+            )
+            .is_none()
+        );
+        assert!(
+            grain_control_inactive_reason("film_render.grain.exposure.format", &params, None)
+                .is_some()
         );
     }
 }

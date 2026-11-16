@@ -66,7 +66,7 @@ The composite is tone-neutral: it subtracts the displacement its zoned bases pro
 
 Presets supply the grain configuration. Amount remains adjustable through `procedural_amount` (0–100).
 
-Select `"custom"` to edit these controls, or edit any of them in the GUI: the first edit copies the selected profile into Custom; the GUI labels the option `Custom · from 35mm250`, the profile whose values fill omitted custom fields. `procedural_amount` and `procedural_timer` stay independent overrides and do not switch the profile.
+Select `Custom` to copy the selected profile into an editable custom profile. A named profile hides its profile-owned fields in the ordinary inspector; search or a canonical locator reveals them disabled with the Custom condition. `procedural_amount` and `procedural_timer` stay independent overrides and do not switch the profile.
 
 - `procedural_mode`: `"analogue"` or `"noise"`.
 - `procedural_size`: 1–48.
@@ -129,7 +129,7 @@ The field belongs to film coordinates. The pipeline develops the full frame. The
 
 Full-frame and cropped CMY reads use one global field and are compared under the precision budget declared by each acceptance record. A rounded output grid may change footprints. Only that sampling is then comparable.
 
-Dye supports still and cine color filming profiles and representable monochrome filming profiles, with negative or positive polarity. It uses the global `camera.film_format_mm` exposed-image long edge. This value must be finite and strictly positive. Its existing default is `35.0`. It is not a roll-width designation.
+Dye supports still and cine color filming profiles and representable monochrome filming profiles, with negative or positive polarity. It uses the global `camera.film_format_mm` exposed-image long edge. This value must be finite and strictly positive. Its factory default is `36.0`, the 135-format exposed-image long edge. It is not a roll-width designation.
 
 Format changes alter physical footprints and workload. Crop/resize determine output dimensions. Value-noise cell sizes and event area remain in film units. Device resource limits fail by name before allocation; the host realization covers the full developed source.
 

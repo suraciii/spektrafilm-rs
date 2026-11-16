@@ -20,17 +20,18 @@ pub(crate) fn sections(
         }
         ui.add_enabled_ui(inactive.is_none(), |ui| {
             let halation_active = params.film_render.halation.active;
-            if filter_matches(filter, "Halation Profiles") {
+            if parent_selector_visible(filter, "Halation Profiles") {
                 if !halation_active {
                     ui.label(egui::RichText::new(crate::i18n::text(ui.ctx(), "controls.halation.inactive_profile")).color(theme::FG_MUTED));
                 }
                 let current = feature_profiles::effective_name(FeatureProfileFamily::Halation, params);
                 let mut selected = current.to_owned();
+                let custom = current == "custom";
                 let choices = feature_profiles::names(FeatureProfileFamily::Halation)
                     .iter()
                     .copied()
                     .map(|name| (name, name))
-                    .chain(std::iter::once(("custom", "Custom")));
+                    .chain(custom.then_some(("custom", "Custom")));
                 if choice_tip_entries(
                     ui,
                     "Halation Profiles",
@@ -50,7 +51,7 @@ pub(crate) fn sections(
                     }
                 }
             }
-            if filter_matches(filter, "enable halation") {
+            if parent_selector_visible(filter, "enable halation") {
                 flags.runtime_changed |= toggle(
                     ui,
                     "Enable halation",
@@ -58,53 +59,58 @@ pub(crate) fn sections(
                     "Enable halation and in-emulsion scatter.",
                 );
             }
-            if filter_matches(filter, "scatter amount") {
-                flags.runtime_changed |= param_numeric(ui, "scatter amount", &mut params.film_render.halation.scatter_amount, "film_render.halation.scatter_amount", "High-level scatter strength. 1.0 = full physical scatter, 0.0 = no scatter. Scales the fraction of light that undergoes in-emulsion scattering.");
+            let active = parent_owned_visible(params.film_render.halation.active, filter);
+            if active && filter_matches(filter, "scatter amount") {
+                flags.runtime_changed |= applicable_control(ui, params, "film_render.halation.scatter_amount", |ui, params| param_numeric(ui, "scatter amount", &mut params.film_render.halation.scatter_amount, "film_render.halation.scatter_amount", "High-level scatter strength. 1.0 = full physical scatter, 0.0 = no scatter. Scales the fraction of light that undergoes in-emulsion scattering."));
             }
-            if filter_matches(filter, "scatter spatial scale") {
-                flags.runtime_changed |= param_numeric(ui, "scatter spatial scale", &mut params.film_render.halation.scatter_spatial_scale, "film_render.halation.scatter_spatial_scale", "High-level scatter size multiplier (1.0 = physical defaults). Scales both core and tail sigmas.");
+            if active && filter_matches(filter, "scatter spatial scale") {
+                flags.runtime_changed |= applicable_control(ui, params, "film_render.halation.scatter_spatial_scale", |ui, params| param_numeric(ui, "scatter spatial scale", &mut params.film_render.halation.scatter_spatial_scale, "film_render.halation.scatter_spatial_scale", "High-level scatter size multiplier (1.0 = physical defaults). Scales both core and tail sigmas."));
             }
-            if filter_matches(filter, "halation amount") {
-                flags.runtime_changed |= param_numeric(ui, "halation amount", &mut params.film_render.halation.halation_amount, "film_render.halation.halation_amount", "High-level halation strength multiplier (1.0 = physical defaults). Scales the per-channel halation amplitudes.");
+            if active && filter_matches(filter, "halation amount") {
+                flags.runtime_changed |= applicable_control(ui, params, "film_render.halation.halation_amount", |ui, params| param_numeric(ui, "halation amount", &mut params.film_render.halation.halation_amount, "film_render.halation.halation_amount", "High-level halation strength multiplier (1.0 = physical defaults). Scales the per-channel halation amplitudes."));
             }
-            if filter_matches(filter, "halation spatial scale") {
-                flags.runtime_changed |= param_numeric(ui, "halation spatial scale", &mut params.film_render.halation.halation_spatial_scale, "film_render.halation.halation_spatial_scale", "Physical back-reflection size multiplier; scales every channel's first-bounce spread without coupling its strength.");
+            if active && filter_matches(filter, "halation spatial scale") {
+                flags.runtime_changed |= applicable_control(ui, params, "film_render.halation.halation_spatial_scale", |ui, params| param_numeric(ui, "halation spatial scale", &mut params.film_render.halation.halation_spatial_scale, "film_render.halation.halation_spatial_scale", "Physical back-reflection size multiplier; scales every channel's first-bounce spread without coupling its strength."));
             }
-            if filter_matches(filter, "source compression") {
-                flags.runtime_changed |= param_numeric(ui, "source compression", &mut params.film_render.halation.source_compression, "film_render.halation.source_compression", "Experimental local source-response compression for halation only. Zero preserves the linear response; higher values make secondary bright sources contribute more nearly like the brightest source without changing the base film raw exposure.");
+            if active && filter_matches(filter, "source compression") {
+                flags.runtime_changed |= applicable_control(ui, params, "film_render.halation.source_compression", |ui, params| param_numeric(ui, "source compression", &mut params.film_render.halation.source_compression, "film_render.halation.source_compression", "Experimental local source-response compression for halation only. Zero preserves the linear response; higher values make secondary bright sources contribute more nearly like the brightest source without changing the base film raw exposure."));
             }
-            if filter_matches(filter, "boost ev") {
-                flags.runtime_changed |= param_numeric(ui, "boost ev", &mut params.film_render.halation.boost_ev, "film_render.halation.boost_ev", "Maximum highlight boost in stops.");
+            let boost_visible = filter_matches(filter, "boost ev")
+                || filter_matches(filter, "protect ev")
+                || filter_matches(filter, "boost range");
+            if active && boost_visible {
+                flags.runtime_changed |= applicable_control(ui, params, "film_render.halation.boost_ev", |ui, params| param_numeric(ui, "boost ev", &mut params.film_render.halation.boost_ev, "film_render.halation.boost_ev", "Maximum highlight boost in stops."));
             }
-            if filter_matches(filter, "protect ev") {
-                flags.runtime_changed |= param_numeric(ui, "protect ev", &mut params.film_render.halation.protect_ev, "film_render.halation.protect_ev", "Protected range above midgray for the boost onset in stops.");
+            let boost = active && (params.film_render.halation.boost_ev != 0.0 || filter.active());
+            if boost && filter_matches(filter, "protect ev") {
+                flags.runtime_changed |= applicable_control(ui, params, "film_render.halation.protect_ev", |ui, params| param_numeric(ui, "protect ev", &mut params.film_render.halation.protect_ev, "film_render.halation.protect_ev", "Protected range above midgray for the boost onset in stops."));
             }
-            if filter_matches(filter, "boost range") {
-                flags.runtime_changed |= param_numeric(ui, "boost range", &mut params.film_render.halation.boost_range, "film_render.halation.boost_range", "Controls how quickly the highlight boost ramps in, from 0 to 1.");
+            if boost && filter_matches(filter, "boost range") {
+                flags.runtime_changed |= applicable_control(ui, params, "film_render.halation.boost_range", |ui, params| param_numeric(ui, "boost range", &mut params.film_render.halation.boost_range, "film_render.halation.boost_range", "Controls how quickly the highlight boost ramps in, from 0 to 1."));
             }
-            if filter_matches(filter, "scatter core um") {
-                flags.runtime_changed |= param_tuple(ui, "scatter core um", &mut params.film_render.halation.scatter_core_um, "film_render.halation.scatter_core_um", "Sigma of the scatter core Gaussian per channel [R,G,B], in micrometers. Controls fine-scale sharpness loss in the emulsion.");
+            if active && filter_matches(filter, "scatter core um") {
+                flags.runtime_changed |= applicable_control(ui, params, "film_render.halation.scatter_core_um", |ui, params| param_tuple(ui, "scatter core um", &mut params.film_render.halation.scatter_core_um, "film_render.halation.scatter_core_um", "Sigma of the scatter core Gaussian per channel [R,G,B], in micrometers. Controls fine-scale sharpness loss in the emulsion."));
             }
-            if filter_matches(filter, "scatter tail um") {
-                flags.runtime_changed |= param_tuple(ui, "scatter tail um", &mut params.film_render.halation.scatter_tail_um, "film_render.halation.scatter_tail_um", "Decay constant of the scatter exponential tail per channel [R,G,B], in micrometers (internally approximated by a sum of Gaussians). Controls extended low-level spread within the emulsion.");
+            if active && filter_matches(filter, "scatter tail um") {
+                flags.runtime_changed |= applicable_control(ui, params, "film_render.halation.scatter_tail_um", |ui, params| param_tuple(ui, "scatter tail um", &mut params.film_render.halation.scatter_tail_um, "film_render.halation.scatter_tail_um", "Decay constant of the scatter exponential tail per channel [R,G,B], in micrometers (internally approximated by a sum of Gaussians). Controls extended low-level spread within the emulsion."));
             }
-            if filter_matches(filter, "scatter tail weight") {
-                flags.runtime_changed |= param_tuple(ui, "scatter tail weight", &mut params.film_render.halation.scatter_tail_weight, "film_render.halation.scatter_tail_weight", "Weight of the scatter tail Gaussian per channel [R,G,B] (0-1). Tail weight + core weight = 1. Higher values put more scattered light into the long tail.");
+            if active && filter_matches(filter, "scatter tail weight") {
+                flags.runtime_changed |= applicable_control(ui, params, "film_render.halation.scatter_tail_weight", |ui, params| param_tuple(ui, "scatter tail weight", &mut params.film_render.halation.scatter_tail_weight, "film_render.halation.scatter_tail_weight", "Weight of the scatter tail Gaussian per channel [R,G,B] (0-1). Tail weight + core weight = 1. Higher values put more scattered light into the long tail."));
             }
-            if filter_matches(filter, "halation strength") {
-                flags.runtime_changed |= param_tuple(ui, "halation strength", &mut params.film_render.halation.halation_strength, "film_render.halation.halation_strength", "Total back-reflection halation amplitude per channel [R,G,B] (0-1). Typical red channel: weak AH 0.02-0.08, no AH 0.08-0.25. The blue channel is usually near zero.");
+            if active && filter_matches(filter, "halation strength") {
+                flags.runtime_changed |= applicable_control(ui, params, "film_render.halation.halation_strength", |ui, params| param_tuple(ui, "halation strength", &mut params.film_render.halation.halation_strength, "film_render.halation.halation_strength", "Total back-reflection halation amplitude per channel [R,G,B] (0-1). Typical red channel: weak AH 0.02-0.08, no AH 0.08-0.25. The blue channel is usually near zero."));
             }
-            if filter_matches(filter, "halation first sigma um") {
-                flags.runtime_changed |= param_tuple(ui, "halation first sigma um", &mut params.film_render.halation.halation_first_sigma_um, "film_render.halation.halation_first_sigma_um", "Sigma of the first halation bounce per channel [R,G,B], in micrometers. Set by the base thickness (40-80 um for typical cine/still bases).");
+            if active && filter_matches(filter, "halation first sigma um") {
+                flags.runtime_changed |= applicable_control(ui, params, "film_render.halation.halation_first_sigma_um", |ui, params| param_tuple(ui, "halation first sigma um", &mut params.film_render.halation.halation_first_sigma_um, "film_render.halation.halation_first_sigma_um", "Sigma of the first halation bounce per channel [R,G,B], in micrometers. Set by the base thickness (40-80 um for typical cine/still bases)."));
             }
-            if filter_matches(filter, "halation n bounces") {
-                flags.runtime_changed |= param_numeric(ui, "halation n bounces", &mut params.film_render.halation.halation_n_bounces, "film_render.halation.halation_n_bounces", "Number of multi-bounce Gaussians summed in the halation pass. Subsequent bounces use sqrt(k)-spaced widths. Typical: 2-3.");
+            if active && filter_matches(filter, "halation n bounces") {
+                flags.runtime_changed |= applicable_control(ui, params, "film_render.halation.halation_n_bounces", |ui, params| param_numeric(ui, "halation n bounces", &mut params.film_render.halation.halation_n_bounces, "film_render.halation.halation_n_bounces", "Number of multi-bounce Gaussians summed in the halation pass. Subsequent bounces use sqrt(k)-spaced widths. Typical: 2-3."));
             }
-            if filter_matches(filter, "halation bounce decay") {
-                flags.runtime_changed |= param_numeric(ui, "halation bounce decay", &mut params.film_render.halation.halation_bounce_decay, "film_render.halation.halation_bounce_decay", "Per-bounce amplitude decay ratio (rho). Physical range 0.3-0.7. Controls how fast the halation energy falls off between bounces.");
+            if active && filter_matches(filter, "halation bounce decay") {
+                flags.runtime_changed |= applicable_control(ui, params, "film_render.halation.halation_bounce_decay", |ui, params| param_numeric(ui, "halation bounce decay", &mut params.film_render.halation.halation_bounce_decay, "film_render.halation.halation_bounce_decay", "Per-bounce amplitude decay ratio (rho). Physical range 0.3-0.7. Controls how fast the halation energy falls off between bounces."));
             }
-            if filter_matches(filter, "halation renormalize") {
-                flags.runtime_changed |= toggle(ui, "halation renormalize", &mut params.film_render.halation.halation_renormalize, "If enabled, divide by (1 + sum of bounce amplitudes) so mid-grey is preserved. If disabled, halation is purely additive and subtly lifts shadows as well as highlights.");
+            if active && filter_matches(filter, "halation renormalize") {
+                flags.runtime_changed |= applicable_control(ui, params, "film_render.halation.halation_renormalize", |ui, params| toggle(ui, "halation renormalize", &mut params.film_render.halation.halation_renormalize, "If enabled, divide by (1 + sum of bounce amplitudes) so mid-grey is preserved. If disabled, halation is purely additive and subtly lifts shadows as well as highlights."));
             }
         });
     }

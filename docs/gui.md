@@ -91,9 +91,9 @@ Input color-space and CCTF controls reinterpret the accepted samples; they do no
 
 **Input and capture → Camera → Capture setup → Film Format** offers **35mm**, **120**, **4×5**, and **Custom**. These choices set the physical film scale for grain and other film effects. They do not crop, resize, or change the image's aspect ratio.
 
-The choices use exposed-image long edges of 36 mm, 56 mm, and 127 mm respectively. **120** uses one representative size; it does not select a square crop. **Custom** reveals **Frame Long Edge** for precise millimeter input. Opening Custom alone does not change the photograph.
+**35mm** uses the standard 135-format exposed-image long edge of 36 mm; **120** uses a representative 56 mm; **4×5** uses 127 mm. **120** does not select a square crop. **Custom** reveals **Frame Long Edge** for precise millimeter input. Opening Custom alone does not change the photograph. A preset selection hides the manual edge; only Custom shows it.
 
-Existing states and presets retain their exact `camera.film_format_mm` value. A value without a matching specification, including the existing 35 mm factory value, displays as Custom. Selecting a specification is one reversible adjustment; the module reset keeps the existing factory default.
+Existing states and presets retain their exact `camera.film_format_mm` value. The factory default 36.0 is the **35mm** exposed-image specification, so a fresh session starts on a named preset without the manual edge. A legacy or otherwise unmatched value, including the nominal 35.0 value, displays as Custom. Selecting a specification is one reversible adjustment; the module reset keeps the existing factory default.
 
 ### RAW decode draft
 
@@ -112,6 +112,8 @@ Dimensionless rows omit the unit text while retaining value-column alignment. Re
 A boolean row is a switch that names the concept it enables. A choice row shows the parameter's name before its selector. Film and print material selectors use a full-width line below the label when the selected identity does not fit the shared value column; long identities wrap instead of truncating. A row marked experimental carries an `experimental` chip beside its name. A checkbox belongs to list selection only.
 
 **Search controls** searches labels and canonical paths across all stages, including folded or inactive modules, plus Settings, Export, and viewer controls. Results name the real owner and module. Selecting a locator reveals, scrolls to, and focuses the actual control; Settings and Export results open their own surfaces rather than creating duplicate editors. The inspector query does not filter those dialogs or change their selected options. **clear filter** restores ordinary disclosure; an empty result names the unmatched query. Closed module headings offer content summaries in help. Inactive controls explain their applicability while retaining stored values. Opening an inactive module does not enable it.
+
+A row whose value is owned or ignored by a parent switch, named profile, preset, or mode leaves ordinary disclosure while the parent makes it ineffective. Search or its canonical locator reveals the row disabled with the actual reason; the parent switch or selector stays reachable. Route and material inoperability remain visible, disabled, and explained.
 
 **Only modified** filters against the reset baseline, independently of the applied preset. It can combine with search. The row marker, module `modified` chip, and this filter use the same exact comparison. The preset browser's applied/modified/missing marker has its own preset baseline.
 
@@ -192,7 +194,7 @@ Dye retains channel correlation and the shared material requests without Dye-gra
 
 The shared **density min** editor remains available when an executing film-scanner or enlarger LUT consumes its bounds, even with grain off or another engine selected. Editing it does not enable grain or select Spektra. Its components follow the current operation's material normalization.
 
-**Procedural Grain Profiles** appears only for Procedural. Named profiles retain editable **Amount**; choose **Custom** to expose custom controls. Noise hides **Film Resolution** and **Resolution Type** without clearing their requests.
+**Procedural Grain Profiles** appears only for Procedural. Named profiles retain editable **Amount** and **Phase timer**; choose **Custom** to expose the profile-owned controls. Noise hides **Film Resolution** and **Resolution Type** without clearing their requests.
 
 **Exposure Grain** exposes strength, size, automatic size, format, roughness, shadows, midtones, highlights, push, and color variation. Automatic size hides absolute size without clearing it.
 

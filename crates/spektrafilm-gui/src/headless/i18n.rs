@@ -538,15 +538,21 @@ fn real_language_selector_retains_invalid_and_deferred_numeric_drafts() {
         h.run_steps(3);
         let mut independent = params.clone();
         independent.camera.auto_exposure = !independent.camera.auto_exposure;
-        // The suspension must not monopolize another numeric field's wheel.
+        // The suspension must not monopolize another numeric field's edit.
         click(h, "拍摄设置");
-        h.get_by_label("画面长边").hover();
+        h.get_by_role_and_label(egui::accesskit::Role::ComboBox, "胶片规格")
+            .click();
+        h.run_steps(3);
+        h.get_by_label("自定义").click();
+        h.run_steps(3);
+        scroll_controls_into_view(h, "画面长边");
+        let field = h.get_by_role_and_label(egui::accesskit::Role::TextInput, "画面长边");
+        field.focus();
         h.step();
-        h.input_mut().events.push(egui::Event::MouseWheel {
-            unit: egui::MouseWheelUnit::Point,
-            delta: egui::vec2(0.0, 1.0),
-            modifiers: egui::Modifiers::NONE,
-        });
+        h.press_key_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+        h.input_mut().events.push(egui::Event::Text("37".into()));
+        h.step();
+        h.press_key(egui::Key::Enter);
         h.run_steps(3);
         assert_ne!(
             h.state().params.camera.film_format_mm,

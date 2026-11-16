@@ -128,7 +128,11 @@ The factory JSON comparison is exact. Native state passes through existing f32
 runtime fields (for example `0.03` serializes as `0.029999999329447746`), so the
 native gate compares each shared numeric value at `1e-6` relative/absolute
 tolerance; it does not round or migrate saved user values. Missing fields,
-extra shared fields and altered oracle hashes fail explicitly.
+extra shared fields and altered oracle hashes fail explicitly. The native gate
+applies explicit GUI contract changes on top of the retained upstream oracle;
+the current list includes the 135-format 36 mm film-format default and the
+retired leaves named in `experimental_gui.py`. The standalone reference check
+remains upstream-exact and will report those intentional differences.
 The retained `control_metadata.json` contains actual manifest field order, labels
 (declared and normalized), tooltips, enums, subsection layout and effective
 numeric bounds/steps/precision from upstream editor constructor defaults.
