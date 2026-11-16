@@ -16,10 +16,17 @@ fn selected(filters: &[String], value: &Value) -> bool {
             .as_str()
             .is_some_and(|v| filters.iter().any(|f| f == v))
 }
-fn matches(row: &Value, cases: &[String], regions: &[String], metrics: &[String]) -> bool {
+fn matches(
+    row: &Value,
+    cases: &[String],
+    regions: &[String],
+    metrics: &[String],
+    sides: &[String],
+) -> bool {
     selected(cases, &row["case_id"])
         && selected(regions, &row["region_id"])
         && selected(metrics, &row["metric"])
+        && selected(sides, &row["side"])
 }
 fn choices<'a>(values: impl Iterator<Item = &'a Value>, field: &str) -> BTreeSet<String> {
     values
@@ -39,30 +46,6 @@ fn validate_selection(kind: &str, filters: &[String], available: &BTreeSet<Strin
         }
     }
     Ok(())
-}
-fn compact(row: &Value) -> Value {
-    let mut result = Map::new();
-    for key in [
-        "case_id",
-        "seed",
-        "seed_population",
-        "pair_id",
-        "region_id",
-        "metric",
-        "domain",
-        "units",
-        "estimator",
-        "sample_count",
-        "availability",
-        "value",
-        "reason",
-        "artifact_refs",
-    ] {
-        if let Some(value) = row.get(key) {
-            result.insert(key.into(), value.clone());
-        }
-    }
-    Value::Object(result)
 }
 fn failed(
     case: &Value,
@@ -185,6 +168,7 @@ pub fn inspect(
     case_ids: &[String],
     region_ids: &[String],
     metrics: &[String],
+    sides: &[String],
 ) -> Result<Value> {
     let root = comparison.canonicalize()?;
     let document = safe_artifact_path(&root, "comparison.json")?;
@@ -215,13 +199,15 @@ pub fn inspect(
         }
     }
     let available_metrics = choices(all_rows(), "metric");
+    let available_sides = choices(all_rows(), "side");
     validate_selection("case", case_ids, &available_cases)?;
     validate_selection("region", region_ids, &available_regions)?;
     validate_selection("metric", metrics, &available_metrics)?;
+    validate_selection("side", sides, &available_sides)?;
     let selected_measurements: Vec<Value> = measurement_rows(cases, single)
-        .filter(|(row, _, _)| matches(row, case_ids, region_ids, metrics))
+        .filter(|(row, _, _)| matches(row, case_ids, region_ids, metrics, sides))
         .map(|(row, case, pair)| {
-            let mut row = compact(row);
+            let mut row = row.clone();
             row["seed"] = case["seed"].clone();
             if let Some(pair) = pair {
                 row["pair_id"] = pair["id"].clone();
@@ -231,12 +217,12 @@ pub fn inspect(
         .collect();
     let seed_measurements: Vec<Value> = aggregates
         .iter()
-        .filter(|row| matches(row, case_ids, region_ids, metrics))
-        .map(compact)
+        .filter(|row| matches(row, case_ids, region_ids, metrics, sides))
+        .cloned()
         .collect();
     let selected_findings: Vec<&Value> = findings
         .iter()
-        .filter(|row| matches(row, case_ids, region_ids, metrics))
+        .filter(|row| matches(row, case_ids, region_ids, metrics, sides))
         .collect();
     // Metric selectors apply to scalar measurements, not to the independent
     // retained coordinate and native-stage records for the selected regions.

@@ -27,7 +27,7 @@ fn measurement(
     available: bool,
 ) -> Value {
     let mut row = json!({"case_id":case,"region_id":region,"metric":metric,
-        "domain":"linear_rgb","units":"linear RGB","estimator":"retained estimator",
+        "metric_version":"retained-v1","domain":"linear_rgb","units":"linear RGB","estimator":"retained estimator",
         "sample_count":16,"availability":if available {"available"} else {"unavailable"},
         "seed_population":population,"artifact_refs":["evidence.json"]});
     if available {

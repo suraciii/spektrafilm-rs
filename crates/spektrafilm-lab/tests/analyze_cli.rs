@@ -144,15 +144,23 @@ fn analysis_and_comparison_report_the_same_measurement() {
     );
     let single = read(&analysis.join("analysis.json"));
     let paired = read(&comparison.join("comparison.json"));
-    let value = |record: &Value, metric: &str| {
+    let value = |record: &Value, metric: &str, side: Option<&str>| {
         record["cases"][0]["measurements"]
             .as_array()
             .unwrap()
             .iter()
-            .find(|row| row["metric"] == metric)
-            .unwrap_or_else(|| panic!("missing {metric}"))["value"]
+            .find(|row| {
+                row["metric"] == metric
+                    && match side {
+                        Some(side) => row["side"] == side,
+                        None => row.get("side").is_none(),
+                    }
+            })
+            .unwrap_or_else(|| panic!("missing {metric} on {side:?}"))["value"]
             .as_f64()
     };
+    // One quantity, one identity: the name an analysis publishes is the name a
+    // comparison publishes, and only the side tells the rows apart.
     for name in [
         "mean_r",
         "luma_std",
@@ -161,9 +169,11 @@ fn analysis_and_comparison_report_the_same_measurement() {
         "channel_correlation_rg",
         "radial_frequency_centroid",
     ] {
-        let alone = value(&single, &format!("color_noise.{name}"));
-        let side = value(&paired, &format!("color_noise.baseline.{name}"));
+        let metric = format!("color_noise.{name}");
+        let alone = value(&single, &metric, None);
+        let side = value(&paired, &metric, Some("baseline"));
         assert_eq!(alone, side, "{name}");
+        assert_eq!(value(&paired, &metric, Some("delta")), Some(0.0), "{name}");
     }
 }
 

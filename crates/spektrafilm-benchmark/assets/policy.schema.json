@@ -115,6 +115,10 @@
             "type": "string",
             "minLength": 1
           },
+          "side": {
+            "enum": ["baseline", "candidate", "delta"],
+            "description": "Which source the rule bounds. Required for a quantity measured on each source, and absent for one that exists once."
+          },
           "required": {
             "type": "boolean"
           },

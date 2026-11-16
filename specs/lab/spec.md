@@ -133,6 +133,22 @@ Every measurement row of an analysis or a comparison names its family, because a
 metric identity need not carry the family as a prefix and a reader groups by
 concept rather than by naming habit.
 
+A metric identity is the name of one physical quantity, and it is the same in
+every record that measures it. `grain.flat_mean.rms.R` is that quantity whether
+it was measured on one delivered image or on both sides of a comparison. Neither
+the family nor the source is part of that name.
+
+The source a row stands for is a field, not a spelling. A comparison measures
+each quantity on `baseline`, on `candidate`, and as their `delta`; a row states
+which. A quantity that exists once — a difference between two sources, a
+statistic of one source — states no side.
+
+A policy rule names the quantity it bounds and states the side when the quantity
+has more than one. Omitting that side is refused with `side_required`, and
+naming a side the quantity does not have is refused with `invalid_policy_side`;
+the measurement definitions decide both, so validation and evaluation cannot
+disagree.
+
 ## Command surface
 
 | Endpoint | Owns | Does not do |
@@ -187,8 +203,9 @@ spektrafilm-lab analyze --source <FILE_OR_DIR>
 ```
 
 `analyze` reads one source and publishes `analysis.json`. Its measurement rows
-name no side: one source is one measurement, and there is no difference to
-state.
+name no side: one source is one measurement of the quantity, not a side of a
+comparison, so the field is absent rather than chosen. The metric identities are
+the same ones a comparison uses, which is what lets one reader query both.
 
 A family that measures a difference between two sources cannot be measured
 here. It is recorded as unavailable with `requires_second_source` rather than
@@ -402,9 +419,10 @@ Every record MUST carry:
   from the record alone; the protocol identity is the analysis profile identity,
   so the record names the profile once;
 - the regions document and its role per region;
-- for every measurement: its family, domain, unit, region, estimator, and sample
-  count, beside the value. A measurement that did not run states no sample
-  count, because a refusal has no count to report;
+- for every measurement: its family, its side when the quantity is measured on
+  more than one source, its domain, unit, region, estimator, and sample count,
+  beside the value. A measurement that did not run states no sample count,
+  because a refusal has no count to report;
 - every unavailable value with its stable reason;
 - the identity of the comparison as a digest over its inputs and its protocol.
 
@@ -480,6 +498,14 @@ reason, which is the noise floor of the pipeline that produced the files.
     measures nothing and leaves no refusal row.
 14. Every measurement row names the family it belongs to, and the family is one
     the protocol's table selects for that row's region role.
+15. A quantity has one metric identity in every record. `analyze` and a
+    comparison of the same source under the same profile publish the same
+    identity for it, and the comparison states the side while the analysis
+    states none.
+16. No metric identity contains a side. A rule that bounds a per-side quantity
+    without stating its side is refused with `side_required`, and a rule that
+    states a side the quantity does not have is refused with
+    `invalid_policy_side`.
 15. `--map-scale 4` changes no scalar measurement and records the scale.
 16. An EXR and the float TIFF written from the same render decode to the same
     samples.

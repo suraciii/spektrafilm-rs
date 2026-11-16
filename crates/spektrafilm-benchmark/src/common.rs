@@ -428,6 +428,12 @@ pub struct Measurement {
     /// leaving a reader to infer it from a naming habit.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub family: Option<String>,
+    /// Which source the quantity was measured on. A comparison measures both
+    /// sources and their difference, and a dimension inside the row keeps one
+    /// metric identity per quantity; a naming habit would make the same
+    /// quantity unrecognizable across records.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub side: Option<String>,
     pub metric: String,
     pub metric_version: &'static str,
     pub domain: String,

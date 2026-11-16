@@ -159,7 +159,9 @@ fn failed_render_remains_failed_through_compare_validation_and_report() {
         &comparison,
     )
     .unwrap_err();
-    assert_eq!(error.code, "measurement_fields");
+    // The row model is the schema's: a row reduced to one field is refused at
+    // the shape it violates, not by a second hand-written field list.
+    assert_eq!(error.code, "missing_field");
 }
 
 #[test]

@@ -38,9 +38,10 @@ fn paired(
     } else {
         "insufficient_evidence"
     };
-    // An analysis measures one source, so the metric is the measurement and
-    // there is no side to name.
+    // An analysis measures one source, so the quantity exists once and names
+    // no side.
     if e.sides == Sides::One {
+        e.in_side("");
         e.scalar(
             region,
             &format!("{prefix}.{name}"),
@@ -59,9 +60,10 @@ fn paired(
         ("candidate", right),
         ("delta", left.zip(right).map(|(a, b)| b - a)),
     ] {
+        e.in_side(side);
         e.scalar(
             region,
-            &format!("{prefix}.{side}.{name}"),
+            &format!("{prefix}.{name}"),
             value,
             count,
             domain,
@@ -1062,12 +1064,13 @@ pub fn tone(
         &[("", None)]
     } else {
         &[
-            ("baseline.", Some(0)),
-            ("candidate.", Some(1)),
-            ("delta.", None),
+            ("baseline", Some(0)),
+            ("candidate", Some(1)),
+            ("delta", None),
         ]
     };
     for (side, index) in sides {
+        e.in_side(side);
         for (i, percent) in [5, 25, 50, 75, 95].into_iter().enumerate() {
             let value = match index {
                 Some(side_index) => quantiles[*side_index][i],
@@ -1076,7 +1079,7 @@ pub fn tone(
             };
             e.scalar(
                 region,
-                &format!("tone.l_star.{side}q{percent:02}"),
+                &format!("tone.l_star.q{percent:02}"),
                 Some(value),
                 n,
                 "bounded_srgb_d65_lab",
@@ -1727,6 +1730,7 @@ pub fn numeric(e: &mut Evidence, region: &str, mask: &[bool], a: &ImageData, b: 
         );
     }
     for (side, image) in [("baseline", a), ("candidate", b)] {
+        e.in_side(side);
         let mut below = 0;
         let mut above = 0;
         let mut nonfinite = 0;
@@ -1753,7 +1757,7 @@ pub fn numeric(e: &mut Evidence, region: &str, mask: &[bool], a: &ImageData, b: 
         ] {
             e.scalar(
                 region,
-                &format!("numeric.{side}.{name}"),
+                &format!("numeric.{name}"),
                 Some(value),
                 if name.ends_with("pixel_count") {
                     n

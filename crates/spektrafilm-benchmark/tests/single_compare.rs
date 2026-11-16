@@ -387,7 +387,7 @@ fn regional_readouts_keep_direction_and_reject_corrupt_evidence_offline() {
     assert_eq!(compare::compare_single(&run, "input", &out).unwrap().1, 0);
     fs::remove_dir_all(&run).unwrap();
     let inspected =
-        spektrafilm_benchmark::inspect::inspect(&out, &[], &["patch".into()], &[]).unwrap();
+        spektrafilm_benchmark::inspect::inspect(&out, &[], &["patch".into()], &[], &[]).unwrap();
     for row in inspected["region_readouts"].as_array().unwrap() {
         assert_eq!(row["sides"]["input"]["sample_count"], 8);
         let displacement = &row["displacements"][0];
@@ -432,7 +432,7 @@ fn regional_readouts_keep_direction_and_reject_corrupt_evidence_offline() {
         (unavailable_value, "schema_validation"),
     ] {
         save_manifest(&out, "comparison.json", invalid);
-        let error = spektrafilm_benchmark::inspect::inspect(&out, &[], &[], &[]).unwrap_err();
+        let error = spektrafilm_benchmark::inspect::inspect(&out, &[], &[], &[], &[]).unwrap_err();
         assert_eq!(error.code, expected);
     }
     let mut legacy = original;
@@ -446,7 +446,7 @@ fn regional_readouts_keep_direction_and_reject_corrupt_evidence_offline() {
         .remove("region_readouts");
     save_manifest(&out, "comparison.json", legacy);
     let inspected =
-        spektrafilm_benchmark::inspect::inspect(&out, &[], &["patch".into()], &[]).unwrap();
+        spektrafilm_benchmark::inspect::inspect(&out, &[], &["patch".into()], &[], &[]).unwrap();
     assert_eq!(
         inspected["readout_status"][0]["region_readouts"],
         "not_retained"

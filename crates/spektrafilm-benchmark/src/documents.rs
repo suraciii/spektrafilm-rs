@@ -1338,6 +1338,41 @@ pub fn validate_policy_selectors(policy: &Value, suite: &Value) -> Result<()> {
                 format!("Metric is unknown or unselected: {metric}"),
             ));
         }
+        // A quantity measured on both sources and their difference needs the
+        // rule to say which one it bounds; a quantity that exists once needs the
+        // rule to stay silent about sides. Both are decided by the same
+        // measurement definitions that decide the metric identity.
+        match crate::metrics::sides_of(metric, case, reg, &suite["protocol"]) {
+            Some(Some(sides)) => match r["side"].as_str() {
+                Some(side) if sides.contains(&side) => {}
+                Some(side) => {
+                    return Err(err(
+                        "invalid_policy_side",
+                        format!(
+                            "Metric {metric} is measured on {}, not {side}",
+                            sides.join(", ")
+                        ),
+                    ));
+                }
+                None => {
+                    return Err(err(
+                        "side_required",
+                        format!(
+                            "Metric {metric} is measured per side; state \"side\": one of {}",
+                            sides.join(", ")
+                        ),
+                    ));
+                }
+            },
+            Some(None) if r.get("side").is_some() => {
+                return Err(err(
+                    "invalid_policy_side",
+                    format!("Metric {metric} exists once and names no side"),
+                ));
+            }
+            Some(None) => {}
+            None => {}
+        }
     }
     Ok(())
 }
@@ -1352,6 +1387,48 @@ mod tests {
             protocol["color"] = color;
         }
         json!({"schema_version":1,"id":"t","protocol":protocol,"cases":[{"id":"c","kind":"probe","input":{"path":"x.png","sha256":"0000000000000000000000000000000000000000000000000000000000000000"},"configuration":{},"seeds":[0],"regions":[{"id":"a","label":"A","role":"color","geometry":{"x":0,"y":0,"width":1,"height":1,"space":"render"},"measurements":[]},{"id":"b","label":"B","role":"neutral","geometry":{"x":1,"y":0,"width":1,"height":1,"space":"render"},"measurements":[]}],"region_pairs":pairs,"measurements":[]}]})
+    }
+
+    /// A rule names a quantity; the side it bounds is a second fact and must be
+    /// stated when the quantity exists on more than one source.
+    #[test]
+    fn a_policy_rule_states_the_side_it_bounds() {
+        let mut suite = suite(None, json!([]));
+        // The region declares what it measures; an unselected region would make
+        // every metric unresolved before the side is ever asked about.
+        suite["cases"][0]["regions"][1]["measurements"] = json!(["neutrality", "numeric"]);
+        let policy = |metric: &str, side: Option<&str>| {
+            let mut rule = json!({
+                "id": "r",
+                "purpose": "protect",
+                "required": true,
+                "selector": {"case_id": "c", "region_id": "b"},
+                "metric": metric,
+            });
+            if let Some(side) = side {
+                rule["side"] = json!(side);
+            }
+            json!({"schema_version": 1, "id": "p",
+                   "protocol_digest": crate::documents::protocol_digest(&suite).unwrap(),
+                   "calibration": {"status": "exploratory", "evidence": []}, "rules": [rule]})
+        };
+
+        // A quantity measured on each source states which one it bounds.
+        let error =
+            validate_policy_selectors(&policy("neutrality.l_star_mean", None), &suite).unwrap_err();
+        assert_eq!(error.code, "side_required");
+        let error =
+            validate_policy_selectors(&policy("neutrality.l_star_mean", Some("both")), &suite)
+                .unwrap_err();
+        assert_eq!(error.code, "invalid_policy_side");
+        validate_policy_selectors(&policy("neutrality.l_star_mean", Some("candidate")), &suite)
+            .unwrap();
+
+        // A quantity that exists once must not claim one.
+        let error =
+            validate_policy_selectors(&policy("numeric.rmse", Some("delta")), &suite).unwrap_err();
+        assert_eq!(error.code, "invalid_policy_side");
+        validate_policy_selectors(&policy("numeric.rmse", None), &suite).unwrap();
     }
 
     #[test]

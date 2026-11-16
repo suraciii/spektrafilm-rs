@@ -83,6 +83,9 @@ pub struct Evidence {
     /// The family being measured. A measurement row states it, because the
     /// concept exists in the protocol and must exist in the record too.
     family: Option<String>,
+    /// The source being measured, when the record measures more than one.
+    /// Empty means the quantity exists once, not that its side is unknown.
+    side: Option<String>,
     body: EvidenceBuilder<Measurement, Finding, Artifact>,
     pub extra: BTreeMap<String, Value>,
 }
@@ -92,11 +95,17 @@ impl Evidence {
         self.family = (!family.is_empty()).then(|| family.to_owned());
     }
 
+    /// State the source the next measurements belong to.
+    pub fn in_side(&mut self, side: &str) {
+        self.side = (!side.is_empty()).then(|| side.to_owned());
+    }
+
     pub fn new(protocol: &Value, out: &Path) -> Self {
         Self {
             out: out.into(),
             sides: Sides::Two,
             family: None,
+            side: None,
             case_id: protocol
                 .get("case_id")
                 .and_then(Value::as_str)
@@ -162,6 +171,7 @@ impl Evidence {
             shared: SharedMeasurement {
                 region_id: region.into(),
                 family: self.family.clone(),
+                side: self.side.clone(),
                 metric: metric.into(),
                 metric_version: METRIC_VERSION,
                 domain: domain.into(),

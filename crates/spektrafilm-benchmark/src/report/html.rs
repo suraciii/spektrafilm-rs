@@ -196,7 +196,17 @@ pub(crate) fn metric_table(case: &Value) -> String {
             continue;
         }
         body.push_str("<tr>");
-        for key in ["region_id", "metric", "units", "estimator", "sample_count"] {
+        // The side is part of what a row states: one quantity is measured on
+        // each source and as their difference, and a table that omits it shows
+        // three indistinguishable rows.
+        for key in [
+            "region_id",
+            "side",
+            "metric",
+            "units",
+            "estimator",
+            "sample_count",
+        ] {
             body.push_str(&format!("<td>{}</td>", field(row, key)));
         }
         body.push_str(&format!(
@@ -215,7 +225,7 @@ pub(crate) fn metric_table(case: &Value) -> String {
         "<div class=\"unavailable\">Metric table: unavailable</div>".into()
     } else {
         format!(
-            "<div class=\"table-scroll\"><table><thead><tr><th>Region</th><th>Metric</th><th>Units</th><th>Estimator</th><th>Samples</th><th>Value/status</th></tr></thead><tbody>{body}</tbody></table></div>"
+            "<div class=\"table-scroll\"><table><thead><tr><th>Region</th><th>侧</th><th>Metric</th><th>Units</th><th>Estimator</th><th>Samples</th><th>Value/status</th></tr></thead><tbody>{body}</tbody></table></div>"
         )
     }
 }

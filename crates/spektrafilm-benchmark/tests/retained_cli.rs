@@ -752,7 +752,8 @@ fn protocol_tone_policy_remains_selected_with_empty_case_probe() {
     save_manifest(&a, "run.json", run);
     let p = temp.path().join("policy.json");
     let mut value = policy(&p, &suite);
-    value["rules"][0]["metric"] = json!("tone.response.interval_0.linear_luminance.delta.slope");
+    value["rules"][0]["metric"] = json!("tone.response.interval_0.linear_luminance.slope");
+    value["rules"][0]["side"] = json!("delta");
     write(&p, &value);
     let out = temp.path().join("comparison");
     let result = invoke(
@@ -779,7 +780,7 @@ fn protocol_tone_policy_remains_selected_with_empty_case_probe() {
         measurement(
             &d,
             "full_image",
-            "tone.response.interval_0.linear_luminance.delta.slope"
+            "tone.response.interval_0.linear_luminance.slope"
         )["value"],
         0.0
     );
@@ -845,7 +846,12 @@ fn reference_policy_requires_distance_suffix_and_corresponding_region() {
         ],
         1,
     );
-    assert_eq!(result["execution_status"], "completed");
+    if result["execution_status"] != "completed" {
+        panic!(
+            "REFERENCE ERRORS: {}",
+            serde_json::to_string_pretty(&result).unwrap()
+        );
+    }
     assert_eq!(
         read(&out.join("comparison.json"))["rules"][0]["status"],
         "passed"
