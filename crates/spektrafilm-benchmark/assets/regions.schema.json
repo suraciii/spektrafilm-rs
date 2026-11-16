@@ -29,14 +29,6 @@
               "flat_field", "edge", "texture", "other", "full_image"
             ]
           },
-          "measurements": {
-            "type": "array",
-            "items": {
-              "enum": ["numeric", "color", "tone", "flip", "grain", "halation", "edge", "color_noise", "neutrality"]
-            },
-            "minItems": 0,
-            "uniqueItems": true
-          },
           "geometry": {
             "anyOf": [
               {
@@ -76,7 +68,7 @@
             ]
           }
         },
-        "required": ["id", "role", "geometry", "measurements"],
+        "required": ["id", "role", "geometry"],
         "additionalProperties": false
       }
     }

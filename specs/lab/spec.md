@@ -115,21 +115,23 @@ is meaningful on any region and is not restricted.
 | `other` | anything | — |
 | `full_image` | the whole raster | — |
 
-Only `neutrality` and `color_noise` require a role. A whole image is not a flat
-field, so `color_noise` on `full_image` is refused rather than measured over
-whatever content the image happens to contain.
+A region declares its geometry and its role. It MUST NOT declare families. The
+analysis profile owns one table from role to families, and the protocol retains
+it, so no region can ask for a family its role cannot support and no second
+declaration can disagree with the first.
 
-The other families need no cell. `tone`, `edge`, `grain`, and `halation`
-declare a probe, and the code that reads the probe is the code that refuses a
-missing one; restating that rule as a role table would give it two owners.
-`numeric`, `color`, and `flip` measure a declared quantity and are
-meaningful anywhere.
+A whole image is not a flat field, so `color_noise` is never selected on
+`full_image`. That is a property of the table, not a refusal at measurement
+time: a family the role does not carry is never attempted, so it leaves no row.
+A refusal would be an answer to a question nobody asked.
 
-A family declared on a role it does not apply to MUST be refused with
-`incompatible_measurement_role`, naming the family and the role. The refusal
-retains an unavailable row, and the region's other families still measure. The
-lab MUST NOT substitute a family that does apply: the substitution would
-measure a signal the caller never declared.
+`tone`, `edge`, `grain`, and `halation` declare a probe, and the code that reads
+the probe is the code that refuses a missing one. `numeric`, `color`, and `flip`
+measure a declared quantity and are meaningful on any region.
+
+Every measurement row names its family, because a metric identity need not carry
+the family as a prefix and a reader groups by concept rather than by naming
+habit.
 
 ## Command surface
 
@@ -467,11 +469,11 @@ reason, which is the noise floor of the pipeline that produced the files.
     names the region.
 12. The same arguments produce byte-identical `analysis.json`,
     `comparison.json`, `protocol.json`, and `regions.json`.
-13. A family declared on a role it does not apply to fails with
-    `incompatible_measurement_role`, naming the family and the role, and the
-    region's other families still measure.
-14. `color` without a reference retains an unavailable row with
-    `missing_reference`, and `color_noise` still measures on the same region.
+13. A region that declares families fails with `unknown_field`, and the profile
+    table decides what each role measures: a role the table gives no entry
+    measures nothing and leaves no refusal row.
+14. Every measurement row names the family it belongs to, and the family is one
+    the protocol's table selects for that row's region role.
 15. `--map-scale 4` changes no scalar measurement and records the scale.
 16. An EXR and the float TIFF written from the same render decode to the same
     samples.

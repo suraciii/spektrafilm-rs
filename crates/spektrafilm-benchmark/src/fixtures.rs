@@ -147,6 +147,13 @@ fn resolve_configuration(
     Ok(())
 }
 fn region(id: &str, rect: [usize; 4], families: &[&str], role: &str) -> Value {
+    let mut value = region_geometry(id, rect, role);
+    value["measurements"] = json!(families);
+    value
+}
+
+/// A region as a standalone regions document carries it: geometry and role.
+fn region_geometry(id: &str, rect: [usize; 4], role: &str) -> Value {
     json!({
         "id": id,
         "label": human_label(id),
@@ -158,7 +165,6 @@ fn region(id: &str, rect: [usize; 4], families: &[&str], role: &str) -> Value {
             "height": rect[3],
             "space": "render",
         },
-        "measurements": families,
     })
 }
 fn human_label(id: &str) -> String {
@@ -456,16 +462,16 @@ pub fn create_fixtures(
             "schema_version": 1,
             "id": "ordinary-45",
             "regions": (0..45)
-                .map(|index| region(&format!("P{:02}", index + 1), [index % 9 * 12, index / 9 * 12, 8, 8], &["color"], "color"))
+                .map(|index| region_geometry(&format!("P{:02}", index + 1), [index % 9 * 12, index / 9 * 12, 8, 8], "color"))
                 .collect::<Vec<_>>(),
         });
         let irregular_regions = json!({
             "schema_version": 1,
             "id": "irregular-explicit",
             "regions": [
-                region("shadow", [2, 3, 7, 5], &["numeric"], "shadow"),
-                region("highlight", [41, 9, 11, 13], &["color"], "highlight"),
-                region("edge", [73, 4, 3, 96], &["tone"], "edge"),
+                region_geometry("shadow", [2, 3, 7, 5], "shadow"),
+                region_geometry("highlight", [41, 9, 11, 13], "highlight"),
+                region_geometry("edge", [73, 4, 3, 96], "edge"),
             ],
         });
         dump(&out.join("ordinary-45-regions.json"), &ordinary_regions)?;

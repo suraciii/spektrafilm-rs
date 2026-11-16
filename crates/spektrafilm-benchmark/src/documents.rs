@@ -554,12 +554,20 @@ pub fn region_roles() -> Result<Vec<String>> {
     )
 }
 
-/// Measurement family names accepted by case and region records.
+/// Measurement family names a protocol may select.
+///
+/// The list belongs to the profiles, not to a region: a region declares a role
+/// and the profile decides what that role measures.
 pub fn measurement_families() -> Result<Vec<String>> {
-    enum_names(
-        &schema_for("regions")?["properties"]["regions"]["items"]["properties"]["measurements"]["items"]
-            ["enum"],
-    )
+    Ok(crate::analysis::PROFILES
+        .iter()
+        .flat_map(|profile| profile.roles.iter())
+        .flat_map(|(_, families)| families.iter())
+        .copied()
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .map(str::to_owned)
+        .collect())
 }
 
 fn enum_names(value: &Value) -> Result<Vec<String>> {

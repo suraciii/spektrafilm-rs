@@ -84,7 +84,7 @@ pub fn run(args: &Args) -> Result<(Value, i32)> {
                 )
             })?
         }
-        (None, false) => analysis::regions(profile, &declared_regions(&args.roi)?),
+        (None, false) => analysis::regions(&declared_regions(&args.roi)?),
         (None, true) => Vec::new(),
     };
     let pairs = pairs(args)?;
@@ -372,7 +372,7 @@ pub fn analyze_run(args: &AnalyzeArgs) -> Result<(Value, i32)> {
                 )
             })?
         }
-        (None, false) => analysis::regions(profile, &declared_regions(&args.roi)?),
+        (None, false) => analysis::regions(&declared_regions(&args.roi)?),
         (None, true) => Vec::new(),
     };
     let files = analysis_files(&args.source)?;

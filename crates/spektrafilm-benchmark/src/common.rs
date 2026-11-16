@@ -423,6 +423,11 @@ pub enum TerminalState {
 #[derive(Serialize)]
 pub struct Measurement {
     pub region_id: String,
+    /// The family this quantity belongs to. The metric name is its identity and
+    /// need not carry the family as a prefix, so the row states it rather than
+    /// leaving a reader to infer it from a naming habit.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub family: Option<String>,
     pub metric: String,
     pub metric_version: &'static str,
     pub domain: String,

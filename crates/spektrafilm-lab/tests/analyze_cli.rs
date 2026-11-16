@@ -40,7 +40,6 @@ fn regions(root: &Path) -> PathBuf {
             "regions": [{
                 "id": "field",
                 "role": "flat_field",
-                "measurements": ["color_noise"],
                 "geometry": {"x": 0, "y": 0, "width": 32, "height": 32, "space": "render"},
             }],
         }))
@@ -133,6 +132,9 @@ fn analysis_and_comparison_report_the_same_measurement() {
             .arg(&source)
             .args(["--declaration", "sRGB:encoded", "--regions"])
             .arg(&regions)
+            // The endpoints hold equal values for one profile, so the test
+            // pins the profile rather than relying on each default.
+            .args(["--analysis", "lab-analysis-v1"])
             .arg("--out")
             .arg(&comparison)
             .output()
@@ -423,4 +425,88 @@ fn a_refusal_states_its_cause_and_its_remedy_apart() {
     assert!(remedy.contains("choose"), "{remedy}");
     let stderr = String::from_utf8_lossy(&repeat.stderr);
     assert!(stderr.contains(message) && stderr.contains(remedy));
+}
+
+/// A region declares where it is and what it is a population of. It cannot
+/// declare families, because the profile owns the one table that decides them.
+#[test]
+fn a_region_cannot_declare_the_families_it_measures() {
+    let temp = tempfile::tempdir().unwrap();
+    let source = temp.path().join("v1").join("field.png");
+    png(&source);
+    let regions = temp.path().join("declared.json");
+    std::fs::write(
+        &regions,
+        serde_json::to_vec(&serde_json::json!({
+            "schema_version": 1,
+            "id": "declared",
+            "regions": [{
+                "id": "field",
+                "role": "flat_field",
+                "measurements": ["color_noise"],
+                "geometry": {"x": 0, "y": 0, "width": 32, "height": 32, "space": "render"},
+            }],
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let out = temp.path().join("analysis");
+    let output = lab()
+        .args(["analyze", "--source"])
+        .arg(&source)
+        .args(["--declaration", "sRGB:encoded", "--regions"])
+        .arg(&regions)
+        .arg("--out")
+        .arg(&out)
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(!out.exists(), "a refused document claims no destination");
+    let error = String::from_utf8_lossy(&output.stderr);
+    assert!(error.contains("measurements"), "{error}");
+}
+
+/// The family a number belongs to is in the record, so a reader groups by
+/// concept instead of by a metric-name prefix.
+#[test]
+fn every_measurement_names_its_family() {
+    let temp = tempfile::tempdir().unwrap();
+    let source = temp.path().join("v1").join("field.png");
+    png(&source);
+    let out = temp.path().join("comparison");
+    assert!(
+        lab()
+            .args(["compare", "--baseline"])
+            .arg(&source)
+            .arg("--candidate")
+            .arg(&source)
+            .args(["--declaration", "sRGB:encoded", "--roi"])
+            .arg("field=0,0,32,32:flat_field")
+            .arg("--out")
+            .arg(&out)
+            .output()
+            .unwrap()
+            .status
+            .success()
+    );
+    let record = read(&out.join("comparison.json"));
+    let protocol = &record["protocol"]["families"];
+    let rows = record["cases"][0]["measurements"].as_array().unwrap();
+    assert!(!rows.is_empty());
+    for row in rows {
+        let family = row["family"]
+            .as_str()
+            .unwrap_or_else(|| panic!("row names no family: {row}"));
+        // The family's metric names are its own; a colour row is `delta_*`,
+        // which is exactly why the prefix cannot be the answer.
+        assert!(
+            protocol["full_image"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .chain(protocol["flat_field"].as_array().unwrap())
+                .any(|name| name == family),
+            "{family} is not a family this protocol selects"
+        );
+    }
 }

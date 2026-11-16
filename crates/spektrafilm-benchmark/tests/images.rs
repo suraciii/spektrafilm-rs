@@ -47,17 +47,14 @@ fn request(baseline: &Path, candidate: &Path) -> Request {
             candidate: candidate.into(),
         }],
         map_scale: 1,
-        regions: analysis::regions(
-            profile,
-            &[analysis::Region {
-                id: "center".into(),
-                x: 2,
-                y: 2,
-                width: 4,
-                height: 4,
-                role: "other".into(),
-            }],
-        ),
+        regions: analysis::regions(&[analysis::Region {
+            id: "center".into(),
+            x: 2,
+            y: 2,
+            width: 4,
+            height: 4,
+            role: "other".into(),
+        }]),
         protocol: analysis::protocol(profile),
     }
 }
@@ -358,10 +355,12 @@ fn one_family_cannot_suppress_the_other_families_of_its_region() {
     png(&right, 8, 8, |_, _| flat(0.75));
 
     let mut request = request(&left, &right);
+    // The protocol's table decides the region's families; the region itself
+    // declares only where it is and what it is a population of.
+    request.protocol["families"]["other"] = json!(["halation", "numeric"]);
     request.regions = vec![json!({
         "id": "probe",
         "role": "other",
-        "measurements": ["halation", "numeric"],
         "geometry": {"x": 2, "y": 2, "width": 4, "height": 4, "space": "render"}
     })];
     let out = temp.path().join("comparison");
@@ -402,10 +401,10 @@ fn a_flat_mean_residual_is_refused_where_there_is_no_flat_field() {
 
     for (role, expected) in [("other", "unavailable"), ("flat_field", "available")] {
         let mut request = request(&left, &right);
+        request.protocol["families"]["other"] = json!(["grain"]);
         request.regions = vec![json!({
             "id": "patch",
             "role": role,
-            "measurements": ["grain"],
             "geometry": {"x": 2, "y": 2, "width": 4, "height": 4, "space": "render"}
         })];
         let out = temp.path().join(role);

@@ -176,6 +176,7 @@ impl<'a> Comparison<'a> {
                 seed_population: self.seeds.clone(),
                 shared: common::Measurement {
                     region_id: region.into(),
+                    family: None,
                     metric: format!("{metric}.{side}"),
                     metric_version: METRIC_VERSION,
                     domain: domain.into(),
@@ -245,6 +246,7 @@ impl<'a> Comparison<'a> {
             seed_population: self.seeds.clone(),
             shared: common::Measurement {
                 region_id: region.into(),
+                family: None,
                 metric: full.clone(),
                 metric_version: METRIC_VERSION,
                 domain: domain.into(),

@@ -78,7 +78,7 @@ fn labelled(
             json!({
                 "id": id, "partition": "all", "source": source,
                 "geometry": {"x": x, "y": y, "width": width, "height": height, "space": space},
-                "role": "other", "measurements": ["numeric"],
+                "role": "other",
             })
         })
         .collect();

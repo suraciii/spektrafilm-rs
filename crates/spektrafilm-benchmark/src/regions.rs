@@ -61,7 +61,6 @@ pub fn generate_grid(
     gap: [u64; 2],
     space: &str,
     role: &str,
-    measurements: &[String],
     out: &Path,
 ) -> Result<Value> {
     if !valid_identifier(id) {
@@ -88,13 +87,6 @@ pub fn generate_grid(
     }
     if !documents::region_roles()?.iter().any(|value| value == role) {
         return Err(invalid(format!("unknown region role {role:?}")));
-    }
-    let families = documents::measurement_families()?;
-    if let Some(unknown) = measurements
-        .iter()
-        .find(|value| !families.iter().any(|known| known == *value))
-    {
-        return Err(invalid(format!("unknown measurement family {unknown:?}")));
     }
     let grid_width = checked_span(columns, patch_size[0], gap[0])
         .and_then(|span| span.checked_add(origin[0]))
@@ -124,7 +116,6 @@ pub fn generate_grid(
                 "label": region_id,
                 "role": role,
                 "geometry": {"x": x, "y": y, "width": width, "height": height, "space": space},
-                "measurements": measurements,
             }));
         }
     }

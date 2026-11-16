@@ -40,8 +40,6 @@ fn regions_grid_writes_an_explicit_regions_document() {
                 "2,4",
                 "--role",
                 "color",
-                "--measurements",
-                "color,tone",
                 "--space",
                 "render",
                 "--out",
@@ -96,8 +94,6 @@ fn regions_grid_refuses_invalid_geometry_and_existing_destinations() {
             "render",
             "--role",
             "color",
-            "--measurements",
-            "color",
             "--out",
         ])
         .arg(&out)
@@ -126,8 +122,6 @@ fn regions_grid_refuses_invalid_geometry_and_existing_destinations() {
                 "render",
                 "--role",
                 "color",
-                "--measurements",
-                "color",
                 "--out",
             ])
             .arg(&out)
@@ -152,8 +146,6 @@ fn regions_grid_refuses_invalid_geometry_and_existing_destinations() {
             "--space",
             "render",
             "--role",
-            "color",
-            "--measurements",
             "color",
             "--out",
         ])

@@ -201,7 +201,6 @@ fn an_authored_regions_document_must_declare_render_geometry() {
             "regions": [{
                 "id": "patch",
                 "role": "other",
-                "measurements": [],
                 "geometry": {"x": 1, "y": 1, "width": 4, "height": 4, "space": space}
             }]
         })

@@ -102,21 +102,6 @@ struct GridArgs {
         ]
     )]
     role: String,
-    /// Measurement families, separated by commas. Required: a generator does
-    /// not decide what is measured. A family the role cannot support measures
-    /// nothing and says so.
-    #[arg(
-        long,
-        value_name = "FAMILY,...",
-        value_delimiter = ',',
-        required = true,
-        value_parser = [
-            "numeric", "color", "tone", "flip", "grain",
-            "halation", "edge", "color_noise", "neutrality"
-        ],
-        action = clap::ArgAction::Append
-    )]
-    measurements: Vec<String>,
     /// New regions document JSON file; must not exist.
     #[arg(long, value_name = "FILE")]
     out: PathBuf,
@@ -346,7 +331,6 @@ fn run() -> i32 {
             args.gap,
             &args.space,
             &args.role,
-            &args.measurements,
             &args.out,
         )
         .map(|value| (value, 0)),

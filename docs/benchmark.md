@@ -5,7 +5,7 @@
 - Compare versions: generate one bundle, run baseline and candidate targets, then use `spektrafilm-bench compare runs`, `spektrafilm-bench inspect`, and `spektrafilm-bench report comparison --comparison DIRECTORY --out DIRECTORY`.
 - Compare delivered images: use `spektrafilm-lab compare --baseline FILE_OR_DIR --candidate FILE_OR_DIR --declaration SPACE:encoded|decoded --out DIRECTORY [--roi name=x,y,w,h[:role]]... [--analysis lab-appearance-v1]` when two renderer builds already wrote the rasters. No suite, target, or renderer is involved.
 - Measure one delivered image: use `spektrafilm-lab analyze --source FILE_OR_DIR --declaration SPACE:encoded|decoded --out DIRECTORY [--roi name=x,y,w,h[:role]]...`. A family that measures a difference between two sources is recorded as unavailable rather than computed against the image itself.
-- Generate measurement geometry independently: use `spektrafilm-lab regions --id ID --rows N --columns N --origin X,Y --patch-size WIDTHxHEIGHT --gap X,Y --space render --role ROLE --measurements FAMILY,... --out REGIONS.json`. It does not read images, and it decides neither the coordinate space, nor the role, nor what is measured: a lab endpoint reads only `render` geometry, and a generator that guessed the rest would produce a declaration the caller never made.
+- Generate measurement geometry independently: use `spektrafilm-lab regions --id ID --rows N --columns N --origin X,Y --patch-size WIDTHxHEIGHT --gap X,Y --space render --role ROLE --out REGIONS.json`. It does not read images, and it decides neither the coordinate space nor the role: a lab endpoint reads only `render` geometry, and a generator that guessed the rest would produce a declaration the caller never made. The analysis profile decides what each role measures.
 - Prepared-image visual review, if used, is benchmark-owned. It is not registered as an instrument document and is not accepted by any lab endpoint.
 - Review a small set of photos visually: build one offline page with `spektrafilm-bench report photos --manifest FILE --out DIRECTORY`. It shows no measurements, no scores, and no baseline, candidate, or reference judgment. See [Review a small set of photos](#review-a-small-set-of-photos).
 - Check a new configuration: use `spektrafilm-f64 run suite --dry-run` before rendering. Read its grouped errors and retained renderer logs before changing the configuration.
@@ -16,7 +16,7 @@ The agent prepares the evidence and reads the measurements. The reviewer opens `
 ./target/release/spektrafilm-lab regions \
     --id chart-regions --rows 6 --columns 4 \
     --origin 0,0 --patch-size 8x8 --gap 2,2 \
-    --space render --role flat_field --measurements color_noise,numeric \
+    --space render --role flat_field \
     --out /tmp/spektrafilm-benchmark-regions.json
 ```
 
