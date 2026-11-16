@@ -11,7 +11,7 @@ pub(crate) fn sections(
 ) {
     if section == "Film base" {
         ui.scope(|ui| {
-            if filter_matches(filter, "enable film base") {
+            if parent_selector_visible(filter, "enable film base") {
                 flags.runtime_changed |= toggle(
                     ui,
                     "Enable film base",
@@ -19,20 +19,87 @@ pub(crate) fn sections(
                     "Enable film base-density (film base + fog / orange mask) tuning.",
                 );
             }
-            if filter_matches(filter, "scale") {
-                flags.runtime_changed |= param_numeric(ui, "scale", &mut params.film_render.base.scale, "film_render.base.scale", "Overall multiplier on the film base density.");
-            }
-            if filter_matches(filter, "tilt") {
-                flags.runtime_changed |= param_numeric(ui, "tilt", &mut params.film_render.base.tilt, "film_render.base.tilt", "Spectral tilt of the film base, pivoting at 555 nm (1.0 = +0.1 density at 650 nm; negative tilts the other way).");
-            }
-            if filter_matches(filter, "cyan") {
-                flags.runtime_changed |= param_numeric(ui, "cyan", &mut params.film_render.base.cyan, "film_render.base.cyan", "Cyan-channel film base density shift around 650 nm (1.0 = neutral; adds (value - 1) density).");
-            }
-            if filter_matches(filter, "magenta") {
-                flags.runtime_changed |= param_numeric(ui, "magenta", &mut params.film_render.base.magenta, "film_render.base.magenta", "Magenta-channel film base density shift around 555 nm (1.0 = neutral; adds (value - 1) density).");
-            }
-            if filter_matches(filter, "yellow") {
-                flags.runtime_changed |= param_numeric(ui, "yellow", &mut params.film_render.base.yellow, "film_render.base.yellow", "Yellow-channel film base density shift around 460 nm (1.0 = neutral; adds (value - 1) density).");
+            if parent_owned_visible(params.film_render.base.active, filter) {
+                if filter_matches(filter, "scale") {
+                    flags.runtime_changed |= applicable_control(
+                        ui,
+                        params,
+                        "film_render.base.scale",
+                        |ui, params| {
+                            param_numeric(
+                                ui,
+                                "scale",
+                                &mut params.film_render.base.scale,
+                                "film_render.base.scale",
+                                "Overall multiplier on the film base density.",
+                            )
+                        },
+                    );
+                }
+                if filter_matches(filter, "tilt") {
+                    flags.runtime_changed |= applicable_control(
+                        ui,
+                        params,
+                        "film_render.base.tilt",
+                        |ui, params| {
+                            param_numeric(
+                                ui,
+                                "tilt",
+                                &mut params.film_render.base.tilt,
+                                "film_render.base.tilt",
+                                "Spectral tilt of the film base, pivoting at 555 nm (1.0 = +0.1 density at 650 nm; negative tilts the other way).",
+                            )
+                        },
+                    );
+                }
+                if filter_matches(filter, "cyan") {
+                    flags.runtime_changed |= applicable_control(
+                        ui,
+                        params,
+                        "film_render.base.cyan",
+                        |ui, params| {
+                            param_numeric(
+                                ui,
+                                "cyan",
+                                &mut params.film_render.base.cyan,
+                                "film_render.base.cyan",
+                                "Cyan-channel film base density shift around 650 nm (1.0 = neutral; adds (value - 1) density).",
+                            )
+                        },
+                    );
+                }
+                if filter_matches(filter, "magenta") {
+                    flags.runtime_changed |= applicable_control(
+                        ui,
+                        params,
+                        "film_render.base.magenta",
+                        |ui, params| {
+                            param_numeric(
+                                ui,
+                                "magenta",
+                                &mut params.film_render.base.magenta,
+                                "film_render.base.magenta",
+                                "Magenta-channel film base density shift around 555 nm (1.0 = neutral; adds (value - 1) density).",
+                            )
+                        },
+                    );
+                }
+                if filter_matches(filter, "yellow") {
+                    flags.runtime_changed |= applicable_control(
+                        ui,
+                        params,
+                        "film_render.base.yellow",
+                        |ui, params| {
+                            param_numeric(
+                                ui,
+                                "yellow",
+                                &mut params.film_render.base.yellow,
+                                "film_render.base.yellow",
+                                "Yellow-channel film base density shift around 460 nm (1.0 = neutral; adds (value - 1) density).",
+                            )
+                        },
+                    );
+                }
             }
         });
     }
@@ -49,7 +116,7 @@ pub(crate) fn sections(
                 ui.label(localized(ui.ctx(), reason));
             }
             ui.add_enabled_ui(inactive.is_none(), |ui| {
-                if filter_matches(filter, "enable print base") {
+                if parent_selector_visible(filter, "enable print base") {
                     flags.runtime_changed |= toggle(
                         ui,
                         "Enable print base",
@@ -57,8 +124,9 @@ pub(crate) fn sections(
                         "Enable print base-density tuning.",
                     );
                 }
+                let values_visible = parent_owned_visible(params.print_render.base.active, filter);
                 ui.add_enabled_ui(values_inactive.is_none(), |ui| {
-                    if filter_matches(filter, "scale") {
+                    if values_visible && filter_matches(filter, "scale") {
                         flags.runtime_changed |= param_numeric(
                             ui,
                             "scale",
@@ -67,7 +135,7 @@ pub(crate) fn sections(
                             "Overall multiplier on the print base density.",
                         );
                     }
-                    if filter_matches(filter, "cyan") {
+                    if values_visible && filter_matches(filter, "cyan") {
                         flags.runtime_changed |= param_numeric(
                             ui,
                             "cyan",
@@ -76,7 +144,7 @@ pub(crate) fn sections(
                             "Cyan-channel multiplicative scale of the print base min around 610 nm (1.0 = neutral).",
                         );
                     }
-                    if filter_matches(filter, "magenta") {
+                    if values_visible && filter_matches(filter, "magenta") {
                         flags.runtime_changed |= param_numeric(
                             ui,
                             "magenta",
@@ -85,7 +153,7 @@ pub(crate) fn sections(
                             "Magenta-channel multiplicative scale of the print base min around 530 nm (1.0 = neutral).",
                         );
                     }
-                    if filter_matches(filter, "yellow") {
+                    if values_visible && filter_matches(filter, "yellow") {
                         flags.runtime_changed |= param_numeric(
                             ui,
                             "yellow",
@@ -97,6 +165,7 @@ pub(crate) fn sections(
                 });
             });
             if inactive.is_none()
+                && parent_owned_visible(params.print_render.base.active, filter)
                 && let Some(reason) = &values_inactive
             {
                 ui.label(localized(ui.ctx(), reason));

@@ -138,6 +138,9 @@ INPUTS = {
 # Effects-off base: the "bare chain" configuration used by the preserved
 # evidence and every arithmetic scenario.
 BARE = {
+    # The GUI/runtime default is the 135-format 36 mm edge. Set it explicitly
+    # on both sides so parity scenarios do not inherit upstream's 35 mm default.
+    "camera.film_format_mm": 36.0,
     "camera.auto_exposure": False,
     "film_render.grain.active": False,
     "film_render.halation.active": False,

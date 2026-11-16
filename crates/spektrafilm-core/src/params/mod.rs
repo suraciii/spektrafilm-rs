@@ -44,7 +44,7 @@ pub struct CameraParams {
     pub auto_exposure_method: String,
     #[serde(default)]
     pub lens_blur_um: f32,
-    #[serde(default = "default_35")]
+    #[serde(default = "default_film_format_mm")]
     pub film_format_mm: f32,
     #[serde(default = "default_filter_uv")]
     pub filter_uv: [f32; 3],
@@ -77,7 +77,7 @@ impl Default for CameraParams {
             auto_exposure: true,
             auto_exposure_method: "center_weighted".into(),
             lens_blur_um: 0.0,
-            film_format_mm: 35.0,
+            film_format_mm: 36.0,
             filter_uv: [0.0, 410.0, 8.0],
             filter_ir: [0.0, 675.0, 15.0],
             color_filter: "none".into(),
@@ -1089,8 +1089,8 @@ fn default_true() -> bool {
 fn default_center_weighted() -> String {
     "center_weighted".into()
 }
-fn default_35() -> f32 {
-    35.0
+fn default_film_format_mm() -> f32 {
+    36.0
 }
 fn default_filter_uv() -> [f32; 3] {
     [0.0, 410.0, 8.0]
@@ -1654,7 +1654,7 @@ mod tests {
     #[test]
     fn film_format_validation_and_persistence() {
         let mut params = super::RuntimeParams::default();
-        assert_eq!(params.camera.film_format_mm, 35.0);
+        assert_eq!(params.camera.film_format_mm, 36.0);
         params.film_render.grain.rms_granularity = [6.0, 8.0, 10.0];
         for engine in [
             super::GrainEngine::Spektra,

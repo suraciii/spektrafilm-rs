@@ -139,7 +139,11 @@ fn print_base_rows_follow_print_interpretation_and_retain_values() {
 
     harness.state_mut().print_render.base.active = false;
     harness.run();
-    assert!(harness.get_by_label("scale").node().is_disabled());
+    assert!(
+        harness.query_by_label("scale").is_none(),
+        "a parent-owned print-base row leaves the ordinary list"
+    );
+    assert_eq!(harness.state().print_render.base.scale, 1.6);
     assert!(
         !harness
             .get_by_label("Enable print base")
@@ -960,7 +964,8 @@ mod row_layout {
     /// Editors retain the same right-aligned value column across the group.
     #[test]
     fn a_row_presents_its_label_before_its_value_on_one_line() {
-        let params = scanner_params();
+        let mut params = scanner_params();
+        params.camera.film_format_mm = 50.0;
         let mut harness = Harness::new_ui_state(camera, params);
         harness.get_by_label("Capture setup").simulate_click();
         harness.run();

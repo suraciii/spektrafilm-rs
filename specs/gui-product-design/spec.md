@@ -128,6 +128,8 @@ The [stage and surface table](../gui-workflow/spec.md#stage-and-surface-ownershi
 
 Closed module headings MUST name their contents with physical terms and expose their modified and inactive states without color alone. Enabling a module MUST NOT be required to discover its contents. Inactive values MUST remain readable.
 
+A control owned or ignored by a parent enable switch, named profile, preset, or mode MAY leave the ordinary list under [conditional disclosure](../gui-workflow/spec.md#complete-control-access). Its value remains stored, and control search or its canonical locator reveals the row with the actual reason. The parent switch or selector MUST remain visible.
+
 A collapsed module MUST confine its content summary and applicability state to its heading and help. It MUST NOT render a multi-line summary or applicability notice beneath its heading.
 
 Expanding the module MUST show the actual applicability reason without requiring hover. A summary that duplicates visible controls MUST NOT remain above the expanded controls.

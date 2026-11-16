@@ -59,38 +59,54 @@ pub(crate) fn sections(
         }
     }
     section_header(ui, filter, "Expand", |ui, filter| {
-        if filter_matches(filter, "Enable Expand")
+        if parent_selector_visible(filter, "Enable Expand")
             && row_path_matches(ui.ctx(), "finishing.expand.enabled")
             && toggle(
                 ui,
                 "Enable Expand",
-                &mut finishing.expand.enabled,
+                &mut params.finishing.expand.enabled,
                 "Map fixed sRGB-encoded input references to black and white. Hard clipping destroys differences for this render; later controls cannot recover them.",
             )
         {
             record_edited_path(ui.ctx(), "finishing.expand.enabled");
             flags.runtime_changed = true;
         }
-        if filter_matches(filter, "Black reference")
+        if parent_owned_visible(params.finishing.expand.enabled, filter)
+            && filter_matches(filter, "Black reference")
             && row_path_matches(ui.ctx(), "finishing.expand.black")
         {
-            flags.runtime_changed |= param_numeric(
+            flags.runtime_changed |= applicable_control(
                 ui,
-                "Black reference",
-                &mut finishing.expand.black,
+                params,
                 "finishing.expand.black",
-                "Encoded input reference mapped to black. This is not a scanner calibration point or output endpoint.",
+                |ui, params| {
+                    param_numeric(
+                        ui,
+                        "Black reference",
+                        &mut params.finishing.expand.black,
+                        "finishing.expand.black",
+                        "Encoded input reference mapped to black. This is not a scanner calibration point or output endpoint.",
+                    )
+                },
             );
         }
-        if filter_matches(filter, "White reference")
+        if parent_owned_visible(params.finishing.expand.enabled, filter)
+            && filter_matches(filter, "White reference")
             && row_path_matches(ui.ctx(), "finishing.expand.white")
         {
-            flags.runtime_changed |= param_numeric(
+            flags.runtime_changed |= applicable_control(
                 ui,
-                "White reference",
-                &mut finishing.expand.white,
+                params,
                 "finishing.expand.white",
-                "Encoded input reference mapped to white. This is not a scanner calibration point or output endpoint.",
+                |ui, params| {
+                    param_numeric(
+                        ui,
+                        "White reference",
+                        &mut params.finishing.expand.white,
+                        "finishing.expand.white",
+                        "Encoded input reference mapped to white. This is not a scanner calibration point or output endpoint.",
+                    )
+                },
             );
         }
     });

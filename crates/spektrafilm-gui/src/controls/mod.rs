@@ -918,6 +918,41 @@ pub(crate) fn locate_row(ui: &Ui, path: &str, response: &egui::Response) {
     }
 }
 
+/// Whether a parent-owned control group renders in the ordinary list.
+///
+/// A value owned or ignored by an enable switch, named profile, or mode is
+/// hidden while that parent makes it ineffective. Search and Only modified
+/// reveal it, and `applicable_control` renders the actual reason: the same
+/// disclosure Film Format uses for its manual edge.
+pub(crate) fn parent_owned_visible(parent_active: bool, filter: &ControlFilter<'_>) -> bool {
+    parent_active || filter.active()
+}
+
+/// Keep a parent switch or selector reachable when a child-only search
+/// reveals one of its rows. The parent is not itself a match, but hiding it
+/// would leave the reason visible without a way to resolve it.
+pub(crate) fn parent_selector_visible(filter: &mut ControlFilter<'_>, label: &'static str) -> bool {
+    filter_matches(filter, label) || filter.active()
+}
+
+/// Render a parent-owned control only while its parent makes it effective.
+///
+/// Search and Only modified reveal the row with its actual applicability
+/// reason instead of leaving an editable control that cannot change the image.
+pub(crate) fn parent_owned_control(
+    ui: &mut Ui,
+    params: &mut RuntimeParams,
+    filter: &ControlFilter<'_>,
+    parent_active: bool,
+    path: &str,
+    edit: impl FnOnce(&mut Ui, &mut RuntimeParams) -> bool,
+) -> bool {
+    if !parent_owned_visible(parent_active, filter) {
+        return false;
+    }
+    applicable_control(ui, params, path, edit)
+}
+
 pub(crate) fn applicable_control(
     ui: &mut Ui,
     params: &mut RuntimeParams,

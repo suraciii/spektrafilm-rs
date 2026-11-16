@@ -1703,6 +1703,9 @@ fn selection_tracks_the_same_source_pixels_across_rotated_cropped_preview_and_sc
     reveal_control(h, "action.rotate_cw");
     click(h, "cw rotate");
     assert_eq!(h.state().input_rotation, 3);
+    reveal_control(h, "io.crop");
+    click(h, "crop");
+    assert!(h.state().params.io.crop);
     for (path, label, value) in [
         ("io.crop_center", "crop center x", "0.5"),
         ("io.crop_center", "crop center y", "0.5"),
@@ -1712,9 +1715,6 @@ fn selection_tracks_the_same_source_pixels_across_rotated_cropped_preview_and_sc
         reveal_control(h, path);
         edit(h, label, value);
     }
-    reveal_control(h, "io.crop");
-    click(h, "crop");
-    assert!(h.state().params.io.crop);
     let preview_image = preview(h);
     assert_eq!((preview_image.width, preview_image.height), (64, 64));
     let cropped_params = h.state().params.clone();

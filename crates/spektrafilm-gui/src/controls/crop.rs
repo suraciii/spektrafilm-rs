@@ -20,7 +20,7 @@ pub(crate) fn sections(
                     "Scale image size up to increase resolution",
                 );
             }
-            if filter_matches(filter, "crop") {
+            if parent_selector_visible(filter, "crop") {
                 flags.runtime_changed |= toggle(
                     ui,
                     "crop",
@@ -28,22 +28,33 @@ pub(crate) fn sections(
                     "Crop image to a fraction of the original size to preview details at full scale",
                 );
             }
-            if filter_matches(filter, "crop center") {
-                flags.runtime_changed |= param_tuple(
-                    ui,
-                    "crop center",
-                    &mut params.io.crop_center,
-                    "io.crop_center",
-                    "Center of the crop region in relative coordinates in x, y (0-1)",
-                );
+            if parent_owned_visible(params.io.crop, filter) && filter_matches(filter, "crop center")
+            {
+                flags.runtime_changed |=
+                    applicable_control(ui, params, "io.crop_center", |ui, params| {
+                        param_tuple(
+                            ui,
+                            "crop center",
+                            &mut params.io.crop_center,
+                            "io.crop_center",
+                            "Center of the crop region in relative coordinates in x, y (0-1)",
+                        )
+                    });
             }
-            if filter_matches(filter, "crop size") {
-                flags.runtime_changed |= param_tuple(
+            if parent_owned_visible(params.io.crop, filter) && filter_matches(filter, "crop size") {
+                flags.runtime_changed |= applicable_control(
                     ui,
-                    "crop size",
-                    &mut params.io.crop_size,
+                    params,
                     "io.crop_size",
-                    "Normalized size of the crop region in x, y (0,1), as fraction of the long side.",
+                    |ui, params| {
+                        param_tuple(
+                            ui,
+                            "crop size",
+                            &mut params.io.crop_size,
+                            "io.crop_size",
+                            "Normalized size of the crop region in x, y (0,1), as fraction of the long side.",
+                        )
+                    },
                 );
             }
         });

@@ -1011,6 +1011,10 @@ def main():
     factory['output_gamut_compress'].pop('lightness_compression')
     factory['simulation'].pop('auto_preview')
     factory['camera']['capture_illuminant'] = None
+    # The GUI now defaults to the 135-format 36 mm exposed-image edge instead
+    # of the upstream nominal 35 mm value. Keep the oracle pinned and state the
+    # contract change explicitly, like the retired leaves above.
+    factory['camera']['film_format_mm'] = 36.0
     rust_factory = json.loads((repo/'crates/spektrafilm-gui/src/factory_state.json').read_text())
     require(parameters_equal({key: value for key, value in rust_factory.items() if key != 'rust'},
                              {key: value for key, value in factory.items() if key != 'rust'}),
