@@ -104,11 +104,31 @@ impl eframe::App for App {
                     .ok()
             })
             .unwrap_or([0, 0]);
-        if let Some(options) =
+        if let Some(action) =
             self.export_dialog
                 .show(ctx, export_dimensions, self.image_path.as_deref())
         {
-            self.start_export(ctx, options);
+            match action {
+                crate::export::ExportDialogResult::Export(options) => {
+                    let destination = self
+                        .export_dialog
+                        .destination()
+                        .map(std::path::Path::to_path_buf);
+                    if let Some(destination) = destination {
+                        self.start_export_to_path(ctx, options, &destination);
+                    } else {
+                        self.start_export(ctx, options);
+                    }
+                }
+                crate::export::ExportDialogResult::ChooseDestination => {
+                    let draft = self.export_dialog.draft().cloned();
+                    if let Some(draft) = draft
+                        && let Some(destination) = self.choose_export_destination(&draft)
+                    {
+                        self.export_dialog.set_destination(destination);
+                    }
+                }
+            }
         }
         self.window_header(ctx);
         self.show_stale_save_confirmation(ctx);

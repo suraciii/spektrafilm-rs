@@ -146,11 +146,11 @@ Only an explicit close or Cancel action, or Escape on the topmost modal, MUST di
 
 General and Display MUST start open in Settings. A control locator MUST reveal, scroll to, and focus the actual canonical row, including a fixed or inactive row. Factory-default confirmation MAY stack above Settings; Escape MUST dismiss only the topmost modal.
 
-Export MUST keep its format, depth, saving color, encoding, compression, and active codec rows readable and canonically locatable.
+Export MUST keep its format, depth, saving color, active codec, and applicable compression rows readable and canonically locatable. Its destination MUST be visible before submission or immediately after the native chooser confirms it.
 
-When JPEG is inapplicable, one summary MUST retain its quality and subsampling values; locating either canonical row MUST reveal it read-only with the inapplicability reason. A fixed capability MUST show its effective value and why it is fixed, rather than a one-choice selector.
+When JPEG is inapplicable, its quality and subsampling rows MUST stay out of the ordinary view. Locating either canonical row MUST reveal it read-only with an accessible inapplicability reason. Fixed capability values MUST stay visible without repeating their reason as a second paragraph.
 
-An inapplicable JPEG option MUST retain its stored preference in the inactive summary and visibly state that it does not apply. Writer capabilities remain owned by [photo export](../photo-export/spec.md) and [saving conversion](../cli/spec.md#export-and-execution-options); presentation MUST NOT offer an unsupported combination or change writer behavior.
+An inapplicable JPEG option MUST retain its stored preference. Writer capabilities remain owned by [photo export](../photo-export/spec.md) and [saving conversion](../cli/spec.md#export-and-execution-options); presentation MUST NOT offer an unsupported combination or change writer behavior.
 
 ## Optical and grain labels
 

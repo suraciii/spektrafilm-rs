@@ -356,7 +356,7 @@ On macOS, the Metal surface is tagged sRGB.
 
 ## Independent Export
 
-Header **Export** opens the modal **Export options** dialog. Choose **Format**, **Bit depth**, **Saving color space**, **Backend**, **Apply saving CCTF encoding**, and the applicable codec/compression settings, then **Export file…** to choose the destination. Export renders a snapshot of the full input and simulation parameters independently of retained preview output. **Cancel**, an explicit close action, or Escape when Export is the topmost modal discards its unsubmitted draft without changing accepted adjustments or retained output. A backdrop click does not dismiss it.
+Header **Export** opens the modal **Export options** dialog. Choose **Format**, **Bit depth**, **Saving color space**, and the applicable codec/compression settings. **Backend** and **Apply saving CCTF encoding** are under **Advanced**. Choose **Destination** inline, or leave it for the native chooser after **Export file…**. Export renders a snapshot of the full input and simulation parameters independently of retained preview output. **Cancel**, an explicit close action, or Escape when Export is the topmost modal discards its unsubmitted draft without changing accepted adjustments or retained output. A backdrop click does not dismiss it.
 
 Locating another Export control while the dialog is open preserves its draft. The locator changes focus, not the selected delivery options.
 
@@ -375,7 +375,7 @@ Export's saving color space and transfer encoding are independent of Save's curr
 | TIFF | 8-bit, 16-bit, or 32-bit float | Optional CCTF | ZIP or none |
 | OpenEXR | 16-bit half or 32-bit float | Linear | ZIP |
 
-Fixed rows show their effective values and reasons instead of one-choice selectors. JPEG quality and subsampling are summarized in one inactive note in other formats; locating either canonical row reveals its stored value and inapplicability reason. Every row remains locatable by its canonical control identity; locating it does not alter the draft.
+Fixed rows show only their effective values; reasons live in the tooltip and accessible description. JPEG quality and subsampling are hidden in other formats until a canonical locator reveals them read-only. Every row remains locatable by its canonical control identity; locating it does not alter the draft.
 
 The header reports Export status and elapsed time. **Cancel export** discards the result before publication through the active worker's cancellation path. Cancellation may wait for active computation or writing.
 
