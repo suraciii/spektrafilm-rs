@@ -611,9 +611,6 @@ pub const DOCUMENT_KINDS: &[(&str, bool)] = &[
     ("command", false),
     ("export", false),
     ("evidence", false),
-    ("aligned_scene", false),
-    ("regional", false),
-    ("material", false),
 ];
 
 /// The kinds `schema` prints.
@@ -1406,5 +1403,35 @@ mod tests {
         document["cases"] = json!([document["cases"][0].clone(), duplicate]);
         let error = validate_suite(&document, Path::new("suite.json")).unwrap_err();
         assert_eq!(error.code, "duplicate_id");
+    }
+}
+
+#[cfg(test)]
+mod registry_tests {
+    use super::*;
+
+    /// The table is the only list, so every name in it must resolve. A kind a
+    /// caller can ask for and the registry cannot answer is a table that lies.
+    #[test]
+    fn every_declared_kind_resolves_to_a_schema() {
+        for (kind, _) in DOCUMENT_KINDS {
+            assert!(
+                schema_for(kind).is_ok(),
+                "{kind} is listed but has no schema"
+            );
+        }
+    }
+
+    /// `validate` decides a subset of what `schema` prints, never a kind the
+    /// schema registry does not have.
+    #[test]
+    fn every_validatable_kind_is_also_printable() {
+        let printable = schema_kinds();
+        for kind in validatable_kinds() {
+            assert!(
+                printable.contains(&kind),
+                "{kind} is validated but not printed"
+            );
+        }
     }
 }
