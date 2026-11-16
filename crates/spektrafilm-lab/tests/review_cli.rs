@@ -162,21 +162,23 @@ fn review_kind_and_removed_manifest_inputs_are_rejected() {
     let review = TempDir::new().unwrap();
     let file = review.path().join("review.json");
     fs::write(&file, b"{}").unwrap();
-    // `schema` takes any kind string, so `review` reaches the registry and is
-    // refused there.
-    let output = cli().args(["schema", "--kind", "review"]).output().unwrap();
-    assert_eq!(output.status.code(), Some(1));
-    let value: Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(value["errors"][0]["code"], "unknown_document_kind");
-    // `validate` names its kinds up front, so `review` never leaves the
-    // parser: the lab does not offer a kind it cannot validate.
-    let output = cli()
-        .args(["validate", "--kind", "review", "--file"])
-        .arg(&file)
-        .output()
-        .unwrap();
-    assert_eq!(output.status.code(), Some(2));
-    assert!(output.stdout.is_empty());
+    // Both endpoints read one registry, so an unknown kind reaches the caller
+    // the same way from either: one code, one exit status, one record shape.
+    for arguments in [
+        vec!["schema", "--kind", "review"],
+        vec!["validate", "--kind", "review", "--file"],
+    ] {
+        let mut command = cli();
+        command.args(&arguments);
+        if arguments[0] == "validate" {
+            command.arg(&file);
+        }
+        let output = command.output().unwrap();
+        assert_eq!(output.status.code(), Some(2), "{arguments:?}");
+        let value: Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(value["errors"][0]["code"], "unknown_document_kind");
+        assert_eq!(value["endpoint"], arguments[0]);
+    }
     for args in [
         vec!["report", "--manifest", "review.json", "--out", "report"],
         vec![
@@ -187,8 +189,11 @@ fn review_kind_and_removed_manifest_inputs_are_rejected() {
             "regions.json",
         ],
     ] {
-        let output = cli().args(args).output().unwrap();
-        assert_eq!(output.status.code(), Some(2));
-        assert!(output.stdout.is_empty());
+        let output = cli().args(&args).output().unwrap();
+        assert_eq!(output.status.code(), Some(2), "{args:?}");
+        // A usage error reaches the caller in the record shape too, so a
+        // pipeline handles it like every other refusal.
+        let value: Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(value["errors"][0]["code"], "argument_syntax", "{args:?}");
     }
 }

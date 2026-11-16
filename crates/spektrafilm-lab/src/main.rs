@@ -39,22 +39,15 @@ enum Commands {
     Regions(GridArgs),
     /// Print the authoritative schema for an authored or retained document.
     Schema {
-        /// Document kind.
-        #[arg(long, value_name = "KIND")]
+        /// Document kind. `schema` prints a kind `validate` may not decide.
+        #[arg(long, value_name = "KIND", value_parser = documents::schema_kinds())]
         kind: String,
     },
     /// Validate document shape and locally decidable dependencies.
     Validate {
-        /// Document kind.
-        #[arg(
-            long,
-            value_name = "KIND",
-            value_parser = [
-                "suite", "target", "policy", "configuration", "reference", "regions",
-                "preparation", "stimuli", "material_measurement", "correspondence_review",
-                "experiment", "run", "comparison", "analysis"
-            ]
-        )]
+        /// Document kind. `validate` decides the kinds it has a rule for;
+        /// `schema` prints the rest.
+        #[arg(long, value_name = "KIND", value_parser = documents::validatable_kinds())]
         kind: String,
         /// JSON document to validate.
         #[arg(long, value_name = "FILE")]
@@ -252,6 +245,39 @@ fn evaluated(name: &str) -> Option<String> {
     None
 }
 
+/// Report a usage error in the record shape every other refusal uses.
+///
+/// A bad `--kind` is a question about the document vocabulary, so it carries
+/// that fact's own code; every other usage error is `argument_syntax`.
+fn usage(error: clap::Error) -> i32 {
+    use clap::error::ErrorKind;
+    let kind = error.kind();
+    if matches!(kind, ErrorKind::DisplayHelp | ErrorKind::DisplayVersion) {
+        print!("{error}");
+        return 0;
+    }
+    let code = match kind {
+        ErrorKind::InvalidValue | ErrorKind::ValueValidation => "unknown_document_kind",
+        _ => "argument_syntax",
+    };
+    let message = error.render().to_string();
+    let message = message.trim_end().to_owned();
+    eprintln!("{code}: {message}");
+    let endpoint = std::env::args()
+        .skip(1)
+        .find(|argument| !argument.starts_with('-'))
+        .unwrap_or_else(|| "usage".to_owned());
+    emit(&stamp(
+        serde_json::json!({
+            "schema_version": 1,
+            "execution_status": "failed",
+            "errors": [{"code": code, "message": message}],
+        }),
+        &endpoint,
+    ));
+    2
+}
+
 const BINARY: &str = "spektrafilm-lab";
 
 fn emit(value: &serde_json::Value) {
@@ -290,23 +316,40 @@ fn run() -> i32 {
     if let Some(status) = reject_moved_subcommand() {
         return status;
     }
-    let cli = Cli::parse();
+    // A usage error is a refusal like any other, so it reaches the caller in
+    // the same shape. Clap's own exit would print prose and no record, which
+    // makes a pipeline special-case it.
+    let cli = match Cli::try_parse() {
+        Ok(cli) => cli,
+        Err(error) => return usage(error),
+    };
     if let Commands::External(args) = &cli.command {
         let name = args.first().map(String::as_str).unwrap_or("<unknown>");
         let owner = moved(name)
             .map(|replacement| ("spektrafilm-f64", replacement))
             .or_else(|| evaluated(name).map(|replacement| ("spektrafilm-bench", replacement)));
-        match owner {
+        let message = match owner {
             Some((binary, replacement)) => {
-                eprintln!("argument_syntax: `{name}` belongs to {binary}; run `{replacement}`")
+                format!("`{name}` belongs to {binary}; run `{replacement}`")
             }
-            None if name == "compare" => eprintln!(
-                "argument_syntax: `compare` takes no subcommand in spektrafilm-lab; \
+            None if name == "compare" => "`compare` takes no subcommand in spektrafilm-lab; \
                  `compare runs`, `compare readings`, and `compare pairs` belong to \
                  spektrafilm-bench compare ..."
-            ),
-            None => eprintln!("argument_syntax: unknown endpoint `{name}`"),
-        }
+                .to_owned(),
+            None => format!("unknown endpoint `{name}`"),
+        };
+        // A refused endpoint names its owner and reaches the caller in the
+        // record shape, so a script learns where the endpoint lives from the
+        // same document it parses everywhere else.
+        eprintln!("argument_syntax: {message}");
+        emit(&stamp(
+            serde_json::json!({
+                "schema_version": 1,
+                "execution_status": "failed",
+                "errors": [{"code": "argument_syntax", "message": message}],
+            }),
+            name,
+        ));
         return 2;
     }
     let command = match &cli.command {
@@ -318,7 +361,15 @@ fn run() -> i32 {
         Commands::External(_) => "unknown",
     };
     let result: spektrafilm_benchmark::Result<(serde_json::Value, i32)> = match cli.command {
-        Commands::Schema { kind } => documents::schema_for(&kind).map(|schema| (schema, 0)),
+        // The payload is the schema itself, so it is printed verbatim rather
+        // than stamped: a caller may diff it against the packaged asset.
+        Commands::Schema { kind } => match documents::schema_for(&kind) {
+            Ok(schema) => {
+                emit(&schema);
+                return 0;
+            }
+            Err(error) => Err(error),
+        },
         Commands::Validate { kind, file } => documents::normalize_path(&file)
             .and_then(|path| validate(&kind, &path))
             .map(|value| (value, 0)),

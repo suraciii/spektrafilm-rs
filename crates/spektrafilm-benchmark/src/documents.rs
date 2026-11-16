@@ -583,6 +583,53 @@ fn enum_names(value: &Value) -> Result<Vec<String>> {
         .ok_or_else(|| err("schema_asset", "enum schema is missing its names"))
 }
 
+/// Every document kind this project names, and whether `validate` can decide it.
+///
+/// One list. `schema` prints a kind a caller may only inspect; `validate`
+/// checks a kind it has a rule for. Both read this table, so the two never drift
+/// apart and neither hides a kind the other accepts.
+pub const DOCUMENT_KINDS: &[(&str, bool)] = &[
+    ("suite", true),
+    ("target", true),
+    ("policy", true),
+    ("configuration", true),
+    ("reference", true),
+    ("regions", true),
+    ("preparation", true),
+    ("stimuli", true),
+    ("material_measurement", true),
+    ("correspondence_review", true),
+    ("experiment", true),
+    ("run", true),
+    ("comparison", true),
+    ("analysis", true),
+    ("metrics", false),
+    ("preflight", false),
+    ("provenance", false),
+    ("report", false),
+    ("resolved", false),
+    ("command", false),
+    ("export", false),
+    ("evidence", false),
+    ("aligned_scene", false),
+    ("regional", false),
+    ("material", false),
+];
+
+/// The kinds `schema` prints.
+pub fn schema_kinds() -> Vec<&'static str> {
+    DOCUMENT_KINDS.iter().map(|(kind, _)| *kind).collect()
+}
+
+/// The kinds `validate` decides.
+pub fn validatable_kinds() -> Vec<&'static str> {
+    DOCUMENT_KINDS
+        .iter()
+        .filter(|(_, validatable)| *validatable)
+        .map(|(kind, _)| *kind)
+        .collect()
+}
+
 pub fn schema_for(kind: &str) -> Result<Value> {
     // `metrics` is not a document: it is the closed vocabulary of metric
     // identities a policy may name. The emitted object is the vocabulary, not

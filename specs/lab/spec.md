@@ -449,7 +449,11 @@ reason, which is the noise floor of the pipeline that produced the files.
 2. The lab builds and runs on a host with no GPU, no raw decoder, and no
    renderer installed.
 3. Every command result names its `binary` and its `endpoint`, and every
-   published record names its `kind` and `schema_version`.
+   published record names its `kind` and `schema_version`. A usage error is a
+   command result too: it carries the same `binary`, `endpoint`,
+   `execution_status`, and `errors`, with exit status 2. `schema` is the one
+   exception, because its payload is the packaged document and a caller can diff
+   it against the asset.
 4. `spektrafilm-lab run suite ...` fails with `argument_syntax` and names
    `spektrafilm-f64 run suite`.
 5. Two identical sources produce a record whose every available delta is zero

@@ -510,3 +510,26 @@ fn every_measurement_names_its_family() {
         );
     }
 }
+
+/// One vocabulary, one list: the kinds `schema` prints and the kinds `validate`
+/// decides come from the same table, and a kind outside it fails the same way
+/// from either endpoint.
+#[test]
+fn the_document_vocabulary_has_one_owner() {
+    let schema_list = lab().args(["schema", "--help"]).output().unwrap();
+    let schema_list = String::from_utf8_lossy(&schema_list.stdout).to_string();
+    let validate_list = lab().args(["validate", "--help"]).output().unwrap();
+    let validate_list = String::from_utf8_lossy(&validate_list.stdout).to_string();
+    // `validate` is a subset of `schema`: a document can be printed without a
+    // rule to decide it, but not decided without a schema to check it against.
+    for kind in ["regions", "analysis", "comparison", "suite", "target"] {
+        assert!(schema_list.contains(kind), "schema cannot print {kind}");
+        assert!(
+            validate_list.contains(kind),
+            "validate cannot decide {kind}"
+        );
+    }
+    // A kind that is printable but not decidable appears in one list only.
+    assert!(schema_list.contains("preflight"), "{schema_list}");
+    assert!(!validate_list.contains("preflight"), "{validate_list}");
+}
