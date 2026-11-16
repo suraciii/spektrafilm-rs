@@ -532,6 +532,29 @@ fn the_document_vocabulary_has_one_owner() {
     // A kind that is printable but not decidable appears in one list only.
     assert!(schema_list.contains("preflight"), "{schema_list}");
     assert!(!validate_list.contains("preflight"), "{validate_list}");
+
+    // A kind in neither list fails from both endpoints with the same code and
+    // the same record shape, so a caller needs no second vocabulary.
+    for (endpoint, arguments) in [
+        ("schema", vec!["schema", "--kind", "not_a_kind"]),
+        (
+            "validate",
+            vec!["validate", "--kind", "not_a_kind", "--file", "x.json"],
+        ),
+    ] {
+        let out = lab().args(arguments).output().unwrap();
+        assert_eq!(
+            out.status.code(),
+            Some(2),
+            "{endpoint} accepted a bogus kind"
+        );
+        let record: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+        assert_eq!(record["execution_status"], "failed", "{endpoint}");
+        assert_eq!(
+            record["errors"][0]["code"], "unknown_document_kind",
+            "{endpoint} named the refusal differently"
+        );
+    }
 }
 
 /// A measurement that did not run has no count to report. Writing zero would

@@ -673,7 +673,6 @@ fn plan_record(plan: &Plan) -> Value {
                 "source": sample.source,
                 "partition": sample.partition,
                 "role": sample.role,
-                "measurements": sample.measurements,
                 "geometry": {
                     "x": sample.x,
                     "y": sample.y,

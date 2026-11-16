@@ -19,6 +19,23 @@ pub use families::{
 pub use mask::geometry_mask;
 pub use math::{count, luminance, mean, median, number, quantile, selected, spelling};
 
+/// Every measurement family the engine implements.
+///
+/// A profile selects from this list and a document may declare from it; neither
+/// owns it. `halation` and `edge` are here although no lab profile selects them,
+/// because a renderer suite and a policy still can.
+pub const FAMILIES: &[&str] = &[
+    "numeric",
+    "color",
+    "tone",
+    "flip",
+    "grain",
+    "halation",
+    "edge",
+    "color_noise",
+    "neutrality",
+];
+
 pub const METRIC_VERSION: &str = "spektrafilm-appearance-spatial-v3";
 /// The transform a retained record names. It is a serialized identity, so its
 /// spelling is frozen: changing it would change every published digest.
@@ -102,18 +119,20 @@ fn unavailable(e: &mut Evidence, region: &str, family: &str, error: &Error, refs
         &[],
         Some(&error.code),
     );
-    e.failure(
-        region,
-        family,
-        error,
-        refs,
-        ![
-            "missing_probe_geometry",
-            "insufficient_samples",
-            "zero_edge_contrast",
-        ]
-        .contains(&error.code.as_str()),
-    );
+    e.failure(region, family, error, refs, is_fatal(&error.code));
+}
+
+/// Whether a family failure ends the case or only that family.
+///
+/// A region that selects nothing, a probe without geometry, and an edge with no
+/// contrast are answers about the population, not failures of the run.
+pub fn is_fatal(code: &str) -> bool {
+    ![
+        "missing_probe_geometry",
+        "insufficient_samples",
+        "zero_edge_contrast",
+    ]
+    .contains(&code)
 }
 
 /// The families a population measures.
@@ -143,17 +162,37 @@ fn families_of(protocol: &Value, region: Option<&Value>, role: &str) -> Vec<Stri
     from_list(protocol.get("measurements"))
 }
 
+/// Whether a family has any meaning on a population of this role.
+///
+/// A lab profile's table already excludes what a role cannot carry, so this is a
+/// no-op there. A renderer suite declares flat lists instead, and one flat list
+/// cannot know that a neutral patch is the only place a cast is meaningful, so
+/// the question is asked in one place for both.
+fn applies(family: &str, role: &str) -> bool {
+    match family {
+        "neutrality" => role == "neutral",
+        "color_noise" => matches!(role, "flat_field" | "texture"),
+        _ => true,
+    }
+}
+
 /// Every population and the families it measures.
 fn populations(regions: &[Value], protocol: &Value) -> Vec<Value> {
+    let of = |region: Option<&Value>, role: &str| -> Vec<String> {
+        families_of(protocol, region, role)
+            .into_iter()
+            .filter(|family| applies(family, role))
+            .collect()
+    };
     let mut result = vec![json!({
         "id": "full_image",
         "role": "full_image",
-        "families": families_of(protocol, None, "full_image"),
+        "families": of(None, "full_image"),
     })];
     for region in regions {
         let role = region["role"].as_str().unwrap_or("other");
         let mut population = region.clone();
-        population["families"] = json!(families_of(protocol, Some(region), role));
+        population["families"] = json!(of(Some(region), role));
         result.push(population);
     }
     result
@@ -329,6 +368,9 @@ fn compare_inner(
     for population in populations {
         let region = population["id"].as_str().unwrap_or("");
         let mut active = "region";
+        // A row produced before any family runs belongs to no family. Clearing
+        // here keeps the previous population's last family out of it.
+        e.in_family("");
         let execution = (|| -> Result<()> {
             if !seen.insert(region) {
                 return Err(err(
@@ -345,7 +387,6 @@ fn compare_inner(
             if n == 0 {
                 return Err(err("insufficient_samples", "Region has no selected pixels"));
             }
-            e.in_family("");
             let geometry = if region == "full_image" {
                 json!({"rectangle":[0,0,w,h]})
             } else {
@@ -602,6 +643,8 @@ pub fn compare_images(
         let mut unavailable = Vec::new();
         for population in populations {
             for family in population["families"].as_array().into_iter().flatten() {
+                // The row names the family it stands for, so it states it.
+                evidence.in_family(family.as_str().unwrap_or(""));
                 evidence.scalar(
                     population["id"].as_str().unwrap_or(""),
                     family.as_str().unwrap_or(""),
@@ -852,26 +895,34 @@ fn metric_definitions(case: &Value, region_id: &str, protocol: &Value) -> HashSe
     let role = region
         .and_then(|r| r["role"].as_str())
         .unwrap_or("full_image");
-    // A run case declares its own measurement set beside the protocol, because
-    // one run may measure different cases differently. The case is the nearer
-    // declaration, so it answers first; a lab protocol has no such field and
-    // falls through to the table. Only a declaration is a list of names.
+    // The engine measures a region by that region's own declaration, and the
+    // whole image by the case's, because a run measures different cases
+    // differently. Definitions must come from the same place, or a policy would
+    // be accepted for a metric the comparison cannot produce.
     let declared = case.get("measurements").filter(|value| {
         value
             .as_array()
             .is_some_and(|names| names.iter().all(Value::is_string))
     });
-    let families = match declared {
-        Some(declared) => declared
-            .as_array()
-            .into_iter()
-            .flatten()
-            .filter_map(Value::as_str)
-            .map(str::to_owned)
-            .collect(),
-        None => families_of(protocol, region, role),
+    let families: Vec<String> = if region_id == "full_image" {
+        match declared {
+            Some(declared) => declared
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+                .map(str::to_owned)
+                .collect(),
+            None => families_of(protocol, None, role),
+        }
+    } else {
+        families_of(protocol, region, role)
     };
-    let chosen: HashSet<&str> = families.iter().map(String::as_str).collect();
+    let chosen: HashSet<&str> = families
+        .iter()
+        .map(String::as_str)
+        .filter(|family| applies(family, role))
+        .collect();
     if chosen.contains("numeric") {
         for name in ["max_abs_difference", "rmse"] {
             definitions.insert(format!("numeric.{name}"));
@@ -1152,6 +1203,90 @@ mod tests {
                 .as_nanos()
         ))
     }
+    /// A policy's definitions and the engine's populations read the same
+    /// declaration, or a policy is accepted for a metric no row can produce.
+    ///
+    /// A suite declares a flat list for the case and may override it per region;
+    /// the region's own list is what that region measures.
+    #[test]
+    fn definitions_follow_the_declaration_the_engine_reads() {
+        let protocol = json!({"measurements": ["tone"]});
+        let case = json!({
+            "measurements": ["color"],
+            "regions": [{"id": "skin", "role": "skin", "measurements": ["numeric"]}],
+        });
+
+        let region = metric_definitions(&case, "skin", &protocol);
+        assert!(region.contains("numeric.rmse"));
+        assert!(!region.contains("delta_e00.p95"));
+
+        let whole = metric_definitions(&case, "full_image", &protocol);
+        assert!(whole.contains("delta_e00.p95"));
+        assert!(!whole.contains("numeric.rmse"));
+
+        // A comparison materializes the case's list onto the protocol before
+        // measuring, so the whole image reads it there.
+        let mut measured = protocol.clone();
+        measured["measurements"] = case["measurements"].clone();
+        let populations = populations(&case["regions"].as_array().unwrap().clone(), &measured);
+        assert_eq!(populations[1]["families"], json!(["numeric"]));
+        assert_eq!(populations[0]["families"], json!(["color"]));
+    }
+
+    /// One flat family list cannot know which role carries a family, so the
+    /// question is still asked for a suite that declares one.
+    #[test]
+    fn a_family_a_role_cannot_carry_is_never_measured() {
+        let protocol = json!({"measurements": ["neutrality", "color_noise", "numeric"]});
+        let regions = json!([
+            {"id": "skin", "role": "skin", "geometry": {"x": 0, "y": 0, "width": 4, "height": 4}},
+            {"id": "neutral", "role": "neutral", "geometry": {"x": 0, "y": 0, "width": 4, "height": 4}},
+        ]);
+        let populations = populations(regions.as_array().unwrap(), &protocol);
+        assert_eq!(populations[1]["families"], json!(["numeric"]));
+        assert_eq!(populations[2]["families"], json!(["neutrality", "numeric"]));
+        let skin = metric_definitions(&json!({"regions": regions}), "skin", &protocol);
+        assert!(!skin.contains("neutrality"));
+    }
+
+    /// A row states the family it belongs to and no other.
+    ///
+    /// A population's own failure happens before its first family runs, so it
+    /// must not inherit the family the previous population ended on.
+    #[test]
+    fn a_population_failure_names_no_family() {
+        let a = image(0.5, 8, 8);
+        let out = output();
+        let protocol = every_role(&["numeric", "tone"]);
+        // Two populations with one identity: the second fails before its first
+        // family runs, so its row must not report the family the first ended on.
+        let regions = json!([
+            {"id": "patch", "role": "other", "geometry": {"x": 0, "y": 0, "width": 4, "height": 4}},
+            {"id": "patch", "role": "other", "geometry": {"x": 4, "y": 4, "width": 4, "height": 4}},
+        ]);
+        let result = compare_images(&a, &a, regions.as_array().unwrap(), &protocol, &out).unwrap();
+        assert_eq!(result["execution_status"], "failed");
+        let rows = result["measurements"].as_array().unwrap();
+        let failed: Vec<&Value> = rows
+            .iter()
+            .filter(|row| row["metric"] == "region")
+            .collect();
+        assert!(
+            !failed.is_empty(),
+            "the duplicate population recorded nothing"
+        );
+        assert!(
+            failed.iter().all(|row| row["family"].is_null()),
+            "a failed population claimed a family"
+        );
+        assert!(
+            rows.iter()
+                .filter(|row| row["metric"] != "region")
+                .all(|row| row["family"].is_string()),
+            "a measured population must state its family"
+        );
+    }
+
     #[test]
     fn structured_boundary_failure() {
         let a = image(0.4, 4, 4);

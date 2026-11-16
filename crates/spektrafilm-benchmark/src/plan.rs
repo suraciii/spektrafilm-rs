@@ -36,8 +36,6 @@ pub struct PlanSample {
     pub partition: String,
     /// The region's declared role.
     pub role: String,
-    /// The measurement families the region selects.
-    pub measurements: Vec<String>,
     /// Left column of the rectangle, in declared-space pixels.
     pub x: u32,
     /// Top row of the rectangle, in declared-space pixels.
@@ -84,8 +82,6 @@ struct RawPlanSample {
     #[serde(default = "default_partition")]
     partition: String,
     role: String,
-    #[serde(default)]
-    measurements: Vec<String>,
     geometry: RawGeometry,
 }
 
@@ -177,7 +173,6 @@ pub fn load(path: &Path) -> Result<Plan, String> {
             source: raw.source,
             partition: raw.partition,
             role: raw.role,
-            measurements: raw.measurements,
             x: raw.geometry.x,
             y: raw.geometry.y,
             width: raw.geometry.width,

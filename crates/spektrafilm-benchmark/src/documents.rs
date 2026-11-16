@@ -554,19 +554,15 @@ pub fn region_roles() -> Result<Vec<String>> {
     )
 }
 
-/// Measurement family names a protocol may select.
+/// Measurement family names a document may declare.
 ///
-/// The list belongs to the profiles, not to a region: a region declares a role
-/// and the profile decides what that role measures.
+/// The vocabulary belongs to the measurement library, not to a profile: a
+/// profile selects from it, and a lab profile that selects none of a family does
+/// not make that family invalid elsewhere.
 pub fn measurement_families() -> Result<Vec<String>> {
-    Ok(crate::analysis::PROFILES
+    Ok(crate::metrics::FAMILIES
         .iter()
-        .flat_map(|profile| profile.roles.iter())
-        .flat_map(|(_, families)| families.iter())
-        .copied()
-        .collect::<std::collections::BTreeSet<_>>()
-        .into_iter()
-        .map(str::to_owned)
+        .map(|family| (*family).to_owned())
         .collect())
 }
 

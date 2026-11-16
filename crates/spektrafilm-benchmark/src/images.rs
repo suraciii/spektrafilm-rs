@@ -71,6 +71,33 @@ fn artifact_extension(path: &Path) -> String {
         .unwrap_or_default()
 }
 
+/// The cause of a case failure: the fatal finding's code and message.
+///
+/// A failure records a finding; measurement rows also carry reasons, but a row
+/// reason may belong to a metric that was expected to be unavailable. A finding
+/// that only answers a question about its population is not the cause either.
+fn failure_cause(measured: &Value) -> (String, String) {
+    let findings = measured["findings"].as_array().into_iter().flatten();
+    let finding = findings
+        .clone()
+        .find(|finding| {
+            finding["code"]
+                .as_str()
+                .is_some_and(crate::metrics::is_fatal)
+        })
+        .or_else(|| findings.clone().next());
+    match finding {
+        Some(finding) => (
+            finding["code"]
+                .as_str()
+                .unwrap_or("measurement_failure")
+                .to_owned(),
+            finding["message"].as_str().unwrap_or("").trim().to_owned(),
+        ),
+        None => ("measurement_failure".into(), String::new()),
+    }
+}
+
 /// A pseudo-suite identity: the protocol digest covers the protocol, the
 /// regions, and the selected families, exactly as it does for a run.
 fn protocol_digest(request: &Request) -> Result<String> {
@@ -82,7 +109,6 @@ fn protocol_digest(request: &Request) -> Result<String> {
                 "id": pair.case_id,
                 "seeds": [0],
                 "regions": request.regions,
-                "measurements": request.protocol["measurements"],
             })
         })
         .collect();
@@ -386,16 +412,10 @@ fn compare_impl(request: &Request, out: &Path) -> Result<(Value, i32)> {
             )?);
         }
         if record["status"] == "failed" {
-            // A failed population records why; that reason is the code a
-            // caller has to act on, so it replaces the generic failure.
-            let reason = measured["measurements"]
-                .as_array()
-                .and_then(|rows| rows.iter().find_map(|row| row["reason"].as_str()))
-                .unwrap_or("measurement_failure")
-                .to_owned();
+            let (reason, cause) = failure_cause(&measured);
             return Err(Error::new(
                 reason,
-                format!("Measurements failed for case {}", pair.case_id),
+                format!("Measurements failed for case {}: {cause}", pair.case_id),
             )
             .at(&pair.case_id));
         }
@@ -569,15 +589,12 @@ fn analyze_impl(request: &AnalysisRequest, out: &Path) -> Result<(Value, i32)> {
             "source": source.clone(),
         });
         if record["status"] == "failed" {
-            let reason = measured["measurements"]
-                .as_array()
-                .and_then(|rows| rows.iter().find_map(|row| row["reason"].as_str()))
-                .unwrap_or("measurement_failure")
-                .to_owned();
-            return Err(
-                Error::new(reason, format!("Case {} did not measure", file.case_id))
-                    .at(&file.case_id),
-            );
+            let (reason, cause) = failure_cause(&measured);
+            return Err(Error::new(
+                reason,
+                format!("Case {} did not measure: {cause}", file.case_id),
+            )
+            .at(&file.case_id));
         }
         record["source"] = source.clone();
         cases.push(record);
@@ -616,7 +633,6 @@ fn analyze_impl(request: &AnalysisRequest, out: &Path) -> Result<(Value, i32)> {
         "cases": request.files.iter().map(|file| json!({
             "id": file.case_id,
             "regions": request.regions,
-            "measurements": request.protocol["measurements"],
         })).collect::<Vec<_>>(),
     }))?;
     let mut manifest = json!({

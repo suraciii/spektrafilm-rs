@@ -159,6 +159,8 @@ fn validate(
             "stimuli" | "material_measurement" | "correspondence_review" | "experiment" => {
                 documents::validate_authored_document(kind, file)
             }
+            // `--kind` already rejects a kind `validate` has no rule for, so
+            // this arm is the registry's own gap, not a caller mistake.
             _ => Err(spektrafilm_benchmark::Error::new(
                 "unknown_document_kind",
                 format!("unknown document kind: {kind}"),

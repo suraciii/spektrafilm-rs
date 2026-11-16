@@ -392,8 +392,11 @@ spektrafilm-bench sample --from-run DIRECTORY|RUN.JSON --case ID --seed UINT32 -
 
 A regions document declares reading positions. One kind serves both reading domains: an image-domain case, a sampling command, and a reference declare regions in it.
 
-- A regions document MUST contain `schema_version`, an `id`, and a nonempty `regions` array. A region MUST contain `id`, `geometry`, `role`, and `measurements`, and MAY contain `label`, `source`, and `partition`.
-- `role` MUST identify `skin`, `neutral`, `shadow`, `highlight`, `color`, `flat_field`, `edge`, `texture`, or `other`. `measurements` MUST select applicable measurement families.
+- A regions document MUST contain `schema_version`, an `id`, and a nonempty `regions` array. A region MUST contain `id`, `geometry`, and `role`, MAY contain `label`, `source`, and `partition`, and MUST NOT declare measurement families, because an analysis profile owns the one table from role to families and a second declaration could disagree with it.
+- `role` MUST identify `skin`, `neutral`, `shadow`, `highlight`, `color`,
+  `flat_field`, `edge`, `texture`, or `other`. Only a renderer suite case MAY
+  declare the families a region measures, because one run measures different
+  cases differently; a standalone regions document MUST NOT.
 - `source` and `partition` are group labels for reporting. Identities MUST be unique within the document, MUST match `^[A-Za-z0-9][A-Za-z0-9_.-]*$`, and `full_image` stays reserved for the whole declared source.
 - `geometry` MUST be either a half-open rectangle with the named fields `x`, `y`, `width`, `height`, or a lossless mask with its `path`, `sha256`, and declared `width` and `height`. Widths and heights MUST be positive integers.
 - Every geometry MUST declare its coordinate space. `source` names the declared source image's pixels; `render` names a completed simulation's output pixels; native stage names are `source_pixels`, `working_pixels`, `film_frame_pixels`, `grain_aperture_pixels`, or `output_pixels`.
@@ -426,7 +429,8 @@ A regions document declares reading positions. One kind serves both reading doma
 - Bounds MUST be validated against the actual master. Fixed regions MUST NOT be silently resized to fit a changed render.
 - Tone-response probe geometries MAY be declared in `protocol.probe.tone_response` or overridden by a case's `probe.tone_response`. Both locations MUST use the same rectangle or hashed-mask validation.
 - Mask paths MUST resolve relative to the suite document, enter the run's dependency inventory, and be retained as immutable evidence. Comparison MUST resolve the effective probe geometry only from retained dependencies, without requiring original mask files or the invocation working directory.
-- The case's `measurements` MUST select full-image measurement families from `numeric`, `color`, `tone`, `flip`, `grain`, `halation`, and `edge`. Region `measurements` MUST select applicable families in that region.
+- The case's `measurements` MUST select full-image measurement families from `numeric`, `color`, `tone`, `flip`, `grain`, `halation`, `edge`, `color_noise`, and `neutrality`. A region MAY declare its own list, which overrides the case's for that region.
+- A family that has no meaning on a region's role MUST NOT be measured there and MUST NOT produce a row. A cast outside a neutral patch and noise outside a flat or textured surface are not measurements a region can fail.
 - The protocol MUST resolve each family to explicit scalar identities, maps, curves, or spectra. A family selector MUST NOT request a hidden aggregate quality score.
 - A case MAY contain `region_pairs`, an array of objects with `id`, `label`, `left`, and `right`. Pair identities MUST be unique and MUST NOT collide with region identities.
 - Both endpoints MUST name distinct existing regions in that case. A pair MUST NOT infer correspondence across cases or image sets.

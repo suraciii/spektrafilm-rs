@@ -141,7 +141,7 @@ The instrument MUST NOT own a second implementation of a metric. A color-differe
 
 Eligibility is a measured property, not a reading of a flag name: each operation carries the first stage whose values it changes, and it is listed only when it executes inside the measured range. The instrument MUST NOT widen that table by guessing that a control is spatial because its name suggests so.
 
-- A [regions document](spec.md#regions-document) is the only authority for a reading position. `regions grid` expands one finite grid into that document without reading images or producing a report.
+- A [regions document](spec.md#regions-document) is the only authority for a reading position. `regions` expands one finite grid into that document without reading images or producing a report.
 - A command MUST NOT infer geometry from image dimensions, labels, color similarity, or a removed review manifest. A sample outside the declared source remains an error rather than a clamped value.
 
 A guard run is a frozen measurement artifact together with the stimuli that produced it. It carries no tolerance and no verdict; a tolerance belongs to the protocol document that declares it. Frozen readings make chain drift visible, so a comparison MUST report an identity difference beside the value difference instead of refusing the pair.
