@@ -10,7 +10,7 @@ This context defines the language of the `spektrafilm-lab` instrument. The instr
 _Avoid_: Output, result, capture, screenshot
 
 **Source**: One delivered image set read under one declaration. In a comparison a source takes the role of baseline or candidate; in an analysis there is one source and no second one.
-_Avoid_: Reference, input, side, sample
+_Avoid_: Reference, input, end, sample
 
 **Declaration**: The color space and transfer state a caller states for a source's samples, because the samples cannot be trusted to state them. The instrument never infers it from a file name or metadata.
 _Avoid_: Metadata, properties, assumption
@@ -34,8 +34,11 @@ _Avoid_: Metric group, suite, category, dimension
 **Measurement**: One measured quantity: its metric identity, its availability, and either its value or the reason it does not exist.
 _Avoid_: Readout, result, statistic, row, number
 
-**Metric**: The stable identity of one measurement, such as `delta_e00.p95`. It is versioned, and a reader can cite it across records.
+**Metric**: The stable identity of one measurement, such as `delta_e00.p95`. It names the quantity and nothing else: neither the family nor the source is part of it, so every record that measures the quantity uses the same identity.
 _Avoid_: Key, field, name, label
+
+**Side**: Which source a measurement row stands for: `baseline`, `candidate`, or the `delta` between them. It exists only when the same quantity is measured on more than one source; a one-source record states no side.
+_Avoid_: Role, position, end, direction, channel
 
 **Protocol**: The materialized measurement recipe a record retains and digests, so the numbers are reproducible from the record alone. An analysis profile generates it.
 _Avoid_: Settings, configuration, parameters, options

@@ -431,14 +431,24 @@ fn probe_protocol(protocol: &Value, case: &Value, seed: u64) -> Value {
     }
     result
 }
+/// Whether a policy rule selects this row.
+///
+/// A rule names a quantity; the side it bounds is a separate fact, because one
+/// quantity is measured on each source and as their difference.
+fn rule_matches(rule: &Value, row: &Value) -> bool {
+    row["case_id"] == rule["selector"]["case_id"]
+        && row["region_id"] == rule["selector"]["region_id"]
+        && row["metric"] == rule["metric"]
+        && match rule.get("side").and_then(Value::as_str) {
+            Some(side) => row["side"] == side,
+            None => row.get("side").is_none(),
+        }
+}
+
 fn rule_result(rule: &Value, measurements: &[Value]) -> Value {
     let rows: Vec<_> = measurements
         .iter()
-        .filter(|row| {
-            row["case_id"] == rule["selector"]["case_id"]
-                && row["region_id"] == rule["selector"]["region_id"]
-                && row["metric"] == rule["metric"]
-        })
+        .filter(|row| rule_matches(rule, row))
         .collect();
     let values: Vec<_> = rows
         .iter()
@@ -1059,13 +1069,16 @@ fn compare_impl(
         }
         for row in array(&record, "measurements")? {
             let metric = text(row, "metric")?;
+            // A change is a difference: a `delta` side, or a quantity that is
+            // itself a difference between the two sources. The row says which,
+            // so the test reads the field instead of the metric's spelling.
+            let difference = row["side"] == "delta"
+                || metric.starts_with("delta_")
+                || metric.starts_with("numeric.rmse")
+                || metric.starts_with("numeric.max_abs");
             if row["availability"] == "available"
                 && row["value"].as_f64().is_some_and(|v| v != 0.0)
-                && (metric.starts_with("delta_")
-                    || metric.starts_with("numeric.rmse")
-                    || metric.starts_with("numeric.max_abs")
-                    || metric.starts_with("tone.l_star.delta")
-                    || metric.contains(".delta."))
+                && difference
             {
                 let refs = if row["artifact_refs"]
                     .as_array()
@@ -1099,11 +1112,7 @@ fn compare_impl(
             let decision = rule_result(rule, &measurements);
             let refs: BTreeSet<_> = measurements
                 .iter()
-                .filter(|row| {
-                    row["case_id"] == rule["selector"]["case_id"]
-                        && row["region_id"] == rule["selector"]["region_id"]
-                        && row["metric"] == rule["metric"]
-                })
+                .filter(|row| rule_matches(rule, row))
                 .flat_map(|row| row["artifact_refs"].as_array().into_iter().flatten())
                 .filter_map(Value::as_str)
                 .map(str::to_owned)

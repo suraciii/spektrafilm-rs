@@ -46,6 +46,12 @@
       "items": {
         "type": "object",
         "properties": {
+          "measurements": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/measurement"
+            }
+          },
           "region_readouts": {
             "type": "array",
             "items": {
@@ -494,6 +500,83 @@
     }
   ],
   "$defs": {
+    "measurement": {
+      "type": "object",
+      "required": [
+        "region_id",
+        "metric",
+        "metric_version",
+        "domain",
+        "units",
+        "estimator",
+        "artifact_refs",
+        "availability"
+      ],
+      "properties": {
+        "case_id": {
+          "type": ["string", "null"]
+        },
+        "seed_population": {
+          "type": "array"
+        },
+        "region_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "family": {
+          "type": "string",
+          "minLength": 1
+        },
+        "side": {
+          "enum": ["baseline", "candidate", "delta"]
+        },
+        "metric": {
+          "type": "string",
+          "minLength": 1
+        },
+        "metric_version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "domain": {
+          "type": "string",
+          "minLength": 1
+        },
+        "units": {
+          "type": "string",
+          "minLength": 1
+        },
+        "estimator": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sample_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "artifact_refs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "availability": {
+          "enum": ["available", "unavailable"]
+        },
+        "value": {
+          "type": "number"
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1
+        },
+        "reference_id": {
+          "type": "string"
+        },
+        "protocol_id": {}
+      },
+      "additionalProperties": false
+    },
     "triple": {
       "type": "array",
       "minItems": 3,

@@ -50,6 +50,9 @@ enum Command {
         /// Exact metric identities to select; repeats.
         #[arg(long = "metric", value_name = "ID")]
         metrics: Vec<String>,
+        /// Which source the row was measured on; repeats.
+        #[arg(long = "side", value_name = "SIDE")]
+        sides: Vec<String>,
     },
     /// Build one benchmark-owned offline report.
     Report {
@@ -165,7 +168,10 @@ fn execute(command: Command) -> Result<(Value, i32)> {
             case_ids,
             region_ids,
             metrics,
-        } => inspect::inspect(&comparison, &case_ids, &region_ids, &metrics).map(|v| (v, 0)),
+            sides,
+        } => {
+            inspect::inspect(&comparison, &case_ids, &region_ids, &metrics, &sides).map(|v| (v, 0))
+        }
         Command::Report { command } => match command {
             ReportCommand::Comparison { comparison, out } => {
                 spektrafilm_benchmark::documents::normalize_path(&out)

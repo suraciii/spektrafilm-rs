@@ -81,6 +81,59 @@ fn inspect_reads_the_comparison_without_reading_an_image() {
     assert!(!inspected["measurements"].as_array().unwrap().is_empty());
 }
 
+/// A reader selects a quantity and the source it stands for, not a spelling of
+/// the source inside the quantity's name.
+#[test]
+fn inspect_selects_one_side_of_one_quantity() {
+    let temp = tempfile::tempdir().unwrap();
+    let (out, _, _) = comparison(temp.path());
+    let output = bench()
+        .args(["inspect", "--comparison"])
+        .arg(&out)
+        .args(["--metric", "tone.l_star.q05", "--side", "baseline"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let inspected: Value = serde_json::from_slice(&output.stdout).unwrap();
+    let rows = inspected["measurements"].as_array().unwrap();
+    assert!(
+        !rows.is_empty(),
+        "the quantity was not found by its own name"
+    );
+    assert!(
+        rows.iter()
+            .all(|row| row["metric"] == "tone.l_star.q05" && row["side"] == "baseline"),
+        "{inspected}"
+    );
+    // A side the record never measured is outside its vocabulary.
+    let unknown = bench()
+        .args(["inspect", "--comparison"])
+        .arg(&out)
+        .args(["--side", "nonsense"])
+        .output()
+        .unwrap();
+    assert_eq!(unknown.status.code(), Some(1));
+    let refusal: Value = serde_json::from_slice(&unknown.stdout).unwrap();
+    assert_eq!(refusal["errors"][0]["code"], "unknown_selection");
+    // A recorded side on a quantity that exists once is an empty intersection,
+    // not a silent guess at the only row.
+    let empty = bench()
+        .args(["inspect", "--comparison"])
+        .arg(&out)
+        .args(["--metric", "numeric.rmse", "--side", "delta"])
+        .output()
+        .unwrap();
+    assert_eq!(empty.status.code(), Some(1));
+    let refusal: Value = serde_json::from_slice(&empty.stdout).unwrap();
+    assert_eq!(refusal["errors"][0]["code"], "empty_selection");
+    let published = std::fs::read(out.join("comparison.json")).unwrap();
+    assert!(String::from_utf8_lossy(&published).contains("tone.l_star.q05"));
+}
+
 #[test]
 fn a_report_failure_leaves_no_report_and_keeps_the_comparison() {
     let temp = tempfile::tempdir().unwrap();

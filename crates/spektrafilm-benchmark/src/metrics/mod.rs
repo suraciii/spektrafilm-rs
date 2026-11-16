@@ -368,9 +368,10 @@ fn compare_inner(
     for population in populations {
         let region = population["id"].as_str().unwrap_or("");
         let mut active = "region";
-        // A row produced before any family runs belongs to no family. Clearing
-        // here keeps the previous population's last family out of it.
+        // A row produced before any family runs belongs to no family and to no
+        // side. Clearing here keeps the previous population's state out of it.
         e.in_family("");
+        e.in_side("");
         let execution = (|| -> Result<()> {
             if !seen.insert(region) {
                 return Err(err(
@@ -445,8 +446,10 @@ fn compare_inner(
             for family in population["families"].as_array().into_iter().flatten() {
                 active = family.as_str().unwrap_or("");
                 // The row states the family it belongs to, so a reader groups
-                // numbers without parsing a metric name.
+                // numbers without parsing a metric name. A family that measures
+                // one quantity once names no side either.
                 e.in_family(active);
+                e.in_side("");
                 // One family answers one question. A family that cannot
                 // measure records one unavailable row, and the region's other
                 // families still measure.
@@ -645,6 +648,7 @@ pub fn compare_images(
             for family in population["families"].as_array().into_iter().flatten() {
                 // The row names the family it stands for, so it states it.
                 evidence.in_family(family.as_str().unwrap_or(""));
+                evidence.in_side("");
                 evidence.scalar(
                     population["id"].as_str().unwrap_or(""),
                     family.as_str().unwrap_or(""),
@@ -888,7 +892,49 @@ pub fn aggregate_seed_measurements(results: &[Value]) -> Vec<Value> {
 /// measurement set beside the protocol. A result case names its *rows* under the
 /// same key, so it must never be passed here.
 fn metric_definitions(case: &Value, region_id: &str, protocol: &Value) -> HashSet<String> {
-    let mut definitions = HashSet::new();
+    definitions_with_sides(case, region_id, protocol)
+        .into_keys()
+        .collect()
+}
+
+/// A quantity measured on one source, and the sides this protocol measures it on.
+///
+/// `None` means the quantity exists once: a difference between two sources, or
+/// a statistic of one. `Some(sides)` means the same quantity is measured on each
+/// side of a comparison, and the row states which. A policy rule that names such
+/// a quantity must name its side too, or it would bound three numbers at once.
+pub fn sides_of(
+    quantity: &str,
+    case: &Value,
+    region_id: &str,
+    protocol: &Value,
+) -> Option<Option<&'static [&'static str]>> {
+    let quantity = quantity
+        .strip_suffix(".seed_mean")
+        .or_else(|| quantity.strip_suffix(".seed_std"))
+        .unwrap_or(quantity);
+    // A reference relation is one quantity per relation; its name suffix is the
+    // relation, not a source.
+    if quantity.starts_with("reference.") {
+        return crate::references::metric_base_id(quantity).map(|_| None);
+    }
+    definitions_with_sides(case, region_id, protocol)
+        .get(quantity)
+        .copied()
+}
+
+const PAIR_SIDES: &[&str] = &["baseline", "candidate"];
+const DELTA_SIDES: &[&str] = &["baseline", "candidate", "delta"];
+
+fn definitions_with_sides(
+    case: &Value,
+    region_id: &str,
+    protocol: &Value,
+) -> BTreeMap<String, Option<&'static [&'static str]>> {
+    let mut definitions: BTreeMap<String, Option<&'static [&'static str]>> = BTreeMap::new();
+    let mut own = |name: String, sides: Option<&'static [&'static str]>| {
+        definitions.entry(name).or_insert(sides);
+    };
     let region = case["regions"]
         .as_array()
         .and_then(|regions| regions.iter().find(|r| r["id"].as_str() == Some(region_id)));
@@ -925,22 +971,20 @@ fn metric_definitions(case: &Value, region_id: &str, protocol: &Value) -> HashSe
         .collect();
     if chosen.contains("numeric") {
         for name in ["max_abs_difference", "rmse"] {
-            definitions.insert(format!("numeric.{name}"));
+            own(format!("numeric.{name}"), None);
         }
-        for side in ["baseline", "candidate"] {
-            for name in [
-                "nonfinite_sample_count",
-                "nonfinite_pixel_count",
-                "below_zero_fraction",
-                "above_one_fraction",
-            ] {
-                definitions.insert(format!("numeric.{side}.{name}"));
-            }
+        for name in [
+            "nonfinite_sample_count",
+            "nonfinite_pixel_count",
+            "below_zero_fraction",
+            "above_one_fraction",
+        ] {
+            own(format!("numeric.{name}"), Some(PAIR_SIDES));
         }
     }
     if chosen.contains("color") {
         for stat in ["median", "p95", "p99", "max"] {
-            definitions.insert(format!("delta_e00.{stat}"));
+            own(format!("delta_e00.{stat}"), None);
         }
         for name in [
             "delta_l_star",
@@ -949,7 +993,7 @@ fn metric_definitions(case: &Value, region_id: &str, protocol: &Value) -> HashSe
             "delta_c_star",
         ] {
             for stat in ["mean", "median"] {
-                definitions.insert(format!("{name}.{stat}"));
+                own(format!("{name}.{stat}"), None);
             }
         }
         for threshold in protocol["delta_e_thresholds"]
@@ -957,7 +1001,10 @@ fn metric_definitions(case: &Value, region_id: &str, protocol: &Value) -> HashSe
             .into_iter()
             .flatten()
         {
-            definitions.insert(format!("delta_e00.fraction_above_{}", spelling(threshold)));
+            own(
+                format!("delta_e00.fraction_above_{}", spelling(threshold)),
+                None,
+            );
         }
     }
     if chosen.contains("neutrality") {
@@ -969,9 +1016,7 @@ fn metric_definitions(case: &Value, region_id: &str, protocol: &Value) -> HashSe
             "chroma_radius_rms",
             "chroma_radius_max",
         ] {
-            for side in ["baseline", "candidate", "delta"] {
-                definitions.insert(format!("neutrality.{side}.{name}"));
-            }
+            own(format!("neutrality.{name}"), Some(DELTA_SIDES));
         }
     }
     if chosen.contains("color_noise") {
@@ -985,31 +1030,28 @@ fn metric_definitions(case: &Value, region_id: &str, protocol: &Value) -> HashSe
             "channel_correlation_rg",
             "radial_frequency_centroid",
         ] {
-            definitions.insert(format!("color_noise.{name}"));
-            for side in ["baseline", "candidate", "delta"] {
-                definitions.insert(format!("color_noise.{side}.{name}"));
-            }
+            own(format!("color_noise.{name}"), Some(DELTA_SIDES));
         }
     }
     if chosen.contains("flip") {
         for stat in ["mean", "p95", "p99", "max"] {
-            definitions.insert(format!("flip.{stat}"));
+            own(format!("flip.{stat}"), None);
         }
     }
-    for side in ["baseline", "candidate", "delta"] {
+    {
         if chosen.contains("tone") {
             for q in [5, 25, 50, 75, 95] {
-                definitions.insert(format!("tone.l_star.{side}.q{q:02}"));
+                own(format!("tone.l_star.q{q:02}"), Some(DELTA_SIDES));
             }
             for scale in protocol["region_sampling_scales"]
                 .as_array()
                 .into_iter()
                 .flatten()
             {
-                definitions.insert(format!(
-                    "tone.local_contrast.sigma_{}.{side}.rms",
-                    spelling(scale)
-                ));
+                own(
+                    format!("tone.local_contrast.sigma_{}.rms", spelling(scale)),
+                    Some(DELTA_SIDES),
+                );
             }
             if region_id == "full_image" {
                 let points = case["probe"]
@@ -1019,9 +1061,10 @@ fn metric_definitions(case: &Value, region_id: &str, protocol: &Value) -> HashSe
                 let n = points.as_array().map_or(0, Vec::len);
                 for interval in 0..n.saturating_sub(1) {
                     for label in ["linear_luminance", "l_star"] {
-                        definitions.insert(format!(
-                            "tone.response.interval_{interval}.{label}.{side}.slope"
-                        ));
+                        own(
+                            format!("tone.response.interval_{interval}.{label}.slope"),
+                            Some(DELTA_SIDES),
+                        );
                     }
                 }
             }
@@ -1045,20 +1088,26 @@ fn metric_definitions(case: &Value, region_id: &str, protocol: &Value) -> HashSe
                 requested
             };
             for channel in ["R", "G", "B", "luminance", "chromatic"] {
-                definitions.insert(format!("grain.{method}.{side}.rms.{channel}"));
+                own(format!("grain.{method}.rms.{channel}"), Some(DELTA_SIDES));
             }
             for pair in ["RG", "RB", "GB"] {
                 for name in ["covariance", "correlation"] {
-                    definitions.insert(format!("grain.{method}.{side}.{name}.{pair}"));
+                    own(format!("grain.{method}.{name}.{pair}"), Some(DELTA_SIDES));
                 }
             }
             for name in ["psd.luminance_total", "frequency_centroid_cycles_per_pixel"] {
-                definitions.insert(format!("grain.{method}.{side}.{name}"));
+                own(format!("grain.{method}.{name}"), Some(DELTA_SIDES));
             }
         }
         if chosen.contains("halation") {
-            definitions.insert(format!("halation.{side}.core_clipped_fraction"));
-            definitions.insert(format!("halation.{side}.red_minus_green.integrated_spill"));
+            own(
+                "halation.core_clipped_fraction".to_owned(),
+                Some(DELTA_SIDES),
+            );
+            own(
+                "halation.red_minus_green.integrated_spill".to_owned(),
+                Some(DELTA_SIDES),
+            );
             for channel in ["R", "G", "B"] {
                 for name in [
                     "peak_amplitude",
@@ -1066,7 +1115,7 @@ fn metric_definitions(case: &Value, region_id: &str, protocol: &Value) -> HashSe
                     "half_height_width_px",
                     "integrated_spill",
                 ] {
-                    definitions.insert(format!("halation.{side}.{channel}.{name}"));
+                    own(format!("halation.{channel}.{name}"), Some(DELTA_SIDES));
                 }
             }
         }
@@ -1077,12 +1126,13 @@ fn metric_definitions(case: &Value, region_id: &str, protocol: &Value) -> HashSe
                 "mtf50_cycles_per_pixel",
                 "plateau_contrast",
             ] {
-                definitions.insert(format!("edge.{side}.{name}"));
+                own(format!("edge.{name}"), Some(DELTA_SIDES));
             }
         }
     }
     definitions
 }
+
 pub fn metric_supported_with_protocol(
     metric: &str,
     case: &Value,
@@ -1203,6 +1253,65 @@ mod tests {
                 .as_nanos()
         ))
     }
+    /// One quantity keeps one identity whether it is measured once or on each
+    /// source, and the row says which source it stands for.
+    ///
+    /// This is the invariant a reader depends on: the name it learned from one
+    /// record is the name it can query in another.
+    #[test]
+    fn a_quantity_keeps_one_identity_across_one_and_two_sources() {
+        let a = image(0.5, 16, 16);
+        let protocol = every_role(&["tone", "neutrality"]);
+        let one = output();
+        let single = analyze_image(&a, &[], &protocol, &one).unwrap();
+        let two = output();
+        let pair = compare_images(&a, &a, &[], &protocol, &two).unwrap();
+
+        let rows = |document: &Value| document["measurements"].as_array().unwrap().clone();
+        let found = |document: &Value, metric: &str, side: Option<&str>| -> Option<f64> {
+            rows(document)
+                .iter()
+                .find(|row| {
+                    row["metric"] == metric
+                        && match side {
+                            Some(side) => row["side"] == side,
+                            None => row.get("side").is_none(),
+                        }
+                })
+                .and_then(|row| row["value"].as_f64())
+        };
+
+        // The same physical quantity, named once and measured on two sides.
+        let centered = found(&single, "tone.l_star.q50", None).unwrap();
+        assert_eq!(
+            found(&pair, "tone.l_star.q50", Some("baseline")),
+            Some(centered)
+        );
+        assert_eq!(
+            found(&pair, "tone.l_star.q50", Some("candidate")),
+            Some(centered)
+        );
+        assert_eq!(found(&pair, "tone.l_star.q50", Some("delta")), Some(0.0));
+
+        // No identity carries a source inside its name.
+        for document in [&single, &pair] {
+            for row in rows(document) {
+                let metric = row["metric"].as_str().unwrap();
+                for side in ["baseline", "candidate", "delta"] {
+                    assert!(
+                        !metric.contains(&format!(".{side}.")),
+                        "{metric} names its side instead of stating it"
+                    );
+                }
+            }
+        }
+        // A row that states no side is a quantity that exists once.
+        let once = rows(&single).iter().all(|row| row.get("side").is_none());
+        assert!(once, "a one-source record names no side");
+        fs::remove_dir_all(one).ok();
+        fs::remove_dir_all(two).ok();
+    }
+
     /// A policy's definitions and the engine's populations read the same
     /// declaration, or a policy is accepted for a metric no row can produce.
     ///
@@ -1351,29 +1460,29 @@ mod tests {
         ];
         let result = compare_images(&a, &b, &regions, &every_role(&["neutrality"]), &path).unwrap();
         let rows = result["measurements"].as_array().unwrap();
-        let value = |metric: &str| {
+        let value = |metric: &str, side: &str| {
             rows.iter()
-                .find(|r| r["metric"] == metric)
-                .unwrap_or_else(|| panic!("missing {metric}"))["value"]
+                .find(|r| r["metric"] == metric && r["side"] == side)
+                .unwrap_or_else(|| panic!("missing {metric} on {side}"))["value"]
                 .as_f64()
                 .unwrap()
         };
         // Raising red above green is a positive a* cast; the radius is that
         // same cast expressed as a distance.
-        let a_star = value("neutrality.baseline.a_star_mean");
-        let b_star = value("neutrality.baseline.b_star_mean");
+        let a_star = value("neutrality.a_star_mean", "baseline");
+        let b_star = value("neutrality.b_star_mean", "baseline");
         assert!(a_star > 2.0, "a* {a_star}");
-        let radius = value("neutrality.baseline.chroma_radius_rms");
+        let radius = value("neutrality.chroma_radius_rms", "baseline");
         assert!(
             (radius - a_star.hypot(b_star)).abs() < 1e-9,
             "radius {radius} for a* {a_star} b* {b_star}"
         );
         // The field is uniform, so its lightness has no spread and every
         // sample sits at the same radius.
-        assert!(value("neutrality.baseline.l_star_std").abs() < 1e-9);
-        assert!((value("neutrality.baseline.chroma_radius_max") - radius).abs() < 1e-9);
+        assert!(value("neutrality.l_star_std", "baseline").abs() < 1e-9);
+        assert!((value("neutrality.chroma_radius_max", "baseline") - radius).abs() < 1e-9);
         // One comparison of one source with itself has no delta.
-        assert_eq!(value("neutrality.delta.a_star_mean"), 0.0);
+        assert_eq!(value("neutrality.a_star_mean", "delta"), 0.0);
         fs::remove_dir_all(path).unwrap();
     }
 
@@ -1434,17 +1543,17 @@ mod tests {
         )
         .unwrap();
         let rows = result["measurements"].as_array().unwrap();
-        let value = |metric: &str| {
+        let value = |metric: &str, side: &str| {
             rows.iter()
-                .find(|r| r["metric"] == metric)
-                .unwrap_or_else(|| panic!("missing {metric}"))["value"]
+                .find(|r| r["metric"] == metric && r["side"] == side)
+                .unwrap_or_else(|| panic!("missing {metric} on {side}"))["value"]
                 .as_f64()
         };
-        let chroma = value("color_noise.baseline.chroma_rms").unwrap();
+        let chroma = value("color_noise.chroma_rms", "baseline").unwrap();
         assert!(chroma.abs() < 1e-12, "chroma_rms {chroma}");
-        let ratio = value("color_noise.baseline.chroma_to_luminance_ratio").unwrap();
+        let ratio = value("color_noise.chroma_to_luminance_ratio", "baseline").unwrap();
         assert!(ratio.abs() < 1e-12, "ratio {ratio}");
-        let luma = value("color_noise.baseline.luma_std").unwrap();
+        let luma = value("color_noise.luma_std", "baseline").unwrap();
         assert!(luma > 0.1, "a dither of amplitude 0.2 has luma_std {luma}");
         fs::remove_dir_all(path).unwrap();
     }
@@ -1476,21 +1585,21 @@ mod tests {
         )
         .unwrap();
         let rows = result["measurements"].as_array().unwrap();
-        let row = |metric: &str| {
+        let row = |metric: &str, side: &str| {
             rows.iter()
-                .find(|r| r["metric"] == metric)
-                .unwrap_or_else(|| panic!("missing {metric}"))
+                .find(|r| r["metric"] == metric && r["side"] == side)
+                .unwrap_or_else(|| panic!("missing {metric} on {side}"))
         };
-        let luma = row("color_noise.baseline.luma_std")["value"]
+        let luma = row("color_noise.luma_std", "baseline")["value"]
             .as_f64()
             .unwrap();
         assert!(luma.abs() < 1e-12, "luma_std {luma}");
-        let chroma = row("color_noise.baseline.chroma_rms")["value"]
+        let chroma = row("color_noise.chroma_rms", "baseline")["value"]
             .as_f64()
             .unwrap();
         assert!(chroma > 0.01, "chroma_rms {chroma}");
         // The ratio cannot exist when its denominator does not.
-        let ratio = row("color_noise.baseline.chroma_to_luminance_ratio");
+        let ratio = row("color_noise.chroma_to_luminance_ratio", "baseline");
         assert_eq!(ratio["reason"], "zero_variance");
         assert!(ratio["value"].is_null());
         fs::remove_dir_all(path).unwrap();
@@ -1520,7 +1629,7 @@ mod tests {
             .as_array()
             .unwrap()
             .iter()
-            .find(|r| r["metric"] == "color_noise.baseline.luma_std")
+            .find(|r| r["metric"] == "color_noise.luma_std" && r["side"] == "baseline")
             .unwrap()["value"]
             .as_f64()
             .unwrap();
@@ -1543,7 +1652,7 @@ mod tests {
             .as_array()
             .unwrap()
             .iter()
-            .find(|r| r["metric"] == "grain.flat_mean.baseline.correlation.RG")
+            .find(|r| r["metric"] == "grain.flat_mean.correlation.RG" && r["side"] == "baseline")
             .unwrap();
         assert_eq!(row["reason"], "zero_variance");
         assert!(

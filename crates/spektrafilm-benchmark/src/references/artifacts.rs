@@ -177,6 +177,9 @@ impl<'a> Comparison<'a> {
                 shared: common::Measurement {
                     region_id: region.into(),
                     family: None,
+                    // A distance to a reference is its own quantity, not a
+                    // source on which one quantity was measured.
+                    side: None,
                     metric: format!("{metric}.{side}"),
                     metric_version: METRIC_VERSION,
                     domain: domain.into(),
@@ -247,6 +250,7 @@ impl<'a> Comparison<'a> {
             shared: common::Measurement {
                 region_id: region.into(),
                 family: None,
+                side: None,
                 metric: full.clone(),
                 metric_version: METRIC_VERSION,
                 domain: domain.into(),
