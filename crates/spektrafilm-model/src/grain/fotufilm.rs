@@ -14,7 +14,9 @@ use std::sync::Arc;
 pub use tiles::{Bank, PitchTables, TileLevel};
 
 pub const PROVENANCE: &str = "Fotufilm 59d43471dbef45c85ae442e507a291fdebfb2ec5 CPU port; endpoint grain lookup; complete periodic rectangular aperture extension above 96um";
-pub type Cancellation<'a> = &'a dyn Fn() -> Result<(), String>;
+/// Cancellation is polled from Rayon workers during preparation and readout,
+/// so the callback must be safe to call concurrently.
+pub type Cancellation<'a> = &'a (dyn Fn() -> Result<(), String> + Sync);
 #[derive(Debug, Clone, PartialEq)]
 pub struct Curve {
     pub log_exposure: Vec<f64>,
