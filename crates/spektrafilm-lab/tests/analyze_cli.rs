@@ -3,6 +3,8 @@
 //! The product case it exists for: one render exists and its color science has
 //! to be quantified without inventing a second one to compare it against.
 
+#![cfg(feature = "precision-f64")]
+
 use serde_json::Value;
 use std::path::{Path, PathBuf};
 use std::process::Command;
