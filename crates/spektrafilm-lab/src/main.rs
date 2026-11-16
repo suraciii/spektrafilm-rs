@@ -17,6 +17,7 @@ mod images;
 #[command(
     name = "spektrafilm-lab",
     about = "SpektraFilm measurement instrument: color science of delivered images, at reference precision",
+    max_term_width = 100,
     version = concat!(env!("CARGO_PKG_VERSION"), " (research documents schema_version 1)"),
     after_help = "Quantify one delivered image with \n  \
                   spektrafilm-lab analyze --source IMAGE --declaration sRGB:encoded --out DIR\n\
@@ -39,14 +40,13 @@ enum Commands {
     Regions(GridArgs),
     /// Print the authoritative schema for an authored or retained document.
     Schema {
-        /// Document kind. `schema` prints a kind `validate` may not decide.
+        /// Document kind.
         #[arg(long, value_name = "KIND", value_parser = documents::schema_kinds())]
         kind: String,
     },
     /// Validate document shape and locally decidable dependencies.
     Validate {
-        /// Document kind. `validate` decides the kinds it has a rule for;
-        /// `schema` prints the rest.
+        /// Document kind.
         #[arg(long, value_name = "KIND", value_parser = documents::validatable_kinds())]
         kind: String,
         /// JSON document to validate.
@@ -78,10 +78,9 @@ struct GridArgs {
     /// Gap as X,Y.
     #[arg(long, value_name = "X,Y", value_parser = parse_pair)]
     gap: [u64; 2],
-    /// Coordinate space for generated rectangles. Required: a generator does
-    /// not decide which pixels a rectangle addresses. `render` is what the lab
-    /// measures; the other spaces address a stage capture and belong to
-    /// `spektrafilm-bench sample`.
+    /// Required: a generator does not decide which pixels a rectangle
+    /// addresses. `render` is what the lab measures; other spaces address a
+    /// stage capture and belong to `spektrafilm-bench sample`.
     #[arg(long, value_name = "SPACE")]
     space: String,
     /// What the generated regions are populations of. Required: a generator

@@ -571,3 +571,17 @@ fn an_unavailable_measurement_reports_no_sample_count() {
     let result = read(&out.join("analysis.json"));
     assert_eq!(result["kind"], "analysis");
 }
+
+/// A refused endpoint is a command result too, so a script learns where the
+/// endpoint lives from the same document it parses everywhere else.
+#[test]
+fn a_refused_endpoint_reaches_the_caller_as_a_record() {
+    let output = lab().args(["report", "--out", "x"]).output().unwrap();
+    assert_eq!(output.status.code(), Some(2));
+    let value: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(value["binary"], "spektrafilm-lab");
+    assert_eq!(value["endpoint"], "report");
+    assert_eq!(value["execution_status"], "failed");
+    let message = value["errors"][0]["message"].as_str().unwrap();
+    assert!(message.contains("spektrafilm-bench"), "{message}");
+}
