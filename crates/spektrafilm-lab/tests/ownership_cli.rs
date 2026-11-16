@@ -4,6 +4,8 @@
 //! that reaches the wrong binary must say which one owns it, because a caller
 //! reading a script's failure has no other way to find out.
 
+#![cfg(feature = "precision-f64")]
+
 use std::process::Command;
 
 fn lab() -> Command {

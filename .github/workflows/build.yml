@@ -217,7 +217,9 @@ jobs:
           export PKG_CONFIG_PATH="$RUNNER_TEMP/libraw-022/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
           cargo build --release -p spektrafilm-gui
           cargo build --release -p spektrafilm-cli --bin spektrafilm --bin decode_raw_gui
-          cargo build --release -p spektrafilm-cli --bin spektrafilm-f64 --bin spektrafilm-lab --features precision-f64
+          cargo build --release -p spektrafilm-cli --bin spektrafilm-f64 --features precision-f64
+          cargo build --release -p spektrafilm-lab --features precision-f64
+          cargo build --release -p spektrafilm-benchmark --bin spektrafilm-bench
           # The f64-only CLI and instrument acceptance runs in the parallel
           # linux-f64-acceptance job; release attachment waits for it.
 
@@ -297,6 +299,8 @@ jobs:
           export PKG_CONFIG_PATH="$RUNNER_TEMP/libraw-022/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
           LD_LIBRARY_PATH="$RUNNER_TEMP/libraw-022/lib:${LD_LIBRARY_PATH:-}" \
             cargo test -p spektrafilm-cli --features precision-f64 --no-fail-fast
+          LD_LIBRARY_PATH="$RUNNER_TEMP/libraw-022/lib:${LD_LIBRARY_PATH:-}" \
+            cargo test -p spektrafilm-lab --features precision-f64 --no-fail-fast
 
   linux-release-attach:
     name: Attach Linux package

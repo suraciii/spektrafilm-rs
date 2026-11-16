@@ -107,7 +107,7 @@ package_native_dependencies() {
     destinations+=("$frameworks/liblcms2.2.dylib")
     executables+=("$lcms_source")
     inherited_paths+=("")
-    for name in spektrafilm-gui spektrafilm spektrafilm-f64 decode_raw_gui spektrafilm-lab; do
+    for name in spektrafilm-gui spektrafilm spektrafilm-f64 decode_raw_gui spektrafilm-lab spektrafilm-bench; do
         source="$(canonical_file "$BUILD_TARGET_DIR/release/$name")" || fail "missing executable $name"
         sources+=("$source")
         destinations+=("$APP_BUNDLE/Contents/MacOS/$name")
@@ -278,10 +278,11 @@ cargo build --release -p spektrafilm-gui --target-dir "$BUILD_TARGET_DIR"
 cargo build --release -p spektrafilm-cli --bin spektrafilm --bin decode_raw_gui --target-dir "$BUILD_TARGET_DIR"
 cargo build --release -p spektrafilm-cli --bin spektrafilm-f64 --features precision-f64 --target-dir "$BUILD_TARGET_DIR"
 cargo build --release -p spektrafilm-lab --features precision-f64 --target-dir "$BUILD_TARGET_DIR"
+cargo build --release -p spektrafilm-benchmark --bin spektrafilm-bench --target-dir "$BUILD_TARGET_DIR"
 
 rm -rf "$DIST_DIR"
 mkdir -p "$APP_BUNDLE/Contents/MacOS" "$APP_BUNDLE/Contents/Resources"
-for executable in spektrafilm-gui spektrafilm spektrafilm-f64 decode_raw_gui spektrafilm-lab; do
+for executable in spektrafilm-gui spektrafilm spektrafilm-f64 decode_raw_gui spektrafilm-lab spektrafilm-bench; do
     cp "$BUILD_TARGET_DIR/release/$executable" "$APP_BUNDLE/Contents/MacOS/$executable"
     chmod +x "$APP_BUNDLE/Contents/MacOS/$executable"
 done
