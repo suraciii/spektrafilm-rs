@@ -1,4 +1,5 @@
 use super::*;
+use rayon::prelude::*;
 use spektrafilm_math::precision::{from_f64, to_f64};
 use std::sync::{Arc, LazyLock, Mutex};
 const N: usize = 256;
@@ -391,10 +392,20 @@ impl TileLevel {
         let qy = (y / n).floor();
         let rx = x - qx * n;
         let ry = y - qy * n;
-        self.inside(rx, ry)
-            + qx * self.inside(n, ry)
-            + qy * self.inside(rx, n)
-            + qx * qy * self.inside(n, n)
+        // The usual readout lies inside one period; skip the zero whole-period
+        // terms rather than evaluating their areas. The surviving terms keep
+        // the source's accumulation order.
+        let mut sum = self.inside(rx, ry);
+        if qx != 0.0 {
+            sum += qx * self.inside(n, ry);
+        }
+        if qy != 0.0 {
+            sum += qy * self.inside(rx, n);
+        }
+        if qx != 0.0 && qy != 0.0 {
+            sum += qx * qy * self.inside(n, n);
+        }
+        sum
     }
     /// Complete periodic texel-area light integral; arbitrary finite rectangles, no margin clip.
     pub fn rectangle_light(&self, x0: f64, x1: f64, y0: f64, y1: f64) -> f64 {
@@ -417,10 +428,16 @@ fn sharing(lag: usize) -> f64 {
 fn sigma48(light: &[f32], cancel: Cancellation<'_>) -> Result<f64, String> {
     let mean = light.iter().map(|x| *x as f64).sum::<f64>() / (N * N) as f64;
     let d: Vec<f64> = light.iter().map(|x| *x as f64 - mean).collect();
-    let mut power = 0.0;
-    for dy in -16_isize..=16 {
-        (cancel)()?;
-        for dx in -16_isize..=16 {
+    const REACH: usize = 16;
+    const LAGS: usize = REACH * 2 + 1;
+    let mut covariance = vec![0.0_f64; LAGS * LAGS];
+    covariance
+        .par_iter_mut()
+        .enumerate()
+        .try_for_each(|(index, value)| -> Result<(), String> {
+            (cancel)()?;
+            let dy = (index / LAGS) as isize - REACH as isize;
+            let dx = (index % LAGS) as isize - REACH as isize;
             let mut c = 0.0;
             for y in 0..N {
                 let other = wrap(y as isize + dy, N) * N;
@@ -428,65 +445,132 @@ fn sigma48(light: &[f32], cancel: Cancellation<'_>) -> Result<f64, String> {
                     c += d[y * N + x] * d[other + wrap(x as isize + dx, N)];
                 }
             }
-            power += c / (N * N) as f64 * sharing(dx.unsigned_abs()) * sharing(dy.unsigned_abs());
+            *value = c / (N * N) as f64;
+            Ok(())
+        })?;
+    // Accumulate the finished lags in the source's dy/dx order. Parallel
+    // workers own disjoint entries; only this serial pass updates `power`.
+    let mut power = 0.0;
+    for dy in -(REACH as isize)..=REACH as isize {
+        for dx in -(REACH as isize)..=REACH as isize {
+            let index = (dy + REACH as isize) as usize * LAGS + (dx + REACH as isize) as usize;
+            power += covariance[index] * sharing(dx.unsigned_abs()) * sharing(dy.unsigned_abs());
         }
     }
     Ok((power.max(0.0) / (std::f64::consts::PI * 24.0 * 24.0)).sqrt() / (mean * 2.302585093))
 }
+struct AnchoredRecord {
+    factor: f64,
+    measured: f64,
+    error: f64,
+    passes: usize,
+}
+
+fn anchor_record(
+    record: &mut population::Record,
+    r: usize,
+    target: f64,
+    gross: f64,
+    cancel: Cancellation<'_>,
+) -> Result<AnchoredRecord, String> {
+    let mut factor = 1.0_f64;
+    let mut slope = 0.5;
+    let mut last: Option<(f64, f64)> = None;
+    let mut latest: Option<f64> = None;
+    let mut passes = 0;
+    for pass in 0..8 {
+        (cancel)()?;
+        let measured = sigma48(&light(record, r, gross, cancel)?, cancel)?;
+        if !measured.is_finite() || measured <= 0.0 {
+            return Err(format!(
+                "Fotufilm sigma48 anchor record {r} has no positive measured variance"
+            ));
+        }
+        let miss = (target / measured).ln();
+        passes = pass + 1;
+        if miss.abs() < 0.02 {
+            latest = Some(measured);
+            break;
+        }
+        if let Some((previous_factor, old_sigma)) = last
+            && (factor / previous_factor).ln().abs() > 1e-3
+        {
+            slope =
+                ((measured / old_sigma).ln() / (factor / previous_factor).ln()).clamp(0.25, 1.5);
+        }
+        last = Some((factor, measured));
+        let step = (miss / slope).exp();
+        if !step.is_finite() || step <= 0.0 {
+            return Err(format!(
+                "Fotufilm sigma48 anchor record {r} cannot converge"
+            ));
+        }
+        for b in &mut record.sublayers {
+            b.crystals_per_mm2 /= step;
+            b.dye_per_cloud *= step;
+            b.shape();
+        }
+        factor *= step;
+        // The record changed after this measurement; a fresh render is needed
+        // unless a later pass measures the final state.
+        latest = None;
+    }
+    let measured = match latest {
+        Some(measured) => measured,
+        None => sigma48(&light(record, r, gross, cancel)?, cancel)?,
+    };
+    let error = (target / measured).ln();
+    if !error.is_finite() || error.abs() >= 0.02 {
+        return Err(format!(
+            "Fotufilm sigma48 anchor record {r} failed after eight passes: target {target:0.8}, measured {measured:0.8}, log error {error:0.6}"
+        ));
+    }
+    Ok(AnchoredRecord {
+        factor,
+        measured,
+        error,
+        passes,
+    })
+}
+
 pub(super) fn anchor(
     p: &mut Population,
     gross: [f64; 3],
     cancel: Cancellation<'_>,
 ) -> Result<(), String> {
     let active: Vec<usize> = if p.monochrome { vec![1] } else { vec![0, 1, 2] };
+    let targets = p.diagnostics.anchor_target;
+    let outcomes: Vec<(usize, Result<Option<AnchoredRecord>, String>)> = p
+        .records
+        .par_iter_mut()
+        .enumerate()
+        .map(|(r, record)| {
+            let outcome =
+                if !active.contains(&r) || targets[r] <= 0.0 || record.sublayers.is_empty() {
+                    Ok(None)
+                } else {
+                    anchor_record(record, r, targets[r], gross[r], cancel).map(Some)
+                };
+            (r, outcome)
+        })
+        .collect();
     let mut factors = [1.0_f64; 3];
+    let mut measured = [0.0_f64; 3];
+    let mut errors = [0.0_f64; 3];
+    let mut passes = [0usize; 3];
+    for (r, outcome) in outcomes {
+        if let Some(anchored) = outcome? {
+            factors[r] = anchored.factor;
+            measured[r] = anchored.measured;
+            errors[r] = anchored.error;
+            passes[r] = anchored.passes;
+        }
+    }
     for r in active {
-        let target = p.diagnostics.anchor_target[r];
-        if target <= 0.0 || p.records[r].sublayers.is_empty() {
-            continue;
-        }
-        let mut slope = 0.5;
-        let mut last: Option<(f64, f64)> = None;
-        for pass in 0..8 {
-            (cancel)()?;
-            let measured = sigma48(&light(&p.records[r], r, gross[r], cancel)?, cancel)?;
-            if !measured.is_finite() || measured <= 0.0 {
-                return Err(format!(
-                    "Fotufilm sigma48 anchor record {r} has no positive measured variance"
-                ));
-            }
-            let miss = (target / measured).ln();
-            p.diagnostics.anchor_passes[r] = pass + 1;
-            if miss.abs() < 0.02 {
-                break;
-            }
-            if let Some((factor, old_sigma)) = last
-                && (factors[r] / factor).ln().abs() > 1e-3
-            {
-                slope = ((measured / old_sigma).ln() / (factors[r] / factor).ln()).clamp(0.25, 1.5);
-            }
-            last = Some((factors[r], measured));
-            let step = (miss / slope).exp();
-            if !step.is_finite() || step <= 0.0 {
-                return Err(format!(
-                    "Fotufilm sigma48 anchor record {r} cannot converge"
-                ));
-            }
-            for b in &mut p.records[r].sublayers {
-                b.crystals_per_mm2 /= step;
-                b.dye_per_cloud *= step;
-                b.shape();
-            }
-            factors[r] *= step;
-        }
-        let final_sigma = sigma48(&light(&p.records[r], r, gross[r], cancel)?, cancel)?;
-        let error = (target / final_sigma).ln();
-        p.diagnostics.anchor_measured[r] = final_sigma;
-        p.diagnostics.anchor_log_error[r] = error;
-        if !error.is_finite() || error.abs() >= 0.02 {
-            return Err(format!(
-                "Fotufilm sigma48 anchor record {r} failed after eight passes: target {target:0.8}, measured {final_sigma:0.8}, log error {error:0.6}"
-            ));
+        if targets[r] > 0.0 && !p.records[r].sublayers.is_empty() {
+            p.diagnostics.anchor_measured[r] = measured[r];
+            p.diagnostics.anchor_log_error[r] = errors[r];
+            p.diagnostics.anchor_passes[r] = passes[r];
         }
     }
     if p.monochrome {
@@ -516,12 +600,17 @@ pub(super) fn build_bank(p: &Population, cancel: Cancellation<'_>) -> Result<Ban
         if p.records[r].sublayers.is_empty() {
             continue;
         }
-        for k in 0..17 {
-            (cancel)()?;
-            let record = &p.records[r];
-            let gross = record.d_min + (record.d_max - record.d_min) * k as f64 / 16.0;
-            levels[r].push(TileLevel::from_light(&light(record, r, gross, cancel)?)?);
-        }
+        let record = &p.records[r];
+        // Levels share no mutable state. Build one record's seventeen levels in
+        // parallel, retaining the level order and each level's arithmetic.
+        levels[r] = (0..17)
+            .into_par_iter()
+            .map(|k| {
+                (cancel)()?;
+                let gross = record.d_min + (record.d_max - record.d_min) * k as f64 / 16.0;
+                TileLevel::from_light(&light(record, r, gross, cancel)?)
+            })
+            .collect::<Result<Vec<_>, String>>()?;
     }
     Ok(Bank {
         levels,
@@ -586,23 +675,26 @@ impl Bank {
                 continue;
             }
             let mut fields = vec![vec![0.0_f64; 128 * 128]; 17];
-            for k in 0..17 {
-                (cancel)()?;
-                for y in 0..128 {
+            fields
+                .par_iter_mut()
+                .enumerate()
+                .try_for_each(|(k, field)| -> Result<(), String> {
                     (cancel)()?;
-                    for x in 0..128 {
-                        let px = (x * 7919 % 4096) as f64 * footprint_texels[0];
-                        let py = (y * 104729 % 4096) as f64 * footprint_texels[1];
-                        let rect = [px, px + footprint_texels[0], py, py + footprint_texels[1]];
-                        let bx = ((px + footprint_texels[0] / 2.0) / 128.0).floor() as i64;
-                        let by = ((py + footprint_texels[1] / 2.0) / 128.0).floor() as i64;
-                        fields[k][y * 128 + x] =
-                            -block_light(&self.levels[r][k], rect, bx, by, 0x5A3F1E1D, r)
-                                .max(1e-9)
-                                .log10();
+                    for y in 0..128 {
+                        for x in 0..128 {
+                            let px = (x * 7919 % 4096) as f64 * footprint_texels[0];
+                            let py = (y * 104729 % 4096) as f64 * footprint_texels[1];
+                            let rect = [px, px + footprint_texels[0], py, py + footprint_texels[1]];
+                            let bx = ((px + footprint_texels[0] / 2.0) / 128.0).floor() as i64;
+                            let by = ((py + footprint_texels[1] / 2.0) / 128.0).floor() as i64;
+                            field[y * 128 + x] =
+                                -block_light(&self.levels[r][k], rect, bx, by, 0x5A3F1E1D, r)
+                                    .max(1e-9)
+                                    .log10();
+                        }
                     }
-                }
-            }
+                    Ok(())
+                })?;
             let means: Vec<f64> = fields
                 .iter()
                 .map(|f| f.iter().sum::<f64>() / f.len() as f64)
@@ -734,42 +826,53 @@ impl Bank {
         let tables = self.pitch_tables(footprint, cancel)?;
         let own = look.color.clamp(0.0, 1.0);
         let shared = (3.0 - 2.0 * own * own).sqrt() - own;
-        let mut out = input.clone();
-        for y in 0..input.height {
-            (cancel)()?;
-            for x in 0..input.width {
-                let i = (y as usize * input.width as usize + x as usize) * 3;
-                let center = [
-                    origin[0] + (x as f64 + 0.5) * pitch[0],
-                    origin[1] + (y as f64 + 0.5) * pitch[1],
-                ];
-                let mut grain = [0.0; 3];
-                for r in 0..3 {
-                    if self.monochrome && r != 1 {
-                        continue;
-                    }
-                    grain[r] = self.residual(
-                        r,
-                        to_f64(input.data[i + r]),
-                        center,
-                        footprint,
-                        seed as u32,
-                        &tables,
-                    ) * look.amount
-                        * look.layers[r]
-                        / size;
-                }
-                let mean = grain.iter().sum::<f64>() / 3.0;
-                for r in 0..3 {
-                    let d = if self.monochrome {
-                        grain[1]
-                    } else {
-                        own * grain[r] + shared * mean
-                    };
-                    out.data[i + r] = from_f64(to_f64(input.data[i + r]) + d);
-                }
-            }
+        let width = input.width as usize;
+        let height = input.height as usize;
+        let row_len = width * 3;
+        if width == 0 || height == 0 {
+            return Ok(input.clone());
         }
+        let mut out = input.clone();
+        let source = &input.data;
+        out.data.par_chunks_mut(row_len).enumerate().try_for_each(
+            |(y, row)| -> Result<(), String> {
+                (cancel)()?;
+                for x in 0..width {
+                    let src = (y * width + x) * 3;
+                    let dst = x * 3;
+                    let center = [
+                        origin[0] + (x as f64 + 0.5) * pitch[0],
+                        origin[1] + (y as f64 + 0.5) * pitch[1],
+                    ];
+                    let mut grain = [0.0; 3];
+                    for r in 0..3 {
+                        if self.monochrome && r != 1 {
+                            continue;
+                        }
+                        grain[r] = self.residual(
+                            r,
+                            to_f64(source[src + r]),
+                            center,
+                            footprint,
+                            seed as u32,
+                            &tables,
+                        ) * look.amount
+                            * look.layers[r]
+                            / size;
+                    }
+                    let mean = grain.iter().sum::<f64>() / 3.0;
+                    for r in 0..3 {
+                        let d = if self.monochrome {
+                            grain[1]
+                        } else {
+                            own * grain[r] + shared * mean
+                        };
+                        row[dst + r] = from_f64(to_f64(source[src + r]) + d);
+                    }
+                }
+                Ok(())
+            },
+        )?;
         Ok(out)
     }
 }
@@ -793,6 +896,30 @@ mod tests {
         assert!(
             (tile.rectangle_light(-17.25, -17.25 + 768.0, 43.5, 43.5 + 512.0) - mean).abs() < 1e-7
         );
+    }
+    #[test]
+    fn periodic_sum_skips_only_zero_whole_period_terms() {
+        let light: Vec<f32> = (0..N * N).map(|i| 0.07 + (i % 53) as f32 * 0.011).collect();
+        let tile = TileLevel::from_light(&light).unwrap();
+        let n = N as f64;
+        for (x, y) in [
+            (17.25, 43.5),
+            (257.25, 43.5),
+            (17.25, 260.75),
+            (-255.5, -3.25),
+            (-257.25, 258.5),
+            (768.0, 512.0),
+        ] {
+            let qx = (x / n).floor();
+            let qy = (y / n).floor();
+            let rx = x - qx * n;
+            let ry = y - qy * n;
+            let expected = tile.inside(rx, ry)
+                + qx * tile.inside(n, ry)
+                + qy * tile.inside(rx, n)
+                + qx * qy * tile.inside(n, n);
+            assert_eq!(tile.periodic_sum(x, y), expected);
+        }
     }
     #[test]
     fn periodic_aperture_matches_direct_area() {
