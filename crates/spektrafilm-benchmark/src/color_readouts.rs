@@ -270,8 +270,8 @@ fn unavailable(region_id: &str, estimator: Estimator, reason: &str) -> Value {
 }
 
 /// Both estimator records for a region that cannot produce coordinates, for
-/// example because the colour family was not selected or the reference scope
-/// does not admit a colour population.
+/// example because the color family was not selected or the reference scope
+/// does not admit a color population.
 pub(crate) fn unavailable_pair(region_id: &str, reason: &str) -> Vec<Value> {
     Estimator::ALL
         .into_iter()

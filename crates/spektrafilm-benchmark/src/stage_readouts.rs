@@ -5,7 +5,7 @@
 //! retained f64 buffers into per-region channel means, minima and maxima in
 //! the producer's own domain: record exposure in log10, record density in
 //! optical density, and the two RGB boundaries in their declared relative
-//! units. Nothing here converts to a display colour space, permutes the CMY
+//! units. Nothing here converts to a display color space, permutes the CMY
 //! record axis, or relabels a boundary: every record carries the domain,
 //! units, channel order and host precision the producer declared.
 //!
@@ -32,7 +32,7 @@ use std::io::{BufReader, Read};
 use std::path::{Path, PathBuf};
 
 /// Stable estimator identity: an arithmetic mean of the native channel values
-/// in the producer's own domain, never a colour-space conversion.
+/// in the producer's own domain, never a color-space conversion.
 const ESTIMATOR: &str = "native_channel_arithmetic_mean";
 /// Every captured stage buffer is stored as little-endian f64 samples.
 const STORAGE_DTYPE: &str = "f64";

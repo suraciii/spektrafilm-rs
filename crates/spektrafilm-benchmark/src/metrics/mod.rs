@@ -20,6 +20,8 @@ pub use mask::geometry_mask;
 pub use math::{count, luminance, mean, median, number, quantile, selected, spelling};
 
 pub const METRIC_VERSION: &str = "spektrafilm-appearance-spatial-v3";
+/// The transform a retained record names. It is a serialized identity, so its
+/// spelling is frozen: changing it would change every published digest.
 pub const COLOR_TRANSFORM: &str = "colour-science-CAT02-srgb-D65-2deg-v1";
 /// Reduce a retained map to one sample per `scale × scale` block.
 ///

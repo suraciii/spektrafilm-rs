@@ -167,7 +167,7 @@ impl Evidence {
                 domain: domain.into(),
                 units: units.into(),
                 estimator: estimator.into(),
-                sample_count: count,
+                sample_count: valid.then_some(count),
                 artifact_refs: refs.to_vec(),
                 availability: if valid {
                     Availability::Available

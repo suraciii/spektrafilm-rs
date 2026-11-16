@@ -533,3 +533,41 @@ fn the_document_vocabulary_has_one_owner() {
     assert!(schema_list.contains("preflight"), "{schema_list}");
     assert!(!validate_list.contains("preflight"), "{validate_list}");
 }
+
+/// A measurement that did not run has no count to report. Writing zero would
+/// state a fact about the population that the code never established.
+#[test]
+fn an_unavailable_measurement_reports_no_sample_count() {
+    let temp = tempfile::tempdir().unwrap();
+    let source = temp.path().join("v1").join("field.png");
+    png(&source);
+    let out = temp.path().join("analysis");
+    assert!(
+        lab()
+            .args(["analyze", "--source"])
+            .arg(&source)
+            .args(["--declaration", "sRGB:encoded", "--out"])
+            .arg(&out)
+            .output()
+            .unwrap()
+            .status
+            .success()
+    );
+    let record = read(&out.join("analysis.json"));
+    let rows = record["cases"][0]["measurements"].as_array().unwrap();
+    let unavailable: Vec<_> = rows
+        .iter()
+        .filter(|row| row["availability"] != "available")
+        .collect();
+    assert!(!unavailable.is_empty(), "the record states a refusal");
+    for row in unavailable {
+        assert!(
+            row.get("sample_count").is_none(),
+            "a refusal has no sample count: {row}"
+        );
+    }
+    // The command result counts the regions the caller declared; the implicit
+    // whole image is an identity, not a region anyone wrote.
+    let result = read(&out.join("analysis.json"));
+    assert_eq!(result["kind"], "analysis");
+}

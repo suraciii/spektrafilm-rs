@@ -220,6 +220,9 @@ fn validate(
     Ok(result)
 }
 
+/// The endpoints this binary owns, in help order.
+const OWNED: &[&str] = &["analyze", "compare", "regions", "schema", "validate"];
+
 /// Endpoints that belong to the research renderer.
 fn moved(name: &str) -> Option<String> {
     const MOVED: &[&str] = &[
@@ -336,7 +339,10 @@ fn run() -> i32 {
                  `compare runs`, `compare readings`, and `compare pairs` belong to \
                  spektrafilm-bench compare ..."
                 .to_owned(),
-            None => format!("unknown endpoint `{name}`"),
+            None => format!(
+                "unknown endpoint `{name}`; this binary owns {}",
+                OWNED.join(", ")
+            ),
         };
         // A refused endpoint names its owner and reaches the caller in the
         // record shape, so a script learns where the endpoint lives from the

@@ -50,7 +50,7 @@ impl Profile {
 
 /// Two sources, compared for appearance.
 const APPEARANCE: &[&str] = &["numeric", "color", "tone", "flip"];
-/// Two sources, compared for colour and tone only.
+/// Two sources, compared for color and tone only.
 const COLOR_TONE: &[&str] = &["numeric", "color", "tone"];
 /// One source measured on its own. `color` and `flip` are absent because both
 /// are differences between two sources.

@@ -433,7 +433,11 @@ pub struct Measurement {
     pub domain: String,
     pub units: String,
     pub estimator: String,
-    pub sample_count: usize,
+    /// How many samples the quantity was computed over. A measurement that did
+    /// not run has no count to report, so the field is absent rather than zero:
+    /// law 4 forbids writing a value for a quantity that does not exist.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sample_count: Option<usize>,
     pub artifact_refs: Vec<String>,
     pub availability: Availability,
     #[serde(skip_serializing_if = "Option::is_none")]

@@ -182,7 +182,7 @@ impl<'a> Comparison<'a> {
                     domain: domain.into(),
                     units: units.into(),
                     estimator: estimator.into(),
-                    sample_count: count,
+                    sample_count: available.then_some(count),
                     artifact_refs: refs.to_vec(),
                     availability: if available {
                         Availability::Available
@@ -252,7 +252,7 @@ impl<'a> Comparison<'a> {
                 domain: domain.into(),
                 units: units.into(),
                 estimator: estimator.into(),
-                sample_count: count,
+                sample_count: Some(count),
                 artifact_refs: refs.to_vec(),
                 availability: if available {
                     Availability::Available

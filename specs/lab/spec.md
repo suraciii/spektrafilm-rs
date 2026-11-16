@@ -399,10 +399,12 @@ Every record MUST carry:
 - each source's name, declared color space and transfer state, dimensions per
   case, and the sha256 of every file it read;
 - the materialized protocol and its digest, so the numbers are reproducible
-  from the record alone;
+  from the record alone; the protocol identity is the analysis profile identity,
+  so the record names the profile once;
 - the regions document and its role per region;
-- for every measurement: its domain, unit, region, estimator, and sample
-  count, beside the value;
+- for every measurement: its family, domain, unit, region, estimator, and sample
+  count, beside the value. A measurement that did not run states no sample
+  count, because a refusal has no count to report;
 - every unavailable value with its stable reason;
 - the identity of the comparison as a digest over its inputs and its protocol.
 

@@ -418,7 +418,7 @@ pub fn load_image_with(source: &Value, options: DecodeOptions) -> Result<ImageDa
             other => {
                 return Err(err(
                     "unsupported_image_layout",
-                    format!("Unsupported TIFF colour type: {other:?}"),
+                    format!("Unsupported TIFF color type: {other:?}"),
                 ));
             }
         };
@@ -733,7 +733,7 @@ pub fn display_rgb(image: &ImageData) -> Result<Vec<[f64; 3]>> {
     {
         return Err(err(
             "unsupported_color_transform",
-            format!("Unknown colour space: {}", image.color_space),
+            format!("Unknown color space: {}", image.color_space),
         ));
     }
     if image.transfer != "linear" && image.transfer != "srgb" && image.transfer != "encoded" {
@@ -757,7 +757,7 @@ pub fn display_rgb(image: &ImageData) -> Result<Vec<[f64; 3]>> {
             l
         } else {
             to_srgb_linear(l, &image.color_space)
-                .ok_or_else(|| err("unsupported_color_transform", "Unknown colour space"))?
+                .ok_or_else(|| err("unsupported_color_transform", "Unknown color space"))?
         };
         o.push([srgb_encode(q[0]), srgb_encode(q[1]), srgb_encode(q[2])])
     }

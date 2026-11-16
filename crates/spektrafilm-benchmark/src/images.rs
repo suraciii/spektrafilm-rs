@@ -437,7 +437,6 @@ fn compare_impl(request: &Request, out: &Path) -> Result<(Value, i32)> {
         "baseline": baseline,
         "candidate": candidate,
         "protocol": request.protocol,
-        "analysis": {"id": request.protocol["id"]},
         "map_scale": request.map_scale,
         "protocol_digest": digest,
         "selection": {"case_ids": case_ids, "full_suite": true},
@@ -464,7 +463,7 @@ fn compare_impl(request: &Request, out: &Path) -> Result<(Value, i32)> {
         "comparison_id": manifest["id"],
         "protocol_digest": manifest["protocol_digest"],
         "cases": request.pairs.len(),
-        "regions": request.regions.len() + 1,
+        "regions": request.regions.len(),
     });
     result["summary"] = manifest["summary"].clone();
     Ok((result, 0))
@@ -628,7 +627,6 @@ fn analyze_impl(request: &AnalysisRequest, out: &Path) -> Result<(Value, i32)> {
         "execution_status": "completed",
         "source": source,
         "protocol": request.protocol,
-        "analysis": {"id": request.protocol["id"]},
         "protocol_digest": digest,
         "selection": {"case_ids": case_ids, "full_suite": true},
         "cases": cases,
@@ -649,7 +647,7 @@ fn analyze_impl(request: &AnalysisRequest, out: &Path) -> Result<(Value, i32)> {
         "analysis_id": manifest["id"],
         "protocol_digest": manifest["protocol_digest"],
         "cases": request.files.len(),
-        "regions": request.regions.len() + 1,
+        "regions": request.regions.len(),
     });
     result["summary"] = manifest["summary"].clone();
     Ok((result, 0))

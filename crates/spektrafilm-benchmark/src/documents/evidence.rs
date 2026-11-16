@@ -17,7 +17,10 @@ pub struct MeasurementRecord {
     pub domain: String,
     pub units: String,
     pub estimator: String,
-    pub sample_count: u64,
+    /// Absent when the measurement did not run: a refusal has no count, and law
+    /// 4 forbids writing one for a quantity that does not exist.
+    #[serde(default)]
+    pub sample_count: Option<u64>,
     pub availability: Availability,
     /// Absent for a delivered image, which is one realisation and has no seed
     /// population. A rendered run always states one.
@@ -789,13 +792,11 @@ pub fn validate_generated_document(kind: &str, v: &Value, root: &Path) -> Result
                 "domain",
                 "units",
                 "estimator",
-                "sample_count",
                 "availability",
                 "artifact_refs",
             ]
             .iter()
             .any(|k| !r.contains_key(*k))
-                || row["sample_count"].as_u64().is_none()
                 // A delivered image has no seed population; a rendered run
                 // always states one.
                 || (r.contains_key("seed_population")

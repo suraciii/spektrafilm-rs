@@ -122,7 +122,7 @@ fn declaration(value: &str) -> Result<(String, bool)> {
     if space.is_empty() {
         return Err(Error::new(
             "argument_syntax",
-            "--declaration must name a colour space",
+            "--declaration must name a color space",
         ));
     }
     Ok((space.to_owned(), decoding))
