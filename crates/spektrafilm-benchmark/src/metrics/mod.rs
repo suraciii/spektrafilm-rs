@@ -306,8 +306,8 @@ fn compare_inner(
         let execution = (|| -> Result<()> {
             if !seen.insert(region) {
                 return Err(err(
-                    "invalid_region",
-                    "Duplicate or reserved full_image region",
+                    "duplicate_region_identity",
+                    format!("Two regions share the identity {region}"),
                 ));
             }
             let mask = if region == "full_image" {

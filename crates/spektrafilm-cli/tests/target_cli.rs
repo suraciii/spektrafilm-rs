@@ -75,10 +75,13 @@ fn target_pins_dependencies_and_refuses_existing_destinations() {
     assert_eq!(refused["errors"][0]["code"], "destination_exists");
     let message = refused["errors"][0]["message"].as_str().unwrap();
     assert!(message.contains(out.to_str().unwrap()));
+    let remedy = refused["errors"][0]["remedy"].as_str().unwrap();
     assert!(
-        message.contains("remove") && message.contains("choose") && message.contains("destination")
+        remedy.contains("choose") && remedy.contains("remove"),
+        "{remedy}"
     );
-    assert!(String::from_utf8_lossy(&repeat.stderr).contains(message));
+    let stderr = String::from_utf8_lossy(&repeat.stderr);
+    assert!(stderr.contains(message) && stderr.contains(remedy));
     assert_eq!(fs::read(&out).unwrap(), before);
     #[cfg(unix)]
     {

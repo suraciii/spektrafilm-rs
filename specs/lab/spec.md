@@ -58,6 +58,9 @@ the lab and receives one structured comparison.
 6. A comparison reports change. It ranks no candidate, selects no winner, and
    asserts no accuracy.
 7. Independence is a build property. The lab binary links no renderer.
+8. A refusal claims nothing. An input the lab cannot measure is refused before
+   it creates a destination, and a refusal says what is wrong before it says
+   what to do about it.
 
 ## Scope
 
@@ -480,6 +483,10 @@ reason, which is the noise floor of the pipeline that produced the files.
     protocol it materialized, so a third party recomputes the same identity.
 20. `spektrafilm-f64 compare runs ...` fails with `argument_syntax` and names
     the owning binary.
+21. A source that does not exist, a container the lab does not measure, and a
+    repeated `--roi` identity each fail without creating the destination.
+22. A refusal states its cause in `message` and its remedy in `remedy`; the
+    human line and the JSON record carry both.
 
 ## Independence
 

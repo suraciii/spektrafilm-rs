@@ -292,3 +292,135 @@ fn two_names_that_reduce_to_one_identity_are_refused() {
     let error = String::from_utf8_lossy(&output.stderr);
     assert!(error.contains("duplicate_case_identity"), "{error}");
 }
+
+/// A refusal claims nothing: the destination the caller named is still free
+/// afterwards, so the same invocation can be retried once the input is fixed.
+#[test]
+fn a_refused_input_leaves_the_destination_unclaimed() {
+    let temp = tempfile::tempdir().unwrap();
+    let out = temp.path().join("analysis");
+    let missing = temp.path().join("v1").join("absent.png");
+    let output = lab()
+        .args(["analyze", "--source"])
+        .arg(&missing)
+        .args(["--declaration", "sRGB:encoded", "--out"])
+        .arg(&out)
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(!out.exists(), "a refusal must not claim a destination");
+
+    // The same path works once the input exists, which is the point.
+    png(&missing);
+    assert!(
+        lab()
+            .args(["analyze", "--source"])
+            .arg(&missing)
+            .args(["--declaration", "sRGB:encoded", "--out"])
+            .arg(&out)
+            .output()
+            .unwrap()
+            .status
+            .success()
+    );
+}
+
+/// A container the instrument does not measure is refused by name, and no
+/// destination is created for it.
+#[test]
+fn an_unmeasured_container_is_refused_by_name_and_claims_nothing() {
+    let temp = tempfile::tempdir().unwrap();
+    let source = temp.path().join("v1").join("field.png");
+    png(&source);
+    std::fs::write(source.parent().unwrap().join("notes.txt"), b"not an image").unwrap();
+    let out = temp.path().join("analysis");
+    let output = lab()
+        .args(["analyze", "--source"])
+        .arg(source.parent().unwrap())
+        .args(["--declaration", "sRGB:encoded", "--out"])
+        .arg(&out)
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(!out.exists(), "a refusal must not claim a destination");
+    let error = String::from_utf8_lossy(&output.stderr).to_string();
+    assert!(error.contains("notes.txt"), "{error}");
+    // The cause is the cause; the remedy is its own line.
+    assert!(
+        error.contains("not a container this instrument measures"),
+        "{error}"
+    );
+}
+
+/// A repeated region identity is refused where it is declared, not discovered
+/// later as a measurement failure.
+#[test]
+fn a_repeated_region_identity_is_refused_before_measuring() {
+    let temp = tempfile::tempdir().unwrap();
+    let source = temp.path().join("v1").join("field.png");
+    png(&source);
+    let out = temp.path().join("comparison");
+    let output = lab()
+        .args(["compare", "--baseline"])
+        .arg(&source)
+        .arg("--candidate")
+        .arg(&source)
+        .args([
+            "--declaration",
+            "sRGB:encoded",
+            "--roi",
+            "field=0,0,16,16:flat_field",
+            "--roi",
+            "field=16,16,16,16:texture",
+            "--out",
+        ])
+        .arg(&out)
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(!out.exists());
+    let result: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(result["errors"][0]["code"], "duplicate_region_identity");
+}
+
+/// A refusal a caller must act on states the cause and the remedy apart, and
+/// both reach the human line and the machine record.
+#[test]
+fn a_refusal_states_its_cause_and_its_remedy_apart() {
+    let temp = tempfile::tempdir().unwrap();
+    let source = temp.path().join("v1").join("field.png");
+    png(&source);
+    let out = temp.path().join("analysis");
+    assert!(
+        lab()
+            .args(["analyze", "--source"])
+            .arg(&source)
+            .args(["--declaration", "sRGB:encoded", "--out"])
+            .arg(&out)
+            .output()
+            .unwrap()
+            .status
+            .success()
+    );
+    let repeat = lab()
+        .args(["analyze", "--source"])
+        .arg(&source)
+        .args(["--declaration", "sRGB:encoded", "--out"])
+        .arg(&out)
+        .output()
+        .unwrap();
+    assert_eq!(repeat.status.code(), Some(1));
+    let result: Value = serde_json::from_slice(&repeat.stdout).unwrap();
+    let error = &result["errors"][0];
+    assert_eq!(error["code"], "destination_exists");
+    let message = error["message"].as_str().unwrap();
+    let remedy = error["remedy"].as_str().unwrap();
+    assert!(message.contains("already exists"), "{message}");
+    assert!(
+        !message.contains("choose"),
+        "the cause must not carry the remedy"
+    );
+    assert!(remedy.contains("choose"), "{remedy}");
+    let stderr = String::from_utf8_lossy(&repeat.stderr);
+    assert!(stderr.contains(message) && stderr.contains(remedy));
+}

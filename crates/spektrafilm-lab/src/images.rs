@@ -139,6 +139,12 @@ fn declared_regions(values: &[String]) -> Result<Vec<Region>> {
             )
         })?;
         analysis::validate_identity(id)?;
+        if regions.iter().any(|region: &Region| region.id == id) {
+            return Err(Error::new(
+                "duplicate_region_identity",
+                format!("--roi declares {id} twice"),
+            ));
+        }
         let (numbers, role) = match rest.split_once(':') {
             Some((numbers, role)) => (numbers, role),
             None => (rest, "other"),

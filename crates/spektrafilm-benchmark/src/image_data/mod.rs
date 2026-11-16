@@ -176,6 +176,35 @@ fn reject_lossy(container: Container, path: &Path) -> Result<()> {
 /// type whose normalization it cannot state is rejected rather than guessed,
 /// and a lossy container is refused because its samples are a codec's
 /// approximation rather than the measured signal.
+/// Decide whether this file is one the instrument measures, without decoding it.
+///
+/// A caller that claims a destination runs this first, so a refusal names a file
+/// and leaves no directory behind. Decoding the pixels can wait for the
+/// destination; classifying a container does not need one.
+pub fn classify_delivered(path: &Path) -> Result<()> {
+    if !path.is_file() {
+        return Err(crate::common::Error::new(
+            "invalid_path",
+            format!("{} is not a file", path.display()),
+        )
+        .at(path.display().to_string()));
+    }
+    let container = sniff(path)?;
+    reject_lossy(container, path)?;
+    match container {
+        Container::Png | Container::Tiff | Container::Exr => Ok(()),
+        Container::Jpeg | Container::WebPhoto => unreachable!("rejected above"),
+        Container::Npy | Container::Declared => Err(crate::common::Error::new(
+            "unsupported_image_encoding",
+            format!(
+                "{} is not a container this instrument measures; measured containers are PNG, TIFF, and EXR",
+                path.display()
+            ),
+        )
+        .at(path.display().to_string())),
+    }
+}
+
 pub fn decode_raster(path: &Path, color_space: &str, cctf_decoding: bool) -> Result<ImageData> {
     if !path.is_file() {
         return Err(crate::common::Error::new(
@@ -537,8 +566,12 @@ pub fn load_image_with(source: &Value, options: DecodeOptions) -> Result<ImageDa
         if kind != "png" {
             return Err(err(
                 "unsupported_image_encoding",
-                "Supported containers are NPY, a declared raw master, TIFF, PNG, and EXR",
-            ));
+                format!(
+                    "{} is not a container this instrument measures; measured containers are PNG, TIFF, and EXR",
+                    path.display()
+                ),
+            )
+            .at(path.display().to_string()));
         }
         // Resolve the decoder from the bytes, not from the name: the sniff
         // already decided this file is a PNG whatever it is called.

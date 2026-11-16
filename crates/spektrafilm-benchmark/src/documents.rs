@@ -703,7 +703,7 @@ pub fn validate_local_dependencies(kind: &str, value: &Value, document: &Path) -
             unique(regions, "id")?;
             for region in regions {
                 if region["id"] == "full_image" {
-                    return Err(err("reserved_region", "full_image is reserved"));
+                    return Err(err("invalid_region_identity", "full_image is reserved"));
                 }
                 geometry(&region["geometry"], document)?;
             }
@@ -957,7 +957,7 @@ pub fn validate_suite(v: &Value, path: &Path) -> Result<()> {
         unique(c["regions"].as_array().unwrap(), "id")?;
         for r in &parsed.regions {
             if r.id == "full_image" {
-                return Err(err("reserved_region", "full_image is reserved"));
+                return Err(err("invalid_region_identity", "full_image is reserved"));
             }
             consumer_geometry(&r.geometry)?;
             geometry(&r.geometry, path)?

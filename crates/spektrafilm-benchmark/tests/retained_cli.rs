@@ -482,11 +482,17 @@ fn undecodable_master_reports_failed_progress_and_retains_incomplete_destination
     assert_eq!(output.status.code(), Some(1));
     let result: Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(result["execution_status"], "failed");
+    let error = &result["errors"][0];
     assert!(
-        result["errors"][0]["message"]
+        error["message"]
             .as_str()
             .unwrap()
-            .contains("incomplete")
+            .contains("partial evidence"),
+        "{error}"
+    );
+    assert!(
+        error["remedy"].as_str().unwrap().contains("remove"),
+        "{error}"
     );
     assert!(out.is_dir());
     assert!(!out.join("comparison.json").exists());

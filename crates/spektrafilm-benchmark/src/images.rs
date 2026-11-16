@@ -186,11 +186,28 @@ pub fn compare(request: &Request, out: &Path) -> Result<(Value, i32)> {
     }
 }
 
+/// Refuse an input this instrument cannot measure before claiming a destination.
+///
+/// Nothing is published yet at this point, so the refusal must not leave a
+/// directory that the caller then has to remove before retrying the same path.
+fn classify_request<'a>(paths: impl Iterator<Item = &'a std::path::PathBuf>) -> Result<()> {
+    for path in paths {
+        image_data::classify_delivered(path)?;
+    }
+    Ok(())
+}
+
 fn compare_impl(request: &Request, out: &Path) -> Result<(Value, i32)> {
     if request.pairs.is_empty() {
         return Err(Error::new("missing_image", "No image pair declared"));
     }
     validate_regions(&request.regions)?;
+    classify_request(
+        request
+            .pairs
+            .iter()
+            .flat_map(|pair| [&pair.baseline, &pair.candidate]),
+    )?;
     let root = documents::normalize_path(out)?;
     common::create_destination(&root)?;
     let mut evidence = Evidence::new(&root);
@@ -485,6 +502,7 @@ fn analyze_impl(request: &AnalysisRequest, out: &Path) -> Result<(Value, i32)> {
         return Err(Error::new("missing_image", "No image declared"));
     }
     validate_regions(&request.regions)?;
+    classify_request(request.files.iter().map(|file| &file.baseline))?;
     let root = documents::normalize_path(out)?;
     common::create_destination(&root)?;
     let mut evidence = Evidence::new(&root);

@@ -146,7 +146,7 @@ pub fn validate_role(role: &str) -> Result<()> {
         Ok(())
     } else {
         Err(Error::new(
-            "invalid_region",
+            "invalid_region_role",
             format!(
                 "Unknown region role: {role}; available: {}",
                 ROLES.join(", ")
@@ -159,7 +159,7 @@ pub fn validate_role(role: &str) -> Result<()> {
 pub fn validate_identity(id: &str) -> Result<()> {
     if id == "full_image" {
         return Err(Error::new(
-            "invalid_region",
+            "invalid_region_identity",
             "full_image is reserved for the complete image",
         ));
     }
@@ -174,7 +174,7 @@ pub fn validate_identity(id: &str) -> Result<()> {
         Ok(())
     } else {
         Err(Error::new(
-            "invalid_region",
+            "invalid_region_identity",
             format!("Region identity does not match ^[A-Za-z0-9][A-Za-z0-9_.-]*$: {id}"),
         ))
     }
