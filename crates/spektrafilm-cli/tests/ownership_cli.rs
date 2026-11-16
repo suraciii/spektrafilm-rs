@@ -3,6 +3,8 @@
 //! This build carries both the renderer's commands and the research surface it
 //! absorbed, so it is the one most likely to name the wrong owner.
 
+#![cfg(feature = "precision-f64")]
+
 use std::process::Command;
 
 fn f64_binary() -> Command {

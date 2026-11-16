@@ -62,10 +62,16 @@ def _write_provenance(evidence, package_root, binaries, observations):
 
 def _benchmark_smoke(exporter, data, evidence, environment):
     suffix = exporter.suffix
-    binaries = {'instrument': exporter.with_name('spektrafilm-lab' + suffix)}
+    binaries = {
+        'instrument': exporter.with_name('spektrafilm-lab' + suffix),
+        'bench': exporter.with_name('spektrafilm-bench' + suffix),
+    }
     instrument = binaries['instrument']
+    bench = binaries['bench']
     assert instrument.is_file(), f'Installed instrument missing: {instrument}'
-    # The research command surface ships in the f64 build the exporter is.
+    assert bench.is_file(), f'Installed benchmark missing: {bench}'
+    # The research command surface ships in the f64 build the exporter is;
+    # evaluation commands live in the benchmark binary beside it.
     assert exporter.is_file(), f'Installed f64 build missing: {exporter}'
     root = evidence / 'benchmark'
     root.mkdir()
@@ -100,7 +106,7 @@ def _benchmark_smoke(exporter, data, evidence, environment):
     invoke('validate', '--kind', 'run', '--file', run / 'run.json')
     comparison = root / 'comparison'
     invoke('compare', 'runs', '--baseline', run, '--candidate', run,
-           '--out', comparison)
+           '--out', comparison, binary=bench)
     manifest = json.loads((comparison / 'comparison.json').read_text())
     rows = manifest['cases'][0]['measurements']
     for metric in ('numeric.rmse', 'delta_e00.median', 'flip.mean'):
@@ -111,12 +117,13 @@ def _benchmark_smoke(exporter, data, evidence, environment):
            comparison / 'comparison.json')
     inspected = invoke('inspect', '--comparison', comparison,
                        '--case', 'color_chart', '--region', 'full_image',
-                       '--metric', 'numeric.rmse')
+                       '--metric', 'numeric.rmse', binary=bench)
     assert inspected['comparison_id'] == manifest['id']
     assert all(row['value'] == 0 and row['metric'] == 'numeric.rmse'
                for row in inspected['measurements'])
     report = root / 'report'
-    invoke('report', 'comparison', '--comparison', comparison, '--out', report)
+    invoke('report', 'comparison', '--comparison', comparison, '--out', report,
+           binary=bench)
     assert (report / 'index.html').is_file()
     assert json.loads((report / 'report.json').read_text())['comparison_id'] == manifest['id']
     for license_name in ('nvlabs-flip-bsd-3-clause.txt', 'littlecms-mit.txt'):
