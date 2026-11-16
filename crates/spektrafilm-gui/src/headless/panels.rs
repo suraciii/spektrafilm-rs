@@ -1090,10 +1090,19 @@ fn keyboard_analysis_selects_and_inspects_without_photographic_edits() {
     let sample = h.state().viewer.analysis_sample().unwrap();
     assert!(sample.keyboard);
     let point = format!("({}, {})", sample.x, sample.y);
-    assert!(
-        h.query_by_label_contains(&point).is_some(),
-        "keyboard pixel readout must replace the plot inspection"
-    );
+    // The readout is drawn by the analysis panel, so it can lag the state that
+    // already carries the sample; wait for the label instead of assuming that
+    // three frames are always enough to lay it out. A slow failure is a useless
+    // failure, so this wait bounds itself far below the harness deadline.
+    const READOUT_DEADLINE: Duration = Duration::from_secs(10);
+    let deadline = Instant::now() + READOUT_DEADLINE;
+    while h.query_by_label_contains(&point).is_none() {
+        h.step();
+        assert!(
+            Instant::now() < deadline,
+            "keyboard pixel readout must replace the plot inspection"
+        );
+    }
     assert!(
         h.query_by_label_contains("L* ").is_some(),
         "the readout must identify the sample's CIE L*a*b*"
