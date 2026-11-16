@@ -3,6 +3,8 @@
 //! The product case: two renderer builds wrote their rasters elsewhere, and the
 //! lab quantifies and reports them without a suite, a target, or a renderer.
 
+#![cfg(feature = "precision-f64")]
+
 use serde_json::json;
 use std::path::Path;
 use std::process::Command;
