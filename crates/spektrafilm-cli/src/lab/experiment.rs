@@ -140,7 +140,17 @@ fn run(args: &ExperimentRunArgs) -> Result<()> {
     }
     let process_args = ProcessArgs {
         backend: Some(crate::Backend::Cpu),
-        input: input_path,
+        input: Some(input_path),
+        expose: Vec::new(),
+        expose_ev: Vec::new(),
+        expose_weight: Vec::new(),
+        multiple_exposure_meter: None,
+        output_crop: None,
+        recipe: None,
+        recipe_out: None,
+        preview: false,
+        preview_max_size: 1024,
+        max_memory: "auto".to_owned(),
         input_color_space: document.chain.input_color_space.clone(),
         input_cctf_decoding: document.chain.input_cctf_decoding,
         output: Some(out.join(format!("output.{}", args.output_format.into_name()))),

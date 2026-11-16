@@ -27,6 +27,10 @@ use spektrafilm_math::spectral::TcLut;
 
 mod execution;
 mod exposure;
+mod multiple_exposure;
+pub use multiple_exposure::{
+    ExposureAccumulator, ExposureShot, MultipleExposureReport, ShotMetering, ShotReport,
+};
 mod material;
 mod retained;
 pub use retained::RetainedRender;
@@ -40,6 +44,8 @@ mod stages;
 mod polymax_tests;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tiling_probe;
 
 /// Diagnostic helper: when env var `$var` is set, dump the image's f64
 /// pixel data to that path as a raw little-endian f64 blob. Used by the

@@ -1454,6 +1454,22 @@ impl ComputeBackend for WgpuBackend {
         self.materialize_buffer(image)
     }
 
+    fn log_e_accumulate(
+        &self,
+        accumulator: Option<&spektrafilm_backend::DeviceImage>,
+        shot: &spektrafilm_backend::DeviceImage,
+        weight: f32,
+    ) -> Result<Option<spektrafilm_backend::DeviceImage>, String> {
+        self.accumulate_log_e(accumulator, shot, weight)
+    }
+
+    fn log_e_finalize(
+        &self,
+        accumulator: &spektrafilm_backend::DeviceImage,
+    ) -> Result<Option<spektrafilm_backend::DeviceImage>, String> {
+        self.finalize_log_e(accumulator)
+    }
+
     fn input_geometry(
         &self,
         image: &spektrafilm_backend::DeviceImage,

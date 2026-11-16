@@ -31,6 +31,8 @@ mod lut_halation;
 #[cfg(feature = "wgpu-backend")]
 mod lut_look;
 #[cfg(feature = "wgpu-backend")]
+mod multiple_exposure;
+#[cfg(feature = "wgpu-backend")]
 mod paged;
 #[cfg(feature = "wgpu-backend")]
 use cache::{CachedPipelineRef, PipelineCache};
@@ -136,10 +138,18 @@ impl WgpuBackend {
             ..Default::default()
         });
 
+        // `SPEKTRAFILM_GPU_SOFTWARE=1` selects the platform fallback adapter
+        // (llvmpipe/lavapipe on Linux) instead of the unstable local device.
+        // It exercises the same WGPU path without requiring hardware.
+        let software = std::env::var_os("SPEKTRAFILM_GPU_SOFTWARE").is_some();
         let options = wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::HighPerformance,
+            power_preference: if software {
+                wgpu::PowerPreference::LowPower
+            } else {
+                wgpu::PowerPreference::HighPerformance
+            },
             compatible_surface: None,
-            force_fallback_adapter: false,
+            force_fallback_adapter: software,
         };
         let mut adapter = pollster::block_on(instance.request_adapter(&options))?;
         let policy = |adapter: &wgpu::Adapter, timestamp: bool| {

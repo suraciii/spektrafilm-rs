@@ -768,7 +768,7 @@ impl Pipeline {
     }
 
     /// Meter the retained source, keeping the bounded EV on the host.
-    fn meter_retained(
+    pub(super) fn meter_retained(
         &self,
         carrier: &DeviceImage,
         backend: &dyn ComputeBackend,
