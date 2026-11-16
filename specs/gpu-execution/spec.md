@@ -31,6 +31,8 @@ The scope MUST cover these production operations:
 
 Existing route restrictions and named preview, diagnostic, spatial, stochastic, or LUT bypass rules remain authoritative. GPU selection MUST NOT add a bypass. Save MUST convert retained output without rerendering simulation or regenerating grain.
 
+A device kernel MUST be finite-time. Stochastic rejection loops MUST carry an iteration bound, and a degenerate input (NaN or an infinite rate) MUST take a defined, deterministic fallback rather than spin. A command stream that never returns stops the device for the whole process once the driver watchdog fires.
+
 Material-stage export and continuation currently remain CPU-only. Selected GPU execution MUST reject those boundaries before numerical processing or publication. This implementation gap does not narrow the complete render target above.
 
 Native file reading, container parsing, compressed-sample unpacking, file encoding and compression, metadata handling, hashing, and atomic publication MAY run on the host. A native RAW call that also performs demosaicing, white balance, lens correction, or color conversion MUST NOT be classified entirely as file I/O. Those numerical operations remain in scope.

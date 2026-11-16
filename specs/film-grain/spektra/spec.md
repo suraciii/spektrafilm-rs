@@ -18,6 +18,7 @@
 - GPU Spektra MUST use the per-pixel PCG32 realization; there is no GPU sampler selector or fallback.
 - The PCG32 realization MUST preserve the prepared model, density floors, layer/channel identities, Poisson-before-binomial order per sample, and f32 conditioning/products. It MUST use independent per-pixel streams.
 - The PCG32 realization is a different random realization, not an MT19937 identity claim. CPU and GPU outputs therefore need not be bit-identical.
+- The PCG32 Poisson and binomial samplers MUST bound every rejection loop. A non-finite or out-of-range rate MUST take a deterministic fallback identical on host and device; the caps MUST sit above every count a finite rate reaches, leaving valid draws unchanged.
 - GPU micro-structure MUST use PCG32 lognormal clumping. CPU micro-structure MUST continue the original MT19937 state.
 - Active Spektra grain MUST run on the selected executor under [GPU algorithm alignment](../../gpu-execution/spec.md#algorithm-alignment). Missing device precision or resources MUST fail explicitly rather than substitute another engine or CPU image work.
 - `particle_area_um2`, `particle_scale`, `particle_scale_layers`, `sublayers_active`, and `n_sub_layers` are obsolete controls. Parameter sources MUST reject them rather than map them to the RMS model.

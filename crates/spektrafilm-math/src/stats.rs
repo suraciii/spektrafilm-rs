@@ -68,7 +68,10 @@ impl FastStatsRng {
         if let Some(v) = self.spare.take() {
             return v;
         }
-        loop {
+        // Bounded rejection: the device kernel caps the same loop, and a
+        // spinning shader would trip the driver watchdog and lose the device.
+        // Acceptance is pi/4, so 64 attempts are unreachable in practice.
+        for _ in 0..MAX_REJECTION_STEPS {
             let u = 2.0 * self.rand() - 1.0;
             let v = 2.0 * self.rand() - 1.0;
             let s = u * u + v * v;
@@ -78,8 +81,17 @@ impl FastStatsRng {
                 return u * factor;
             }
         }
+        0.0
     }
 }
+
+/// Bounds shared with the device kernels: rejection loops must terminate even
+/// when a rate degrades to NaN or infinity, because a spinning shader stops
+/// returning commands and the driver watchdog then resets the device. The caps
+/// are far above any reachable count for a finite input, so ordinary draws are
+/// unchanged.
+const MAX_REJECTION_STEPS: u32 = 512;
+const MAX_MULTIPLICATION_STEPS: u32 = 4096;
 
 /// Port of `fast_poisson`: λ ≤ 0 → 0; λ < 30 → Knuth multiplication of
 /// uniforms; otherwise a rounded normal approximation clamped at 0.
@@ -92,7 +104,10 @@ pub fn fast_poisson(rng: &mut FastStatsRng, lam: f64) -> i64 {
         let l = (-lam).exp();
         let mut p = 1.0;
         let mut k = 0i64;
-        while p > l {
+        for _ in 0..MAX_MULTIPLICATION_STEPS {
+            if p <= l {
+                return k - 1;
+            }
             k += 1;
             p *= rng.rand();
         }
@@ -219,13 +234,14 @@ pub fn poisson_exact(rng: &mut FastStatsRng, lambda: f64) -> Result<u64, String>
         let limit = (-lambda).exp();
         let mut product = 1.0f64;
         let mut count = 0u64;
-        loop {
+        for _ in 0..MAX_MULTIPLICATION_STEPS {
             product *= rng.rand();
             if product <= limit {
                 return Ok(count);
             }
             count += 1;
         }
+        return Ok(count);
     }
     poisson_ptrs(rng, lambda)
 }
@@ -237,7 +253,7 @@ fn poisson_ptrs(rng: &mut FastStatsRng, lambda: f64) -> Result<u64, String> {
     let a = -0.059 + 0.02483 * b;
     let inv_alpha = 1.1239 + 1.1328 / (b - 3.4);
     let vr = 0.9277 - 3.6224 / (b - 2.0);
-    loop {
+    for _ in 0..MAX_REJECTION_STEPS {
         let u = rng.rand() - 0.5;
         let v = rng.rand();
         let us = 0.5 - u.abs();
@@ -263,6 +279,7 @@ fn poisson_ptrs(rng: &mut FastStatsRng, lambda: f64) -> Result<u64, String> {
             return Ok(k as u64);
         }
     }
+    Ok(lambda.max(0.0).round() as u64)
 }
 
 /// The device's 32-bit integer hash, replicated so a CPU draw and a GPU draw
@@ -416,6 +433,19 @@ mod coordinate_draw_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Degenerate rates must terminate through the bounded budget. Before the
+    /// caps existed `poisson_exact` looped forever on a NaN rate, and its device
+    /// mirror would have tripped the driver watchdog.
+    #[test]
+    fn degenerate_rates_take_the_bounded_fallback() {
+        let mut rng = FastStatsRng::new(5);
+        assert_eq!(fast_poisson(&mut rng, f64::NAN), 0);
+        // The exact sampler rejects a non-finite candidate with its documented
+        // integer-range error instead of looping.
+        assert!(poisson_exact(&mut rng, f64::NAN).is_err());
+        assert!(poisson_exact(&mut rng, f64::INFINITY).is_err());
+    }
 
     /// Sample mean and (population) variance of a per-index sampler. Each
     /// sample index gets its own deterministic stream, mirroring an array
