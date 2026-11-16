@@ -1100,7 +1100,6 @@
   "surfaces.profiles.time_help": "Development time for a BW development-time family: selects the density curve and base+fog to render. '—' uses the representative middle development; ignored for single-curve and color stocks.",
   "surfaces.profiles.film_help": "Film stock to simulate",
   "surfaces.profiles.print_help": "Print stock to simulate",
-  "surfaces.export.backend_help": "CPU: highest precision, slower. GPU: faster, f32 precision.",
   "surfaces.export.format_help": "JPEG: lossy 8-bit for web. PNG: lossless 8-bit. TIFF: 8/16-bit integer or 32-bit float, ZIP or uncompressed. EXR: 16/32-bit linear for compositing.",
   "surfaces.export.depth_help": "Select the bit depth.",
   "surfaces.export.subsampling_help": "Select the JPEG chroma subsampling.",

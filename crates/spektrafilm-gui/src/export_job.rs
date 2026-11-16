@@ -68,6 +68,16 @@ pub(super) struct ExportResult {
 }
 
 impl App {
+    /// Export follows the running execution selection rather than carrying a
+    /// second backend preference in the save dialog.
+    fn running_export_backend(&self) -> ExportBackend {
+        if self.backend.is_gpu() {
+            ExportBackend::Gpu
+        } else {
+            ExportBackend::Cpu
+        }
+    }
+
     /// Render an immutable snapshot of the loaded full input independently of Save.
     fn default_export_name(&self, options: &ExportOptions) -> String {
         let stem = self
@@ -79,7 +89,7 @@ impl App {
         format!(
             "{stem}_{}_spektra_{}.{}",
             self.film_name,
-            options.backend.argument(),
+            self.running_export_backend().argument(),
             options.format.extension()
         )
     }
@@ -149,6 +159,7 @@ impl App {
         let Some(image) = self.export_input() else {
             return;
         };
+        options.backend = self.running_export_backend();
         options.normalize();
         let mut operation = self.diagnostics.begin(OperationKind::Export);
         operation.set_revisions(Some(self.input_epoch), Some(self.parameter_revision));

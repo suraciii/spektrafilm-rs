@@ -679,7 +679,6 @@ class ExperimentalDesktop(X11):
         depths = (('16 bit', '32 bit') if requested == 'EXR' else
                   ('8 bit', '16 bit', '32 bit') if requested == 'TIFF' else ('8 bit',))
         choices = {
-            'Backend': ('CPU (f32)', 'CPU (f64)', 'GPU (WGPU f32)'),
             'Format': ('JPEG', 'PNG', 'TIFF', 'EXR'),
             'Bit depth': depths,
             'Saving color space': spaces,
@@ -863,8 +862,6 @@ class ExperimentalDesktop(X11):
                     raise
             self.snap('modal-selected-' + label.replace(' ', '-'), result[0], result[2])
 
-        if getattr(self, 'backend_requested', None) == 'wgpu':
-            select('Backend', 'GPU (WGPU f32)')
         select('Format', requested)
         depth = ('32 bit' if float_export else '16 bit') if requested in ('TIFF', 'EXR') else '8 bit'
         select('Bit depth', depth)
@@ -912,12 +909,6 @@ class ExperimentalDesktop(X11):
                 return None
             image, box, lines = result
             expected = {'Format': requested, 'Bit depth': depth}
-            backend_value = control(result, 'Backend')
-            if backend_value is None:
-                return None
-            expected['Backend'] = backend_value[0]
-            if getattr(self, 'backend_requested', None) == 'wgpu':
-                expected['Backend'] = 'GPU (WGPU f32)'
             if saving_color_space is not None:
                 expected['Saving color space'] = saving_color_space
             for label, option in expected.items():
@@ -945,7 +936,7 @@ class ExperimentalDesktop(X11):
                     self.snap('export-options-confirmed', image, lines + footer)
                     self.records[-1]['export_controls'] = expected
                     self.records[-1]['transfer_encoded'] = transfer(result)
-                    self.export_backend_requested = ('wgpu' if expected['Backend'].startswith('GPU') else 'cpu')
+                    self.export_backend_requested = getattr(self, 'backend_requested', 'auto')
                     return center(span)
             return None
         x, y = wait_for(submit, 'verified export controls and Export file button', 20)

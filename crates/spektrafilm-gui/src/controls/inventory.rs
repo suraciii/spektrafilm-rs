@@ -1143,15 +1143,6 @@ const SURFACES: &[SurfaceEntry] = &[
         conditions: &["rebuilds the running selection"],
     },
     SurfaceEntry {
-        path: "extras.rust.export_backend",
-        label: "Backend",
-        owner: ControlOwner::Export,
-        section: "Export options",
-        editor: EditorKind::Choice,
-        validator: "export::ExportOptions::normalize",
-        conditions: &[],
-    },
-    SurfaceEntry {
         path: "extras.rust.export_format",
         label: "Format",
         owner: ControlOwner::Export,

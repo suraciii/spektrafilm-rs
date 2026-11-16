@@ -955,8 +955,6 @@ fn scanner_ui_real_preview_scan_persistence_save_and_export() {
     assert!(h.state().export_dialog.is_open());
     choose(h, "Format", "TIFF");
     choose(h, "Bit depth", "32 bit");
-    click(h, "Advanced");
-    choose(h, "Backend", ExportBackend::Gpu.label());
     click(h, "Cancel");
     assert!(!h.state().export_dialog.is_open());
     assert_eq!(h.state().export_options.format, export::ExportFormat::Png);

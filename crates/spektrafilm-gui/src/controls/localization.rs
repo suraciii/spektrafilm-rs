@@ -276,9 +276,6 @@ fn key(label: &str) -> Option<&'static str> {
         "CMYK ink style" => Some("controls.cmyk.section"),
         "CMYK ink style appearance strength." => Some("controls.cmyk.strength_help"),
         "CPU %{stage}: %{reason}" => Some("surfaces.diagnostics.cpu_reason"),
-        "CPU: highest precision, slower. GPU: faster, f32 precision." => {
-            Some("surfaces.export.backend_help")
-        }
         "Camera" => Some("controls.label.camera"),
         "Camera diffusion" => Some("controls.label.camera_diffusion"),
         "Camera taking filter held in front of the lens. Its measured spectral transmittance multiplies the incoming light, so it both darkens and color-casts the exposure (e.g. Hoya Y2/YA3 yellow, R1 red, X0/X1 UV/haze). 'none' = no filter." => {

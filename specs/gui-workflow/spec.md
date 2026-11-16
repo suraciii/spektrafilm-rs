@@ -146,7 +146,7 @@ Only an explicit close or Cancel action, or Escape on the topmost modal, MUST di
 
 General and Display MUST start open in Settings. A control locator MUST reveal, scroll to, and focus the actual canonical row, including a fixed or inactive row. Factory-default confirmation MAY stack above Settings; Escape MUST dismiss only the topmost modal.
 
-Export MUST keep its format, depth, saving color, active codec, and applicable compression rows readable and canonically locatable. Its destination MUST be visible before submission or immediately after the native chooser confirms it.
+Export MUST keep its format, depth, saving color, active codec, and applicable compression rows readable and canonically locatable. Its destination MUST be visible before submission or immediately after the native chooser confirms it. Export MUST use the execution backend selected in Settings and MUST NOT expose a second backend selector.
 
 Switching format MUST restore that container's previous draft or normalize a new one. It MUST NOT silently carry an incompatible bit depth, encoding, or compression choice into the new container.
 
@@ -213,7 +213,7 @@ Each module has one editing owner. The inspector MUST contain these stages and m
 | Effects | Diffusion; Halation; Grain. The stage is active in LUT and Off and inactive in Film. |
 | Output | Output color space and encoding where exposed by their contracts; output gamut processing; CMYK ink style and Simulation blend, inactive in LUT and Off; retained Save color and encoding settings. |
 | Application settings | General: interface language, preview limits, and rendering preferences that are not photographic controls; State and startup: startup state save/load/default actions; Display: display transform, ICC selection, canvas, padding, and interpolation; Diagnostics: observation and report actions. Language preference ownership follows [GUI product language](../gui-language/spec.md#selection-and-persistence), not photographic state. |
-| Export dialog | Independent full-resolution export backend, format, depth, saving color and encoding, applicable codec/compression options, destination selection, and export submission. |
+| Export dialog | Independent full-resolution export format, depth, saving color and encoding, applicable codec/compression options, destination selection, and export submission. The execution backend comes from Settings. |
 | Viewer footer | Original/Modified/Paper back selection; zoom, fit, reveal, crossfade, and read-only zoom state; [black and white endpoint warnings](../gui-product-design/clipping-warnings/spec.md#controls); optional image-analysis visibility. |
 | Preset browser | Film, LUT, and Effects preset selection; browser search; library refresh/reveal; preset management. |
 
