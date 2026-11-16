@@ -164,21 +164,8 @@ fn assert_codec_inactive(h: &Harness<'_, App>) {
         h.query_by_role_and_label(egui::accesskit::Role::ComboBox, "JPEG subsampling")
             .is_none()
     );
-    // The draft explicitly selected 4:2:0 while JPEG was active; changing the
-    // container must retain that uncommitted preference, not the committed 4:4:4.
-    let subsampling = "4:2:0";
     assert!(h.query_by_label("JPEG quality").is_none());
     assert!(h.query_by_label("JPEG subsampling").is_none());
-    let summary = crate::tr!(
-        &h.ctx,
-        "surfaces.export.jpeg_inactive_summary",
-        quality = h.state().export_options.jpeg_quality,
-        subsampling = subsampling
-    );
-    assert!(
-        h.query_by_label(summary.as_ref()).is_some(),
-        "inactive codec values must remain summarized in one quiet note: {summary}"
-    );
 }
 fn assert_quality_controls(h: &Harness<'_, App>) {
     assert!(
@@ -475,6 +462,11 @@ fn change_export_format(h: &mut Harness<'_, App>, next: &str) {
 
 /// Move the Export draft away from the committed baseline.
 fn edit_export_draft(h: &mut Harness<'_, App>) {
+    if h.query_by_role_and_label(egui::accesskit::Role::ComboBox, "Backend")
+        .is_none()
+    {
+        click(h, "Advanced");
+    }
     choose(h, "Backend", export::ExportBackend::Cpu.label());
     choose(h, "Format", "PNG");
     choose(h, "Saving color space", "Display P3");
@@ -616,15 +608,11 @@ fn inactive_jpeg_locator_reveals_stored_rows_beyond_the_summary() {
         h.query_by_label("JPEG quality").is_some(),
         "a canonical locator reveals the individual read-only row"
     );
-    let inactive = crate::i18n::text(&h.ctx, "surfaces.export.jpeg_inactive");
     // The reveal persists after the locator request is consumed, so the row
-    // cannot vanish on the next frame.
+    // cannot vanish on the next frame. The reason is tooltip/accessibility
+    // text, not a second visible paragraph.
     h.run_steps(3);
     assert!(h.query_by_label("JPEG quality").is_some());
-    assert!(
-        h.query_all_by_label(inactive.as_ref()).count() >= 1,
-        "the revealed row keeps its inapplicability reason"
-    );
 }
 
 #[test]
@@ -644,10 +632,6 @@ fn export_dialog_format_controls_are_conditional_and_both_cancel_paths_write_not
         h.query_by_role_and_label(egui::accesskit::Role::Switch, "Apply saving CCTF encoding")
             .is_none()
     );
-    assert!(
-        h.query_all_by_label("encoded")
-            .any(|node| node.label().as_deref() == Some("Apply saving CCTF encoding"))
-    );
     choose(h, "JPEG subsampling", "4:2:0");
 
     change_export_format(h, "TIFF");
@@ -656,6 +640,7 @@ fn export_dialog_format_controls_are_conditional_and_both_cancel_paths_write_not
             .is_some()
     );
     assert_codec_inactive(h);
+    click(h, "Advanced");
     assert!(
         !h.get_by_role_and_label(egui::accesskit::Role::Switch, "Apply saving CCTF encoding")
             .node()
@@ -677,10 +662,6 @@ fn export_dialog_format_controls_are_conditional_and_both_cancel_paths_write_not
     assert!(
         h.query_by_role_and_label(egui::accesskit::Role::Switch, "Apply saving CCTF encoding")
             .is_none()
-    );
-    assert!(
-        h.query_all_by_label("linear")
-            .any(|node| node.label().as_deref() == Some("Apply saving CCTF encoding"))
     );
     h.get_by_role_and_label(egui::accesskit::Role::ComboBox, "Saving color space")
         .simulate_click();
@@ -723,6 +704,51 @@ fn export_dialog_format_controls_are_conditional_and_both_cancel_paths_write_not
     assert!(!h.state().export_dialog.is_open());
     assert!(h.state().export_job.is_none());
     assert!(!close_path.exists());
+}
+
+#[test]
+fn export_destination_is_chosen_before_submission_and_used_without_a_second_prompt() {
+    let mut s = session();
+    let h = &mut s.harness;
+    let destination = s.directory.path().join("chosen-destination.png");
+    open_export_dialog(h);
+    script(h, chooser::Chooser::chooser_path(&destination));
+    click(h, "Choose…");
+    h.run_steps(3);
+    assert_eq!(
+        h.state().export_dialog.destination(),
+        Some(destination.as_path())
+    );
+    assert!(
+        h.query_by_label_contains("chosen-destination.png")
+            .is_some(),
+        "the chosen filename is visible before submission"
+    );
+    assert!(
+        !destination.exists(),
+        "choosing a destination does not export"
+    );
+    click(h, "Export file…");
+    wait_until(h, |app| app.export_job.is_none() && destination.is_file());
+    assert!(destination.is_file());
+}
+
+#[test]
+fn export_advanced_locator_opens_hidden_computation_rows() {
+    let mut s = session();
+    let h = &mut s.harness;
+    open_export_dialog(h);
+    assert!(
+        h.query_by_role_and_label(egui::accesskit::Role::ComboBox, "Backend")
+            .is_none()
+    );
+    controls::request_focus(&h.ctx, "Export options", "extras.rust.export_backend");
+    h.run_steps(3);
+    assert!(
+        h.query_by_role_and_label(egui::accesskit::Role::ComboBox, "Backend")
+            .is_some(),
+        "a canonical locator opens Advanced and focuses Backend"
+    );
 }
 
 #[test]
@@ -862,53 +888,6 @@ fn confirmed_image_names_and_containers_are_not_reinterpreted() {
             .starts_with(b"\x89PNG\r\n\x1a\n")
     );
     assert_eq!(std::fs::read(&other_export).unwrap(), b"other sentinel");
-}
-
-// The export dialog is modal, but a modal window does not block drag-and-drop,
-// so the input the export renders can be replaced while the dialog is open. The
-// estimate reads the current input, not the one the dialog was opened with.
-#[test]
-fn the_export_estimate_follows_the_input_while_the_dialog_is_open() {
-    let mut s = session();
-    let h = &mut s.harness;
-    open_export_dialog(h);
-    let opened_with = estimated_output_size_row(h);
-
-    let path = s.directory.path().join("wider-input.png");
-    let mut image = ImageBuf::new(320, 240);
-    for value in image.data.iter_mut() {
-        *value = spektrafilm_math::precision::from_f64(0.25);
-    }
-    image_io::save(
-        &path,
-        &image,
-        SaveOptions {
-            depth: BitDepth::Eight,
-            color_space: "sRGB",
-            cctf_encoding: true,
-            jpeg_quality: None,
-            jpeg_subsampling: None,
-            compression: None,
-        },
-        None,
-    )
-    .unwrap();
-    h.state_mut().load_image_from_path(&path);
-    await_input(h);
-
-    assert_eq!(h.state().image.as_ref().unwrap().width(), 320);
-    assert!(h.state().export_dialog.is_open());
-    let replaced_with = estimated_output_size_row(h);
-    assert_ne!(
-        replaced_with, opened_with,
-        "the estimate must describe the input the export now renders"
-    );
-}
-
-fn estimated_output_size_row(h: &Harness<'_, App>) -> String {
-    h.query_by_label_contains("Estimated output size")
-        .and_then(|node| node.value())
-        .unwrap_or_else(|| panic!("the export dialog states an estimated output size"))
 }
 
 fn report_paths(directory: &Path) -> Vec<PathBuf> {

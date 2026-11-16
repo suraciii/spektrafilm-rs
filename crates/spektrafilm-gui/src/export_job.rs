@@ -69,28 +69,41 @@ pub(super) struct ExportResult {
 
 impl App {
     /// Render an immutable snapshot of the loaded full input independently of Save.
-    pub(super) fn start_export(&mut self, ctx: &egui::Context, mut options: ExportOptions) {
-        if self.export_input().is_none() {
-            return;
-        }
-        options.normalize();
+    fn default_export_name(&self, options: &ExportOptions) -> String {
         let stem = self
             .image_path
             .as_ref()
             .and_then(|p| p.file_stem())
             .and_then(|s| s.to_str())
             .unwrap_or("spektrafilm");
-        let default_name = format!(
+        format!(
             "{stem}_{}_spektra_{}.{}",
             self.film_name,
             options.backend.argument(),
             options.format.extension()
-        );
-        let Some(chosen_path) = self.chooser.save_file(
+        )
+    }
+
+    /// Native destination chooser shared by the in-dialog button and the
+    /// legacy submit path when no destination has been selected yet.
+    pub(super) fn choose_export_destination(
+        &mut self,
+        options: &ExportOptions,
+    ) -> Option<std::path::PathBuf> {
+        let name = self.default_export_name(options);
+        self.chooser.save_file(
             self.file_dialog("export")
                 .add_filter(options.format.label(), options.format.extensions())
-                .set_file_name(&default_name),
-        ) else {
+                .set_file_name(&name),
+        )
+    }
+
+    pub(super) fn start_export(&mut self, ctx: &egui::Context, mut options: ExportOptions) {
+        if self.export_input().is_none() {
+            return;
+        }
+        options.normalize();
+        let Some(chosen_path) = self.choose_export_destination(&options) else {
             return;
         };
         self.start_export_to_path(ctx, options, &chosen_path);

@@ -383,6 +383,8 @@ fn key(label: &str) -> Option<&'static str> {
             Some("controls.crop.crop_help")
         }
         "Current look: %{group} / %{name} • %{state}" => Some("surfaces.presets.current"),
+        "Advanced" => Some("surfaces.export.advanced"),
+        "Destination" => Some("surfaces.export.destination"),
         "Custom" => Some("controls.scanner.custom"),
         "Edited" => Some("controls.scanner.edited"),
         "Scan Profile" => Some("controls.scanner.scan_profile"),
@@ -602,10 +604,6 @@ fn key(label: &str) -> Option<&'static str> {
         "Enlarger optics: core, tail, and warmth" => Some("surfaces.summary.enlarger_diffusion"),
         "Enter any shared catalog illuminant or BB<kelvin> (1667..=25000)." => {
             Some("controls.convert.custom_illuminant_help")
-        }
-        "Estimated output size: ≈ %{size}" => Some("surfaces.export.size"),
-        "Estimated output size: ≈ %{size} before compression" => {
-            Some("surfaces.export.size_compressed")
         }
         "Experimental local source-response compression for halation only. Zero preserves the linear response; higher values make secondary bright sources contribute more nearly like the brightest source without changing the base film raw exposure." => {
             Some("controls.halation.source_compression_help")
@@ -1046,12 +1044,6 @@ fn key(label: &str) -> Option<&'static str> {
         }
         "Physical back-reflection size multiplier; scales every channel's first-bounce spread without coupling its strength." => {
             Some("controls.halation.halation_spatial_scale_help")
-        }
-        "Pixel payload at the input's full resolution. This container compresses the samples, so the file is smaller; the exact size depends on image content." => {
-            Some("surfaces.export.size_compressed_help")
-        }
-        "Pixel payload at the input's full resolution. This container stores the samples uncompressed, so the file matches apart from headers." => {
-            Some("surfaces.export.size_help")
         }
         "Pixels from render #%{id} · %{width} × %{height} · diagnostics %{state}" => {
             Some("surfaces.diagnostics.source")

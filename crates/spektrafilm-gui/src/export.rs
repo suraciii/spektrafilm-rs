@@ -1,7 +1,7 @@
 //! Full-render export preferences and a cancellable options draft.
 //! Search locates this draft's real controls without changing its format;
 //! inapplicable codec values remain readable, and only submission commits it.
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::controls::{self, enum_choice};
 use crate::theme;
@@ -270,47 +270,22 @@ pub(crate) fn output_dimensions(
     Ok([width, height])
 }
 
-/// Pixel payload of exported samples at the accepted delivery resolution.
-///
-/// The dimensions already include requested crop and upscale. Every
-/// container writes three samples per pixel. Compressed containers write a
-/// smaller file whose
-/// exact size depends on image content, so the payload is the
-/// content-independent bound the row can state without compressing.
-pub(crate) fn estimated_output_bytes(options: &ExportOptions, dimensions: [u32; 2]) -> u64 {
-    let bytes_per_sample = match options.depth {
-        BitDepth::Eight => 1,
-        BitDepth::Sixteen => 2,
-        BitDepth::ThirtyTwo => 4,
-    };
-    dimensions[0] as u64 * dimensions[1] as u64 * 3 * bytes_per_sample
-}
-
-/// Whether the chosen container compresses the samples it writes.
-///
-/// TIFF is the only container whose compression the dialog can turn off, so
-/// its estimate is the file size; every other container always codes the
-/// samples, and the payload is only a bound.
-fn container_compresses(options: &ExportOptions) -> bool {
-    match options.format {
-        ExportFormat::Tiff => options.compression == ExportCompression::Zip,
-        _ => true,
+/// Keep the filename end visible in the narrow destination row. The full path
+/// remains available as the row's tooltip.
+fn compact_path(path: &Path) -> String {
+    let text = path.display().to_string();
+    if text.chars().count() <= 24 {
+        return text;
     }
-}
-
-/// Binary-prefixed byte count for the estimated-size row.
-fn format_size(bytes: u64) -> String {
-    const KB: f64 = 1024.0;
-    let value = bytes as f64;
-    if value >= KB * KB * KB {
-        format!("{:.1} GB", value / (KB * KB * KB))
-    } else if value >= KB * KB {
-        format!("{:.1} MB", value / (KB * KB))
-    } else if value >= KB {
-        format!("{:.1} KB", value / KB)
-    } else {
-        format!("{bytes} B")
-    }
+    let tail: String = text
+        .chars()
+        .rev()
+        .take(23)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect();
+    format!("…{tail}")
 }
 
 /// Editor column width shared with the choice and switch rows, so a
@@ -378,9 +353,6 @@ fn readonly_row(ui: &mut egui::Ui, label: &str, value: &str, help: &str, path: &
             .on_hover_text(help)
         })
         .inner;
-    // Fixed reasons read as full-width row notes instead of a right-aligned
-    // footnote under the value, where long text became a ragged column.
-    ui.add(egui::Label::new(egui::RichText::new(help).small().color(theme::FG_MUTED)).wrap());
     let name = controls::localized(ui.ctx(), label);
     ui.ctx().accesskit_node_builder(response.id, |node| {
         node.set_label(name.as_ref());
@@ -393,6 +365,8 @@ fn readonly_row(ui: &mut egui::Ui, label: &str, value: &str, help: &str, path: &
 #[derive(Default)]
 pub(crate) struct ExportDialog {
     draft: Option<ExportOptions>,
+    /// Chosen before submitting; the native chooser still runs when absent.
+    destination: Option<PathBuf>,
     /// Set while a freshly opened draft still owes the dialog its one-time
     /// initial focus. A canonical locator request owns the focus instead.
     initial_focus: bool,
@@ -400,16 +374,34 @@ pub(crate) struct ExportDialog {
     /// read-only rows for the rest of this dialog session.
     codec_revealed: bool,
 }
+
+pub(crate) enum ExportDialogResult {
+    Export(ExportOptions),
+    ChooseDestination,
+}
 impl ExportDialog {
     pub(crate) fn open(&mut self, committed: &ExportOptions) {
         let mut draft = committed.clone();
         draft.normalize();
         self.draft = Some(draft);
+        self.destination = None;
         self.initial_focus = true;
         self.codec_revealed = false;
     }
     pub(crate) fn is_open(&self) -> bool {
         self.draft.is_some()
+    }
+
+    pub(crate) fn destination(&self) -> Option<&Path> {
+        self.destination.as_deref()
+    }
+
+    pub(crate) fn set_destination(&mut self, destination: PathBuf) {
+        self.destination = Some(destination);
+    }
+
+    pub(crate) fn draft(&self) -> Option<&ExportOptions> {
+        self.draft.as_ref()
     }
 
     /// Closing or cancelling drops the draft; only Export returns preferences.
@@ -422,9 +414,11 @@ impl ExportDialog {
         ctx: &egui::Context,
         dimensions: [u32; 2],
         source: Option<&Path>,
-    ) -> Option<ExportOptions> {
+    ) -> Option<ExportDialogResult> {
         let draft = self.draft.as_mut()?;
+        let mut destination = self.destination.clone();
         let mut submit = false;
+        let mut choose_destination = false;
         let mut cancel = false;
         let mut close = false;
         let title = crate::i18n::text(ctx, "surfaces.export.title");
@@ -516,6 +510,7 @@ impl ExportDialog {
                             .show(ui, |ui| {
                 ui.spacing_mut().item_spacing = egui::vec2(theme::SPACE_3, theme::SPACE_2);
                 section_heading(ui, "File and container");
+                let previous_format = draft.format;
                 enum_choice(ui, "Format", &mut draft.format, &[
                     (ExportFormat::Jpeg, ExportFormat::Jpeg.label()),
                     (ExportFormat::Png, ExportFormat::Png.label()),
@@ -523,6 +518,50 @@ impl ExportDialog {
                     (ExportFormat::Exr, ExportFormat::Exr.label()),
                 ], "JPEG: lossy 8-bit for web. PNG: lossless 8-bit. TIFF: 8/16-bit integer or 32-bit float, ZIP or uncompressed. EXR: 16/32-bit linear for compositing.");
                 draft.normalize();
+                if draft.format != previous_format {
+                    // Keep the chosen stem but move it to the new container's
+                    // extension instead of silently losing the destination.
+                    if let Some(path) = destination.as_mut() {
+                        path.set_extension(draft.format.extension());
+                    }
+                    self.destination = destination.clone();
+                }
+                ui.horizontal(|ui| {
+                    ui.label(
+                        egui::RichText::new(crate::i18n::text(ui.ctx(), "surfaces.export.destination"))
+                            .color(theme::FG_SECONDARY),
+                    );
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        let button_label = crate::i18n::text(
+                            ui.ctx(),
+                            if destination.is_some() {
+                                "surfaces.export.change_destination"
+                            } else {
+                                "surfaces.export.choose_destination"
+                            },
+                        );
+                        if ui
+                            .add_sized(
+                                egui::vec2(88.0, theme::HEIGHT_CONTROL),
+                                egui::Button::new(button_label),
+                            )
+                            .clicked()
+                        {
+                            choose_destination = true;
+                        }
+                    });
+                });
+                if let Some(path) = destination.as_ref() {
+                    ui.add(
+                        egui::Label::new(
+                            egui::RichText::new(compact_path(path))
+                                .size(theme::SIZE_LABEL)
+                                .color(theme::FG_SECONDARY),
+                        )
+                        .truncate(),
+                    )
+                    .on_hover_text(path.display().to_string());
+                }
                 let depth_choices: &[(BitDepth, &str)] = match draft.format {
                     ExportFormat::Jpeg | ExportFormat::Png => &[],
                     ExportFormat::Tiff => &[(BitDepth::Eight, "8 bit"), (BitDepth::Sixteen, "16 bit"), (BitDepth::ThirtyTwo, "32 bit")],
@@ -620,49 +659,13 @@ impl ExportDialog {
                             inactive.as_ref(),
                             "extras.rust.jpeg_subsampling",
                         );
-                    } else {
-                        let summary = crate::tr!(
-                            ui.ctx(),
-                            "surfaces.export.jpeg_inactive_summary",
-                            quality = draft.jpeg_quality,
-                            subsampling = subsampling_value
-                        );
-                        ui.add(
-                            egui::Label::new(
-                                egui::RichText::new(summary)
-                                    .size(theme::SIZE_HINT)
-                                    .color(theme::FG_SECONDARY),
-                            )
-                            .wrap(),
-                        );
                     }
                 }
-                match draft.format {
-                    ExportFormat::Tiff => {
-                        enum_choice(ui, "Compression", &mut draft.compression, &[
-                            (ExportCompression::Zip, "ZIP"),
-                            (ExportCompression::None, "None"),
-                        ], "Select the TIFF compression method.");
-                    }
-                    format => {
-                        let (value, help) = match format {
-                            ExportFormat::Exr => {
-                                let help = crate::i18n::text(ui.ctx(), "surfaces.export.compression_exr");
-                                ("ZIP", help)
-                            }
-                            ExportFormat::Jpeg => {
-                                let help = crate::i18n::text(ui.ctx(), "surfaces.export.compression_jpeg");
-                                ("JPEG lossy", help)
-                            }
-                            ExportFormat::Png => {
-                                let help = crate::i18n::text(ui.ctx(), "surfaces.export.compression_png");
-                                ("PNG lossless", help)
-                            }
-                            ExportFormat::Tiff => unreachable!(),
-                        };
-                        let value = controls::localized(ui.ctx(), value);
-                        readonly_row(ui, "Compression", &value, &help, "extras.rust.export_compression");
-                    }
+                if draft.format == ExportFormat::Tiff {
+                    enum_choice(ui, "Compression", &mut draft.compression, &[
+                        (ExportCompression::Zip, "ZIP"),
+                        (ExportCompression::None, "None"),
+                    ], "Select the TIFF compression method.");
                 }
                 section_break(ui);
                 section_heading(ui, "Color and computation");
@@ -701,48 +704,65 @@ impl ExportDialog {
                 // the same presentation, state, and accessible naming an
                 // inspector boolean gets. Its response keeps the row
                 // locatable by canonical path through the draft's real owner.
-                let cctf_help = crate::i18n::text(ui.ctx(), "surfaces.export.cctf_help");
-                match draft.format {
-                    ExportFormat::Tiff => {
+                let advanced_requested = ui.ctx().data(|data| {
+                    data.get_temp::<(String, String)>(egui::Id::new("control_focus_request"))
+                })
+                .is_some_and(|(section, target)| {
+                    (section == "Export" || section == "Export options")
+                        && matches!(
+                            target.as_str(),
+                            "extras.rust.export_saving_cctf_encoding"
+                                | "extras.rust.export_backend"
+                        )
+                });
+                let advanced_id = ui.make_persistent_id("export-advanced");
+                let mut advanced =
+                    egui::collapsing_header::CollapsingState::load_with_default_open(
+                        ui.ctx(),
+                        advanced_id,
+                        false,
+                    );
+                if advanced_requested {
+                    advanced.set_open(true);
+                }
+                let advanced_label = crate::controls::localized(ui.ctx(), "Advanced");
+                let header = ui.horizontal(|ui| {
+                    if crate::controls::disclosure_header(
+                        ui,
+                        advanced_label.as_ref(),
+                        advanced.is_open(),
+                    )
+                    .clicked()
+                    {
+                        advanced.toggle(ui);
+                    }
+                });
+                advanced.show_body_indented(&header.response, ui, |ui| {
+                    if draft.format == ExportFormat::Tiff {
+                        let cctf_help =
+                            crate::i18n::text(ui.ctx(), "surfaces.export.cctf_help");
                         let encoding = controls::toggle_row(
                             ui,
                             "Apply saving CCTF encoding",
                             &mut draft.saving_cctf_encoding,
                             &cctf_help,
                         );
-                        controls::locate_row(ui, "extras.rust.export_saving_cctf_encoding", &encoding);
-                    }
-                    ExportFormat::Jpeg | ExportFormat::Png => {
-                        let fixed = crate::i18n::text(ui.ctx(), "surfaces.export.encoded_fixed");
-                        let value = controls::localized(ui.ctx(), "encoded");
-                        readonly_row(
+                        controls::locate_row(
                             ui,
-                            "Apply saving CCTF encoding",
-                            &value,
-                            &fixed,
                             "extras.rust.export_saving_cctf_encoding",
+                            &encoding,
                         );
                     }
-                    ExportFormat::Exr => {
-                        let fixed = crate::i18n::text(ui.ctx(), "surfaces.export.exr_fixed");
-                        let value = crate::i18n::text(ui.ctx(), "surfaces.export.linear");
-                        readonly_row(
-                            ui,
-                            "Apply saving CCTF encoding",
-                            &value,
-                            &fixed,
-                            "extras.rust.export_saving_cctf_encoding",
-                        );
-                    }
-                }
-                let cpu_label: &str = if cfg!(feature = "precision-f64") { "CPU (f64)" } else { "CPU (f32)" };
-                enum_choice(ui, "Backend", &mut draft.backend, &[
-                    (ExportBackend::Cpu, cpu_label),
-                    (ExportBackend::Gpu, "GPU (WGPU f32)"),
-                ], "CPU: highest precision, slower. GPU: faster, f32 precision.");
-                ui.label(egui::RichText::new(crate::i18n::text(
-                    ui.ctx(), "result.export.guidance",
-                )).small().color(theme::FG_SECONDARY));
+                    let cpu_label: &str = if cfg!(feature = "precision-f64") {
+                        "CPU (f64)"
+                    } else {
+                        "CPU (f32)"
+                    };
+                    enum_choice(ui, "Backend", &mut draft.backend, &[
+                        (ExportBackend::Cpu, cpu_label),
+                        (ExportBackend::Gpu, "GPU (WGPU f32)"),
+                    ], "CPU: highest precision, slower. GPU: faster, f32 precision.");
+                });
                 draft.normalize();
                 let depth_label = match draft.depth {
                     BitDepth::Eight => "8 bit",
@@ -762,19 +782,6 @@ impl ExportDialog {
                 ui.label(egui::RichText::new(dimensions_text.as_ref()).small().color(theme::FG_SECONDARY));
                 ui.label(egui::RichText::new(crate::tr!(ui.ctx(), "surfaces.export.summary", summary = summary)).small().color(theme::FG_SECONDARY))
                     .on_hover_text(crate::i18n::text(ui.ctx(), "surfaces.export.summary_help"));
-                let compressed = container_compresses(draft);
-                let estimate = format_size(estimated_output_bytes(draft, dimensions));
-                let row = if compressed {
-                    crate::tr!(ui.ctx(), "surfaces.export.size_compressed", size = estimate)
-                } else {
-                    crate::tr!(ui.ctx(), "surfaces.export.size", size = estimate)
-                };
-                ui.label(egui::RichText::new(row).small().color(theme::FG_MUTED))
-                    .on_hover_text(if compressed {
-                        crate::i18n::text(ui.ctx(), "surfaces.export.size_compressed_help")
-                    } else {
-                        crate::i18n::text(ui.ctx(), "surfaces.export.size_help")
-                    });
                             })
                     })
                     .inner;
@@ -840,10 +847,13 @@ impl ExportDialog {
             self.draft = None;
             return None;
         }
+        if choose_destination {
+            return Some(ExportDialogResult::ChooseDestination);
+        }
         if submit {
             let mut options = self.draft.take()?;
             options.normalize();
-            return Some(options);
+            return Some(ExportDialogResult::Export(options));
         }
         None
     }
@@ -884,72 +894,6 @@ mod tests {
             saving_color_space: "sRGB".to_owned(),
             saving_cctf_encoding: true,
         }
-    }
-
-    fn tiff(depth: BitDepth) -> ExportOptions {
-        options(depth, ExportFormat::Tiff, ExportCompression::Zip)
-    }
-
-    /// The row states the payload of the full-resolution input, so a wrong
-    /// depth mapping, channel count, or dimension order must fail here.
-    #[test]
-    fn estimated_size_scales_with_resolution_channels_and_depth() {
-        assert_eq!(
-            estimated_output_bytes(&tiff(BitDepth::Eight), [100, 10]),
-            3_000
-        );
-        assert_eq!(
-            estimated_output_bytes(&tiff(BitDepth::Sixteen), [100, 10]),
-            6_000
-        );
-        assert_eq!(
-            estimated_output_bytes(&tiff(BitDepth::ThirtyTwo), [100, 10]),
-            12_000
-        );
-        assert_eq!(
-            estimated_output_bytes(&tiff(BitDepth::Eight), [200, 10]),
-            6_000
-        );
-        // No image loaded: the export trigger is disabled, and the row must
-        // not invent a size.
-        assert_eq!(estimated_output_bytes(&tiff(BitDepth::Eight), [0, 0]), 0);
-    }
-
-    /// Only an uncompressed TIFF states a size the file will actually match;
-    /// every other container codes the samples and needs the qualifier.
-    #[test]
-    fn only_uncompressed_tiff_skips_the_compression_qualifier() {
-        let zip = |format| options(BitDepth::Sixteen, format, ExportCompression::Zip);
-        let none = |format| options(BitDepth::Sixteen, format, ExportCompression::None);
-        assert!(!container_compresses(&none(ExportFormat::Tiff)));
-        assert!(container_compresses(&zip(ExportFormat::Tiff)));
-        assert!(container_compresses(&zip(ExportFormat::Jpeg)));
-        assert!(container_compresses(&zip(ExportFormat::Png)));
-        assert!(container_compresses(&zip(ExportFormat::Exr)));
-    }
-
-    #[test]
-    fn format_size_uses_binary_prefixes() {
-        assert_eq!(format_size(0), "0 B");
-        assert_eq!(format_size(999), "999 B");
-        assert_eq!(format_size(1024), "1.0 KB");
-        assert_eq!(format_size(3_000), "2.9 KB");
-        assert_eq!(format_size(1024 * 1024), "1.0 MB");
-        assert_eq!(format_size(1024 * 1024 * 1024), "1.0 GB");
-    }
-
-    /// A large input must not read as bytes; the row picks the unit that keeps
-    /// the number readable.
-    #[test]
-    fn format_size_scales_to_the_megabyte_range() {
-        // 4000x3000 at 16 bit: 72 MB of samples.
-        assert_eq!(
-            format_size(estimated_output_bytes(
-                &tiff(BitDepth::Sixteen),
-                [4000, 3000]
-            )),
-            "68.7 MB"
-        );
     }
 
     /// The fixed rows state exactly what the writer receives: a normalized

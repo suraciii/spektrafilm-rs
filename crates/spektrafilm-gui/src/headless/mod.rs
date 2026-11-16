@@ -955,6 +955,7 @@ fn scanner_ui_real_preview_scan_persistence_save_and_export() {
     assert!(h.state().export_dialog.is_open());
     choose(h, "Format", "TIFF");
     choose(h, "Bit depth", "32 bit");
+    click(h, "Advanced");
     choose(h, "Backend", ExportBackend::Gpu.label());
     click(h, "Cancel");
     assert!(!h.state().export_dialog.is_open());
@@ -1161,7 +1162,7 @@ mod layout_snapshots {
             h.query_by_role_and_label(egui::accesskit::Role::ComboBox, "Compression")
                 .is_some()
         );
-        assert!(h.query_by_label("Apply saving CCTF encoding").is_some());
+        assert!(h.query_by_label("Advanced").is_some());
         // Attach the offscreen renderer only in this opt-in gate; render the
         // real dialog's TIFF-specific controls selected above.
         let dimensions = h
@@ -1189,8 +1190,6 @@ mod layout_snapshots {
             "Bit depth",
             "Compression",
             "Saving color space",
-            "Backend",
-            "Apply saving CCTF encoding",
             "Export file…",
             "Cancel",
         ] {
@@ -1235,13 +1234,10 @@ mod layout_snapshots {
                 );
             }
         }
-        // The dialog must state what the chosen settings will write; the row
-        // is a read-only label, so it carries no widget of its own to query.
+        // The dialog states what the chosen settings will write.
         assert!(
-            modal
-                .query_by_label_contains("Estimated output size")
-                .is_some(),
-            "the export dialog must state the estimated output size"
+            modal.query_by_label_contains("Summary:").is_some(),
+            "the export dialog must state its delivery summary"
         );
         let colors: std::collections::HashSet<_> = image.pixels().map(|p| p.0).collect();
         assert!(
