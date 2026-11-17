@@ -618,6 +618,7 @@ pub fn resolve(film: &Profile, params: &RuntimeParams) -> Result<DyeGrainParams,
         monochrome: film.is_bw(),
         positive: film.is_positive(),
         dye_strength: grain.dye_strength,
+        color_grain: grain.dye_color_grain,
         layer_count: profile_layer_count(film)?,
         seed: params.random_seed,
         expectation: expectation_requested(),
@@ -904,6 +905,15 @@ fn law_params(resolved: &DyeGrainParams) -> texture::DyeLawParams {
             zero = true;
         }
     }
+    // A monochrome profile has one effective record. Its three lanes may
+    // still carry different targets after the tonal chain, but the color-grain
+    // control must not change their shared realization: keep the delivered
+    // coupling for BW and the recipe mapping for color.
+    params.rho = if resolved.monochrome {
+        spektrafilm_backend::dye_params::law::RHO
+    } else {
+        1.0 - resolved.color_grain
+    };
     params.length_scale = if resolved.positive {
         POSITIVE_BASE_SCALE
     } else {
@@ -984,6 +994,7 @@ fn device_params_with_law(
     layer_scales: [f64; 3],
     layer_table: Option<std::sync::Arc<spektrafilm_backend::dye_params::DyeLayerTable>>,
 ) -> Result<spektrafilm_backend::dye_params::DyeGpuParams, String> {
+    law.validate()?;
     let layer_count = layer_table.as_ref().map_or(1, |table| table.layer_count);
     Ok(spektrafilm_backend::dye_params::DyeGpuParams {
         source_pitch_um,
@@ -996,6 +1007,7 @@ fn device_params_with_law(
         seed: law.seed,
         expectation: law.expectation,
         monochrome: law.monochrome,
+        rho: law.rho,
         white: law.white,
         event_area_um2: law.q,
         fog: law.fog,
@@ -1561,7 +1573,7 @@ mod tests {
                     .expect("the device field runs");
             // The reference is the engine's law: the device must reproduce the
             // host model exactly in expectation, for every readout grid.
-            let mut reference = texture::DyeLawParams::delivered();
+            let mut reference = law_params(&resolved);
             reference.expectation = resolved.expectation;
             reference.seed = resolved.seed;
             let cpu_out = texture::apply(
@@ -2208,6 +2220,44 @@ mod tests {
         }
         assert!(weak < 0.8 * base, "weak {weak} vs base {base}");
         assert!(strong > 1.2 * base, "strong {strong} vs base {base}");
+    }
+
+    #[test]
+    fn color_grain_maps_to_record_coupling_on_both_handoffs() {
+        let film = load("kodak_portra_400");
+        let grid = ReadoutGrid {
+            origin_um: [0.0; 2],
+            pitch_um: [3.5; 2],
+            width: 4,
+            height: 4,
+        };
+        let defaults = supported_params();
+        assert_eq!(defaults.film_render.grain.dye_color_grain, 0.75);
+        assert!((law_params(&resolve(&film, &defaults).unwrap()).rho - 0.25).abs() < 1e-12);
+        for color_grain in [0.0, 0.2, 0.5, 0.75, 1.0] {
+            let mut params = supported_params();
+            params.film_render.grain.dye_color_grain = color_grain;
+            let resolved = resolve(&film, &params).unwrap();
+            let law = law_params(&resolved);
+            assert!((law.rho - (1.0 - color_grain)).abs() < 1e-12);
+            let device = device_params(&resolved, 3.5, grid).unwrap();
+            assert!((device.rho - (1.0 - color_grain)).abs() < 1e-12);
+        }
+    }
+
+    #[test]
+    fn color_grain_is_inert_for_monochrome_law() {
+        let film = load("kodak_doublex");
+        let mut couplings = Vec::new();
+        for color_grain in [0.0, 1.0] {
+            let mut params = supported_params();
+            params.film_render.grain.dye_color_grain = color_grain;
+            let resolved = resolve(&film, &params).unwrap();
+            assert!(resolved.monochrome);
+            let law = law_params(&resolved);
+            couplings.push(law.rho);
+        }
+        assert_eq!(couplings, [spektrafilm_backend::dye_params::law::RHO; 2]);
     }
 
     /// Positive profiles keep every density layer on the finer delivered base;

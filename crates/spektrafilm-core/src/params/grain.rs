@@ -299,6 +299,17 @@ pub struct GrainParams {
     /// Dye-only.
     #[serde(default = "default_dye_strength")]
     pub dye_strength: f64,
+    /// Relative separation of the three color records' grain fields.
+    ///
+    /// `0` puts all records on the shared field; `1` gives each record an
+    /// independent field. The default is `0.75`; an explicit `0.2` preserves
+    /// the previous delivered law's `rho = 0.8`.
+    /// This is a look control for color film only: it changes grain chroma,
+    /// not image saturation, and it leaves each record's field variance,
+    /// mean, size and spectrum unchanged. Black-and-white Dye has one
+    /// effective record, so this control does not apply there.
+    #[serde(default = "default_dye_color_grain")]
+    pub dye_color_grain: f64,
     /// Retained legacy Dye record-correlation value, in
     /// `[0, MEASURED_CHANNEL_CORRELATION_CEILING]`. Loads and saves keep it
     /// unchanged; the delivered Dye law does not read it.
@@ -356,6 +367,9 @@ fn default_dye_event_area_um2() -> f64 {
 /// The delivered Dye amplitude: a recipe at `1.0` leaves the law unchanged.
 fn default_dye_strength() -> f64 {
     1.0
+}
+fn default_dye_color_grain() -> f64 {
+    0.75
 }
 /// Historical supported and acceptance ceiling for [`GrainParams::channel_correlation`].
 ///
@@ -424,6 +438,7 @@ impl Default for GrainParams {
             dye_support_um: default_dye_support_um(),
             dye_event_area_um2: default_dye_event_area_um2(),
             dye_strength: default_dye_strength(),
+            dye_color_grain: default_dye_color_grain(),
             channel_correlation: default_channel_correlation(),
             blur: 0.89,
             mult_usm_sigma: 0.7,

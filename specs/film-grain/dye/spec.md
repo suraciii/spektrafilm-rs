@@ -49,10 +49,15 @@ Changing film geometry MUST preserve requested output raster dimensions while ch
 | Control | Key | Range | Default | Meaning |
 |---|---|---|---|---|
 | Grain strength | `film_render.grain.dye_strength` | `[0, 4]` | `1.0` | Relative amplitude of the stochastic field and count deviation on the polarity's delivered scale |
+| Color grain | `film_render.grain.dye_color_grain` | `[0, 1]` | `0.75` | Separation of the three color records' grain fields: `0` shares one field, `1` gives each record its own |
 
 `film_render.grain.active` owns the enable switch. No other Dye value is a public control.
 
 Grain strength MUST scale the correlated field's standard deviation and the event count's standard deviation by the same factor. It MUST preserve `E[D] = t`, the derived density taper, and the per-record ratio. It is a relative strength control, not a certified optical RMS target or material calibration.
+
+Color grain MUST map to the record coupling as `rho = 1 - color_grain`. It MUST preserve `E[D] = t`, the density taper, the per-record amplitude ratio, and the overall amplitude. It changes the cross-record covariance, not image saturation.
+
+A monochrome profile ignores the distinction and keeps its single effective record and delivered coupling; the GUI hides the control. Values outside `[0, 1]` MUST fail before rendering.
 
 The delivered positive strength scale MUST be twice the delivered negative scale at the same public strength. This polarity constant compensates the density-to-encoded contrast of a direct positive scan; it is engine calibration, not a second control.
 
@@ -60,15 +65,17 @@ Grain strength `0` MUST return the target density at the Dye boundary with no ra
 
 The value-noise cell size is an engine constant. It is not a crystal diameter, scanner blur, output-pixel size, or magnification.
 
-An omitted strength key MUST resolve to `1.0`.
+An omitted strength key MUST resolve to `1.0`. An omitted color-grain key MUST resolve to `0.75`. An explicit `0.2` MUST preserve the previous delivered look's `rho = 0.8` law.
 
 ### Resolved law inputs
 
-Dye's remaining law parameters are engine-derived constants: the per-record relative ratio, record coupling, and the delivered value-noise cell sizes. They also include the positive microcontrast cell and variance fraction, the delivered positive amplitude scale, event area, fog baseline, saturation density, development uniformity, and two-component normalization.
+Dye's remaining law parameters are engine-derived constants: the per-record relative ratio and the delivered value-noise cell sizes. They also include the positive microcontrast cell and variance fraction, the delivered positive amplitude scale, event area, fog baseline, saturation density, development uniformity, and two-component normalization.
 
 The profile's density-layer curves determine the layer targets and layer count; they are material data, not appearance controls. The engine owns each active layer's relative correlation scale and the polarity's delivered base cell.
 
-The per-record ratio and record coupling are advanced candidates, not public controls. They MUST NOT be exposed until each has a validated direction, range, and interaction with grain strength. Their current delivered values remain engine constants.
+The per-record ratio remains an advanced candidate, not a public control. It MUST NOT be exposed until it has a validated direction, range, and interaction with grain strength. Record coupling is exposed as color grain: its direction is monotone, its range is `[0, 1]`, and it preserves the strength mapping and mean.
+
+Its default is `0.75`; `0.2` reproduces the previous delivered law.
 
 The resolved seed selects the realization. The same seed, inputs, geometry, and implementation MUST reproduce the same field on the same executor. The seed MUST NOT be presented as a grain-arrangement or creative control.
 
@@ -81,7 +88,6 @@ Recipes that carry `dye_support_um`, `dye_event_area_um2`, `rms_granularity`, `d
 These candidates MUST remain internal or unexposed until a separate contract and evidence exist:
 
 - **Per-record grain ratio:** relative C/M/Y field amplitude. It is not a white-balance control and does not equal final RGB grain amounts.
-- **Record coupling:** the shared-field fraction between records. Its output direction and amplitude MUST be validated through the resolved color chain before exposure.
 - **Value-noise cell size:** an engine constant in film coordinates, not a public look control.
 - **Distribution width or roughness:** an internal spectrum-shape parameter. It is not `uniformity` and not an event-contribution width.
 - **Tone-zone weights:** record-density zones are not final-image shadows and highlights. A creative control would need its own definition.
@@ -119,6 +125,14 @@ Acceptance is gated. A later gate MUST NOT compensate for an earlier gate that f
 4. **Executor parity:** Prove the CPU and GPU realizations agree in expectation exactly, and that stochastic realizations agree within the declared count-term bound.
 5. **Optical measurement:** Run the independent spectral measurement oracle with a declared receiver, aperture, density definition, wavelength range, provenance, footprint, and viewing condition.
 6. **Photographic validation:** Use lossless outputs and a declared reference set containing portraits, smooth fields, dark and bright regions, saturated colors, fine detail, and a color chart. Record the intended viewing size and the limits of the comparison.
+
+### Color-grain acceptance
+
+- **Defaults:** An omitted or `0.75` color grain MUST produce the default field bit for bit on each executor. An explicit `0.2` MUST reproduce the previous delivered field bit for bit.
+- **Direction:** At fixed seed, geometry, and target, raising color grain from `0` through `0.5` to `1` MUST monotonically reduce cross-record correlation while the per-record mean stays at the target within the declared tolerance.
+- **Limits:** `0` MUST realize the shared-field limit; `1` MUST realize independent record fields. Both limits MUST preserve the density taper, per-record ratio, and overall amplitude.
+- **Strength interaction:** Color grain MUST NOT change the strength mapping. At strength `0`, every color-grain value MUST return the target.
+- **Handoff:** The CPU and device MUST receive the same mapped coupling and stream addressing.
 
 ### Strength-control acceptance
 
