@@ -7,6 +7,7 @@ license.workspace = true
 [features]
 precision-f64 = [
     "spektrafilm-math/precision-f64",
+    "spektrafilm-backend/precision-f64",
     "spektrafilm-gpu/precision-f64",
     "spektrafilm-model/precision-f64",
 ]

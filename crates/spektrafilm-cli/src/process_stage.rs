@@ -288,11 +288,7 @@ fn execute(
             header.as_ref().map_or("input", |h| kind_name(h.state)),
             params.random_seed,
             seed_source,
-            if cfg!(feature = "precision-f64") {
-                "f64"
-            } else {
-                "f32"
-            },
+            spektrafilm_backend::Precision::HOST.name(),
             if args.dry_run { " (dry run)" } else { " yet" }
         );
         eprintln!(

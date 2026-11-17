@@ -17,7 +17,7 @@ mod research;
     name = "spektrafilm",
     about = "Physically-based spectral film emulation"
 )]
-struct Cli {
+pub(crate) struct Cli {
     #[command(subcommand)]
     command: Commands,
 }
@@ -26,7 +26,7 @@ struct Cli {
 // Clap parses these argument structs directly; boxing a variant would not
 // satisfy the derived subcommand surface. The enum is built once per run.
 #[allow(clippy::large_enum_variant)]
-enum Commands {
+pub(crate) enum Commands {
     /// Process an image through the film simulation pipeline.
     #[command(
         after_long_help = "Examples:\n  spektrafilm process input.png -o output.tif --preset 'Kodak Portra 400' --input-color-space sRGB --input-cctf-decoding true\n  spektrafilm process input.png -o output.tif --preset 'Kodak Portra 400' --input-color-space sRGB --input-cctf-decoding true --set camera.exposure_compensation_ev=0.5 --seed 42\n  spektrafilm process input.png -o output.tif --lut look.cube --input-color-space sRGB --input-cctf-decoding true\n  spektrafilm process input.png -o output.tif --preset 'Kodak Portra 400' --input-color-space sRGB --input-cctf-decoding true --dry-run --dry-run-format text\n  spektrafilm process --expose a.tif --expose-ev -1 --expose b.tif --expose-ev -1 --film kodak_portra_400 --paper kodak_portra_endura --output double.tif\n  spektrafilm process --expose a.tif --expose-ev -2 --expose b.tif --expose-ev -2 --expose c.tif --expose-ev -2 --expose d.tif --expose-ev -2 --film kodak_portra_400 --paper kodak_portra_endura --output four.tif\n  spektrafilm preset list --format text\n  spektrafilm list-profiles\n  spektrafilm describe --format text\n  spektrafilm describe --module film_render.grain --format json\n\nRaster source color and transfer state must be declared explicitly; RAW uses linear ACES2065-1 from its decoder. Scanner io.output_color_space controls simulation output; --saving-color-space converts it for the writer. --saving-cctf-encoding controls writer encoding. Output bit depth does not select computation precision. Dry run does not decode pixels or prove device availability."
@@ -183,7 +183,7 @@ enum Commands {
     External(Vec<String>),
 }
 
-fn main() -> Result<()> {
+pub(crate) fn main() -> Result<()> {
     static IDENTITY: std::sync::LazyLock<(String, String)> = std::sync::LazyLock::new(|| {
         let name = std::env::current_exe()
             .ok()
@@ -193,11 +193,7 @@ fn main() -> Result<()> {
                     .map(str::to_owned)
             })
             .unwrap_or_else(|| "spektrafilm".into());
-        let precision = if cfg!(feature = "precision-f64") {
-            "f64"
-        } else {
-            "f32"
-        };
+        let precision = spektrafilm_backend::Precision::HOST.name();
         (
             name,
             format!("{} (native CPU {})", env!("CARGO_PKG_VERSION"), precision),

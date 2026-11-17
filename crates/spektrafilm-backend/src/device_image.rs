@@ -16,8 +16,10 @@
 //! CPU reference execution path under the same domain contracts.
 
 use crate::ComputeBackend;
+use serde::{Deserialize, Serialize};
 use spektrafilm_math::colorspace::RgbColorSpace;
 use spektrafilm_math::image::ImageBuf;
+use spektrafilm_math::precision::Scalar;
 use std::any::Any;
 use std::sync::Arc;
 
@@ -37,7 +39,8 @@ pub enum SampleDomain {
 /// Arithmetic precision the carrier's samples were produced with. A carrier
 /// that left a device pass is f32; the CPU reference may hold f64. The
 /// distinction is reported, never used to select a different algorithm.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Precision {
     /// Binary32 samples (every device pass today).
     F32,
@@ -47,11 +50,54 @@ pub enum Precision {
 
 impl Precision {
     /// Precision of host `Scalar` samples in this build.
-    pub fn host() -> Self {
-        if cfg!(feature = "precision-f64") {
-            Precision::F64
-        } else {
-            Precision::F32
+    ///
+    /// Derived from the actual scalar type, not from a downstream feature
+    /// flag: feature lists can disagree, the type cannot.
+    pub const HOST: Self = if std::mem::size_of::<Scalar>() == 8 {
+        Self::F64
+    } else {
+        Self::F32
+    };
+
+    /// Precision of host `Scalar` samples in this build.
+    pub const fn host() -> Self {
+        Self::HOST
+    }
+
+    /// Precision used for host computation.
+    pub const fn computation() -> Self {
+        Self::HOST
+    }
+
+    /// Whether this is the binary64 reference precision.
+    pub const fn is_f64(self) -> bool {
+        match self {
+            Self::F32 => false,
+            Self::F64 => true,
+        }
+    }
+
+    /// Storage width of one sample in bytes.
+    pub const fn byte_width(self) -> u64 {
+        match self {
+            Self::F32 => 4,
+            Self::F64 => 8,
+        }
+    }
+
+    /// Stable machine name used by reports and diagnostics.
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::F32 => "f32",
+            Self::F64 => "f64",
+        }
+    }
+
+    /// Short human label for CPU precision selectors.
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::F32 => "CPU (f32)",
+            Self::F64 => "CPU (f64)",
         }
     }
 }
@@ -217,5 +263,22 @@ impl std::fmt::Debug for DeviceImage {
             .field("pixel_pitch_um", &self.meta.pixel_pitch_um)
             .field("retained", &self.payload.is_some())
             .finish()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Precision;
+    use spektrafilm_math::precision::Scalar;
+
+    #[test]
+    fn host_precision_matches_scalar_storage() {
+        assert_eq!(
+            Precision::HOST.byte_width(),
+            std::mem::size_of::<Scalar>() as u64
+        );
+        assert_eq!(Precision::host(), Precision::HOST);
+        assert_eq!(Precision::computation(), Precision::HOST);
+        assert_eq!(Precision::HOST.is_f64(), std::mem::size_of::<Scalar>() == 8);
     }
 }

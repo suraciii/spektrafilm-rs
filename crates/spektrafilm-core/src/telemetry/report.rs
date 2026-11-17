@@ -2,6 +2,8 @@ use super::configuration::{RenderConfiguration, SavingConfiguration};
 use serde::{Deserialize, Serialize};
 use spektrafilm_backend::telemetry::{AvailabilityReason, CollectionMode, Outcome};
 
+pub use spektrafilm_backend::Precision;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum OperationKind {
@@ -55,13 +57,6 @@ pub struct SourceRender {
     pub diagnostics_collected: bool,
     pub color_space: super::configuration::ColorSpaceRole,
     pub transfer_encoded: bool,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Precision {
-    F32,
-    F64,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

@@ -39,13 +39,7 @@ impl ExportBackend {
     }
     pub(crate) fn label(self) -> &'static str {
         match self {
-            Self::Cpu => {
-                if cfg!(feature = "precision-f64") {
-                    "CPU (f64)"
-                } else {
-                    "CPU (f32)"
-                }
-            }
+            Self::Cpu => spektrafilm_backend::Precision::HOST.label(),
             Self::Gpu => "GPU (WGPU f32)",
         }
     }
@@ -697,7 +691,7 @@ impl ExportDialog {
                         );
                     }
                 }
-                let cpu_label: &str = if cfg!(feature = "precision-f64") { "CPU (f64)" } else { "CPU (f32)" };
+                let cpu_label: &str = spektrafilm_backend::Precision::HOST.label();
                 enum_choice(ui, "Backend", &mut draft.backend, &[
                     (ExportBackend::Cpu, cpu_label),
                     (ExportBackend::Gpu, "GPU (WGPU f32)"),

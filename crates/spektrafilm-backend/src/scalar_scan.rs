@@ -127,7 +127,7 @@ mod tests {
     // Declared before the comparisons: f64 factoring/reduction error, or the
     // final f32 conversion at the public ImageBuf boundary. Not pixel identity.
     fn assert_rgb_close(actual: &ImageBuf, expected: &ImageBuf) {
-        let tolerance = if cfg!(feature = "precision-f64") {
+        let tolerance = if crate::Precision::HOST.is_f64() {
             2e-12
         } else {
             2e-6
@@ -276,7 +276,7 @@ mod exponent_domain_tests {
     const IDENTITY: [[f64; 3]; 3] = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
 
     fn assert_same_classification_and_value(actual: &ImageBuf, reference: &ImageBuf) {
-        let tolerance = if cfg!(feature = "precision-f64") {
+        let tolerance = if crate::Precision::HOST.is_f64() {
             2e-12
         } else {
             2e-6

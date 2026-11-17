@@ -3,7 +3,7 @@ use spektrafilm_math::image::ImageBuf;
 use spektrafilm_math::precision::{Scalar, exp10_inplace, from_f32, from_f64, to_f32, to_f64};
 use spektrafilm_math::spectral;
 
-use crate::{ComputeBackend, Lut3D};
+use crate::{ComputeBackend, Lut3D, Precision};
 
 // Pull in BLAS-src so `cblas_dgemm` is available at link time. The
 // provider crate (Accelerate on macOS, OpenBLAS elsewhere) is selected
@@ -187,10 +187,9 @@ impl ComputeBackend for CpuBackend {
     }
 
     fn name(&self) -> &str {
-        if cfg!(feature = "precision-f64") {
-            "CPU (f64 reference, rayon)"
-        } else {
-            "CPU (f32, rayon)"
+        match Precision::HOST {
+            Precision::F32 => "CPU (f32, rayon)",
+            Precision::F64 => "CPU (f64 reference, rayon)",
         }
     }
 }

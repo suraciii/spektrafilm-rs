@@ -9,29 +9,7 @@ use sha2::{Digest, Sha256};
 use spektrafilm_math::image::ImageBuf;
 use spektrafilm_math::precision::Scalar;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ScalarType {
-    F32,
-    F64,
-}
-
-impl ScalarType {
-    pub const fn computation() -> Self {
-        if cfg!(feature = "precision-f64") {
-            Self::F64
-        } else {
-            Self::F32
-        }
-    }
-
-    pub const fn byte_width(self) -> u64 {
-        match self {
-            Self::F32 => 4,
-            Self::F64 => 8,
-        }
-    }
-}
+pub use spektrafilm_backend::Precision as ScalarType;
 
 #[derive(Debug, Clone)]
 pub enum NativeSamples {

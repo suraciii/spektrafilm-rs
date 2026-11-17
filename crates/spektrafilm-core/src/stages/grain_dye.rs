@@ -1151,7 +1151,7 @@ mod tests {
     /// Field identity tolerance from the design: f32 reads agree to 1e-5,
     /// f64 reads to 1e-10.
     fn read_tolerance() -> f64 {
-        if cfg!(feature = "precision-f64") {
+        if spektrafilm_backend::Precision::HOST.is_f64() {
             1e-10
         } else {
             1e-5
