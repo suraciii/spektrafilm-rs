@@ -355,6 +355,7 @@ pub fn moved_invocation() -> Option<i32> {
             Some(sub @ ("runs" | "readings" | "pairs")) => {
                 Some((("spektrafilm-bench"), format!("compare {sub}")))
             }
+            None | Some("-h" | "--help") => Some((("spektrafilm-bench"), "compare".to_owned())),
             _ => None,
         },
         other => moved(other).map(|(binary, _)| (binary, other.to_owned())),

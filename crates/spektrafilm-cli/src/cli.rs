@@ -29,7 +29,7 @@ pub(crate) struct Cli {
 pub(crate) enum Commands {
     /// Process an image through the film simulation pipeline.
     #[command(
-        after_long_help = "Examples:\n  spektrafilm process input.png -o output.tif --preset 'Kodak Portra 400' --input-color-space sRGB --input-cctf-decoding true\n  spektrafilm process input.png -o output.tif --preset 'Kodak Portra 400' --input-color-space sRGB --input-cctf-decoding true --set camera.exposure_compensation_ev=0.5 --seed 42\n  spektrafilm process input.png -o output.tif --lut look.cube --input-color-space sRGB --input-cctf-decoding true\n  spektrafilm process input.png -o output.tif --preset 'Kodak Portra 400' --input-color-space sRGB --input-cctf-decoding true --dry-run --dry-run-format text\n  spektrafilm process --expose a.tif --expose-ev -1 --expose b.tif --expose-ev -1 --film kodak_portra_400 --paper kodak_portra_endura --output double.tif\n  spektrafilm process --expose a.tif --expose-ev -2 --expose b.tif --expose-ev -2 --expose c.tif --expose-ev -2 --expose d.tif --expose-ev -2 --film kodak_portra_400 --paper kodak_portra_endura --output four.tif\n  spektrafilm preset list --format text\n  spektrafilm list-profiles\n  spektrafilm describe --format text\n  spektrafilm describe --module film_render.grain --format json\n\nRaster source color and transfer state must be declared explicitly; RAW uses linear ACES2065-1 from its decoder. Scanner io.output_color_space controls simulation output; --saving-color-space converts it for the writer. --saving-cctf-encoding controls writer encoding. Output bit depth does not select computation precision. Dry run does not decode pixels or prove device availability."
+        after_long_help = "Examples:\n  spektrafilm process input.png -o output.tif --preset 'Kodak Portra 400' --input-color-space sRGB --input-cctf-decoding true\n  spektrafilm process input.png -o output.tif --lut look.cube --input-color-space sRGB --input-cctf-decoding true\n  spektrafilm process input.png -o output.tif --preset 'Kodak Portra 400' --input-color-space sRGB --input-cctf-decoding true --dry-run --dry-run-format text\n  spektrafilm process --expose a.tif --expose-ev -1 --expose b.tif --expose-ev -1 --film kodak_portra_400 --paper kodak_portra_endura --output double.tif\n\nRaster source color and transfer state must be declared explicitly; RAW uses linear ACES2065-1 from its decoder. Scanner io.output_color_space controls simulation output; --saving-color-space converts it for the writer. --saving-cctf-encoding controls writer encoding. Output bit depth does not select computation precision. Dry run does not decode pixels or prove device availability."
     )]
     Process(process::ProcessArgs),
     /// List available film and paper profiles.
@@ -213,15 +213,24 @@ pub fn run() -> Result<()> {
     let argv = research::normalize_legacy_argv();
     #[cfg(not(feature = "precision-f64"))]
     let argv: Vec<std::ffi::OsString> = std::env::args_os().collect();
-    let matches = Cli::command()
+    #[allow(unused_mut)]
+    let mut command = Cli::command()
         .name(name.as_str())
         .version(version.as_str())
         .mut_subcommand("process", |command| {
             command.mut_arg("route", |arg| {
                 arg.help(route_help.clone()).long_help(route_help.clone())
             })
-        })
-        .get_matches_from(argv);
+        });
+    // These names remain accepted so old invocations get the owning binary's
+    // guidance, but they are not part of this binary's command surface.
+    #[cfg(feature = "precision-f64")]
+    {
+        command = command
+            .mut_subcommand("inspect", |command| command.hide(true))
+            .mut_subcommand("compare", |command| command.hide(true));
+    }
+    let matches = command.get_matches_from(argv);
     let cli = Cli::from_arg_matches(&matches)?;
     let (_, command_matches) = matches.subcommand().expect("required subcommand");
     let debug = matches.subcommand_name() == Some("process") && command_matches.get_flag("debug");
