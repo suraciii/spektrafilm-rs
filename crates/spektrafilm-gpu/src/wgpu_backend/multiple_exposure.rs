@@ -97,6 +97,9 @@ const _: () = assert!(std::mem::size_of::<ComposeParams>() == 16);
 const _: () = assert!(std::mem::offset_of!(ComposeParams, acc_base) == 8);
 
 impl WgpuBackend {
+    // `ViewPlan` stores `&dyn RasterStorage`; `Vec<ImagePage>` is the sized
+    // implementor, while the slice impl cannot be cast to a trait object.
+    #[allow(clippy::ptr_arg)]
     fn compose_pass(
         &self,
         shader: &'static str,

@@ -93,7 +93,7 @@ def _benchmark_smoke(exporter, data, evidence, environment):
     target = root / 'local-target.json'
     invoke('target', '--renderer', exporter, '--data-dir', data,
            '--backend', 'cpu', '--out', target, binary=exporter)
-    invoke('validate', '--kind', 'target', '--file', target)
+    invoke('document', '--kind', 'target', '--check', target)
     preflight = root / 'preflight'
     invoke('run', 'suite', '--suite', fixtures / 'complete.json', '--target',
            target, '--dry-run', '--out', preflight, binary=exporter)
@@ -103,7 +103,7 @@ def _benchmark_smoke(exporter, data, evidence, environment):
     run = root / 'run'
     invoke('run', 'suite', '--suite', fixtures / 'quick.json', '--target',
            target, '--case', 'color_chart', '--out', run, binary=exporter)
-    invoke('validate', '--kind', 'run', '--file', run / 'run.json')
+    invoke('document', '--kind', 'run', '--check', run / 'run.json')
     comparison = root / 'comparison'
     invoke('compare', 'runs', '--baseline', run, '--candidate', run,
            '--out', comparison, binary=bench)
@@ -113,7 +113,7 @@ def _benchmark_smoke(exporter, data, evidence, environment):
         row = next(row for row in rows if row['metric'] == metric
                    and row['region_id'] == 'full_image')
         assert row['availability'] == 'available' and row['value'] == 0, row
-    invoke('validate', '--kind', 'comparison', '--file',
+    invoke('document', '--kind', 'comparison', '--check',
            comparison / 'comparison.json')
     inspected = invoke('inspect', '--comparison', comparison,
                        '--case', 'color_chart', '--region', 'full_image',
