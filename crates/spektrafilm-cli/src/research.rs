@@ -4,15 +4,15 @@
 //! are experimental: they MAY change or disappear between revisions, so they
 //! ship with the f64 binary rather than with the stable exporter commands.
 
-use anyhow::Result;
-use clap::ArgMatches;
-use spektrafilm_benchmark::{local_input, runner, target};
-use spektrafilm_cli::lab::cli::{
+use crate::lab::cli::{
     CompareCommand, EvaluationRunArgs, MeasureCommand, RunCommand, RunImageArgs, RunSuiteArgs,
     SpectralCommand,
 };
+use anyhow::Result;
+use clap::ArgMatches;
+use spektrafilm_benchmark::{local_input, runner, target};
 
-use crate::Commands;
+use crate::cli::Commands;
 
 const BINARY: &str = "spektrafilm-f64";
 
@@ -64,9 +64,8 @@ fn execute(
         },
         Commands::Measure { command } => match command {
             MeasureCommand::Run(args) => {
-                let (value, status) =
-                    spektrafilm_cli::lab::measure::run::run_with_result(&args, matches)
-                        .map_err(|error| BenchError::with_message("operation_failed", error))?;
+                let (value, status) = crate::lab::measure::run::run_with_result(&args, matches)
+                    .map_err(|error| BenchError::with_message("operation_failed", error))?;
                 Ok((value, status))
             }
         },
@@ -106,19 +105,16 @@ fn execute(
         )),
         Commands::Spectral { command } => match command {
             SpectralCommand::Evaluate(args) => {
-                let (value, status) =
-                    spektrafilm_cli::lab::evaluate::run_with_result(&args, matches)
-                        .map_err(|error| BenchError::with_message("operation_failed", error))?;
+                let (value, status) = crate::lab::evaluate::run_with_result(&args, matches)
+                    .map_err(|error| BenchError::with_message("operation_failed", error))?;
                 Ok((value, status))
             }
         },
-        Commands::Experiment { command } => {
-            spektrafilm_cli::lab::experiment::dispatch_with_result(&command)
-                .map_err(|error| BenchError::with_message("operation_failed", error))
-        }
+        Commands::Experiment { command } => crate::lab::experiment::dispatch_with_result(&command)
+            .map_err(|error| BenchError::with_message("operation_failed", error)),
         Commands::External(_) => unreachable!("handled before dispatch"),
         Commands::Fit(args) => {
-            let (value, status) = spektrafilm_cli::fit::cmd_fit_with_result(&args, matches)
+            let (value, status) = crate::fit::cmd_fit_with_result(&args, matches)
                 .map_err(|error| BenchError::with_message("operation_failed", error))?;
             Ok((value, status))
         }
@@ -275,13 +271,13 @@ fn execute_run_legacy(
         let enter = args
             .enter
             .ok_or_else(|| BenchError::new("argument_syntax", "--stimuli requires --enter"))?;
-        let measurement = spektrafilm_cli::lab::cli::MeasureRunArgs {
+        let measurement = crate::lab::cli::MeasureRunArgs {
             stimuli,
             enter,
             read: args.read,
             dry_run: args.dry_run,
             out,
-            chain: spektrafilm_cli::lab::cli::ChainArgs {
+            chain: crate::lab::cli::ChainArgs {
                 preset: args.preset,
                 film: args.film,
                 paper: args.paper,
@@ -292,9 +288,8 @@ fn execute_run_legacy(
                 data_dir: args.data_dir,
             },
         };
-        let (value, status) =
-            spektrafilm_cli::lab::measure::run::run_with_result(&measurement, matches)
-                .map_err(|error| BenchError::with_message("operation_failed", error))?;
+        let (value, status) = crate::lab::measure::run::run_with_result(&measurement, matches)
+            .map_err(|error| BenchError::with_message("operation_failed", error))?;
         return Ok((value, status));
     }
     let target = args
@@ -383,7 +378,7 @@ pub fn moved(name: &str) -> Option<(&'static str, String)> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::Cli;
+    use crate::cli::Cli;
     use clap::Parser;
 
     #[test]

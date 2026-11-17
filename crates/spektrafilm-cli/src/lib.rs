@@ -1,10 +1,15 @@
 //! Shared command plumbing for the SpektraFilm binaries.
 //!
-//! The user binaries (`spektrafilm`, `spektrafilm-f64`) and the instrument
-//! share these modules. The instrument-only `fit` and `lab` modules compile
-//! under the `precision-f64` feature, which also selects host f64; an f64 user
-//! build therefore carries the research commands too. Each binary's own `main`
-//! owns its command surface.
+//! The user binaries (`spektrafilm`, `spektrafilm-f64`) are thin entry points
+//! over [`run`]. The instrument-only `fit` and `lab` modules compile under the
+//! `precision-f64` feature, which also selects host f64; an f64 user build
+//! therefore carries the research commands too.
+
+mod cli;
+#[cfg(feature = "precision-f64")]
+mod research;
+
+pub use cli::run;
 
 pub mod contract;
 #[cfg(feature = "precision-f64")]
