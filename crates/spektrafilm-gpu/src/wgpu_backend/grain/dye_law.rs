@@ -53,7 +53,6 @@ struct ApplyParams {
     white: f32,
     rho: f32,
     taper_peak: f32,
-    dmax: f32,
     uniformity: f32,
     q: f32,
     area: f32,
@@ -70,7 +69,10 @@ struct ApplyParams {
     pad3: u32,
     pad4: u32,
     pad5: u32,
+    pad6: u32,
     strength: [f32; 4],
+    /// Per-layer saturation density, one vec4 per layer.
+    dmax: [[f32; 4]; 3],
 }
 
 fn layer_table_bytes(table: Option<&spektrafilm_backend::dye_params::DyeLayerTable>) -> Vec<f32> {
@@ -290,6 +292,7 @@ pub(super) struct LawGeom {
     pub event_area_um2: f64,
     pub fog: f64,
     pub layer_count: u32,
+    pub layer_dmax: [[f64; 3]; 3],
     pub layer_table: Option<std::sync::Arc<spektrafilm_backend::dye_params::DyeLayerTable>>,
     pub pitch_um: f64,
     pub base_px: [f64; 3],
@@ -463,7 +466,6 @@ impl WgpuBackend {
             white: geom.white as f32,
             rho: geom.rho as f32,
             taper_peak: law::taper_peak() as f32,
-            dmax: law::DMAX as f32,
             uniformity: law::UNIFORMITY as f32,
             q: geom.event_area_um2 as f32,
             area: (geom.pitch_um * geom.pitch_um) as f32,
@@ -486,12 +488,17 @@ impl WgpuBackend {
             pad3: 0,
             pad4: 0,
             pad5: 0,
+            pad6: 0,
             strength: [
                 law::STRENGTH[0] as f32,
                 law::STRENGTH[1] as f32,
                 law::STRENGTH[2] as f32,
                 0.0,
             ],
+            dmax: std::array::from_fn(|layer| {
+                let value = geom.layer_dmax[layer];
+                [value[0] as f32, value[1] as f32, value[2] as f32, 0.0]
+            }),
         };
         let u = self.uniform("dye_law_apply", bytemuck::bytes_of(&params));
         let layer_bytes = layer_table_bytes(geom.layer_table.as_deref());
@@ -586,6 +593,7 @@ impl WgpuBackend {
             event_area_um2: params.event_area_um2,
             fog: params.fog,
             layer_count: params.layer_count.max(1),
+            layer_dmax: params.layer_dmax,
             layer_table: params.layer_table.clone(),
             pitch_um,
             base_px,

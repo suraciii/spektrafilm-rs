@@ -251,6 +251,7 @@ impl WgpuBackend {
                     event_area_um2: params.event_area_um2,
                     fog: params.fog,
                     layer_count: params.layer_count.max(1),
+                    layer_dmax: params.layer_dmax,
                     layer_table: params.layer_table.clone(),
                     pitch_um: source_pitch,
                     base_px,
@@ -365,6 +366,7 @@ mod tests {
             fine_scale: 0.0,
             fine_weight: 0.0,
             layer_scales: law::LAYER_SCALES,
+            layer_dmax: [[law::DMAX; 3]; 3],
             layer_count: 1,
             layer_table: None,
         }

@@ -80,6 +80,9 @@ pub struct DyeLawParams {
     /// Zero-based density-layer index. It only selects the independent
     /// record stream; the density target is already that layer's share.
     pub layer: u32,
+    /// Per-channel record density at which the granularity taper vanishes.
+    /// The resolved profile supplies the active layer's curve maximum.
+    pub dmax: [f64; 3],
     pub seed: u64,
     /// Replace every draw by its conditional mean (diagnostic only).
     pub expectation: bool,
@@ -104,6 +107,7 @@ impl DyeLawParams {
             fine_scale: 0.0,
             fine_weight: 0.0,
             layer: 0,
+            dmax: [law::DMAX; 3],
             seed: 7,
             expectation: false,
             monochrome: false,
@@ -140,6 +144,13 @@ impl DyeLawParams {
         if self.fine_weight > 0.0 && (!self.fine_scale.is_finite() || self.fine_scale <= 0.0) {
             return Err("film grain Dye: fine_scale must be finite and positive".into());
         }
+        if self
+            .dmax
+            .iter()
+            .any(|value| !value.is_finite() || *value <= 0.0)
+        {
+            return Err("film grain Dye: dmax must be finite and positive".into());
+        }
         Ok(())
     }
 }
@@ -169,8 +180,8 @@ fn correlated_field(
     )
 }
 
-fn density_taper(t: f64, taper_peak: f64) -> f64 {
-    let p_dev = (t / law::DMAX).clamp(0.0, 1.0);
+fn density_taper(t: f64, dmax: f64, taper_peak: f64) -> f64 {
+    let p_dev = (t / dmax).clamp(0.0, 1.0);
     let sat = 1.0 - p_dev * law::UNIFORMITY;
     let shape = (sat * p_dev * (1.0 - p_dev)).max(0.0).sqrt();
     shape / taper_peak
@@ -214,7 +225,7 @@ fn channel(
         .enumerate()
         .try_for_each(|(i, o)| -> Result<(), String> {
             let t = to_f64(target[i * 3 + c]);
-            let taper = density_taper(t, taper_peak);
+            let taper = density_taper(t, p.dmax[c], taper_peak);
             if p.expectation || q <= 0.0 {
                 *o = from_f64(t);
                 return Ok(());
@@ -395,9 +406,17 @@ mod tests {
     #[test]
     fn density_taper_vanishes_at_clear_base_and_saturation() {
         let peak = law::taper_peak();
-        assert_eq!(density_taper(0.0, peak), 0.0);
-        assert_eq!(density_taper(law::DMAX, peak), 0.0);
-        assert!(density_taper(law::DMAX * 0.5, peak) > 0.0);
+        assert_eq!(density_taper(0.0, law::DMAX, peak), 0.0);
+        assert_eq!(density_taper(law::DMAX, law::DMAX, peak), 0.0);
+        assert!(density_taper(law::DMAX * 0.5, law::DMAX, peak) > 0.0);
+    }
+
+    #[test]
+    fn density_taper_follows_the_record_saturation_density() {
+        let peak = law::taper_peak();
+        let dmax = 2.25;
+        assert!(density_taper(1.5, dmax, peak) > 0.0);
+        assert_eq!(density_taper(dmax, dmax, peak), 0.0);
     }
 
     #[test]

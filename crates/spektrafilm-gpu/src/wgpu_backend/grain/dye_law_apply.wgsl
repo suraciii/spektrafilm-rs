@@ -22,7 +22,6 @@ struct P {
     white: f32,
     rho: f32,
     taper_peak: f32,
-    dmax: f32,
     uniformity: f32,
     q: f32,
     area: f32,
@@ -39,7 +38,9 @@ struct P {
     pad3: u32,
     pad4: u32,
     pad5: u32,
+    pad6: u32,
     strength: vec4<f32>,
+    dmax: array<vec4<f32>, 3>,
 };
 @group(0) @binding(0) var<uniform> p: P;
 @group(0) @binding(1) var<storage, read> density: array<f32>;
@@ -180,8 +181,8 @@ fn poisson_exact(lambda: f32, seed: u32, stream: u32, x: u32, y: u32) -> f32 {
     return max(lambda, 0.0);
 }
 
-fn taper(t: f32) -> f32 {
-    let pd = clamp(t / p.dmax, 0.0, 1.0);
+fn taper(t: f32, dmax: f32) -> f32 {
+    let pd = clamp(t / dmax, 0.0, 1.0);
     let sat = 1.0 - pd * p.uniformity;
     let shape = sqrt(max(sat * pd * (1.0 - pd), 0.0));
     return shape / p.taper_peak;
@@ -233,7 +234,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
             let strength = select(p.strength[c], 1.0, mono);
             let s = shared_field[offset];
             let wi = a * s + b * own_c;
-            let rel = p.white * strength * taper(layer_density);
+            let rel = p.white * strength * taper(layer_density, p.dmax[layer][c]);
             let e = max(1.0 + rel * wi, 0.02);
             let expected = (layer_density + p.fog) * e;
             let lambda = max(expected * p.area / p.q, 0.0);

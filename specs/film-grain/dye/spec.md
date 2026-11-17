@@ -69,9 +69,11 @@ An omitted strength key MUST resolve to `1.0`. An omitted color-grain key MUST r
 
 ### Resolved law inputs
 
-Dye's remaining law parameters are engine-derived constants: the per-record relative ratio and the delivered value-noise cell sizes. They also include the positive microcontrast cell and variance fraction, the delivered positive amplitude scale, event area, fog baseline, saturation density, development uniformity, and two-component normalization.
+Dye's remaining law parameters are engine-derived constants: the per-record relative ratio and the delivered value-noise cell sizes. They also include the positive microcontrast cell and variance fraction, the delivered positive amplitude scale, event area, fog baseline, development uniformity, and two-component normalization.
 
-The profile's density-layer curves determine the layer targets and layer count; they are material data, not appearance controls. The engine owns each active layer's relative correlation scale and the polarity's delivered base cell.
+The profile's density-layer curves determine the layer targets, the layer count, and each layer/channel saturation density `dmax`; they are material data, not appearance controls. A profile without layer curves uses its composite curve maximum, and the engine fallback applies only when no usable positive curve exists.
+
+The engine owns each active layer's relative correlation scale and the polarity's delivered base cell.
 
 The per-record ratio remains an advanced candidate, not a public control. It MUST NOT be exposed until it has a validated direction, range, and interaction with grain strength. Record coupling is exposed as inter-record grain separation: its direction is monotone, its range is `[0, 1]`, and it preserves the strength mapping and mean.
 
@@ -94,7 +96,7 @@ These candidates MUST remain internal or unexposed until a separate contract and
 - **Distribution width or roughness:** an internal spectrum-shape parameter. It is not `uniformity` and not an event-contribution width.
 - **Tone-zone weights:** record-density zones are not final-image shadows and highlights. A creative control would need its own definition.
 - **Fog grain:** a model or stock parameter, not a public knob.
-- **Event area, value-noise cell size, field normalization, Dmax, uniformity, fog baseline, and the per-record ratio:** internal law, calibration, or numerical values, not ordinary appearance controls.
+- **Event area, value-noise cell size, field normalization, profile-derived layer Dmax, uniformity, fog baseline, and the per-record ratio:** internal law, material, calibration, or numerical values, not ordinary appearance controls.
 - **Film format, scanner blur, and sharpening:** owned by their modules; they do not replace texture scale.
 
 The expectation diagnostic replaces every draw by its conditional mean and MUST remain a diagnostic. It MUST NOT change the user's recipe or become a production bypass.
