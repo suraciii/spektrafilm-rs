@@ -193,7 +193,7 @@ fn report_for(
     let total_exposure: f64 = reports.iter().map(|shot| 2.0_f64.powf(shot.final_ev)).sum();
     let highlight_log_e = film_shoulder_log_e(&pipeline.film);
     let mut highlight_pixels = 0usize;
-    for pixel in combined.data.chunks_exact(3) {
+    for pixel in combined.data.as_chunks::<3>().0 {
         let peak = pixel
             .iter()
             .map(|&value| to_f64(value))

@@ -863,9 +863,11 @@ mod tests {
 
     #[test]
     fn default_flag_metering_is_manual() {
-        let mut args = ProcessArgs::default();
-        args.expose = vec![PathBuf::from("a.png"), PathBuf::from("b.png")];
-        args.film = Some("kodak_portra_400".into());
+        let args = ProcessArgs {
+            expose: vec![PathBuf::from("a.png"), PathBuf::from("b.png")],
+            film: Some("kodak_portra_400".into()),
+            ..Default::default()
+        };
         let resolved = resolve_flags(&args).unwrap();
         assert_eq!(resolved.metering, MeteringArg::Manual);
     }
