@@ -23,6 +23,9 @@ struct Cli {
 }
 
 #[derive(Subcommand)]
+// Clap parses these argument structs directly; boxing a variant would not
+// satisfy the derived subcommand surface. The enum is built once per run.
+#[allow(clippy::large_enum_variant)]
 enum Commands {
     /// Process an image through the film simulation pipeline.
     #[command(

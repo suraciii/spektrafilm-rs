@@ -56,7 +56,7 @@ fn execute(
     protected: &[&Path],
 ) -> Result<()> {
     let header = if args.input_path().is_dir() {
-        Some(stage_artifact::read_header(&args.input_path())?)
+        Some(stage_artifact::read_header(args.input_path())?)
     } else {
         None
     };
@@ -97,9 +97,9 @@ fn execute(
             args.input_path().display()
         );
     }
-    let input_is_raw = header.is_none() && image_io::is_raw(&args.input_path());
+    let input_is_raw = header.is_none() && image_io::is_raw(args.input_path());
     if header.is_none() && !input_is_raw {
-        image_io::ImageFormat::detect(&args.input_path())?;
+        image_io::ImageFormat::detect(args.input_path())?;
     }
     let raw = raw_options(&args.workflow);
     if input_is_raw {
@@ -343,7 +343,7 @@ fn execute(
         .context("--output is required for execution")?;
     // Complete required member verification precedes compute-device creation.
     let mut restored = if header.is_some() {
-        Some(stage_artifact::read(&args.input_path())?)
+        Some(stage_artifact::read(args.input_path())?)
     } else {
         None
     };
@@ -440,11 +440,11 @@ fn execute(
         }
     } else {
         let image = if input_is_raw {
-            spektrafilm_raw::load(&args.input_path(), &raw)
+            spektrafilm_raw::load(args.input_path(), &raw)
                 .map_err(anyhow::Error::msg)?
                 .image
         } else {
-            let loaded = image_io::load(&args.input_path())?;
+            let loaded = image_io::load(args.input_path())?;
             metadata = loaded.metadata;
             loaded.image
         };
@@ -736,8 +736,8 @@ fn dry_report(
 }
 
 fn validate_read_only_input(args: &ProcessArgs) -> Result<()> {
-    let root = std::fs::canonicalize(&args.input_path())?;
-    let header = stage_artifact::read_header(&args.input_path())?;
+    let root = std::fs::canonicalize(args.input_path())?;
+    let header = stage_artifact::read_header(args.input_path())?;
     let mut members = vec![root.join("stage.json")];
     members.extend(
         header
