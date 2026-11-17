@@ -234,12 +234,10 @@ function ConvertTo-RustString {
 function New-EmbedManifest {
     param(
         [string]$DataDir,
-        [string]$F64Exe,
         [string]$Destination
     )
 
     $dataRoot = (Resolve-Path -LiteralPath $DataDir).Path
-    $f64Path = (Resolve-Path -LiteralPath $F64Exe).Path
     $files = Get-ChildItem -LiteralPath $dataRoot -Recurse -File | Sort-Object FullName
 
     $hashLines = New-Object System.Collections.Generic.List[string]
@@ -251,8 +249,6 @@ function New-EmbedManifest {
         $hashLines.Add("data/$rel|$($file.Length)|$hash")
         $entries.Add("    (`"$(ConvertTo-RustString $rel)`", include_bytes!(r#`"$($file.FullName)`"#) as &[u8]),")
     }
-    $f64Hash = (Get-FileHash -LiteralPath $f64Path -Algorithm SHA256).Hash.ToLowerInvariant()
-    $hashLines.Add("spektrafilm-f64.exe|$((Get-Item -LiteralPath $f64Path).Length)|$f64Hash")
 
     $sha = [System.Security.Cryptography.SHA256]::Create()
     try {
@@ -275,7 +271,6 @@ function New-EmbedManifest {
         $manifest.Add($entry)
     }
     $manifest.Add("];")
-    $manifest.Add("pub const F64_EXE: &[u8] = include_bytes!(r#`"$f64Path`"#);")
     Set-Content -LiteralPath $Destination -Value $manifest -Encoding UTF8
 }
 
@@ -404,7 +399,7 @@ try {
         if ($LASTEXITCODE -ne 0) { throw "Failed building the benchmark binary" }
         $releaseDir = Join-Path $BuildTargetDir $(if ($env:SPEKTRAFILM_RELEASE_SUBDIR) { $env:SPEKTRAFILM_RELEASE_SUBDIR } else { "release" })
         $manifestPath = Join-Path $repo "target\packaging\embedded_bundle.rs"
-        New-EmbedManifest -DataDir "data" -F64Exe (Join-Path $releaseDir "spektrafilm-f64.exe") -Destination $manifestPath
+        New-EmbedManifest -DataDir "data" -Destination $manifestPath
 
         $oldEmbed = $env:SPEKTRAFILM_EMBED_MANIFEST
         try {
@@ -434,11 +429,10 @@ spektrafilm-rs Windows AIO
 
 Run spektrafilm-gui-aio.exe.
 
-This executable embeds application assets and the CPU f64 exporter;
-the adjacent native DLLs, external exporter, helper, instrument binary and Lensfun database are required.
+This executable embeds application data and assets.
+The adjacent native DLLs, external f64 exporter, helper, instrument binary and Lensfun database are required.
 - application data/profiles/LUTs
 - arctic2026alpha02 assets
-- spektrafilm-f64.exe for CPU f64 export and the research command surface
 - spektrafilm-lab.exe for measurement, comparison, and reporting
 - spektrafilm-bench.exe for completed-run comparison and reporting
 On first launch it extracts the embedded payload to:
