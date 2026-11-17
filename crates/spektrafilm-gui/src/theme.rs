@@ -10,8 +10,10 @@ use egui::{Color32, CornerRadius, FontId, Rgba, Shadow, Stroke, TextStyle, Visua
 
 /// Warm gold accent used for active elements, sliders, and highlights.
 pub const ACCENT: Color32 = Color32::from_rgb(0xd6, 0xb3, 0x6a);
-/// Dimmed accent for hover borders and inactive indicators.
+/// Dimmed accent for hover borders and non-text indicators.
 pub const ACCENT_DIM: Color32 = Color32::from_rgb(0x8d, 0x73, 0x43);
+/// Small-text accent on panel surfaces. Contrast against `SURFACE` is 4.9:1.
+pub const ACCENT_DIM_TEXT: Color32 = Color32::from_rgb(0x9a, 0x80, 0x51);
 /// Deepest surface: the well behind editable text (`extreme_bg_color`).
 ///
 /// This is not the viewer's canvas. The 18% gray/black canvas behaviour is
@@ -305,4 +307,38 @@ pub fn apply(ctx: &egui::Context) {
     style.spacing.item_spacing = egui::vec2(style.spacing.item_spacing.x, SPACE_ROW);
     style.spacing.button_padding = egui::vec2(BUTTON_PADDING[0], BUTTON_PADDING[1]);
     ctx.set_style(style);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn luminance(color: Color32) -> f32 {
+        let channel = |value: u8| {
+            let value = f32::from(value) / 255.0;
+            if value <= 0.04045 {
+                value / 12.92
+            } else {
+                ((value + 0.055) / 1.055).powf(2.4)
+            }
+        };
+        0.2126 * channel(color.r()) + 0.7152 * channel(color.g()) + 0.0722 * channel(color.b())
+    }
+
+    fn contrast(a: Color32, b: Color32) -> f32 {
+        let (lighter, darker) = if luminance(a) > luminance(b) {
+            (luminance(a), luminance(b))
+        } else {
+            (luminance(b), luminance(a))
+        };
+        (lighter + 0.05) / (darker + 0.05)
+    }
+
+    #[test]
+    fn small_text_accent_meets_the_accessible_contrast_floor() {
+        assert!(
+            contrast(ACCENT_DIM_TEXT, SURFACE) >= 4.5,
+            "stage numbers and other small accent text must stay readable on the panel surface"
+        );
+    }
 }

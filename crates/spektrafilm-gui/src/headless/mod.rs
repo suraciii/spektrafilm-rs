@@ -549,8 +549,19 @@ fn choose(h: &mut Harness<'_, App>, label: &str, option: &str) {
     // while the visible option carries the product-language display label.
     let option_label =
         crate::controls::localized_for(crate::i18n::locale(&h.ctx), option).into_owned();
-    h.get_by_role_and_label(egui::accesskit::Role::ComboBox, label)
-        .focus();
+    // Topmost matching surface wins: an open modal may legitimately repeat
+    // a label also present in the inspector (for example Saving color space).
+    {
+        let combo = h
+            .query_all_by_role_and_label(egui::accesskit::Role::ComboBox, label)
+            .min_by_key(|node| {
+                node.raw_bounds()
+                    .map(|rect| rect.x0 as i32)
+                    .unwrap_or(i32::MAX)
+            })
+            .expect("combo box exists");
+        combo.focus();
+    }
     h.run_steps(3);
     h.press_key(egui::Key::Space);
     h.run_steps(3);
@@ -559,7 +570,13 @@ fn choose(h: &mut Harness<'_, App>, label: &str, option: &str) {
     h.run_steps(3);
     await_input(h);
     if h.ctx.memory(|memory| memory.any_popup_open()) {
-        h.get_by_role_and_label(egui::accesskit::Role::ComboBox, label)
+        h.query_all_by_role_and_label(egui::accesskit::Role::ComboBox, label)
+            .min_by_key(|node| {
+                node.raw_bounds()
+                    .map(|rect| rect.x0 as i32)
+                    .unwrap_or(i32::MAX)
+            })
+            .expect("combo box exists")
             .click();
         h.run_steps(3);
     }
@@ -813,14 +830,14 @@ fn scanner_ui_real_preview_scan_persistence_save_and_export() {
     reveal_control(h, "extras.simulation.film_stock");
     let profile = profile::load_profile_by_name(&data_dir(), "kodak_portra_400").unwrap();
     let profile_label = profile.info.name.as_deref().unwrap_or("kodak_portra_400");
-    choose(h, "film profile", profile_label);
+    choose(h, "Film profile", profile_label);
     assert_eq!(h.state().film_name, "kodak_portra_400");
     // Selecting a stock intentionally resets its workflow; choose the eligible
     // scanner route after that production profile-selection behavior.
     reveal_control(h, "workflow.route");
     choose(h, "Film route", "input > film > scan");
     search_controls(h, "Scanner");
-    choose(h, "scan output", "Preserve medium polarity");
+    choose(h, "Scan output", "Preserve medium polarity");
     assert!(
         h.query_by_role_and_label(egui::accesskit::Role::ComboBox, "scanner lamp")
             .is_none(),
@@ -838,7 +855,7 @@ fn scanner_ui_real_preview_scan_persistence_save_and_export() {
     assert_eq!(h.state().params.scanner.lens_blur, 0.0);
     // The rest of this test exercises the negative-capture scanner path, so
     // select it through the real control rather than writing the parameter.
-    choose(h, "scan output", "Negative to positive");
+    choose(h, "Scan output", "Negative to positive");
     assert_eq!(h.state().params.scanner.scan_output, "negative_to_positive");
     // Negative conversion previews stay frame-independent until the
     // experimental setup asks for the complete frame.
@@ -847,12 +864,12 @@ fn scanner_ui_real_preview_scan_persistence_save_and_export() {
         h.query_by_role_and_label(egui::accesskit::Role::ComboBox, "scanner lamp")
             .is_none()
     );
-    // The conversion style belongs to the negative interpretation, so the
+    // The Conversion style belongs to the negative interpretation, so the
     // combo appears only once that polarity is selected. Its end-to-end
     // behaviour is covered by `conversion_style_combo_offers_installed_styles_and_renders_them`,
     // which needs a data directory the test authors styles into.
     assert!(
-        h.query_by_role_and_label(egui::accesskit::Role::ComboBox, "conversion style")
+        h.query_by_role_and_label(egui::accesskit::Role::ComboBox, "Conversion style")
             .is_some()
     );
     let preview = preview(h);
@@ -930,7 +947,7 @@ fn scanner_ui_real_preview_scan_persistence_save_and_export() {
     .unwrap();
     assert_png(&save_path, &expected_saved);
     reveal_control(h, "settings.preview_max_size");
-    edit(h, "preview max size", "256");
+    edit(h, "Preview max size", "256");
     close_settings(h);
     let scan = scan(h);
     assert_eq!((scan.width, scan.height), (160, 80));
@@ -938,7 +955,7 @@ fn scanner_ui_real_preview_scan_persistence_save_and_export() {
     // A size edit schedules automatic Preview. Negative conversion retains
     // the exact full frame; only its viewer raster uses the size limit.
     reveal_control(h, "settings.preview_max_size");
-    edit(h, "preview max size", "128");
+    edit(h, "Preview max size", "128");
     assert_eq!(h.state().params.settings.preview_max_size, 128);
     assert!(h.query_by_label("Update").is_none());
     assert!(h.query_by_label("auto preview").is_none());
@@ -1064,7 +1081,7 @@ fn fotufilm_engine_selection_reaches_the_native_app_runtime() {
     reveal_control(h, "extras.simulation.film_stock");
     let profile = profile::load_profile_by_name(&data_dir(), "kodak_portra_400").unwrap();
     let profile_label = profile.info.name.as_deref().unwrap_or("kodak_portra_400");
-    choose(h, "film profile", profile_label);
+    choose(h, "Film profile", profile_label);
     // Selecting a stock intentionally resets its workflow.
     reveal_control(h, "workflow.route");
     choose(h, "Film route", "input > film > scan");
@@ -1409,15 +1426,15 @@ fn conversion_style_combo_offers_installed_styles_and_renders_them() {
     );
     reveal_control(h, "extras.simulation.film_stock");
     let profile = profile::load_profile_by_name(&data_dir(), "kodak_portra_400").unwrap();
-    choose(h, "film profile", profile.info.name.as_deref().unwrap());
+    choose(h, "Film profile", profile.info.name.as_deref().unwrap());
     reveal_control(h, "workflow.route");
     choose(h, "Film route", "input > film > scan");
     search_controls(h, "Scanner");
-    choose(h, "scan output", "Negative to positive");
+    choose(h, "Scan output", "Negative to positive");
     // The selector lists exactly what the data directory carries: the
     // installed style is offered, and the neutral reference is too.
-    scroll_controls_into_view(h, "conversion style");
-    h.get_by_role_and_label(egui::accesskit::Role::ComboBox, "conversion style")
+    scroll_controls_into_view(h, "Conversion style");
+    h.get_by_role_and_label(egui::accesskit::Role::ComboBox, "Conversion style")
         .focus();
     h.run_steps(3);
     h.press_key(egui::Key::Space);
@@ -1433,14 +1450,14 @@ fn conversion_style_combo_offers_installed_styles_and_renders_them() {
     h.press_key(egui::Key::Escape);
     h.run_steps(3);
     let reference = preview(h);
-    choose(h, "conversion style", "warm-probe");
+    choose(h, "Conversion style", "warm-probe");
     assert_eq!(h.state().params.scanner.conversion_style, "warm-probe");
     let styled = preview(h);
     assert_ne!(
         styled.data, reference.data,
         "an installed style must change the rendered capture"
     );
-    choose(h, "conversion style", "standard");
+    choose(h, "Conversion style", "standard");
     assert_eq!(h.state().params.scanner.conversion_style, "standard");
     let unstyled = preview(h);
     assert_eq!(unstyled.data, reference.data);
@@ -1452,7 +1469,7 @@ fn scanner_state_rejection_uses_the_neutral_scan_model() {
     let h = &mut s.harness;
     reveal_control(h, "extras.simulation.film_stock");
     let profile = profile::load_profile_by_name(&data_dir(), "kodak_portra_400").unwrap();
-    choose(h, "film profile", profile.info.name.as_deref().unwrap());
+    choose(h, "Film profile", profile.info.name.as_deref().unwrap());
     reveal_control(h, "workflow.route");
     choose(h, "Film route", "input > film > scan");
     search_controls(h, "Scanner");
@@ -1572,10 +1589,10 @@ fn scanner_state_rejection_uses_the_neutral_scan_model() {
     assert_eq!(h.state().params.scanner.scan_output, "direct_scan");
     choose(h, "Film route", "input > film > scan");
     search_controls(h, "Scanner");
-    choose(h, "scan output", "Negative to positive");
+    choose(h, "Scan output", "Negative to positive");
     reveal_control(h, "extras.simulation.film_stock");
     let slide = profile::load_profile_by_name(&data_dir(), "kodak_ektachrome_100").unwrap();
-    choose(h, "film profile", slide.info.name.as_deref().unwrap());
+    choose(h, "Film profile", slide.info.name.as_deref().unwrap());
     assert_eq!(h.state().params.scanner.scan_output, "direct_scan");
     preview(h);
 }

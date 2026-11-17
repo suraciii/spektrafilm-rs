@@ -24,7 +24,7 @@ fn key(label: &str) -> Option<&'static str> {
         "film-exposure route and executed span required" => {
             Some("controls.condition.film_exposure_operation")
         }
-        "print exposure operation required" => Some("controls.condition.print_exposure_operation"),
+        "Print exposure operation required" => Some("controls.condition.print_exposure_operation"),
         "scan operation required" => Some("controls.condition.scan_operation"),
         "terminal RGB finishing required" => Some("controls.condition.terminal_rgb_finishing"),
         "print readout scan operation required" => {
@@ -42,7 +42,7 @@ fn key(label: &str) -> Option<&'static str> {
         "selected grain engine requires film development or a scan for Procedural grain" => {
             Some("controls.condition.grain_operation")
         }
-        "film exposure, film scan interpretation, or print exposure tracking required" => {
+        "film exposure, film scan interpretation, or Print exposure tracking required" => {
             Some("controls.condition.exposure_compensation")
         }
         "film_render.base.active = true" => Some("controls.condition.film_base"),
@@ -77,7 +77,7 @@ fn key(label: &str) -> Option<&'static str> {
         "Change internal tonal separation with less influence near reference endpoints. This is not sharpening or an endpoint crop." => {
             Some("controls.finishing.contrast_help")
         }
-        "Shift along a fixed warm–cool direction weighted by tone and chroma. This is not Kelvin or capture white balance." => {
+        "Shift along a fixed warm–cool direction weighted by tone and chroma. This is not Kelvin or capture White balance." => {
             Some("controls.finishing.warmth_help")
         }
         "Change color strength with restrained amplification of strong colors. This is not physical dye density or automatic warming." => {
@@ -111,7 +111,7 @@ fn key(label: &str) -> Option<&'static str> {
         "effective Procedural mode = analogue; Noise does not use Film Resolution or its method" => {
             Some("controls.grain.inactive_noise_resolution")
         }
-        "preserved Procedural Film Type metadata; not used by rendering kernels" => {
+        "preserved Procedural Film type metadata; not used by rendering kernels" => {
             Some("controls.grain.film_type_metadata")
         }
         "Photograph toolbar" => Some("controls.owner.photograph_toolbar"),
@@ -169,7 +169,7 @@ fn key(label: &str) -> Option<&'static str> {
         "1.0 = full simulation · 0.0 = original" => Some("controls.output.blend_guide"),
         "16 bit" => Some("surfaces.export.bit16"),
         "32 bit" => Some("surfaces.export.bit32"),
-        "3x3 device-correction matrix (9 numbers, row-major) applied to the input before inversion, to undo the scanner/camera colour rendering vs the standard observer over the film dyes (the cross-channel cast that the scan illuminant and base cannot reach). Use 'Blind calibration' to fit it from the current image." => {
+        "3x3 device-correction matrix (9 numbers, row-major) applied to the input before inversion, to undo the scanner/camera colour rendering vs the standard observer over the film dyes (the cross-channel cast that the Scan illuminant and base cannot reach). Use 'Blind calibration' to fit it from the current image." => {
             Some("controls.convert.calibration_help")
         }
         "8 bit" => Some("surfaces.export.bit8"),
@@ -178,7 +178,7 @@ fn key(label: &str) -> Option<&'static str> {
             Some("controls.scanner.camera_exposure_help")
         }
         "Add grain to the negative" => Some("controls.grain.enable_help"),
-        "Adds stray light from viewing or scanning a paper print: shadows lift and contrast drops. It does not change print exposure, chemistry, or developed density." => {
+        "Adds stray light from viewing or scanning a paper print: shadows lift and contrast drops. It does not change Print exposure, chemistry, or developed density." => {
             Some("controls.help.glare.enable")
         }
         "Additive offset on the family's halo warmth axis. Positive = warm outer halo / cool inner halo. Energy-preserving per channel. 0 = use family default." => {
@@ -209,7 +209,7 @@ fn key(label: &str) -> Option<&'static str> {
         "Amount (%)" => Some("controls.grain.amount"),
         "Analogue" => Some("controls.grain.analogue"),
         "Applied preset '%{name}'" => Some("surfaces.status.preset_applied"),
-        "Apply lens corrections" => Some("controls.scanner.lens_correction_help"),
+        "Apply Lens corrections" => Some("controls.scanner.lens_correction_help"),
         "Apply saving CCTF encoding" => Some("controls.label.apply_saving_cctf_encoding"),
         "Apply the copied four values to this frame's own automatic setup." => {
             Some("controls.scanner.paste_correction_help")
@@ -220,10 +220,10 @@ fn key(label: &str) -> Option<&'static str> {
         "Apply the hanatos2025 surface adaptation polynomial when reconstructing spectra." => {
             Some("controls.upsampling.adaptation_surface_help")
         }
-        "Apply the inverse color component transfer function (CCTF) of the input color space, so the declared encoded samples become linear before the pipeline reads them." => {
+        "Apply the inverse color component transfer function (CCTF) of the Input color space, so the declared encoded samples become linear before the pipeline reads them." => {
             Some("controls.scanner.input_cctf_decoding_help")
         }
-        "Apply the output color space transfer encoding to runtime output. This is independent of retained Save encoding and display presentation." => {
+        "Apply the Output color space transfer encoding to runtime output. This is independent of retained Save encoding and display presentation." => {
             Some("controls.output.output_cctf_help")
         }
         "Authored effective RMS optical-density target; not measured stock calibration." => {
@@ -239,7 +239,7 @@ fn key(label: &str) -> Option<&'static str> {
             Some("controls.help.shares.transfer")
         }
         "Auto" => Some("controls.grain.auto"),
-        "Auto normalizes the print exposure so the developed midgray density prints to the paper midgray and follows camera exposure compensation, like a color analyzer or minilab. Manual applies the print exposure time alone, like a test strip." => {
+        "Auto normalizes the Print exposure so the developed midgray density prints to the paper midgray and follows camera exposure compensation, like a color analyzer or minilab. Manual applies the Print exposure time alone, like a test strip." => {
             Some("controls.scanner.print_exposure_mode_help")
         }
         "Collection mode" => Some("surfaces.diagnostics.mode"),
@@ -316,13 +316,13 @@ fn key(label: &str) -> Option<&'static str> {
         "Coating density scale (×)" => Some("controls.grain.coating_density_scale"),
         "Collapse or expand Presets" => Some("surfaces.presets.toggle"),
         "Color (relative)" => Some("controls.grain.color"),
-        "Color space and transfer encoding of the file Export writes. This is file conversion, distinct from the output color space of the runtime digital output and from the display transform, which is viewer-only." => {
+        "Color space and transfer encoding of the file Export writes. This is file conversion, distinct from the Output color space of the runtime digital output and from the display transform, which is viewer-only." => {
             Some("surfaces.export.space_help")
         }
-        "Color space and transfer encoding of the runtime digital output. It describes what the simulation produces, which is distinct from the saving color space used for the file and from the display transform, which is viewer-only." => {
+        "Color space and transfer encoding of the runtime digital output. It describes what the simulation produces, which is distinct from the Saving color space used for the file and from the display transform, which is viewer-only." => {
             Some("controls.output.output_color_space_help")
         }
-        "Color space of the file Save writes. Save writes the retained output in this space without rerendering; Export renders and writes independently with its own saving color space." => {
+        "Color space of the file Save writes. Save writes the retained output in this space without rerendering; Export renders and writes independently with its own Saving color space." => {
             Some("controls.output.saving_color_space_help")
         }
         "Color space of the input image, will be internally converted to sRGB and negative values clipped" => {
@@ -500,6 +500,7 @@ fn key(label: &str) -> Option<&'static str> {
         "Grain scale (×)" => Some("controls.grain.dye_scale"),
         "Grain size (relative)" => Some("controls.grain.grain_size"),
         "Automatic size" => Some("controls.grain.automatic_size"),
+        "Film Format" => Some("controls.scanner.film_format"),
         "Film format" => Some("controls.grain.film_format"),
         "Absolute size (px)" => Some("controls.grain.absolute_size_px"),
         "Roughness (%)" => Some("controls.grain.roughness"),
@@ -621,7 +622,7 @@ fn key(label: &str) -> Option<&'static str> {
         "JPEG lossy" => Some("surfaces.export.compression_jpeg_value"),
         "PNG lossless" => Some("surfaces.export.compression_png_value"),
         "File and container" => Some("surfaces.export.section_file"),
-        "Color and computation" => Some("surfaces.export.section_color"),
+        "Color and encoding" => Some("surfaces.export.section_color"),
         "Summary and actions" => Some("surfaces.export.section_summary"),
         "Exported preset to %{path}" => Some("surfaces.status.preset_exported"),
         "Export…" => Some("surfaces.presets.export"),
@@ -636,13 +637,12 @@ fn key(label: &str) -> Option<&'static str> {
         "Effects" => Some("surfaces.effects.label"),
         "Effect controls" => Some("surfaces.effects.controls"),
         "Look" => Some("controls.label.look"),
-        "Film Format" => Some("controls.scanner.film_format"),
         "Film resolution (%)" => Some("controls.grain.film_resolution"),
-        "Film Type" => Some("controls.grain.film_type"),
+        "Film type" => Some("controls.grain.film_type"),
         "Film base" => Some("controls.label.film_base"),
         "Film chemistry" => Some("controls.chemistry.film_section"),
         "Film material" => Some("controls.label.film_material"),
-        "Retained Procedural Film Type metadata; rendering kernels do not consume it." => {
+        "Retained Procedural Film type metadata; rendering kernels do not consume it." => {
             Some("controls.grain.film_type_help")
         }
         "Film profile changed" => Some("surfaces.status.film_changed"),
@@ -668,7 +668,7 @@ fn key(label: &str) -> Option<&'static str> {
         "Fraction of coupler diffusion energy assigned to the long tail. 0 = pure Gaussian spread, higher values add a longer-range inhibition shoulder." => {
             Some("controls.couplers.diffusion_tail_weight_help")
         }
-        "Frame Long Edge" => Some("controls.scanner.frame_long_edge"),
+        "Frame long edge" => Some("controls.scanner.frame_long_edge"),
         "Execution" => Some("surfaces.settings.execution"),
         "GPU API" => Some("surfaces.execution.gpu_api"),
         "GPU passes and measurement availability" => Some("surfaces.diagnostics.gpu"),
@@ -789,7 +789,7 @@ fn key(label: &str) -> Option<&'static str> {
         "Hold the primary mouse button or focused Space to view this same frame with default operator values. Release to restore the corrected view. Saved and exported corrections are unchanged." => {
             Some("controls.scanner.hold_comparison_help")
         }
-        "How the print exposure follows camera exposure compensation. follow_mode tracks it in auto mode and does not track it in manual; never disables tracking in auto; always applies the relative compensation factor in manual. The choice equivalent to the current mode is disabled." => {
+        "How the Print exposure follows camera exposure compensation. follow_mode tracks it in auto mode and does not track it in manual; never disables tracking in auto; always applies the relative compensation factor in manual. The choice equivalent to the current mode is disabled." => {
             Some("controls.scanner.print_tracking_help")
         }
         "In auto mode, Always is equivalent to Follow exposure mode; this choice is disabled." => {
@@ -828,7 +828,7 @@ fn key(label: &str) -> Option<&'static str> {
         "Inactive controls · %{reason} · stored values retained" => {
             Some("surfaces.section.inactive")
         }
-        "Inactive: requires a negative film, an eligible negative-to-positive route and standard conversion style. Stored corrections are retained." => {
+        "Inactive: requires a negative film, an eligible negative-to-positive route and standard Conversion style. Stored corrections are retained." => {
             Some("controls.scanner.operator_inactive")
         }
         "Independent preflash Magenta shift around the calibrated neutral filter pack, in Kodak CC units." => {
@@ -878,7 +878,7 @@ fn key(label: &str) -> Option<&'static str> {
         "Layer amounts (relative)" => Some("controls.grain.layer_amounts"),
         "Layer size ratio (×)" => Some("controls.grain.layer_size_ratio"),
         "Layer weights (relative)" => Some("controls.grain.layer_weights"),
-        "Leave at daylight (D65): it is the colorimetric reference the rest of the pipeline assumes, and should not be changed. Do not use it to neutralize a colour cast — fix white balance downstream with the enlarger filters instead. (custom exposes temperature/tint for special cases.)" => {
+        "Leave at daylight (D65): it is the colorimetric reference the rest of the pipeline assumes, and should not be changed. Do not use it to neutralize a colour cast — fix White balance downstream with the enlarger filters instead. (custom exposes temperature/tint for special cases.)" => {
             Some("controls.scanner.white_balance_help")
         }
         "Lens blur (readout optics)" => Some("controls.scanner.lens_blur"),
@@ -951,7 +951,7 @@ fn key(label: &str) -> Option<&'static str> {
             Some("controls.couplers.langmuir_donor_help")
         }
         "Name in My Presets" => Some("surfaces.presets.name_label"),
-        "Named positive-conversion tone of the negative-to-positive interpretation. `standard` is the built-in frozen tone; any other name is a declared style you place in data/scan-styles/, never a fitted surface. The selector lists the styles found there. A style applies only with scan output set to Negative to positive." => {
+        "Named positive-conversion tone of the negative-to-positive interpretation. `standard` is the built-in frozen tone; any other name is a declared style you place in data/scan-styles/, never a fitted surface. The selector lists the styles found there. A style applies only with Scan output set to Negative to positive." => {
             Some("controls.scanner.conversion_style_help")
         }
         "Negative" => Some("controls.scanner.negative"),
@@ -1083,13 +1083,13 @@ fn key(label: &str) -> Option<&'static str> {
         "Procedural" => Some("controls.grain.procedural"),
         "Procedural Grain Profiles" => Some("controls.grain.procedural_profiles"),
         "Procedural grain processing mode." => Some("controls.grain.processing_mode_help"),
-        "Processing Mode" => Some("controls.grain.processing_mode"),
+        "Processing mode" => Some("controls.grain.processing_mode"),
         "Profile" => Some("controls.metadata.profile"),
         "Profile selection error: %{error}" => Some("surfaces.status.profile_error"),
-        "Profile selection error: '%{name}' is not a film profile" => {
+        "Profile selection error: '%{name}' is not a Film profile" => {
             Some("surfaces.status.profile_not_film")
         }
-        "Profile selection error: '%{name}' is not a print profile" => {
+        "Profile selection error: '%{name}' is not a Print profile" => {
             Some("surfaces.status.profile_not_print")
         }
         "Protected range above midgray for the boost onset in stops." => {
@@ -1105,7 +1105,7 @@ fn key(label: &str) -> Option<&'static str> {
             Some("surfaces.raw.inactive")
         }
         "RAW source" => Some("controls.condition.raw"),
-        "RAW source; custom white balance; explicit Reprocess RAW" => {
+        "RAW source; custom White balance; explicit Reprocess RAW" => {
             Some("controls.condition.raw_custom")
         }
         "RAW source; explicit Reprocess RAW" => Some("controls.condition.raw_reprocess"),
@@ -1118,7 +1118,7 @@ fn key(label: &str) -> Option<&'static str> {
         "Real negative capture: exposure, base estimation, calibration, channel swaps" => {
             Some("surfaces.summary.convert")
         }
-        "Red-minus-blue exposure difference in EV. Positive values are warmer; negative values are cooler. This is not Kelvin and does not change capture white balance." => {
+        "Red-minus-blue exposure difference in EV. Positive values are warmer; negative values are cooler. This is not Kelvin and does not change capture White balance." => {
             Some("controls.scanner.warmth_help")
         }
         "Redo" => Some("surfaces.action.redo"),
@@ -1155,7 +1155,7 @@ fn key(label: &str) -> Option<&'static str> {
             Some("controls.scanner.restore_automatic_help")
         }
         "Resident route declined: %{reason}" => Some("surfaces.diagnostics.declined"),
-        "Resolution Type" => Some("controls.grain.resolution_type"),
+        "Resolution type" => Some("controls.grain.resolution_type"),
         "Optical" => Some("controls.grain.optical"),
         "Fast" => Some("controls.grain.fast"),
         "Resolution component of the post-scan Procedural appearance algorithm; this does not set scanner lens resolution." => {
@@ -1203,7 +1203,7 @@ fn key(label: &str) -> Option<&'static str> {
         "Scanner inactive on this route; stored values are retained." => {
             Some("controls.scanner.scanner_inactive")
         }
-        "Scanner sequence: white reference, scan output polarity, then readout optics and digital sharpening." => {
+        "Scanner sequence: White reference, Scan output polarity, then readout optics and digital sharpening." => {
             Some("controls.scanner.sequence")
         }
         "Search controls" => Some("surfaces.search.label"),
@@ -1236,7 +1236,7 @@ fn key(label: &str) -> Option<&'static str> {
         "Show the retained image at %{percent}% — one source pixel per device pixel at 100%. Viewer only; retained and written pixels are unchanged." => {
             Some("surfaces.viewer.zoom_exact_help")
         }
-        "Show the retained input, decoded from its input color space and transfer decoding. The viewer layer does not change the retained image itself." => {
+        "Show the retained input, decoded from its Input color space and transfer decoding. The viewer layer does not change the retained image itself." => {
             Some("surfaces.viewer.input_help")
         }
         "Show the retained output of the latest Preview or Scan. The viewer layer does not change the retained image itself." => {
@@ -1302,12 +1302,12 @@ fn key(label: &str) -> Option<&'static str> {
         "Taking-lens diffusion: core, tail, and warmth" => {
             Some("surfaces.summary.camera_diffusion")
         }
-        "Temperature in Kelvin for the custom whitebalance, not used for the other white balance settings" => {
+        "Temperature in Kelvin for the custom whitebalance, not used for the other White balance settings" => {
             Some("controls.scanner.temperature_help")
         }
         "Text" => Some("controls.metadata.text"),
         "Phase timer" => Some("controls.grain.timer"),
-        "Tint value for the custom white balance, not used for the other white balance settings" => {
+        "Tint value for the custom White balance, not used for the other White balance settings" => {
             Some("controls.scanner.raw_tint_help")
         }
         "Toggle" => Some("controls.metadata.toggle"),
@@ -1356,7 +1356,7 @@ fn key(label: &str) -> Option<&'static str> {
         "Weight of the scatter tail Gaussian per channel [R,G,B] (0-1). Tail weight + core weight = 1. Higher values put more scattered light into the long tail." => {
             Some("controls.halation.scatter_tail_weight_help")
         }
-        "What these settings will write: format, bit depth, saving color space, and the transfer encoding (CCTF, the color component transfer function, or linear) plus compression. Save writes the retained output with the current simulation saving settings instead, without rerendering." => {
+        "What these settings will write: format, bit depth, Saving color space, and the transfer encoding (CCTF, the color component transfer function, or linear) plus compression. Save writes the retained output with the current simulation saving settings instead, without rerendering." => {
             Some("surfaces.export.summary_help")
         }
         "Which physical path the image takes through the pipeline: input color-manages RGB. input > film > scan exposes and scans film; negative film can retain its negative polarity or use Negative to positive, while slide film remains positive. input > film > print > scan exposes film, prints photographically, and scans positive paper. input > convert-film > print > scan converts the input to negative capture, prints photographically, and scans positive paper. input > convert-film > scan scans the negative capture with its film base; it can preserve negative polarity or convert Negative to positive. input > convert-film > scan-minus-base removes the film base and keeps negative polarity. CMYK ink style is independent in every workflow." => {
@@ -1367,7 +1367,7 @@ fn key(label: &str) -> Option<&'static str> {
         "Workflow: 1) Detect base → 2) Blind calibration (vibrant frame) → 3) Neutralize filters" => {
             Some("controls.convert.workflow")
         }
-        "Write the retained output to an image file without rerendering: the pixels are the latest Preview or Scan result, converted to the saving color space and transfer encoding. Export renders and writes independently." => {
+        "Write the retained output to an image file without rerendering: the pixels are the latest Preview or Scan result, converted to the Saving color space and transfer encoding. Export renders and writes independently." => {
             Some("surfaces.action.save_help")
         }
         "Y filter shift of the color enlarger from a neutral position, in Kodak CC units" => {
@@ -1389,11 +1389,11 @@ fn key(label: &str) -> Option<&'static str> {
         "always" => Some("controls.scanner.always"),
         "amount" => Some("controls.label.amount"),
         "applied" => Some("surfaces.presets.applied"),
-        "apply cctf decoding" => Some("controls.scanner.input_cctf_decoding"),
+        "Apply CCTF decoding" => Some("controls.scanner.input_cctf_decoding"),
         "as_shot" => Some("controls.scanner.as_shot"),
         "auto" => Some("controls.scanner.auto"),
-        "auto exposure" => Some("controls.scanner.auto_exposure"),
-        "auto exposure method" => Some("controls.scanner.metering_method"),
+        "Auto exposure" => Some("controls.scanner.auto_exposure"),
+        "Auto exposure method" => Some("controls.scanner.metering_method"),
         "average" => Some("controls.scanner.metering_average"),
         "base percentile" => Some("controls.convert.base_percentile"),
         "blind calibration" => Some("controls.convert.blind_calibration"),
@@ -1408,9 +1408,9 @@ fn key(label: &str) -> Option<&'static str> {
         "camera.diffusion_filter.active = true; strength and spatial_scale positive" => {
             Some("controls.condition.camera_diffusion")
         }
-        "capture illuminant" => Some("controls.scanner.capture_illuminant"),
+        "Capture illuminant" => Some("controls.scanner.capture_illuminant"),
         "captured-negative Convert route" => Some("controls.condition.captured_negative"),
-        "ccw rotate" => Some("surfaces.source.rotate_ccw"),
+        "CCW rotate" => Some("surfaces.source.rotate_ccw"),
         "center_weighted" => Some("controls.scanner.metering_center"),
         "channel permutation" => Some("controls.label.channel_permutation"),
         "clear" => Some("surfaces.action.clear"),
@@ -1421,10 +1421,10 @@ fn key(label: &str) -> Option<&'static str> {
         "cmyk.strength > 0" => Some("controls.condition.cmyk_strength"),
         "collected" => Some("surfaces.diagnostics.collected"),
         "color component transfer function" => Some("controls.output.cctf_expansion"),
-        "color filter" => Some("controls.scanner.color_filter"),
+        "Color filter" => Some("controls.scanner.color_filter"),
         "confirmation required" => Some("controls.condition.confirm"),
         "contrast" => Some("controls.finishing.contrast"),
-        "conversion style" => Some("controls.scanner.conversion_style"),
+        "Conversion style" => Some("controls.scanner.conversion_style"),
         "Measure the whole developed frame for exposure, cast and contrast placement before the fixed tone. Off by default: the algorithm is a declared heuristic with no validated photographic model behind it, it makes the scan frame-dependent, and it cannot be baked into a point-wise LUT. Turning it off keeps the readout a fixed, frame-independent transform." => {
             None
         }
@@ -1440,8 +1440,8 @@ fn key(label: &str) -> Option<&'static str> {
         "crossfade transition" => Some("surfaces.viewer.crossfade"),
         "custom" => Some("surfaces.presets.custom"),
         "custom BB<kelvin>" => Some("controls.convert.custom_illuminant_hint"),
-        "custom scan illuminant" => Some("controls.convert.custom_scan_illuminant"),
-        "cw rotate" => Some("surfaces.source.rotate_cw"),
+        "Custom scan illuminant" => Some("controls.convert.custom_scan_illuminant"),
+        "CW rotate" => Some("surfaces.source.rotate_cw"),
         "cyan" => Some("controls.base.cyan"),
         "daylight" => Some("controls.scanner.daylight"),
         "Profile gamma" => Some("controls.chemistry.density_curve_gamma"),
@@ -1502,7 +1502,7 @@ fn key(label: &str) -> Option<&'static str> {
         "exposure compensation ev" => Some("controls.scanner.camera_exposure"),
         "Conversion exposure compensation ev" => Some("controls.convert.exposure_compensation"),
         "exposure ×" => Some("controls.unit.exposure"),
-        "film profile" => Some("controls.label.film_profile"),
+        "Film profile" => Some("controls.label.film_profile"),
         "film type" => Some("controls.grain.film_type"),
         "film-exposure route that converts scene RGB to film exposure" => {
             Some("controls.condition.capture_illuminant")
@@ -1556,7 +1556,7 @@ fn key(label: &str) -> Option<&'static str> {
         "gamma interlayer g to rb" => Some("controls.couplers.gamma_green_to_red_blue"),
         "gamma interlayer r to gb" => Some("controls.couplers.gamma_red_to_green_blue"),
         "gamma samelayer rgb" => Some("controls.couplers.gamma_samelayer"),
-        "gray 18% canvas" => Some("controls.label.gray_18_canvas"),
+        "Gray 18% canvas" => Some("controls.label.gray_18_canvas"),
         "green–magenta tint" => Some("controls.scanner.tint"),
         "halation amount" => Some("controls.halation.halation_amount"),
         "halation bounce decay" => Some("controls.halation.bounce_decay"),
@@ -1573,11 +1573,11 @@ fn key(label: &str) -> Option<&'static str> {
         "highlight_weighted" => Some("controls.scanner.metering_highlight"),
         "hold automatic comparison" => Some("controls.scanner.hold_comparison"),
         "hull detail" => Some("controls.gamut.hull_detail"),
-        "inherit (film profile)" => Some("controls.scanner.capture_inherit"),
+        "Inherit (film profile)" => Some("controls.scanner.capture_inherit"),
         "inhibition amount" => Some("controls.couplers.inhibition_amount"),
         "inhibition interlayer" => Some("controls.couplers.inhibition_interlayer"),
         "inhibition samelayer" => Some("controls.couplers.inhibition_samelayer"),
-        "input color space" => Some("controls.scanner.input_color_space"),
+        "Input color space" => Some("controls.scanner.input_color_space"),
         "inscribed_hull" => Some("controls.gamut.inscribed_hull"),
         "io.crop = true" => Some("controls.condition.crop"),
         "print_render.glare.active = true; percent > 0; stochastic effects enabled" => {
@@ -1587,7 +1587,7 @@ fn key(label: &str) -> Option<&'static str> {
         "langmuir donor k rgb" => Some("controls.couplers.langmuir_donor"),
         "langmuir receiver k rgb" => Some("controls.couplers.langmuir_receiver"),
         "lens blur (readout optics)" => Some("controls.scanner.lens_blur"),
-        "lens correction" => Some("controls.scanner.lens_correction"),
+        "Lens correction" => Some("controls.scanner.lens_correction"),
         "limit" => Some("controls.label.limit"),
         "linear" => Some("surfaces.export.linear"),
         "linear exposure multiplier" => Some("controls.unit.linear_exposure_multiplier"),
@@ -1611,14 +1611,14 @@ fn key(label: &str) -> Option<&'static str> {
         "Density sharpening amount (relative)" => Some("controls.grain.unsharp_amount"),
         "Density sharpening sigma (px)" => Some("controls.grain.unsharp_sigma"),
         "multi_zone" => Some("controls.scanner.metering_multizone"),
-        "negative film; eligible negative-to-positive route; standard conversion style" => {
+        "negative film; eligible negative-to-positive route; standard Conversion style" => {
             Some("controls.condition.operator_route")
         }
         "neutralize print filters" => Some("controls.convert.neutralize_filters"),
         "never" => Some("controls.scanner.never"),
         "none" => Some("controls.scanner.none"),
-        "normalized scanner controls: scan output" => Some("surfaces.status.normalized"),
-        "normalized scanner controls: scan output; scanner controls inactive for this route; stored selections retained" => {
+        "normalized scanner controls: Scan output" => Some("surfaces.status.normalized"),
+        "normalized scanner controls: Scan output; scanner controls inactive for this route; stored selections retained" => {
             Some("surfaces.status.normalized_inactive")
         }
         "not applicable / not reached" => Some("surfaces.diagnostics.not_applicable"),
@@ -1629,28 +1629,28 @@ fn key(label: &str) -> Option<&'static str> {
             Some("controls.gamut.output_algorithm_help")
         }
         "on" => Some("controls.label.on"),
-        "output cctf encoding" => Some("controls.output.output_cctf"),
-        "output color space" => Some("controls.output.output_color_space"),
-        "output interpolation" => Some("surfaces.viewer.interpolation"),
+        "Output CCTF encoding" => Some("controls.output.output_cctf"),
+        "Output color space" => Some("controls.output.output_color_space"),
+        "Output interpolation" => Some("surfaces.viewer.interpolation"),
         "partial" => Some("controls.scanner.metering_partial"),
         "Particle scale (relative)" => Some("controls.grain.particle_scale_sublayers"),
         "paste operator correction" => Some("controls.scanner.paste_correction"),
         "percent" => Some("controls.label.percent"),
         "pixels" => Some("controls.unit.pixels"),
         "power" => Some("controls.label.power"),
-        "preflash exposure" => Some("controls.scanner.preflash_exposure"),
+        "Preflash exposure" => Some("controls.scanner.preflash_exposure"),
         "preflash m filter shift" => Some("controls.scanner.preflash_m_shift"),
         "preflash y filter shift" => Some("controls.scanner.preflash_y_shift"),
         "preserved upstream no-op" => Some("controls.condition.no_op"),
         "preset actions" => Some("surfaces.presets.actions"),
         "preset actions for %{name}" => Some("surfaces.presets.actions_name"),
-        "preview max size" => Some("controls.display.preview_size"),
-        "print exposure" => Some("controls.scanner.print_exposure"),
-        "print exposure ev tracking" => Some("controls.scanner.print_tracking"),
-        "print exposure mode" => Some("controls.scanner.print_exposure_mode"),
-        "print illuminant" => Some("controls.scanner.print_illuminant"),
+        "Preview max size" => Some("controls.display.preview_size"),
+        "Print exposure" => Some("controls.scanner.print_exposure"),
+        "Print exposure ev tracking" => Some("controls.scanner.print_tracking"),
+        "Print exposure mode" => Some("controls.scanner.print_exposure_mode"),
+        "Print illuminant" => Some("controls.scanner.print_illuminant"),
         "print m filter shift" => Some("controls.scanner.print_m_shift"),
-        "print profile" => Some("controls.label.print_profile"),
+        "Print profile" => Some("controls.label.print_profile"),
         "print y filter shift" => Some("controls.scanner.print_y_shift"),
         "print_channel_swap" => Some("controls.convert.print_channel_swap"),
         "print_render.density_curves_morph.active = true; supported fitted density_curves_model required" => {
@@ -1661,7 +1661,7 @@ fn key(label: &str) -> Option<&'static str> {
         "relative" => Some("controls.unit.relative"),
         "reset" => Some("surfaces.state.reset"),
         "reset %{section}" => Some("surfaces.section.reset_name"),
-        "reset view" => Some("surfaces.viewer.reset"),
+        "Reset view" => Some("surfaces.viewer.reset"),
         "resolution type" => Some("controls.grain.resolution_type"),
         "restore automatic" => Some("controls.scanner.restore_automatic"),
         "retained output; viewer-only" => Some("controls.condition.retained"),
@@ -1671,11 +1671,11 @@ fn key(label: &str) -> Option<&'static str> {
         "sRGB for web · Adobe RGB for print · ACES2065-1 for archival" => {
             Some("surfaces.export.space_hint")
         }
-        "saving cctf encoding" => Some("controls.output.saving_cctf"),
+        "Saving CCTF encoding" => Some("controls.output.saving_cctf"),
         "saving color space" => Some("controls.output.saving_color_space"),
         "scale" => Some("controls.base.scale"),
-        "scan illuminant" => Some("controls.convert.scan_illuminant"),
-        "scan output" => Some("controls.scanner.scan_output"),
+        "Scan illuminant" => Some("controls.convert.scan_illuminant"),
+        "Scan output" => Some("controls.scanner.scan_output"),
         "white reference" => Some("controls.scanner.white_reference"),
         "scanner selections retained; scanner controls inactive for this route; stored selections retained" => {
             Some("surfaces.status.scanner_inactive")
@@ -1685,7 +1685,7 @@ fn key(label: &str) -> Option<&'static str> {
         "scatter spatial scale" => Some("controls.halation.scatter_spatial_scale"),
         "scatter tail um" => Some("controls.halation.scatter_tail"),
         "scatter tail weight" => Some("controls.halation.scatter_tail_weight"),
-        "select ICC profile…" => Some("surfaces.display.select_profile"),
+        "Select ICC profile…" => Some("surfaces.display.select_profile"),
         "selected ICC profile" => Some("controls.condition.display_profile"),
         "selected film profile carries fitted hanatos2025 adaptation surface parameters" => {
             Some("controls.condition.hanatos_surface_fit")
@@ -1727,12 +1727,12 @@ fn key(label: &str) -> Option<&'static str> {
         "unsubmitted export draft" => Some("controls.condition.draft"),
         "upscale factor" => Some("controls.crop.upscale_factor"),
         "use cat16" => Some("controls.upsampling.use_cat16"),
-        "use display transform" => Some("controls.label.use_display_transform"),
+        "Use display transform" => Some("controls.label.use_display_transform"),
         "viewer output layer only" => Some("controls.condition.viewer_output"),
         "viewer-only" => Some("controls.condition.viewer"),
         "warmth" => Some("controls.scanner.warmth"),
-        "white balance" => Some("controls.scanner.white_balance"),
-        "white padding" => Some("controls.label.white_padding"),
+        "White balance" => Some("controls.scanner.white_balance"),
+        "White padding" => Some("controls.label.white_padding"),
         "workflow" => Some("controls.label.workflow"),
         "working dimensions unavailable" => Some("surfaces.diagnostics.dimensions_missing"),
         "xy: radial compression in CIE 1931 chromaticity toward the spectral locus / inscribed hull (ACES RGC family, preserves dominant wavelength). oklch: perceptual chroma reduction in OkLab. off: disable input gamut compression." => {

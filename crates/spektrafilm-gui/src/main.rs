@@ -366,7 +366,7 @@ mod telemetry_lifecycle_tests {
                     .iter()
                     .all(|sample| spektrafilm_math::precision::to_f64(*sample).is_finite())
             );
-            // The neutral filters are derived from the selected print profile,
+            // The neutral filters are derived from the selected Print profile,
             // so the snapshot's raw value and the runtime's resolved value
             // legitimately differ. Everything else must agree exactly.
             let mut snapshot_params = serde_json::to_value(snapshot.params()).unwrap();

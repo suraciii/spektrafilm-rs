@@ -533,7 +533,7 @@ fn settings_does_not_submit_or_cancel_a_background_preset_dialog() {
     click(h, "Save preset…");
     edit_preset_name(h, "Modal isolation");
     click(h, "Settings");
-    h.get_by_label("preview max size").focus();
+    h.get_by_label("Preview max size").focus();
     h.step();
     h.press_key(egui::Key::Enter);
     h.run_steps(3);
@@ -657,7 +657,13 @@ fn export_dialog_format_controls_are_conditional_and_both_cancel_paths_write_not
         h.query_by_role_and_label(egui::accesskit::Role::Switch, "Apply saving CCTF encoding")
             .is_none()
     );
-    h.get_by_role_and_label(egui::accesskit::Role::ComboBox, "Saving color space")
+    h.query_all_by_role_and_label(egui::accesskit::Role::ComboBox, "Saving color space")
+        .min_by_key(|node| {
+            node.raw_bounds()
+                .map(|rect| rect.x0 as i32)
+                .unwrap_or(i32::MAX)
+        })
+        .expect("export saving color space")
         .simulate_click();
     h.run_steps(3);
     assert!(h.query_by_label("sRGB").is_some());
@@ -1464,9 +1470,9 @@ fn guarded_operations_and_unknown_save_extension_create_no_file() {
     click(h, "SAVE");
     assert!(h.state().output_image.is_none());
     reveal_control(h, "action.rotate_cw");
-    assert!(h.get_by_label("cw rotate").node().is_disabled());
+    assert!(h.get_by_label("CW rotate").node().is_disabled());
     let image_epoch = h.state().input_epoch;
-    click(h, "cw rotate");
+    click(h, "CW rotate");
     assert_eq!(h.state().input_epoch, image_epoch);
     assert!(h.get_by_label("Export").node().is_disabled());
     let ctx = h.ctx.clone();

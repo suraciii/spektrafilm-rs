@@ -700,7 +700,7 @@ impl ExportDialog {
                     ], "Select the TIFF compression method.");
                 }
                 section_break(ui);
-                section_heading(ui, "Color and computation");
+                section_heading(ui, "Color and encoding");
                 let spaces = if draft.format == ExportFormat::Exr { EXR_COLOR_SPACES } else { COLOR_SPACES };
                 // The shared choice owner models label, selector, and help;
                 // this selector additionally offers selection guidance inside

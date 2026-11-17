@@ -47,12 +47,12 @@ fn set_route(h: &mut Harness<'_, App>, route: &str) {
 fn select_film(h: &mut Harness<'_, App>, label: &str) {
     search_controls(h, "");
     navigate_stage(h, controls::Stage::Film);
-    if h.query_by_role_and_label(egui::accesskit::Role::ComboBox, "film profile")
+    if h.query_by_role_and_label(egui::accesskit::Role::ComboBox, "Film profile")
         .is_none()
     {
         click(h, "Film material");
     }
-    choose(h, "film profile", label);
+    choose(h, "Film profile", label);
 }
 
 fn open_grain(h: &mut Harness<'_, App>) {
@@ -862,9 +862,9 @@ fn camera_enlarger_crop_upscale_and_cmyk_controls_edit_params_geometry_and_persi
     toggle_control(h, "cmyk.active", "Enable CMYK ink style");
     assert_eq!(h.state().params.cmyk.active, cmyk_active);
 
-    choose_control(h, "camera.film_format_mm", "Film Format", "120");
+    choose_control(h, "camera.film_format_mm", "Film format", "120");
     if !h.state().params.camera.auto_exposure {
-        toggle_control(h, "camera.auto_exposure", "auto exposure");
+        toggle_control(h, "camera.auto_exposure", "Auto exposure");
     }
     choose_control(
         h,
@@ -872,20 +872,20 @@ fn camera_enlarger_crop_upscale_and_cmyk_controls_edit_params_geometry_and_persi
         "Metering method",
         "Matrix",
     );
-    choose_control(h, "camera.color_filter", "color filter", "Hoya Y2");
+    choose_control(h, "camera.color_filter", "Color filter", "Hoya Y2");
     assert_eq!(h.state().params.camera.film_format_mm, 56.0);
     assert_eq!(h.state().params.camera.auto_exposure_method, "matrix");
     assert_eq!(h.state().params.camera.color_filter, "hoya_y2");
-    edit_control(h, "enlarger.print_exposure", "print exposure", "0.5");
+    edit_control(h, "enlarger.print_exposure", "Print exposure", "0.5");
     choose_control(
         h,
         "enlarger.print_exposure_mode",
-        "print exposure mode",
+        "Print exposure mode",
         "manual",
     );
     edit_control(h, "enlarger.y_filter_shift", "print y filter shift", "0.75");
     edit_control(h, "enlarger.m_filter_shift", "print m filter shift", "-0.5");
-    edit_control(h, "enlarger.preflash_exposure", "preflash exposure", "0.25");
+    edit_control(h, "enlarger.preflash_exposure", "Preflash exposure", "0.25");
     edit_control(
         h,
         "enlarger.preflash_y_filter_shift",
@@ -950,8 +950,8 @@ fn camera_enlarger_crop_upscale_and_cmyk_controls_edit_params_geometry_and_persi
         2.0
     );
     save_mutate_and_reload(&mut s, "capture-controls.json", |h| {
-        choose_control(h, "camera.film_format_mm", "Film Format", "Custom");
-        edit(h, "Frame Long Edge", "42");
+        choose_control(h, "camera.film_format_mm", "Film format", "Custom");
+        edit(h, "Frame long edge", "42");
         assert_eq!(h.state().params.camera.film_format_mm, 42.0);
     });
 }
@@ -964,17 +964,17 @@ fn film_format_default_is_135_and_presets_hide_the_edge() {
     click(h, "Capture setup");
     assert_eq!(h.state().params.camera.film_format_mm, 36.0);
     assert!(
-        h.query_by_label("Frame Long Edge").is_none(),
+        h.query_by_label("Frame long edge").is_none(),
         "the factory default is the named 135-format preset"
     );
-    choose(h, "Film Format", "Custom");
+    choose(h, "Film format", "Custom");
     assert!(
-        h.query_by_label("Frame Long Edge").is_some(),
+        h.query_by_label("Frame long edge").is_some(),
         "Custom reveals the manual long edge"
     );
-    choose(h, "Film Format", "35mm");
+    choose(h, "Film format", "35mm");
     assert!(
-        h.query_by_label("Frame Long Edge").is_none(),
+        h.query_by_label("Frame long edge").is_none(),
         "choosing the 35mm preset hides the manual long edge"
     );
     assert_eq!(h.state().params.camera.film_format_mm, 36.0);
@@ -991,18 +991,18 @@ fn film_format_specs_change_only_physical_scale_and_preserve_custom_values() {
         original,
         "locating the row must not change the stored physical scale"
     );
-    assert!(h.query_by_label("Frame Long Edge").is_some());
-    for query in ["Frame Long Edge", "long edge"] {
+    assert!(h.query_by_label("Frame long edge").is_some());
+    for query in ["Frame long edge", "long edge"] {
         search_controls(h, query);
         assert!(
-            h.query_by_label("Film Format · Camera → Input and capture stage")
+            h.query_by_label("Film format · Camera → Input and capture stage")
                 .is_some()
         );
-        assert!(h.query_by_label("Frame Long Edge").is_some());
+        assert!(h.query_by_label("Frame long edge").is_some());
     }
     reveal_control(h, "camera.film_format_mm");
     for (name, mm) in [("120", 56.0), ("4×5", 127.0), ("35mm", 36.0)] {
-        choose(h, "Film Format", name);
+        choose(h, "Film format", name);
         let mut expected = original.clone();
         expected.camera.film_format_mm = mm;
         let mut preparation = expected.render_preparation_state();
@@ -1015,20 +1015,20 @@ fn film_format_specs_change_only_physical_scale_and_preserve_custom_values() {
             expected,
             "{name} must not change crop or effects"
         );
-        assert!(h.query_by_label("Frame Long Edge").is_some());
+        assert!(h.query_by_label("Frame long edge").is_some());
     }
     click(h, "Undo");
     assert_eq!(h.state().params.camera.film_format_mm, 127.0);
     click(h, "Redo");
     assert_eq!(h.state().params.camera.film_format_mm, 36.0);
     let revision = h.state().parameter_revision;
-    choose(h, "Film Format", "Custom");
+    choose(h, "Film format", "Custom");
     assert_eq!(
         h.state().parameter_revision,
         revision,
         "revealing custom is not an edit"
     );
-    edit(h, "Frame Long Edge", "42");
+    edit(h, "Frame long edge", "42");
     assert_eq!(h.state().params.camera.film_format_mm, 42.0);
     click(h, "reset Camera");
     assert_eq!(
@@ -1038,11 +1038,11 @@ fn film_format_specs_change_only_physical_scale_and_preserve_custom_values() {
     click(h, "Undo");
     assert_eq!(h.state().params.camera.film_format_mm, 42.0);
     save_mutate_and_reload(&mut s, "custom-format.json", |h| {
-        choose_control(h, "camera.film_format_mm", "Film Format", "120");
+        choose_control(h, "camera.film_format_mm", "Film format", "120");
     });
     reveal_control(&mut s.harness, "camera.film_format_mm");
     assert_eq!(s.harness.state().params.camera.film_format_mm, 42.0);
-    assert!(s.harness.query_by_label("Frame Long Edge").is_some());
+    assert!(s.harness.query_by_label("Frame long edge").is_some());
 }
 
 #[test]
@@ -1099,13 +1099,13 @@ fn simulation_blend_scales_render_between_prepared_source_and_complete_result() 
     choose_control(
         h,
         "io.output_color_space",
-        "output color space",
+        "Output color space",
         "Display P3",
     );
     choose_control(
         h,
         "extras.simulation.saving_color_space",
-        "saving color space",
+        "Saving color space",
         "ProPhoto RGB",
     );
     let saving_cctf = h.state().gui_state.sections["simulation"]["saving_cctf_encoding"]
@@ -1114,7 +1114,7 @@ fn simulation_blend_scales_render_between_prepared_source_and_complete_result() 
     toggle_control(
         h,
         "extras.simulation.saving_cctf_encoding",
-        "saving cctf encoding",
+        "Saving CCTF encoding",
     );
     assert_eq!(h.state().params.io.output_color_space, "Display P3");
     assert_eq!(
@@ -1127,7 +1127,7 @@ fn simulation_blend_scales_render_between_prepared_source_and_complete_result() 
     );
 
     reveal_control(h, "settings.preview_max_size");
-    edit(h, "preview max size", "256");
+    edit(h, "Preview max size", "256");
     assert_eq!(h.state().params.settings.preview_max_size, 256);
     assert!(h.query_by_label("update").is_none());
     close_settings(h);
@@ -1153,8 +1153,8 @@ fn preflash_zero_and_nonprinting_route_retain_independent_filters_and_main_expos
     let mut s = session();
     let h = &mut s.harness;
     set_route(h, "input > film > print > scan");
-    edit_control(h, "enlarger.print_exposure", "print exposure", "0.5");
-    edit_control(h, "enlarger.preflash_exposure", "preflash exposure", "0.25");
+    edit_control(h, "enlarger.print_exposure", "Print exposure", "0.5");
+    edit_control(h, "enlarger.preflash_exposure", "Preflash exposure", "0.25");
     edit_control(
         h,
         "enlarger.preflash_y_filter_shift",
@@ -1167,7 +1167,7 @@ fn preflash_zero_and_nonprinting_route_retain_independent_filters_and_main_expos
         "preflash m filter shift",
         "-0.75",
     );
-    edit_control(h, "enlarger.preflash_exposure", "preflash exposure", "0");
+    edit_control(h, "enlarger.preflash_exposure", "Preflash exposure", "0");
     assert_eq!(h.state().params.enlarger.preflash_exposure, 0.0);
     assert_eq!(h.state().params.enlarger.preflash_y_filter_shift, 1.5);
     assert_eq!(h.state().params.enlarger.preflash_m_filter_shift, -0.75);
@@ -1175,7 +1175,7 @@ fn preflash_zero_and_nonprinting_route_retain_independent_filters_and_main_expos
     let retained = h.state().params.enlarger.clone();
     set_route(h, "input > film > scan");
     for (path, label) in [
-        ("enlarger.preflash_exposure", "preflash exposure"),
+        ("enlarger.preflash_exposure", "Preflash exposure"),
         (
             "enlarger.preflash_y_filter_shift",
             "preflash y filter shift",
@@ -1206,7 +1206,7 @@ fn preflash_zero_and_nonprinting_route_retain_independent_filters_and_main_expos
         "the revealed filter names the zero-exposure condition"
     );
     assert_eq!(h.state().params.enlarger, retained);
-    edit_control(h, "enlarger.preflash_exposure", "preflash exposure", "1");
+    edit_control(h, "enlarger.preflash_exposure", "Preflash exposure", "1");
     reveal_control(h, "enlarger.preflash_y_filter_shift");
     assert!(
         !h.get_by_label("preflash y filter shift")
@@ -1286,9 +1286,9 @@ fn procedural_named_amount_custom_and_noise_follow_effective_controls() {
     );
     // A named profile owns its profile fields; the independent overrides
     // remain available, and Custom is the explicit way to expose the rest.
-    assert!(h.query_by_label("Film Type").is_none());
+    assert!(h.query_by_label("Film type").is_none());
     assert!(
-        h.query_by_role_and_label(egui::accesskit::Role::ComboBox, "Processing Mode")
+        h.query_by_role_and_label(egui::accesskit::Role::ComboBox, "Processing mode")
             .is_none()
     );
     assert!(h.query_all_by_label("Size (relative)").next().is_none());
@@ -1296,7 +1296,7 @@ fn procedural_named_amount_custom_and_noise_follow_effective_controls() {
     assert!(h.query_all_by_label("Film resolution (%)").next().is_none());
     click(h, "Procedural Advanced");
     assert!(
-        !h.get_by_role_and_label(egui::accesskit::Role::ComboBox, "Resolution Type")
+        !h.get_by_role_and_label(egui::accesskit::Role::ComboBox, "Resolution type")
             .node()
             .is_disabled()
     );
@@ -1307,7 +1307,7 @@ fn procedural_named_amount_custom_and_noise_follow_effective_controls() {
         "custom"
     );
     assert!(
-        h.query_by_role_and_label(egui::accesskit::Role::ComboBox, "Processing Mode")
+        h.query_by_role_and_label(egui::accesskit::Role::ComboBox, "Processing mode")
             .is_some()
     );
     assert!(h.query_all_by_label("Size (relative)").next().is_some());
@@ -1320,16 +1320,16 @@ fn procedural_named_amount_custom_and_noise_follow_effective_controls() {
         "Amount stays an independent override"
     );
     edit(h, "Film resolution (%)", "88");
-    choose(h, "Resolution Type", "Optical");
+    choose(h, "Resolution type", "Optical");
     edit(h, "Shadows (%)", "42");
-    choose(h, "Processing Mode", "Noise");
+    choose(h, "Processing mode", "Noise");
     assert_eq!(
         h.state().params.film_render.grain.procedural_mode,
         ProceduralGrainMode::Noise
     );
     assert!(h.query_by_label("Film resolution (%)").is_none());
-    assert!(h.query_by_label("Resolution Type").is_none());
-    assert!(h.query_by_label("Film Type").is_none());
+    assert!(h.query_by_label("Resolution type").is_none());
+    assert!(h.query_by_label("Film type").is_none());
     assert!(!h.get_by_label("Shadows (%)").node().is_disabled());
     let noise = h.state().params.film_render.grain.clone();
     for (path, label) in [
@@ -1339,7 +1339,7 @@ fn procedural_named_amount_custom_and_noise_follow_effective_controls() {
         ),
         (
             "film_render.grain.procedural_resolution_type",
-            "Resolution Type",
+            "Resolution type",
         ),
     ] {
         reveal_control(h, path);
@@ -1352,7 +1352,7 @@ fn procedural_named_amount_custom_and_noise_follow_effective_controls() {
         assert_eq!(h.state().params.film_render.grain, noise);
     }
     open_grain(h);
-    choose(h, "Processing Mode", "Analogue");
+    choose(h, "Processing mode", "Analogue");
     assert_eq!(
         h.state()
             .params
@@ -1725,12 +1725,12 @@ fn scanner_white_reference_defaults_to_clear_film_base_and_can_opt_out() {
         spektrafilm_core::params::SCAN_WHITE_REFERENCE_CLEAR_FILM_BASE
     );
     search_controls(h, "Scanner");
-    choose(h, "white reference", "Readout illuminant");
+    choose(h, "White reference", "Readout illuminant");
     assert_eq!(
         h.state().params.scanner.white_reference,
         spektrafilm_core::params::SCAN_WHITE_REFERENCE_READOUT_ILLUMINANT
     );
-    choose(h, "white reference", "Clear film base");
+    choose(h, "White reference", "Clear film base");
     assert_eq!(
         h.state().params.scanner.white_reference,
         spektrafilm_core::params::SCAN_WHITE_REFERENCE_CLEAR_FILM_BASE
@@ -1745,7 +1745,7 @@ fn scanner_search_reveals_independent_rows_on_an_inactive_route() {
     let params = h.state().params.clone();
     reveal_control(h, "scanner.conversion_style");
     assert!(
-        h.get_by_role_and_label(egui::accesskit::Role::ComboBox, "conversion style")
+        h.get_by_role_and_label(egui::accesskit::Role::ComboBox, "Conversion style")
             .node()
             .is_disabled()
     );
@@ -1798,8 +1798,8 @@ fn module_resets_restore_only_their_owned_values_and_are_reversible() {
     let h = &mut s.harness;
     set_route(h, "input > film > print > scan");
     let factory = state::GuiState::factory().runtime_params().unwrap();
-    edit_control(h, "enlarger.print_exposure", "print exposure", "0.5");
-    edit_control(h, "enlarger.preflash_exposure", "preflash exposure", "0.25");
+    edit_control(h, "enlarger.print_exposure", "Print exposure", "0.5");
+    edit_control(h, "enlarger.preflash_exposure", "Preflash exposure", "0.25");
     edit_control(
         h,
         "enlarger.preflash_y_filter_shift",
@@ -1882,7 +1882,7 @@ fn global_search_locates_settings_and_export_without_mutation_or_filtering_the_d
     let options = h.state().export_options.clone();
     reveal_control(h, "settings.preview_max_size");
     assert!(h.state().settings_open);
-    assert!(h.query_by_label("preview max size").is_some());
+    assert!(h.query_by_label("Preview max size").is_some());
     assert!(h.query_by_label("auto preview").is_none());
     assert!(h.query_by_label("Update").is_none());
     assert!(!h.state().export_dialog.is_open());
@@ -2017,31 +2017,31 @@ fn applied_look_materials_follow_factory_filtering_and_undo() {
     search_controls(h, "extras.simulation.film_stock");
     click(h, "Only modified");
     assert!(
-        h.query_by_label("film profile · Film material → Film stage")
+        h.query_by_label("Film profile · Film material → Film stage")
             .is_some()
     );
     assert!(
-        h.query_by_role_and_label(egui::accesskit::Role::ComboBox, "film profile")
+        h.query_by_role_and_label(egui::accesskit::Role::ComboBox, "Film profile")
             .is_some()
     );
     click(h, "Undo");
     assert_eq!(h.state().film_name, state::GuiState::factory().film());
     assert!(
-        h.query_by_label("film profile · Film material → Film stage")
+        h.query_by_label("Film profile · Film material → Film stage")
             .is_none()
     );
     assert!(
-        h.query_by_role_and_label(egui::accesskit::Role::ComboBox, "film profile")
+        h.query_by_role_and_label(egui::accesskit::Role::ComboBox, "Film profile")
             .is_none()
     );
     click(h, "Redo");
     assert_eq!(h.state().film_name, "kodak_portra_400");
     assert!(
-        h.query_by_label("film profile · Film material → Film stage")
+        h.query_by_label("Film profile · Film material → Film stage")
             .is_some()
     );
     assert!(
-        h.query_by_role_and_label(egui::accesskit::Role::ComboBox, "film profile")
+        h.query_by_role_and_label(egui::accesskit::Role::ComboBox, "Film profile")
             .is_some()
     );
 }
@@ -2059,7 +2059,7 @@ fn camera_module_reset_retains_camera_diffusion_and_other_stage_edits() {
         "0.75",
     );
     edit_control(h, "camera.diffusion_filter.strength", "strength", "0.5");
-    edit_control(h, "enlarger.print_exposure", "print exposure", "2.0");
+    edit_control(h, "enlarger.print_exposure", "Print exposure", "2.0");
     let mut expected = h.state().params.clone();
     expected.camera.exposure_compensation_ev = factory.camera.exposure_compensation_ev;
     expected.camera.auto_exposure = factory.camera.auto_exposure;

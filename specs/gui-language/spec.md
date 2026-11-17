@@ -73,16 +73,16 @@ The Simplified Chinese presentation MUST use these core terms consistently. The 
 | Brightness / Contrast | 明暗 / 反差 |
 | Conversion contrast / Conversion exposure compensation | 转换反差 / 转换曝光补偿 |
 | Warmth / Saturation | 冷暖 / 彩度 |
-| Film Format / Custom | 胶片规格 / 自定义 |
+| Film format / Custom | 胶片规格 / 自定义 |
 | Capture setup | 拍摄设置 |
-| Frame Long Edge | 画面长边 |
+| Frame long edge | 画面长边 |
 | reset <module> · help: Restore <module> to the factory state | 重置<模块> · 提示：将<模块>恢复为出厂状态 |
 | history: Reset <module> to factory | 历史：将<模块>恢复出厂值 |
 | Original / Modified / Paper back | 原图 / 修改图 / 相纸背面 |
 
 ### Search and text entry
 
-Control search MUST match Simplified Chinese and English labels, module and destination names, and exact canonical paths in either interface language. Alternate visible labels, including Frame Long Edge, MUST remain searchable through their one canonical owner. Results MUST use the selected presentation language and retain technical paths as secondary detail.
+Control search MUST match Simplified Chinese and English labels, module and destination names, and exact canonical paths in either interface language. Alternate visible labels, including Frame long edge, MUST remain searchable through their one canonical owner. Results MUST use the selected presentation language and retain technical paths as secondary detail.
 
 Localization MUST NOT create duplicate controls, parameter aliases, or translated paths. Pinyin and fuzzy transliteration search are outside this contract.
 

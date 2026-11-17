@@ -242,7 +242,7 @@ fn rotation_undo_redo_automatically_refreshes_viewable_and_saveable_output() {
         wait_until(&mut h, |a| !a.dirty && a.render_job.is_none());
         let source = h.state().image.as_ref().unwrap().clone();
         reveal_control(&mut h, "action.rotate_cw");
-        click(&mut h, "cw rotate");
+        click(&mut h, "CW rotate");
         assert_eq!(h.state().input_rotation, 3);
         wait_until(&mut h, |a| !a.dirty && a.render_job.is_none());
         click(&mut h, "SCAN");

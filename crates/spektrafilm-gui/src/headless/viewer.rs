@@ -239,7 +239,7 @@ fn locating_viewer_popovers_keeps_choices_open_without_executing_them() {
             ),
             expected
         );
-        click(h, "fit");
+        click(h, "Fit");
         assert!(h.query_by_label("reveal transition").is_none());
         assert!(h.query_by_label("crossfade transition").is_none());
     }
@@ -262,13 +262,13 @@ fn layers_and_interpolation_change_output_but_preserve_input_pixels() {
     settle_animation(h);
     click(h, "400%");
     display_controls(h);
-    choose(h, "output interpolation", "nearest");
+    choose(h, "Output interpolation", "nearest");
     close_settings(h);
     click(h, "Modified");
     let nearest = composed(h, 100.0);
     assert_eq!(nearest.interpolation, Interpolation::Nearest);
     display_controls(h);
-    choose(h, "output interpolation", "spline36");
+    choose(h, "Output interpolation", "spline36");
     close_settings(h);
     let spline = composed(h, 100.0);
     assert_eq!(spline.interpolation, Interpolation::Spline36);
@@ -292,7 +292,7 @@ fn layers_and_interpolation_change_output_but_preserve_input_pixels() {
     click(h, "Original");
     let baseline = composed(h, 100.0).pixels.unwrap();
     display_controls(h);
-    choose(h, "output interpolation", "nearest");
+    choose(h, "Output interpolation", "nearest");
     close_settings(h);
     let input = composed(h, 100.0);
     assert_eq!(input.interpolation, Interpolation::Nearest);
@@ -487,7 +487,7 @@ fn clicking_the_photograph_leaves_an_editor_without_changing_the_view() {
     let mut s = session();
     let h = &mut s.harness;
     for exact in [false, true] {
-        click(h, "reset view");
+        click(h, "Reset view");
         if exact {
             click(h, "200%");
         }
@@ -629,7 +629,7 @@ fn gray_canvas_and_white_padding_change_composed_pixels_and_restore_baseline() {
         baseline.pixels.as_ref().unwrap().pixels[0],
         egui::Color32::from_gray(118)
     );
-    click(h, "gray 18% canvas");
+    click(h, "Gray 18% canvas");
     let time = h.ctx.input(|input| input.time) + 1.0;
     let black = composed(h, time);
     assert_ne!(baseline.key, black.key);
@@ -641,13 +641,13 @@ fn gray_canvas_and_white_padding_change_composed_pixels_and_restore_baseline() {
         black.pixels.as_ref().unwrap().pixels[0],
         egui::Color32::BLACK
     );
-    click(h, "gray 18% canvas");
+    click(h, "Gray 18% canvas");
     let time = h.ctx.input(|input| input.time) + 1.0;
     assert_eq!(
         baseline.pixels.as_ref().unwrap().pixels,
         composed(h, time).pixels.unwrap().pixels
     );
-    edit(h, "white padding", "0.2");
+    edit(h, "White padding", "0.2");
     let time = h.ctx.input(|input| input.time) + 1.0;
     let padded = composed(h, time);
     assert!(padded.image_rect.width() < baseline.image_rect.width());
@@ -663,7 +663,7 @@ fn gray_canvas_and_white_padding_change_composed_pixels_and_restore_baseline() {
         baseline.pixels.as_ref().unwrap().pixels,
         padded.pixels.unwrap().pixels
     );
-    edit(h, "white padding", "0.03");
+    edit(h, "White padding", "0.03");
     let time = h.ctx.input(|input| input.time) + 1.0;
     assert_eq!(
         baseline.pixels.unwrap().pixels,
@@ -677,10 +677,10 @@ fn white_padding_modified_locator_and_display_reset_follow_live_and_persisted_vi
     let h = &mut s.harness;
     let factory = state::GuiState::factory().sections["display"]["white_padding"]
         .as_f64()
-        .expect("factory white padding");
+        .expect("factory White padding");
     let params = h.state().params.clone();
     reveal_control(h, "extras.display.white_padding");
-    edit(h, "white padding", "0.2");
+    edit(h, "White padding", "0.2");
     assert!((h.state().viewer.settings.white_padding as f64 - 0.2).abs() < 1e-6);
     assert!(
         (h.state().current_state().unwrap().sections["display"]["white_padding"]
@@ -693,7 +693,7 @@ fn white_padding_modified_locator_and_display_reset_follow_live_and_persisted_vi
 
     close_settings(h);
     click(h, "Only modified");
-    let locator = "white padding · Display → Settings dialog";
+    let locator = "White padding · Display → Settings dialog";
     assert!(h.query_by_label(locator).is_some());
     click(h, locator);
     let reset_bounds = h
@@ -722,7 +722,7 @@ fn white_padding_modified_locator_and_display_reset_follow_live_and_persisted_vi
     close_settings(h);
     assert!(
         h.query_by_label(locator).is_none(),
-        "factory white padding leaves the modified index"
+        "factory White padding leaves the modified index"
     );
 }
 
@@ -736,18 +736,18 @@ fn display_reset_restores_the_full_live_viewer_settings_without_adjustment_histo
     let revision = h.state().parameter_revision;
     let undo_label = h.state().undo_label_localized(&h.ctx);
     reveal_control(h, "extras.display.use_display_transform");
-    click(h, "use display transform");
-    click(h, "gray 18% canvas");
+    click(h, "Use display transform");
+    click(h, "Gray 18% canvas");
     choose(
         h,
-        "output interpolation",
+        "Output interpolation",
         if factory.interpolation == Interpolation::Nearest {
             "spline36"
         } else {
             "nearest"
         },
     );
-    edit(h, "white padding", "0.2");
+    edit(h, "White padding", "0.2");
     let changed = h.state().viewer.settings.clone();
     assert_ne!(changed.use_display_transform, factory.use_display_transform);
     assert_ne!(changed.gray_18_canvas, factory.gray_18_canvas);
@@ -992,10 +992,10 @@ fn viewer_settings_do_not_change_saved_or_exported_pixels() {
     let export_before = s.directory.path().join("export-before.exr");
     save_and_export_float_images(h, &save_before, &export_before);
     display_controls(h);
-    click(h, "gray 18% canvas");
-    click(h, "use display transform");
-    edit(h, "white padding", "0.2");
-    choose(h, "output interpolation", "nearest");
+    click(h, "Gray 18% canvas");
+    click(h, "Use display transform");
+    edit(h, "White padding", "0.2");
+    choose(h, "Output interpolation", "nearest");
     close_settings(h);
     click(h, "Original");
     click(h, "400%");
@@ -1029,7 +1029,7 @@ fn display_profile_selection_clear_persistence_and_viewer_only_effect() {
     let profile = data_dir().join("icc/saucecontrol/DisplayP3-v4.icc");
     assert!(profile.is_file());
     script(h, chooser::Chooser::chooser_path(&profile));
-    click(h, "select ICC profile…");
+    click(h, "Select ICC profile…");
     assert_eq!(
         h.state().gui_state.display_profile(),
         Some(profile.to_str().unwrap()),
@@ -1133,7 +1133,7 @@ fn an_unusable_display_profile_path_falls_back_without_breaking_state() {
     let retained = h.state().output_image.as_ref().unwrap().clone();
     let missing = s.directory.path().join("absent-profile.icc");
     script(h, chooser::Chooser::chooser_path(&missing));
-    click(h, "select ICC profile…");
+    click(h, "Select ICC profile…");
     assert_eq!(
         h.state().gui_state.display_profile(),
         Some(missing.to_str().unwrap()),
@@ -1148,7 +1148,7 @@ fn an_unusable_display_profile_path_falls_back_without_breaking_state() {
     let broken = s.directory.path().join("broken.icc");
     std::fs::write(&broken, b"not an icc profile").unwrap();
     script(h, chooser::Chooser::chooser_path(&broken));
-    click(h, "select ICC profile…");
+    click(h, "Select ICC profile…");
     assert_eq!(
         h.state().gui_state.display_profile(),
         Some(broken.to_str().unwrap())
@@ -1249,8 +1249,8 @@ fn canonical_search_preserves_inspector_and_viewer_geometry_at_supported_desktop
             "Modified",
             "Paper back",
             "transitions",
-            "fit",
-            "reset view",
+            "Fit",
+            "Reset view",
         ] {
             footer.push((name.to_owned(), h.get_by_label(name).raw_bounds().unwrap()));
         }
