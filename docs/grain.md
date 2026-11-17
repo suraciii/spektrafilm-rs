@@ -5,7 +5,7 @@ Use this page to select a grain engine and configure its controls. It also descr
 ## Select an engine
 
 `film_render.grain.engine` accepts `spektra`, `procedural`, `dye`, `fotufilm`, or `exposure`.
-Use `procedural_*` for Procedural controls, `dye_strength` for the Dye look control, and `film_render.grain.exposure.*` for Exposure Grain controls.
+Use `procedural_*` for Procedural controls, `dye_strength` and `dye_color_grain` for the Dye look controls, and `film_render.grain.exposure.*` for Exposure Grain controls.
 
 Historical numbered control keys remain readable; saved documents and parameter descriptions emit only canonical names.
 Supplying both spellings of one control in the same grain object is an error.
@@ -17,7 +17,7 @@ Dye diagnostics use `SPEKTRAFILM_GRAIN_DYE_*`. Historical numbered diagnostic na
 
 - Spektra is the upstream experimental original.
 - Procedural derives from Dehancer. It provides Analogue/Noise grain with twelve format/speed profiles. Its controls include Size, Amount, Shadows, Midtones, Highlights, Chroma, and Film Resolution. Pixel parity with Dehancer is not claimed.
-- Dye is the default self-developed experimental film-coordinate dye field. `dye_strength` is its only look control.
+- Dye is the default self-developed experimental film-coordinate dye field. `dye_strength` and `dye_color_grain` are its look controls.
 - Fotufilm Film is an adapted appearance population model fitted to resolved film curves. It is opt-in. `film_render.grain.fotufilm.*` controls it.
 - Exposure Grain is a reconstructed post-scan encoded-RGB gradient-noise appearance model. It is opt-in. `film_render.grain.exposure.*` controls it.
 
@@ -102,19 +102,20 @@ Grain Dye is selected with `film_render.grain.engine: "dye"`.
 
 ### Field controls
 
-Dye's grain law is part of the engine. One relative recipe control tunes it:
+Dye's grain law is part of the engine. Two relative recipe controls tune it:
 
 - **Grain strength** (`dye_strength`, 0..4) scales the correlated field amplitude and the event count together. `1` keeps the delivered look. `0` returns the target density with no random grain, including residual count noise. The density response and the per-record ratio do not change. It is not a certified optical RMS target.
+- **Color grain** (`dye_color_grain`, 0..1) sets how far the three color records' grain fields separate. `0` shares one field across the records; `1` gives each record its own. `0.75` is the default; `0.2` reproduces the previous delivered look. It changes grain chroma, not image saturation, and is inactive for monochrome film. The GUI hides it for black-and-white Dye; search reveals the stored value disabled. It does not scale overall grain amplitude.
 
-Omitting the key resolves to `1.0`, so recipes authored before this control existed keep the delivered look. The delivered cell size is an engine constant; it is not a public control.
+Omitting `dye_strength` resolves to `1.0` and omitting `dye_color_grain` resolves to `0.75`; an explicit `0.2` keeps the previous delivered look. The delivered cell size is an engine constant; it is not a public control.
 
 Dye reads the profile's one to three `density_curves_layers` rows. Each layer receives its normalized pointwise share of the developed density target; the layer targets sum to the full target. Each layer realizes its own coordinate-addressed value-noise field and conditional count, with a shared field coupling the records. Positive profiles mix in a finer microcontrast lattice at a minority of the field variance and carry twice the delivered amplitude of negative profiles; both are engine calibration, not controls. The layer densities are summed before readout. A profile without layer curves, or with one layer, uses the total target as one layer of the same law.
 
-The remaining law values — per-record relative amplitude, record coupling, value-noise cell size, per-layer relative cell scale, and normalization, fog baseline, saturation density, and development taper — are engine constants. Recipes that carry `dye_support_um`, `dye_event_area_um2`, `rms_granularity`, `density_min`, `uniformity`, `particle_scale_sublayers`, or `channel_correlation` load and save unchanged; those values do not change the delivered Dye field. The Dye layer split does not read `particle_scale_sublayers`; the profile layer table owns the layer targets and layer count, and the engine owns each layer's relative correlation scale. Negative profiles use a 1.0 / 0.5 / 0.3 layer cell ladder; positive profiles use the base cell on every layer so their dominant layer cannot fall below one source pixel at a 35 mm 1:1 crop.
+The remaining law values — per-record relative amplitude, value-noise cell size, per-layer relative cell scale, and normalization, fog baseline, saturation density, and development taper — are engine constants. Recipes that carry `dye_support_um`, `dye_event_area_um2`, `rms_granularity`, `density_min`, `uniformity`, `particle_scale_sublayers`, or `channel_correlation` load and save unchanged; those values do not change the delivered Dye field. The Dye layer split does not read `particle_scale_sublayers`; the profile layer table owns the layer targets and layer count, and the engine owns each layer's relative correlation scale. Negative profiles use a 1.0 / 0.5 / 0.3 layer cell ladder; positive profiles use the base cell on every layer so their dominant layer cannot fall below one source pixel at a 35 mm 1:1 crop.
 
 Positive profiles use half the negative delivered base cell, so their dominant density layer stays visibly grainy instead of becoming a low-frequency density cloud. The cell is not an absolute crystal size.
 
-The seed selects the realization. `random_seed` and `dye_strength` are the grain inputs that change the image, and the same seed, inputs, geometry, and executor reproduce the same field. Each density layer has its own stream, so layers do not share one random texture.
+The seed selects the realization. `random_seed`, `dye_strength`, and `dye_color_grain` are the grain inputs that change the image, and the same seed, inputs, geometry, and executor reproduce the same field. Each density layer has its own stream, so layers do not share one random texture.
 
 Dye realizes the coordinate-addressed fields on the film lattice and reads them out through the requested grid. A finer grid interpolates a lattice cell centre; a coarser grid integrates the cells it covers. Cropping, preview scaling, and stage splitting therefore sample one film rather than starting a second realization.
 

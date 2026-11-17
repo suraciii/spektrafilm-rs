@@ -1302,11 +1302,12 @@ fn grain_procedural_canonical_fields_roundtrip_through_state_and_runtime() {
     assert_eq!(restored.micro_structure, [0.4, 24.0]);
 
     let object = loaded.sections["grain"].as_object().unwrap();
-    assert_eq!(object.len(), 12);
+    assert_eq!(object.len(), 13);
     for key in [
         "active",
         "rms_granularity",
         "dye_strength",
+        "dye_color_grain",
         "density_min",
         "uniformity",
         "particle_scale_sublayers",

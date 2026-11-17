@@ -1140,6 +1140,12 @@ fn dye_bw_keeps_look_controls_and_retains_hidden_requests() {
     let color = profile::load_profile_by_name(&data_dir(), "kodak_portra_400").unwrap();
     select_film(h, color.info.name.as_deref().unwrap_or("kodak_portra_400"));
     open_grain(h);
+    assert!(
+        !h.get_by_label("Color grain (relative)")
+            .node()
+            .is_disabled(),
+        "color Dye exposes the color-film control"
+    );
     edit(h, "Grain strength (×)", "1.5");
 
     let bw = profile::load_profile_by_name(&data_dir(), "kodak_doublex").unwrap();
@@ -1160,6 +1166,10 @@ fn dye_bw_keeps_look_controls_and_retains_hidden_requests() {
         "the look controls stay editable for BW material"
     );
     assert!(h.query_by_label("Dye Advanced").is_none());
+    assert!(
+        h.query_by_label("Color grain (relative)").is_none(),
+        "black-and-white Dye hides the color-film control"
+    );
     for label in [
         "Channel correlation",
         "RMS granularity (relative) R",

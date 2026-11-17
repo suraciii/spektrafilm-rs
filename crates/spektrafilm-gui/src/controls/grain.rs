@@ -504,6 +504,14 @@ fn engine_controls(
                 "Grain strength (×)",
                 "Relative Dye grain amplitude: 1 keeps the delivered look; 0 removes random grain, including residual count noise. The density response and the inter-record ratio stay unchanged, and this is not a certified optical RMS target."
             );
+            changed |= number!(
+                ui,
+                params,
+                filter,
+                dye_color_grain,
+                "Color grain (relative)",
+                "Relative separation of the three color records' Dye grain fields: 0 shares one field, 1 gives each record its own. The default is 0.75; 0.2 reproduces the previous delivered look. This changes grain chroma only, not image saturation; black-and-white Dye hides this control because it has one effective record."
+            );
         }
         GrainEngine::Spektra => {
             changed |= number!(
@@ -1506,6 +1514,18 @@ mod tests {
         assert!(harness.query_by_label("Dye Advanced").is_none());
         assert!(harness.query_by_label("Density minimum (D) R").is_none());
         assert!(harness.query_by_label("Channel correlation").is_none());
+        assert!(harness.query_by_label("Color grain (relative)").is_none());
+        harness.state_mut().query = "Color grain".into();
+        harness.run();
+        assert!(
+            harness
+                .get_by_label("Color grain (relative)")
+                .node()
+                .is_disabled(),
+            "search reveals the stored value without making it editable"
+        );
+        harness.state_mut().query.clear();
+        harness.run();
         assert!(
             !harness
                 .get_by_label("Grain strength (×)")
@@ -1527,6 +1547,34 @@ mod tests {
         harness.state_mut().query = "density min".into();
         harness.run();
         assert_eq!(harness.state().params, before);
+    }
+
+    #[test]
+    fn dye_color_grain_edits_color_film_only() {
+        let mut params = crate::state::GuiState::factory().runtime_params().unwrap();
+        params.film_render.grain.engine = GrainEngine::Dye;
+        params.film_render.grain.monochrome = false;
+        let mut harness = Harness::new_ui_state(
+            grain_ui,
+            GrainUi {
+                params,
+                query: String::new(),
+            },
+        );
+        assert_eq!(
+            harness.state().params.film_render.grain.dye_color_grain,
+            0.75
+        );
+        let field = harness.get_by_label("Color grain (relative)");
+        assert!(!field.node().is_disabled());
+        field.focus();
+        harness.run();
+        harness.press_key_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+        harness
+            .get_by_label("Color grain (relative)")
+            .type_text("0.6");
+        harness.run();
+        assert!((harness.state().params.film_render.grain.dye_color_grain - 0.6).abs() < 1e-9);
     }
 
     #[test]

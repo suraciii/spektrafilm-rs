@@ -626,6 +626,9 @@ fn description(path: &str) -> Option<&'static str> {
         "film_render.grain.procedural_amount" => Some(
             "Grain Procedural Amount in percent; used with named and custom Procedural profiles, distinct from RMS granularity.",
         ),
+        "film_render.grain.dye_color_grain" => Some(
+            "Relative separation of the three color records' Dye grain fields: zero shares the field, one gives each record its own. The default is 0.75; 0.2 reproduces the previous delivered look. Affects grain chroma only; black-and-white film hides this color-film control.",
+        ),
         "film_render.grain.rms_granularity" => Some(
             "RMS granularity is distinct from Procedural Amount: Spektra derives statistical particle area from the film density curves; Dye uses relative strength G to scale per-channel event area, not a certified optical RMS target.",
         ),

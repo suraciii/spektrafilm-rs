@@ -34,6 +34,10 @@ pub struct DyeGpuParams {
     /// One effective record carried in three equal lanes: every record reads the
     /// same field, the same strength and the same count draw.
     pub monochrome: bool,
+    /// Shared field fraction between the three color records. `1.0` is one
+    /// shared field; `0.0` gives each record its own. The public color-grain
+    /// default `0.75` maps to `0.25`; monochrome holds the previous `0.8`.
+    pub rho: f64,
     /// Relative density amplitude at the taper peak (the mapped law value).
     pub white: f64,
     /// Event area of one developed cluster, in square micrometres (the
@@ -92,7 +96,9 @@ pub mod law {
     pub const POSITIVE_FINE_WEIGHT: f64 = 0.35;
     /// Relative density amplitude per record.
     pub const STRENGTH: [f64; 3] = [1.0, 1.0, 1.18];
-    /// Shared fraction of the field between records.
+    /// Shared fraction retained by the monochrome law and the previous
+    /// delivered color look. Color film maps the public value as
+    /// `rho = 1 - dye_color_grain`; its default `0.75` maps to `0.25`.
     pub const RHO: f64 = 0.8;
     /// Event area of one developed cluster, in square micrometres.
     pub const EVENT_AREA_UM2: f64 = 0.00096;
