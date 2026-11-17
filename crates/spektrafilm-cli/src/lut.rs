@@ -119,7 +119,7 @@ pub struct BuildArgs {
     /// Captured RuntimeParams JSON snapshot to use as the bake source.
     #[arg(long, value_name = "FILE", help_heading = "Bundle configuration")]
     params: Option<PathBuf>,
-    /// Parent directory of the generated OUT/<bundle-name>/ bundle.
+    /// Parent directory of the generated `OUT/<bundle-name>/` bundle.
     #[arg(value_name = "OUT", help_heading = "Delivery")]
     out: PathBuf,
     /// Data directory; otherwise use SPEKTRAFILM_DATA_DIR or automatic discovery.
