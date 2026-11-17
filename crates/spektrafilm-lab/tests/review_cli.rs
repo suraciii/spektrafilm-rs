@@ -40,8 +40,6 @@ fn regions_grid_writes_an_explicit_regions_document() {
                 "2,4",
                 "--role",
                 "color",
-                "--space",
-                "render",
                 "--out",
             ])
             .arg(&out)
@@ -70,6 +68,60 @@ fn regions_grid_writes_an_explicit_regions_document() {
 }
 
 #[test]
+fn regions_grid_defaults_identity_and_origin_to_the_declaration_it_writes() {
+    let dir = TempDir::new().unwrap();
+    let out = dir.path().join("chart.json");
+    // The common grid is contiguous from the pixel origin and named after the
+    // file that holds it. Ceremony that is always the same is not a decision.
+    result(
+        cli()
+            .args([
+                "regions",
+                "--rows",
+                "1",
+                "--columns",
+                "2",
+                "--patch-size",
+                "8x8",
+            ])
+            .args(["--role", "color", "--out"])
+            .arg(&out)
+            .output()
+            .unwrap(),
+    );
+    let regions: Value = serde_json::from_slice(&fs::read(&out).unwrap()).unwrap();
+    assert_eq!(regions["id"], "chart");
+    assert_eq!(
+        regions["regions"][1]["geometry"],
+        json!({"x": 8, "y": 0, "width": 8, "height": 8, "space": "render"}),
+        "one contiguous grid, written in the space this binary measures"
+    );
+}
+
+/// A delivered raster has one coordinate space. A flag whose other six values
+/// produce a document this binary refuses is a trap, not a choice.
+#[test]
+fn regions_grid_offers_no_coordinate_space_it_cannot_measure() {
+    let dir = TempDir::new().unwrap();
+    let output = cli()
+        .args([
+            "regions",
+            "--rows",
+            "1",
+            "--columns",
+            "1",
+            "--patch-size",
+            "8x8",
+        ])
+        .args(["--role", "color", "--space", "source_pixels", "--out"])
+        .arg(dir.path().join("chart.json"))
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(2));
+    assert!(!dir.path().join("chart.json").exists());
+}
+
+#[test]
 fn regions_grid_refuses_invalid_geometry_and_existing_destinations() {
     let dir = TempDir::new().unwrap();
     let out = dir.path().join("regions.json");
@@ -90,8 +142,6 @@ fn regions_grid_refuses_invalid_geometry_and_existing_destinations() {
             "4x4",
             "--gap",
             "0,0",
-            "--space",
-            "render",
             "--role",
             "color",
             "--out",
@@ -118,8 +168,6 @@ fn regions_grid_refuses_invalid_geometry_and_existing_destinations() {
                 "4x4",
                 "--gap",
                 "0,0",
-                "--space",
-                "render",
                 "--role",
                 "color",
                 "--out",
@@ -143,8 +191,6 @@ fn regions_grid_refuses_invalid_geometry_and_existing_destinations() {
             "4x4",
             "--gap",
             "0,0",
-            "--space",
-            "render",
             "--role",
             "color",
             "--out",

@@ -60,9 +60,9 @@ enum Commands {
 
 #[derive(Args)]
 struct GridArgs {
-    /// Regions document identity.
+    /// Document identity. Defaults to the output file stem.
     #[arg(long, value_name = "ID")]
-    id: String,
+    id: Option<String>,
     /// Number of grid rows.
     #[arg(long, value_name = "N")]
     rows: u64,
@@ -70,19 +70,14 @@ struct GridArgs {
     #[arg(long, value_name = "N")]
     columns: u64,
     /// Top-left origin as X,Y.
-    #[arg(long, value_name = "X,Y", value_parser = parse_pair)]
+    #[arg(long, value_name = "X,Y", default_value = "0,0", value_parser = parse_pair)]
     origin: [u64; 2],
     /// Patch size as WIDTHxHEIGHT.
     #[arg(long, value_name = "SIZE", value_parser = parse_size)]
     patch_size: [u64; 2],
-    /// Gap as X,Y.
-    #[arg(long, value_name = "X,Y", value_parser = parse_pair)]
+    /// Gap between patches as X,Y.
+    #[arg(long, value_name = "X,Y", default_value = "0,0", value_parser = parse_pair)]
     gap: [u64; 2],
-    /// Required: a generator does not decide which pixels a rectangle
-    /// addresses. `render` is what the lab measures; other spaces address a
-    /// stage capture and belong to `spektrafilm-bench sample`.
-    #[arg(long, value_name = "SPACE")]
-    space: String,
     /// What each generated region is a population of. Required: a generator
     /// does not decide what a region is for.
     #[arg(
@@ -232,39 +227,55 @@ fn decide(kind: &str, file: &std::path::Path) -> spektrafilm_benchmark::Result<s
 /// The endpoints this binary owns, in help order.
 const OWNED: &[&str] = &["analyze", "compare", "regions", "document"];
 
-/// Endpoints this binary used to own, by their new name.
-fn renamed(name: &str) -> Option<String> {
-    let kind = match name {
-        "schema" => "KIND",
-        "validate" => "KIND --check FILE",
-        _ => return None,
-    };
-    Some(format!("spektrafilm-lab document --kind {kind} ..."))
+/// Endpoints another binary owns, and the command that owns them.
+///
+/// One row per endpoint and one fact per row: where the endpoint lives now.
+/// The owner is the first word of the replacement, so a row cannot claim one
+/// binary and point at another.
+const ELSEWHERE: &[(&str, &str)] = &[
+    ("run", "spektrafilm-f64 run ..."),
+    ("measure", "spektrafilm-f64 measure ..."),
+    ("experiment", "spektrafilm-f64 experiment ..."),
+    ("fixtures", "spektrafilm-f64 fixtures ..."),
+    ("target", "spektrafilm-f64 target ..."),
+    ("spectral", "spektrafilm-f64 spectral ..."),
+    ("fit", "spektrafilm-f64 fit ..."),
+    ("inspect", "spektrafilm-bench inspect ..."),
+    ("report", "spektrafilm-bench report ..."),
+    ("sample", "spektrafilm-bench sample ..."),
+    ("compare runs", "spektrafilm-bench compare runs ..."),
+    ("compare readings", "spektrafilm-bench compare readings ..."),
+    ("compare pairs", "spektrafilm-bench compare pairs ..."),
+    ("schema", "spektrafilm-lab document --kind KIND ..."),
+    (
+        "validate",
+        "spektrafilm-lab document --kind KIND --check FILE ...",
+    ),
+];
+
+/// The owner and the replacement command for an endpoint this binary refuses.
+fn elsewhere(endpoint: &str) -> Option<(&'static str, &'static str)> {
+    ELSEWHERE
+        .iter()
+        .find(|(name, _)| *name == endpoint)
+        .map(|(_, replacement)| {
+            let owner = replacement.split(' ').next().unwrap_or_default();
+            (owner, *replacement)
+        })
 }
 
-/// Endpoints that belong to the research renderer.
-fn moved(name: &str) -> Option<String> {
-    const MOVED: &[&str] = &[
-        "run",
-        "measure",
-        "experiment",
-        "fixtures",
-        "target",
-        "spectral",
-        "fit",
-    ];
-    MOVED
-        .contains(&name)
-        .then(|| format!("spektrafilm-f64 {name} ..."))
-}
-
-/// Endpoints that belong to the benchmark's evaluation surface.
-fn evaluated(name: &str) -> Option<String> {
-    const EVALUATED: &[&str] = &["inspect", "report", "sample"];
-    if EVALUATED.contains(&name) {
-        return Some(format!("spektrafilm-bench {name} ..."));
-    }
-    None
+/// Refuse an invocation in the shape every other refusal uses.
+fn refuse(code: &str, message: &str, endpoint: &str) -> i32 {
+    eprintln!("{code}: {message}");
+    emit(&stamp(
+        serde_json::json!({
+            "schema_version": 1,
+            "execution_status": "failed",
+            "errors": [{"code": code, "message": message}],
+        }),
+        endpoint,
+    ));
+    2
 }
 
 /// Report a usage error in the record shape every other refusal uses.
@@ -295,20 +306,11 @@ fn usage(error: clap::Error) -> i32 {
     };
     let message = error.render().to_string();
     let message = message.trim_end().to_owned();
-    eprintln!("{code}: {message}");
     let endpoint = std::env::args()
         .skip(1)
         .find(|argument| !argument.starts_with('-'))
         .unwrap_or_else(|| "usage".to_owned());
-    emit(&stamp(
-        serde_json::json!({
-            "schema_version": 1,
-            "execution_status": "failed",
-            "errors": [{"code": code, "message": message}],
-        }),
-        &endpoint,
-    ));
-    2
+    refuse(code, &message, &endpoint)
 }
 
 const BINARY: &str = "spektrafilm-lab";
@@ -317,24 +319,22 @@ fn emit(value: &serde_json::Value) {
     println!("{}", serde_json::to_string_pretty(value).unwrap());
 }
 
-/// `compare` takes an image pair, not a subcommand. The forms that were
-/// subcommands belong to the benchmark's evaluation surface, and clap would
-/// report them as a missing argument rather than as a command another binary
-/// owns. The guard runs before parsing so that message stays exact.
-fn reject_moved_subcommand() -> Option<i32> {
+/// `compare` takes an image pair, not a subcommand. A word that used to be a
+/// subcommand here belongs to another binary, and clap would report it as an
+/// unexpected argument instead. The guard runs before parsing so the refusal
+/// comes from the one table that says where that endpoint lives.
+fn reject_elsewhere_subcommand() -> Option<i32> {
     let mut argv = std::env::args().skip(1);
     if argv.next().as_deref() != Some("compare") {
         return None;
     }
-    let subcommand = argv.next()?;
-    if !["runs", "readings", "pairs"].contains(&subcommand.as_str()) {
-        return None;
-    }
-    eprintln!(
-        "argument_syntax: `compare {subcommand}` belongs to spektrafilm-bench; \
-         run `spektrafilm-bench compare {subcommand} ...`"
-    );
-    Some(2)
+    let endpoint = format!("compare {}", argv.next()?);
+    let (owner, replacement) = elsewhere(&endpoint)?;
+    Some(refuse(
+        "argument_syntax",
+        &format!("`{endpoint}` belongs to {owner}; run `{replacement}`"),
+        &endpoint,
+    ))
 }
 
 /// The binary and the endpoint that produced a result. A reader can tell a lab
@@ -346,7 +346,7 @@ fn stamp(mut value: serde_json::Value, endpoint: &str) -> serde_json::Value {
 }
 
 fn run() -> i32 {
-    if let Some(status) = reject_moved_subcommand() {
+    if let Some(status) = reject_elsewhere_subcommand() {
         return status;
     }
     // A usage error is a refusal like any other, so it reaches the caller in
@@ -378,18 +378,10 @@ fn run() -> i32 {
     };
     if let Commands::External(args) = &cli.command {
         let name = args.first().map(String::as_str).unwrap_or("<unknown>");
-        let owner = moved(name)
-            .map(|replacement| ("spektrafilm-f64", replacement))
-            .or_else(|| evaluated(name).map(|replacement| ("spektrafilm-bench", replacement)))
-            .or_else(|| renamed(name).map(|replacement| ("spektrafilm-lab", replacement)));
-        let message = match owner {
-            Some((binary, replacement)) => {
-                format!("`{name}` belongs to {binary}; run `{replacement}`")
+        let message = match elsewhere(name) {
+            Some((owner, replacement)) => {
+                format!("`{name}` belongs to {owner}; run `{replacement}`")
             }
-            None if name == "compare" => "`compare` takes no subcommand in spektrafilm-lab; \
-                 `compare runs`, `compare readings`, and `compare pairs` belong to \
-                 spektrafilm-bench compare ..."
-                .to_owned(),
             None => format!(
                 "unknown endpoint `{name}`; this binary owns {}",
                 OWNED.join(", ")
@@ -398,16 +390,7 @@ fn run() -> i32 {
         // A refused endpoint names its owner and reaches the caller in the
         // record shape, so a script learns where the endpoint lives from the
         // same document it parses everywhere else.
-        eprintln!("argument_syntax: {message}");
-        emit(&stamp(
-            serde_json::json!({
-                "schema_version": 1,
-                "execution_status": "failed",
-                "errors": [{"code": "argument_syntax", "message": message}],
-            }),
-            name,
-        ));
-        return 2;
+        return refuse("argument_syntax", &message, name);
     }
     let command = match &cli.command {
         Commands::Analyze { .. } => "analyze",
@@ -432,18 +415,30 @@ fn run() -> i32 {
         } => documents::normalize_path(&file)
             .and_then(|path| decide(&kind, &path))
             .map(|value| (value, 0)),
-        Commands::Regions(args) => regions::generate_grid(
-            &args.id,
-            args.rows,
-            args.columns,
-            args.origin,
-            args.patch_size,
-            args.gap,
-            &args.space,
-            &args.role,
-            &args.out,
-        )
-        .map(|value| (value, 0)),
+        Commands::Regions(args) => {
+            let id = args.id.clone().unwrap_or_else(|| {
+                args.out
+                    .file_stem()
+                    .and_then(|value| value.to_str())
+                    .unwrap_or("regions")
+                    .to_owned()
+            });
+            // A delivered raster has one coordinate space. Offering the other
+            // six would let a caller declare geometry this binary refuses to
+            // measure, so the generator writes the space its reader reads.
+            regions::generate_grid(
+                &id,
+                args.rows,
+                args.columns,
+                args.origin,
+                args.patch_size,
+                args.gap,
+                "render",
+                &args.role,
+                &args.out,
+            )
+            .map(|value| (value, 0))
+        }
         Commands::Analyze(args) => images::analyze_run(&args),
         Commands::Compare(args) => images::run(&args),
         Commands::External(_) => unreachable!("handled before dispatch"),
