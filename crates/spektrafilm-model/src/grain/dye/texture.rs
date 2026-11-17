@@ -62,7 +62,8 @@ impl ReadoutGeometry {
 pub struct DyeLawParams {
     /// Relative per-record strength (`[1, 1, 1]` is neutral).
     pub strength: [f64; 3],
-    /// Shared fraction across records, `[0, 1]`.
+    /// Shared fraction across records, `[0, 1]`. The public color grain
+    /// maps to `rho = 1 - color_grain`; monochrome callers hold it at `0.8`.
     pub rho: f64,
     /// Relative density modulation at strength 1.
     pub white: f64,
@@ -87,13 +88,15 @@ pub struct DyeLawParams {
 }
 
 impl DyeLawParams {
-    /// The delivered Dye grain law. Every parameter is part of the engine,
-    /// not of the caller's environment: the model is the engine's grain, so
-    /// there is nothing to switch on and nothing to fall back to.
+    /// The engine's reference Dye grain law with the default color coupling.
+    /// Every parameter is part of the engine, not of the caller's environment:
+    /// the model is the engine's grain, so there is nothing to switch on and
+    /// nothing to fall back to.
     pub fn delivered() -> Self {
         Self {
             strength: law::STRENGTH,
-            rho: law::RHO,
+            // Public color grain defaults to 0.75; `rho = 1 - color_grain`.
+            rho: 0.25,
             white: law::WHITE,
             q: law::EVENT_AREA_UM2,
             fog: law::FOG,
@@ -430,6 +433,47 @@ mod tests {
                 "strength {strength:?} relative mean error {rel}"
             );
         }
+    }
+
+    #[test]
+    fn color_grain_reduces_cross_record_correlation_without_moving_the_mean() {
+        let src = flat(96, 0.7);
+        let geom = ReadoutGeometry::whole(96, 96, 3.6676);
+        let corr = |out: &ImageBuf| {
+            let n = out.width as usize * out.height as usize;
+            let (mut sa, mut sb, mut sab) = (0.0, 0.0, 0.0);
+            let (mut ma, mut mb) = (0.0, 0.0);
+            for i in 0..n {
+                ma += to_f64(out.data[i * 3]);
+                mb += to_f64(out.data[i * 3 + 1]);
+            }
+            ma /= n as f64;
+            mb /= n as f64;
+            for i in 0..n {
+                let a = to_f64(out.data[i * 3]) - ma;
+                let b = to_f64(out.data[i * 3 + 1]) - mb;
+                sa += a * a;
+                sb += b * b;
+                sab += a * b;
+            }
+            (sab / (sa * sb).sqrt()).abs()
+        };
+        let mut correlations = Vec::new();
+        for color_grain in [0.0, 0.5, 1.0] {
+            let mut p = params([1.0, 1.0, 1.0], false);
+            p.rho = 1.0 - color_grain;
+            let out = apply(&src, 3.6676, &geom, &p).unwrap();
+            let mean = out.data.iter().map(|&v| to_f64(v)).sum::<f64>() / out.data.len() as f64;
+            assert!(
+                (mean - 0.7).abs() / 0.7 < 0.01,
+                "mean drifted at {color_grain}"
+            );
+            correlations.push(corr(&out));
+        }
+        assert!(
+            correlations[0] > correlations[1] && correlations[1] > correlations[2],
+            "cross-record correlation must fall with color grain: {correlations:?}"
+        );
     }
 
     #[test]

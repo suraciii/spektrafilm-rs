@@ -12,6 +12,7 @@ pub(super) enum Condition {
     Exposure,
     AutoSize,
     Dye,
+    ColorFilm,
     Retained,
     DensityMinimum(Option<usize>),
     MaterialRecord(Option<usize>),
@@ -77,6 +78,9 @@ impl Condition {
             Self::Exposure => "film_render.grain.engine = exposure",
             Self::AutoSize => "film_render.grain.exposure.auto_size = false",
             Self::Dye => "film_render.grain.engine = dye; supported stock, format and route",
+            Self::ColorFilm => {
+                "color film channel model; black-and-white Dye carries one effective record"
+            }
             Self::Retained => "retained legacy Dye value; the delivered Dye law does not read it",
             Self::DensityMinimum(_) => {
                 "Spektra grain on film development, or an executing film scanner or enlarger LUT; image input applies monochrome record and debug LUT-mode constraints"
@@ -175,6 +179,7 @@ impl Condition {
             Self::Exposure => g.engine == GrainEngine::Exposure,
             Self::AutoSize => !g.exposure.auto_size,
             Self::Dye => g.engine == GrainEngine::Dye,
+            Self::ColorFilm => film.map_or(!g.monochrome, Profile::is_color),
             Self::DensityMinimum(component) => {
                 (Self::density_min_lut(p)
                     && (p.workflow.route_enum().artifact_input().is_some()
@@ -365,6 +370,9 @@ fn grain_conditions(path: &str, component: Option<usize>) -> [Option<Condition>;
         }
     } else if path.ends_with(".dye_strength") {
         out[1] = Some(Dye);
+    } else if path.ends_with(".dye_color_grain") {
+        out[1] = Some(Dye);
+        out[2] = Some(ColorFilm);
     } else if path.ends_with(".dye_support_um")
         || path.ends_with(".dye_event_area_um2")
         || path.ends_with(".channel_correlation")
@@ -1584,6 +1592,30 @@ mod tests {
                 Some(Condition::Spektra.description())
             );
         }
+    }
+
+    #[test]
+    fn dye_color_grain_is_color_only() {
+        let color = film(true, true);
+        let bw = film(false, true);
+        let mut params = RuntimeParams::default();
+        params.film_render.grain.engine = GrainEngine::Dye;
+        let path = "film_render.grain.dye_color_grain";
+        assert_eq!(
+            grain_control_inactive_reason_with_profile(path, &params, &color, None),
+            None
+        );
+        assert_eq!(
+            grain_control_inactive_reason_with_profile(path, &params, &bw, None),
+            Some(Condition::ColorFilm.description())
+        );
+        params.film_render.grain.monochrome = true;
+        assert_eq!(
+            grain_control_inactive_reason(path, &params, None),
+            Some(Condition::ColorFilm.description())
+        );
+        params.film_render.grain.monochrome = false;
+        assert_eq!(grain_control_inactive_reason(path, &params, None), None);
     }
 
     #[test]

@@ -28,6 +28,8 @@ The field lives on the film lattice. The readout resamples it: finer grids inter
 
 **Record coupling**: the shared and independent split between the three records, `sqrt(rho)` on the shared field and `sqrt(1 − rho)` on each record's own field. The shared field is common to the records of one density layer; each layer has its own record streams.
 
+The public color-grain control `c` maps to `rho = 1 − c`; the default is `c = 0.75`, `rho = 0.25`. An explicit `c = 0.2` preserves the previous delivered look, `rho = 0.8`.
+
 **Event area**: the density-times-area carried by one developed event, `q`. It sets the count variance, not a microscopic crystal size.
 
 ## Processing boundary
@@ -94,6 +96,20 @@ q_eff     = q * s_eff^2
 A mapped event area below the f32 normal minimum resolves to the deterministic limit on both executors. Above the exact count-rate threshold the count deviation is normal and evaluated directly, so a small event area cannot overflow the rate or lose the mean.
 
 A delivered cell whose size or coordinates are not finite and positive MUST fail before allocation.
+
+## Color grain control
+
+Let `c` be public color grain in `[0, 1]`. It maps to the record coupling as `rho = 1 - c`.
+
+`c = 0` shares one field across the three records (`rho = 1`); `c = 1` gives each record its own field (`rho = 0`); `c = 0.75` is the default, and `c = 0.2` preserves the previous delivered look.
+
+The control changes only the cross-record mixture. It MUST preserve `E[D] = t`, the density taper, the per-record amplitude ratio, the event area, and every field and count stream. It MUST NOT rescale overall grain amplitude.
+
+For a monochrome profile the three lanes already carry one effective record, so the control has no effect. The resolved law keeps the delivered coupling even when the lanes carry different tonal targets. The value still validates and stores so a later switch to a color profile renders from a declared input.
+
+The default `c = 0.75` MUST produce the default `rho = 0.25` field bit for bit on each executor. The previous delivered `c = 0.2` MUST reproduce its `rho = 0.8` law bit for bit.
+
+Changing `c` MUST NOT change the shared or per-record mean; it changes their covariance. At a fixed seed and geometry, increasing `c` MUST reduce the cross-record correlation.
 
 ## Field construction
 

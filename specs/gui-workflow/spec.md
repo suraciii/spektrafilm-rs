@@ -166,7 +166,11 @@ No duplicate grain selector or automatic engine conversion is required.
 
 Ordinary Grain browsing MUST place Enable grain and Engine first. It MUST show the selected engine's effective grain controls. Turning grain off MUST hide grain-only numerical controls without clearing their requests.
 
-Dye MUST expose Grain strength as its only numerical grain editor. Grain strength 0 MUST remove random grain, including residual count noise; 1 MUST keep the delivered rendering. The delivered cell size is an engine constant in film coordinates and MUST NOT be presented as a user control.
+Dye MUST expose Grain strength and Color grain as its numerical grain editors. Grain strength 0 MUST remove random grain, including residual count noise; 1 MUST keep the delivered rendering.
+
+Color grain 0 MUST share one field across the color records, 1 MUST give each record its own, and 0.75 MUST be the default; 0.2 MUST reproduce the previous delivered rendering.
+
+Black-and-white Dye MUST hide Color grain and keep only Grain strength editable. Control search MAY reveal the hidden row disabled with the color-film reason, but MUST NOT make it editable. The delivered cell size is an engine constant in film coordinates and MUST NOT be presented as a user control.
 
 RMS granularity, channel correlation, density minimum, uniformity, and particle scale sublayers MUST remain stored recipe values without Dye grain editors; loads and saves MUST keep them unchanged. The GUI MUST NOT present them as effective Dye grain controls.
 

@@ -35,6 +35,10 @@ pub struct DyeGrainParams {
     /// Relative delivered-law grain amplitude from the recipe. `1.0` keeps
     /// the delivered law; `0.0` realizes the target without random grain.
     pub dye_strength: f64,
+    /// Relative separation of the three color records' grain fields.
+    /// `0.0` shares the field; `1.0` gives each record its own. This maps to
+    /// `rho = 1.0 - color_grain`; the default value is `0.75`.
+    pub color_grain: f64,
     /// Active profile density layers. Each layer is an independent record of
     /// the same film; their density targets sum to the developed density.
     pub layer_count: u32,
