@@ -1,7 +1,7 @@
 //! Shared command plumbing for the SpektraFilm binaries.
 //!
 //! The user binaries (`spektrafilm`, `spektrafilm-f64`) are thin entry points
-//! over [`run`]. The instrument-only `fit` and `lab` modules compile under the
+//! over [`run`]. The f64 research modules (`fit` and `lab`) compile under the
 //! `precision-f64` feature, which also selects host f64; an f64 user build
 //! therefore carries the research commands too.
 
