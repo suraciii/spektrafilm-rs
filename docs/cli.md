@@ -8,7 +8,7 @@ This page covers CLI image processing, runtime controls, source interpretation, 
 # Explicit GPU export: requires the complete computation scope on WGPU.
 # A missing stage or device failure must fail before publication, including
 # when automatic selection chooses GPU. Use --backend cpu for a CPU export.
-./target/release/spektrafilm-f64 process input.ORF -o out.png \
+./target/release/spektrafilm process input.ORF -o out.png \
     --backend gpu --film kodak_gold_200 --paper kodak_portra_endura --data-dir data
 
 # CPU f64 reference export
@@ -16,13 +16,13 @@ This page covers CLI image processing, runtime controls, source interpretation, 
     --backend cpu --film kodak_gold_200 --paper kodak_portra_endura --data-dir data
 
 # Explicit JPEG quality and chroma sampling
-./target/release/spektrafilm-f64 process input.tif -o out.jpg \
+./target/release/spektrafilm process input.tif -o out.jpg \
     --input-color-space 'ProPhoto RGB' --input-cctf-decoding false \
     --format jpeg --bit-depth 8 --jpeg-quality 95 --jpeg-subsampling 444 \
     --backend cpu --film kodak_gold_200 --scan-film --data-dir data
 
 # Override any params via JSON (matches RuntimeParams struct)
-./target/release/spektrafilm-f64 process input.ORF -o out.png \
+./target/release/spektrafilm process input.ORF -o out.png \
     --backend cpu --film kodak_gold_200 --paper kodak_portra_endura \
     --params my_params.json --data-dir data
 
@@ -104,7 +104,7 @@ The [CLI parameter contract](../specs/cli/spec.md) defines parameter editing.
 
 ```bash
 # Apply a sparse file, then an inline edit, with independent writer settings
-./target/release/spektrafilm-f64 process input.png -o output.tif \
+./target/release/spektrafilm process input.png -o output.tif \
     --input-color-space sRGB --input-cctf-decoding true \
     --preset 'Kodak Portra 400' --set adjustments.toml \
     --set 'enlarger.print_exposure=1.2' --backend cpu \
@@ -156,7 +156,7 @@ Omit `--output` when checking parameters without choosing a destination. The rep
 Without a format, container-specific defaults such as bit depth and compression remain `null`. Supply `--format` to validate codec-specific options such as JPEG quality or compression.
 
 ```bash
-./target/release/spektrafilm-f64 process input.png \
+./target/release/spektrafilm process input.png \
     --preset 'built-in:Kodak Gold 200' \
     --input-color-space sRGB --input-cctf-decoding true \
     --dry-run --data-dir data
@@ -186,7 +186,7 @@ Recipe `seed` values are admitted in the unsigned 32-bit range (`0..=4_294_967_2
 
 ```bash
 # Select a procedural grain profile
-./target/release/spektrafilm-f64 process input.png -o output.tif \
+./target/release/spektrafilm process input.png -o output.tif \
     --input-color-space sRGB --input-cctf-decoding true \
     --film fujifilm_provia_100f --scan-film \
     --feature-profile grain.procedural=35mm250 --data-dir data
@@ -334,19 +334,19 @@ executes only the remaining operations. A stage input always requires an explici
 
 ```bash
 # Develop an image into a retained film state.
-./target/release/spektrafilm-f64 process input.tif \
+./target/release/spektrafilm process input.tif \
     --route 'input > film' -o negative.sfstage \
     --input-color-space 'ProPhoto RGB' --input-cctf-decoding false \
     --film kodak_portra_400 --backend cpu --data-dir data
 
 # Expose and develop a print from that completed film state.
-./target/release/spektrafilm-f64 process negative.sfstage \
+./target/release/spektrafilm process negative.sfstage \
     --route 'film > print' -o print.sfstage \
-    --paper kodak_portra_endura --data-dir data
+    --paper kodak_portra_endura --backend cpu --data-dir data
 
 # Scan that completed print; --debug writes messages only to stderr.
-./target/release/spektrafilm-f64 process print.sfstage \
-    --route 'print > scan' -o print.png --debug \
+./target/release/spektrafilm process print.sfstage \
+    --route 'print > scan' -o print.png --backend cpu --debug \
     --diagnostics print-report.json --data-dir data
 ```
 

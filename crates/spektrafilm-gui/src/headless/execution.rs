@@ -33,11 +33,7 @@ fn execution_surface_shows_the_running_selection_and_persists_the_request() {
         "the execution surface must show the running backend"
     );
 
-    let cpu_label = if cfg!(feature = "precision-f64") {
-        "CPU (f64)"
-    } else {
-        "CPU (f32)"
-    };
+    let cpu_label = spektrafilm_backend::Precision::HOST.label();
     choose_value(h, "Compute backend", cpu_label);
     assert_eq!(
         h.state().gui_state.backend_choice(),

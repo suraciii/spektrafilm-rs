@@ -1,9 +1,10 @@
 //! Shared command plumbing for the SpektraFilm binaries.
 //!
 //! The user binaries (`spektrafilm`, `spektrafilm-f64`) and the instrument
-//! `spektrafilm-lab` binary share these modules; only the instrument binary
-//! is gated on the `precision-f64` feature. Each binary's own `main` owns its
-//! command surface.
+//! share these modules. The instrument-only `fit` and `lab` modules compile
+//! under the `precision-f64` feature, which also selects host f64; an f64 user
+//! build therefore carries the research commands too. Each binary's own `main`
+//! owns its command surface.
 
 pub mod contract;
 #[cfg(feature = "precision-f64")]

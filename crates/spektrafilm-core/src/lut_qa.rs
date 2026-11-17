@@ -151,12 +151,7 @@ pub fn run(
         bundle_name: bundle.meta.name.clone(),
         reference_commit: REFERENCE_COMMIT.into(),
         backend: backend.name().into(),
-        precision: if cfg!(feature = "precision-f64") {
-            "f64"
-        } else {
-            "f32"
-        }
-        .into(),
+        precision: spektrafilm_backend::Precision::HOST.name().into(),
         input_color_space: input.name.into(),
         output_color_space: output.name.into(),
         topology: bundle.meta.topology.name().into(),

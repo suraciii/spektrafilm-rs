@@ -11,6 +11,7 @@ path = "src/main.rs"
 [features]
 precision-f64 = [
     "spektrafilm-math/precision-f64",
+    "spektrafilm-backend/precision-f64",
     "spektrafilm-core/precision-f64",
     "spektrafilm-gpu/precision-f64",
     "spektrafilm-raw/precision-f64",

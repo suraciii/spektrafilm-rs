@@ -775,3 +775,10 @@ fn historical_grain_keys_and_preparation_paths_survive_strict_material_reads() {
     });
     assert!(read_header(&path).is_err());
 }
+
+#[test]
+fn scalar_type_wire_names_are_stable() {
+    assert_eq!(serde_json::to_value(ScalarType::F32).unwrap(), json!("f32"));
+    assert_eq!(serde_json::to_value(ScalarType::F64).unwrap(), json!("f64"));
+    assert_eq!(ScalarType::computation(), ScalarType::HOST);
+}

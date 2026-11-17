@@ -8,9 +8,9 @@
 mod gpu_helpers;
 
 use parking_lot::Mutex;
-use spektrafilm_backend::ComputeBackend;
 use spektrafilm_backend::cpu_backend::CpuBackend;
 use spektrafilm_backend::telemetry::AdapterDescription;
+use spektrafilm_backend::{ComputeBackend, Precision};
 use std::sync::atomic::{AtomicBool, Ordering};
 
 #[cfg(feature = "wgpu-backend")]
@@ -342,9 +342,11 @@ pub fn select_backend_for(
     choice: BackendChoice,
     api: GpuApi,
 ) -> Result<SelectedBackend, SelectionError> {
-    #[cfg(feature = "precision-f64")]
-    if choice == BackendChoice::Auto {
-        tracing::info!(precision = "f64", "using CPU reference backend");
+    if choice == BackendChoice::Auto && Precision::HOST.is_f64() {
+        tracing::info!(
+            precision = Precision::HOST.name(),
+            "using CPU reference backend"
+        );
         return Ok(SelectedBackend::cpu(CpuBackend));
     }
 

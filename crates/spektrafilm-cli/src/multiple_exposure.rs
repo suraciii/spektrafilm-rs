@@ -140,7 +140,7 @@ fn estimate_peak_bytes(width: u32, height: u32) -> u64 {
     let samples = (width as u64)
         .saturating_mul(height as u64)
         .saturating_mul(3);
-    let factor = if cfg!(feature = "precision-f64") {
+    let factor = if spektrafilm_backend::Precision::HOST.is_f64() {
         80.0
     } else {
         37.0
@@ -152,7 +152,7 @@ fn default_memory_budget(width: u32, height: u32) -> u64 {
     const GIB: u64 = 1024_u64.pow(3);
     let estimate = estimate_peak_bytes(width, height);
     let with_headroom = estimate.saturating_add(GIB);
-    if cfg!(feature = "precision-f64") {
+    if spektrafilm_backend::Precision::HOST.is_f64() {
         // The f64 build is the reference/debug lane, not the product f32
         // target; keep the old generous floor, but never undercut the
         // calibrated estimate.

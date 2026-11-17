@@ -1182,7 +1182,7 @@ mod prepared_capture_tests {
                 .flat_map(|d| [from_f64(d); 3])
                 .collect(),
         );
-        let tolerance = if cfg!(feature = "precision-f64") {
+        let tolerance = if spektrafilm_backend::Precision::HOST.is_f64() {
             2e-12
         } else {
             2e-6

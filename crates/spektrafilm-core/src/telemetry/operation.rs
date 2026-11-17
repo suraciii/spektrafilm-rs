@@ -328,11 +328,7 @@ impl Operation {
                 input_dimensions: self.input_dimensions,
                 working_dimensions,
                 published_dimensions: self.published_dimensions,
-                host_precision: Some(if cfg!(feature = "precision-f64") {
-                    Precision::F64
-                } else {
-                    Precision::F32
-                }),
+                host_precision: Some(Precision::HOST),
                 gpu_precision: if gpu_work_observed {
                     Some(Precision::F32)
                 } else {

@@ -1055,7 +1055,8 @@ fn compose_display_device(
         }
         let need_full =
             request.full_source && request.layer != ViewLayer::PaperBack && image.is_some();
-        let native = if need_full || (params.clipping.active() && !cfg!(feature = "precision-f64"))
+        let native = if need_full
+            || (params.clipping.active() && !spektrafilm_backend::Precision::HOST.is_f64())
         {
             let source = request.source.as_ref();
             let metadata = &request.metadata;
@@ -1183,7 +1184,7 @@ fn compose_display_device(
             })
             .transpose()?;
         let native_for_clipping = if params.clipping.active() {
-            if cfg!(feature = "precision-f64")
+            if spektrafilm_backend::Precision::HOST.is_f64()
                 && request.source.is_some()
                 && (request.layer == ViewLayer::Input || request.retained_source.is_none())
             {
@@ -1553,7 +1554,7 @@ mod tests {
                     saved
                 );
             } else {
-                assert!(cfg!(feature = "precision-f64") && !full_source);
+                assert!(spektrafilm_backend::Precision::HOST.is_f64() && !full_source);
             }
         }
         let raw = cache.device_source[1].as_ref().unwrap().image.clone();

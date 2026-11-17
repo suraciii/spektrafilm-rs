@@ -807,11 +807,7 @@ fn cmd_process(
                 Some(Backend::Gpu) => "gpu",
                 None => "auto",
             },
-            if cfg!(feature = "precision-f64") {
-                "f64"
-            } else {
-                "f32"
-            },
+            spektrafilm_backend::Precision::HOST.name(),
             input.display()
         );
         eprintln!(

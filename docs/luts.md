@@ -24,7 +24,7 @@ Later edits use `apply_stocks_specifics=false`.
 ```bash
 ./target/release/spektrafilm lut list input
 ./target/release/spektrafilm lut list output
-SPEKTRAFILM_BACKEND=cpu ./target/release/spektrafilm-f64 lut build build/lut_bundles \
+SPEKTRAFILM_BACKEND=cpu ./target/release/spektrafilm lut build build/lut_bundles \
     --film kodak_portra_400 --print kodak_portra_endura \
     --input vlog --output srgb --topology 4lut --resolution 33 \
     --combinations --data-dir data

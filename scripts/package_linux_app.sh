@@ -7,6 +7,7 @@ BUILD_TARGET_DIR="${BUILD_TARGET_DIR:-target/linux-app}"
 RELEASE_SUBDIR="${RELEASE_SUBDIR:-release}"
 DIST_DIR="${DIST_DIR:-dist/spektrafilm-linux-x64}"
 APP_NAME="$(basename "$DIST_DIR")"
+binaries=(spektrafilm-gui spektrafilm spektrafilm-f64 decode_raw_gui spektrafilm-lab spektrafilm-bench)
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
@@ -39,7 +40,7 @@ done
 
 release_dir="$BUILD_TARGET_DIR/$RELEASE_SUBDIR"
 [[ -d "$release_dir" ]] || fail "release directory missing: $release_dir"
-for executable in spektrafilm-gui spektrafilm spektrafilm-f64 decode_raw_gui spektrafilm-lab spektrafilm-bench; do
+for executable in "${binaries[@]}"; do
     [[ -x "$release_dir/$executable" ]] || fail "built executable missing: $release_dir/$executable"
 done
 
@@ -106,7 +107,7 @@ internal_library() {
 rm -rf "$DIST_DIR"
 mkdir -p "$DIST_DIR/bin" "$DIST_DIR/lib/spektrafilm" "$DIST_DIR/share/licenses"
 
-for executable in spektrafilm-gui spektrafilm spektrafilm-f64 decode_raw_gui spektrafilm-lab spektrafilm-bench; do
+for executable in "${binaries[@]}"; do
     canonical_file "$release_dir/$executable" >"$DIST_DIR/.source.$executable"
     cp "$(cat "$DIST_DIR/.source.$executable")" "$DIST_DIR/lib/spektrafilm/$executable"
     chmod 0755 "$DIST_DIR/lib/spektrafilm/$executable"
@@ -127,7 +128,7 @@ declare -A dependency_sources
 queue=()
 dependency_sources[liblcms2.so.2]="$lcms_library"
 queue+=("$lcms_library")
-for executable in spektrafilm-gui spektrafilm spektrafilm-f64 decode_raw_gui spektrafilm-lab spektrafilm-bench; do
+for executable in "${binaries[@]}"; do
     queue+=("$(canonical_file "$release_dir/$executable")")
 done
  
@@ -262,7 +263,7 @@ for required in libraw lensfun exiv2 glib openimageio; do
     ((found == 1)) || fail "required native dependency was not bundled: $required"
 done
 
-for executable in spektrafilm-gui spektrafilm spektrafilm-f64 decode_raw_gui spektrafilm-lab spektrafilm-bench; do
+for executable in "${binaries[@]}"; do
     launcher="$DIST_DIR/bin/$executable"
     cat >"$launcher" <<LAUNCHER
 #!/bin/sh
@@ -272,7 +273,6 @@ root=\$(CDPATH= cd -- "\$(dirname -- "\$launcher_path")/.." && pwd)
 export LD_LIBRARY_PATH="\$root/lib"
 export SPEKTRAFILM_DATA_DIR="\$root/share/data"
 export SPEKTRAFILM_LENSFUN_DATABASE="\$root/share/lensfun"
-export SPEKTRAFILM_F64_CLI="\$root/lib/spektrafilm/spektrafilm-f64"
 exec "\$root/lib/spektrafilm/$executable" "\$@"
 LAUNCHER
     chmod 0755 "$launcher"

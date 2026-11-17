@@ -10,7 +10,7 @@ path = "src/main.rs"
 
 [[bin]]
 name = "spektrafilm-f64"
-path = "src/main.rs"
+path = "src/bin/spektrafilm-f64.rs"
 required-features = ["precision-f64"]
 
 [[bin]]
@@ -20,6 +20,7 @@ path = "src/bin/decode_raw_gui.rs"
 [features]
 precision-f64 = [
     "spektrafilm-math/precision-f64",
+    "spektrafilm-backend/precision-f64",
     "spektrafilm-core/precision-f64",
     "spektrafilm-gpu/precision-f64",
     "spektrafilm-raw/precision-f64",

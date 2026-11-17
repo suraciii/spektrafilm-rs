@@ -546,7 +546,7 @@ impl App {
                 spektrafilm_gpu::BackendChoice::Cpu,
                 crate::i18n::text(
                     ctx,
-                    if cfg!(feature = "precision-f64") {
+                    if spektrafilm_backend::Precision::HOST.is_f64() {
                         "surfaces.execution.cpu_f64"
                     } else {
                         "surfaces.execution.cpu_f32"
