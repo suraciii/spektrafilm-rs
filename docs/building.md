@@ -93,12 +93,13 @@ Extract the entire archive and launch the wrappers in `bin/`. They locate bundle
 
 The default and integration branch is `main-0.3.4`; pull requests require the `PR lightweight` check, which runs `just ci-pr` through `just verify-pr`. Pushes to `main-0.3.4` and manual dispatch run the `Main CI` workflow: the
 `Main full verification` job runs the full gate through `just verify` while the
-three-platform `Build packages` job produces nightly packages in parallel.
-Artifacts from a failed run are not accepted evidence. Version tags and manual
-dispatch run the `Release` workflow: a gate job verifies that the tag sits on
-`main-0.3.4` and matches the workspace version, and the shared three-platform
-build attaches the packages to the GitHub Release after the Linux f64
-acceptance passes.
+three-platform `Build packages` job produces nightly packages in parallel. The
+packages job is disabled until the macOS arm64 runner pool stops cancelling
+queued jobs; the `Release` workflow still builds every platform. Artifacts from
+a failed run are not accepted evidence. Version tags and manual dispatch run
+the `Release` workflow: a gate job verifies that the tag sits on `main-0.3.4`
+and matches the workspace version, and the shared three-platform build attaches
+the packages to the GitHub Release after the Linux f64 acceptance passes.
 
 The Linux verification environment is maintained separately from source changes.
 See [verification environment maintenance](../eng/verification-environment.md)

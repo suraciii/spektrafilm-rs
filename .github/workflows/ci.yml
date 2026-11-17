@@ -72,17 +72,20 @@ jobs:
             target
           key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
 
-  packages:
-    name: Build packages
-    # Package builds run alongside verification. The workflow result is the
-    # acceptance signal for nightly artifacts; Release attachment is gated by
-    # the release workflow. Nightly package runs are latest-only, so a newer
-    # main push cancels the previous package run.
-    concurrency:
-      group: main-packages-${{ github.ref }}
-      cancel-in-progress: true
-    permissions:
-      contents: read
-    uses: ./.github/workflows/build.yml
-    with:
-      attach_release: false
+  # Cross-platform package builds are disabled: the macOS arm64 runner pool
+  # cancels queued jobs before a runner is acquired, failing an otherwise
+  # green run. Release still builds every platform through build.yml.
+  # packages:
+  #   name: Build packages
+  #   # Package builds run alongside verification. The workflow result is the
+  #   # acceptance signal for nightly artifacts; Release attachment is gated by
+  #   # the release workflow. Nightly package runs are latest-only, so a newer
+  #   # main push cancels the previous package run.
+  #   concurrency:
+  #     group: main-packages-${{ github.ref }}
+  #     cancel-in-progress: true
+  #   permissions:
+  #     contents: read
+  #   uses: ./.github/workflows/build.yml
+  #   with:
+  #     attach_release: false
