@@ -24,17 +24,20 @@ pub struct ReadoutGrid {
 ///
 /// The profile, chemistry, density curves, and film geometry are consumed by
 /// the upstream chain that forms the density target. They are not repeated
-/// here: the field law only needs the record layout, the two look controls,
-/// the seed, and the expectation diagnostic.
+/// here: the field law only needs the record layout, the one look control,
+/// the profile layer count, the seed, and the expectation diagnostic.
 #[derive(Debug, Clone)]
 pub struct DyeGrainParams {
     /// Profile-derived single-record layout, carried in three equal lanes.
     pub monochrome: bool,
+    /// Profile polarity. Positive profiles use the finer delivered base cell.
+    pub positive: bool,
     /// Relative delivered-law grain amplitude from the recipe. `1.0` keeps
     /// the delivered law; `0.0` realizes the target without random grain.
     pub dye_strength: f64,
-    /// Relative delivered-law correlation-length scale from the recipe.
-    pub dye_scale: f64,
+    /// Active profile density layers. Each layer is an independent record of
+    /// the same film; their density targets sum to the developed density.
+    pub layer_count: u32,
     /// Full 64-bit seed; field and count addresses derive from it.
     pub seed: u64,
     /// Replace every draw with its conditional mean (diagnostic only).

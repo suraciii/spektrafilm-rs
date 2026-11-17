@@ -2312,7 +2312,6 @@ fn xp2_builtin_is_one_source_dye_look_and_preserves_photo_context() {
         assert_eq!(p.film_render.grain.engine, crate::params::GrainEngine::Dye);
         assert_eq!(p.film_render.grain.rms_granularity, [0.; 3]);
         assert_eq!(p.film_render.grain.dye_strength, 1.0);
-        assert_eq!(p.film_render.grain.dye_scale, 1.0);
         assert_eq!(p.film_render.grain.density_min, [0.03; 3]);
         assert_eq!(p.film_render.grain.uniformity, [0.97; 3]);
         assert_eq!(p.film_render.halation.halation_first_sigma_um, [65.; 3]);

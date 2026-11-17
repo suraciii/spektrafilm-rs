@@ -65,7 +65,7 @@ physical-film accuracy.
 - Camera exposure, metering, crop and film format are preserved by the preset
   contract. The source identity is 135/roll representative; the look is not
   separately calibrated for 120/sheet.
-- **Dye grain engine**, active. `dye_strength=1.0`, `dye_scale=1.0`; no RMS
+- **Dye grain engine**, active. `dye_strength=1.0`; no RMS
   target is authored (`rms_granularity=[0,0,0]` is inert for Dye). Harman
   publishes no RMS or MTF for XP2, so this is a class-level approximation, not
   a measured grain calibration. Fotufilm also has an explicit

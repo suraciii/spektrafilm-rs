@@ -1,28 +1,23 @@
 //! Isotropic value-noise field for the Dye grain law.
 //!
-//! The field is a coordinate-addressed three-octave value-noise sum with
-//! smoothstep interpolation. It replaces the Gaussian-filtered field: the
-//! octave weights, not a high-pass, control the large-scale content, and the
-//! process has no low-frequency Gaussian lobes to read as dark blotches.
+//! The field is one coordinate-addressed smoothstep value-noise lattice. The
+//! profile's density layers, not an octave stack, carry the multi-layer
+//! structure. This keeps one correlation scale per record and avoids the
+//! low-frequency lobes of a filtered field.
 //!
 //! The realization is deterministic at a film coordinate. The same hash,
-//! stream, octave sizes and normalization are evaluated by the CPU reference
+//! stream, cell size and normalization are evaluated by the CPU reference
 //! and the device field pass, so a crop or band split samples one film.
 
 use rayon::prelude::*;
 use spektrafilm_backend::dye_params::law;
-use spektrafilm_math::precision::{Scalar, ZERO, from_f64};
+use spektrafilm_math::precision::{Scalar, ZERO, from_f64, to_f64};
 
-/// Offset between octave lattices, in cells. It keeps the three octaves from
-/// sharing lattice corners without changing the field's stationarity.
-const OCTAVE_OFFSET: f64 = 37.0;
-
-fn hash(mut x: u32, y: u32, seed: u32, octave: u32) -> f64 {
+fn hash(mut x: u32, y: u32, seed: u32) -> f64 {
     x = x
         .wrapping_mul(0x9e37_79b1)
         .wrapping_add(y.wrapping_mul(0x85eb_ca6b))
-        .wrapping_add(seed.wrapping_mul(0xc2b2_ae35))
-        .wrapping_add(octave.wrapping_mul(0x27d4_eb2f));
+        .wrapping_add(seed.wrapping_mul(0xc2b2_ae35));
     x ^= x >> 15;
     x = x.wrapping_mul(0x2c1b_3c6d);
     x ^= x >> 12;
@@ -36,7 +31,7 @@ fn smoothstep(t: f64) -> f64 {
     t * t * (3.0 - 2.0 * t)
 }
 
-fn value_noise(x: f64, y: f64, seed: u32, octave: u32) -> f64 {
+fn value_noise(x: f64, y: f64, seed: u32) -> f64 {
     let ix = x.floor();
     let iy = y.floor();
     let fx = smoothstep(x - ix);
@@ -45,10 +40,10 @@ fn value_noise(x: f64, y: f64, seed: u32, octave: u32) -> f64 {
     let y0 = iy as i64 as u32;
     let x1 = (ix as i64 + 1) as u32;
     let y1 = (iy as i64 + 1) as u32;
-    let a = hash(x0, y0, seed, octave);
-    let b = hash(x1, y0, seed, octave);
-    let c = hash(x0, y1, seed, octave);
-    let d = hash(x1, y1, seed, octave);
+    let a = hash(x0, y0, seed);
+    let b = hash(x1, y0, seed);
+    let c = hash(x0, y1, seed);
+    let d = hash(x1, y1, seed);
     let top = a + (b - a) * fx;
     let bottom = c + (d - c) * fx;
     top + (bottom - top) * fy
@@ -58,6 +53,21 @@ fn value_noise(x: f64, y: f64, seed: u32, octave: u32) -> f64 {
 ///
 /// `stream` selects the shared field (`0`) or one record's own field
 /// (`c + 1`). `scale` is the recipe's relative correlation length.
+fn field_one(w: usize, h: usize, pitch_um: f64, scale: f64, seed: u64, stream: u32) -> Vec<Scalar> {
+    let seed = (seed as u32) ^ stream.wrapping_mul(0x9e37_79b9);
+    let base_px = law::base_cell_px(scale, pitch_um);
+    let gain = law::VALUE_FIELD_SCALE;
+    let mut out = vec![ZERO; w * h];
+    out.par_chunks_mut(w).enumerate().for_each(|(y, row)| {
+        for (x, cell) in row.iter_mut().enumerate() {
+            let value = value_noise(x as f64 / base_px, y as f64 / base_px, seed);
+            *cell = from_f64(value * gain);
+        }
+    });
+    out
+}
+
+#[cfg(test)]
 pub(crate) fn field(
     w: usize,
     h: usize,
@@ -66,29 +76,40 @@ pub(crate) fn field(
     seed: u64,
     stream: u32,
 ) -> Vec<Scalar> {
-    let seed = (seed as u32) ^ stream.wrapping_mul(0x9e37_79b9);
-    let base_px = law::base_cell_px(scale, pitch_um);
-    let norm = law::VALUE_WEIGHTS.iter().map(|w| w * w).sum::<f64>().sqrt();
-    let gain = law::VALUE_FIELD_SCALE / norm;
-    let mut out = vec![ZERO; w * h];
-    out.par_chunks_mut(w).enumerate().for_each(|(y, row)| {
+    field_one(w, h, pitch_um, scale, seed, stream)
+}
+
+/// One unit-variance field with an optional finer microcontrast component.
+/// The two components are independent and mixed by variance: the base keeps
+/// `1 - fine_weight`, the fine component carries `fine_weight`.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn field_with_fine(
+    w: usize,
+    h: usize,
+    pitch_um: f64,
+    scale: f64,
+    seed: u64,
+    stream: u32,
+    fine_scale: f64,
+    fine_weight: f64,
+) -> Vec<Scalar> {
+    let mut base = field_one(w, h, pitch_um, scale, seed, stream);
+    if fine_weight <= 0.0 {
+        return base;
+    }
+    let fine_seed = (seed as u32) ^ (stream ^ 0x4000_0000).wrapping_mul(0x9e37_79b9);
+    let fine_base_px = law::base_cell_px(scale * fine_scale, pitch_um);
+    let gain = law::VALUE_FIELD_SCALE;
+    let a = (1.0 - fine_weight).sqrt();
+    let b = fine_weight.sqrt();
+    base.par_chunks_mut(w).enumerate().for_each(|(y, row)| {
         for (x, cell) in row.iter_mut().enumerate() {
-            let mut sum = 0.0;
-            for (octave, weight) in law::VALUE_WEIGHTS.iter().enumerate() {
-                let size = base_px / (1u32 << octave) as f64;
-                let offset = octave as f64 * OCTAVE_OFFSET;
-                sum += weight
-                    * value_noise(
-                        x as f64 / size + offset,
-                        y as f64 / size + offset,
-                        seed,
-                        octave as u32,
-                    );
-            }
-            *cell = from_f64(sum * gain);
+            let fine =
+                value_noise(x as f64 / fine_base_px, y as f64 / fine_base_px, fine_seed) * gain;
+            *cell = from_f64(a * to_f64(*cell) + b * fine);
         }
     });
-    out
+    base
 }
 
 #[cfg(test)]
@@ -133,6 +154,15 @@ mod tests {
                 "pitch {pitch_um} scale {scale} sd {sd}"
             );
         }
+    }
+
+    #[test]
+    fn microcontrast_keeps_unit_variance() {
+        let v = field_with_fine(256, 256, 4.86, 1.0, 7, 0, 0.5, 0.35);
+        let mean = v.iter().map(|&x| to_f64(x)).sum::<f64>() / v.len() as f64;
+        let var = v.iter().map(|&x| (to_f64(x) - mean).powi(2)).sum::<f64>() / v.len() as f64;
+        assert!((mean).abs() < 0.03, "mean {mean}");
+        assert!((var.sqrt() - 1.0).abs() < 0.05, "sd {}", var.sqrt());
     }
 
     #[test]

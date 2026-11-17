@@ -14,11 +14,17 @@
 use crate::WorkflowRoute;
 
 use spektrafilm_math::image::ImageBuf;
+use spektrafilm_math::precision::{from_f64, to_f64};
 use spektrafilm_model::grain::dye::{DyeGrainParams, ReadoutGrid, diagnostic_env, texture};
 
 use crate::params::RuntimeParams;
 use crate::params::grain::GrainEngine;
 use crate::profile::Profile;
+
+/// Positive profiles use half the negative delivered base cell (7.0 µm
+/// instead of 14.0 µm) so their dominant density layer stays visibly grainy
+/// rather than becoming a low-frequency density cloud.
+const POSITIVE_BASE_SCALE: f64 = 0.5;
 
 /// Reference route: the film exposes the print paper, which is scanned.
 const PRINT_ROUTE: &str = "input > film > print > scan";
@@ -406,19 +412,213 @@ pub fn full_route_spatial_context(params: &RuntimeParams) -> bool {
     print_spatial_context(params) || scanner_spatial_context(params)
 }
 
+/// Active density layers declared by the profile. A profile without layer
+/// curves behaves as one layer; a layered profile supplies at most three.
+fn profile_layer_count(film: &Profile) -> Result<u32, String> {
+    let rows = &film.data.density_curves_layers;
+    if rows.is_empty() {
+        return Ok(1);
+    }
+    let count = rows[0].len();
+    if !(1..=3).contains(&count) || rows.iter().any(|row| row.len() != count) {
+        return Err(
+            "film grain Dye: the profile must declare one to three consistent density layers"
+                .into(),
+        );
+    }
+    Ok(count as u32)
+}
+
+/// One layer's share of the developed density. The profile's layer curves
+/// describe the same exposure axis as the composite target, so a pointwise
+/// inverse lookup splits the target without a second exposure solve.
+struct DyeLayerSplit {
+    axis: Vec<[f64; 3]>,
+    curves: Vec<[[f64; 3]; 3]>,
+    inv_dx: [Vec<f64>; 3],
+    sign: f64,
+    count: usize,
+}
+
+impl DyeLayerSplit {
+    fn prepare(film: &Profile) -> Result<Option<Self>, String> {
+        let rows = &film.data.density_curves_layers;
+        if rows.is_empty() {
+            return Ok(None);
+        }
+        let count = rows[0].len();
+        if !(1..=3).contains(&count) || rows.iter().any(|row| row.len() != count) {
+            return Err(
+                "film grain Dye: the profile must declare one to three consistent density layers"
+                    .into(),
+            );
+        }
+        if count == 1 {
+            return Ok(None);
+        }
+        let mut axis = crate::chain_prep::FilmCurves::prepare(film).normalized;
+        let mut curves = film.density_curves_layers_f64();
+        if film.is_bw() {
+            // A stored BW profile may expose one record while the Dye target
+            // arrives with that record replicated in all three lanes.
+            for row in &mut axis {
+                row[1] = row[0];
+                row[2] = row[0];
+            }
+            for row in &mut curves {
+                for layer in row.iter_mut() {
+                    layer[1] = layer[0];
+                    layer[2] = layer[0];
+                }
+            }
+        }
+        if axis.len() < 2 || axis.len() != curves.len() {
+            return Err("film grain Dye: composite and layer density curves must have the same non-empty exposure axis".into());
+        }
+        let sign = if film.is_positive() { -1.0 } else { 1.0 };
+        let mut inv_dx: [Vec<f64>; 3] = std::array::from_fn(|_| Vec::new());
+        for c in 0..3 {
+            for row in &axis {
+                if !row[c].is_finite() {
+                    return Err("film grain Dye: composite density curves must be finite".into());
+                }
+            }
+            let mut previous = f64::NEG_INFINITY;
+            for row in &mut axis {
+                let oriented = row[c] * sign;
+                if oriented < previous {
+                    row[c] = previous * sign;
+                } else {
+                    previous = oriented;
+                }
+            }
+            inv_dx[c].reserve(axis.len() - 1);
+            for pair in axis.windows(2) {
+                let delta = pair[1][c] * sign - pair[0][c] * sign;
+                if !delta.is_finite() || delta < 0.0 {
+                    return Err("film grain Dye: composite density curves must be monotonic".into());
+                }
+                inv_dx[c].push(if delta > 0.0 { 1.0 / delta } else { 0.0 });
+            }
+        }
+        for row in &curves {
+            for layer in row.iter().take(count) {
+                if layer.iter().any(|value| !value.is_finite()) {
+                    return Err("film grain Dye: layer density curves must be finite".into());
+                }
+            }
+        }
+        Ok(Some(Self {
+            axis,
+            curves,
+            inv_dx,
+            sign,
+            count,
+        }))
+    }
+
+    fn count(&self) -> usize {
+        self.count
+    }
+
+    fn table(&self) -> spektrafilm_backend::dye_params::DyeLayerTable {
+        spektrafilm_backend::dye_params::DyeLayerTable {
+            layer_count: self.count as u32,
+            axis: self.axis.clone(),
+            curves: self.curves.clone(),
+            sign: self.sign,
+        }
+    }
+
+    fn interpolate(&self, target: f64, channel: usize, layer: usize) -> f64 {
+        let x = target * self.sign;
+        let last = self.axis.len() - 1;
+        if x <= self.axis[0][channel] * self.sign {
+            return self.curves[0][layer][channel];
+        }
+        if x >= self.axis[last][channel] * self.sign {
+            return self.curves[last][layer][channel];
+        }
+        let upper = self
+            .axis
+            .partition_point(|row| row[channel] * self.sign <= x);
+        let lower = upper - 1;
+        let x0 = self.axis[lower][channel] * self.sign;
+        let t = (x - x0) * self.inv_dx[channel][lower];
+        if t <= 0.0 {
+            return self.curves[lower][layer][channel];
+        }
+        self.curves[lower][layer][channel]
+            + t * (self.curves[upper][layer][channel] - self.curves[lower][layer][channel])
+    }
+
+    /// Split the full developed target into one layer's density. The raw
+    /// layer curves define the relative layer shares; normalize them
+    /// pointwise so the layer targets sum to the target exactly.
+    fn target(&self, source: &ImageBuf, layer: usize) -> Result<ImageBuf, String> {
+        if layer >= self.count {
+            return Err("film grain Dye: layer index is outside the profile layer set".into());
+        }
+        let width = source.width as usize;
+        let height = source.height as usize;
+        let expected = width
+            .checked_mul(height)
+            .and_then(|pixels| pixels.checked_mul(3))
+            .ok_or("film grain Dye: source dimensions overflow")?;
+        if source.data.len() != expected {
+            return Err(
+                "film grain Dye: source raster shape does not match its sample count".into(),
+            );
+        }
+        let mut out = ImageBuf::new(source.width, source.height);
+        for y in 0..height {
+            for x in 0..width {
+                let base = (y * width + x) * 3;
+                for c in 0..3 {
+                    let target = to_f64(source.data[base + c]);
+                    if !target.is_finite() {
+                        return Err("film grain Dye: source density must be finite".into());
+                    }
+                    let mut values = [0.0; 3];
+                    let mut sum = 0.0;
+                    for (l, value) in values.iter_mut().enumerate().take(self.count) {
+                        *value = self.interpolate(target, c, l);
+                        sum += *value;
+                    }
+                    let value = if target > 0.0 {
+                        if sum > 0.0 {
+                            values[layer] * target / sum
+                        } else {
+                            // A profile may have zero layer curves at the
+                            // bottom of the density range. Keep the layer
+                            // targets summing to the developed target rather
+                            // than dropping a positive density.
+                            target / self.count as f64
+                        }
+                    } else {
+                        0.0
+                    };
+                    out.data[base + c] = from_f64(value);
+                }
+            }
+        }
+        Ok(out)
+    }
+}
+
 /// Resolve the Dye look inputs from the resolved film profile and the
 /// runtime controls.
 ///
-/// The profile-derived density curves and geometry are consumed by the
-/// upstream film chain that forms the density target. Repeating them here
-/// would duplicate work the continuous law does not read.
+/// The profile-derived density curves form the layer targets. Geometry is
+/// consumed by the upstream film chain that forms the density target.
 pub fn resolve(film: &Profile, params: &RuntimeParams) -> Result<DyeGrainParams, String> {
     validate_supported(film, params)?;
     let grain = &params.film_render.grain;
     Ok(DyeGrainParams {
         monochrome: film.is_bw(),
+        positive: film.is_positive(),
         dye_strength: grain.dye_strength,
-        dye_scale: grain.dye_scale,
+        layer_count: profile_layer_count(film)?,
         seed: params.random_seed,
         expectation: expectation_requested(),
     })
@@ -441,52 +641,203 @@ pub fn readout(
     backend: &dyn spektrafilm_backend::ComputeBackend,
 ) -> Result<ImageBuf, String> {
     let resolved = resolve(film, params)?;
-    if backend.is_gpu() {
-        match device_params(&resolved, source_pitch_um, grid) {
-            Ok(device) => {
-                let observation = super::StageObservation::new(backend, "grain_dye_field");
-                let observed = observation.backend(backend);
-                tracing::info!(
-                    stock = film.info.stock.as_deref().unwrap_or(""),
-                    source = format_args!("{}x{}", source.width, source.height),
-                    origin_um = ?grid.origin_um,
-                    output_pitch_um = ?grid.pitch_um,
-                    output = format_args!("{}x{}", grid.width, grid.height),
-                    dye_strength = resolved.dye_strength,
-                    dye_scale = resolved.dye_scale,
-                    expectation = resolved.expectation,
-                    "film grain Dye: field readout on GPU"
-                );
-                match observed.dye_field(source, &device) {
-                    Some(result) => return result,
-                    None if backend.explicit_gpu_request() => {
-                        return Err(format!(
-                            "explicit GPU request cannot run the film grain Dye field: {} has no \
-                             device field path; retry with an explicit CPU request",
-                            backend.name()
-                        ));
-                    }
-                    None => {
-                        tracing::info!(
-                            stock = film.info.stock.as_deref().unwrap_or(""),
-                            backend = backend.name(),
-                            "film grain Dye: the backend has no device field path, resolving on CPU"
-                        );
-                    }
-                }
+    let split = DyeLayerSplit::prepare(film)?;
+    let layer_scales = layer_scales(film);
+    if let Some(split) = &split
+        && backend.is_gpu()
+    {
+        let count = split.count();
+        let table = std::sync::Arc::new(split.table());
+        let mut law = law_params(&resolved);
+        law.fog /= count as f64;
+        law.layer = 0;
+        if let Some(out) = try_device_field(
+            source,
+            film,
+            source_pitch_um,
+            grid,
+            &resolved,
+            &law,
+            layer_scales,
+            0,
+            count,
+            Some(table),
+            backend,
+        )? {
+            return Ok(out);
+        }
+        return cpu_layer_sum(
+            source,
+            split,
+            source_pitch_um,
+            grid,
+            &resolved,
+            layer_scales,
+            backend,
+        );
+    }
+    let layer_count = split.as_ref().map_or(1, DyeLayerSplit::count);
+    let mut out: Option<ImageBuf> = None;
+    for layer in 0..layer_count {
+        let law = law_params_for_layer(&resolved, layer_scales, layer as u32);
+        let layer_target = match &split {
+            Some(split) => Some(split.target(source, layer)?),
+            None => None,
+        };
+        let layer_source = layer_target.as_ref().unwrap_or(source);
+        let field = readout_field(
+            layer_source,
+            film,
+            source_pitch_um,
+            grid,
+            &resolved,
+            &law,
+            layer_scales,
+            layer,
+            layer_count,
+            backend,
+        )?;
+        add_to_sum(&mut out, field)?;
+    }
+    out.ok_or_else(|| "film grain Dye: no density layer was available".into())
+}
+
+fn add_to_sum(total: &mut Option<ImageBuf>, field: ImageBuf) -> Result<(), String> {
+    match total {
+        None => *total = Some(field),
+        Some(total) => {
+            if total.data.len() != field.data.len() {
+                return Err("film grain Dye: layer readouts disagree on the output grid".into());
             }
-            Err(reason) if backend.explicit_gpu_request() => return Err(reason),
-            Err(reason) => {
-                tracing::info!(
-                    stock = film.info.stock.as_deref().unwrap_or(""),
-                    backend = backend.name(),
-                    %reason,
-                    "film grain Dye: the request has no device field path, resolving on CPU"
-                );
-            }
+            total
+                .data
+                .iter_mut()
+                .zip(field.data)
+                .for_each(|(sum, value)| *sum += value);
         }
     }
-    cpu_field(source, source_pitch_um, grid, &resolved, backend)
+    Ok(())
+}
+
+/// CPU fallback for a device request that has no field path. The layered
+/// geometry is resolved per layer on the host, exactly as the non-device
+/// route would.
+#[allow(clippy::too_many_arguments)]
+fn cpu_layer_sum(
+    source: &ImageBuf,
+    split: &DyeLayerSplit,
+    source_pitch_um: f64,
+    grid: ReadoutGrid,
+    resolved: &DyeGrainParams,
+    layer_scales: [f64; 3],
+    backend: &dyn spektrafilm_backend::ComputeBackend,
+) -> Result<ImageBuf, String> {
+    let mut out = None;
+    for layer in 0..split.count() {
+        let law = law_params_for_layer(resolved, layer_scales, layer as u32);
+        let target = split.target(source, layer)?;
+        let field = cpu_field(&target, source_pitch_um, grid, &law, backend)?;
+        add_to_sum(&mut out, field)?;
+    }
+    out.ok_or_else(|| "film grain Dye: no density layer was available".into())
+}
+
+/// Try the selected device field path, returning `None` when the backend has
+/// no device field rather than silently resolving the host law.
+#[allow(clippy::too_many_arguments)]
+fn try_device_field(
+    source: &ImageBuf,
+    film: &Profile,
+    source_pitch_um: f64,
+    grid: ReadoutGrid,
+    resolved: &DyeGrainParams,
+    law: &texture::DyeLawParams,
+    layer_scales: [f64; 3],
+    layer: usize,
+    layer_count: usize,
+    layer_table: Option<std::sync::Arc<spektrafilm_backend::dye_params::DyeLayerTable>>,
+    backend: &dyn spektrafilm_backend::ComputeBackend,
+) -> Result<Option<ImageBuf>, String> {
+    if !backend.is_gpu() {
+        return Ok(None);
+    }
+    match device_params_with_law(source_pitch_um, grid, law, layer_scales, layer_table) {
+        Ok(device) => {
+            let observation = super::StageObservation::new(backend, "grain_dye_field");
+            let observed = observation.backend(backend);
+            tracing::info!(
+                stock = film.info.stock.as_deref().unwrap_or(""),
+                source = format_args!("{}x{}", source.width, source.height),
+                origin_um = ?grid.origin_um,
+                output_pitch_um = ?grid.pitch_um,
+                output = format_args!("{}x{}", grid.width, grid.height),
+                dye_strength = resolved.dye_strength,
+                layer,
+                layer_count,
+                expectation = resolved.expectation,
+                "film grain Dye: field readout on GPU"
+            );
+            match observed.dye_field(source, &device) {
+                Some(result) => return result.map(Some),
+                None if backend.explicit_gpu_request() => {
+                    return Err(format!(
+                        "explicit GPU request cannot run the film grain Dye field: {} has no \
+                         device field path; retry with an explicit CPU request",
+                        backend.name()
+                    ));
+                }
+                None => {
+                    tracing::info!(
+                        stock = film.info.stock.as_deref().unwrap_or(""),
+                        backend = backend.name(),
+                        "film grain Dye: the backend has no device field path, resolving on CPU"
+                    );
+                }
+            }
+        }
+        Err(reason) if backend.explicit_gpu_request() => return Err(reason),
+        Err(reason) => {
+            tracing::info!(
+                stock = film.info.stock.as_deref().unwrap_or(""),
+                backend = backend.name(),
+                %reason,
+                "film grain Dye: the request has no device field path, resolving on CPU"
+            );
+        }
+    }
+    Ok(None)
+}
+
+/// Realize one density layer on the selected executor.
+#[allow(clippy::too_many_arguments)]
+fn readout_field(
+    source: &ImageBuf,
+    film: &Profile,
+    source_pitch_um: f64,
+    grid: ReadoutGrid,
+    resolved: &DyeGrainParams,
+    law: &texture::DyeLawParams,
+    layer_scales: [f64; 3],
+    layer: usize,
+    layer_count: usize,
+    backend: &dyn spektrafilm_backend::ComputeBackend,
+) -> Result<ImageBuf, String> {
+    if let Some(result) = try_device_field(
+        source,
+        film,
+        source_pitch_um,
+        grid,
+        resolved,
+        law,
+        layer_scales,
+        layer,
+        layer_count,
+        None,
+        backend,
+    )? {
+        return Ok(result);
+    }
+    cpu_field(source, source_pitch_um, grid, law, backend)
 }
 
 /// The host field readout: one CPU realization with the published stage
@@ -495,7 +846,7 @@ fn cpu_field(
     source: &ImageBuf,
     source_pitch_um: f64,
     grid: ReadoutGrid,
-    resolved: &DyeGrainParams,
+    law: &texture::DyeLawParams,
     backend: &dyn spektrafilm_backend::ComputeBackend,
 ) -> Result<ImageBuf, String> {
     // The observation records the host executor and its published reason.
@@ -504,12 +855,11 @@ fn cpu_field(
         "grain_dye_field",
         spektrafilm_backend::telemetry::CpuReason::DyeGrainFieldCpu,
     );
-    // The Dye grain law: the record density is built from a correlated, band-limited
-    // field whose amplitude follows the derived granularity curve. The engine's law
-    // constants come from DyeLawParams::delivered; the recipe's strength and scale map
-    // onto them in `law_params`, and the mean is preserved exactly: E[D] = t for every
-    // strength. The device receives the same mapped law, so both executors realize it.
-    let params = law_params(resolved);
+    // The Dye grain law: the record density is built from a correlated
+    // coordinate-addressed field whose amplitude follows the derived granularity curve. The engine's law
+    // constants come from DyeLawParams::delivered; the recipe's strength maps
+    // onto them in `law_params`, and the mean is preserved exactly: E[D] = t for
+    // every strength. The device receives the same mapped law, so both executors realize it.
     texture::apply(
         source,
         source_pitch_um,
@@ -519,11 +869,11 @@ fn cpu_field(
             width: grid.width,
             height: grid.height,
         },
-        &params,
+        law,
     )
 }
 
-/// The delivered law with the recipe's two effective Dye look controls
+/// The delivered law with the recipe's one effective Dye look control
 /// applied. This is the one mapping both executors consume.
 ///
 /// The look strength scales the correlated field's amplitude and the event
@@ -535,7 +885,12 @@ fn cpu_field(
 /// residual count noise remains.
 fn law_params(resolved: &DyeGrainParams) -> texture::DyeLawParams {
     let mut params = texture::DyeLawParams::delivered();
-    let strength = resolved.dye_strength;
+    let strength = resolved.dye_strength
+        * if resolved.positive {
+            spektrafilm_backend::dye_params::law::POSITIVE_AMPLITUDE_SCALE
+        } else {
+            1.0
+        };
     let mut zero = strength == 0.0;
     if strength > 0.0 {
         // The mapped event area must stay representable on both executors.
@@ -549,22 +904,87 @@ fn law_params(resolved: &DyeGrainParams) -> texture::DyeLawParams {
             zero = true;
         }
     }
-    params.length_scale = resolved.dye_scale;
+    params.length_scale = if resolved.positive {
+        POSITIVE_BASE_SCALE
+    } else {
+        1.0
+    };
+    params.fine_scale = if resolved.positive {
+        spektrafilm_backend::dye_params::law::POSITIVE_FINE_SCALE
+    } else {
+        0.0
+    };
+    params.fine_weight = if resolved.positive {
+        spektrafilm_backend::dye_params::law::POSITIVE_FINE_WEIGHT
+    } else {
+        0.0
+    };
     params.seed = resolved.seed;
     params.expectation = resolved.expectation || zero;
     params.monochrome = resolved.monochrome;
     params
 }
 
+/// Relative cell sizes for the profile's density layers.
+///
+/// Negative profiles spread the target across fast, mid, and slow layers, so
+/// the size ladder [1, 0.5, 0.3] gives their visible grain a multi-scale
+/// texture. Positive profiles weight their normal-density target toward the
+/// finest-index layer (Kodachrome 64 carries about 87% there at t = 0.55, and
+/// Tri-X about 48%); applying 0.3 to that layer at a 35 mm 1:1 crop puts its
+/// cell below one source pixel, leaving an uncorrelated field that reads as
+/// no grain. Positive profiles therefore keep the base cell on every layer.
+fn layer_scales(film: &Profile) -> [f64; 3] {
+    if film.is_positive() {
+        [1.0; 3]
+    } else {
+        spektrafilm_backend::dye_params::law::LAYER_SCALES
+    }
+}
+
+/// The same delivered law for one profile density layer. Splitting the fog
+/// keeps the total event rate of the layered realization equal to the
+/// single-layer rate at the same total density.
+fn law_params_for_layer(
+    resolved: &DyeGrainParams,
+    layer_scales: [f64; 3],
+    layer: u32,
+) -> texture::DyeLawParams {
+    let mut params = law_params(resolved);
+    let count = resolved.layer_count.max(1) as f64;
+    let index = layer.min(2) as usize;
+    params.fog /= count;
+    params.layer = layer;
+    params.length_scale *= layer_scales[index];
+    params
+}
+
 /// Device parameters for one readout: the mapped look values and the output
 /// grid. The host and device read the same law constants; this record only
 /// carries the recipe-dependent values.
+#[cfg(test)]
 fn device_params(
     resolved: &DyeGrainParams,
     source_pitch_um: f64,
     grid: ReadoutGrid,
 ) -> Result<spektrafilm_backend::dye_params::DyeGpuParams, String> {
-    let law = law_params(resolved);
+    device_params_with_law(
+        source_pitch_um,
+        grid,
+        &law_params(resolved),
+        spektrafilm_backend::dye_params::law::LAYER_SCALES,
+        None,
+    )
+}
+
+fn device_params_with_law(
+    source_pitch_um: f64,
+    grid: ReadoutGrid,
+    law: &texture::DyeLawParams,
+    layer_scales: [f64; 3],
+    layer_table: Option<std::sync::Arc<spektrafilm_backend::dye_params::DyeLayerTable>>,
+) -> Result<spektrafilm_backend::dye_params::DyeGpuParams, String> {
+    let layer_count = layer_table.as_ref().map_or(1, |table| table.layer_count);
     Ok(spektrafilm_backend::dye_params::DyeGpuParams {
         source_pitch_um,
         grid: spektrafilm_backend::dye_params::DyeReadoutGrid {
@@ -578,7 +998,13 @@ fn device_params(
         monochrome: law.monochrome,
         white: law.white,
         event_area_um2: law.q,
+        fog: law.fog,
         length_scale: law.length_scale,
+        fine_scale: law.fine_scale,
+        fine_weight: law.fine_weight,
+        layer_scales,
+        layer_count,
+        layer_table,
     })
 }
 
@@ -616,7 +1042,16 @@ pub(crate) fn resident_device_params_for_grid(
     source_pitch_um: f64,
     grid: ReadoutGrid,
 ) -> Result<spektrafilm_backend::dye_params::DyeGpuParams, String> {
-    device_params(&resolve(film, params)?, source_pitch_um, grid)
+    let resolved = resolve(film, params)?;
+    let split = DyeLayerSplit::prepare(film)?;
+    let table = split
+        .as_ref()
+        .map(|split| std::sync::Arc::new(split.table()));
+    let count = split.as_ref().map_or(1, DyeLayerSplit::count);
+    let mut law = law_params(&resolved);
+    law.fog /= count as f64;
+    law.layer = 0;
+    device_params_with_law(source_pitch_um, grid, &law, layer_scales(film), table)
 }
 
 /// One geometry authority for the retained field and every downstream tail.
@@ -789,7 +1224,188 @@ mod tests {
 
     use crate::params::RuntimeParams;
     use crate::test_support::data_dir;
-    use spektrafilm_math::precision::from_f64;
+    use spektrafilm_math::precision::{from_f64, to_f64};
+
+    #[test]
+    fn profile_density_layers_sum_to_the_developed_target() {
+        let film = load("kodak_portra_400");
+        let split = DyeLayerSplit::prepare(&film).unwrap().unwrap();
+        assert_eq!(split.count(), 3);
+        let source = density_target(32, 24);
+        let mut total = ImageBuf::new(source.width, source.height);
+        for layer in 0..split.count() {
+            let target = split.target(&source, layer).unwrap();
+            assert!(
+                target
+                    .data
+                    .iter()
+                    .zip(&source.data)
+                    .any(|(layer, source)| (to_f64(*layer) - to_f64(*source)).abs() > 1e-3),
+                "layer {layer} did not carry a distinct part of the density"
+            );
+            total
+                .data
+                .iter_mut()
+                .zip(target.data)
+                .for_each(|(sum, value)| *sum += value);
+        }
+        assert!(
+            max_abs_diff(&source, &total) < 2e-4,
+            "layer sum differs from the target by {}",
+            max_abs_diff(&source, &total)
+        );
+    }
+
+    #[test]
+    fn layer_split_preserves_a_low_positive_target_when_layer_curves_are_zero() {
+        let film = load("kodak_endura_premier");
+        let split = DyeLayerSplit::prepare(&film).unwrap().unwrap();
+        let value = from_f64(0.00024);
+        let source = ImageBuf::from_data(2, 2, vec![value; 12]);
+        let mut total = ImageBuf::new(source.width, source.height);
+        for layer in 0..split.count() {
+            let target = split.target(&source, layer).unwrap();
+            total
+                .data
+                .iter_mut()
+                .zip(target.data)
+                .for_each(|(sum, value)| *sum += value);
+        }
+        assert!(
+            max_abs_diff(&source, &total) < 2e-4,
+            "layer sum differs from the target by {}",
+            max_abs_diff(&source, &total)
+        );
+    }
+
+    #[test]
+    fn layered_filming_profiles_normalize_to_a_positive_target() {
+        let dir = data_dir().join("profiles");
+        let mut checked = 0;
+        for entry in std::fs::read_dir(dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
+                continue;
+            }
+            let stock = path.file_stem().unwrap().to_str().unwrap();
+            let film = load(stock);
+            if !film.is_filming() || film.data.density_curves_layers.is_empty() {
+                continue;
+            }
+            let Some(split) =
+                DyeLayerSplit::prepare(&film).unwrap_or_else(|error| panic!("{stock}: {error}"))
+            else {
+                continue;
+            };
+            let source = ImageBuf::from_data(
+                2,
+                2,
+                vec![
+                    from_f64(0.5),
+                    from_f64(0.6),
+                    from_f64(0.7),
+                    from_f64(0.5),
+                    from_f64(0.6),
+                    from_f64(0.7),
+                    from_f64(0.5),
+                    from_f64(0.6),
+                    from_f64(0.7),
+                    from_f64(0.5),
+                    from_f64(0.6),
+                    from_f64(0.7),
+                ],
+            );
+            let mut total = ImageBuf::new(2, 2);
+            for layer in 0..split.count() {
+                let target = split.target(&source, layer).unwrap();
+                total
+                    .data
+                    .iter_mut()
+                    .zip(target.data)
+                    .for_each(|(sum, value)| *sum += value);
+            }
+            assert!(
+                max_abs_diff(&source, &total) < 2e-4,
+                "{stock}: layer sum differs from the target by {}",
+                max_abs_diff(&source, &total)
+            );
+            checked += 1;
+        }
+        assert!(checked > 0, "no layered filming profiles were checked");
+    }
+
+    #[test]
+    fn monochrome_layer_curves_normalize_to_the_target() {
+        let film = load("kodak_trix");
+        let split = DyeLayerSplit::prepare(&film).unwrap().unwrap();
+        assert_eq!(split.count(), 3);
+        let source = density_target(16, 16);
+        let mut total = ImageBuf::new(source.width, source.height);
+        for layer in 0..split.count() {
+            let target = split.target(&source, layer).unwrap();
+            assert!(
+                target.data.iter().any(|value| to_f64(*value) > 0.0),
+                "layer {layer} carried no density"
+            );
+            total
+                .data
+                .iter_mut()
+                .zip(target.data)
+                .for_each(|(sum, value)| *sum += value);
+        }
+        assert!(
+            max_abs_diff(&source, &total) < 2e-4,
+            "monochrome layer sum differs from the target by {}",
+            max_abs_diff(&source, &total)
+        );
+    }
+
+    #[test]
+    fn layered_gpu_field_matches_the_host_layer_sum() {
+        let gpu = spektrafilm_gpu::test_support::adapter();
+        let film = load("kodak_portra_400");
+        let params = supported_params();
+        let source = density_target(64, 64);
+        let pitch = 4.86;
+        let grid = ReadoutGrid {
+            origin_um: [0.0, 0.0],
+            pitch_um: [pitch, pitch],
+            width: source.width,
+            height: source.height,
+        };
+        let cpu = readout(
+            &source,
+            &film,
+            &params,
+            pitch,
+            grid,
+            &spektrafilm_backend::cpu_backend::CpuBackend,
+        )
+        .unwrap();
+        let device = readout(&source, &film, &params, pitch, grid, gpu.backend()).unwrap();
+        let moments = |image: &ImageBuf| {
+            let values: Vec<f64> = image.data.chunks(3).map(|p| to_f64(p[1])).collect();
+            let mean = values.iter().sum::<f64>() / values.len() as f64;
+            let variance =
+                values.iter().map(|v| (v - mean).powi(2)).sum::<f64>() / values.len() as f64;
+            (mean, variance)
+        };
+        let (cpu_mean, cpu_var) = moments(&cpu);
+        let (device_mean, device_var) = moments(&device);
+        assert!(
+            (cpu_mean - device_mean).abs() < 0.02,
+            "layered mean mismatch: host {cpu_mean:.6}, device {device_mean:.6}"
+        );
+        assert!(
+            cpu_var > 1e-6 && device_var > 1e-6,
+            "layered field lost its texture: host {cpu_var:.8}, device {device_var:.8}"
+        );
+        let variance_ratio = device_var / cpu_var;
+        assert!(
+            (0.5..=2.0).contains(&variance_ratio),
+            "layered variance mismatch: host {cpu_var:.8}, device {device_var:.8}"
+        );
+    }
 
     /// The device must draw the same distribution the host does across the whole rate
     /// range, not only where a normal approximation happens to be accurate. Both sides
@@ -1563,7 +2179,7 @@ mod tests {
         use spektrafilm_model::grain::dye::texture::{ReadoutGeometry, apply};
         let film = load("kodak_portra_400");
         let target = {
-            let mut image = ImageBuf::new(48, 48);
+            let mut image = ImageBuf::new(96, 96);
             image.data.iter_mut().for_each(|v| *v = from_f64(0.62));
             image
         };
@@ -1571,8 +2187,8 @@ mod tests {
         let grid = ReadoutGeometry {
             origin_um: [0.0, 0.0],
             pitch_um: [pitch, pitch],
-            width: 48,
-            height: 48,
+            width: 96,
+            height: 96,
         };
         let moments = |strength: f64| {
             let mut params = supported_params();
@@ -1594,46 +2210,47 @@ mod tests {
         assert!(strong > 1.2 * base, "strong {strong} vs base {base}");
     }
 
-    /// The scale control moves the texture's correlation length.
+    /// Positive profiles keep every density layer on the finer delivered base;
+    /// the negative profile keeps the delivered negative base and layer ladder.
     #[test]
-    fn dye_scale_changes_the_texture_correlation_length() {
-        use spektrafilm_model::grain::dye::texture::{ReadoutGeometry, apply};
-        let film = load("kodak_portra_400");
-        let target = {
-            let mut image = ImageBuf::new(64, 64);
-            image.data.iter_mut().for_each(|v| *v = from_f64(0.55));
-            image
-        };
-        let pitch = 3.5;
-        let grid = ReadoutGeometry {
-            origin_um: [0.0, 0.0],
-            pitch_um: [pitch, pitch],
-            width: 64,
-            height: 64,
-        };
-        let adjacent_energy = |scale: f64| {
-            let mut params = supported_params();
-            params.film_render.grain.dye_scale = scale;
+    fn positive_profiles_use_the_finer_delivered_base() {
+        let params = supported_params();
+        for stock in ["kodak_kodachrome_64", "kodak_trix"] {
+            let film = load(stock);
             let resolved = resolve(&film, &params).unwrap();
-            let out = apply(&target, pitch, &grid, &law_params(&resolved)).unwrap();
-            let mut sum = 0.0;
-            let mut count = 0usize;
-            for y in 0..64usize {
-                for x in 0..63usize {
-                    let a = out.data[(y * 64 + x) * 3 + 1] as f64;
-                    let b = out.data[(y * 64 + x + 1) * 3 + 1] as f64;
-                    sum += (a - b).abs();
-                    count += 1;
-                }
+            let scales = layer_scales(&film);
+            assert_eq!(scales, [1.0; 3], "{stock}");
+            for layer in 0..resolved.layer_count {
+                let law = law_params_for_layer(&resolved, scales, layer);
+                assert!(
+                    (law.length_scale - POSITIVE_BASE_SCALE).abs() < 1e-12,
+                    "{stock} layer {layer} did not use the positive base cell"
+                );
+                let strength = resolved.dye_strength
+                    * spektrafilm_backend::dye_params::law::POSITIVE_AMPLITUDE_SCALE;
+                assert!(
+                    (law.white - spektrafilm_backend::dye_params::law::WHITE * strength).abs()
+                        < 1e-12,
+                    "{stock} layer {layer} did not carry the positive amplitude"
+                );
+                assert!(
+                    (law.fine_weight - spektrafilm_backend::dye_params::law::POSITIVE_FINE_WEIGHT)
+                        .abs()
+                        < 1e-12,
+                    "{stock} layer {layer} lost the positive microcontrast"
+                );
             }
-            sum / count as f64
-        };
-        let fine = adjacent_energy(0.5);
-        let reference = adjacent_energy(1.0);
-        let coarse = adjacent_energy(2.0);
+        }
+
+        let film = load("kodak_portra_400");
+        let resolved = resolve(&film, &params).unwrap();
+        assert_eq!(
+            layer_scales(&film),
+            spektrafilm_backend::dye_params::law::LAYER_SCALES
+        );
         assert!(
-            fine > reference && reference > coarse,
-            "adjacent energy must fall as the scale coarsens: {fine} > {reference} > {coarse}"
+            (law_params(&resolved).length_scale - 1.0).abs() < 1e-12,
+            "negative profile lost its delivered base cell"
         );
     }
 
@@ -1644,11 +2261,6 @@ mod tests {
         use spektrafilm_backend::ComputeBackend as _;
         use spektrafilm_model::grain::dye::texture::{ReadoutGeometry, apply};
         let backend = spektrafilm_gpu::test_support::adapter();
-        let film = load("kodak_portra_800");
-        let mut params = supported_params();
-        params.film_render.grain.dye_strength = 1.6;
-        params.film_render.grain.dye_scale = 1.5;
-        let resolved = resolve(&film, &params).unwrap();
         let source = density_target(64, 48);
         let pitch = 3.5;
         let grid = ReadoutGrid {
@@ -1657,39 +2269,45 @@ mod tests {
             width: 64,
             height: 48,
         };
-        let device = device_params(&resolved, pitch, grid).unwrap();
-        let gpu = backend
-            .dye_field(&source, &device)
-            .expect("device field path")
-            .expect("device field runs");
-        let cpu = apply(
-            &source,
-            pitch,
-            &ReadoutGeometry {
-                origin_um: grid.origin_um,
-                pitch_um: grid.pitch_um,
-                width: grid.width,
-                height: grid.height,
-            },
-            &law_params(&resolved),
-        )
-        .unwrap();
         let moments = |image: &ImageBuf| {
             let values: Vec<f64> = image.data.chunks(3).map(|p| p[1] as f64).collect();
             let mean = values.iter().sum::<f64>() / values.len() as f64;
             let var = values.iter().map(|v| (v - mean).powi(2)).sum::<f64>() / values.len() as f64;
             (mean, var.sqrt())
         };
-        let (gpu_mean, gpu_sd) = moments(&gpu);
-        let (cpu_mean, cpu_sd) = moments(&cpu);
-        assert!(
-            (gpu_mean - cpu_mean).abs() <= 0.02 * cpu_mean.abs(),
-            "mean: device {gpu_mean:.5}, host {cpu_mean:.5}"
-        );
-        let ratio = gpu_sd.max(1e-12) / cpu_sd.max(1e-12);
-        assert!(
-            (ratio - 1.0).abs() <= 0.15,
-            "amplitude: device is {ratio:.3} of the host"
-        );
+        for stock in ["kodak_portra_800", "kodak_kodachrome_64"] {
+            let film = load(stock);
+            let mut params = supported_params();
+            params.film_render.grain.dye_strength = 1.6;
+            let resolved = resolve(&film, &params).unwrap();
+            let device = device_params(&resolved, pitch, grid).unwrap();
+            let gpu = backend
+                .dye_field(&source, &device)
+                .expect("device field path")
+                .expect("device field runs");
+            let cpu = apply(
+                &source,
+                pitch,
+                &ReadoutGeometry {
+                    origin_um: grid.origin_um,
+                    pitch_um: grid.pitch_um,
+                    width: grid.width,
+                    height: grid.height,
+                },
+                &law_params(&resolved),
+            )
+            .unwrap();
+            let (gpu_mean, gpu_sd) = moments(&gpu);
+            let (cpu_mean, cpu_sd) = moments(&cpu);
+            assert!(
+                (gpu_mean - cpu_mean).abs() <= 0.02 * cpu_mean.abs(),
+                "{stock} mean: device {gpu_mean:.5}, host {cpu_mean:.5}"
+            );
+            let ratio = gpu_sd.max(1e-12) / cpu_sd.max(1e-12);
+            assert!(
+                (ratio - 1.0).abs() <= 0.15,
+                "{stock} amplitude: device is {ratio:.3} of the host"
+            );
+        }
     }
 }

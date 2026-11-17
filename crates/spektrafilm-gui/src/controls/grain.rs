@@ -504,14 +504,6 @@ fn engine_controls(
                 "Grain strength (×)",
                 "Relative Dye grain amplitude: 1 keeps the delivered look; 0 removes random grain, including residual count noise. The density response and the inter-record ratio stay unchanged, and this is not a certified optical RMS target."
             );
-            changed |= number!(
-                ui,
-                params,
-                filter,
-                dye_scale,
-                "Grain scale (×)",
-                "Relative Dye grain scale in film coordinates: 1 keeps the delivered correlation length, and the texture's octaves and band limit scale together. Not a crystal diameter, scanner blur, or output-pixel size."
-            );
         }
         GrainEngine::Spektra => {
             changed |= number!(

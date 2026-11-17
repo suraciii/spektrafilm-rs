@@ -4,6 +4,17 @@
 //! signature and in `FilmChainParams::grain_dye`, so they live with the trait
 //! rather than with the device passes that consume them.
 
+/// Profile density curves consumed by the layered Dye field. `axis` is the
+/// normalized composite curve and `curves[row][layer][channel]` is the raw
+/// layer curve on the same exposure axis.
+#[derive(Clone, Debug)]
+pub struct DyeLayerTable {
+    pub layer_count: u32,
+    pub axis: Vec<[f64; 3]>,
+    pub curves: Vec<[[f64; 3]; 3]>,
+    pub sign: f64,
+}
+
 #[derive(Clone, Debug)]
 pub struct DyeReadoutGrid {
     pub origin_um: [f64; 2],
@@ -28,41 +39,69 @@ pub struct DyeGpuParams {
     /// Event area of one developed cluster, in square micrometres (the
     /// mapped law value).
     pub event_area_um2: f64,
+    /// Base (fog) density for this layer's record.
+    pub fog: f64,
     /// Relative correlation length of the field (the mapped law value).
     pub length_scale: f64,
+    /// Relative cell size of the positive microcontrast component.
+    pub fine_scale: f64,
+    /// Variance fraction of the positive microcontrast component.
+    pub fine_weight: f64,
+    /// Relative correlation scale per active layer. Negative profiles use the
+    /// delivered ladder, where later entries resolve progressively finer
+    /// density layers; positive profiles pass the base value for every layer.
+    pub layer_scales: [f64; 3],
+    /// Active profile layers. `1` means the total-density single-layer law.
+    pub layer_count: u32,
+    /// Profile layer curves when `layer_count > 1`.
+    pub layer_table: Option<std::sync::Arc<DyeLayerTable>>,
 }
 
 /// Delivered Dye law constants.
 ///
 /// The host model and the device passes read the same values from here, so a
 /// delivered-look change cannot drift between executors. The value at `1.0`
-/// look strength is the engine constant; recipe strength and scale are applied
-/// by the caller.
+/// look strength is the engine constant; the recipe strength is applied by the
+/// caller.
 pub mod law {
-    /// Nominal base cell size of the value-noise field in micrometres, before
-    /// `dye_scale`. Smaller octaves halve this size; there is no high-pass.
-    pub const VALUE_BASE_UM: f64 = 7.3;
-    /// Relative weights of the three value-noise octaves.
-    pub const VALUE_WEIGHTS: [f64; 3] = [1.0, 0.5, 0.25];
-    /// Converts the weighted value-noise sum to unit variance. Measured from
-    /// the same smoothstep value-noise process the CPU and device evaluate.
-    pub const VALUE_FIELD_SCALE: f64 = 2.3325;
-    /// Relative density amplitude at the taper peak.
-    pub const WHITE: f64 = 0.0385;
+    /// Delivered base cell size of the value-noise field in micrometres.
+    /// There is no octave stack; profile density layers carry the multi-layer
+    /// structure, and positive profiles add one finer microcontrast component.
+    pub const VALUE_BASE_UM: f64 = 14.0;
+    /// Converts one smoothstep value-noise field to unit variance. Measured
+    /// from the same process the CPU and device evaluate.
+    pub const VALUE_FIELD_SCALE: f64 = 2.313;
+    /// Relative correlation scale per profile density layer for negative
+    /// profiles. The layers share one grain law but resolve as distinct
+    /// emulsion depths; these engine constants are not Spektra's particle-scale
+    /// controls. Positive profiles keep the base cell on every layer because
+    /// their dominant layer would otherwise fall below one source pixel on a
+    /// 35 mm 1:1 crop.
+    pub const LAYER_SCALES: [f64; 3] = [1.0, 0.5, 0.3];
+    /// Relative density amplitude at the taper peak. The delivered value keeps
+    /// 100% midtone texture visible without restoring the old pixel-noise floor.
+    pub const WHITE: f64 = 0.0308;
+    /// Positive-profile delivered density-amplitude scale. Positive material
+    /// spends much of its record range where a direct scan maps density
+    /// modulation to a smaller encoded contrast than a print scan; the positive
+    /// delivered law therefore carries twice the negative amplitude.
+    pub const POSITIVE_AMPLITUDE_SCALE: f64 = 2.0;
+    /// Relative cell of the positive microcontrast component.
+    pub const POSITIVE_FINE_SCALE: f64 = 0.55;
+    /// Variance fraction carried by the positive microcontrast component.
+    pub const POSITIVE_FINE_WEIGHT: f64 = 0.35;
     /// Relative density amplitude per record.
     pub const STRENGTH: [f64; 3] = [1.0, 1.0, 1.18];
     /// Shared fraction of the field between records.
     pub const RHO: f64 = 0.8;
     /// Event area of one developed cluster, in square micrometres.
-    pub const EVENT_AREA_UM2: f64 = 0.0015;
+    pub const EVENT_AREA_UM2: f64 = 0.00096;
     /// Base (fog) density that keeps the event rate alive in the deep shadows.
     pub const FOG: f64 = 0.15;
     /// Record density at which the density scale saturates.
     pub const DMAX: f64 = 1.2;
     /// Development-probability uniformity.
     pub const UNIFORMITY: f64 = 0.97;
-    /// Residual granularity fraction at full development.
-    pub const TAPER_FLOOR: f64 = 0.18;
 
     /// Source-lattice cell size for `base_cell_px`.
     ///
@@ -77,11 +116,8 @@ pub mod law {
             return base;
         }
         for _ in 0..8 {
-            let commensurate = (0..VALUE_WEIGHTS.len()).any(|octave| {
-                let cells_per_pixel = (1u32 << octave) as f64 / base;
-                (cells_per_pixel - cells_per_pixel.round()).abs() < 2e-3
-            });
-            if !commensurate {
+            let cells_per_pixel = 1.0 / base;
+            if (cells_per_pixel - cells_per_pixel.round()).abs() >= 2e-3 {
                 break;
             }
             base *= 1.0137;

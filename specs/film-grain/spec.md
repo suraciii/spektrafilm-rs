@@ -66,7 +66,7 @@ Runtime control names MUST identify their engine.
 
 Procedural controls MUST use the `procedural_` prefix.
 
-Dye strength controls MUST use `dye_strength` and `dye_scale`.
+Dye strength controls MUST use `dye_strength`.
 
 Exposure controls MUST use the `film_render.grain.exposure` object. Its controls identify the engine by object path and stable field names.
 

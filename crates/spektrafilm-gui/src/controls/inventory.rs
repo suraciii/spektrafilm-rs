@@ -1644,7 +1644,6 @@ const LABELS: &[(&str, &str)] = &[
         "RMS granularity (relative)",
     ),
     ("film_render.grain.dye_strength", "Grain strength (×)"),
-    ("film_render.grain.dye_scale", "Grain scale (×)"),
     ("film_render.grain.exposure.strength", "Grain strength (%)"),
     ("film_render.grain.exposure.size", "Grain size (relative)"),
     ("film_render.grain.exposure.auto_size", "Automatic size"),

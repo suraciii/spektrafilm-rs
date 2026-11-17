@@ -4,8 +4,8 @@
 // Every output is unit variance; the apply pass mixes them with sqrt(rho) and
 // sqrt(1-rho), applies the density taper, and draws the conditional count.
 //
-// The hash, octave sizes and weights match the CPU reference. Coordinates are
-// global source pixels, so overlapping bands reproduce the same field.
+// The hash and cell size match the CPU reference. Coordinates are global
+// source pixels, so overlapping bands reproduce the same field.
 
 struct P {
     w: u32,
@@ -16,12 +16,14 @@ struct P {
     monochrome: u32,
     pad0: u32,
     pad1: u32,
-    base_px: f32,
+    layer_count: u32,
+    base_l0: f32,
+    base_l1: f32,
+    base_l2: f32,
     field_scale: f32,
-    wa: f32,
-    wb: f32,
-    wc: f32,
-    norm: f32,
+    fine_scale: f32,
+    fine_weight: f32,
+    pad2: u32,
 };
 @group(0) @binding(0) var<uniform> p: P;
 @group(0) @binding(1) var<storage, read_write> shared_field: array<f32>;
@@ -29,11 +31,10 @@ struct P {
 @group(0) @binding(3) var<storage, read_write> own_g: array<f32>;
 @group(0) @binding(4) var<storage, read_write> own_b: array<f32>;
 
-fn hash(x0: u32, y0: u32, seed: u32, octave: u32) -> f32 {
+fn hash(x0: u32, y0: u32, seed: u32) -> f32 {
     var x = x0 * 0x9e3779b1u
         + y0 * 0x85ebca6bu
-        + seed * 0xc2b2ae35u
-        + octave * 0x27d4eb2fu;
+        + seed * 0xc2b2ae35u;
     x = x ^ (x >> 15u);
     x = x * 0x2c1b3c6du;
     x = x ^ (x >> 12u);
@@ -47,7 +48,7 @@ fn smoothstep01(t: f32) -> f32 {
     return v * v * (3.0 - 2.0 * v);
 }
 
-fn value_noise(x: f32, y: f32, seed: u32, octave: u32) -> f32 {
+fn value_noise(x: f32, y: f32, seed: u32) -> f32 {
     let ix = floor(x);
     let iy = floor(y);
     let fx = smoothstep01(x - ix);
@@ -56,26 +57,25 @@ fn value_noise(x: f32, y: f32, seed: u32, octave: u32) -> f32 {
     let y0 = bitcast<u32>(i32(iy));
     let x1 = bitcast<u32>(i32(ix) + 1);
     let y1 = bitcast<u32>(i32(iy) + 1);
-    let a = hash(x0, y0, seed, octave);
-    let b = hash(x1, y0, seed, octave);
-    let c = hash(x0, y1, seed, octave);
-    let d = hash(x1, y1, seed, octave);
+    let a = hash(x0, y0, seed);
+    let b = hash(x1, y0, seed);
+    let c = hash(x0, y1, seed);
+    let d = hash(x1, y1, seed);
     let top = a + (b - a) * fx;
     let bottom = c + (d - c) * fx;
     return top + (bottom - top) * fy;
 }
 
-fn field(x: f32, y: f32, stream: u32) -> f32 {
+fn field_one(x: f32, y: f32, stream: u32, base_px: f32) -> f32 {
     let seed = p.seed ^ (stream * 0x9e3779b9u);
-    let weights = array<f32, 3>(p.wa, p.wb, p.wc);
-    var sum = 0.0;
-    for (var octave = 0u; octave < 3u; octave++) {
-        let weight = weights[octave];
-        let size = p.base_px / f32(1u << octave);
-        let offset = f32(octave) * 37.0;
-        sum += weight * value_noise(x / size + offset, y / size + offset, seed, octave);
-    }
-    return sum / p.norm * p.field_scale;
+    return value_noise(x / base_px, y / base_px, seed) * p.field_scale;
+}
+
+fn field(x: f32, y: f32, stream: u32, base_px: f32) -> f32 {
+    let base = field_one(x, y, stream, base_px);
+    if (p.fine_weight <= 0.0) { return base; }
+    let fine = field_one(x, y, stream ^ 0x40000000u, base_px * p.fine_scale);
+    return base * sqrt(1.0 - p.fine_weight) + fine * sqrt(p.fine_weight);
 }
 
 @compute @workgroup_size(64)
@@ -84,10 +84,17 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     let y = gid.y;
     if (x >= p.w || y >= p.h) { return; }
     let i = y * p.w + x;
+    let n = p.w * p.h;
     let gx = f32(x + p.ox);
     let gy = f32(y + p.oy);
-    shared_field[i] = field(gx, gy, 0u);
-    own_r[i] = field(gx, gy, 1u);
-    own_g[i] = field(gx, gy, select(2u, 1u, p.monochrome != 0u));
-    own_b[i] = field(gx, gy, select(3u, 1u, p.monochrome != 0u));
+    let layers = max(p.layer_count, 1u);
+    for (var layer = 0u; layer < layers; layer++) {
+        let offset = layer * n + i;
+        let layer_stream = layer * 4u;
+        let base_px = select(select(p.base_l0, p.base_l1, layer == 1u), p.base_l2, layer == 2u);
+        shared_field[offset] = field(gx, gy, 0u, base_px);
+        own_r[offset] = field(gx, gy, layer_stream + 1u, base_px);
+        own_g[offset] = field(gx, gy, select(layer_stream + 2u, layer_stream + 1u, p.monochrome != 0u), base_px);
+        own_b[offset] = field(gx, gy, select(layer_stream + 3u, layer_stream + 1u, p.monochrome != 0u), base_px);
+    }
 }

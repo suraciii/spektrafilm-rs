@@ -126,7 +126,6 @@ density_min = [
     0.03,
 ]
 dye_event_area_um2 = 1.28
-dye_scale = 1.0
 dye_strength = 1.0
 dye_support_um = 3.5
 engine = "spektra"

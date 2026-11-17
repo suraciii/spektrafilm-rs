@@ -1,10 +1,11 @@
 //! The Dye grain field on the device.
 //!
-//! The field is the same three-octave value-noise process as the host
+//! The field is the same coordinate-addressed value-noise process as the host
 //! reference: global-coordinate hashing, smoothstep interpolation and a fixed
-//! unit-variance scale. The device writes the shared and record fields, then
-//! the existing apply pass mixes them and draws the conditional count. No
-//! Gaussian taps, halo, or device-side reduction are needed.
+//! unit-variance scale. The device writes the shared and record fields for
+//! every profile density layer; the apply pass splits the target, mixes each
+//! layer's field, draws its conditional count, and sums the layer densities.
+//! No Gaussian taps, halo, or device-side reduction are needed.
 
 use super::*;
 use crate::gpu_helpers::{f32_to_scalars, scalars_to_f32};
@@ -16,9 +17,9 @@ const APPLY_WGSL: &str = include_str!("dye_law_apply.wgsl");
 pub(super) const READOUT_WGSL: &str = include_str!("dye_law_readout.wgsl");
 
 /// Bytes one band needs: density and output RGB plus four single-channel
-/// fields.
+/// fields for each of the three supported density layers.
 pub(super) fn band_bytes(pixels: u64) -> u64 {
-    pixels * 40
+    pixels * 72
 }
 
 #[repr(C)]
@@ -32,12 +33,14 @@ struct ValueParams {
     monochrome: u32,
     pad0: u32,
     pad1: u32,
-    base_px: f32,
+    layer_count: u32,
+    base_l0: f32,
+    base_l1: f32,
+    base_l2: f32,
     field_scale: f32,
-    wa: f32,
-    wb: f32,
-    wc: f32,
-    norm: f32,
+    fine_scale: f32,
+    fine_weight: f32,
+    pad2: u32,
 }
 
 #[repr(C)]
@@ -50,7 +53,6 @@ struct ApplyParams {
     white: f32,
     rho: f32,
     taper_peak: f32,
-    taper_floor: f32,
     dmax: f32,
     uniformity: f32,
     q: f32,
@@ -59,7 +61,37 @@ struct ApplyParams {
     ox: u32,
     oy: u32,
     monochrome: u32,
+    layer_count: u32,
+    layer_rows: u32,
+    layer_sign: f32,
+    pad0: u32,
+    pad1: u32,
+    pad2: u32,
+    pad3: u32,
+    pad4: u32,
+    pad5: u32,
     strength: [f32; 4],
+}
+
+fn layer_table_bytes(table: Option<&spektrafilm_backend::dye_params::DyeLayerTable>) -> Vec<f32> {
+    let rows = table.map_or(0, |table| table.axis.len());
+    let mut data = vec![0.0f32; (rows * 16).max(4)];
+    if let Some(table) = table {
+        for (row, values) in table.axis.iter().enumerate() {
+            for c in 0..3 {
+                data[row * 4 + c] = values[c] as f32;
+            }
+        }
+        let base = rows * 4;
+        for (row, layers) in table.curves.iter().enumerate() {
+            for layer in 0..3 {
+                for c in 0..3 {
+                    data[base + (row * 3 + layer) * 4 + c] = layers[layer][c] as f32;
+                }
+            }
+        }
+    }
+    data
 }
 
 fn resample_readout(
@@ -161,6 +193,7 @@ impl WgpuBackend {
                     wgpu::BufferBindingType::Storage { read_only: true },
                     wgpu::BufferBindingType::Storage { read_only: true },
                     wgpu::BufferBindingType::Storage { read_only: false },
+                    wgpu::BufferBindingType::Storage { read_only: true },
                 ],
                 "main",
             ),
@@ -191,7 +224,7 @@ impl LawBand {
             | wgpu::BufferUsages::COPY_DST;
         let mut buffers = Vec::with_capacity(6);
         for index in 0..6u64 {
-            let size = if index < 2 { pixels * 12 } else { pixels * 4 };
+            let size = pixels * 12;
             if index == 0
                 && let Some(data) = contents
             {
@@ -254,8 +287,13 @@ pub(super) struct LawGeom {
     pub monochrome: bool,
     pub white: f64,
     pub event_area_um2: f64,
+    pub fog: f64,
+    pub layer_count: u32,
+    pub layer_table: Option<std::sync::Arc<spektrafilm_backend::dye_params::DyeLayerTable>>,
     pub pitch_um: f64,
-    pub base_px: f64,
+    pub base_px: [f64; 3],
+    pub fine_scale: f64,
+    pub fine_weight: f64,
 }
 
 impl WgpuBackend {
@@ -370,12 +408,14 @@ impl WgpuBackend {
             monochrome: u32::from(geom.monochrome),
             pad0: 0,
             pad1: 0,
-            base_px: geom.base_px as f32,
+            layer_count: geom.layer_count.max(1),
+            base_l0: geom.base_px[0] as f32,
+            base_l1: geom.base_px[1] as f32,
+            base_l2: geom.base_px[2] as f32,
             field_scale: law::VALUE_FIELD_SCALE as f32,
-            wa: law::VALUE_WEIGHTS[0] as f32,
-            wb: law::VALUE_WEIGHTS[1] as f32,
-            wc: law::VALUE_WEIGHTS[2] as f32,
-            norm: law::VALUE_WEIGHTS.iter().map(|w| w * w).sum::<f64>().sqrt() as f32,
+            fine_scale: geom.fine_scale as f32,
+            fine_weight: geom.fine_weight as f32,
+            pad2: 0,
         };
         let u = self.uniform("dye_value", bytemuck::bytes_of(&params));
         let bind = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -422,15 +462,29 @@ impl WgpuBackend {
             white: geom.white as f32,
             rho: law::RHO as f32,
             taper_peak: law::taper_peak() as f32,
-            taper_floor: law::TAPER_FLOOR as f32,
             dmax: law::DMAX as f32,
             uniformity: law::UNIFORMITY as f32,
             q: geom.event_area_um2 as f32,
             area: (geom.pitch_um * geom.pitch_um) as f32,
-            fog: law::FOG as f32,
+            fog: geom.fog as f32,
             ox: geom.origin_x,
             oy: geom.origin_y,
             monochrome: u32::from(geom.monochrome),
+            layer_count: geom.layer_count.max(1),
+            layer_rows: geom
+                .layer_table
+                .as_ref()
+                .map_or(0, |table| table.axis.len() as u32),
+            layer_sign: geom
+                .layer_table
+                .as_ref()
+                .map_or(1.0, |table| table.sign as f32),
+            pad0: 0,
+            pad1: 0,
+            pad2: 0,
+            pad3: 0,
+            pad4: 0,
+            pad5: 0,
             strength: [
                 law::STRENGTH[0] as f32,
                 law::STRENGTH[1] as f32,
@@ -439,6 +493,14 @@ impl WgpuBackend {
             ],
         };
         let u = self.uniform("dye_law_apply", bytemuck::bytes_of(&params));
+        let layer_bytes = layer_table_bytes(geom.layer_table.as_deref());
+        let layer_buffer = self
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("dye_layer_table"),
+                contents: bytemuck::cast_slice(&layer_bytes),
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            });
         let bind = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("dye_law_apply"),
             layout: &pipes.apply.layout,
@@ -470,6 +532,10 @@ impl WgpuBackend {
                 wgpu::BindGroupEntry {
                     binding: 6,
                     resource: band.rgb(1),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 7,
+                    resource: layer_buffer.as_entire_binding(),
                 },
             ],
         });
@@ -503,7 +569,9 @@ impl WgpuBackend {
             return Err("Dye grain law: the correlation-length scale must be positive".into());
         }
         let grid = &params.grid;
-        let base_px = law::base_cell_px(params.length_scale, pitch_um);
+        let base_px = std::array::from_fn(|layer| {
+            law::base_cell_px(params.length_scale * params.layer_scales[layer], pitch_um)
+        });
         let upload = scalars_to_f32(&image.data);
         let band = LawBand::new(self, width, height, "dye_law_field", Some(&upload));
         let geom = LawGeom {
@@ -514,8 +582,13 @@ impl WgpuBackend {
             monochrome: params.monochrome,
             white: params.white,
             event_area_um2: params.event_area_um2,
+            fog: params.fog,
+            layer_count: params.layer_count.max(1),
+            layer_table: params.layer_table.clone(),
             pitch_um,
             base_px,
+            fine_scale: params.fine_scale,
+            fine_weight: params.fine_weight,
         };
         let pipes = self.dye_law_pipelines();
         let mut encoder = self.device.create_command_encoder(&Default::default());

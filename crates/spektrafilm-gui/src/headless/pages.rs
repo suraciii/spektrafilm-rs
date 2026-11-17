@@ -911,20 +911,17 @@ fn ordinary_grain_controls_follow_engine_and_enable_without_losing_values() {
     open_grain(h);
     assert_eq!(h.state().params.film_render.grain.engine, GrainEngine::Dye);
     assert!(!h.get_by_label("Grain strength (×)").node().is_disabled());
-    assert!(!h.get_by_label("Grain scale (×)").node().is_disabled());
     assert!(h.query_by_label("Channel correlation").is_none());
     assert!(h.query_by_label("Procedural Grain Profiles").is_none());
     assert!(h.query_by_label("Post blur (px)").is_none());
     assert!(h.query_by_label("Layer amounts (relative)").is_none());
     edit(h, "Grain strength (×)", "0.64");
-    edit(h, "Grain scale (×)", "2.5");
     let retained = h.state().params.film_render.grain.clone();
     click(h, "Enable grain");
     let mut disabled = retained.clone();
     disabled.active = false;
     assert_eq!(h.state().params.film_render.grain, disabled);
     assert!(h.query_by_label("Grain strength (×)").is_none());
-    assert!(h.query_by_label("Grain scale (×)").is_none());
     assert!(
         h.query_by_label("Film-coordinate dye field · default engine · experimental")
             .is_some(),
@@ -946,7 +943,6 @@ fn ordinary_grain_controls_follow_engine_and_enable_without_losing_values() {
     edit(h, "Amount (×)", "2.25");
     choose(h, "Engine", "Dye");
     assert_eq!(h.state().params.film_render.grain.dye_strength, 0.64);
-    assert_eq!(h.state().params.film_render.grain.dye_scale, 2.5);
     choose(h, "Engine", "Spektra");
     assert_eq!(h.state().params.film_render.grain.blur, 1.05);
     choose(h, "Engine", "Fotufilm Film");
@@ -1145,7 +1141,6 @@ fn dye_bw_keeps_look_controls_and_retains_hidden_requests() {
     select_film(h, color.info.name.as_deref().unwrap_or("kodak_portra_400"));
     open_grain(h);
     edit(h, "Grain strength (×)", "1.5");
-    edit(h, "Grain scale (×)", "2");
 
     let bw = profile::load_profile_by_name(&data_dir(), "kodak_doublex").unwrap();
     select_film(h, bw.info.name.as_deref().unwrap_or("kodak_doublex"));
@@ -1164,7 +1159,6 @@ fn dye_bw_keeps_look_controls_and_retains_hidden_requests() {
         !h.get_by_label("Grain strength (×)").node().is_disabled(),
         "the look controls stay editable for BW material"
     );
-    assert!(!h.get_by_label("Grain scale (×)").node().is_disabled());
     assert!(h.query_by_label("Dye Advanced").is_none());
     for label in [
         "Channel correlation",
@@ -1213,7 +1207,6 @@ fn dye_bw_keeps_look_controls_and_retains_hidden_requests() {
         restored.film_render.grain.dye_strength,
         retained.dye_strength
     );
-    assert_eq!(restored.film_render.grain.dye_scale, retained.dye_scale);
     assert_eq!(
         restored.film_render.grain.channel_correlation,
         retained.channel_correlation
@@ -1235,12 +1228,10 @@ fn dye_bw_keeps_look_controls_and_retains_hidden_requests() {
     let h = &mut s.harness;
     let reloaded = &h.state().params.film_render.grain;
     assert_eq!(reloaded.dye_strength, retained.dye_strength);
-    assert_eq!(reloaded.dye_scale, retained.dye_scale);
     assert_eq!(reloaded.channel_correlation, retained.channel_correlation);
     select_film(h, color.info.name.as_deref().unwrap_or("kodak_portra_400"));
     let color_grain = &h.state().params.film_render.grain;
     assert_eq!(color_grain.dye_strength, retained.dye_strength);
-    assert_eq!(color_grain.dye_scale, retained.dye_scale);
     assert_eq!(
         color_grain.channel_correlation,
         retained.channel_correlation
@@ -1275,7 +1266,6 @@ fn hidden_grain_modified_locators_and_whole_reset_are_complete_scoped_and_revers
         "Grain strength (×)",
         "1.4",
     );
-    edit_control(h, "film_render.grain.dye_scale", "Grain scale (×)", "2");
     let bw = profile::load_profile_by_name(&data_dir(), "kodak_doublex").unwrap();
     select_film(h, bw.info.name.as_deref().unwrap_or("kodak_doublex"));
     toggle_control(h, "film_render.grain.active", "Enable grain");
@@ -1288,7 +1278,6 @@ fn hidden_grain_modified_locators_and_whole_reset_are_complete_scoped_and_revers
         ("film_render.grain.fotufilm.rms_density", "RMS density (D)"),
         ("film_render.grain.blur", "Post blur (px)"),
         ("film_render.grain.dye_strength", "Grain strength (×)"),
-        ("film_render.grain.dye_scale", "Grain scale (×)"),
     ] {
         reveal_control(h, path);
         assert!(h.get_by_label(label).node().is_disabled());

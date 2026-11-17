@@ -497,7 +497,6 @@ fn key(label: &str) -> Option<&'static str> {
         "Dye negative" => Some("controls.grain.dye_negative"),
         "Dye reversal" => Some("controls.grain.dye_reversal"),
         "Grain strength (×)" => Some("controls.grain.dye_strength"),
-        "Grain scale (×)" => Some("controls.grain.dye_scale"),
         "Grain size (relative)" => Some("controls.grain.grain_size"),
         "Automatic size" => Some("controls.grain.automatic_size"),
         "Film format" => Some("controls.grain.film_format"),
@@ -695,9 +694,6 @@ fn key(label: &str) -> Option<&'static str> {
         }
         "Relative Dye grain amplitude: 1 keeps the delivered look; 0 removes random grain, including residual count noise. The density response and the inter-record ratio stay unchanged, and this is not a certified optical RMS target." => {
             Some("controls.grain.dye_strength_help")
-        }
-        "Relative Dye grain scale in film coordinates: 1 keeps the delivered correlation length, and the texture's octaves and band limit scale together. Not a crystal diameter, scanner blur, or output-pixel size." => {
-            Some("controls.grain.dye_scale_help")
         }
         "Overall Exposure grain amplitude in encoded RGB; post-scan appearance, not material formation." => {
             Some("controls.grain.exposure_strength_help")

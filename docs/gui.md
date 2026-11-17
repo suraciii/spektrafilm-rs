@@ -184,7 +184,7 @@ The `input` workflow color-manages an already rendered image to the output space
 
 **Film → Grain** starts with **Enable grain** and **Engine**. It shows the selected engine's effective grain controls. Turning Grain off hides grain-only numerical controls without clearing stored values.
 
-Dye exposes **Grain strength** and **Grain scale** as its only numerical grain editors. Strength 1 keeps the delivered look and 0 removes random grain, including residual count noise. Scale 1 keeps the delivered texture and larger values coarsen it; it is a film-coordinate texture scale, not a crystal diameter or scanner blur.
+Dye exposes **Grain strength** as its only numerical grain editor. Strength 1 keeps the delivered look and 0 removes random grain, including residual count noise. The delivered cell size is an engine constant in film coordinates, not a user control.
 
 Black-and-white Spektra shows only record 0 for RMS or relative strength, density minimum, and uniformity. Hidden G/B requests stay stored and reactivate for color material.
 
