@@ -387,7 +387,6 @@ fn dye_fence_params() -> RuntimeParams {
     params.io.output_cctf_encoding = false;
     params.film_render.grain.active = true;
     params.film_render.grain.engine = crate::params::grain::GrainEngine::Dye;
-    params.film_render.grain.dye_support_um = 8.0;
     params
 }
 
@@ -2036,7 +2035,6 @@ fn retained_convert_film_never_generates_dye_or_fotufilm_grain() {
             params.film_render.grain.engine = engine;
             params.film_render.grain.active = false;
             params.film_render.grain.fotufilm.amount = 1.0;
-            params.film_render.grain.dye_support_um = 8.0;
             params.scanner.scan_output = "direct_scan".into();
             params.scanner.lens_blur = 0.0;
             params.scanner.unsharp_mask = [0.0, 0.0];

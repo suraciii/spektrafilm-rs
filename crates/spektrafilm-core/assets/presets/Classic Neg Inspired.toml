@@ -119,15 +119,12 @@ langmuir_receiver_k_rgb = [
 active = true
 blur = 0.89
 blur_dye_clouds_um = 2.0
-channel_correlation = 0.0
 density_min = [
     0.03,
     0.03,
     0.03,
 ]
-dye_event_area_um2 = 1.28
 dye_strength = 1.0
-dye_support_um = 3.5
 engine = "spektra"
 micro_structure = [
     0.2,

@@ -69,6 +69,29 @@ fn edit_manifest(path: &Path, f: impl FnOnce(&mut Value)) {
 }
 
 #[test]
+fn retired_dye_controls_in_legacy_manifests_are_dropped() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("retired-controls.sfstage");
+    write(&path, &state()).unwrap();
+    edit_manifest(&path, |value| {
+        let grain = &mut value["baseline"]["film_render"]["grain"];
+        grain["dye_support_um"] = json!(4.5);
+        grain["dye_event_area_um2"] = json!(0.6);
+        grain["channel_correlation"] = json!(0.35);
+    });
+    let loaded = read_header(&path).unwrap();
+    let saved = serde_json::to_value(&loaded.baseline).unwrap();
+    let grain = &saved["film_render"]["grain"];
+    for retired in [
+        "dye_support_um",
+        "dye_event_area_um2",
+        "channel_correlation",
+    ] {
+        assert!(grain.get(retired).is_none(), "{retired} survived");
+    }
+}
+
+#[test]
 fn moved_artifact_preserves_values_profiles_and_seed_without_external_sources() {
     let root = tempfile::tempdir().unwrap();
     let original = root.path().join("original.sfstage");
@@ -725,10 +748,6 @@ fn historical_grain_keys_and_preparation_paths_survive_strict_material_reads() {
             for new in keys {
                 let old = if let Some(suffix) = new.strip_prefix("procedural_") {
                     format!("v2_{suffix}")
-                } else if new == "dye_support_um" {
-                    "v3_dye_support_um".into()
-                } else if new == "dye_event_area_um2" {
-                    "v3_event_area_um2".into()
                 } else {
                     continue;
                 };
@@ -758,7 +777,7 @@ fn historical_grain_keys_and_preparation_paths_survive_strict_material_reads() {
     let saved = root.path().join("canonical.sfstage");
     write(&saved, &loaded).unwrap();
     let canonical = std::fs::read_to_string(saved.join("stage.json")).unwrap();
-    assert!(!canonical.contains("v2_amount") && !canonical.contains("v3_dye_support_um"));
+    assert!(!canonical.contains("v2_amount"));
     edit_manifest(&path, |value| {
         value["baseline"]["film_render"]["grain"]["procedural_amount"] = json!(27.0)
     });

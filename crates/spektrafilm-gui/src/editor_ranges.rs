@@ -72,11 +72,8 @@ pub static ALL_PATHS: &[&str] = &[
     "film_render.grain.procedural_amount",
     "film_render.grain.procedural_resolution_type",
     "film_render.grain.procedural_timer",
-    "film_render.grain.dye_support_um",
-    "film_render.grain.dye_event_area_um2",
     "film_render.grain.dye_strength",
     "film_render.grain.dye_color_grain",
-    "film_render.grain.channel_correlation",
     "film_render.grain.rms_granularity",
     "film_render.grain.particle_scale_sublayers",
     "film_render.grain.density_min",
@@ -281,16 +278,8 @@ pub fn editor_range(path: &str) -> Option<EditorRange> {
         "film_render.grain.procedural_amount" => Some((0.0, 100.0, 1.0, 1)),
         "film_render.grain.procedural_resolution_type" => Some((0.0, 1.0, 1.0, 0)),
         "film_render.grain.procedural_timer" => Some((0.0, 0.999999, 0.01, 6)),
-        "film_render.grain.dye_support_um" => Some((1.0, 32.0, 0.5, 1)),
-        "film_render.grain.dye_event_area_um2" => Some((0.1, 8.0, 0.05, 2)),
         "film_render.grain.dye_strength" => Some((0.0, 4.0, 0.05, 2)),
         "film_render.grain.dye_color_grain" => Some((0.0, 1.0, 0.01, 2)),
-        "film_render.grain.channel_correlation" => Some((
-            0.0,
-            spektrafilm_core::params::grain::MEASURED_CHANNEL_CORRELATION_CEILING,
-            0.05,
-            2,
-        )),
         "film_render.grain.rms_granularity" => Some((0.0, 1000000.0, 1.0, 2)),
         // Engine-shared fields: the single range is the union of the former
         // per-engine editor bounds.

@@ -1175,7 +1175,6 @@ mod tests {
         params.workflow.route = "input > film > scan".into();
         params.io.scan_film = true;
         params.film_render.grain.engine = spektrafilm_core::params::GrainEngine::Dye;
-        params.film_render.grain.channel_correlation = 0.35;
         params.film_render.grain.uniformity = [0.2, 0.3, 0.4];
         let bw = state::GuiState::from_runtime(
             &params,

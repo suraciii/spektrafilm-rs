@@ -1481,87 +1481,26 @@ mod tests {
             default.film_render.grain.engine,
             super::grain::GrainEngine::Dye
         );
-        assert_eq!(default.film_render.grain.dye_support_um, 3.5);
-        assert_eq!(default.film_render.grain.dye_event_area_um2, 1.28);
         assert_eq!(default.film_render.grain.dye_strength, 1.0);
         assert_eq!(default.film_render.grain.dye_color_grain, 0.75);
-        assert_eq!(default.film_render.grain.channel_correlation, 0.0);
-        // Recipes saved before the Dye event area and the channel
-        // correlation existed get their defaults.
-        let mut legacy = value.clone();
-        legacy["film_render"]["grain"]
-            .as_object_mut()
-            .unwrap()
-            .remove("dye_event_area_um2");
-        legacy["film_render"]["grain"]
-            .as_object_mut()
-            .unwrap()
-            .remove("channel_correlation");
-        legacy["film_render"]["grain"]
-            .as_object_mut()
-            .unwrap()
-            .remove("dye_strength");
-        legacy["film_render"]["grain"]
-            .as_object_mut()
-            .unwrap()
-            .remove("dye_color_grain");
-        let legacy: super::RuntimeParams = serde_json::from_value(legacy).unwrap();
-        assert_eq!(legacy.film_render.grain.dye_event_area_um2, 1.28);
-        assert_eq!(legacy.film_render.grain.dye_strength, 1.0);
-        assert_eq!(legacy.film_render.grain.dye_color_grain, 0.75);
-        assert_eq!(legacy.film_render.grain.channel_correlation, 0.0);
         value["film_render"]["grain"]["engine"] = serde_json::json!("dye");
-        value["film_render"]["grain"]["dye_support_um"] = serde_json::json!(4.5);
-        value["film_render"]["grain"]["dye_event_area_um2"] = serde_json::json!(0.6);
-        value["film_render"]["grain"]["channel_correlation"] = serde_json::json!(0.35);
+        value["film_render"]["grain"]["dye_strength"] = serde_json::json!(1.6);
+        value["film_render"]["grain"]["dye_color_grain"] = serde_json::json!(0.35);
         let params: super::RuntimeParams = serde_json::from_value(value).unwrap();
         let reparsed: super::RuntimeParams =
             serde_json::from_value(serde_json::to_value(&params).unwrap()).unwrap();
         for grain in [&params.film_render.grain, &reparsed.film_render.grain] {
             assert_eq!(grain.engine, super::grain::GrainEngine::Dye);
-            assert_eq!(grain.dye_support_um, 4.5);
-            assert_eq!(grain.dye_event_area_um2, 0.6);
-            assert_eq!(grain.channel_correlation, 0.35);
+            assert_eq!(grain.dye_strength, 1.6);
+            assert_eq!(grain.dye_color_grain, 0.35);
         }
         assert!(serde_json::from_str::<super::GrainParams>(r#"{"engine":"unknown"}"#).is_err());
     }
     #[test]
-    fn dye_controls_must_be_finite_and_positive() {
+    fn dye_controls_must_be_finite_and_in_range() {
         let mut params = super::RuntimeParams::default();
         params.film_render.grain.engine = super::grain::GrainEngine::Dye;
         params.validate().unwrap();
-        for value in [0.0, -0.5, f32::NAN, f32::INFINITY] {
-            let mut bad = params.clone();
-            bad.film_render.grain.dye_support_um = value;
-            let error = bad.validate().unwrap_err();
-            assert!(
-                error.contains("film_render.grain.dye_support_um"),
-                "unexpected error for {value}: {error}"
-            );
-            let mut bad = params.clone();
-            bad.film_render.grain.dye_event_area_um2 = f64::from(value);
-            let error = bad.validate().unwrap_err();
-            assert!(
-                error.contains("film_render.grain.dye_event_area_um2"),
-                "unexpected error for {value}: {error}"
-            );
-        }
-        // Preserve the historical supported and acceptance range, not an
-        // identified material limit or scanner-processing attribution.
-        for value in [-0.5, 0.4500001, 1.0, f64::NAN, f64::INFINITY] {
-            let mut bad = params.clone();
-            bad.film_render.grain.channel_correlation = value;
-            let error = bad.validate().unwrap_err();
-            assert!(
-                error.contains("film_render.grain.channel_correlation"),
-                "unexpected error for {value}: {error}"
-            );
-        }
-        for value in [0.0, 0.342, 0.45] {
-            let mut ok = params.clone();
-            ok.film_render.grain.channel_correlation = value;
-            ok.validate().unwrap();
-        }
         // The Dye look controls keep an explicit zero strength and a
         // positive scale; values outside the declared domain fail.
         for value in [0.0, 0.5, 1.0, 4.0] {
@@ -1592,12 +1531,6 @@ mod tests {
                 "unexpected error for {value}: {error}"
             );
         }
-        // Spektra ignores the controls, but stored values stay validated so a
-        // later switch to Dye cannot render from an invalid recipe.
-        params.film_render.grain.engine = super::grain::GrainEngine::Spektra;
-        params.film_render.grain.rms_granularity = [6.0, 8.0, 10.0];
-        params.film_render.grain.dye_event_area_um2 = -1.0;
-        assert!(params.validate().is_err());
     }
 
     #[test]

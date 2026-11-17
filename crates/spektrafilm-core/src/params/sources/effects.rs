@@ -13,7 +13,6 @@ pub(super) enum Condition {
     AutoSize,
     Dye,
     ColorFilm,
-    Retained,
     DensityMinimum(Option<usize>),
     MaterialRecord(Option<usize>),
     Analogue,
@@ -81,7 +80,6 @@ impl Condition {
             Self::ColorFilm => {
                 "color film channel model; black-and-white Dye carries one effective record"
             }
-            Self::Retained => "retained legacy Dye value; the delivered Dye law does not read it",
             Self::DensityMinimum(_) => {
                 "Spektra grain on film development, or an executing film scanner or enlarger LUT; image input applies monochrome record and debug LUT-mode constraints"
             }
@@ -190,7 +188,6 @@ impl Condition {
                         && Self::Spektra.holds_for(p, film)
                         && Self::MaterialRecord(component).holds_for(p, film))
             }
-            Self::Retained => false,
             Self::MaterialRecord(component) => {
                 component.is_none_or(|component| component == 0)
                     || film.map_or(!g.monochrome, Profile::is_color)
@@ -373,12 +370,6 @@ fn grain_conditions(path: &str, component: Option<usize>) -> [Option<Condition>;
     } else if path.ends_with(".dye_color_grain") {
         out[1] = Some(Dye);
         out[2] = Some(ColorFilm);
-    } else if path.ends_with(".dye_support_um")
-        || path.ends_with(".dye_event_area_um2")
-        || path.ends_with(".channel_correlation")
-    {
-        out[1] = Some(Dye);
-        out[2] = Some(Retained);
     } else if [
         "rms_granularity",
         "density_min",

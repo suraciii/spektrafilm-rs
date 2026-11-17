@@ -1,6 +1,28 @@
 use super::*;
 
 #[test]
+fn retired_dye_controls_load_and_never_survive_a_state_save() {
+    let mut sections = GuiState::factory().sections;
+    sections["grain"]["dye_support_um"] = json!(4.5);
+    sections["grain"]["dye_event_area_um2"] = json!(0.6);
+    sections["grain"]["channel_correlation"] = json!(0.35);
+    sections["rust"]["runtime"]["film_render"]["grain"]["v3_event_area_um2"] = json!(0.7);
+
+    let state = GuiState::from_value(sections).unwrap();
+    let params = state.runtime_params().unwrap();
+    let saved = serde_json::to_value(params).unwrap();
+    let grain = &saved["film_render"]["grain"];
+    for retired in [
+        "dye_support_um",
+        "dye_event_area_um2",
+        "channel_correlation",
+        "v3_event_area_um2",
+    ] {
+        assert!(grain.get(retired).is_none(), "{retired} survived");
+    }
+}
+
+#[test]
 fn inactive_chemistry_state_validates_mirrors_and_preserves_valid_values() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("state.json");
@@ -237,7 +259,7 @@ fn grain_defaults_distinguish_authored_sparse_and_versioned_legacy_states() {
         for runtime in [
             json!({}),
             json!({"film_render": {}}),
-            json!({"film_render": {"grain": {"dye_event_area_um2": 2.25}}}),
+            json!({"film_render": {"grain": {"dye_color_grain": 0.5}}}),
         ] {
             let state =
                 GuiState::from_value(json!({"rust": {"version": version, "runtime": runtime}}))
@@ -276,7 +298,7 @@ fn explicit_grain_engines_survive_every_state_boundary() {
     ] {
         for version in 1..=CURRENT_STATE_VERSION {
             for source in [
-                json!({"rust": {"version": version, "runtime": {"film_render": {"grain": {"engine": name, "dye_event_area_um2": 2.25}}}}}),
+                json!({"rust": {"version": version, "runtime": {"film_render": {"grain": {"engine": name, "dye_color_grain": 0.5}}}}}),
                 json!({"rust": {"version": version}, "grain": {"engine": name}}),
             ] {
                 let state = GuiState::from_value(source).unwrap();
@@ -1159,13 +1181,13 @@ fn fotufilm_effective_controls_roundtrip_only_in_rust_extension() {
 #[test]
 fn partial_fotufilm_state_keeps_nested_defaults_and_old_engine_controls() {
     let state = GuiState::from_value(json!({"rust": {"version": 1, "runtime": {
-        "film_render": {"grain": {"engine": "fotufilm", "fotufilm": {"amount": 0.0}, "dye_support_um": 4.5}}
-    }}})).unwrap();
+        "film_render": {"grain": {"engine": "fotufilm", "fotufilm": {"amount": 0.0}}}
+    }}}))
+    .unwrap();
     let grain = state.runtime_params().unwrap().film_render.grain;
     assert_eq!(grain.fotufilm.amount, 0.0);
     assert_eq!(grain.fotufilm.rms_density, 0.009);
     assert_eq!(grain.fotufilm.sublayer_shares, [0.25; 4]);
-    assert_eq!(grain.dye_support_um, 4.5);
 }
 
 #[test]
@@ -1175,8 +1197,6 @@ fn runtime_extensions_roundtrip_without_overriding_upstream_selection() {
     params.io.output_cctf_encoding = false;
     params.film_render.development_time = Some(9.0);
     params.film_render.grain.engine = spektrafilm_core::params::GrainEngine::Dye;
-    params.film_render.grain.dye_support_um = 4.5;
-    params.film_render.grain.dye_event_area_um2 = 0.6;
     params.film_render.grain.procedural_profile = "8mm500".into();
     params.film_render.grain.procedural_amount = Some(0.0);
     let mut extras = factory.sections.clone();
@@ -1187,10 +1207,6 @@ fn runtime_extensions_roundtrip_without_overriding_upstream_selection() {
         saved.sections["rust"]["runtime"]["film_render"]["grain"]["engine"],
         "dye"
     );
-    assert_eq!(
-        saved.sections["rust"]["runtime"]["film_render"]["grain"]["dye_support_um"],
-        4.5
-    );
     let recipe = serde_json::from_slice(&serde_json::to_vec(&saved.sections).unwrap()).unwrap();
     let loaded = GuiState::from_value(recipe).unwrap();
     let restored = loaded.runtime_params().unwrap();
@@ -1200,8 +1216,6 @@ fn runtime_extensions_roundtrip_without_overriding_upstream_selection() {
         restored.film_render.grain.engine,
         spektrafilm_core::params::GrainEngine::Dye
     );
-    assert_eq!(restored.film_render.grain.dye_support_um, 4.5);
-    assert_eq!(restored.film_render.grain.dye_event_area_um2, 0.6);
     assert_eq!(restored.film_render.grain.procedural_profile, "8mm500");
     assert_eq!(
         restored
@@ -1779,8 +1793,8 @@ fn historical_grain_control_names_migrate_before_factory_overlay() {
     for nested in [false, true] {
         let mut value = json!({"rust":{"version":CURRENT_STATE_VERSION}});
         let controls = json!({"engine":"procedural","v2_profile":"custom",
-            "v2_mode":"noise","v2_amount":27.0,"v2_timer":0.25,
-            "v3_dye_support_um":4.5,"v3_event_area_um2":0.6});
+        "v2_mode":"noise","v2_amount":27.0,"v2_timer":0.25,
+        });
         if nested {
             value["rust"]["runtime"] = json!({"film_render":{"grain":controls}});
         } else {
@@ -1809,8 +1823,6 @@ fn historical_grain_control_names_migrate_before_factory_overlay() {
         );
         assert_eq!(grain.procedural_amount, Some(27.0));
         assert_eq!(grain.procedural_timer, 0.25);
-        assert_eq!(grain.dye_support_um, 4.5);
-        assert_eq!(grain.dye_event_area_um2, 0.6);
         let saved = serde_json::to_value(params).unwrap();
         assert!(saved["film_render"]["grain"].get("v2_amount").is_none());
         assert_eq!(

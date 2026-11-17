@@ -30,8 +30,8 @@ particle_scale_sublayers = [1.0, 0.4, 0.25]
 # Some channel ratios below come from commercial film-simulation outputs,
 # normalized to green; the existing green magnitudes remain unchanged.
 # These are valid appearance references, not film-material measurements.
-# Other entries and the default `channel_correlation` retain their existing
-# values; these choices do not identify material ratios or scanner causality.
+# Other entries retain their existing values; these choices do not identify
+# material ratios or scanner causality.
 #
 # Source names below identify appearance references. Entries marked "same
 # class" map by stock class, not exact stock identity. Runtime semantics and
@@ -52,9 +52,7 @@ rms_granularity = [2.919, 3.5, 4.284]
 [kodak_portra_400] # KodakPortra400
 rms_granularity = [5.6385, 4.5, 5.544]
 
-# Reference stock for Dye's relative scale: `k_c = (G_c / 6)^2 = 1` here keeps
-# the configured `dye_event_area_um2`, not a validated absolute material area.
-# The reference stock and its pushes retain uniform channel presets.
+# Reference stock for Spektra's relative scale. Dye does not read these values.
 [kodak_portra_800]
 rms_granularity = [6.0, 6.0, 6.0]
 

@@ -1740,7 +1740,6 @@ mod tests {
             let mut source = baseline.clone();
             source.film = source_film.into();
             source.params.film_render.grain.engine = spektrafilm_core::params::GrainEngine::Dye;
-            source.params.film_render.grain.channel_correlation = 0.35;
             source.params.film_render.grain.uniformity = [0.2, 0.4, 0.6];
             let mut destination = baseline.clone();
             destination.film = destination_film.into();
@@ -1755,7 +1754,6 @@ mod tests {
             .unwrap();
             assert_eq!(copied.film, source_film);
             assert_eq!(copied.params.film_render.grain.monochrome, monochrome);
-            assert_eq!(copied.params.film_render.grain.channel_correlation, 0.35);
             assert_eq!(copied.params.film_render.grain.uniformity, [0.2, 0.4, 0.6]);
         }
     }

@@ -572,7 +572,7 @@ fn material_defers_operator_correction_until_the_continued_scan() {
 
 #[test]
 fn dye_bw_material_keeps_one_realization_through_scan_continuation() {
-    const CONTROLS: &str = "film_render.grain.engine=dye,film_render.grain.active=true,film_render.grain.channel_correlation=0.35,camera.auto_exposure=false,camera.film_format_mm=0.12,camera.diffusion_filter.active=false,film_render.halation.active=false,scanner.lens_blur=0,scanner.unsharp_mask=[0,0],io.output_gamut_compress.algorithm=off";
+    const CONTROLS: &str = "film_render.grain.engine=dye,film_render.grain.active=true,camera.auto_exposure=false,camera.film_format_mm=0.12,camera.diffusion_filter.active=false,film_render.halation.active=false,scanner.lens_blur=0,scanner.unsharp_mask=[0,0],io.output_gamut_compress.algorithm=off";
     for bin in binaries() {
         for stock in ["kodak_doublex", "kodak_trix"] {
             let root = fixture();
@@ -668,7 +668,7 @@ fn dye_bw_material_keeps_one_realization_through_scan_continuation() {
                     "--route",
                     "film > scan",
                     "--set",
-                    "film_render.grain.channel_correlation=0.1",
+                    "film_render.grain.dye_strength=0.5",
                     "-o",
                     "changed.tif",
                 ],

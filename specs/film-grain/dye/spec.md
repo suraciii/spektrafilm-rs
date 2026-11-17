@@ -32,7 +32,7 @@ This polarity rule is a texture requirement, not permission for a separate sharp
 
 Dye MUST NOT retain an independent clean-detail image and add grain after it. A mean-plus-residual implementation is valid only when mean and residual describe the same conditional field.
 
-The film, print, and scan chain owns grain polarity and color. Dye MUST NOT force white grain, neutral grain, a fixed shadow-to-highlight trend, or a universal inter-record correlation. Scanner chroma reduction, display sharpening, JPEG tuning, and final-RGB noise remain outside Dye.
+The film, print, and scan chain owns grain polarity and color. Dye MUST NOT force white grain, neutral grain, or a fixed shadow-to-highlight trend. Scanner chroma reduction, display sharpening, JPEG tuning, and final-RGB noise remain outside Dye.
 
 ## Supported product boundary
 
@@ -49,13 +49,13 @@ Changing film geometry MUST preserve requested output raster dimensions while ch
 | Control | Key | Range | Default | Meaning |
 |---|---|---|---|---|
 | Grain strength | `film_render.grain.dye_strength` | `[0, 4]` | `1.0` | Relative amplitude of the stochastic field and count deviation on the polarity's delivered scale |
-| Color grain | `film_render.grain.dye_color_grain` | `[0, 1]` | `0.75` | Separation of the three color records' grain fields: `0` shares one field, `1` gives each record its own |
+| Inter-record grain separation | `film_render.grain.dye_color_grain` | `[0, 1]` | `0.75` | Separation of the three color records' grain fields: `0` shares one field, `1` gives each record its own |
 
 `film_render.grain.active` owns the enable switch. No other Dye value is a public control.
 
 Grain strength MUST scale the correlated field's standard deviation and the event count's standard deviation by the same factor. It MUST preserve `E[D] = t`, the derived density taper, and the per-record ratio. It is a relative strength control, not a certified optical RMS target or material calibration.
 
-Color grain MUST map to the record coupling as `rho = 1 - color_grain`. It MUST preserve `E[D] = t`, the density taper, the per-record amplitude ratio, and the overall amplitude. It changes the cross-record covariance, not image saturation.
+Inter-record grain separation MUST map to the record coupling as `rho = 1 - color_grain`. It MUST preserve `E[D] = t`, the density taper, the per-record amplitude ratio, and the overall amplitude. It changes the cross-record covariance, not image saturation.
 
 A monochrome profile ignores the distinction and keeps its single effective record and delivered coupling; the GUI hides the control. Values outside `[0, 1]` MUST fail before rendering.
 
@@ -73,7 +73,7 @@ Dye's remaining law parameters are engine-derived constants: the per-record rela
 
 The profile's density-layer curves determine the layer targets and layer count; they are material data, not appearance controls. The engine owns each active layer's relative correlation scale and the polarity's delivered base cell.
 
-The per-record ratio remains an advanced candidate, not a public control. It MUST NOT be exposed until it has a validated direction, range, and interaction with grain strength. Record coupling is exposed as color grain: its direction is monotone, its range is `[0, 1]`, and it preserves the strength mapping and mean.
+The per-record ratio remains an advanced candidate, not a public control. It MUST NOT be exposed until it has a validated direction, range, and interaction with grain strength. Record coupling is exposed as inter-record grain separation: its direction is monotone, its range is `[0, 1]`, and it preserves the strength mapping and mean.
 
 Its default is `0.75`; `0.2` reproduces the previous delivered law.
 
@@ -81,7 +81,9 @@ The resolved seed selects the realization. The same seed, inputs, geometry, and 
 
 ### Compatibility
 
-Recipes that carry `dye_support_um`, `dye_event_area_um2`, `rms_granularity`, `density_min`, `uniformity`, `particle_scale_sublayers`, or `channel_correlation` MUST load and save unchanged. Those values MUST NOT change the delivered Dye field and MUST NOT be presented as effective Dye controls.
+Recipes that carry `rms_granularity`, `density_min`, `uniformity`, or `particle_scale_sublayers` MUST load and save unchanged. Those values MUST NOT change the delivered Dye field and MUST NOT be presented as effective Dye controls.
+
+The historical `dye_support_um`, `dye_event_area_um2`, and `channel_correlation` keys remain readable as retired no-ops so documents saved by earlier builds reopen. Readers MUST discard them, and emitted documents MUST NOT contain them. Their values MUST NOT change the delivered Dye field, and they MUST NOT be presented as effective Dye controls.
 
 ### Deferred and internal controls
 
@@ -126,12 +128,12 @@ Acceptance is gated. A later gate MUST NOT compensate for an earlier gate that f
 5. **Optical measurement:** Run the independent spectral measurement oracle with a declared receiver, aperture, density definition, wavelength range, provenance, footprint, and viewing condition.
 6. **Photographic validation:** Use lossless outputs and a declared reference set containing portraits, smooth fields, dark and bright regions, saturated colors, fine detail, and a color chart. Record the intended viewing size and the limits of the comparison.
 
-### Color-grain acceptance
+### Inter-record grain separation acceptance
 
-- **Defaults:** An omitted or `0.75` color grain MUST produce the default field bit for bit on each executor. An explicit `0.2` MUST reproduce the previous delivered field bit for bit.
-- **Direction:** At fixed seed, geometry, and target, raising color grain from `0` through `0.5` to `1` MUST monotonically reduce cross-record correlation while the per-record mean stays at the target within the declared tolerance.
+- **Defaults:** An omitted or `0.75` separation MUST produce the default field bit for bit on each executor. An explicit `0.2` MUST reproduce the previous delivered field bit for bit.
+- **Direction:** At fixed seed, geometry, and target, raising separation from `0` through `0.5` to `1` MUST monotonically reduce cross-record correlation while the per-record mean stays at the target within the declared tolerance.
 - **Limits:** `0` MUST realize the shared-field limit; `1` MUST realize independent record fields. Both limits MUST preserve the density taper, per-record ratio, and overall amplitude.
-- **Strength interaction:** Color grain MUST NOT change the strength mapping. At strength `0`, every color-grain value MUST return the target.
+- **Strength interaction:** Inter-record grain separation MUST NOT change the strength mapping. At strength `0`, every separation value MUST return the target.
 - **Handoff:** The CPU and device MUST receive the same mapped coupling and stream addressing.
 
 ### Strength-control acceptance

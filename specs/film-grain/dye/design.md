@@ -97,9 +97,9 @@ A mapped event area below the f32 normal minimum resolves to the deterministic l
 
 A delivered cell whose size or coordinates are not finite and positive MUST fail before allocation.
 
-## Color grain control
+## Inter-record grain separation control
 
-Let `c` be public color grain in `[0, 1]`. It maps to the record coupling as `rho = 1 - c`.
+Let `c` be the public inter-record grain separation in `[0, 1]`. It maps to the record coupling as `rho = 1 - c`.
 
 `c = 0` shares one field across the three records (`rho = 1`); `c = 1` gives each record its own field (`rho = 0`); `c = 0.75` is the default, and `c = 0.2` preserves the previous delivered look.
 
