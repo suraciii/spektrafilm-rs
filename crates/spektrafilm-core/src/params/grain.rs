@@ -299,12 +299,6 @@ pub struct GrainParams {
     /// Dye-only.
     #[serde(default = "default_dye_strength")]
     pub dye_strength: f64,
-    /// Relative Dye grain scale. `1.0` keeps the delivered correlation
-    /// length; the field's octaves and band limit scale together in film
-    /// coordinates. It is not a crystal diameter, scanner blur, or output
-    /// pixel size. Dye-only.
-    #[serde(default = "default_dye_scale")]
-    pub dye_scale: f64,
     /// Retained legacy Dye record-correlation value, in
     /// `[0, MEASURED_CHANNEL_CORRELATION_CEILING]`. Loads and saves keep it
     /// unchanged; the delivered Dye law does not read it.
@@ -361,11 +355,6 @@ fn default_dye_event_area_um2() -> f64 {
 }
 /// The delivered Dye amplitude: a recipe at `1.0` leaves the law unchanged.
 fn default_dye_strength() -> f64 {
-    1.0
-}
-/// The delivered Dye correlation length: a recipe at `1.0` leaves the law
-/// unchanged.
-fn default_dye_scale() -> f64 {
     1.0
 }
 /// Historical supported and acceptance ceiling for [`GrainParams::channel_correlation`].
@@ -435,7 +424,6 @@ impl Default for GrainParams {
             dye_support_um: default_dye_support_um(),
             dye_event_area_um2: default_dye_event_area_um2(),
             dye_strength: default_dye_strength(),
-            dye_scale: default_dye_scale(),
             channel_correlation: default_channel_correlation(),
             blur: 0.89,
             mult_usm_sigma: 0.7,

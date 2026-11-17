@@ -179,7 +179,12 @@ impl WgpuBackend {
             return Err("Dye grain law: the correlation-length scale must be positive".into());
         }
         let grid = &params.grid;
-        let base_px = law::base_cell_px(params.length_scale, source_pitch);
+        let base_px = std::array::from_fn(|layer| {
+            law::base_cell_px(
+                params.length_scale * params.layer_scales[layer],
+                source_pitch,
+            )
+        });
         let output_pages = self.allocate_image_pages(grid.width, grid.height, "dye_law_output")?;
         let pipes = self.dye_law_pipelines();
         let readout_pipe = self.cached_pipeline_at(
@@ -243,8 +248,13 @@ impl WgpuBackend {
                     monochrome: params.monochrome,
                     white: params.white,
                     event_area_um2: params.event_area_um2,
+                    fog: params.fog,
+                    layer_count: params.layer_count.max(1),
+                    layer_table: params.layer_table.clone(),
                     pitch_um: source_pitch,
                     base_px,
+                    fine_scale: params.fine_scale,
+                    fine_weight: params.fine_weight,
                 },
                 readout,
             });
@@ -348,7 +358,13 @@ mod tests {
             monochrome: false,
             white: law::WHITE,
             event_area_um2: law::EVENT_AREA_UM2,
+            fog: law::FOG,
             length_scale: 1.0,
+            fine_scale: 0.0,
+            fine_weight: 0.0,
+            layer_scales: law::LAYER_SCALES,
+            layer_count: 1,
+            layer_table: None,
         }
     }
 

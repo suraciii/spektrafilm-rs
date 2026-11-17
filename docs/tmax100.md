@@ -85,7 +85,7 @@ diffusion, print glare, DIR, chemistry change or scanner sharpening is added.
 calibration path; it does not disable chromatic adaptation.
 
 Grain is disabled in Preview by the existing Spektra product policy. Use Scan
-or a saved render to inspect texture. Grain scale follows the caller's film
+or a saved render to inspect texture. Grain texture follows the caller's film
 format and image sampling.
 
 ## Real-scan review

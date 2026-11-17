@@ -103,7 +103,6 @@ uniformity = [
 blur = 0.2
 blur_dye_clouds_um = 2.0
 dye_strength = 1.0
-dye_scale = 1.0
 micro_structure = [
     0.2,
     30.0,

@@ -90,7 +90,6 @@ fn xp2_builtin_uses_dye_grain_without_authored_rms_and_keeps_print_route() {
     );
     assert_eq!(resolved.params.film_render.grain.rms_granularity, [0.; 3]);
     assert_eq!(resolved.params.film_render.grain.dye_strength, 1.0);
-    assert_eq!(resolved.params.film_render.grain.dye_scale, 1.0);
     assert_eq!(resolved.params.film_render.halation.scatter_amount, 0.10);
     assert_eq!(resolved.params.film_render.halation.halation_amount, 0.10);
     assert_eq!(

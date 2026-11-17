@@ -1,18 +1,19 @@
 //! Delivered film-coordinate Dye grain law.
 //!
 //! The law is a coordinate-addressed value-noise field whose relative
-//! amplitude follows the developed record density, plus a conditional
-//! Poisson event count. For record `c`:
+//! amplitude follows one density layer's developed record density, plus a
+//! conditional Poisson event count. For record `c` and density layer `l`:
 //!
 //! ```text
-//! u_c      = sqrt(rho) * u_shared + sqrt(1 - rho) * u_own,c
-//! e_c(x)   = 1 + white * strength[c] * taper(t_c(x)) * u_c(x)
-//! lambda_c = (t_c + fog) * e_c * A / q
-//! N_c      ~ Poisson(lambda_c)
-//! D_c      = q * N_c / A - fog
+//! u_c,l      = sqrt(rho) * u_shared + sqrt(1 - rho) * u_own,c,l
+//! e_c,l(x)   = 1 + white * strength[c] * taper(t_c,l(x)) * u_c,l(x)
+//! lambda_c,l = (t_c,l + fog/layers) * e_c,l * A / q
+//! N_c,l      ~ Poisson(lambda_c,l)
+//! D_c        = sum_l (q * N_c,l / A - fog/layers)
 //! ```
 //!
-//! `u` is zero-mean and unit-variance in the ensemble, so `E[D] = t`.
+//! `u` is zero-mean and unit-variance in the ensemble, and the layer targets
+//! sum to the developed target, so `E[D] = t`.
 //! `expectation` replaces the material modulation and every count by its
 //! conditional mean and returns the target. The field is realized on the
 //! source film lattice and read through output footprints; a crop or a
@@ -67,8 +68,17 @@ pub struct DyeLawParams {
     pub white: f64,
     /// Single-event mass in `D * um^2`.
     pub q: f64,
+    /// Base (fog) density for this record.
+    pub fog: f64,
     /// Relative field correlation length. The delivered reference is `1.0`.
     pub length_scale: f64,
+    /// Relative cell of the microcontrast component, or zero to disable it.
+    pub fine_scale: f64,
+    /// Variance fraction carried by the microcontrast component.
+    pub fine_weight: f64,
+    /// Zero-based density-layer index. It only selects the independent
+    /// record stream; the density target is already that layer's share.
+    pub layer: u32,
     pub seed: u64,
     /// Replace every draw by its conditional mean (diagnostic only).
     pub expectation: bool,
@@ -86,7 +96,11 @@ impl DyeLawParams {
             rho: law::RHO,
             white: law::WHITE,
             q: law::EVENT_AREA_UM2,
+            fog: law::FOG,
             length_scale: 1.0,
+            fine_scale: 0.0,
+            fine_weight: 0.0,
+            layer: 0,
             seed: 7,
             expectation: false,
             monochrome: false,
@@ -111,8 +125,17 @@ impl DyeLawParams {
         if !self.q.is_finite() || self.q <= 0.0 {
             return Err("film grain Dye: q must be finite and positive".into());
         }
+        if !self.fog.is_finite() || self.fog < 0.0 {
+            return Err("film grain Dye: fog must be finite and non-negative".into());
+        }
         if !self.length_scale.is_finite() || self.length_scale <= 0.0 {
             return Err("film grain Dye: length_scale must be finite and positive".into());
+        }
+        if !self.fine_weight.is_finite() || !(0.0..1.0).contains(&self.fine_weight) {
+            return Err("film grain Dye: fine_weight must be finite and in [0, 1)".into());
+        }
+        if self.fine_weight > 0.0 && (!self.fine_scale.is_finite() || self.fine_scale <= 0.0) {
+            return Err("film grain Dye: fine_scale must be finite and positive".into());
         }
         Ok(())
     }
@@ -120,6 +143,7 @@ impl DyeLawParams {
 
 /// One zero-mean, unit-variance value-noise field on the source lattice.
 /// `stream` is the shared field (`0`) or one record's own field.
+#[allow(clippy::too_many_arguments)]
 fn correlated_field(
     w: usize,
     h: usize,
@@ -127,8 +151,26 @@ fn correlated_field(
     seed: u64,
     stream: u32,
     length_scale: f64,
+    fine_scale: f64,
+    fine_weight: f64,
 ) -> Vec<Scalar> {
-    super::value::field(w, h, pitch_um, length_scale, seed, stream)
+    super::value::field_with_fine(
+        w,
+        h,
+        pitch_um,
+        length_scale,
+        seed,
+        stream,
+        fine_scale,
+        fine_weight,
+    )
+}
+
+fn density_taper(t: f64, taper_peak: f64) -> f64 {
+    let p_dev = (t / law::DMAX).clamp(0.0, 1.0);
+    let sat = 1.0 - p_dev * law::UNIFORMITY;
+    let shape = (sat * p_dev * (1.0 - p_dev)).max(0.0).sqrt();
+    shape / taper_peak
 }
 
 /// Realize one channel of the delivered law on a 1:1 field.
@@ -145,13 +187,20 @@ fn channel(
 ) -> Result<(), String> {
     let record_strength = if p.monochrome { 1.0 } else { p.strength[c] };
     let sigma_white = p.white * record_strength;
+    let layer_stream = p.layer * 4;
     let own = correlated_field(
         w,
         h,
         pitch_um,
         p.seed,
-        if p.monochrome { 1 } else { c as u32 + 1 },
+        if p.monochrome {
+            1 + layer_stream
+        } else {
+            c as u32 + 1 + layer_stream
+        },
         p.length_scale,
+        p.fine_scale,
+        p.fine_weight,
     );
     let a = p.rho.sqrt();
     let b = (1.0 - p.rho).sqrt();
@@ -162,19 +211,20 @@ fn channel(
         .enumerate()
         .try_for_each(|(i, o)| -> Result<(), String> {
             let t = to_f64(target[i * 3 + c]);
-            let p_dev = (t / law::DMAX).clamp(0.0, 1.0);
-            let sat = 1.0 - p_dev * law::UNIFORMITY;
-            let shape = (sat * p_dev * (1.0 - p_dev)).max(0.0).sqrt();
-            let taper = (shape / taper_peak).max(law::TAPER_FLOOR);
+            let taper = density_taper(t, taper_peak);
             if p.expectation || q <= 0.0 {
                 *o = from_f64(t);
                 return Ok(());
             }
             let wi = a * to_f64(shared_white[i]) + b * to_f64(own[i]);
             let e = (1.0 + sigma_white * taper * wi).max(0.02);
-            let expected = (t.max(0.0) + law::FOG) * e;
+            let expected = (t.max(0.0) + p.fog) * e;
             let lambda = expected * area / q;
-            let stream = if p.monochrome { 100 } else { 100 + c as u32 };
+            let stream = if p.monochrome {
+                100 + layer_stream
+            } else {
+                100 + c as u32 + layer_stream
+            };
             let x = (i % w) as u32;
             let y = (i / w) as u32;
             if lambda > LARGE_RATE_THRESHOLD {
@@ -183,7 +233,7 @@ fn channel(
                 // cannot overflow the rate and lose the mean.
                 let variance = (q * expected / area).max(0.0);
                 let z = normal01_coordinate(p.seed as u32, stream, x, y);
-                *o = from_f64(expected - law::FOG + variance.sqrt() * z);
+                *o = from_f64(expected - p.fog + variance.sqrt() * z);
             } else {
                 // One count from the draw the device kernel also uses: the
                 // uniform is addressed by global cell coordinate and sample
@@ -191,7 +241,7 @@ fn channel(
                 // executor. A sequential stream cannot be replayed on a device
                 // whose invocations run in an order it does not control.
                 let count = poisson_exact_coordinate(lambda, p.seed as u32, stream, x, y) as f64;
-                *o = from_f64(q * count / area - law::FOG);
+                *o = from_f64(q * count / area - p.fog);
             }
             Ok(())
         })
@@ -283,7 +333,16 @@ pub fn apply(
     // readout resamples the developed density afterwards. Realizing the field on the
     // readout grid instead would make the draw depend on how the render was cropped,
     // scaled, or split into stages, which no film does.
-    let shared_white = correlated_field(w, h, pitch_um, params.seed, 0, params.length_scale);
+    let shared_white = correlated_field(
+        w,
+        h,
+        pitch_um,
+        params.seed,
+        0,
+        params.length_scale,
+        params.fine_scale,
+        params.fine_weight,
+    );
     let mut out = ImageBuf::new(w as u32, h as u32);
     for c in 0..3 {
         let mut plane = vec![ZERO; w * h];
@@ -328,6 +387,14 @@ mod tests {
         p.strength = strength;
         p.expectation = expectation;
         p
+    }
+
+    #[test]
+    fn density_taper_vanishes_at_clear_base_and_saturation() {
+        let peak = law::taper_peak();
+        assert_eq!(density_taper(0.0, peak), 0.0);
+        assert_eq!(density_taper(law::DMAX, peak), 0.0);
+        assert!(density_taper(law::DMAX * 0.5, peak) > 0.0);
     }
 
     #[test]

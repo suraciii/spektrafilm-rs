@@ -255,7 +255,6 @@ pub(crate) fn leaf_numeric_bounds(path: &str) -> Option<(f64, Option<f64>)> {
             Some((0.0, None))
         }
         "film_render.grain.dye_strength" => Some((0.0, Some(4.0))),
-        "film_render.grain.dye_scale" => Some((0.5, Some(4.0))),
         "film_render.grain.channel_correlation" => Some((
             0.0,
             Some(super::grain::MEASURED_CHANNEL_CORRELATION_CEILING),
@@ -1091,7 +1090,6 @@ pub(super) fn validate_finite_values_detailed(
             dye_support_um,
             dye_event_area_um2,
             dye_strength,
-            dye_scale,
             channel_correlation,
             mult_usm_sigma,
             mult_usm_amount,
@@ -1367,7 +1365,6 @@ pub(super) fn validate_values_detailed(params: &RuntimeParams) -> Result<(), Val
             grain.dye_event_area_um2,
         ),
         ("film_render.grain.dye_strength", grain.dye_strength),
-        ("film_render.grain.dye_scale", grain.dye_scale),
         (
             "film_render.grain.channel_correlation",
             grain.channel_correlation,

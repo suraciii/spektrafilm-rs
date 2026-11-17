@@ -35,7 +35,7 @@ a fine-grained reversal stock with strong antihalation; they are not measured
 Astia point-spread functions. No creative diffusion filter is added.
 
 Use Scan or a saved render to inspect Spektra texture: Preview disables this
-engine by design. Grain scale follows the caller's film format and image sampling.
+engine by design. Grain texture follows the caller's film format and image sampling.
 The look preserves camera exposure, metering and format rather than resetting
 them. CPU and GPU Spektra produce different random realizations; do not expect
 pixel equality between them. See [Grain](grain.md).
