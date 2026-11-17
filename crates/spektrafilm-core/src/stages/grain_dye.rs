@@ -416,50 +416,68 @@ fn profile_layer_count(film: &Profile) -> Result<u32, String> {
     Ok(count as u32)
 }
 
-/// Per-layer, per-channel record saturation from the profile's own density
-/// curves. The taper must vanish at the saturation of the record, not at a
-/// stock-independent constant; a one-layer profile therefore keeps its grain
-/// through highlight densities that a fixed 1.2 cutoff would erase.
-fn profile_layer_dmax(film: &Profile, layer_count: u32) -> [[f64; 3]; 3] {
+/// Largest positive finite value of one channel across a curve table.
+fn curve_peak(curves: &[[f64; 3]], channel: usize) -> f64 {
+    curves
+        .iter()
+        .map(|row| row[channel])
+        .filter(|value| value.is_finite() && *value > 0.0)
+        .fold(0.0, f64::max)
+}
+
+/// Largest positive finite value of one layer/channel across the layer table.
+fn layer_curve_peak(rows: &[[[f64; 3]; 3]], layer: usize, channel: usize) -> f64 {
+    rows.iter()
+        .map(|row| row[layer][channel])
+        .filter(|value| value.is_finite() && *value > 0.0)
+        .fold(0.0, f64::max)
+}
+
+/// Per-layer, per-channel density peak from the profile's own density curves.
+///
+/// A layered profile supplies one peak per active layer. A one-layer profile
+/// has no split (`DyeLayerSplit::prepare` returns `None` for it), so its
+/// target is the composite density and its peak must come from the composite
+/// curve, not from a possibly different single stored layer curve. A profile
+/// without layer curves follows the same composite path.
+fn profile_layer_peak(film: &Profile, layer_count: u32) -> [[f64; 3]; 3] {
     let mut dmax = [[spektrafilm_backend::dye_params::law::DMAX; 3]; 3];
-    let rows = film.density_curves_layers_f64();
     let active = layer_count.min(3) as usize;
-    if !rows.is_empty() {
+    if active > 1 {
+        let rows = film.density_curves_layers_f64();
         for (layer, values) in dmax.iter_mut().enumerate().take(active) {
+            let first_peak = layer_curve_peak(&rows, layer, 0);
             for (channel, value) in values.iter_mut().enumerate() {
-                let peak = rows
-                    .iter()
-                    .map(|row| row[layer][channel])
-                    .filter(|value| value.is_finite() && *value > 0.0)
-                    .fold(0.0, f64::max);
-                if peak > 0.0 {
-                    *value = peak;
-                }
+                let peak = layer_curve_peak(&rows, layer, channel);
+                *value = if peak > 0.0 {
+                    peak
+                } else if !film.is_bw() && first_peak > 0.0 {
+                    // A short row omits the remaining channels; use the
+                    // representative channel rather than mixing one resolved
+                    // peak with the engine fallback.
+                    first_peak
+                } else {
+                    *value
+                };
             }
         }
     } else {
+        let composite = film.density_curves_f64();
+        let first_peak = curve_peak(&composite, 0);
         for (channel, value) in dmax[0].iter_mut().enumerate() {
-            let peak = film
-                .data
-                .density_curves
-                .iter()
-                .map(|row| {
-                    row.get(channel)
-                        .copied()
-                        .or_else(|| row.first().copied())
-                        .unwrap_or(0.0)
-                })
-                .filter(|value| value.is_finite() && *value > 0.0)
-                .fold(0.0, f64::max);
-            if peak > 0.0 {
-                *value = peak;
-            }
+            let peak = curve_peak(&composite, channel.min(2));
+            *value = if peak > 0.0 {
+                peak
+            } else if !film.is_bw() && first_peak > 0.0 {
+                first_peak
+            } else {
+                *value
+            };
         }
     }
-    // A BW profile stores one silver record; the layered split replicates its
-    // channel into the three lanes, so its saturation density must replicate
-    // too. Otherwise the device would give the three equal lanes different
-    // taper amplitudes.
+    // The layered split uses one representative channel for a BW profile, so
+    // its peak must be the same in all three lanes. Otherwise the device
+    // would give the three equal lanes different taper amplitudes.
     if film.is_bw() {
         for values in dmax.iter_mut().take(active.max(1)) {
             *values = [values[0]; 3];
@@ -666,7 +684,7 @@ pub fn resolve(film: &Profile, params: &RuntimeParams) -> Result<DyeGrainParams,
         dye_strength: grain.dye_strength,
         color_grain: grain.dye_color_grain,
         layer_count,
-        layer_dmax: profile_layer_dmax(film, layer_count),
+        layer_dmax: profile_layer_peak(film, layer_count),
         seed: params.random_seed,
         expectation: expectation_requested(),
     })
@@ -1312,10 +1330,10 @@ mod tests {
     use spektrafilm_math::precision::{from_f64, to_f64};
 
     #[test]
-    fn profile_layer_dmax_uses_the_layer_curve_maxima() {
+    fn profile_layer_peak_uses_the_layer_curve_maxima() {
         let film = load("fujifilm_velvia_50");
         let count = profile_layer_count(&film).unwrap();
-        let dmax = profile_layer_dmax(&film, count);
+        let dmax = profile_layer_peak(&film, count);
         let rows = film.density_curves_layers_f64();
         for layer in 0..count as usize {
             for channel in 0..3 {
@@ -1338,20 +1356,70 @@ mod tests {
     }
 
     #[test]
-    fn single_layer_profile_uses_its_composite_dmax() {
+    fn single_layer_profile_uses_its_composite_peak() {
         let film = load("fujifilm_astia_100f");
         let count = profile_layer_count(&film).unwrap();
         assert_eq!(count, 1);
-        let dmax = profile_layer_dmax(&film, count);
-        assert!(
-            dmax[0].iter().all(|value| *value > 3.0),
-            "the one-layer profile must keep its high-curve dmax: {dmax:?}"
-        );
+        let composite = film.density_curves_f64();
+        let expected: [f64; 3] = std::array::from_fn(|channel| curve_peak(&composite, channel));
+        let dmax = profile_layer_peak(&film, count);
+        assert_eq!(dmax[0], expected);
 
         let params = supported_params();
         let resolved = resolve(&film, &params).unwrap();
         let law = law_params_for_layer(&resolved, layer_scales(&film), 0);
         assert_eq!(law.dmax, dmax[0]);
+    }
+
+    #[test]
+    fn single_layer_split_does_not_use_a_different_layer_peak() {
+        let mut film = load("fujifilm_astia_100f");
+        assert_eq!(profile_layer_count(&film).unwrap(), 1);
+        for row in &mut film.data.density_curves_layers {
+            row[0][0] = 1.0;
+        }
+        let composite = film.density_curves_f64();
+        let expected: [f64; 3] = std::array::from_fn(|channel| curve_peak(&composite, channel));
+        let dmax = profile_layer_peak(&film, 1);
+        assert_eq!(dmax[0], expected);
+        assert!(
+            dmax[0][0] > 3.0,
+            "single-layer split must follow the composite curve: {dmax:?}"
+        );
+    }
+
+    #[test]
+    fn short_composite_rows_replicate_the_first_channel() {
+        let mut film = load("fujifilm_astia_100f");
+        assert!(!film.is_bw());
+        for row in &mut film.data.density_curves {
+            row[1] = 0.0;
+            row[2] = 0.0;
+        }
+        let composite = film.density_curves_f64();
+        let expected = curve_peak(&composite, 0);
+        assert!(expected > 0.0);
+        let dmax = profile_layer_peak(&film, 1);
+        assert_eq!(dmax[0], [expected; 3]);
+    }
+
+    #[test]
+    fn short_layer_rows_replicate_the_first_channel() {
+        let mut film = load("kodak_portra_400");
+        assert!(!film.is_bw());
+        for row in &mut film.data.density_curves_layers {
+            for layer in row.iter_mut() {
+                layer[1] = 0.0;
+                layer[2] = 0.0;
+            }
+        }
+        let rows = film.density_curves_layers_f64();
+        let dmax = profile_layer_peak(&film, profile_layer_count(&film).unwrap());
+        for (layer, values) in dmax.iter().take(3).enumerate() {
+            let expected = layer_curve_peak(&rows, layer, 0);
+            assert!(expected > 0.0);
+            assert_eq!(*values, [expected; 3], "layer {layer}");
+        }
     }
 
     #[test]
@@ -1361,20 +1429,15 @@ mod tests {
         assert!(film.data.density_curves_layers.is_empty());
         assert_eq!(profile_layer_count(&film).unwrap(), 1);
 
-        let expected = film
-            .data
-            .density_curves
-            .iter()
-            .map(|row| row[0])
-            .filter(|value| value.is_finite() && *value > 0.0)
-            .fold(0.0, f64::max);
-        let dmax = profile_layer_dmax(&film, 1);
+        let composite = film.density_curves_f64();
+        let expected = curve_peak(&composite, 0);
+        let dmax = profile_layer_peak(&film, 1);
         assert!(expected > 0.0);
         assert_eq!(dmax[0], [expected; 3]);
     }
 
     #[test]
-    fn high_density_layer_keeps_grain_above_the_legacy_cutoff() {
+    fn high_density_layer_keeps_grain_at_sampled_peak() {
         let film = load("fujifilm_velvia_50");
         let params = supported_params();
         let resolved = resolve(&film, &params).unwrap();
@@ -1398,7 +1461,13 @@ mod tests {
         legacy.dmax = [spektrafilm_backend::dye_params::law::DMAX; 3];
 
         let n = 64u32;
-        let target = ImageBuf::from_data(n, n, vec![from_f64(1.5); (n * n * 3) as usize]);
+        let mut data = Vec::with_capacity((n * n * 3) as usize);
+        for _ in 0..n * n {
+            data.push(from_f64(law.dmax[0]));
+            data.push(from_f64(law.dmax[1]));
+            data.push(from_f64(law.dmax[2]));
+        }
+        let target = ImageBuf::from_data(n, n, data);
         let pitch = 4.0;
         let geometry = texture::ReadoutGeometry::whole(n, n, pitch);
         let current = texture::apply(&target, pitch, &geometry, &law).unwrap();
@@ -1416,7 +1485,88 @@ mod tests {
         let legacy_variance = variance(&old);
         assert!(
             current_variance > legacy_variance * 4.0,
-            "profile dmax {law:?} must keep correlated grain above 1.2: current variance {current_variance:.8}, legacy {legacy_variance:.8}"
+            "profile dmax {law:?} must keep correlated grain at the sampled peak: current variance {current_variance:.8}, legacy {legacy_variance:.8}"
+        );
+    }
+
+    #[test]
+    fn one_layer_bw_keeps_high_density_grain() {
+        let film = load("kodak_tmax_100");
+        let params = supported_params();
+        let resolved = resolve(&film, &params).unwrap();
+        assert_eq!(resolved.layer_count, 1);
+        let law = law_params_for_layer(&resolved, layer_scales(&film), 0);
+        let mut fallback = law.clone();
+        fallback.dmax = [spektrafilm_backend::dye_params::law::DMAX; 3];
+
+        let n = 64u32;
+        let target_density = law.dmax[0];
+        let target =
+            ImageBuf::from_data(n, n, vec![from_f64(target_density); (n * n * 3) as usize]);
+        let pitch = 4.0;
+        let geometry = texture::ReadoutGeometry::whole(n, n, pitch);
+        let current = texture::apply(&target, pitch, &geometry, &law).unwrap();
+        let legacy = texture::apply(&target, pitch, &geometry, &fallback).unwrap();
+        let moments = |image: &ImageBuf| {
+            let values: Vec<f64> = image.data.iter().map(|value| to_f64(*value)).collect();
+            let mean = values.iter().sum::<f64>() / values.len() as f64;
+            let variance =
+                values.iter().map(|v| (v - mean).powi(2)).sum::<f64>() / values.len() as f64;
+            (mean, variance)
+        };
+        let (current_mean, current_variance) = moments(&current);
+        let (_, legacy_variance) = moments(&legacy);
+        assert!(
+            (current_mean - target_density).abs() / target_density < 0.01,
+            "T-MAX sampled-peak mean drifted: target {target_density:.6}, mean {current_mean:.6}"
+        );
+        assert!(
+            current_variance > legacy_variance * 4.0,
+            "T-MAX high density must keep material grain: profile {current_variance:?}, fallback {legacy_variance:?}"
+        );
+
+        let asymptote = law.dmax[0] / spektrafilm_backend::dye_params::law::UNIFORMITY;
+        let saturated = ImageBuf::from_data(n, n, vec![from_f64(asymptote); (n * n * 3) as usize]);
+        let saturated = texture::apply(&saturated, pitch, &geometry, &law).unwrap();
+        let (saturated_mean, _) = moments(&saturated);
+        assert!(
+            (saturated_mean - asymptote).abs() / asymptote < 0.01,
+            "T-MAX asymptotic mean drifted: target {asymptote:.6}, mean {saturated_mean:.6}"
+        );
+    }
+
+    #[test]
+    fn layered_color_keeps_high_density_grain() {
+        let film = load("kodak_portra_400");
+        let params = supported_params();
+        let n = 64u32;
+        let source = ImageBuf::from_data(n, n, vec![from_f64(1.5); (n * n * 3) as usize]);
+        let pitch = 4.0;
+        let grid = ReadoutGrid {
+            origin_um: [0.0, 0.0],
+            pitch_um: [pitch, pitch],
+            width: n,
+            height: n,
+        };
+        let out = readout(
+            &source,
+            &film,
+            &params,
+            pitch,
+            grid,
+            &spektrafilm_backend::cpu_backend::CpuBackend,
+        )
+        .unwrap();
+        let values: Vec<f64> = out.data.chunks(3).map(|pixel| to_f64(pixel[1])).collect();
+        let mean = values.iter().sum::<f64>() / values.len() as f64;
+        let variance = values.iter().map(|v| (v - mean).powi(2)).sum::<f64>() / values.len() as f64;
+        assert!(
+            (mean - 1.5).abs() < 0.03,
+            "layered high-density mean drifted: {mean:.6}"
+        );
+        assert!(
+            variance > 1e-7,
+            "layered high-density field lost its grain: {variance:.8}"
         );
     }
 
@@ -1668,7 +1818,7 @@ mod tests {
     fn device_count_moments_match_the_host_across_rates() {
         use spektrafilm_backend::ComputeBackend as _;
         let backend = spektrafilm_gpu::test_support::adapter();
-        let film = load("kodak_portra_800");
+        let film = load("fujifilm_astia_100f");
         let params = supported_params();
         let resolved = resolve(&film, &params).unwrap();
         let n = 192u32;
@@ -1690,7 +1840,7 @@ mod tests {
                 .dye_field(&source, &device)
                 .expect("device field path")
                 .expect("device field runs");
-            let mut law = spektrafilm_model::grain::dye::texture::DyeLawParams::delivered();
+            let mut law = law_params(&resolved);
             law.seed = resolved.seed;
             let cpu = spektrafilm_model::grain::dye::texture::apply(
                 &source,

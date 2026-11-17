@@ -80,8 +80,9 @@ pub struct DyeLawParams {
     /// Zero-based density-layer index. It only selects the independent
     /// record stream; the density target is already that layer's share.
     pub layer: u32,
-    /// Per-channel record density at which the granularity taper vanishes.
-    /// The resolved profile supplies the active layer's curve maximum.
+    /// Per-channel density peak of the active profile layer. The taper is
+    /// evaluated against this sampled peak and reaches its asymptotic zero at
+    /// `dmax / uniformity`.
     pub dmax: [f64; 3],
     pub seed: u64,
     /// Replace every draw by its conditional mean (diagnostic only).
@@ -180,10 +181,17 @@ fn correlated_field(
     )
 }
 
+/// Normalized layer variance envelope used by the material grain model.
+///
+/// `p = t / peak` is the developed fraction of the layer's sampled density
+/// peak. The variance shape is `p * (1 - uniformity * p)`, so it is zero at
+/// clear base and zero only at the asymptotic saturation
+/// `peak / uniformity`, above the sampled profile peak. The correlated field
+/// therefore keeps a positive residual at the sampled peak instead of
+/// removing the material texture there.
 fn density_taper(t: f64, dmax: f64, taper_peak: f64) -> f64 {
-    let p_dev = (t / dmax).clamp(0.0, 1.0);
-    let sat = 1.0 - p_dev * law::UNIFORMITY;
-    let shape = (sat * p_dev * (1.0 - p_dev)).max(0.0).sqrt();
+    let p_dev = (t / dmax).clamp(0.0, 1.0 / law::UNIFORMITY);
+    let shape = (p_dev * (1.0 - law::UNIFORMITY * p_dev)).max(0.0).sqrt();
     shape / taper_peak
 }
 
@@ -404,19 +412,30 @@ mod tests {
     }
 
     #[test]
-    fn density_taper_vanishes_at_clear_base_and_saturation() {
+    fn density_taper_vanishes_at_clear_base_and_asymptotic_saturation() {
         let peak = law::taper_peak();
         assert_eq!(density_taper(0.0, law::DMAX, peak), 0.0);
-        assert_eq!(density_taper(law::DMAX, law::DMAX, peak), 0.0);
+        assert!(
+            density_taper(law::DMAX / law::UNIFORMITY, law::DMAX, peak) < 1e-6,
+            "asymptotic saturation should vanish"
+        );
         assert!(density_taper(law::DMAX * 0.5, law::DMAX, peak) > 0.0);
     }
 
     #[test]
-    fn density_taper_follows_the_record_saturation_density() {
+    fn density_taper_keeps_a_positive_residual_at_the_sampled_peak() {
         let peak = law::taper_peak();
         let dmax = 2.25;
-        assert!(density_taper(1.5, dmax, peak) > 0.0);
-        assert_eq!(density_taper(dmax, dmax, peak), 0.0);
+        let at_peak = density_taper(dmax, dmax, peak);
+        assert!(at_peak > 0.0, "sampled peak amplitude {at_peak}");
+        assert!(
+            (at_peak - 2.0 * (law::UNIFORMITY * (1.0 - law::UNIFORMITY)).sqrt()).abs() < 1e-12,
+            "sampled peak should retain the material variance residual"
+        );
+        assert!(
+            density_taper(dmax / law::UNIFORMITY, dmax, peak) < 1e-6,
+            "asymptotic saturation should vanish"
+        );
     }
 
     #[test]

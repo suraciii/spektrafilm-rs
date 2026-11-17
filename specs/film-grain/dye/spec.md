@@ -14,7 +14,9 @@ Subject shape, tone, color, and fine detail MUST pass through the same field rea
 
 Dye MUST consume the developed record-density target `t` at the film-density boundary and produce a realized density `D` with `E[D] = t` exactly.
 
-The profile's one to three density layers MUST split `t` pointwise into non-negative layer targets whose sum is `t`, using the layer curves as relative shares. The layer relative amplitude MUST follow a granularity curve derived from development statistics and MUST vanish at clear base and at saturation of the layer record.
+The profile's one to three density layers MUST split `t` pointwise into non-negative layer targets whose sum is `t`, using the layer curves as relative shares.
+
+The layer relative amplitude MUST follow the normalized material layer-variance envelope `sqrt(p * (1 - uniformity * p))`. It MUST vanish at clear base and at the asymptotic saturation `p = 1 / uniformity`, above the sampled layer peak; the sampled peak MUST retain a positive residual.
 
 Each layer realizes its own coordinate-addressed value-noise field and conditional count; the realized layer densities MUST sum to `D`. The field MUST be a variance-preserving mixture of a base value-noise lattice and, for positive profiles, a finer microcontrast lattice.
 
@@ -71,7 +73,7 @@ An omitted strength key MUST resolve to `1.0`. An omitted color-grain key MUST r
 
 Dye's remaining law parameters are engine-derived constants: the per-record relative ratio and the delivered value-noise cell sizes. They also include the positive microcontrast cell and variance fraction, the delivered positive amplitude scale, event area, fog baseline, development uniformity, and two-component normalization.
 
-The profile's density-layer curves determine the layer targets, the layer count, and each layer/channel saturation density `dmax`; they are material data, not appearance controls. A profile without layer curves uses its composite curve maximum, and the engine fallback applies only when no usable positive curve exists.
+The profile's density-layer curves determine the layer targets, the layer count, and each layer/channel sampled density peak `dmax`; they are material data, not appearance controls. A one-layer profile and a profile without layer curves use the composite curve peak, because neither is split into layer targets. The engine fallback applies only when no usable positive curve exists.
 
 The engine owns each active layer's relative correlation scale and the polarity's delivered base cell.
 
@@ -123,7 +125,7 @@ Different output dimensions MAY produce different footprints and therefore diffe
 
 Acceptance is gated. A later gate MUST NOT compensate for an earlier gate that failed.
 
-1. **Law and mean:** Prove `E[D] = t` for uniform, graded, and saturated targets, and prove the amplitude follows the derived granularity curve. The expectation realization MUST equal the target.
+1. **Law and mean:** Prove `E[D] = t` for uniform, graded, sampled-peak, and saturated targets, and prove the amplitude follows the derived granularity envelope. The sampled peak MUST retain a positive residual; asymptotic saturation MUST be its only zero above clear base, and expectation MUST equal the target.
 2. **Partition invariance:** Prove same-canvas full-frame, crop, tile, band, and stage-split agreement at fixed seed and geometry. Resource checks MUST reject oversized work before allocation.
 3. **Table partitioning:** A table larger than one binding MUST be partitioned by rows, each partition carrying the margins its read footprint needs, and the layout MUST NOT change the composed image.
 4. **Executor parity:** Prove the CPU and GPU realizations agree in expectation exactly, and that stochastic realizations agree within the declared count-term bound.
