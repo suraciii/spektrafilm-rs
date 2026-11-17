@@ -52,7 +52,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         );
         eprintln!("compose start");
         accumulator = Some(
-            gpu.log_e_accumulate(accumulator.as_ref(), &retained, 1.0)?
+            gpu.log_e_accumulate(accumulator.as_ref(), &retained)?
                 .ok_or("GPU declined logE accumulation")?,
         );
         eprintln!("compose done");
@@ -110,7 +110,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let shot = ExposureShot {
             image,
             exposure_ev: ev,
-            weight: 1.0,
             metering: ShotMetering::Manual,
         };
         let log_e = cpu_pipeline.process_exposures(&[shot], &cpu, Tap::LogEFilm)?;
@@ -136,13 +135,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ExposureShot {
             image: &a,
             exposure_ev: ev,
-            weight: 1.0,
             metering: ShotMetering::Manual,
         },
         ExposureShot {
             image: &b,
             exposure_ev: ev,
-            weight: 1.0,
             metering: ShotMetering::Manual,
         },
     ];

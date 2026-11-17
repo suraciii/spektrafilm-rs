@@ -4,13 +4,12 @@
 //! ```text
 //! cargo run -p spektrafilm-core --example double_exposure --features precision-f64 -- \
 //!   data kodak_portra_400 kodak_portra_endura out.tif \
-//!   0.5:a.png 0.5:b.png        # ev:weight:path, or weight:path (ev=0)
+//!   -1:a.png -1:b.png        # ev:path
 //! ```
 //!
-//! Each `ev:weight:path` triple is one exposure; `weight:path` is accepted as
-//! `0:weight:path` for compatibility. `ev` is the physical exposure offset,
-//! `weight` is the logE composition multiplier. The example composes at
-//! `log_e_film` and develops once, the physically faithful order.
+//! Each `ev:path` pair is one exposure. `ev` is the physical exposure offset.
+//! The example composes at `log_e_film` and develops once, the physically
+//! faithful order.
 
 use spektrafilm_backend::cpu_backend::CpuBackend;
 use spektrafilm_core::{
@@ -25,7 +24,7 @@ use std::path::{Path, PathBuf};
 
 fn usage() -> ! {
     eprintln!(
-        "usage: double_exposure <data-dir> <film> <paper> <out.tif> <ev>:<weight>:<image> [<ev>:<weight>:<image> ...]"
+        "usage: double_exposure <data-dir> <film> <paper> <out.tif> <ev>:<image> [<ev>:<image> ...]"
     );
     std::process::exit(2)
 }
@@ -42,23 +41,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut images: Vec<ImageBuf> = Vec::new();
     let mut evs: Vec<f64> = Vec::new();
-    let mut weights: Vec<f64> = Vec::new();
     for spec in &args[4..] {
         let parts: Vec<&str> = spec.split(':').collect();
-        let (ev, weight, path) = match parts.as_slice() {
-            [weight, path] => (0.0, weight.parse::<f64>()?, *path),
-            [ev, weight, path] => (ev.parse::<f64>()?, weight.parse::<f64>()?, *path),
+        let (ev, path) = match parts.as_slice() {
+            [ev, path] => (ev.parse::<f64>()?, *path),
             _ => {
-                return Err(format!(
-                    "expected <ev>:<weight>:<image> or <weight>:<image>, got {spec:?}"
-                )
-                .into());
+                return Err(format!("expected <ev>:<image>, got {spec:?}").into());
             }
         };
         let loaded = image_io::load(Path::new(path))?;
         images.push(loaded.image);
         evs.push(ev);
-        weights.push(weight);
     }
     let metering = match std::env::var("POC_METERING").as_deref() {
         Ok("lock-to-first") | Ok("lock_to_first") => {
@@ -70,11 +63,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let shots: Vec<ExposureShot<'_>> = images
         .iter()
         .zip(&evs)
-        .zip(&weights)
-        .map(|((image, &exposure_ev), &weight)| ExposureShot {
+        .map(|(image, &exposure_ev)| ExposureShot {
             image,
             exposure_ev,
-            weight,
             metering,
         })
         .collect();
@@ -137,8 +128,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
     for shot in &report.shots {
         println!(
-            "  shot {}: metered_ev={:.3} exposure_ev={:.3} final_ev={:.3} weight={:.3}",
-            shot.index, shot.metered_ev, shot.exposure_ev, shot.final_ev, shot.weight
+            "  shot {}: metered_ev={:.3} exposure_ev={:.3} final_ev={:.3}",
+            shot.index, shot.metered_ev, shot.exposure_ev, shot.final_ev
         );
     }
     Ok(())

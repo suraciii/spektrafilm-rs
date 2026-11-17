@@ -385,15 +385,14 @@ pub trait ComputeBackend: Send + Sync {
     /// multiple-exposure accumulator.
     ///
     /// `accumulator == None` creates the accumulator from the first shot;
-    /// otherwise the shader adds `weight * 10^shot` in place. The returned
-    /// carrier is an intermediate linear-exposure buffer. `Ok(None)` means the
-    /// backend has no device composition; a selected GPU must not silently
-    /// fall back to host arithmetic.
+    /// otherwise the shader adds `10^shot` in place. The returned carrier is
+    /// an intermediate linear-exposure buffer. `Ok(None)` means the backend
+    /// has no device composition; a selected GPU must not silently fall back
+    /// to host arithmetic.
     fn log_e_accumulate(
         &self,
         _accumulator: Option<&DeviceImage>,
         _shot: &DeviceImage,
-        _weight: f32,
     ) -> Result<Option<DeviceImage>, String> {
         Ok(None)
     }

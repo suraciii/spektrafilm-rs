@@ -3,7 +3,7 @@
 //!
 //! This is a research example for high-resolution memory planning, not a
 //! product API. Usage:
-//!   streaming_exposure_f32 <data> <film> <paper> <out> <ev>:<weight>:<image>...
+//!   streaming_exposure_f32 <data> <film> <paper> <out> <ev>:<image>...
 
 use spektrafilm_backend::cpu_backend::CpuBackend;
 use spektrafilm_core::{
@@ -13,15 +13,16 @@ use spektrafilm_core::{
     profile,
     runtime::{DigestMode, RuntimePhotoParams},
 };
-use spektrafilm_math::{image::ImageBuf, precision::from_f64};
+use spektrafilm_math::{
+    image::ImageBuf,
+    precision::{from_f64, to_f64},
+};
 use std::path::{Path, PathBuf};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     if args.len() < 5 {
-        eprintln!(
-            "usage: streaming_exposure_f32 <data> <film> <paper> <out> <ev>:<weight>:<image>..."
-        );
+        eprintln!("usage: streaming_exposure_f32 <data> <film> <paper> <out> <ev>:<image>...");
         std::process::exit(2);
     }
     let data = PathBuf::from(&args[0]);
@@ -46,9 +47,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut dims = None;
     for spec in &args[4..] {
         let parts: Vec<&str> = spec.split(':').collect();
-        let (ev, weight, path) = match parts.as_slice() {
-            [ev, weight, path] => (ev.parse::<f64>()?, weight.parse::<f64>()?, *path),
-            _ => return Err(format!("expected <ev>:<weight>:<image>, got {spec:?}").into()),
+        let (ev, path) = match parts.as_slice() {
+            [ev, path] => (ev.parse::<f64>()?, *path),
+            _ => return Err(format!("expected <ev>:<image>, got {spec:?}").into()),
         };
         let image = image_io::load(Path::new(path))?.image;
         if let Some((w, h)) = dims {
@@ -57,15 +58,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         } else {
             dims = Some((image.width, image.height));
-            accum = Some(vec![
-                0.0;
-                (image.width as usize * image.height as usize * 3)
-            ]);
+            accum = Some(vec![0.0; image.width as usize * image.height as usize * 3]);
         }
         let shot = ExposureShot {
             image: &image,
             exposure_ev: ev,
-            weight,
             metering: ShotMetering::Manual,
         };
         let log_e = runtime.process_exposures(&[shot], &backend, Tap::LogEFilm)?;
@@ -91,7 +88,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         };
         if let Some(values) = accum.as_mut() {
             for (acc, &value) in values.iter_mut().zip(&log_e.data) {
-                *acc += 10.0_f32.powf(value - effective);
+                let value = to_f64(value);
+                *acc += 10.0_f32.powf((value - f64::from(effective)) as f32);
             }
         }
         drop(log_e);

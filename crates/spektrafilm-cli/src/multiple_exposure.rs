@@ -1,6 +1,6 @@
 //! Multiple-exposure CLI entry point.
 //!
-//! This is the Phase 1b surface for the core `process_exposures` API. It stays
+//! This is the CLI surface for the core `process_exposures` API. It stays
 //! separate from the single-image `process` path so the existing route,
 //! telemetry and stage-artifact behavior is untouched.
 
@@ -14,7 +14,6 @@ use sha2::{Digest, Sha256};
 use spektrafilm_backend::ComputeBackend;
 use spektrafilm_core::image_io::{self, BitDepth, Compression, JpegSubsampling, SaveOptions};
 use spektrafilm_core::params::{PrintExposureEvTracking, PrintExposureMode, RuntimeParams, Tap};
-use spektrafilm_core::pipeline::ExposureShot;
 use spektrafilm_core::profile;
 use spektrafilm_core::runtime::{DigestMode, RuntimePhotoParams};
 use spektrafilm_math::image::ImageBuf;
@@ -40,7 +39,6 @@ struct RecipeShot {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     sha256: Option<String>,
     exposure_ev: f64,
-    weight: f64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     transform: Option<TransformRecipe>,
 }
@@ -100,7 +98,7 @@ struct Resolved {
     paper: Option<String>,
     seed: u32,
     metering: MeteringArg,
-    shots: Vec<(PathBuf, Option<String>, f64, f64)>,
+    shots: Vec<(PathBuf, Option<String>, f64)>,
     output_crop: Option<CropSpec>,
     print: Option<PrintRecipe>,
     input_color_space: Option<String>,
@@ -134,29 +132,40 @@ fn parse_memory_limit(value: &str) -> Result<Option<u64>> {
 
 fn estimate_peak_bytes(width: u32, height: u32) -> u64 {
     // CPU host estimate, calibrated against the measured f32 streaming runs:
-    // 61 MP / 4 shots 6.45 GiB and 100 MP / 4-8 shots 10.46 GiB. It does not
-    // scale with shot count. GPU host/VRAM is intentionally unguarded.
+    // 61 MP / 4 shots 6.45 GiB and 100 MP / 4-8 shots 10.46 GiB. The estimate
+    // must cover the accumulator plus the pipeline's working f32 images, not
+    // just one three-channel buffer; 37 bytes/sample is conservative for the
+    // measured runs, and 80 bytes/sample covers the f64 reference lane. It
+    // does not scale with shot count. GPU host/VRAM is intentionally unguarded.
     let samples = (width as u64)
         .saturating_mul(height as u64)
         .saturating_mul(3);
     let factor = if cfg!(feature = "precision-f64") {
-        8.0
+        80.0
     } else {
-        9.0
+        37.0
     };
     (samples as f64 * factor) as u64 + 512 * 1024_u64.pow(2)
 }
 
 fn default_memory_budget(width: u32, height: u32) -> u64 {
+    const GIB: u64 = 1024_u64.pow(3);
+    let estimate = estimate_peak_bytes(width, height);
+    let with_headroom = estimate.saturating_add(GIB);
     if cfg!(feature = "precision-f64") {
         // The f64 build is the reference/debug lane, not the product f32
-        // target; give it enough room to finish 100 MP without a false
-        // capacity failure.
-        24 * 1024_u64.pow(3)
-    } else if (width as u64) * (height as u64) >= 90_000_000 {
-        11 * 1024_u64.pow(3)
+        // target; keep the old generous floor, but never undercut the
+        // calibrated estimate.
+        with_headroom.max(24 * GIB)
+    } else if estimate <= 7 * GIB {
+        7 * GIB
+    } else if estimate <= 11 * GIB {
+        11 * GIB
     } else {
-        7 * 1024_u64.pow(3)
+        // The 90 MP step must not reject 102 MP or larger rasters merely
+        // because the estimate crossed an old fixed branch. Keep a GiB of
+        // host headroom above the estimate.
+        with_headroom
     }
 }
 
@@ -261,7 +270,7 @@ pub(crate) fn run(args: &ProcessArgs, data: &DataSelection) -> Result<()> {
         .begin_exposures(backend.as_ref(), metering, Tap::RgbOut)
         .map_err(anyhow::Error::msg)?;
     let mut full_dims = None;
-    for (index, (path, hash, ev, weight)) in resolved.shots.iter().enumerate() {
+    for (index, (path, hash, ev)) in resolved.shots.iter().enumerate() {
         if let Some(expected) = hash {
             verify_sha256(path, expected)
                 .with_context(|| format!("verifying shot {index}: {}", path.display()))?;
@@ -291,9 +300,7 @@ pub(crate) fn run(args: &ProcessArgs, data: &DataSelection) -> Result<()> {
                 );
             }
         }
-        stack
-            .add_shot(&image, *ev, *weight)
-            .map_err(anyhow::Error::msg)?;
+        stack.add_shot(&image, *ev).map_err(anyhow::Error::msg)?;
         drop(image);
     }
     let (rendered, report) = stack.finish().map_err(anyhow::Error::msg)?;
@@ -337,8 +344,8 @@ pub(crate) fn run(args: &ProcessArgs, data: &DataSelection) -> Result<()> {
     );
     for shot in &report.shots {
         eprintln!(
-            "  shot {}: metered_ev={:.3} exposure_ev={:.3} final_ev={:.3} weight={:.3}",
-            shot.index, shot.metered_ev, shot.exposure_ev, shot.final_ev, shot.weight
+            "  shot {}: metered_ev={:.3} exposure_ev={:.3} final_ev={:.3}",
+            shot.index, shot.metered_ev, shot.exposure_ev, shot.final_ev
         );
     }
     Ok(())
@@ -356,6 +363,19 @@ fn reject_unsupported(args: &ProcessArgs) -> Result<()> {
     }
     if args.scan_film || args.workflow.route.is_some() || args.workflow.scan_output.is_some() {
         bail!("multiple-exposure.unsupported: route/scan_film/scan_output are not supported yet");
+    }
+    if args.lut.is_some()
+        || args.workflow.scan_profile.is_some()
+        || args.workflow.raw_white_balance != "as-shot"
+        || args.workflow.raw_temperature.is_some()
+        || args.workflow.raw_tint.is_some()
+        || args.workflow.lens_correction
+        || args.workflow.film_channel_swap != "none"
+        || args.workflow.print_channel_swap != "none"
+    {
+        bail!(
+            "multiple-exposure.unsupported: LUT, scan profile, RAW loading, lens correction and channel swaps are not supported"
+        );
     }
     if args.dry_run {
         bail!("multiple-exposure.unsupported: --dry-run is not implemented for multiple exposure");
@@ -376,10 +396,13 @@ fn reject_unsupported(args: &ProcessArgs) -> Result<()> {
             || args.paper.is_some()
             || args.output_crop.is_some()
             || args.seed.is_some()
-            || args.multiple_exposure_meter.is_some())
+            || args.multiple_exposure_meter.is_some()
+            || args.input_color_space.is_some()
+            || args.input_cctf_decoding.is_some()
+            || !args.expose_ev.is_empty())
     {
         bail!(
-            "multiple-exposure.recipe-schema: --recipe carries film/paper/crop/seed/metering; do not combine those flags with --recipe"
+            "multiple-exposure.recipe-schema: --recipe carries film/paper/crop/seed/metering/input interpretation; do not combine those flags with --recipe"
         );
     }
     Ok(())
@@ -395,16 +418,14 @@ fn resolve_flags(args: &ProcessArgs) -> Result<Resolved> {
     if !args.expose_ev.is_empty() && args.expose_ev.len() != args.expose.len() {
         bail!("multiple-exposure.ev-count: --expose-ev count must equal --expose count");
     }
-    if !args.expose_weight.is_empty() && args.expose_weight.len() != args.expose.len() {
-        bail!("multiple-exposure.weight-count: --expose-weight count must equal --expose count");
-    }
-    let metering = args.multiple_exposure_meter.unwrap_or(MeteringArg::Each);
+    // Manual is the explicit physical default: auto-exposure normalizes each
+    // shot and can change the relative exposure the user is trying to make.
+    let metering = args.multiple_exposure_meter.unwrap_or(MeteringArg::Manual);
     let mut shots = Vec::with_capacity(args.expose.len());
     for (index, path) in args.expose.iter().enumerate() {
         let ev = args.expose_ev.get(index).copied().unwrap_or(0.0);
-        let weight = args.expose_weight.get(index).copied().unwrap_or(1.0);
-        validate_shot(index, ev, weight)?;
-        shots.push((path.clone(), None, ev, weight));
+        validate_shot(index, ev)?;
+        shots.push((path.clone(), None, ev));
     }
     let output_crop = args.output_crop.as_deref().map(parse_crop).transpose()?;
     Ok(Resolved {
@@ -427,6 +448,15 @@ fn resolve_flags(args: &ProcessArgs) -> Result<Resolved> {
 fn read_recipe(path: &Path) -> Result<Resolved> {
     let bytes = fs::read(path).with_context(|| format!("reading recipe {}", path.display()))?;
     let recipe: Recipe = serde_json::from_slice(&bytes)
+        .map_err(|error| {
+            if error.to_string().contains("weight") {
+                anyhow::anyhow!(
+                    "multiple-exposure.weight-removed: replace each shot weight w with exposure_ev += log2(w); the old weight was applied after optics"
+                )
+            } else {
+                anyhow::Error::new(error)
+            }
+        })
         .with_context(|| format!("parsing recipe {}", path.display()))?;
     if recipe.schema != RECIPE_SCHEMA {
         bail!(
@@ -440,10 +470,10 @@ fn read_recipe(path: &Path) -> Result<Resolved> {
     let parent = path.parent().map(Path::to_path_buf);
     let mut shots = Vec::with_capacity(recipe.shots.len());
     for (index, shot) in recipe.shots.iter().enumerate() {
-        validate_shot(index, shot.exposure_ev, shot.weight)?;
+        validate_shot(index, shot.exposure_ev)?;
         if shot.transform.is_some() {
             bail!(
-                "multiple-exposure.unsupported: per-shot transform is Phase 2; remove transform from shot {index}"
+                "multiple-exposure.unsupported: per-shot transform is not implemented; remove transform from shot {index}"
             );
         }
         let shot_path = if Path::new(&shot.path).is_absolute() {
@@ -454,12 +484,7 @@ fn read_recipe(path: &Path) -> Result<Resolved> {
                 .map(|p| p.join(&shot.path))
                 .unwrap_or_else(|| PathBuf::from(&shot.path))
         };
-        shots.push((
-            shot_path,
-            shot.sha256.clone(),
-            shot.exposure_ev,
-            shot.weight,
-        ));
+        shots.push((shot_path, shot.sha256.clone(), shot.exposure_ev));
     }
     Ok(Resolved {
         film: recipe.film,
@@ -475,15 +500,10 @@ fn read_recipe(path: &Path) -> Result<Resolved> {
     })
 }
 
-fn validate_shot(index: usize, ev: f64, weight: f64) -> Result<()> {
+fn validate_shot(index: usize, ev: f64) -> Result<()> {
     if !ev.is_finite() || !(-10.0..=10.0).contains(&ev) {
         bail!(
             "multiple-exposure.ev-range: shot {index} exposure_ev must be finite and in [-10, 10]"
-        );
-    }
-    if !weight.is_finite() || weight < 0.0 {
-        bail!(
-            "multiple-exposure.weight-invalid: shot {index} weight must be finite and non-negative"
         );
     }
     Ok(())
@@ -669,11 +689,11 @@ fn verify_sha256(path: &Path, expected: &str) -> Result<()> {
 
 fn resolved_to_recipe(
     resolved: &Resolved,
-    shots: &[(PathBuf, Option<String>, f64, f64)],
+    shots: &[(PathBuf, Option<String>, f64)],
     _args: &ProcessArgs,
 ) -> Result<Recipe> {
     let mut recipe_shots = Vec::with_capacity(shots.len());
-    for (path, sha256, ev, weight) in shots {
+    for (path, sha256, ev) in shots {
         let recipe_path = match &resolved.recipe_parent {
             Some(parent) => path
                 .strip_prefix(parent)
@@ -689,7 +709,6 @@ fn resolved_to_recipe(
             path: recipe_path,
             sha256: Some(hash),
             exposure_ev: *ev,
-            weight: *weight,
             transform: None,
         });
     }
@@ -723,6 +742,41 @@ mod tests {
         assert_eq!(parse_memory_limit("4096").unwrap(), Some(4096));
         assert!(parse_memory_limit("nope").is_err());
         assert!(parse_memory_limit("999999999999999999999GiB").is_err());
+    }
+
+    #[test]
+    fn peak_estimate_covers_measured_high_res_cpu_runs() {
+        // Measured f32 streaming peaks: 6.45 GiB at 61 MP and 10.46 GiB at
+        // 100 MP. Both builds must estimate at least those peaks; the old
+        // 9-bytes/sample formula only estimated 2.0/3.0 GiB.
+        let gib = 1024_u64.pow(3);
+        let e61 = estimate_peak_bytes(9568, 6376) as f64 / gib as f64;
+        let e100 = estimate_peak_bytes(10000, 10000) as f64 / gib as f64;
+        assert!(
+            e61 >= 6.4,
+            "61 MP estimate {e61:.3} GiB below measured peak"
+        );
+        assert!(
+            e100 >= 10.4,
+            "100 MP estimate {e100:.3} GiB below measured peak"
+        );
+    }
+
+    #[test]
+    fn default_budget_covers_estimate_across_sensor_sizes() {
+        for (width, height) in [
+            (9568, 6376),   // 61 MP
+            (10000, 10000), // 100 MP acceptance case
+            (11648, 8736),  // 102 MP GFX 100 II
+            (12000, 9000),  // 108 MP
+        ] {
+            let estimate = estimate_peak_bytes(width, height);
+            let budget = default_memory_budget(width, height);
+            assert!(
+                budget >= estimate,
+                "{width}x{height}: default budget {budget} below estimate {estimate}"
+            );
+        }
     }
 
     #[test]
@@ -782,11 +836,46 @@ mod tests {
           "seed": 0,
           "metering": "manual",
           "shots": [
-            {"path": "a.png", "exposure_ev": 0.0, "weight": 1.0, "crop": {"x":0,"y":0,"width":1,"height":1}},
-            {"path": "b.png", "exposure_ev": 0.0, "weight": 1.0}
+            {"path": "a.png", "exposure_ev": 0.0, "crop": {"x":0,"y":0,"width":1,"height":1}},
+            {"path": "b.png", "exposure_ev": 0.0}
           ]
         }"#;
         assert!(serde_json::from_str::<Recipe>(json).is_err());
+    }
+
+    #[test]
+    fn rejects_recipe_with_removed_weight_field() {
+        let json = r#"{
+          "schema": "spektrafilm.multiple-exposure/1",
+          "film": "kodak_portra_400",
+          "seed": 0,
+          "metering": "manual",
+          "shots": [
+            {"path": "a.png", "exposure_ev": -1.0, "weight": 0.5},
+            {"path": "b.png", "exposure_ev": -1.0, "weight": 0.5}
+          ]
+        }"#;
+        let error = serde_json::from_str::<Recipe>(json)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("weight"), "unexpected recipe error: {error}");
+    }
+
+    #[test]
+    fn default_flag_metering_is_manual() {
+        let mut args = ProcessArgs::default();
+        args.expose = vec![PathBuf::from("a.png"), PathBuf::from("b.png")];
+        args.film = Some("kodak_portra_400".into());
+        let resolved = resolve_flags(&args).unwrap();
+        assert_eq!(resolved.metering, MeteringArg::Manual);
+    }
+
+    #[test]
+    fn validate_shot_rejects_out_of_range_ev() {
+        assert!(validate_shot(0, -1.0).is_ok());
+        assert!(validate_shot(1, 10.0).is_ok());
+        assert!(validate_shot(2, 10.01).is_err());
+        assert!(validate_shot(3, f64::NAN).is_err());
     }
 
     #[test]
@@ -802,14 +891,12 @@ mod tests {
                     path: "a.png".into(),
                     sha256: None,
                     exposure_ev: -1.0,
-                    weight: 1.0,
                     transform: None,
                 },
                 RecipeShot {
                     path: "b.png".into(),
                     sha256: None,
                     exposure_ev: -1.0,
-                    weight: 1.0,
                     transform: None,
                 },
             ],
@@ -824,6 +911,7 @@ mod tests {
             input_cctf_decoding: Some(false),
         };
         let text = serde_json::to_string(&recipe).unwrap();
+        assert!(!text.contains("weight"));
         let back: Recipe = serde_json::from_str(&text).unwrap();
         assert_eq!(back.input_color_space.as_deref(), Some("ProPhoto RGB"));
         assert_eq!(back.input_cctf_decoding, Some(false));

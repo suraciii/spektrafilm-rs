@@ -50,15 +50,7 @@ pub struct ProcessArgs {
         help_heading = "Multiple exposure"
     )]
     pub(crate) expose_ev: Vec<f64>,
-    /// Per-shot linear composition weight; repeat once per --expose.
-    #[arg(
-        long = "expose-weight",
-        value_name = "W",
-        action = clap::ArgAction::Append,
-        help_heading = "Multiple exposure"
-    )]
-    pub(crate) expose_weight: Vec<f64>,
-    /// Metering mode for the multiple-exposure stack.
+    /// Metering mode for the multiple-exposure stack; defaults to manual.
     #[arg(
         long = "multiple-exposure-meter",
         value_enum,
@@ -261,7 +253,6 @@ impl Default for ProcessArgs {
             input: None,
             expose: Vec::new(),
             expose_ev: Vec::new(),
-            expose_weight: Vec::new(),
             multiple_exposure_meter: None,
             output_crop: None,
             recipe: None,
@@ -629,6 +620,7 @@ pub fn run(mut args: ProcessArgs, command_matches: &ArgMatches) -> Result<()> {
     if !args.expose.is_empty() || args.recipe.is_some() {
         return crate::multiple_exposure::run(&args, &data);
     }
+    reject_multiple_only_flags(&args)?;
     if args.input.is_none() {
         bail!("input image is required unless --expose or --recipe is used");
     }
@@ -650,12 +642,27 @@ pub fn run(mut args: ProcessArgs, command_matches: &ArgMatches) -> Result<()> {
     run_with_data_dir(args, data)
 }
 
+fn reject_multiple_only_flags(args: &ProcessArgs) -> Result<()> {
+    if args.output_crop.is_some()
+        || args.preview
+        || args.recipe_out.is_some()
+        || !args.expose_ev.is_empty()
+        || args.multiple_exposure_meter.is_some()
+        || args.max_memory != "auto"
+        || args.preview_max_size != 1024
+    {
+        bail!("multiple-exposure flags require --expose or --recipe");
+    }
+    Ok(())
+}
+
 /// Run the process pipeline with an already-resolved data directory.
 /// Shared with the lab module, which cannot construct `ArgMatches`.
 pub(crate) fn run_with_data_dir(args: ProcessArgs, data: DataSelection) -> Result<()> {
     if !args.expose.is_empty() || args.recipe.is_some() {
         return crate::multiple_exposure::run(&args, &data);
     }
+    reject_multiple_only_flags(&args)?;
     run_with_capture(args, data, None)
 }
 
@@ -1718,8 +1725,19 @@ fn apply_channel_swap(profile: &mut profile::Profile, selection: &str) -> Result
 
 #[cfg(test)]
 mod runtime_prepare_error_tests {
-    use super::runtime_prepare_error;
+    use super::{ProcessArgs, reject_multiple_only_flags, runtime_prepare_error};
     use std::path::Path;
+
+    #[test]
+    fn multiple_only_flags_require_a_stack() {
+        let mut args = ProcessArgs::default();
+        assert!(reject_multiple_only_flags(&args).is_ok());
+        args.output_crop = Some("0,0,1,1".into());
+        assert!(reject_multiple_only_flags(&args).is_err());
+        args.output_crop = None;
+        args.preview = true;
+        assert!(reject_multiple_only_flags(&args).is_err());
+    }
 
     #[test]
     fn lut_preparation_does_not_name_spectral_profile_fallbacks() {

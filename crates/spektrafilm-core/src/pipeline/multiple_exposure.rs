@@ -7,9 +7,10 @@
 //! grain run exactly once.
 //!
 //! This is a proof-of-concept core API. It deliberately keeps the public
-//! surface small: weights are linear exposure multipliers, all shots share the
-//! pipeline's film/print/route parameters and working geometry, and each shot
-//! gets its own auto-exposure decision when `camera.auto_exposure` is enabled.
+//! surface small: each shot carries only its physical exposure offset; all
+//! shots share the pipeline's film/print/route parameters and working geometry,
+//! and each shot gets its own auto-exposure decision when
+//! `camera.auto_exposure` is enabled.
 
 use super::*;
 use spektrafilm_backend::{DeviceImage, Precision, RetainedImageMeta, SampleDomain};
@@ -38,9 +39,6 @@ pub struct ExposureShot<'a> {
     /// Physical per-shot exposure offset in stops, applied inside `expose`
     /// after AE and before optical effects. Negative = underexpose.
     pub exposure_ev: f64,
-    /// Linear composition weight, applied in the logE domain after `expose`.
-    /// `1.0` means the shot keeps its exposed value; `0.5` halves it.
-    pub weight: f64,
     /// Metering policy for this stack. All shots must agree.
     pub metering: ShotMetering,
 }
@@ -48,11 +46,16 @@ pub struct ExposureShot<'a> {
 /// A streaming multiple-exposure stack. Create it with
 /// [`Pipeline::begin_exposures`], add one shot at a time, then call `finish`.
 ///
-/// CPU stacks keep one f64 accumulator. GPU stacks keep one device-side
+/// CPU stacks keep one accumulator (`f64` in the `precision-f64` reference
+/// build, `f32` in the default product build). GPU stacks keep one device-side
 /// accumulator; the caller can drop each host image immediately after
 /// `add_shot`. This is the product streaming path; the slice APIs below are
 /// thin wrappers over it.
-pub enum ExposureAccumulator<'a> {
+pub struct ExposureAccumulator<'a> {
+    inner: AccumulatorKind<'a>,
+}
+
+enum AccumulatorKind<'a> {
     Cpu(CpuAccumulator<'a>),
     Gpu(GpuAccumulator<'a>),
 }
@@ -60,23 +63,18 @@ pub enum ExposureAccumulator<'a> {
 impl<'a> ExposureAccumulator<'a> {
     /// Add one shot. The image is borrowed only for this call; the caller may
     /// drop it before loading the next shot.
-    pub fn add_shot(
-        &mut self,
-        image: &ImageBuf,
-        exposure_ev: f64,
-        weight: f64,
-    ) -> Result<(), String> {
-        match self {
-            Self::Cpu(stack) => stack.add_shot(image, exposure_ev, weight),
-            Self::Gpu(stack) => stack.add_shot(image, exposure_ev, weight),
+    pub fn add_shot(&mut self, image: &ImageBuf, exposure_ev: f64) -> Result<(), String> {
+        match &mut self.inner {
+            AccumulatorKind::Cpu(stack) => stack.add_shot(image, exposure_ev),
+            AccumulatorKind::Gpu(stack) => stack.add_shot(image, exposure_ev),
         }
     }
 
     /// Finalize the stack and run develop/print/scan once.
     pub fn finish(self) -> Result<(ImageBuf, MultipleExposureReport), String> {
-        match self {
-            Self::Cpu(stack) => stack.finish(),
-            Self::Gpu(stack) => stack.finish(),
+        match self.inner {
+            AccumulatorKind::Cpu(stack) => stack.finish(),
+            AccumulatorKind::Gpu(stack) => stack.finish(),
         }
     }
 }
@@ -90,7 +88,6 @@ struct CpuAccumulator<'a> {
     height: u32,
     dims_set: bool,
     pitch: Option<f64>,
-    total_weight: f64,
     reports: Vec<ShotReport>,
     locked_ae: Option<f64>,
     shift: Option<f64>,
@@ -105,7 +102,6 @@ struct GpuAccumulator<'a> {
     width: u32,
     height: u32,
     dims_set: bool,
-    total_weight: f64,
     reports: Vec<ShotReport>,
     locked_ae: Option<f64>,
     accumulator: Option<DeviceImage>,
@@ -157,7 +153,6 @@ fn check_shot(
     dims_set: &mut bool,
     image: &ImageBuf,
     exposure_ev: f64,
-    weight: f64,
 ) -> Result<(), String> {
     if image.width == 0 || image.height == 0 {
         return Err("multiple exposure requires non-empty images".into());
@@ -171,9 +166,6 @@ fn check_shot(
             "multiple exposure shot is {}x{}, expected {}x{}",
             image.width, image.height, *width, *height
         ));
-    }
-    if !weight.is_finite() || weight < 0.0 {
-        return Err("multiple exposure weight must be finite and non-negative".into());
     }
     if !exposure_ev.is_finite() || !(-10.0..=10.0).contains(&exposure_ev) {
         return Err("multiple exposure exposure_ev must be finite and in [-10, 10]".into());
@@ -198,10 +190,7 @@ fn report_for(
         .iter()
         .map(|&value| to_f64(value))
         .fold(f64::NEG_INFINITY, f64::max);
-    let total_exposure: f64 = reports
-        .iter()
-        .map(|shot| shot.weight * 2.0_f64.powf(shot.final_ev))
-        .sum();
+    let total_exposure: f64 = reports.iter().map(|shot| 2.0_f64.powf(shot.final_ev)).sum();
     let highlight_log_e = film_shoulder_log_e(&pipeline.film);
     let mut highlight_pixels = 0usize;
     for pixel in combined.data.chunks_exact(3) {
@@ -228,14 +217,13 @@ fn report_for(
 }
 
 impl CpuAccumulator<'_> {
-    fn add_shot(&mut self, image: &ImageBuf, exposure_ev: f64, weight: f64) -> Result<(), String> {
+    fn add_shot(&mut self, image: &ImageBuf, exposure_ev: f64) -> Result<(), String> {
         check_shot(
             &mut self.width,
             &mut self.height,
             &mut self.dims_set,
             image,
             exposure_ev,
-            weight,
         )?;
         let index = self.reports.len();
         if self.values.is_empty() {
@@ -305,28 +293,20 @@ impl CpuAccumulator<'_> {
             Some(current) => current,
         };
         for (acc, &value) in self.values.iter_mut().zip(&log_e.data) {
-            *acc += (weight * 10.0_f64.powf(to_f64(value) - effective_shift)) as AccumulatorSample;
+            *acc += (10.0_f64.powf(to_f64(value) - effective_shift)) as AccumulatorSample;
         }
         self.reports.push(ShotReport {
             index,
             metered_ev: ae_ev,
             exposure_ev,
             final_ev,
-            weight,
         });
-        self.total_weight += weight;
-        if !self.total_weight.is_finite() {
-            return Err("multiple exposure requires a positive finite total weight".into());
-        }
         Ok(())
     }
 
     fn finish(self) -> Result<(ImageBuf, MultipleExposureReport), String> {
         if !self.dims_set || self.reports.is_empty() {
             return Err("multiple exposure requires at least one shot".into());
-        }
-        if !self.total_weight.is_finite() || self.total_weight <= 0.0 {
-            return Err("multiple exposure requires a positive finite total weight".into());
         }
         let shift = self.shift.ok_or("multiple exposure has no logE shift")?;
         let mut combined = ImageBuf::from_data(
@@ -365,14 +345,13 @@ impl CpuAccumulator<'_> {
 }
 
 impl GpuAccumulator<'_> {
-    fn add_shot(&mut self, image: &ImageBuf, exposure_ev: f64, weight: f64) -> Result<(), String> {
+    fn add_shot(&mut self, image: &ImageBuf, exposure_ev: f64) -> Result<(), String> {
         check_shot(
             &mut self.width,
             &mut self.height,
             &mut self.dims_set,
             image,
             exposure_ev,
-            weight,
         )?;
         let index = self.reports.len();
         let input_space =
@@ -420,7 +399,7 @@ impl GpuAccumulator<'_> {
         )?;
         self.accumulator = Some(
             self.backend
-                .log_e_accumulate(self.accumulator.as_ref(), &retained, weight as f32)?
+                .log_e_accumulate(self.accumulator.as_ref(), &retained)?
                 .ok_or_else(|| {
                     "selected GPU has no device logE composition; use --backend cpu".to_owned()
                 })?,
@@ -436,12 +415,7 @@ impl GpuAccumulator<'_> {
             metered_ev,
             exposure_ev,
             final_ev,
-            weight,
         });
-        self.total_weight += weight;
-        if !self.total_weight.is_finite() {
-            return Err("multiple exposure requires a positive finite total weight".into());
-        }
         Ok(())
     }
 
@@ -485,8 +459,9 @@ pub struct ShotReport {
     pub index: usize,
     pub metered_ev: f64,
     pub exposure_ev: f64,
+    /// Final relative exposure: `metered_ev + exposure_ev` when AE is active,
+    /// otherwise `exposure_ev`.
     pub final_ev: f64,
-    pub weight: f64,
 }
 
 /// Diagnostics for the composite stack.
@@ -515,35 +490,37 @@ impl Pipeline {
     ) -> Result<ExposureAccumulator<'a>, String> {
         validate_stack(self, collect)?;
         if backend.is_gpu() {
-            Ok(ExposureAccumulator::Gpu(GpuAccumulator {
-                pipeline: self,
-                backend,
-                metering,
-                collect,
-                width: 0,
-                height: 0,
-                dims_set: false,
-                total_weight: 0.0,
-                reports: Vec::new(),
-                locked_ae: None,
-                accumulator: None,
-            }))
+            Ok(ExposureAccumulator {
+                inner: AccumulatorKind::Gpu(GpuAccumulator {
+                    pipeline: self,
+                    backend,
+                    metering,
+                    collect,
+                    width: 0,
+                    height: 0,
+                    dims_set: false,
+                    reports: Vec::new(),
+                    locked_ae: None,
+                    accumulator: None,
+                }),
+            })
         } else {
-            Ok(ExposureAccumulator::Cpu(CpuAccumulator {
-                pipeline: self,
-                backend,
-                metering,
-                collect,
-                width: 0,
-                height: 0,
-                dims_set: false,
-                pitch: None,
-                total_weight: 0.0,
-                reports: Vec::new(),
-                locked_ae: None,
-                shift: None,
-                values: Vec::new(),
-            }))
+            Ok(ExposureAccumulator {
+                inner: AccumulatorKind::Cpu(CpuAccumulator {
+                    pipeline: self,
+                    backend,
+                    metering,
+                    collect,
+                    width: 0,
+                    height: 0,
+                    dims_set: false,
+                    pitch: None,
+                    reports: Vec::new(),
+                    locked_ae: None,
+                    shift: None,
+                    values: Vec::new(),
+                }),
+            })
         }
     }
 
@@ -556,7 +533,7 @@ impl Pipeline {
     /// collected at [`Tap::LogEFilm`]. The collected log10 exposures are added
     /// as linear exposure:
     ///
-    /// `L_c = log10(sum_i w_i * 10^(L_i))`
+    /// `L_c = log10(sum_i 10^(L_i))`
     ///
     /// using a per-pixel max shift for numerical stability.
     pub fn process_exposures(
@@ -585,7 +562,7 @@ impl Pipeline {
         }
         let mut stack = self.begin_exposures(backend, metering, collect)?;
         for shot in shots {
-            stack.add_shot(shot.image, shot.exposure_ev, shot.weight)?;
+            stack.add_shot(shot.image, shot.exposure_ev)?;
         }
         stack.finish()
     }
@@ -706,7 +683,6 @@ mod tests {
                 &[ExposureShot {
                     image: &source,
                     exposure_ev: 0.0,
-                    weight: 1.0,
                     metering: ShotMetering::Each,
                 }],
                 &CpuBackend,
@@ -717,7 +693,7 @@ mod tests {
     }
 
     #[test]
-    fn two_half_exposures_add_to_one_full_exposure() {
+    fn two_minus_one_exposures_add_to_one_full_exposure() {
         let pipeline = pipeline();
         let source = image(0.1);
         let full = pipeline
@@ -730,8 +706,7 @@ mod tests {
             .unwrap();
         let half = ExposureShot {
             image: &source,
-            exposure_ev: 0.0,
-            weight: 0.5,
+            exposure_ev: -1.0,
             metering: ShotMetering::Each,
         };
         let combined = pipeline
@@ -752,7 +727,7 @@ mod tests {
     }
 
     #[test]
-    fn zero_total_weight_and_bad_shots_fail() {
+    fn bad_shots_fail() {
         let pipeline = pipeline();
         let source = image(0.0);
         assert!(
@@ -760,8 +735,7 @@ mod tests {
                 .process_exposures(
                     &[ExposureShot {
                         image: &source,
-                        exposure_ev: 0.0,
-                        weight: 0.0,
+                        exposure_ev: 11.0,
                         metering: ShotMetering::Each
                     }],
                     &CpuBackend,
@@ -774,8 +748,7 @@ mod tests {
                 .process_exposures(
                     &[ExposureShot {
                         image: &source,
-                        exposure_ev: 0.0,
-                        weight: -1.0,
+                        exposure_ev: f64::NAN,
                         metering: ShotMetering::Each
                     }],
                     &CpuBackend,
@@ -791,31 +764,6 @@ mod tests {
     }
 
     #[test]
-    fn zero_weight_shot_is_allowed_when_a_later_shot_has_weight() {
-        let pipeline = pipeline();
-        let a = image(0.0);
-        let b = image(0.1);
-        let shots = [
-            ExposureShot {
-                image: &a,
-                exposure_ev: 0.0,
-                weight: 0.0,
-                metering: ShotMetering::Manual,
-            },
-            ExposureShot {
-                image: &b,
-                exposure_ev: 0.0,
-                weight: 1.0,
-                metering: ShotMetering::Manual,
-            },
-        ];
-        let out = pipeline
-            .process_exposures(&shots, &CpuBackend, Tap::CmyFilm)
-            .unwrap();
-        assert_eq!(out.width, a.width);
-    }
-
-    #[test]
     fn mismatched_dimensions_and_early_collection_fail() {
         let pipeline = pipeline();
         let a = image(0.0);
@@ -827,13 +775,11 @@ mod tests {
                         ExposureShot {
                             image: &a,
                             exposure_ev: 0.0,
-                            weight: 1.0,
                             metering: ShotMetering::Each
                         },
                         ExposureShot {
                             image: &b,
                             exposure_ev: 0.0,
-                            weight: 1.0,
                             metering: ShotMetering::Each
                         }
                     ],
@@ -848,7 +794,6 @@ mod tests {
                     &[ExposureShot {
                         image: &a,
                         exposure_ev: 0.0,
-                        weight: 1.0,
                         metering: ShotMetering::Each
                     }],
                     &CpuBackend,
@@ -866,13 +811,11 @@ mod tests {
             ExposureShot {
                 image: &a,
                 exposure_ev: -0.5,
-                weight: 1.0,
                 metering: ShotMetering::Manual,
             },
             ExposureShot {
                 image: &b,
                 exposure_ev: -1.5,
-                weight: 0.75,
                 metering: ShotMetering::Manual,
             },
         ];
@@ -883,9 +826,7 @@ mod tests {
             .begin_exposures(&CpuBackend, ShotMetering::Manual, Tap::CmyFilm)
             .unwrap();
         for shot in &shots {
-            stack
-                .add_shot(shot.image, shot.exposure_ev, shot.weight)
-                .unwrap();
+            stack.add_shot(shot.image, shot.exposure_ev).unwrap();
         }
         let (streamed, _) = stack.finish().unwrap();
         assert_eq!(batch.width, streamed.width);
@@ -900,7 +841,6 @@ mod tests {
         let base = ExposureShot {
             image: &source,
             exposure_ev: 0.0,
-            weight: 1.0,
             metering: ShotMetering::Manual,
         };
         let minus_one = ExposureShot {
@@ -933,7 +873,6 @@ mod tests {
         let shot = ExposureShot {
             image: &source,
             exposure_ev: -1.0,
-            weight: 1.0,
             metering: ShotMetering::Manual,
         };
         let (_, report) = pipeline
@@ -958,7 +897,6 @@ mod tests {
                 &[ExposureShot {
                     image: &source,
                     exposure_ev: 0.0,
-                    weight: 1.0,
                     metering: ShotMetering::Manual,
                 }],
                 &CpuBackend,
@@ -980,13 +918,11 @@ mod tests {
                         ExposureShot {
                             image: &source,
                             exposure_ev: 0.0,
-                            weight: 1.0,
                             metering: ShotMetering::Each,
                         },
                         ExposureShot {
                             image: &source,
                             exposure_ev: 0.0,
-                            weight: 1.0,
                             metering: ShotMetering::Manual,
                         },
                     ],
@@ -1008,7 +944,6 @@ mod tests {
                     &[ExposureShot {
                         image: &source,
                         exposure_ev: 0.0,
-                        weight: 1.0,
                         metering: ShotMetering::Manual,
                     }],
                     &CpuBackend,

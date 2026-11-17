@@ -126,13 +126,11 @@ fn fully_resident_gpu_matches_cpu_within_visual_gate() {
         ExposureShot {
             image: &a,
             exposure_ev: -1.0,
-            weight: 1.0,
             metering: ShotMetering::Manual,
         },
         ExposureShot {
             image: &b,
             exposure_ev: -1.0,
-            weight: 1.0,
             metering: ShotMetering::Manual,
         },
     ];

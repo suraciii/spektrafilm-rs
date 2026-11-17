@@ -1458,9 +1458,8 @@ impl ComputeBackend for WgpuBackend {
         &self,
         accumulator: Option<&spektrafilm_backend::DeviceImage>,
         shot: &spektrafilm_backend::DeviceImage,
-        weight: f32,
     ) -> Result<Option<spektrafilm_backend::DeviceImage>, String> {
-        self.accumulate_log_e(accumulator, shot, weight)
+        self.accumulate_log_e(accumulator, shot)
     }
 
     fn log_e_finalize(
