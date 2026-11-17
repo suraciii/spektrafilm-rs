@@ -15,7 +15,6 @@ precision-f64 = [
 [dependencies]
 spektrafilm-backend.workspace = true
 spektrafilm-math.workspace = true
-spektrafilm-gpu.workspace = true
 spektrafilm-model.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -33,6 +32,11 @@ zip = { version = "2", default-features = false, features = ["deflate"] }
 time = { version = "0.3", features = ["formatting"] }
 nalgebra = { version = "0.33", default-features = false, features = ["std"] }
 rustfft.workspace = true
+
+[dev-dependencies]
+# GPU parity tests require an adapter; production code depends only on the
+# compute backend abstraction.
+spektrafilm-gpu.workspace = true
 
 [build-dependencies]
 cc = "1"
