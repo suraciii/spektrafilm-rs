@@ -155,7 +155,7 @@ impl ScanMedium {
     }
 }
 
-/// Scan medium implied by a film profile: negative, positive (slide), or
+/// Scan medium implied by a Film profile: negative, positive (slide), or
 /// none when the stock is not a filming-stage film.
 pub(crate) fn scan_medium(film: &Profile) -> ScanMedium {
     if film.is_film() && film.is_negative() {
@@ -177,7 +177,7 @@ pub(crate) fn normalize_scanner_selections(params: &mut RuntimeParams, film_medi
     if !film_medium.positive_output_eligible(&params.workflow.route) {
         params.scanner.scan_output = "direct_scan".into();
     }
-    // A conversion style belongs to the negative interpretation, so leaving
+    // A Conversion style belongs to the negative interpretation, so leaving
     // that interpretation resets it to the frozen reference tone. Resetting
     // keeps the transition actioned; a non-neutral style with a direct scan
     // is a validation error the render would otherwise surface.
@@ -923,7 +923,7 @@ pub(crate) fn locate_row(ui: &Ui, path: &str, response: &egui::Response) {
 /// A value owned or ignored by an enable switch, named profile, or mode is
 /// hidden while that parent makes it ineffective. Search and Only modified
 /// reveal it, and `applicable_control` renders the actual reason: the same
-/// disclosure Film Format uses for its manual edge.
+/// disclosure Film format uses for its manual edge.
 pub(crate) fn parent_owned_visible(parent_active: bool, filter: &ControlFilter<'_>) -> bool {
     parent_active || filter.active()
 }
@@ -1002,7 +1002,7 @@ pub(crate) fn module_applicability(
     }
     // A module banner states that the whole module has no effect. Reporting
     // the first inactive control would promote an optional subfeature (the
-    // halation boost group, camera auto exposure, crop) to a module-wide
+    // halation boost group, camera Auto exposure, crop) to a module-wide
     // failure, so only a section whose every dependent control is inactive
     // qualifies. Switch rows own their module and are not evidence against it.
     let mut first_reason = None;
@@ -1387,7 +1387,7 @@ mod tests {
         assert!(has_text(&output, "BB4000"));
 
         // Clearing returns to inherit (None), which is a real unset value.
-        let flags = select(&ctx, &mut params, "BB4000", "inherit (film profile)");
+        let flags = select(&ctx, &mut params, "BB4000", "inherit (Film profile)");
         assert!(flags.runtime_changed);
         assert_eq!(params.camera.capture_illuminant, None);
         let (_, output) = camera_frame(&ctx, &mut params, vec![]);
@@ -1433,8 +1433,8 @@ mod tests {
                 },
             );
             assert!(
-                !has_text(&output, "capture illuminant"),
-                "{section} must not own the capture illuminant"
+                !has_text(&output, "Capture illuminant"),
+                "{section} must not own the Capture illuminant"
             );
             assert!(!flags.runtime_changed);
             assert_eq!(params.camera.capture_illuminant, None);

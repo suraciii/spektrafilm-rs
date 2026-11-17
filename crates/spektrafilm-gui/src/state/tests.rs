@@ -904,7 +904,7 @@ fn camera_mirror_is_validated_before_dedicated_diffusion_overrides_it() {
         assert_eq!(std::fs::read(&path).unwrap(), accepted_bytes);
     }
 
-    // Legacy null color filters normalize to the runtime's "none" value.
+    // Legacy null Color filters normalize to the runtime's "none" value.
     let state = GuiState::from_value(json!({
         "rust": {"version": 2},
         "camera": {"color_filter": null, "diffusion_filter": {"filter_family": "pro_mist"}},
@@ -997,7 +997,7 @@ fn valid_enlarger_mirror_precedence_survives_runtime_and_file_roundtrip() {
 #[test]
 fn camera_capture_illuminant_roundtrips_through_gui_state() {
     let factory = GuiState::factory();
-    // `None` is a real unset value (inherit the film profile reference
+    // `None` is a real unset value (inherit the Film profile reference
     // illuminant), not a missing field: it must survive the save/load
     // projection as an explicit null rather than collapse to a default.
     let mut params = factory.runtime_params().unwrap();

@@ -401,9 +401,9 @@ impl App {
                         self.print_name.clone()
                     };
                     let (changed, response) = if film {
-                        profile_combo(ui, "film", "film profile", &self.films, &mut selected)
+                        profile_combo(ui, "film", "Film profile", &self.films, &mut selected)
                     } else {
-                        profile_combo(ui, "paper", "print profile", &self.papers, &mut selected)
+                        profile_combo(ui, "paper", "Print profile", &self.papers, &mut selected)
                     };
                     controls::locate_row(ui, path, &response);
                     if changed {
@@ -959,7 +959,7 @@ impl App {
                                 egui::RichText::new(number)
                                     .monospace()
                                     .small()
-                                    .color(theme::ACCENT_DIM),
+                                    .color(theme::ACCENT_DIM_TEXT),
                             );
                         }
                         let response = controls::stage_disclosure(ui, stage.label(), open);

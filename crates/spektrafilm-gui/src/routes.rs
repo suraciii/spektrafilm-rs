@@ -24,12 +24,12 @@ pub(crate) mod vocabulary {
     pub(crate) const CCTF: &str = "color component transfer function";
 
     /// How the scanner surface is sequenced: the physical light source and
-    /// white reference, the output polarity, then the readout optics and
+    /// White reference, the output polarity, then the readout optics and
     /// digital sharpening.
-    pub(crate) const SCANNER_SEQUENCE: &str = "Scanner sequence: white reference, scan output \
+    pub(crate) const SCANNER_SEQUENCE: &str = "Scanner sequence: White reference, Scan output \
          polarity, then readout optics and digital sharpening.";
 
-    /// `white reference`: the scan calibration reference.
+    /// `White reference`: the scan calibration reference.
     pub(crate) const WHITE_REFERENCE: &str = "white reference";
 
     pub(crate) const WHITE_REFERENCE_HELP: &str = "Select the reference the scanner divides by \
@@ -40,24 +40,24 @@ pub(crate) mod vocabulary {
     pub(crate) const WHITE_REFERENCE_CLEAR_FILM_BASE: &str = "Clear film base";
     pub(crate) const WHITE_REFERENCE_READOUT_ILLUMINANT: &str = "Readout illuminant";
 
-    /// `conversion style`: the named positive-conversion tone of the
+    /// `Conversion style`: the named positive-conversion tone of the
     /// negative-to-positive interpretation.
-    pub(crate) const CONVERSION_STYLE: &str = "conversion style";
+    pub(crate) const CONVERSION_STYLE: &str = "Conversion style";
 
-    /// `conversion style` help, stating that it is declared data, that the
+    /// `Conversion style` help, stating that it is declared data, that the
     /// selector lists only what the user has installed, and that it applies
     /// only to the negative interpretation.
     pub(crate) const CONVERSION_STYLE_HELP: &str = "Named positive-conversion tone of the \
          negative-to-positive interpretation. `standard` is the built-in frozen tone; any other \
          name is a declared style you place in data/scan-styles/, never a fitted surface. The \
-         selector lists the styles found there. A style applies only with scan output set to \
+         selector lists the styles found there. A style applies only with Scan output set to \
          Negative to positive.";
 
     /// The automatic built-in style; aliases are never offered as choices.
     pub(crate) const CONVERSION_STYLE_STANDARD: &str = "standard";
 
-    /// `scan output`: native polarity or negative conversion.
-    pub(crate) const SCAN_OUTPUT: &str = "scan output";
+    /// `Scan output`: native polarity or negative conversion.
+    pub(crate) const SCAN_OUTPUT: &str = "Scan output";
 
     pub(crate) const SCAN_OUTPUT_HELP: &str = "Preserve medium polarity keeps the scanned \
          medium's native scan polarity: a negative film scan reads the negative image on the film, \
@@ -208,8 +208,8 @@ mod tests {
         // The explanatory line is explanatory only: it names the groups without
         // renaming a runtime concept or adding a second control taxonomy.
         for group in [
-            "white reference",
-            "scan output polarity",
+            "White reference",
+            "Scan output polarity",
             "readout optics",
             "digital sharpening",
         ] {

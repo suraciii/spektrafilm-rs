@@ -55,7 +55,7 @@ Open **Settings → General → 语言 / Language** (**设置 → 通用** in Si
 
 Language changes apply immediately and persist independently of photographic GUI state. Loading a state, applying a preset, restoring startup controls, and adjustment Undo/Redo do not change the language. Switching language does not rerender the photograph, alter numeric parsing, or clear existing editing and Export drafts. A preference write failure reports that the choice could not be saved while keeping it active for the current run.
 
-Control search accepts Chinese labels, English labels, and canonical paths in either language. For example, **胶片规格**, **Film Format**, **画面长边**, and `camera.film_format_mm` locate the same control. Brand and film-stock names, `35mm`/`120`/`4×5`, standard color-space names, paths, and user-authored preset text keep their original identities. Native file choosers follow the operating system's language.
+Control search accepts Chinese labels, English labels, and canonical paths in either language. For example, **胶片规格**, **Film format**, **画面长边**, and `camera.film_format_mm` locate the same control. Brand and film-stock names, `35mm`/`120`/`4×5`, standard color-space names, paths, and user-authored preset text keep their original identities. Native file choosers follow the operating system's language.
 
 Chinese fonts are bundled for offline use; no system font installation is required. The interface supports native input-method composition in editable text. The CLI, serialized state, recipes, and diagnostic reports retain their existing machine vocabulary. The product contract is [GUI language](../specs/gui-language/spec.md#interface-language).
 
@@ -85,13 +85,13 @@ GPU Preview and Scan reuse the current RGB input upload while its source, device
 
 Input color-space and CCTF controls reinterpret the accepted samples; they do not convert or rewrite the stored RAW carrier. Preview, Scan, input viewing, and Export use that accepted declaration, and queued exports keep the declaration captured at submission even if the active photograph changes.
 
-**Input and capture → Camera** keeps exposure compensation and automatic exposure directly visible. Its **Capture setup** (**拍摄设置**) group starts closed and contains Film Format, Frame Long Edge, metering, color filter, and capture illuminant. Search, Only modified, and canonical locators reveal the actual controls without changing values; Camera reset still owns the complete module.
+**Input and capture → Camera** keeps exposure compensation and automatic exposure directly visible. Its **Capture setup** (**拍摄设置**) group starts closed and contains Film format, Frame long edge, metering, color filter, and capture illuminant. Search, Only modified, and canonical locators reveal the actual controls without changing values; Camera reset still owns the complete module.
 
-### Film Format
+### Film format
 
-**Input and capture → Camera → Film Format** offers **35mm**, **120**, **4×5**, and **Custom**. These choices set the physical film scale for grain and other film effects. They do not crop, resize, or change the image's aspect ratio.
+**Input and capture → Camera → Film format** offers **35mm**, **120**, **4×5**, and **Custom**. These choices set the physical film scale for grain and other film effects. They do not crop, resize, or change the image's aspect ratio.
 
-**35mm** uses the standard 135-format exposed-image long edge of 36 mm; **120** uses a representative 56 mm; **4×5** uses 127 mm. **120** does not select a square crop. **Custom** reveals **Frame Long Edge** for precise millimeter input. Opening Custom alone does not change the photograph. A preset selection hides the manual edge; only Custom shows it.
+**35mm** uses the standard 135-format exposed-image long edge of 36 mm; **120** uses a representative 56 mm; **4×5** uses 127 mm. **120** does not select a square crop. **Custom** reveals **Frame long edge** for precise millimeter input. Opening Custom alone does not change the photograph. A preset selection hides the manual edge; only Custom shows it.
 
 Existing states and presets retain their exact `camera.film_format_mm` value. The factory default 36.0 is the **35mm** exposed-image specification, so a fresh session starts on a named preset without the manual edge. A legacy or otherwise unmatched value, including the nominal 35.0 value, displays as Custom. Selecting a specification is one reversible adjustment; the module reset keeps the existing factory default.
 
@@ -230,7 +230,7 @@ Accepting another source, completing RAW reprocessing, or loading a complete GUI
 
 ## Preview and Scan
 
-Preview automatically renders a bounded image using the configured preview long-edge limit and current runtime controls. Set **preview max size** in **Settings → General**; accepting a new limit automatically updates Preview. The General section's **reset** restores that limit to the factory value. The preview contract disables the spatial and stochastic effects it can safely omit, including lens blur, diffusion blur, physical grain, scanner blur, unsharp masking, and glare blur; Procedural and Fotufilm grain, halation, and diffusion filters remain active.
+Preview automatically renders a bounded image using the configured preview long-edge limit and current runtime controls. Set **Preview max size** in **Settings → General**; accepting a new limit automatically updates Preview. The General section's **reset** restores that limit to the factory value. The preview contract disables the spatial and stochastic effects it can safely omit, including lens blur, diffusion blur, physical grain, scanner blur, unsharp masking, and glare blur; Procedural and Fotufilm grain, halation, and diffusion filters remain active.
 
 Opening an image, applying a preset, moving a slider, or accepting numeric text refreshes **Modified** automatically. No Preview button, Update action, or auto-preview preference is required. Rendering waits while calibration or the existing modal guards block submission.
 
@@ -387,7 +387,7 @@ The GUI warns that JPEG remains lossy even at quality 100. 4:2:0 can soften colo
 
 ## Save retained output
 
-**SAVE** saves the latest retained floating output without rerendering. Its caption identifies Preview or Scan and the retained pixel dimensions, not the source or independent Export dimensions. If it no longer matches the accepted adjustments, an explicit confirmation offers to continue saving that frame or cancel before opening the file chooser. It uses **Output → Output → saving color space** and **saving cctf encoding**. The filename extension selects the format. `.jpg` is the default. Wait for automatic Preview or run Scan first when the file should reflect changed controls.
+**SAVE** saves the latest retained floating output without rerendering. Its caption identifies Preview or Scan and the retained pixel dimensions, not the source or independent Export dimensions. If it no longer matches the accepted adjustments, an explicit confirmation offers to continue saving that frame or cancel before opening the file chooser. It uses **Output → Output → Saving color space** and **Saving CCTF encoding**. The filename extension selects the format. `.jpg` is the default. Wait for automatic Preview or run Scan first when the file should reflect changed controls.
 
 - JPEG/PNG use 8-bit integer samples.
 - TIFF uses 16-bit integer samples with ZIP compression.

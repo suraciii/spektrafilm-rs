@@ -1701,7 +1701,7 @@ fn selection_tracks_the_same_source_pixels_across_rotated_cropped_preview_and_sc
     reveal_control(h, "workflow.route");
     choose(h, "Film route", "input");
     reveal_control(h, "action.rotate_cw");
-    click(h, "cw rotate");
+    click(h, "CW rotate");
     assert_eq!(h.state().input_rotation, 3);
     reveal_control(h, "io.crop");
     click(h, "crop");
@@ -1809,7 +1809,7 @@ fn footer_reset_view_restores_fit_zoom_and_zero_pan_after_zoom_and_drag() {
     pointer(h, center + Vec2::new(36.0, 24.0), false, 42.2);
     assert!((h.state().viewer.pan - Vec2::new(36.0, 24.0)).length() < 0.01);
 
-    click(h, "reset view");
+    click(h, "Reset view");
     assert_eq!(h.state().viewer.zoom_percent, None);
     assert_eq!(h.state().viewer.zoom, 1.0);
     assert_eq!(h.state().viewer.pan, Vec2::ZERO);
@@ -1827,7 +1827,7 @@ fn footer_reset_view_restores_fit_zoom_and_zero_pan_after_zoom_and_drag() {
     pointer(h, center + Vec2::new(12.0, 6.0), false, 44.2);
     let panned = Vec2::new(12.0, 6.0);
     assert!((h.state().viewer.pan - panned).length() < 0.01);
-    click(h, "fit");
+    click(h, "Fit");
     assert_eq!(h.state().viewer.zoom_percent, None);
     assert_eq!(h.state().viewer.zoom, 1.0);
     assert!((h.state().viewer.pan - panned).length() < 0.01);
@@ -1841,7 +1841,7 @@ fn footer_reset_view_restores_fit_zoom_and_zero_pan_after_zoom_and_drag() {
     );
     assert!((fitted.image_rect.center() - panned - baseline.image_rect.center()).length() < 0.01);
     // Reset view then recentres the pan as well.
-    click(h, "reset view");
+    click(h, "Reset view");
     assert_eq!(h.state().viewer.pan, Vec2::ZERO);
     assert_eq!(composed(h, 46.0).image_rect, baseline.image_rect);
 }

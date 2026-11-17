@@ -547,14 +547,14 @@ fn engine_controls(
             // The profile selector owns the profile fields. Keep it reachable
             // when a child-only search reveals one of those fields.
             let profile_visible = filter_matches(filter, "Procedural Grain Profiles")
-                || filter_matches(filter, "Processing Mode")
+                || filter_matches(filter, "Processing mode")
                 || filter_matches(filter, "Size (relative)")
                 || filter_matches(filter, "Shadows (%)")
                 || filter_matches(filter, "Midtones (%)")
                 || filter_matches(filter, "Highlights (%)")
                 || filter_matches(filter, "Chroma (%)")
                 || filter_matches(filter, "Film resolution (%)")
-                || filter_matches(filter, "Film Type")
+                || filter_matches(filter, "Film type")
                 || filter_matches(filter, "Procedural Advanced");
             let mut profile_changed = false;
             if profile_visible {
@@ -601,12 +601,12 @@ fn engine_controls(
                 ui,
                 params,
                 filter,
-                "Processing Mode",
+                "Processing mode",
                 "film_render.grain.procedural_mode",
                 |ui, params| {
                     enum_choice(
                         ui,
-                        "Processing Mode",
+                        "Processing mode",
                         &mut params.film_render.grain.procedural_mode,
                         &[
                             (ProceduralGrainMode::Analogue, "Analogue"),
@@ -682,12 +682,12 @@ fn engine_controls(
                         ui,
                         params,
                         filter,
-                        "Resolution Type",
+                        "Resolution type",
                         "film_render.grain.procedural_resolution_type",
                         |ui, params| {
                             enum_choice(
                                 ui,
-                                "Resolution Type",
+                                "Resolution type",
                                 &mut params.film_render.grain.procedural_resolution_type,
                                 &[(0, "Optical"), (1, "Fast")],
                                 "Post-scan Procedural appearance resolution method. It does not change scanner readout optics.",
@@ -710,18 +710,18 @@ fn engine_controls(
                     ui,
                     params,
                     filter,
-                    "Film Type",
+                    "Film type",
                     "film_render.grain.procedural_film_type",
                     |ui, params| {
                         enum_choice(
                             ui,
-                            "Film Type",
+                            "Film type",
                             &mut params.film_render.grain.procedural_film_type,
                             &[
                                 (ProceduralGrainFilmType::Negative, "Negative"),
                                 (ProceduralGrainFilmType::Positive, "Positive"),
                             ],
-                            "Retained Procedural Film Type metadata; rendering kernels do not consume it.",
+                            "Retained Procedural Film type metadata; rendering kernels do not consume it.",
                         )
                     },
                 );
@@ -1588,17 +1588,17 @@ mod tests {
         harness.run();
         assert!(
             harness
-                .get_by_role_and_label(egui::accesskit::Role::ComboBox, "Resolution Type")
+                .get_by_role_and_label(egui::accesskit::Role::ComboBox, "Resolution type")
                 .node()
                 .is_disabled()
         );
         harness.state_mut().query = "film type".into();
         harness.run();
-        let mut metadata = harness.query_all_by_label("Film Type");
+        let mut metadata = harness.query_all_by_label("Film type");
         assert!(
             metadata
                 .next()
-                .expect("stored Film Type metadata remains discoverable")
+                .expect("stored Film type metadata remains discoverable")
                 .node()
                 .is_disabled()
         );

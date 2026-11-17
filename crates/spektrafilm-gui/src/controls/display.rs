@@ -12,10 +12,10 @@ pub(crate) fn sections(
     filter: &mut ControlFilter<'_>,
 ) {
     if section == "Session"
-        && filter_matches(filter, "preview max size")
+        && filter_matches(filter, "Preview max size")
         && param_numeric(
             ui,
-            "preview max size",
+            "Preview max size",
             &mut params.settings.preview_max_size,
             "settings.preview_max_size",
             "max size of the long edge of the preview image in pixels",

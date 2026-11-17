@@ -18,7 +18,7 @@ pub(crate) fn sections(
             );
             ui.add_enabled_ui(reason.is_none(), |ui| {
                 if parent_selector_visible(filter, "simulate viewing glare") {
-                    flags.runtime_changed |= toggle(ui, "Simulate viewing glare", &mut params.print_render.glare.active, "Adds stray light from viewing or scanning a paper print: shadows lift and contrast drops. It does not change print exposure, chemistry, or developed density.");
+                    flags.runtime_changed |= toggle(ui, "Simulate viewing glare", &mut params.print_render.glare.active, "Adds stray light from viewing or scanning a paper print: shadows lift and contrast drops. It does not change Print exposure, chemistry, or developed density.");
                 }
                 if reason.is_none() {
                     let status = if !params.print_render.glare.active {

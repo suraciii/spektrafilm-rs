@@ -5,7 +5,7 @@ use serde_json::Value;
 use spektrafilm_core::params::ScanOperatorParams;
 use std::path::Path;
 
-/// The tracking choice already implied by the print exposure mode.
+/// The tracking choice already implied by the Print exposure mode.
 fn print_tracking_redundancy(
     tracking: PrintExposureEvTracking,
     mode: PrintExposureMode,
@@ -83,7 +83,7 @@ fn operator_controls(
         return;
     }
     if !active {
-        ui.label(localized(ui.ctx(), "Inactive: requires a negative film, an eligible negative-to-positive route and standard conversion style. Stored corrections are retained."));
+        ui.label(localized(ui.ctx(), "Inactive: requires a negative film, an eligible negative-to-positive route and standard Conversion style. Stored corrections are retained."));
     }
     let mut editor = ui.ctx().data_mut(|data| {
         data.remove_temp::<OperatorEditor>(operator_editor_id())
@@ -100,7 +100,7 @@ fn operator_controls(
         if filter_matches(filter, "Warmth") {
             param_numeric(ui, "Warmth", &mut operator.warmth_ev,
                 "scanner.operator.warmth_ev",
-                "Red-minus-blue exposure difference in EV. Positive values are warmer; negative values are cooler. This is not Kelvin and does not change capture white balance.");
+                "Red-minus-blue exposure difference in EV. Positive values are warmer; negative values are cooler. This is not Kelvin and does not change capture White balance.");
         }
         if filter_matches(filter, "Green–magenta tint") {
             param_numeric(ui, "Green–magenta tint", &mut operator.tint_ev,
@@ -214,21 +214,21 @@ pub(crate) fn sections(
     }
     if section == "Input" {
         section_header(ui, filter, "Input", |ui, filter| {
-            if filter_matches(filter, "input color space") {
+            if filter_matches(filter, "Input color space") {
                 flags.runtime_changed |= choice_tip(
                     ui,
-                    "input color space",
+                    "Input color space",
                     &mut params.io.input_color_space,
                     COLOR_SPACES,
                     "Color space of the input image, will be internally converted to sRGB and negative values clipped",
                 );
             }
-            if filter_matches(filter, "apply cctf decoding") {
+            if filter_matches(filter, "Apply CCTF decoding") {
                 flags.runtime_changed |= toggle(
                     ui,
-                    "apply cctf decoding",
+                    "Apply CCTF decoding",
                     &mut params.io.input_cctf_decoding,
-                    "Apply the inverse color component transfer function (CCTF) of the input color space, so the declared encoded samples become linear before the pipeline reads them.",
+                    "Apply the inverse color component transfer function (CCTF) of the Input color space, so the declared encoded samples become linear before the pipeline reads them.",
                 );
             }
         });
@@ -239,10 +239,10 @@ pub(crate) fn sections(
             if filter_matches(filter, "exposure compensation ev") {
                 flags.runtime_changed |= applicable_control(ui, params, "camera.exposure_compensation_ev", |ui, params| param_numeric(ui, "exposure compensation ev", &mut params.camera.exposure_compensation_ev, "camera.exposure_compensation_ev", "Add a bias to the auto-exposure of the camera."));
             }
-            if filter_matches(filter, "auto exposure") {
-                flags.runtime_changed |= applicable_control(ui, params, "camera.auto_exposure", |ui, params| toggle(ui, "auto exposure", &mut params.camera.auto_exposure, "Use the auto-exposure feature of the virtual camera."));
+            if filter_matches(filter, "Auto exposure") {
+                flags.runtime_changed |= applicable_control(ui, params, "camera.auto_exposure", |ui, params| toggle(ui, "Auto exposure", &mut params.camera.auto_exposure, "Use the auto-exposure feature of the virtual camera."));
             }
-            // Film Format is a camera-wide physical scale, not an auto-exposure
+            // Film format is a camera-wide physical scale, not an auto-exposure
             // sub-setting. Keep it at the module's first level so the Capture
             // setup disclosure cannot hide it.
             if filter_matches(filter, "Film Format") {
@@ -252,13 +252,13 @@ pub(crate) fn sections(
             if !capture_active {
                 ui.label(localized(ui.ctx(), "Capture illuminant inactive on this route; stored values are retained."));
             }
-            if filter_matches(filter, "auto exposure method") {
-                flags.runtime_changed |= applicable_control(ui, params, "camera.auto_exposure_method", |ui, params| choice_tip(ui, "auto exposure method", &mut params.camera.auto_exposure_method, &["center_weighted", "matrix", "multi_zone", "partial", "highlight_weighted", "median", "average"], "Metering method used by the virtual camera's auto-exposure."));
+            if filter_matches(filter, "Auto exposure method") {
+                flags.runtime_changed |= applicable_control(ui, params, "camera.auto_exposure_method", |ui, params| choice_tip(ui, "Auto exposure method", &mut params.camera.auto_exposure_method, &["center_weighted", "matrix", "multi_zone", "partial", "highlight_weighted", "median", "average"], "Metering method used by the virtual camera's auto-exposure."));
             }
-            if filter_matches(filter, "color filter") {
-                flags.runtime_changed |= applicable_control(ui, params, "camera.color_filter", |ui, params| choice_tip(ui, "color filter", &mut params.camera.color_filter, &["none", "hoya_x0", "hoya_x1", "hoya_y2", "hoya_ya3", "hoya_r1"], "Camera taking filter held in front of the lens. Its measured spectral transmittance multiplies the incoming light, so it both darkens and color-casts the exposure (e.g. Hoya Y2/YA3 yellow, R1 red, X0/X1 UV/haze). 'none' = no filter."));
+            if filter_matches(filter, "Color filter") {
+                flags.runtime_changed |= applicable_control(ui, params, "camera.color_filter", |ui, params| choice_tip(ui, "Color filter", &mut params.camera.color_filter, &["none", "hoya_x0", "hoya_x1", "hoya_y2", "hoya_ya3", "hoya_r1"], "Camera taking filter held in front of the lens. Its measured spectral transmittance multiplies the incoming light, so it both darkens and color-casts the exposure (e.g. Hoya Y2/YA3 yellow, R1 red, X0/X1 UV/haze). 'none' = no filter."));
             }
-            if filter_matches(filter, "capture illuminant") {
+            if filter_matches(filter, "Capture illuminant") {
                 ui.add_enabled_ui(capture_active, |ui| {
                     let help = crate::tr!(ui.ctx(), "controls.scanner.capture_illuminant_help", reference = capture_reference_illuminant);
                     let inherited = params.camera.capture_illuminant.is_none().then(|| {
@@ -266,9 +266,9 @@ pub(crate) fn sections(
                     });
                     flags.runtime_changed |= optional_choice_tip(
                         ui,
-                        "capture illuminant",
+                        "Capture illuminant",
                         &mut params.camera.capture_illuminant,
-                        "inherit (film profile)",
+                        "inherit (Film profile)",
                         inherited.as_deref(),
                         CAPTURE_ILLUMINANTS,
                         &help,
@@ -289,14 +289,14 @@ pub(crate) fn sections(
             ));
         }
         ui.add_enabled_ui(print_active, |ui| {
-            if filter_matches(filter, "print exposure") {
-                flags.runtime_changed |= param_numeric(ui, "print exposure", &mut params.enlarger.print_exposure, "enlarger.print_exposure", "Changes the exposure time set in the virtual enlarger");
+            if filter_matches(filter, "Print exposure") {
+                flags.runtime_changed |= param_numeric(ui, "Print exposure", &mut params.enlarger.print_exposure, "enlarger.print_exposure", "Changes the exposure time set in the virtual enlarger");
             }
-            if filter_matches(filter, "print exposure mode") {
-                flags.runtime_changed |= enum_choice(ui, "print exposure mode", &mut params.enlarger.print_exposure_mode, &[
+            if filter_matches(filter, "Print exposure mode") {
+                flags.runtime_changed |= enum_choice(ui, "Print exposure mode", &mut params.enlarger.print_exposure_mode, &[
                     (PrintExposureMode::Auto, "auto"),
                     (PrintExposureMode::Manual, "manual"),
-                ], "Auto normalizes the print exposure so the developed midgray density prints to the paper midgray and follows camera exposure compensation, like a color analyzer or minilab. Manual applies the print exposure time alone, like a test strip.");
+                ], "Auto normalizes the Print exposure so the developed midgray density prints to the paper midgray and follows camera exposure compensation, like a color analyzer or minilab. Manual applies the Print exposure time alone, like a test strip.");
             }
             if filter_matches(filter, "print y filter shift") {
                 flags.runtime_changed |= param_numeric(ui, "print y filter shift", &mut params.enlarger.y_filter_shift, "enlarger.y_filter_shift", "Y filter shift of the color enlarger from a neutral position, in Kodak CC units");
@@ -304,21 +304,21 @@ pub(crate) fn sections(
             if filter_matches(filter, "print m filter shift") {
                 flags.runtime_changed |= param_numeric(ui, "print m filter shift", &mut params.enlarger.m_filter_shift, "enlarger.m_filter_shift", "M filter shift of the color enlarger from a neutral position, in Kodak CC units");
             }
-            if filter_matches(filter, "print illuminant") {
-                flags.runtime_changed |= choice_tip_experimental(ui, "print illuminant", &mut params.enlarger.illuminant, &["TH-KG3", "TH-KG3-L", "K75P", "T", "D50", "D55", "D65", "A", "BB3200", "BB5000", "LED-B3", "LED-B5", "LED-RGB1", "LED-V2", "FL2"], "Print illuminant to simulate. Default is the bundled TH-KG3.");
+            if filter_matches(filter, "Print illuminant") {
+                flags.runtime_changed |= choice_tip_experimental(ui, "Print illuminant", &mut params.enlarger.illuminant, &["TH-KG3", "TH-KG3-L", "K75P", "T", "D50", "D55", "D65", "A", "BB3200", "BB5000", "LED-B3", "LED-B5", "LED-RGB1", "LED-V2", "FL2"], "Print illuminant to simulate. Default is the bundled TH-KG3.");
             }
-            if filter_matches(filter, "print exposure ev tracking") {
+            if filter_matches(filter, "Print exposure ev tracking") {
                 let mode = params.enlarger.print_exposure_mode;
                 flags.runtime_changed |= enum_choice_with_disabled(
                     ui,
-                    "print exposure ev tracking",
+                    "Print exposure ev tracking",
                     &mut params.settings.print_exposure_ev_tracking,
                     &[
                         (PrintExposureEvTracking::FollowMode, "follow_mode"),
                         (PrintExposureEvTracking::Never, "never"),
                         (PrintExposureEvTracking::Always, "always"),
                     ],
-                    "How the print exposure follows camera exposure compensation. follow_mode tracks it in auto mode and does not track it in manual; never disables tracking in auto; always applies the relative compensation factor in manual. The choice equivalent to the current mode is disabled.",
+                    "How the Print exposure follows camera exposure compensation. follow_mode tracks it in auto mode and does not track it in manual; never disables tracking in auto; always applies the relative compensation factor in manual. The choice equivalent to the current mode is disabled.",
                     |tracking| print_tracking_redundancy(*tracking, mode),
                 );
                 if let Some(reason) =
@@ -398,7 +398,7 @@ pub(crate) fn sections(
                 flags.runtime_changed = true;
                 normalize_scanner_selections(params, film_medium);
             }
-            // A conversion style is a property of the negative interpretation,
+            // A Conversion style is a property of the negative interpretation,
             // so it is offered only while that interpretation is selected.
             if filter_matches(filter, vocabulary::CONVERSION_STYLE) {
                 let conversion_active = positive_route && params.scanner.scan_output == "negative_to_positive";
@@ -430,16 +430,16 @@ pub(crate) fn sections(
         });
     }
     if section == "Import Raw" {
-        if filter_matches(filter, "white balance") {
+        if filter_matches(filter, "White balance") {
             extra_choice(
                 ui,
                 extras,
                 "load_raw",
                 "white_balance",
-                "white balance",
+                "White balance",
                 "daylight",
                 &["as_shot", "daylight", "tungsten", "custom"],
-                "Leave at daylight (D65): it is the colorimetric reference the rest of the pipeline assumes, and should not be changed. Do not use it to neutralize a colour cast — fix white balance downstream with the enlarger filters instead. (custom exposes temperature/tint for special cases.)",
+                "Leave at daylight (D65): it is the colorimetric reference the rest of the pipeline assumes, and should not be changed. Do not use it to neutralize a colour cast — fix White balance downstream with the enlarger filters instead. (custom exposes temperature/tint for special cases.)",
             );
         }
         if filter_matches(filter, "temperature") {
@@ -451,7 +451,7 @@ pub(crate) fn sections(
                 "temperature",
                 5500.0,
                 "extras.load_raw.temperature",
-                "Temperature in Kelvin for the custom whitebalance, not used for the other white balance settings",
+                "Temperature in Kelvin for the custom whitebalance, not used for the other White balance settings",
             );
         }
         if filter_matches(filter, "tint") {
@@ -463,18 +463,18 @@ pub(crate) fn sections(
                 "tint",
                 1.0,
                 "extras.load_raw.tint",
-                "Tint value for the custom white balance, not used for the other white balance settings",
+                "Tint value for the custom White balance, not used for the other White balance settings",
             );
         }
-        if filter_matches(filter, "lens correction") {
+        if filter_matches(filter, "Lens correction") {
             extra_bool_tip(
                 ui,
                 extras,
                 "load_raw",
                 "lens_correction",
-                "lens correction",
+                "Lens correction",
                 false,
-                "Apply lens corrections",
+                "Apply Lens corrections",
             );
         }
     }
@@ -588,7 +588,7 @@ fn film_format<T: egui::emath::Numeric>(ui: &mut Ui, value: &mut T, reveal_edge:
         }
     }
     if custom || reveal_edge || (located_edge && !picked_format) {
-        changed |= param_numeric(ui, "Frame Long Edge", value, PATH, HELP);
+        changed |= param_numeric(ui, "Frame long edge", value, PATH, HELP);
     }
     ui.ctx().data_mut(|data| {
         if picked_format {
@@ -615,7 +615,7 @@ fn preflash_controls(
     if !filter_matches_any(
         filter,
         &[
-            "preflash exposure",
+            "Preflash exposure",
             "preflash y filter shift",
             "preflash m filter shift",
         ],
@@ -632,8 +632,8 @@ fn preflash_controls(
         ));
     }
     ui.add_enabled_ui(active, |ui| {
-        if parent_selector_visible(filter, "preflash exposure") {
-            flags.runtime_changed |= param_numeric(ui, "preflash exposure", &mut params.enlarger.preflash_exposure, "enlarger.preflash_exposure", "Linear multiplier of the integrated spectral flash, not EV. Zero disables flash and retains its filters. For negative-to-photographic-paper printing, flash can bring weak highlight exposure differences into a responsive part of the paper curve; it cannot recover absent detail. Excess may lower paper white, add fog, alter midtones and change color. Other print materials retain their own polarity.");
+        if parent_selector_visible(filter, "Preflash exposure") {
+            flags.runtime_changed |= param_numeric(ui, "Preflash exposure", &mut params.enlarger.preflash_exposure, "enlarger.preflash_exposure", "Linear multiplier of the integrated spectral flash, not EV. Zero disables flash and retains its filters. For negative-to-photographic-paper printing, flash can bring weak highlight exposure differences into a responsive part of the paper curve; it cannot recover absent detail. Excess may lower paper white, add fog, alter midtones and change color. Other print materials retain their own polarity.");
         }
         let flash_on = params.enlarger.preflash_exposure > 0.0;
         if filter_matches(filter, "preflash y filter shift")

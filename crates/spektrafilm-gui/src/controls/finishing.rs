@@ -45,7 +45,7 @@ pub(crate) fn sections(
             "Tone & Color warmth",
             "finishing.warmth",
             &mut finishing.warmth,
-            "Shift along a fixed warm–cool direction weighted by tone and chroma. This is not Kelvin or capture white balance.",
+            "Shift along a fixed warm–cool direction weighted by tone and chroma. This is not Kelvin or capture White balance.",
         ),
         (
             "Saturation",

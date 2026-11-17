@@ -94,10 +94,10 @@ fn camera_rows_follow_route_without_losing_values() {
     params.camera.exposure_compensation_ev = 0.75;
     params.camera.film_format_mm = 50.0;
     let mut harness = Harness::new_ui_state(camera, params);
-    // Film Format is a Camera-level row, not a child of the collapsed Capture
+    // Film format is a Camera-level row, not a child of the collapsed Capture
     // setup disclosure. A custom edge is visible and editable immediately.
-    assert!(harness.query_by_label("Frame Long Edge").is_some());
-    assert!(!harness.get_by_label("Frame Long Edge").node().is_disabled());
+    assert!(harness.query_by_label("Frame long edge").is_some());
+    assert!(!harness.get_by_label("Frame long edge").node().is_disabled());
     assert!(
         harness
             .get_by_label("Exposure compensation")
@@ -696,7 +696,7 @@ mod headless {
         assert_eq!(input.role(), egui::accesskit::Role::TextInput);
         assert_eq!(
             harness
-                .get_by_role_and_label(egui::accesskit::Role::ComboBox, "scan output")
+                .get_by_role_and_label(egui::accesskit::Role::ComboBox, "Scan output")
                 .role(),
             egui::accesskit::Role::ComboBox
         );
@@ -845,15 +845,15 @@ mod layout_snapshots {
             assert_eq!(image.width(), (size.x * dpi) as u32);
             assert_eq!(image.height(), (size.y * dpi) as u32);
             let labels = [
-                "scan output",
-                "conversion style",
+                "Scan output",
+                "Conversion style",
                 "Lens blur (readout optics)",
                 "Unsharp mask (digital sharpening) sigma",
                 "Unsharp mask (digital sharpening) amount",
             ];
             let mut bounds = Vec::new();
             for label in labels {
-                let node = if matches!(label, "scan output" | "conversion style") {
+                let node = if matches!(label, "Scan output" | "Conversion style") {
                     harness.get_by_role_and_label(egui::accesskit::Role::ComboBox, label)
                 } else {
                     harness.get_by_label(label)
@@ -961,13 +961,13 @@ mod roles {
         let mut params = scanner_params();
         params.camera.auto_exposure = false;
         let mut harness = Harness::new_ui_state(camera, params);
-        let node = harness.get_by_label("auto exposure");
+        let node = harness.get_by_label("Auto exposure");
         assert_eq!(node.role(), egui::accesskit::Role::Switch);
         assert_eq!(node.toggled(), Some(egui::accesskit::Toggled::False));
-        harness.get_by_label("auto exposure").simulate_click();
+        harness.get_by_label("Auto exposure").simulate_click();
         harness.run();
         assert_eq!(
-            harness.get_by_label("auto exposure").toggled(),
+            harness.get_by_label("Auto exposure").toggled(),
             Some(egui::accesskit::Toggled::True)
         );
     }
@@ -989,7 +989,7 @@ mod row_layout {
         harness.run();
         // The label sits left of its editor and shares its vertical band, so
         // the pair reads as one row rather than a stacked pair.
-        let rows = ["Frame Long Edge", "Exposure compensation"];
+        let rows = ["Frame long edge", "Exposure compensation"];
         let mut value_rights: Vec<f64> = Vec::new();
         for label in rows {
             let node = harness.get_by_label(label);
@@ -1013,7 +1013,7 @@ mod row_layout {
         );
     }
 
-    /// The preflash exposure row carries the longest unit in the vocabulary, so
+    /// The Preflash exposure row carries the longest unit in the vocabulary, so
     /// its abbreviated display suffix is what keeps the row on one line inside
     /// the fixed-width panel. A unit that wraps the label breaks the single-line
     /// row rhythm the spec requires.
@@ -1022,7 +1022,7 @@ mod row_layout {
         let mut params = scanner_params();
         params.workflow.route = "input > film > print".into();
         let harness = Harness::new_ui_state(preflash, params);
-        let node = harness.get_by_label("preflash exposure");
+        let node = harness.get_by_label("Preflash exposure");
         let rect = node.raw_bounds().expect("row editor has no bounds");
         let label_rect = node
             .labelled_by()
@@ -1033,7 +1033,7 @@ mod row_layout {
         let shared = label_rect.y0 < rect.y1 && rect.y0 < label_rect.y1;
         assert!(
             shared,
-            "preflash exposure: label and value must share one line \
+            "Preflash exposure: label and value must share one line \
              (label {label_rect:?}, value {rect:?})"
         );
     }

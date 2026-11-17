@@ -97,7 +97,7 @@ fn loaded_state_reports_scanner_normalization_in_header_status() {
     reveal_control(h, "workflow.route");
     choose(h, "Film route", "input > film > scan");
     reveal_control(h, "scanner.scan_output");
-    choose(h, "scan output", "Negative to positive");
+    choose(h, "Scan output", "Negative to positive");
     assert_eq!(h.state().params.scanner.scan_output, "negative_to_positive");
     // A route that cannot carry the negative polarity resets it, and the
     // header status names the control that was normalized.
@@ -113,7 +113,7 @@ fn loaded_state_reports_scanner_normalization_in_header_status() {
         h.state().status
     );
     assert!(
-        h.state().status.to_string().contains("scan output"),
+        h.state().status.to_string().contains("Scan output"),
         "{}",
         h.state().status
     );
@@ -202,13 +202,13 @@ fn workflow_modes_keep_stage_navigation_visible_and_mark_inactive_stages() {
     // A module in a stage that remains active in both workflows keeps its
     // disclosure state across the real workflow selector.
     navigate_stage(h, controls::Stage::Input);
-    if h.query_by_role_and_label(egui::accesskit::Role::ComboBox, "input color space")
+    if h.query_by_role_and_label(egui::accesskit::Role::ComboBox, "Input color space")
         .is_none()
     {
         click(h, "Input");
     }
     assert!(
-        h.query_by_role_and_label(egui::accesskit::Role::ComboBox, "input color space")
+        h.query_by_role_and_label(egui::accesskit::Role::ComboBox, "Input color space")
             .is_some()
     );
     navigate_stage(h, controls::Stage::Look);
@@ -236,7 +236,7 @@ fn workflow_modes_keep_stage_navigation_visible_and_mark_inactive_stages() {
     assert!(h.query_by_label("Print").is_some());
     navigate_stage(h, controls::Stage::Input);
     assert!(
-        h.query_by_role_and_label(egui::accesskit::Role::ComboBox, "input color space")
+        h.query_by_role_and_label(egui::accesskit::Role::ComboBox, "Input color space")
             .is_some(),
         "an always-active module must keep its disclosure state across a workflow switch"
     );
@@ -264,7 +264,7 @@ fn workflow_modes_keep_stage_navigation_visible_and_mark_inactive_stages() {
     search_controls(h, "Film material");
     assert!(h.query_by_label("Film material").is_some());
     assert!(
-        h.get_by_role_and_label(egui::accesskit::Role::ComboBox, "film profile")
+        h.get_by_role_and_label(egui::accesskit::Role::ComboBox, "Film profile")
             .node()
             .is_disabled()
     );

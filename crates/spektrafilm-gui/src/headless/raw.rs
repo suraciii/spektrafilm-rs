@@ -78,10 +78,10 @@ fn retained_raw_interpretation_matches_cpu_and_queued_exports_freeze_the_declara
     .enumerate()
     {
         reveal_control(&mut h, "io.input_color_space");
-        choose(&mut h, "input color space", space);
+        choose(&mut h, "Input color space", space);
         if h.state().params.io.input_cctf_decoding != encoded {
             reveal_control(&mut h, "io.input_cctf_decoding");
-            click(&mut h, "apply cctf decoding");
+            click(&mut h, "Apply CCTF decoding");
         }
         assert_eq!(h.state().params.io.input_color_space, space);
         assert_eq!(h.state().params.io.input_cctf_decoding, encoded);

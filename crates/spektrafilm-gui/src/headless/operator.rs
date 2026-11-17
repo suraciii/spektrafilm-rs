@@ -9,7 +9,7 @@ fn standard_operator(h: &mut Harness<'_, App>) {
     choose(h, "Film route", "input > film > scan");
     assert_eq!(h.state().film_medium, controls::ScanMedium::Negative);
     reveal_control(h, "scanner.scan_output");
-    choose(h, "scan output", "Negative to positive");
+    choose(h, "Scan output", "Negative to positive");
     assert_eq!(h.state().params.scanner.conversion_style, "standard");
     // The full-frame preview contract belongs to the experimental setup: only
     // the setup needs the complete frame, so opt in where a test asserts it.
@@ -436,7 +436,7 @@ fn inactive_operator_values_remain_stored_while_rendering_neutrally() {
     let corrected = preview(h);
 
     reveal_control(h, "scanner.scan_output");
-    choose(h, "scan output", "Preserve medium polarity");
+    choose(h, "Scan output", "Preserve medium polarity");
     operator_controls(h);
     assert!(h.get_by_label("Finished exposure").node().is_disabled());
     assert!(h.get_by_label("Restore automatic").node().is_disabled());
@@ -461,7 +461,7 @@ fn inactive_operator_values_remain_stored_while_rendering_neutrally() {
     operator_controls(h);
     click(h, "Restore automatic");
     reveal_control(h, "scanner.scan_output");
-    choose(h, "scan output", "Preserve medium polarity");
+    choose(h, "Scan output", "Preserve medium polarity");
     let neutral = preview(h);
     assert_eq!(inactive.data, neutral.data);
 }

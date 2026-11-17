@@ -229,9 +229,9 @@ fn pending_raw_drafts_return_per_entry_without_becoming_accepted_record_settings
     let accepted = h.state().capture_photograph_settings().unwrap();
     let pixels = h.state().image.clone().unwrap();
     reveal_control(h, "extras.load_raw.white_balance");
-    choose(h, "white balance", "custom");
+    choose(h, "White balance", "custom");
     reveal_control(h, "extras.load_raw.temperature");
-    edit(h, "temperature", "4200");
+    edit(h, "Temperature", "4200");
     h.get_by_label("Search controls").focus();
     h.run_steps(3);
     let draft = h.state().gui_state.sections["load_raw"].clone();
@@ -256,7 +256,7 @@ fn pending_raw_drafts_return_per_entry_without_becoming_accepted_record_settings
     );
     assert_ne!(h.state().gui_state.sections["load_raw"], draft);
     reveal_control(h, "extras.load_raw.white_balance");
-    choose(h, "white balance", "tungsten");
+    choose(h, "White balance", "tungsten");
     h.get_by_label("Search controls").focus();
     h.run_steps(3);
     let second_draft = h.state().gui_state.sections["load_raw"].clone();
@@ -297,9 +297,9 @@ fn raw_options_draft_carrier_is_restored_independently_for_each_work_context() {
     let h = &mut s.harness;
     h.state_mut().add_work_paths(vec![second.clone()]);
     reveal_control(h, "extras.load_raw.white_balance");
-    choose(h, "white balance", "custom");
+    choose(h, "White balance", "custom");
     reveal_control(h, "extras.load_raw.temperature");
-    edit(h, "temperature", "4200");
+    edit(h, "Temperature", "4200");
     h.get_by_label("Search controls").focus();
     h.run_steps(3);
     let first_draft = h.state().gui_state.sections["load_raw"].clone();
@@ -310,7 +310,7 @@ fn raw_options_draft_carrier_is_restored_independently_for_each_work_context() {
     h.run_steps(2);
     assert_ne!(h.state().gui_state.sections["load_raw"], first_draft);
     reveal_control(h, "extras.load_raw.white_balance");
-    choose(h, "white balance", "tungsten");
+    choose(h, "White balance", "tungsten");
     h.get_by_label("Search controls").focus();
     h.run_steps(3);
     let second_draft = h.state().gui_state.sections["load_raw"].clone();

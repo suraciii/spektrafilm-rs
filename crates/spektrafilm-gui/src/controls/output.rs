@@ -32,21 +32,21 @@ pub(crate) fn sections(
             .small()
             .color(theme::FG_MUTED),
         );
-        if filter_matches(filter, "output color space") {
+        if filter_matches(filter, "Output color space") {
             flags.runtime_changed |= choice_tip(
                 ui,
-                "output color space",
+                "Output color space",
                 &mut params.io.output_color_space,
                 COLOR_SPACES,
-                "Color space and transfer encoding of the runtime digital output. It describes what the simulation produces, which is distinct from the saving color space used for the file and from the display transform, which is viewer-only.",
+                "Color space and transfer encoding of the runtime digital output. It describes what the simulation produces, which is distinct from the Saving color space used for the file and from the display transform, which is viewer-only.",
             );
         }
-        if filter_matches(filter, "output cctf encoding") {
+        if filter_matches(filter, "Output CCTF encoding") {
             flags.runtime_changed |= toggle(
                 ui,
-                "output cctf encoding",
+                "Output CCTF encoding",
                 &mut params.io.output_cctf_encoding,
-                "Apply the output color space transfer encoding to runtime output. This is independent of retained Save encoding and display presentation.",
+                "Apply the Output color space transfer encoding to runtime output. This is independent of retained Save encoding and display presentation.",
             );
         }
         if filter_matches(filter, "saving color space") {
@@ -58,10 +58,10 @@ pub(crate) fn sections(
                 "saving color space",
                 "sRGB",
                 COLOR_SPACES,
-                "Color space of the file Save writes. Save writes the retained output in this space without rerendering; Export renders and writes independently with its own saving color space.",
+                "Color space of the file Save writes. Save writes the retained output in this space without rerendering; Export renders and writes independently with its own Saving color space.",
             );
         }
-        if filter_matches(filter, "saving cctf encoding") {
+        if filter_matches(filter, "Saving CCTF encoding") {
             let help = crate::tr!(
                 ui.ctx(),
                 "controls.output.saving_cctf_help",
@@ -72,7 +72,7 @@ pub(crate) fn sections(
                 extras,
                 "simulation",
                 "saving_cctf_encoding",
-                "saving cctf encoding",
+                "Saving CCTF encoding",
                 true,
                 &help,
             );

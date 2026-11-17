@@ -235,7 +235,7 @@ The film Tone & Color group remains owned by Scan and becomes inactive in LUT an
 
 Rotation is a source operation and MUST NOT be offered as viewer-only pan or zoom. A read-only summary or action that locates its owner MAY appear elsewhere; a second editable copy MUST NOT.
 
-An expanded Camera module MUST keep exposure compensation and automatic exposure directly visible. Film Format, Frame Long Edge, metering method, color filter, and capture illuminant MUST belong to a nested **Capture setup** group within Camera.
+An expanded Camera module MUST keep exposure compensation and automatic exposure directly visible. Film format, Frame long edge, metering method, color filter, and capture illuminant MUST belong to a nested **Capture setup** group within Camera.
 
 Capture setup MUST start collapsed in a fresh disclosure session. This grouping MUST NOT change Camera ownership, parameter identity, or the Camera module reset scope.
 
@@ -380,7 +380,7 @@ The header actions MUST name the next undoable or redoable operation and be disa
 
 ## Film format selection
 
-The Camera module MUST expose one **Film Format** selector with **35mm**, **120**, **4×5**, and **Custom**. These are specification labels, not numeric roll-width values. The three presets MUST set `camera.film_format_mm` to exposed-image long edges of 36, 56, and 127 mm respectively.
+The Camera module MUST expose one **Film format** selector with **35mm**, **120**, **4×5**, and **Custom**. These are specification labels, not numeric roll-width values. The three presets MUST set `camera.film_format_mm` to exposed-image long edges of 36, 56, and 127 mm respectively.
 
 The 35 mm film width is not the frame long edge; the factory default is the 36 mm 135-format value, and a legacy nominal 35.0 mm value displays as Custom.
 
@@ -388,7 +388,7 @@ The 120 choice uses a fixed representative 56 mm scale.
 
 A specification selection MUST change only that canonical physical-scale value and its edit provenance. It MUST NOT change crop, aspect ratio, output dimensions, or other effect controls. It MUST form one undoable adjustment.
 
-Custom MUST expose the existing numeric editor as **Frame Long Edge**, in millimeters. Revealing Custom MUST NOT change the value or create history. External values that do not exactly match a named specification MUST display as Custom.
+Custom MUST expose the existing numeric editor as **Frame long edge**, in millimeters. Revealing Custom MUST NOT change the value or create history. External values that do not exactly match a named specification MUST display as Custom.
 
 Loading a state or preset MUST NOT round a value to a specification or migrate the existing factory value. No additional film-format field MUST be serialized.
 

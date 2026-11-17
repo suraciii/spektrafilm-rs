@@ -396,15 +396,15 @@ impl App {
                                 "Display" => {
                                     self.display_profile_controls(ui);
                                     let transform = controls::toggle_row(ui,
-                                        "use display transform",
+                                        "Use display transform",
                                         &mut self.viewer.settings.use_display_transform,
                                         "Viewer-only display conversion; does not change retained or written pixels.",
                                     );
                                     controls::locate_row(ui, "extras.display.use_display_transform", &transform);
-                                    let canvas = controls::toggle_row(ui, "gray 18% canvas",
-                                        &mut self.viewer.settings.gray_18_canvas, "gray 18% canvas");
+                                    let canvas = controls::toggle_row(ui, "Gray 18% canvas",
+                                        &mut self.viewer.settings.gray_18_canvas, "Gray 18% canvas");
                                     controls::locate_row(ui, "extras.display.gray_18_canvas", &canvas);
-                                    controls::param_numeric(ui, "white padding",
+                                    controls::param_numeric(ui, "White padding",
                                         &mut self.viewer.settings.white_padding,
                                         "extras.display.white_padding",
                                         "Viewer-only white border, as a fraction of the image long edge.");

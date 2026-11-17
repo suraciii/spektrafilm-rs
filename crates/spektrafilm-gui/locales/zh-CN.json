@@ -980,7 +980,7 @@
   "surfaces.viewer.gestures_help": "查看器手势帮助",
   "surfaces.export.title": "导出选项",
   "surfaces.export.section_file": "文件与容器",
-  "surfaces.export.section_color": "颜色与计算",
+  "surfaces.export.section_color": "颜色与编码",
   "surfaces.export.section_summary": "摘要",
   "surfaces.export.depth_fixed": "位深：8 bit——JPEG 和 PNG 要求",
   "surfaces.export.jpeg_warning": "有损压缩。若要保留细节，请使用 PNG、TIFF 或 EXR。",

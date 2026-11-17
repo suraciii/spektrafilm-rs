@@ -441,7 +441,7 @@ fn rotation_save_and_export_preserve_pixel_positions_and_normalize_metadata() {
         .clone();
     let baseline = scan(h);
     reveal_control(h, "action.rotate_cw");
-    click(h, "cw rotate");
+    click(h, "CW rotate");
     assert_eq!(h.state().input_rotation, 3);
     // Orientation is deferred metadata: the retained source keeps its pixels
     // and only the presentation source is turned.
@@ -510,7 +510,7 @@ fn rotation_save_and_export_preserve_pixel_positions_and_normalize_metadata() {
     }
     assert_rotated_metadata(&exported, (2, 4));
     reveal_control(h, "action.rotate_ccw");
-    click(h, "ccw rotate");
+    click(h, "CCW rotate");
     assert_eq!(h.state().input_rotation, 0);
     assert_eq!(
         h.state().image.as_ref().unwrap().host_image().unwrap().data,

@@ -487,7 +487,7 @@ impl Viewer {
         self.zoom_percent = None;
     }
     /// Set an exact source-pixel zoom. 100% means one source pixel per device
-    /// pixel, independent of viewport size and white padding.
+    /// pixel, independent of viewport size and White padding.
     pub fn set_zoom_percent(&mut self, percent: f32) {
         if percent.is_finite() {
             self.zoom_percent = Some(percent.max(0.0).clamp(0.1, 3200.0));
@@ -1153,7 +1153,7 @@ impl Viewer {
                 .available_width()
                 .clamp(theme::WIDTH_COMBO_MIN, theme::WIDTH_COMBO_MAX);
             ui.add_space((ui.available_width() - width).max(0.0));
-            let response = egui::ComboBox::from_id_salt("output interpolation")
+            let response = egui::ComboBox::from_id_salt("Output interpolation")
                 .width(width)
                 .selected_text(crate::controls::localized(
                     ui.ctx(),
@@ -1173,7 +1173,7 @@ impl Viewer {
                     ui.ctx(),
                     "surfaces.viewer.interpolation_help",
                 ));
-            crate::controls::name_choice(ui, "output interpolation");
+            crate::controls::name_choice(ui, "Output interpolation");
             crate::controls::locate_row(ui, "extras.display.output_interpolation", &response);
         });
     }

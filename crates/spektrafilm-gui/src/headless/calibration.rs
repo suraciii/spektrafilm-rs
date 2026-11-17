@@ -149,9 +149,9 @@ fn detect_base_button_fits_the_film_base_and_scan_exposure_from_the_loaded_ramp(
     let h = &mut s.harness;
     drain(h);
     open_convert_controls(h);
-    choose(h, "scan illuminant", "D65");
+    choose(h, "Scan illuminant", "D65");
     assert_eq!(h.state().params.film_render.convert.scan_illuminant, "D65");
-    choose(h, "scan illuminant", "D55");
+    choose(h, "Scan illuminant", "D55");
     assert_eq!(h.state().params.film_render.convert.scan_illuminant, "D55");
     drain(h);
     let before = calibration_outputs(h.state());

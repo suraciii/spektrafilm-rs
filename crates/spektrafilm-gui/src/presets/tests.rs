@@ -251,7 +251,7 @@ fn scanner_transitions_reset_the_scan_polarity() {
     app.params.workflow.route = "input > film > print > scan".into();
     app.finish_route_change();
     assert!(
-        app.status.to_string().contains("scan output"),
+        app.status.to_string().contains("Scan output"),
         "route normalization status must name the reset polarity: {}",
         app.status
     );

@@ -7,11 +7,11 @@ fn polymax_paper_selection_preview_scan_save_and_disabled_color_solver() {
     reveal_control(h, "workflow.route");
     choose(h, "Film route", "input > film > print > scan");
     reveal_control(h, "extras.simulation.film_stock");
-    choose(h, "film profile", "Kodak Double-X Negative Film 5222");
+    choose(h, "Film profile", "Kodak Double-X Negative Film 5222");
     reveal_control(h, "extras.simulation.print_paper");
     choose(
         h,
-        "print profile",
+        "Print profile",
         "Kodak Polymax Fine-Art F / No filter (source curve)",
     );
     assert_eq!(h.state().print_name, "kodak_polymax_fine_art");

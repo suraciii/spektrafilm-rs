@@ -17,7 +17,7 @@ pub(crate) fn sections(
                     .small()
                     .color(theme::FG_MUTED),
             );
-            if filter_matches(filter, "scan illuminant") {
+            if filter_matches(filter, "Scan illuminant") {
                 flags.runtime_changed |= scan_illuminant(ui, &mut params.film_render.convert.scan_illuminant);
             }
             if filter_matches(filter, "Conversion exposure compensation ev") {
@@ -27,7 +27,7 @@ pub(crate) fn sections(
                 flags.runtime_changed |= param_numeric(ui, "base percentile", &mut params.film_render.convert.base_percentile, "film_render.convert.base_percentile", "Brightest-pixels percentile used by 'Detect base' to sample the clear / unexposed film (99 = brightest 1%). Detect base fits the film Base so that clear film maps to density 0 (unexposed -> neutral).");
             }
             if filter_matches(filter, "calibration") {
-                ui.label(localized(ui.ctx(), "calibration")).on_hover_text(localized(ui.ctx(), "3x3 device-correction matrix (9 numbers, row-major) applied to the input before inversion, to undo the scanner/camera colour rendering vs the standard observer over the film dyes (the cross-channel cast that the scan illuminant and base cannot reach). Use 'Blind calibration' to fit it from the current image."));
+                ui.label(localized(ui.ctx(), "calibration")).on_hover_text(localized(ui.ctx(), "3x3 device-correction matrix (9 numbers, row-major) applied to the input before inversion, to undo the scanner/camera colour rendering vs the standard observer over the film dyes (the cross-channel cast that the Scan illuminant and base cannot reach). Use 'Blind calibration' to fit it from the current image."));
                 flags.runtime_changed |= calibration_matrix(ui, &mut params.film_render.convert.calibration);
                 flags.runtime_changed |= ui.text_edit_singleline(&mut params.film_render.convert.calibration).changed();
             }
@@ -88,7 +88,7 @@ fn scan_illuminant(ui: &mut Ui, value: &mut String) -> bool {
     });
     let mut changed = choice_tip_experimental(
         ui,
-        "scan illuminant",
+        "Scan illuminant",
         value,
         &ILLUMINANTS,
         "Light used to acquire the imported negative RGB. This only changes capture inversion, not the fixed product readout light.",
@@ -108,7 +108,7 @@ fn scan_illuminant(ui: &mut Ui, value: &mut String) -> bool {
             ui.ctx(),
             "Enter any shared catalog illuminant or BB<kelvin> (1667..=25000).",
         ));
-    let accessible_label = localized(ui.ctx(), "custom scan illuminant");
+    let accessible_label = localized(ui.ctx(), "Custom scan illuminant");
     ui.ctx().accesskit_node_builder(response.id, |node| {
         node.set_label(accessible_label.as_ref())
     });
@@ -118,7 +118,7 @@ fn scan_illuminant(ui: &mut Ui, value: &mut String) -> bool {
     {
         value.clone_from(&draft);
         changed = true;
-        record_label_edit(ui.ctx(), "scan illuminant");
+        record_label_edit(ui.ctx(), "Scan illuminant");
     }
     let stored_draft = if response.lost_focus() || !response.has_focus() {
         value.clone()
@@ -226,18 +226,18 @@ mod tests {
             params,
         );
         harness
-            .get_by_role_and_label(egui::accesskit::Role::ComboBox, "scan illuminant")
+            .get_by_role_and_label(egui::accesskit::Role::ComboBox, "Scan illuminant")
             .click();
         harness.run();
         harness.get_by_label("D65").click();
         harness.run();
         assert_eq!(harness.state().film_render.convert.scan_illuminant, "D65");
         for (draft, expected) in [("BB4321", "BB4321"), ("BB1000", "BB4321")] {
-            harness.get_by_label("custom scan illuminant").focus();
+            harness.get_by_label("Custom scan illuminant").focus();
             harness.run();
             harness.press_key_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
             harness
-                .get_by_label("custom scan illuminant")
+                .get_by_label("Custom scan illuminant")
                 .type_text(draft);
             harness.run();
             assert_eq!(

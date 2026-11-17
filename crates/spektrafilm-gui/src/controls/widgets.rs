@@ -1527,12 +1527,12 @@ mod layout_tests {
                         let content = ui.scope(|ui| {
                             optional_choice_tip(
                                 ui,
-                                "capture illuminant",
+                                "Capture illuminant",
                                 &mut value,
-                                "inherit (film profile)",
-                                Some("inherit (film profile) · D65"),
+                                "Inherit (film profile)",
+                                Some("inherit (Film profile) · D65"),
                                 &["D50", "D65"],
-                                "Effective inherited capture illuminant: D65",
+                                "Effective inherited Capture illuminant: D65",
                             );
                         });
                         content_width = content.response.rect.width();

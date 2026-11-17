@@ -468,7 +468,7 @@ mod tests {
                 "Session",
             ),
             ("select ICC profile", ControlOwner::Settings, "Display"),
-            ("reset view", ControlOwner::Viewer, "Viewer"),
+            ("Reset view", ControlOwner::Viewer, "Viewer"),
         ] {
             let found = build_filtered(query, &params, &extras, false);
             assert!(
@@ -667,7 +667,7 @@ mod tests {
                     found[0]
                         .labels
                         .iter()
-                        .any(|label| label == "preview max size")
+                        .any(|label| label == "Preview max size")
                 );
             } else {
                 assert!(found.is_empty());
@@ -781,7 +781,7 @@ mod tests {
             found[0]
                 .labels
                 .iter()
-                .all(|label| label.starts_with("preflash"))
+                .all(|label| label.to_lowercase().starts_with("preflash"))
         );
     }
 }

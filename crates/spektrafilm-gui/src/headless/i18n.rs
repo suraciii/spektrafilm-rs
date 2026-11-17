@@ -39,9 +39,9 @@ fn switching_language_preserves_photographic_identity_and_bilingual_search() {
     assert!(h.query_by_label("预览").is_none());
     for query in [
         "胶片规格",
-        "Film Format",
+        "Film format",
         "画面长边",
-        "Frame Long Edge",
+        "Frame long edge",
         "camera.film_format_mm",
     ] {
         h.get_by_label("搜索控件").focus();
@@ -669,9 +669,9 @@ fn raw_settings_draft_is_not_reprocessed_or_lost_by_language_switch() {
     let mut s = session();
     let h = &mut s.harness;
     reveal_control(h, "extras.load_raw.white_balance");
-    choose(h, "white balance", "custom");
+    choose(h, "White balance", "custom");
     reveal_control(h, "extras.load_raw.temperature");
-    edit(h, "temperature", "5200");
+    edit(h, "Temperature", "5200");
     let draft = h.state().gui_state.sections["load_raw"].clone();
     let source = h.state().image.clone().unwrap();
     let epoch = h.state().input_epoch;
@@ -685,7 +685,7 @@ fn raw_settings_draft_is_not_reprocessed_or_lost_by_language_switch() {
     assert_eq!(h.state().can_undo(), history);
     language(h, LanguagePreference::English);
     assert_eq!(
-        h.get_by_label("temperature")
+        h.get_by_label("Temperature")
             .value()
             .unwrap()
             .parse::<f64>()

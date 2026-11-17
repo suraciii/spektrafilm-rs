@@ -273,7 +273,7 @@ pub(crate) fn inventory() -> &'static [ControlEntry] {
                 text.push_str("\nExpand\n扩展");
             }
             if entry.path == "camera.film_format_mm" {
-                text.push_str("\nFrame Long Edge");
+                text.push_str("\nFrame long edge");
             }
             for component in &entry.components {
                 text.push('\n');
@@ -293,7 +293,7 @@ pub(crate) fn inventory() -> &'static [ControlEntry] {
                 }
                 if entry.path == "camera.film_format_mm" {
                     text.push('\n');
-                    text.push_str(&super::localized_for(locale, "Frame Long Edge"));
+                    text.push_str(&super::localized_for(locale, "Frame long edge"));
                 }
                 if entry.path.starts_with("scanner.scan_profile") {
                     for label in [
@@ -678,7 +678,7 @@ fn append_nonruntime(entries: &mut Vec<ControlEntry>) {
                 editor: Action,
                 validator: "controls::scanner::operator_controls",
                 conditions: &[
-                    "negative film; eligible negative-to-positive route; standard conversion style",
+                    "negative film; eligible negative-to-positive route; standard Conversion style",
                     "stored corrections retained while inactive; clipboard and comparison are session-only",
                 ],
             },
@@ -997,7 +997,7 @@ const SURFACES: &[SurfaceEntry] = &[
     },
     SurfaceEntry {
         path: "extras.simulation.film_stock",
-        label: "film profile",
+        label: "Film profile",
         owner: ControlOwner::Stage(Stage::Film),
         section: "Film material",
         editor: EditorKind::Profile,
@@ -1006,7 +1006,7 @@ const SURFACES: &[SurfaceEntry] = &[
     },
     SurfaceEntry {
         path: "extras.simulation.print_paper",
-        label: "print profile",
+        label: "Print profile",
         owner: ControlOwner::Stage(Stage::Print),
         section: "Print material",
         editor: EditorKind::Profile,
@@ -1024,7 +1024,7 @@ const SURFACES: &[SurfaceEntry] = &[
     },
     SurfaceEntry {
         path: "extras.simulation.saving_cctf_encoding",
-        label: "saving cctf encoding",
+        label: "Saving CCTF encoding",
         owner: ControlOwner::Stage(Stage::Output),
         section: "Output",
         editor: EditorKind::Toggle,
@@ -1033,7 +1033,7 @@ const SURFACES: &[SurfaceEntry] = &[
     },
     SurfaceEntry {
         path: "extras.load_raw.white_balance",
-        label: "white balance",
+        label: "White balance",
         owner: ControlOwner::Stage(Stage::Input),
         section: "Import Raw",
         editor: EditorKind::Choice,
@@ -1047,7 +1047,7 @@ const SURFACES: &[SurfaceEntry] = &[
         section: "Import Raw",
         editor: EditorKind::Numeric,
         validator: "spektrafilm_raw::RawOptions",
-        conditions: &["RAW source; custom white balance; explicit Reprocess RAW"],
+        conditions: &["RAW source; custom White balance; explicit Reprocess RAW"],
     },
     SurfaceEntry {
         path: "extras.load_raw.tint",
@@ -1056,11 +1056,11 @@ const SURFACES: &[SurfaceEntry] = &[
         section: "Import Raw",
         editor: EditorKind::Numeric,
         validator: "spektrafilm_raw::RawOptions",
-        conditions: &["RAW source; custom white balance; explicit Reprocess RAW"],
+        conditions: &["RAW source; custom White balance; explicit Reprocess RAW"],
     },
     SurfaceEntry {
         path: "extras.load_raw.lens_correction",
-        label: "lens correction",
+        label: "Lens correction",
         owner: ControlOwner::Stage(Stage::Input),
         section: "Import Raw",
         editor: EditorKind::Toggle,
@@ -1069,7 +1069,7 @@ const SURFACES: &[SurfaceEntry] = &[
     },
     SurfaceEntry {
         path: "extras.display.use_display_transform",
-        label: "use display transform",
+        label: "Use display transform",
         owner: ControlOwner::Settings,
         section: "Display",
         editor: EditorKind::Toggle,
@@ -1078,7 +1078,7 @@ const SURFACES: &[SurfaceEntry] = &[
     },
     SurfaceEntry {
         path: "extras.display.gray_18_canvas",
-        label: "gray 18% canvas",
+        label: "Gray 18% canvas",
         owner: ControlOwner::Settings,
         section: "Display",
         editor: EditorKind::Toggle,
@@ -1087,7 +1087,7 @@ const SURFACES: &[SurfaceEntry] = &[
     },
     SurfaceEntry {
         path: "extras.display.white_padding",
-        label: "white padding",
+        label: "White padding",
         owner: ControlOwner::Settings,
         section: "Display",
         editor: EditorKind::Numeric,
@@ -1096,7 +1096,7 @@ const SURFACES: &[SurfaceEntry] = &[
     },
     SurfaceEntry {
         path: "extras.display.output_interpolation",
-        label: "output interpolation",
+        label: "Output interpolation",
         owner: ControlOwner::Settings,
         section: "Display",
         editor: EditorKind::Choice,
@@ -1105,7 +1105,7 @@ const SURFACES: &[SurfaceEntry] = &[
     },
     SurfaceEntry {
         path: "extras.rust.display_profile",
-        label: "select ICC profile…",
+        label: "Select ICC profile…",
         owner: ControlOwner::Settings,
         section: "Display",
         editor: EditorKind::Profile,
@@ -1216,7 +1216,7 @@ const SURFACES: &[SurfaceEntry] = &[
     },
     SurfaceEntry {
         path: "action.rotate_ccw",
-        label: "ccw rotate",
+        label: "CCW rotate",
         owner: ControlOwner::Stage(Stage::Input),
         section: "Source rotation",
         editor: EditorKind::Action,
@@ -1225,7 +1225,7 @@ const SURFACES: &[SurfaceEntry] = &[
     },
     SurfaceEntry {
         path: "action.rotate_cw",
-        label: "cw rotate",
+        label: "CW rotate",
         owner: ControlOwner::Stage(Stage::Input),
         section: "Source rotation",
         editor: EditorKind::Action,
@@ -1432,7 +1432,7 @@ const SURFACES: &[SurfaceEntry] = &[
     },
     SurfaceEntry {
         path: "viewer.reset",
-        label: "reset view",
+        label: "Reset view",
         owner: ControlOwner::Viewer,
         section: "Viewer",
         editor: EditorKind::Action,
@@ -1450,10 +1450,10 @@ const LABELS: &[(&str, &str)] = &[
     ("finishing.expand.black", "Black reference"),
     ("finishing.expand.white", "White reference"),
     ("io.input_gamut_compress.boundary", "boundary"),
-    ("camera.auto_exposure", "auto exposure"),
-    ("camera.auto_exposure_method", "auto exposure method"),
-    ("camera.capture_illuminant", "capture illuminant"),
-    ("camera.color_filter", "color filter"),
+    ("camera.auto_exposure", "Auto exposure"),
+    ("camera.auto_exposure_method", "Auto exposure method"),
+    ("camera.capture_illuminant", "Capture illuminant"),
+    ("camera.color_filter", "Color filter"),
     ("camera.diffusion_filter.active", "Camera diffusion"),
     ("camera.diffusion_filter.bloom_intensity", "bloom intensity"),
     ("camera.diffusion_filter.bloom_size", "bloom size"),
@@ -1486,9 +1486,9 @@ const LABELS: &[(&str, &str)] = &[
     ("enlarger.diffusion_filter.halo_warmth", "halo warmth"),
     ("enlarger.diffusion_filter.spatial_scale", "spatial scale"),
     ("enlarger.diffusion_filter.strength", "strength"),
-    ("enlarger.illuminant", "print illuminant"),
+    ("enlarger.illuminant", "Print illuminant"),
     ("enlarger.m_filter_shift", "print m filter shift"),
-    ("enlarger.preflash_exposure", "preflash exposure"),
+    ("enlarger.preflash_exposure", "Preflash exposure"),
     (
         "enlarger.preflash_m_filter_shift",
         "preflash m filter shift",
@@ -1497,8 +1497,8 @@ const LABELS: &[(&str, &str)] = &[
         "enlarger.preflash_y_filter_shift",
         "preflash y filter shift",
     ),
-    ("enlarger.print_exposure", "print exposure"),
-    ("enlarger.print_exposure_mode", "print exposure mode"),
+    ("enlarger.print_exposure", "Print exposure"),
+    ("enlarger.print_exposure_mode", "Print exposure mode"),
     ("enlarger.y_filter_shift", "print y filter shift"),
     ("film_render.base.active", "Enable film base"),
     ("film_render.base.cyan", "cyan"),
@@ -1535,7 +1535,7 @@ const LABELS: &[(&str, &str)] = &[
         "film_render.convert.exposure_compensation_ev",
         "Conversion exposure compensation ev",
     ),
-    ("film_render.convert.scan_illuminant", "scan illuminant"),
+    ("film_render.convert.scan_illuminant", "Scan illuminant"),
     ("film_render.density_curve_gamma", "Profile gamma"),
     ("film_render.development_time", "development time"),
     ("film_render.dir_couplers.active", "Enable DIR couplers"),
@@ -1675,10 +1675,10 @@ const LABELS: &[(&str, &str)] = &[
     ("film_render.grain.uniformity", "Uniformity (relative)"),
     ("film_render.grain.procedural_amount", "Amount (%)"),
     ("film_render.grain.procedural_chroma", "Chroma (%)"),
-    ("film_render.grain.procedural_film_type", "Film Type"),
+    ("film_render.grain.procedural_film_type", "Film type"),
     ("film_render.grain.procedural_highlights", "Highlights (%)"),
     ("film_render.grain.procedural_midtones", "Midtones (%)"),
-    ("film_render.grain.procedural_mode", "Processing Mode"),
+    ("film_render.grain.procedural_mode", "Processing mode"),
     (
         "film_render.grain.procedural_profile",
         "Procedural Grain Profiles",
@@ -1689,7 +1689,7 @@ const LABELS: &[(&str, &str)] = &[
     ),
     (
         "film_render.grain.procedural_resolution_type",
-        "Resolution Type",
+        "Resolution type",
     ),
     ("film_render.grain.procedural_shadows", "Shadows (%)"),
     ("film_render.grain.procedural_size", "Size (relative)"),
@@ -1756,8 +1756,8 @@ const LABELS: &[(&str, &str)] = &[
     ("io.crop", "crop"),
     ("io.crop_center", "crop center"),
     ("io.crop_size", "crop size"),
-    ("io.input_cctf_decoding", "apply cctf decoding"),
-    ("io.input_color_space", "input color space"),
+    ("io.input_cctf_decoding", "Apply CCTF decoding"),
+    ("io.input_color_space", "Input color space"),
     (
         "io.input_gamut_compress.active",
         "Enable input gamut compress",
@@ -1765,8 +1765,8 @@ const LABELS: &[(&str, &str)] = &[
     ("io.input_gamut_compress.algorithm", "algorithm"),
     ("io.input_gamut_compress.hull_detail", "hull detail"),
     ("io.input_gamut_compress.knee", "knee"),
-    ("io.output_cctf_encoding", "output cctf encoding"),
-    ("io.output_color_space", "output color space"),
+    ("io.output_cctf_encoding", "Output CCTF encoding"),
+    ("io.output_color_space", "Output color space"),
     ("io.output_gamut_compress.algorithm", "algorithm"),
     ("io.output_gamut_compress.knee", "knee"),
     ("io.upscale_factor", "upscale factor"),
@@ -1814,14 +1814,14 @@ const LABELS: &[(&str, &str)] = &[
     ("print_render.glare.blur", "Blur (viewing glare)"),
     ("print_render.glare.percent", "percent"),
     ("print_render.glare.roughness", "roughness"),
-    ("scanner.conversion_style", "conversion style"),
+    ("scanner.conversion_style", "Conversion style"),
     ("scanner.scan_profile.strength", "Scan Profile Strength"),
     ("scanner.lens_blur", "Lens blur (readout optics)"),
     ("scanner.operator.exposure_ev", "Finished exposure"),
     ("scanner.operator.warmth_ev", "Warmth"),
     ("scanner.operator.tint_ev", "Green–magenta tint"),
     ("scanner.operator.contrast", "Conversion contrast"),
-    ("scanner.scan_output", "scan output"),
+    ("scanner.scan_output", "Scan output"),
     ("scanner.white_reference", "white reference"),
     ("scanner.unsharp_mask", "Unsharp mask (digital sharpening)"),
     (
@@ -1832,10 +1832,10 @@ const LABELS: &[(&str, &str)] = &[
         "settings.apply_hanatos2025_adaptation_window",
         "hanatos2025 adaptation window",
     ),
-    ("settings.preview_max_size", "preview max size"),
+    ("settings.preview_max_size", "Preview max size"),
     (
         "settings.print_exposure_ev_tracking",
-        "print exposure ev tracking",
+        "Print exposure ev tracking",
     ),
     ("settings.rgb_to_raw_method", "spectral upsampling"),
     ("settings.spectral_gaussian_blur", "spectral gaussian blur"),
