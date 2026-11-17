@@ -1,6 +1,6 @@
 # Profile fitting
 
-`spektrafilm-f64 fit` derives film-profile surface terms from reference patch data instead of hand measurement. It renders a chart through the calibrated chain and minimizes the CIELAB difference between the rendered patches and the reference table. The command exists only in the lab binary.
+`spektrafilm-f64 fit` derives film-profile surface terms from reference patch data instead of hand measurement. It renders a chart through the calibrated chain and minimizes the CIELAB difference between the rendered patches and the reference table. The command exists only in the f64 binary.
 
 ## Inputs and fitting
 

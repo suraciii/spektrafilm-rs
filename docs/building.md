@@ -36,6 +36,8 @@ cargo build --release -p spektrafilm-cli
 # separately; its experimental research commands execute a declaration and
 # retain evidence
 cargo build --release --features precision-f64 -p spektrafilm-cli --bin spektrafilm-f64
+# `precision-f64` is package-wide: always name `--bin spektrafilm-f64`, or the
+# same feature reloads `spektrafilm` as f64 under the production binary name.
 
 # lab instrument — measures delivered images at f64 reference precision, links no renderer
 cargo build --release --features precision-f64 -p spektrafilm-lab

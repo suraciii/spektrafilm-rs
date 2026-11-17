@@ -31,7 +31,7 @@ The GUI exposes passthrough, film-scan, film-print-scan, and the three convert-f
 To match the upstream experimental scanner while keeping the product default, select the readout-light white reference explicitly:
 
 ```bash
-./target/release/spektrafilm-f64 process input.tif -o upstream-aligned.tif \
+./target/release/spektrafilm process input.tif -o upstream-aligned.tif \
     --input-color-space 'sRGB' --backend cpu --film kodak_portra_400 \
     --paper kodak_portra_endura --route 'input > film > print > scan' --data-dir data \
     --set scanner.white_reference=readout_illuminant
@@ -45,7 +45,7 @@ The following commands select the scan output and the scan-stage appearance expl
 
 ```bash
 # Negative conversion
-./target/release/spektrafilm-f64 process input.tif -o positive.tif \
+./target/release/spektrafilm process input.tif -o positive.tif \
     --input-color-space 'ProPhoto RGB' --input-cctf-decoding false \
     --backend cpu --film kodak_portra_400 --scan-film \
     --scan-output negative_to_positive --data-dir data
@@ -56,7 +56,7 @@ The following commands select the scan output and the scan-stage appearance expl
     --scan-output negative_to_positive --dry-run --data-dir data
 
 # Apply the built-in scan-stage appearance
-./target/release/spektrafilm-f64 process input.tif -o positive.tif \
+./target/release/spektrafilm process input.tif -o positive.tif \
     --input-color-space 'ProPhoto RGB' --input-cctf-decoding false \
     --backend cpu --film kodak_portra_400 --scan-film \
     --scan-output negative_to_positive --scan-profile sp3000_inspired --data-dir data
@@ -98,7 +98,7 @@ Four controls adjust the positive image before the fixed tone. They are exposure
 Warmth and tint are differential EV, not Kelvin. These controls do not change negative density, camera exposure, or Convert recovery. Conversion contrast does not amplify channel differences before tone. The nonlinear tone can still change perceived hue and saturation. See the [equations and numerical contract](../specs/film-chain/lab-scan/spec.md#operator-correction).
 
 ```bash
-./target/release/spektrafilm-f64 process input.tif -o corrected.tif \
+./target/release/spektrafilm process input.tif -o corrected.tif \
     --input-color-space 'ProPhoto RGB' --input-cctf-decoding false \
     --backend cpu --film kodak_portra_400 --scan-film \
     --scan-output negative_to_positive --data-dir data \
@@ -158,7 +158,7 @@ cat > data/scan-styles/warm.json <<'JSON'
 }
 JSON
 
-./target/release/spektrafilm-f64 process input.tif -o warm.tif \
+./target/release/spektrafilm process input.tif -o warm.tif \
     --input-color-space 'ProPhoto RGB' --input-cctf-decoding false \
     --backend cpu --film kodak_portra_400 --scan-film \
     --set scanner.conversion_style=warm \
@@ -192,7 +192,7 @@ To evaluate tungsten balance, adapt the input from its capture light to `T`. Dec
 The look's `negative_to_positive` tone assumes scene-linear input. Its tone values live in the look bundle and preset.
 
 ```bash
-./target/release/spektrafilm-f64 process input.tif -o cinestill.png \
+./target/release/spektrafilm process input.tif -o cinestill.png \
     --input-color-space 'ProPhoto RGB' --input-cctf-decoding false \
     --preset 'CineStill 800T' --backend cpu --data-dir data \
     --route 'input > film > scan' --scan-output negative_to_positive
