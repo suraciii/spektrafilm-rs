@@ -1,12 +1,5 @@
-//! The f64 reference build of the shared CLI entry point.
-
-#[path = "../main.rs"]
-mod cli;
-
-#[cfg(test)]
-pub(crate) use cli::Cli;
-pub(crate) use cli::Commands;
+//! The f64 reference binary: one thin entry point over the shared CLI.
 
 fn main() -> anyhow::Result<()> {
-    cli::main()
+    spektrafilm_cli::run()
 }

@@ -18,6 +18,9 @@ name = "decode_raw_gui"
 path = "src/bin/decode_raw_gui.rs"
 
 [features]
+# Package-wide: selecting this feature recompiles every bin in this package at
+# f64. Build the reference with `--bin spektrafilm-f64`; the production
+# `spektrafilm` target is f32 in normal builds.
 precision-f64 = [
     "spektrafilm-math/precision-f64",
     "spektrafilm-backend/precision-f64",
