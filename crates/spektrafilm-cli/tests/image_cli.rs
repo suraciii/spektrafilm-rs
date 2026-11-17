@@ -1199,3 +1199,107 @@ fn lut_option_reads_the_cube_declaration_and_reports_lut_mode() {
         String::from_utf8_lossy(&mixed.stderr)
     );
 }
+
+#[test]
+fn multiple_exposure_is_ev_only_at_the_entry_point() {
+    let f = Fixture::new();
+    let input = f.0.join("input.png");
+    let output = f.0.join("stack.png");
+    let data = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data");
+    let input_text = input.to_str().unwrap();
+    let output_text = output.to_str().unwrap();
+
+    let run = |extra: &[&str]| {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_spektrafilm"));
+        command
+            .arg("process")
+            .args(["--film", "kodak_portra_400"])
+            .args(["--paper", "kodak_portra_endura"])
+            .args(["--backend", "cpu", "--data-dir"])
+            .arg(&data)
+            .args(extra)
+            .env("RUST_LOG", "off")
+            .env("SPEKTRAFILM_CONFIG_DIR", f.0.join("config"))
+            .env_remove("SPEKTRAFILM_INTERNAL_PRESERVE_USER_EDITS")
+            .env_remove("SPEKTRAFILM_DATA_DIR")
+            .env_remove("SPEKTRAFILM_BACKEND");
+        command.output().unwrap()
+    };
+
+    let stack = run(&[
+        "--expose",
+        input_text,
+        "--expose-ev",
+        "-1",
+        "--expose",
+        input_text,
+        "--expose-ev",
+        "-1",
+        "--multiple-exposure-meter",
+        "manual",
+        "--output",
+        output_text,
+    ]);
+    assert!(
+        stack.status.success(),
+        "{}",
+        String::from_utf8_lossy(&stack.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&stack.stderr).contains("total_ev=0.000"),
+        "{}",
+        String::from_utf8_lossy(&stack.stderr)
+    );
+    assert!(output.is_file());
+
+    let _ = std::fs::remove_file(&output);
+    let removed = run(&[
+        "--expose",
+        input_text,
+        "--expose",
+        input_text,
+        "--expose-weight",
+        "0.5",
+        "0.5",
+        "--output",
+        output_text,
+    ]);
+    assert_eq!(removed.status.code(), Some(2), "{removed:?}");
+    assert!(!output.exists());
+
+    let recipe_path = f.0.join("weighted.json");
+    std::fs::write(
+        &recipe_path,
+        serde_json::json!({
+            "schema": "spektrafilm.multiple-exposure/1",
+            "film": "kodak_portra_400",
+            "paper": "kodak_portra_endura",
+            "seed": 0,
+            "metering": "manual",
+            "shots": [
+                {"path": input, "exposure_ev": -1.0, "weight": 0.5},
+                {"path": input, "exposure_ev": -1.0, "weight": 0.5}
+            ]
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let legacy = Command::new(env!("CARGO_BIN_EXE_spektrafilm"))
+        .arg("process")
+        .args(["--recipe"])
+        .arg(&recipe_path)
+        .args(["--backend", "cpu", "--data-dir"])
+        .arg(&data)
+        .args(["--output", output_text])
+        .env("RUST_LOG", "off")
+        .env("SPEKTRAFILM_CONFIG_DIR", f.0.join("config"))
+        .output()
+        .unwrap();
+    assert_eq!(legacy.status.code(), Some(1), "{legacy:?}");
+    assert!(
+        String::from_utf8_lossy(&legacy.stderr).contains("weight"),
+        "{}",
+        String::from_utf8_lossy(&legacy.stderr)
+    );
+    assert!(!output.exists());
+}

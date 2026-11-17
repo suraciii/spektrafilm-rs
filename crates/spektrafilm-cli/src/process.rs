@@ -46,7 +46,6 @@ pub struct ProcessArgs {
         long = "expose-ev",
         value_name = "EV",
         action = clap::ArgAction::Append,
-        allow_hyphen_values = true,
         allow_negative_numbers = true,
         help_heading = "Multiple exposure"
     )]

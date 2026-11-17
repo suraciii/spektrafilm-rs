@@ -459,6 +459,8 @@ pub struct ShotReport {
     pub index: usize,
     pub metered_ev: f64,
     pub exposure_ev: f64,
+    /// Final relative exposure: `metered_ev + exposure_ev` when AE is active,
+    /// otherwise `exposure_ev`.
     pub final_ev: f64,
 }
 
@@ -531,7 +533,7 @@ impl Pipeline {
     /// collected at [`Tap::LogEFilm`]. The collected log10 exposures are added
     /// as linear exposure:
     ///
-    /// `L_c = log10(sum_i w_i * 10^(L_i))`
+    /// `L_c = log10(sum_i 10^(L_i))`
     ///
     /// using a per-pixel max shift for numerical stability.
     pub fn process_exposures(

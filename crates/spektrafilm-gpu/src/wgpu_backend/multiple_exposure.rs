@@ -90,6 +90,12 @@ struct ComposeParams {
     _pad: u32,
 }
 
+// Keep the host-side uniform layout pinned to the WGSL blocks. `acc_base`
+// moved to offset 8 when the weight field was removed; a silent layout drift
+// would make finalize read the wrong page.
+const _: () = assert!(std::mem::size_of::<ComposeParams>() == 16);
+const _: () = assert!(std::mem::offset_of!(ComposeParams, acc_base) == 8);
+
 impl WgpuBackend {
     fn compose_pass(
         &self,
@@ -244,7 +250,7 @@ mod tests {
     use crate::test_support::adapter;
     use spektrafilm_backend::{ComputeBackend, Precision, RetainedImageMeta};
     use spektrafilm_math::image::ImageBuf;
-    use spektrafilm_math::precision::from_f64;
+    use spektrafilm_math::precision::{from_f64, to_f64};
 
     fn log_image(width: u32, height: u32, phase: f32) -> ImageBuf {
         let mut image = ImageBuf::new(width, height);
@@ -312,9 +318,9 @@ mod tests {
             .unwrap()
             .to_host(gpu.backend())
             .unwrap();
-        let mut worst = 0.0f32;
+        let mut worst = 0.0f64;
         for (&actual, &expected) in composed.data.iter().zip(&reference) {
-            worst = worst.max((actual - expected).abs());
+            worst = worst.max((to_f64(actual) - f64::from(expected)).abs());
         }
         assert!(
             worst < 5e-6,

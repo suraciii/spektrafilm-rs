@@ -13,7 +13,10 @@ use spektrafilm_core::{
     profile,
     runtime::{DigestMode, RuntimePhotoParams},
 };
-use spektrafilm_math::{image::ImageBuf, precision::from_f64};
+use spektrafilm_math::{
+    image::ImageBuf,
+    precision::{from_f64, to_f64},
+};
 use std::path::{Path, PathBuf};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -85,7 +88,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         };
         if let Some(values) = accum.as_mut() {
             for (acc, &value) in values.iter_mut().zip(&log_e.data) {
-                *acc += 10.0_f32.powf(value - effective);
+                let value = to_f64(value);
+                *acc += 10.0_f32.powf((value - f64::from(effective)) as f32);
             }
         }
         drop(log_e);

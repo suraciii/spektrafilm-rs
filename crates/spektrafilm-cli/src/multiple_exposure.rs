@@ -149,15 +149,23 @@ fn estimate_peak_bytes(width: u32, height: u32) -> u64 {
 }
 
 fn default_memory_budget(width: u32, height: u32) -> u64 {
+    const GIB: u64 = 1024_u64.pow(3);
+    let estimate = estimate_peak_bytes(width, height);
+    let with_headroom = estimate.saturating_add(GIB);
     if cfg!(feature = "precision-f64") {
         // The f64 build is the reference/debug lane, not the product f32
-        // target; give it enough room to finish 100 MP without a false
-        // capacity failure.
-        24 * 1024_u64.pow(3)
-    } else if (width as u64) * (height as u64) >= 90_000_000 {
-        11 * 1024_u64.pow(3)
+        // target; keep the old generous floor, but never undercut the
+        // calibrated estimate.
+        with_headroom.max(24 * GIB)
+    } else if estimate <= 7 * GIB {
+        7 * GIB
+    } else if estimate <= 11 * GIB {
+        11 * GIB
     } else {
-        7 * 1024_u64.pow(3)
+        // The 90 MP step must not reject 102 MP or larger rasters merely
+        // because the estimate crossed an old fixed branch. Keep a GiB of
+        // host headroom above the estimate.
+        with_headroom
     }
 }
 
@@ -440,6 +448,15 @@ fn resolve_flags(args: &ProcessArgs) -> Result<Resolved> {
 fn read_recipe(path: &Path) -> Result<Resolved> {
     let bytes = fs::read(path).with_context(|| format!("reading recipe {}", path.display()))?;
     let recipe: Recipe = serde_json::from_slice(&bytes)
+        .map_err(|error| {
+            if error.to_string().contains("weight") {
+                anyhow::anyhow!(
+                    "multiple-exposure.weight-removed: replace each shot weight w with exposure_ev += log2(w); the old weight was applied after optics"
+                )
+            } else {
+                anyhow::Error::new(error)
+            }
+        })
         .with_context(|| format!("parsing recipe {}", path.display()))?;
     if recipe.schema != RECIPE_SCHEMA {
         bail!(
@@ -743,6 +760,23 @@ mod tests {
             e100 >= 10.4,
             "100 MP estimate {e100:.3} GiB below measured peak"
         );
+    }
+
+    #[test]
+    fn default_budget_covers_estimate_across_sensor_sizes() {
+        for (width, height) in [
+            (9568, 6376),   // 61 MP
+            (10000, 10000), // 100 MP acceptance case
+            (11648, 8736),  // 102 MP GFX 100 II
+            (12000, 9000),  // 108 MP
+        ] {
+            let estimate = estimate_peak_bytes(width, height);
+            let budget = default_memory_budget(width, height);
+            assert!(
+                budget >= estimate,
+                "{width}x{height}: default budget {budget} below estimate {estimate}"
+            );
+        }
     }
 
     #[test]
