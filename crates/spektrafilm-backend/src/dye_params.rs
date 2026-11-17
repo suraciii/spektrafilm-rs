@@ -55,9 +55,10 @@ pub struct DyeGpuParams {
     /// delivered ladder, where later entries resolve progressively finer
     /// density layers; positive profiles pass the base value for every layer.
     pub layer_scales: [f64; 3],
-    /// Per-layer, per-channel saturation density from the profile's layer
-    /// curves. The taper reaches zero at this record density. Entries beyond
-    /// `layer_count` are unused.
+    /// Per-layer, per-channel density peak from the profile's layer curves.
+    /// The taper is nonzero at this sampled peak and reaches its asymptotic
+    /// zero at `layer_dmax / uniformity`. Entries beyond `layer_count` are
+    /// unused.
     pub layer_dmax: [[f64; 3]; 3],
     /// Active profile layers. `1` means the total-density single-layer law.
     pub layer_count: u32,
@@ -111,7 +112,10 @@ pub mod law {
     /// Fallback record density when a profile has no usable positive density
     /// curve. A resolved profile's layer/channel curve maximum overrides it.
     pub const DMAX: f64 = 1.2;
-    /// Development-probability uniformity.
+    /// Engine shape constant for the material layer-variance envelope. It is
+    /// not a measured stock property. It also fixes the asymptotic saturation
+    /// at `layer_peak / UNIFORMITY`, above the profile's sampled layer peak,
+    /// so the sampled peak retains residual variance.
     pub const UNIFORMITY: f64 = 0.97;
 
     /// Source-lattice cell size for `base_cell_px`.
@@ -136,15 +140,13 @@ pub mod law {
         base
     }
 
-    /// Peak of the derived granularity shape over the record density.
+    /// Peak of the material granularity envelope `sqrt(p * (1 - u p))`.
+    ///
+    /// The envelope is the same normalized layer-variance curve used by the
+    /// material grain model; its maximum is at `p = 1 / (2u)`. The sampled
+    /// layer peak `p = 1` is above that maximum, so the field keeps a
+    /// positive residual at the sampled peak rather than vanishing there.
     pub fn taper_peak() -> f64 {
-        (1..=512)
-            .map(|i| {
-                let p = f64::from(i) / 512.0;
-                let sat = 1.0 - p * UNIFORMITY;
-                (sat * p * (1.0 - p)).max(0.0).sqrt()
-            })
-            .fold(0.0, f64::max)
-            .max(1e-6)
+        1.0 / (2.0 * UNIFORMITY.sqrt())
     }
 }

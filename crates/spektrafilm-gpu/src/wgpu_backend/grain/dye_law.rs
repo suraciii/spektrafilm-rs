@@ -71,7 +71,8 @@ struct ApplyParams {
     pad5: u32,
     pad6: u32,
     strength: [f32; 4],
-    /// Per-layer saturation density, one vec4 per layer.
+    /// Per-layer sampled density peak, one vec4 per layer. The envelope's
+    /// asymptotic zero is at `dmax / uniformity`.
     dmax: [[f32; 4]; 3],
 }
 

@@ -8,6 +8,12 @@ This context defines the domain language for the film-coordinate Dye grain model
 
 **Density layer**: One profile-declared emulsion layer whose curve contributes a share of the developed record density. One to three layers each realize a field and count; their density targets sum to the developed record.
 
+**Dye layer density peak**: The largest sampled density of an active layer curve for one channel. A one-layer profile uses the composite curve peak because it has no layer split.
+
+**Dye asymptotic saturation**: The density `peak / uniformity`, above the sampled layer peak. The material granularity envelope vanishes there, not at the last stored sample.
+
+**Dye granularity envelope**: The normalized material layer-variance curve `sqrt(p * (1 - uniformity * p))`, where `p` is the developed fraction of the layer density peak. It conditions the correlated field amplitude while preserving the target mean. It is an engine shape, not a stock-calibrated RMS-granularity curve; `uniformity` is not a measured stock property.
+
 **Single-record BW field**: One stochastic material-density realization for a monochrome profile. It describes record layout, not identified silver chemistry or stock calibration.
 
 **Dye correlation length**: The delivered value-noise cell scale of the field in film coordinates. Negative profiles deliver 14.0 µm; positive profiles deliver 7.0 µm. It is an engine constant, independent of the output grid and event area.

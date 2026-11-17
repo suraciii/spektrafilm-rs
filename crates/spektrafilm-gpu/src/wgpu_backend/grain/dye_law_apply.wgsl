@@ -181,10 +181,12 @@ fn poisson_exact(lambda: f32, seed: u32, stream: u32, x: u32, y: u32) -> f32 {
     return max(lambda, 0.0);
 }
 
+// Normalized layer variance envelope. p is the developed fraction of the
+// sampled layer peak; the asymptotic zero is at p = 1 / uniformity, above
+// the sampled peak, so the measured peak keeps a positive residual.
 fn taper(t: f32, dmax: f32) -> f32 {
-    let pd = clamp(t / dmax, 0.0, 1.0);
-    let sat = 1.0 - pd * p.uniformity;
-    let shape = sqrt(max(sat * pd * (1.0 - pd), 0.0));
+    let pd = clamp(t / dmax, 0.0, 1.0 / p.uniformity);
+    let shape = sqrt(max(pd * (1.0 - p.uniformity * pd), 0.0));
     return shape / p.taper_peak;
 }
 
