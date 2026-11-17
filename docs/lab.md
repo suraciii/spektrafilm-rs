@@ -38,12 +38,14 @@ and pass `--regions file.json`. `regions` writes such a document from a grid
 without reading any image:
 
 ```
-spektrafilm-lab regions --id g --rows 3 --columns 4 --origin 0,0 \
-  --patch-size 64x64 --gap 0,0 --space render --role flat_field --out grid.json
+spektrafilm-lab regions --rows 3 --columns 4 --patch-size 64x64 \
+  --role flat_field --out grid.json
 ```
 
-Geometry is in delivered pixels. The role is required, because a generator does not
-decide what a region is for.
+Geometry is in delivered pixels, the only coordinate space a raster has; the
+region identity defaults to the file stem, and the origin and gap to zero. The role
+is required, because a generator does not decide what a region is for. Pass
+`--id`, `--origin X,Y`, or `--gap X,Y` when the grid is offset or spaced.
 
 ## What a row says
 

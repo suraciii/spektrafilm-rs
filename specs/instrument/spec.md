@@ -97,7 +97,7 @@ spektrafilm-bench compare readings --baseline DIRECTORY --candidate DIRECTORY --
 spektrafilm-bench compare pairs --run DIRECTORY --against input|reference|both --out DIRECTORY
 spektrafilm-bench inspect --comparison DIRECTORY [--case ID ...] [--region ID ...] [--metric ID ...]
 spektrafilm-bench report comparison --comparison DIRECTORY --out DIRECTORY
-spektrafilm-lab regions --id ID --rows N --columns N --origin X,Y --patch-size WxH --gap X,Y --space SPACE --role ROLE --out FILE
+spektrafilm-lab regions --rows N --columns N --patch-size WxH --role ROLE --out FILE [--id ID] [--origin X,Y] [--gap X,Y]
 ```
 ```text
 spektrafilm-f64 --help
@@ -188,10 +188,15 @@ The command family names are semantic, not workflow steps. `measure run` publish
 - Its output MUST remain usable without the run directories by copying required review artifacts and retaining their provenance. An external original that cannot be redistributed MUST remain excluded from a distributable report; the report MUST identify the omission rather than substitute another image.
 - `regions` MUST expand one finite grid declaration into a normal `regions`
   document without reading an image, invoking a renderer, computing
-  measurements, or generating a page. It MUST require the coordinate space and
-  the role, because a generator decides neither, and it MUST validate dimensions,
-  origin and gap arithmetic before publishing. A region names no measurement
-  family, because the analysis profile owns the table from role to families.
+  measurements, or generating a page.
+- It MUST write `render` geometry, the only coordinate space a delivered raster
+  has, rather than offer a choice whose other values it would refuse to measure.
+  It MUST require the role, because a generator does not decide what a region is
+  for. Origin, gap, and identity MUST default to the pixel origin, no gap, and
+  the output file stem.
+- It MUST validate dimensions, origin and gap arithmetic before publishing. A
+  region names no measurement family, because the analysis profile owns the
+  table from role to families.
 - The generated document is the only input geometry consumed by later `sample`, `compare`, and run endpoints; downstream endpoints MUST NOT interpret a grid declaration.
 
 Irregular geometry MUST be authored directly as a `regions` document, or declared with `--roi` on a comparison. The lab MUST NOT replace a removed review manifest with repeated `--image`, `--pair`, or `--default-pair` options. `--roi` declares windows on one source and names no image, pair, or default.

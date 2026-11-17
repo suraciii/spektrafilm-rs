@@ -77,20 +77,7 @@ pub fn run(args: &Args) -> Result<(Value, i32)> {
     } = args.declaration;
     let profile = analysis::profile(args.analysis.as_deref().unwrap_or("lab-appearance-v1"))?;
     let protocol = analysis::protocol(profile);
-    let regions = match (&args.regions, args.roi.is_empty()) {
-        (Some(path), _) => {
-            let document = local_input::load("regions", path)
-                .map_err(|error| error.at(path.display().to_string()))?;
-            document["regions"].as_array().cloned().ok_or_else(|| {
-                Error::new(
-                    "invalid_document",
-                    "regions document carries no regions array",
-                )
-            })?
-        }
-        (None, false) => analysis::regions(&declared_regions(&args.roi)?),
-        (None, true) => Vec::new(),
-    };
+    let regions = regions_of(&args.regions, &args.roi)?;
     let pairs = pairs(args)?;
     let request = engine::Request {
         baseline_id: source_id(&args.baseline),
@@ -200,6 +187,28 @@ fn declared_regions(values: &[String]) -> Result<Vec<Region>> {
         regions.push(region);
     }
     Ok(regions)
+}
+
+/// The declared regions, from a document or from the command line.
+///
+/// Both measurement endpoints resolve geometry through this, so a region
+/// document and a `--roi` produce the same regions, and neither endpoint can
+/// drift in which of the two wins.
+fn regions_of(document: &Option<PathBuf>, roi: &[String]) -> Result<Vec<Value>> {
+    match (document, roi.is_empty()) {
+        (Some(path), _) => {
+            let value = local_input::load("regions", path)
+                .map_err(|error| error.at(path.display().to_string()))?;
+            value["regions"].as_array().cloned().ok_or_else(|| {
+                Error::new(
+                    "invalid_document",
+                    "regions document carries no regions array",
+                )
+            })
+        }
+        (None, false) => Ok(analysis::regions(&declared_regions(roi)?)),
+        (None, true) => Ok(Vec::new()),
+    }
 }
 
 /// One side's own name: the file stem, or the directory name.
@@ -383,20 +392,7 @@ pub fn analyze_run(args: &AnalyzeArgs) -> Result<(Value, i32)> {
     } = args.declaration;
     let profile = analysis::profile(args.analysis.as_deref().unwrap_or("lab-analysis-v1"))?;
     let protocol = analysis::protocol(profile);
-    let regions = match (&args.regions, args.roi.is_empty()) {
-        (Some(path), _) => {
-            let document = local_input::load("regions", path)
-                .map_err(|error| error.at(path.display().to_string()))?;
-            document["regions"].as_array().cloned().ok_or_else(|| {
-                Error::new(
-                    "invalid_document",
-                    "regions document carries no regions array",
-                )
-            })?
-        }
-        (None, false) => analysis::regions(&declared_regions(&args.roi)?),
-        (None, true) => Vec::new(),
-    };
+    let regions = regions_of(&args.regions, &args.roi)?;
     let files = analysis_files(&args.source)?;
     let request = engine::AnalysisRequest {
         source_id: source_id(&args.source),
