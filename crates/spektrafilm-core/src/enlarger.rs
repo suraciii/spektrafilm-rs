@@ -4,94 +4,6 @@
 /// Filter values are in Kodak CC units (100 = 1.0 density = 90% reduction).
 use spektrafilm_math::spectral::{self, N_WAVELENGTHS};
 
-/// TH-KG3 illuminant SPD (tungsten-halogen + Schott KG3 heat filter)
-/// at full f64 precision. Baked from Python's
-/// `standard_illuminant('TH-KG3')`. The f32 fallback drops ~7 digits
-/// per sample and accumulates ~3e-8 in the filtered illuminant.
-const ILLUMINANT_TH_KG3_F64: [f64; N_WAVELENGTHS] = [
-    0.27115487737678473,
-    0.2933630241983439,
-    0.31540886133985474,
-    0.3369808836611168,
-    0.3586779925678246,
-    0.38052016290102403,
-    0.40301341542370506,
-    0.4267870797493813,
-    0.4516515921147848,
-    0.4780646983713809,
-    0.5066708689059379,
-    0.5366576010691867,
-    0.5680769778513239,
-    0.5999220381342626,
-    0.630515347854697,
-    0.6612217385546929,
-    0.6920909115305464,
-    0.7236647580300142,
-    0.7576009324911563,
-    0.7930688015230838,
-    0.829084542867803,
-    0.8654853588024557,
-    0.902212749209677,
-    0.938990050475476,
-    0.9747004155955517,
-    1.0087417855358256,
-    1.040916738775546,
-    1.0715558331394295,
-    1.1009111192408307,
-    1.131926197237691,
-    1.1638985698017286,
-    1.19636460651255,
-    1.2303390279092097,
-    1.2682954247580434,
-    1.3068524359316893,
-    1.3428629981362672,
-    1.375710370915656,
-    1.4046281460277452,
-    1.4308952617117419,
-    1.4554028101360024,
-    1.4771790396751106,
-    1.4964115098687572,
-    1.5136660039295053,
-    1.5280688440333003,
-    1.538146469210825,
-    1.5459434102593674,
-    1.5515901051035574,
-    1.5540261727761033,
-    1.5535666436238242,
-    1.5500616564793381,
-    1.5408266875226315,
-    1.5320737503736817,
-    1.5194886088637505,
-    1.5030832634966458,
-    1.479985561016079,
-    1.4599852627082766,
-    1.4367535752409983,
-    1.4032296202488896,
-    1.3718429999284323,
-    1.3404558220815574,
-    1.3019482391882462,
-    1.2649087261004042,
-    1.2261391348332888,
-    1.1802123657454517,
-    1.136867763608742,
-    1.0926534663168934,
-    1.0452427815027683,
-    1.0004794004746733,
-    0.9480577282133905,
-    0.9023807920757143,
-    0.8546651971962678,
-    0.7922263441280082,
-    0.7345212240830614,
-    0.6892285469718005,
-    0.6522498893006442,
-    0.607482301998138,
-    0.5717547839358964,
-    0.526940374973515,
-    0.4866761911161827,
-    0.449539809526992,
-    0.41455292589926274,
-];
-
 /// TH-KG3 + default CMY dichroic filters (C=0, M=65, Y=55) at full f64 precision.
 /// Baked from Python's `color_enlarger(standard_illuminant('TH-KG3'), (0, 65, 55))`.
 pub const ILLUMINANT_TH_KG3_DEFAULT_FILTERS_F64: [f64; N_WAVELENGTHS] = [
@@ -200,10 +112,9 @@ pub fn enlarger_filtered_illuminant_f64(
         return ILLUMINANT_TH_KG3_DEFAULT_FILTERS_F64.to_vec();
     }
 
-    let light_source: Vec<f64> = match illuminant_name {
-        "TH-KG3" => ILLUMINANT_TH_KG3_F64.to_vec(),
-        _ => crate::spectral_service::select_illuminant_f64(illuminant_name).into_owned(),
-    };
+    // One authoritative catalog owns the pinned spectra, TH-KG3 included.
+    let light_source: Vec<f64> =
+        crate::spectral_service::select_illuminant_f64(illuminant_name).into_owned();
 
     let dichroics = dichroic_filters_f64();
     let filter_cc = [c_filter, m_filter, y_filter];
