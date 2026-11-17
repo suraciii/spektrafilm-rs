@@ -781,840 +781,873 @@ pub fn validate_generated_document(kind: &str, v: &Value, root: &Path) -> Result
             return Err(err("hash_mismatch", "artifact hash mismatch"));
         }
     }
-    let reference = |item: &Value| indexed_reference(&index, item);
-    let measurements = |rows: &Value| -> Result<()> {
-        for row in rows.as_array().into_iter().flatten() {
-            let r = obj(row)?;
-            if [
-                "case_id",
-                "region_id",
-                "metric",
-                "domain",
-                "units",
-                "estimator",
-                "availability",
-                "artifact_refs",
-            ]
-            .iter()
-            .any(|k| !r.contains_key(*k))
-                // A delivered image has no seed population; a rendered run
-                // always states one.
-                || (r.contains_key("seed_population")
-                    && !row["seed_population"].is_array())
-            {
-                return Err(err(
-                    "measurement_fields",
-                    "measurement requires identity, population and estimator",
-                ));
-            }
-            if !matches!(
-                row["availability"].as_str(),
-                Some("available" | "unavailable" | "not_applicable")
-            ) {
-                return Err(err(
-                    "measurement_availability",
-                    "invalid measurement availability",
-                ));
-            }
-            let parsed: MeasurementRecord = serde_json::from_value(row.clone())
-                .map_err(|e| err("measurement_fields", e.to_string()))?;
-            match parsed.availability {
-                Availability::Available => {
-                    if parsed.value.is_none_or(|x| !x.is_finite()) || row.get("reason").is_some() {
-                        return Err(err(
-                            "measurement_value",
-                            "available measurement requires one finite value",
-                        ));
-                    }
-                }
-                Availability::Unavailable | Availability::NotApplicable => {
-                    if row.get("value").is_some()
-                        || parsed.reason.as_deref().is_none_or(str::is_empty)
-                    {
-                        return Err(err(
-                            "measurement_availability",
-                            "unavailable measurement requires reason and no value",
-                        ));
-                    }
-                }
-            }
-            for a in &parsed.artifact_refs {
-                reference(a)?
-            }
+    match kind {
+        "run" => validate_run_document(v, root, &index),
+        "analysis" => validate_analysis_document(v, &index),
+        "comparison" => validate_comparison_document(v, root, &index),
+        _ => Ok(()),
+    }
+}
+
+/// Validate the measurement rows of a generated document against its artifact index.
+fn validate_measurements(
+    index: &std::collections::BTreeMap<&str, &Value>,
+    rows: &Value,
+) -> Result<()> {
+    for row in rows.as_array().into_iter().flatten() {
+        let r = obj(row)?;
+        if [
+            "case_id",
+            "region_id",
+            "metric",
+            "domain",
+            "units",
+            "estimator",
+            "availability",
+            "artifact_refs",
+        ]
+        .iter()
+        .any(|k| !r.contains_key(*k))
+            // A delivered image has no seed population; a rendered run
+            // always states one.
+            || (r.contains_key("seed_population")
+                && !row["seed_population"].is_array())
+        {
+            return Err(err(
+                "measurement_fields",
+                "measurement requires identity, population and estimator",
+            ));
         }
-        Ok(())
-    };
-    let readouts = |owner: &Value, case: &Value| -> Result<()> {
-        for readout in owner["region_readouts"].as_array().into_iter().flatten() {
-            for artifact in readout["artifact_refs"].as_array().into_iter().flatten() {
-                reference(artifact)?;
+        if !matches!(
+            row["availability"].as_str(),
+            Some("available" | "unavailable" | "not_applicable")
+        ) {
+            return Err(err(
+                "measurement_availability",
+                "invalid measurement availability",
+            ));
+        }
+        let parsed: MeasurementRecord = serde_json::from_value(row.clone())
+            .map_err(|e| err("measurement_fields", e.to_string()))?;
+        match parsed.availability {
+            Availability::Available => {
+                if parsed.value.is_none_or(|x| !x.is_finite()) || row.get("reason").is_some() {
+                    return Err(err(
+                        "measurement_value",
+                        "available measurement requires one finite value",
+                    ));
+                }
             }
-            if let Some(mask) = readout.get("common_area_artifact_id") {
-                reference(mask)?;
-            }
-            if owner.get("left_role").is_some() && readout["pair_id"] != owner["id"] {
-                return Err(err(
-                    "readout_identity",
-                    "Color readout differs from its comparison pair",
-                ));
-            }
-            let expected_domain = if readout["estimator"] == "bounded_lab_channel_median" {
-                "bounded_srgb_d65_lab"
-            } else {
-                "unclipped_linear_srgb_mean_lab"
-            };
-            if readout["domain"] != expected_domain {
-                return Err(err(
-                    "readout_domain",
-                    "Color readout domain differs from its estimator",
-                ));
-            }
-            if readout["availability"] != "available" {
-                continue;
-            }
-            let sides = readout["sides"].as_object().unwrap();
-            let reference_review = &owner["reference"];
-            let is_reference = readout["pair_id"] == "reference";
-            if is_reference
-                && (reference_review["scope"] == "visual"
-                    || reference_review["color_available"] == false
-                    || (reference_review["scope"] == "aligned_scene"
-                        && reference_review["geometry"] != "pixel_aligned"))
-            {
-                return Err(err(
-                    "readout_applicability",
-                    "Color readout conflicts with retained reference qualification",
-                ));
-            }
-            for displacement in readout["displacements"].as_array().unwrap() {
-                let from = displacement["from_role"].as_str().unwrap();
-                let to = displacement["to_role"].as_str().unwrap();
-                if from == to
-                    || !sides.contains_key(from)
-                    || !sides.contains_key(to)
-                    || (is_reference && from != "reference")
-                    || (readout["pair_id"] == "input" && (from != "input" || to != "simulation"))
-                    || (readout["pair_id"] == "baseline/candidate"
-                        && (from != "baseline" || to != "candidate"))
+            Availability::Unavailable | Availability::NotApplicable => {
+                if row.get("value").is_some() || parsed.reason.as_deref().is_none_or(str::is_empty)
                 {
                     return Err(err(
-                        "readout_identity",
-                        "Color displacement must name the retained comparison direction",
+                        "measurement_availability",
+                        "unavailable measurement requires reason and no value",
                     ));
-                }
-                for (eligible, keys) in [
-                    (
-                        "tone_target_eligible",
-                        &["delta_lab", "delta_l_star", "delta_e76", "delta_e00"][..],
-                    ),
-                    (
-                        "color_diagnostic_eligible",
-                        &["delta_c_star", "delta_h_degrees", "equal_l_delta_e00"][..],
-                    ),
-                ] {
-                    if is_reference
-                        && reference_review[eligible] != true
-                        && keys
-                            .iter()
-                            .any(|key| displacement[*key]["availability"] == "available")
-                    {
-                        return Err(err(
-                            "readout_applicability",
-                            "Color displacement exceeds retained reference eligibility",
-                        ));
-                    }
                 }
             }
         }
-        for readout in owner["stage_readouts"].as_array().into_iter().flatten() {
-            for artifact in readout["artifact_refs"].as_array().into_iter().flatten() {
-                reference(artifact)?;
-            }
-            let role = readout["run_role"].as_str().unwrap();
-            let payload = &case["run_evidence"][role];
-            if !payload.is_object() {
-                return Err(err(
-                    "readout_identity",
-                    "Stage readout has no retained run role",
-                ));
-            }
-            if readout["availability"] != "available" {
-                continue;
-            }
-            let stage = payload["observed"]["stages"]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .find(|stage| stage["id"] == readout["stage_id"]);
-            if stage.is_none_or(|stage| {
-                stage["availability"] != "available"
-                    || stage["domain"] != readout["domain"]
-                    || stage["units"] != readout["units"]
-                    || stage["layout"]["channel_order"] != readout["channel_order"]
-                    || stage["geometry"] != readout["stage_geometry"]
-            }) || payload["precision"]["host_precision"] != readout["host_precision"]
+        for a in &parsed.artifact_refs {
+            indexed_reference(index, a)?
+        }
+    }
+    Ok(())
+}
+
+/// Validate a case's region readouts, displacements and their artifact references.
+fn validate_readouts(
+    index: &std::collections::BTreeMap<&str, &Value>,
+    owner: &Value,
+    case: &Value,
+) -> Result<()> {
+    for readout in owner["region_readouts"].as_array().into_iter().flatten() {
+        for artifact in readout["artifact_refs"].as_array().into_iter().flatten() {
+            indexed_reference(index, artifact)?;
+        }
+        if let Some(mask) = readout.get("common_area_artifact_id") {
+            indexed_reference(index, mask)?;
+        }
+        if owner.get("left_role").is_some() && readout["pair_id"] != owner["id"] {
+            return Err(err(
+                "readout_identity",
+                "Color readout differs from its comparison pair",
+            ));
+        }
+        let expected_domain = if readout["estimator"] == "bounded_lab_channel_median" {
+            "bounded_srgb_d65_lab"
+        } else {
+            "unclipped_linear_srgb_mean_lab"
+        };
+        if readout["domain"] != expected_domain {
+            return Err(err(
+                "readout_domain",
+                "Color readout domain differs from its estimator",
+            ));
+        }
+        if readout["availability"] != "available" {
+            continue;
+        }
+        let sides = readout["sides"].as_object().unwrap();
+        let reference_review = &owner["reference"];
+        let is_reference = readout["pair_id"] == "reference";
+        if is_reference
+            && (reference_review["scope"] == "visual"
+                || reference_review["color_available"] == false
+                || (reference_review["scope"] == "aligned_scene"
+                    && reference_review["geometry"] != "pixel_aligned"))
+        {
+            return Err(err(
+                "readout_applicability",
+                "Color readout conflicts with retained reference qualification",
+            ));
+        }
+        for displacement in readout["displacements"].as_array().unwrap() {
+            let from = displacement["from_role"].as_str().unwrap();
+            let to = displacement["to_role"].as_str().unwrap();
+            if from == to
+                || !sides.contains_key(from)
+                || !sides.contains_key(to)
+                || (is_reference && from != "reference")
+                || (readout["pair_id"] == "input" && (from != "input" || to != "simulation"))
+                || (readout["pair_id"] == "baseline/candidate"
+                    && (from != "baseline" || to != "candidate"))
             {
                 return Err(err(
-                    "readout_domain",
-                    "Stage readout differs from its producer's observed boundary",
+                    "readout_identity",
+                    "Color displacement must name the retained comparison direction",
                 ));
             }
-            let buffer = payload["stage_evidence"]["buffers"]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .find(|buffer| buffer["stage_id"] == readout["stage_id"]);
-            if buffer.is_none_or(|buffer| {
-                !readout["artifact_refs"]
-                    .as_array()
-                    .unwrap()
-                    .contains(&buffer["path"])
-            }) {
-                return Err(err(
-                    "readout_evidence",
-                    "Available stage readout requires its retained native buffer",
-                ));
-            }
-            for channel in 0..3 {
-                let min = readout["channel_min"][channel].as_f64().unwrap();
-                let max = readout["channel_max"][channel].as_f64().unwrap();
-                if min > max {
+            for (eligible, keys) in [
+                (
+                    "tone_target_eligible",
+                    &["delta_lab", "delta_l_star", "delta_e76", "delta_e00"][..],
+                ),
+                (
+                    "color_diagnostic_eligible",
+                    &["delta_c_star", "delta_h_degrees", "equal_l_delta_e00"][..],
+                ),
+            ] {
+                if is_reference
+                    && reference_review[eligible] != true
+                    && keys
+                        .iter()
+                        .any(|key| displacement[*key]["availability"] == "available")
+                {
                     return Err(err(
-                        "readout_value",
-                        "Stage minimum must not exceed its maximum",
+                        "readout_applicability",
+                        "Color displacement exceeds retained reference eligibility",
                     ));
                 }
             }
         }
-        Ok(())
-    };
-    if kind == "run" {
-        reference(&v["suite"])?;
-        reference(&v["target"])?;
-        let suite = load_json_document(&safe_artifact_path(
-            root,
-            v["suite"]["path"].as_str().unwrap(),
-        )?)?;
-        validate_schema("suite", &suite)?;
-        if digest(&suite)? != v["suite"]["digest"].as_str().unwrap_or("")
-            || suite["protocol"] != v["protocol"]
-        {
+    }
+    for readout in owner["stage_readouts"].as_array().into_iter().flatten() {
+        for artifact in readout["artifact_refs"].as_array().into_iter().flatten() {
+            indexed_reference(index, artifact)?;
+        }
+        let role = readout["run_role"].as_str().unwrap();
+        let payload = &case["run_evidence"][role];
+        if !payload.is_object() {
             return Err(err(
-                "suite_identity",
-                "suite snapshot and protocol mismatch",
+                "readout_identity",
+                "Stage readout has no retained run role",
             ));
         }
-        let selected = v["selection"]["case_ids"]
+        if readout["availability"] != "available" {
+            continue;
+        }
+        let stage = payload["observed"]["stages"]
             .as_array()
-            .ok_or_else(|| err("run_selection", "selection case_ids must be array"))?;
-        let all = suite["cases"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|c| c["id"].clone())
-            .collect::<Vec<_>>();
-        let set = selected.iter().map(|x| x.as_str()).collect::<BTreeSet<_>>();
-        if selected.is_empty()
-            || set.len() != selected.len()
-            || selected.iter().any(|x| !all.contains(x))
-            || v["selection"]["full_suite"].as_bool() != Some(selected == &all)
+            .into_iter()
+            .flatten()
+            .find(|stage| stage["id"] == readout["stage_id"]);
+        if stage.is_none_or(|stage| {
+            stage["availability"] != "available"
+                || stage["domain"] != readout["domain"]
+                || stage["units"] != readout["units"]
+                || stage["layout"]["channel_order"] != readout["channel_order"]
+                || stage["geometry"] != readout["stage_geometry"]
+        }) || payload["precision"]["host_precision"] != readout["host_precision"]
         {
             return Err(err(
-                "run_selection",
-                "selection must identify distinct suite cases and full-suite state",
+                "readout_domain",
+                "Stage readout differs from its producer's observed boundary",
             ));
         }
-        let mut expected = BTreeSet::new();
-        for c in suite["cases"].as_array().unwrap() {
-            if selected.contains(&c["id"]) {
-                for seed in c["seeds"].as_array().unwrap() {
-                    expected.insert((
-                        c["id"].as_str().unwrap().to_string(),
-                        seed.as_u64().unwrap(),
-                    ));
+        let buffer = payload["stage_evidence"]["buffers"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .find(|buffer| buffer["stage_id"] == readout["stage_id"]);
+        if buffer.is_none_or(|buffer| {
+            !readout["artifact_refs"]
+                .as_array()
+                .unwrap()
+                .contains(&buffer["path"])
+        }) {
+            return Err(err(
+                "readout_evidence",
+                "Available stage readout requires its retained native buffer",
+            ));
+        }
+        for channel in 0..3 {
+            let min = readout["channel_min"][channel].as_f64().unwrap();
+            let max = readout["channel_max"][channel].as_f64().unwrap();
+            if min > max {
+                return Err(err(
+                    "readout_value",
+                    "Stage minimum must not exceed its maximum",
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Validate a generated `run` document: selection, cases, dependencies and retained evidence.
+fn validate_run_document(
+    v: &Value,
+    root: &Path,
+    index: &std::collections::BTreeMap<&str, &Value>,
+) -> Result<()> {
+    indexed_reference(index, &v["suite"])?;
+    indexed_reference(index, &v["target"])?;
+    let suite = load_json_document(&safe_artifact_path(
+        root,
+        v["suite"]["path"].as_str().unwrap(),
+    )?)?;
+    validate_schema("suite", &suite)?;
+    if digest(&suite)? != v["suite"]["digest"].as_str().unwrap_or("")
+        || suite["protocol"] != v["protocol"]
+    {
+        return Err(err(
+            "suite_identity",
+            "suite snapshot and protocol mismatch",
+        ));
+    }
+    let selected = v["selection"]["case_ids"]
+        .as_array()
+        .ok_or_else(|| err("run_selection", "selection case_ids must be array"))?;
+    let all = suite["cases"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| c["id"].clone())
+        .collect::<Vec<_>>();
+    let set = selected.iter().map(|x| x.as_str()).collect::<BTreeSet<_>>();
+    if selected.is_empty()
+        || set.len() != selected.len()
+        || selected.iter().any(|x| !all.contains(x))
+        || v["selection"]["full_suite"].as_bool() != Some(selected == &all)
+    {
+        return Err(err(
+            "run_selection",
+            "selection must identify distinct suite cases and full-suite state",
+        ));
+    }
+    let mut expected = BTreeSet::new();
+    for c in suite["cases"].as_array().unwrap() {
+        if selected.contains(&c["id"]) {
+            for seed in c["seeds"].as_array().unwrap() {
+                expected.insert((
+                    c["id"].as_str().unwrap().to_string(),
+                    seed.as_u64().unwrap(),
+                ));
+            }
+        }
+    }
+    let mut observed = BTreeSet::new();
+    for row in v["cases"].as_array().unwrap() {
+        let ro = obj(row)?;
+        identifier(ro, "case_id")?;
+        let seed = row["seed"]
+            .as_u64()
+            .filter(|x| *x <= u32::MAX as u64)
+            .ok_or_else(|| err("run_case", "invalid case seed"))?;
+        if !observed.insert((text(ro, "case_id")?.to_string(), seed)) {
+            return Err(err("run_selection", "duplicate rendered case/seed"));
+        }
+        match row["status"].as_str() {
+            Some("completed") => {
+                for k in [
+                    "input",
+                    "raw",
+                    "raw_metadata",
+                    "master",
+                    "diagnostics",
+                    "resolved",
+                    "stdout",
+                    "stderr",
+                ] {
+                    let record = obj(req(ro, k)?)?;
+                    text(record, "path")?;
+                    indexed_reference(index, req(ro, k)?)?
                 }
-            }
-        }
-        let mut observed = BTreeSet::new();
-        for row in v["cases"].as_array().unwrap() {
-            let ro = obj(row)?;
-            identifier(ro, "case_id")?;
-            let seed = row["seed"]
-                .as_u64()
-                .filter(|x| *x <= u32::MAX as u64)
-                .ok_or_else(|| err("run_case", "invalid case seed"))?;
-            if !observed.insert((text(ro, "case_id")?.to_string(), seed)) {
-                return Err(err("run_selection", "duplicate rendered case/seed"));
-            }
-            match row["status"].as_str() {
-                Some("completed") => {
-                    for k in [
-                        "input",
-                        "raw",
-                        "raw_metadata",
-                        "master",
-                        "diagnostics",
-                        "resolved",
-                        "stdout",
-                        "stderr",
-                    ] {
-                        let record = obj(req(ro, k)?)?;
-                        text(record, "path")?;
-                        reference(req(ro, k)?)?
-                    }
-                    // Completed rows always retain the original existing source
-                    // evidence; a manifest that lost it must not revalidate.
-                    for key in [
-                        "source_raw",
-                        "source_raw_metadata",
-                        "source_resolved",
-                        "source_diagnostics",
-                        "source_master",
-                    ] {
-                        let record = row.get(key).ok_or_else(|| {
-                            err(
-                                "source_evidence",
-                                format!("completed run row requires retained {key}"),
-                            )
-                        })?;
-                        text(obj(record)?, "path")?;
-                        reference(record)?;
-                    }
-                    for key in ["command", "source_command"] {
-                        let argv = row[key].as_array().filter(|argv| {
-                            !argv.is_empty()
-                                && argv
-                                    .iter()
-                                    .all(|arg| arg.as_str().is_some_and(|arg| !arg.is_empty()))
-                        });
-                        if argv.is_none() {
-                            return Err(err(
-                                "run_command",
-                                "retained command must record the executed argument vector",
-                            ));
-                        }
-                    }
-                    {
-                        let source = &row["source_raw"];
-                        let layout = &source["layout"];
-                        let width = layout["width"]
-                            .as_u64()
-                            .filter(|v| *v > 0)
-                            .ok_or_else(|| err("raw_layout", "Invalid source width"))?;
-                        let height = layout["height"]
-                            .as_u64()
-                            .filter(|v| *v > 0)
-                            .ok_or_else(|| err("raw_layout", "Invalid source height"))?;
-                        let bytes = width
-                            .checked_mul(height)
-                            .and_then(|v| v.checked_mul(24))
-                            .ok_or_else(|| err("raw_layout", "Source dimensions overflow"))?;
-                        if source["color"]
-                            != json!({"color_space":"ACES2065-1","cctf_decoding":false})
-                            || layout["channels"] != 3
-                            || layout["dtype"] != "f64"
-                            || layout["channel_order"] != "RGB"
-                            || fs::metadata(safe_artifact_path(
-                                root,
-                                source["path"].as_str().unwrap(),
-                            )?)?
-                            .len()
-                                != bytes
-                        {
-                            return Err(err(
-                                "raw_layout",
-                                "Retained source layout, color, or byte count is invalid",
-                            ));
-                        }
-                        let metadata = load_json_document(&safe_artifact_path(
-                            root,
-                            row["source_raw_metadata"]["path"].as_str().unwrap(),
-                        )?)?;
-                        let mut expected = layout.clone();
-                        expected
-                            .as_object_mut()
-                            .unwrap()
-                            .extend(source["color"].as_object().unwrap().clone());
-                        let diagnostics = load_json_document(&safe_artifact_path(
-                            root,
-                            row["source_diagnostics"]["path"].as_str().unwrap(),
-                        )?)?;
-                        if metadata != expected
-                            || diagnostics["configuration"]["input_dimensions"]
-                                != row["source_dimensions"]
-                            || diagnostics["configuration"]["published_dimensions"]
-                                != json!([width, height])
-                            || row["source_geometry"]["published_dimensions"]
-                                != json!([width, height])
-                            || row["simulation_geometry"]["published_dimensions"]
-                                != row["dimensions"]
-                        {
-                            return Err(err(
-                                "source_geometry",
-                                "Source evidence metadata and observed geometry disagree",
-                            ));
-                        }
-                        let case = suite["cases"]
-                            .as_array()
-                            .unwrap()
-                            .iter()
-                            .find(|c| c["id"] == row["case_id"])
-                            .ok_or_else(|| err("run_selection", "Unknown retained case"))?;
-                        if case.get("preparation") != row.get("preparation") {
-                            return Err(err(
-                                "preparation_identity",
-                                "Run preparation differs from suite provenance",
-                            ));
-                        }
-                    }
-                    let layout = &row["raw"]["layout"];
-                    let w = layout["width"]
-                        .as_u64()
-                        .ok_or_else(|| err("raw_layout", "invalid width"))?;
-                    let h = layout["height"]
-                        .as_u64()
-                        .ok_or_else(|| err("raw_layout", "invalid height"))?;
-                    let bytes = w
-                        .checked_mul(h)
-                        .and_then(|x| x.checked_mul(24))
-                        .ok_or_else(|| err("raw_layout", "raw byte count overflow"))?;
-                    if fs::metadata(safe_artifact_path(
-                        root,
-                        row["raw"]["path"].as_str().unwrap(),
-                    )?)?
-                    .len()
-                        != bytes
-                    {
-                        return Err(err("raw_layout", "raw byte count differs from dimensions"));
-                    }
-                    let d = load_json_document(&safe_artifact_path(
-                        root,
-                        row["diagnostics"]["path"].as_str().unwrap(),
-                    )?)?;
-                    if d["configuration"]["published_dimensions"] != row["dimensions"] {
+                // Completed rows always retain the original existing source
+                // evidence; a manifest that lost it must not revalidate.
+                for key in [
+                    "source_raw",
+                    "source_raw_metadata",
+                    "source_resolved",
+                    "source_diagnostics",
+                    "source_master",
+                ] {
+                    let record = row.get(key).ok_or_else(|| {
+                        err(
+                            "source_evidence",
+                            format!("completed run row requires retained {key}"),
+                        )
+                    })?;
+                    text(obj(record)?, "path")?;
+                    indexed_reference(index, record)?;
+                }
+                for key in ["command", "source_command"] {
+                    let argv = row[key].as_array().filter(|argv| {
+                        !argv.is_empty()
+                            && argv
+                                .iter()
+                                .all(|arg| arg.as_str().is_some_and(|arg| !arg.is_empty()))
+                    });
+                    if argv.is_none() {
                         return Err(err(
-                            "render_geometry",
-                            "diagnostics and retained dimensions disagree",
+                            "run_command",
+                            "retained command must record the executed argument vector",
                         ));
                     }
-                    if let Some(stage) = row.get("stage_evidence") {
-                        let record = obj(stage)?;
-                        let requested = record
-                            .get("requested")
-                            .and_then(Value::as_bool)
-                            .ok_or_else(|| {
-                                err("stage_evidence", "stage_evidence.requested must be boolean")
-                            })?;
-                        if !requested {
-                            if record.get("manifest").is_some() || record.get("buffers").is_some() {
-                                return Err(err(
-                                    "stage_evidence",
-                                    "uncaptured stage evidence must not claim bundle artifacts",
-                                ));
-                            }
-                            if !matches!(
-                                record["availability"].as_str(),
-                                Some("not_applicable" | "unavailable")
-                            ) || record["reason"]
-                                .as_str()
-                                .is_none_or(|reason| reason.is_empty())
-                            {
-                                return Err(err(
-                                    "stage_evidence",
-                                    "uncaptured stage evidence must name its unavailability explicitly",
-                                ));
-                            }
-                            continue;
-                        }
-                        if record["availability"] != json!("available") {
+                }
+                {
+                    let source = &row["source_raw"];
+                    let layout = &source["layout"];
+                    let width = layout["width"]
+                        .as_u64()
+                        .filter(|v| *v > 0)
+                        .ok_or_else(|| err("raw_layout", "Invalid source width"))?;
+                    let height = layout["height"]
+                        .as_u64()
+                        .filter(|v| *v > 0)
+                        .ok_or_else(|| err("raw_layout", "Invalid source height"))?;
+                    let bytes = width
+                        .checked_mul(height)
+                        .and_then(|v| v.checked_mul(24))
+                        .ok_or_else(|| err("raw_layout", "Source dimensions overflow"))?;
+                    if source["color"] != json!({"color_space":"ACES2065-1","cctf_decoding":false})
+                        || layout["channels"] != 3
+                        || layout["dtype"] != "f64"
+                        || layout["channel_order"] != "RGB"
+                        || fs::metadata(safe_artifact_path(
+                            root,
+                            source["path"].as_str().unwrap(),
+                        )?)?
+                        .len()
+                            != bytes
+                    {
+                        return Err(err(
+                            "raw_layout",
+                            "Retained source layout, color, or byte count is invalid",
+                        ));
+                    }
+                    let metadata = load_json_document(&safe_artifact_path(
+                        root,
+                        row["source_raw_metadata"]["path"].as_str().unwrap(),
+                    )?)?;
+                    let mut expected = layout.clone();
+                    expected
+                        .as_object_mut()
+                        .unwrap()
+                        .extend(source["color"].as_object().unwrap().clone());
+                    let diagnostics = load_json_document(&safe_artifact_path(
+                        root,
+                        row["source_diagnostics"]["path"].as_str().unwrap(),
+                    )?)?;
+                    if metadata != expected
+                        || diagnostics["configuration"]["input_dimensions"]
+                            != row["source_dimensions"]
+                        || diagnostics["configuration"]["published_dimensions"]
+                            != json!([width, height])
+                        || row["source_geometry"]["published_dimensions"] != json!([width, height])
+                        || row["simulation_geometry"]["published_dimensions"] != row["dimensions"]
+                    {
+                        return Err(err(
+                            "source_geometry",
+                            "Source evidence metadata and observed geometry disagree",
+                        ));
+                    }
+                    let case = suite["cases"]
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .find(|c| c["id"] == row["case_id"])
+                        .ok_or_else(|| err("run_selection", "Unknown retained case"))?;
+                    if case.get("preparation") != row.get("preparation") {
+                        return Err(err(
+                            "preparation_identity",
+                            "Run preparation differs from suite provenance",
+                        ));
+                    }
+                }
+                let layout = &row["raw"]["layout"];
+                let w = layout["width"]
+                    .as_u64()
+                    .ok_or_else(|| err("raw_layout", "invalid width"))?;
+                let h = layout["height"]
+                    .as_u64()
+                    .ok_or_else(|| err("raw_layout", "invalid height"))?;
+                let bytes = w
+                    .checked_mul(h)
+                    .and_then(|x| x.checked_mul(24))
+                    .ok_or_else(|| err("raw_layout", "raw byte count overflow"))?;
+                if fs::metadata(safe_artifact_path(
+                    root,
+                    row["raw"]["path"].as_str().unwrap(),
+                )?)?
+                .len()
+                    != bytes
+                {
+                    return Err(err("raw_layout", "raw byte count differs from dimensions"));
+                }
+                let d = load_json_document(&safe_artifact_path(
+                    root,
+                    row["diagnostics"]["path"].as_str().unwrap(),
+                )?)?;
+                if d["configuration"]["published_dimensions"] != row["dimensions"] {
+                    return Err(err(
+                        "render_geometry",
+                        "diagnostics and retained dimensions disagree",
+                    ));
+                }
+                if let Some(stage) = row.get("stage_evidence") {
+                    let record = obj(stage)?;
+                    let requested = record
+                        .get("requested")
+                        .and_then(Value::as_bool)
+                        .ok_or_else(|| {
+                            err("stage_evidence", "stage_evidence.requested must be boolean")
+                        })?;
+                    if !requested {
+                        if record.get("manifest").is_some() || record.get("buffers").is_some() {
                             return Err(err(
                                 "stage_evidence",
-                                "a completed render cannot retain incomplete stage capture as evidence",
+                                "uncaptured stage evidence must not claim bundle artifacts",
                             ));
                         }
-                        let bundle =
-                            validate_retained_bundle(root, &index, stage, record.get("context"))?;
-                        // Producer semantics: every captured boundary declares
-                        // its own geometry and the run observes the matching
-                        // dimensions; RGB boundaries state the declared input
-                        // and output color interpretation. Stage capture is
-                        // rejected under preview bounding, so the decoded
-                        // source space always is the retained original input.
-                        let resolved = load_json_document(&safe_artifact_path(
-                            root,
-                            row["resolved"]["path"].as_str().unwrap(),
-                        )?)?;
-                        let io = &resolved["parameters"]["io"];
-                        for buffer in record["buffers"].as_array().into_iter().flatten() {
-                            let layout = &buffer["layout"];
-                            let dims = json!([layout["width"], layout["height"]]);
-                            let space = buffer["geometry"]["coordinate_space"].as_str();
-                            let expected = match space {
-                                Some("source_pixels") => Some(&row["source_dimensions"]),
-                                Some("working_pixels") => {
-                                    Some(&row["simulation_geometry"]["working_dimensions"])
-                                }
-                                Some("output_pixels") => Some(&row["dimensions"]),
-                                // Film-frame and supersampled aperture grids
-                                // have no matching run-level dimensions.
-                                _ => None,
-                            };
-                            if let Some(expected) = expected
-                                && expected.is_array()
-                                && *expected != dims
-                            {
+                        if !matches!(
+                            record["availability"].as_str(),
+                            Some("not_applicable" | "unavailable")
+                        ) || record["reason"]
+                            .as_str()
+                            .is_none_or(|reason| reason.is_empty())
+                        {
+                            return Err(err(
+                                "stage_evidence",
+                                "uncaptured stage evidence must name its unavailability explicitly",
+                            ));
+                        }
+                        continue;
+                    }
+                    if record["availability"] != json!("available") {
+                        return Err(err(
+                            "stage_evidence",
+                            "a completed render cannot retain incomplete stage capture as evidence",
+                        ));
+                    }
+                    let bundle =
+                        validate_retained_bundle(root, index, stage, record.get("context"))?;
+                    // Producer semantics: every captured boundary declares
+                    // its own geometry and the run observes the matching
+                    // dimensions; RGB boundaries state the declared input
+                    // and output color interpretation. Stage capture is
+                    // rejected under preview bounding, so the decoded
+                    // source space always is the retained original input.
+                    let resolved = load_json_document(&safe_artifact_path(
+                        root,
+                        row["resolved"]["path"].as_str().unwrap(),
+                    )?)?;
+                    let io = &resolved["parameters"]["io"];
+                    for buffer in record["buffers"].as_array().into_iter().flatten() {
+                        let layout = &buffer["layout"];
+                        let dims = json!([layout["width"], layout["height"]]);
+                        let space = buffer["geometry"]["coordinate_space"].as_str();
+                        let expected = match space {
+                            Some("source_pixels") => Some(&row["source_dimensions"]),
+                            Some("working_pixels") => {
+                                Some(&row["simulation_geometry"]["working_dimensions"])
+                            }
+                            Some("output_pixels") => Some(&row["dimensions"]),
+                            // Film-frame and supersampled aperture grids
+                            // have no matching run-level dimensions.
+                            _ => None,
+                        };
+                        if let Some(expected) = expected
+                            && expected.is_array()
+                            && *expected != dims
+                        {
+                            return Err(err(
+                                "stage_evidence",
+                                format!(
+                                    "stage {} geometry disagrees with the run's observed {} dimensions",
+                                    buffer["stage_id"],
+                                    space.unwrap_or("coordinate space")
+                                ),
+                            ));
+                        }
+                        let id = buffer["stage_id"].as_str().unwrap_or_default();
+                        let declaration = match id {
+                            "rgb_in" => Some((
+                                io["input_color_space"].clone(),
+                                io["input_cctf_decoding"] == json!(true),
+                            )),
+                            "rgb_out" => Some((
+                                io["output_color_space"].clone(),
+                                io["output_cctf_encoding"] == json!(true),
+                            )),
+                            _ => None,
+                        };
+                        if let Some((color_space, encoded)) = declaration {
+                            let expected =
+                                json!({"color_space":color_space,"cctf_decoding":!encoded});
+                            if buffer["color"] != expected {
                                 return Err(err(
                                     "stage_evidence",
                                     format!(
-                                        "stage {} geometry disagrees with the run's observed {} dimensions",
-                                        buffer["stage_id"],
-                                        space.unwrap_or("coordinate space")
+                                        "stage {id} color interpretation differs from the declared io configuration"
                                     ),
                                 ));
                             }
-                            let id = buffer["stage_id"].as_str().unwrap_or_default();
-                            let declaration = match id {
-                                "rgb_in" => Some((
-                                    io["input_color_space"].clone(),
-                                    io["input_cctf_decoding"] == json!(true),
-                                )),
-                                "rgb_out" => Some((
-                                    io["output_color_space"].clone(),
-                                    io["output_cctf_encoding"] == json!(true),
-                                )),
-                                _ => None,
-                            };
-                            if let Some((color_space, encoded)) = declaration {
-                                let expected =
-                                    json!({"color_space":color_space,"cctf_decoding":!encoded});
-                                if buffer["color"] != expected {
-                                    return Err(err(
-                                        "stage_evidence",
-                                        format!(
-                                            "stage {id} color interpretation differs from the declared io configuration"
-                                        ),
-                                    ));
-                                }
-                            }
                         }
-                        if record["context"]["exposure"]["availability"] == json!("available")
-                            && record["context"]["exposure"]["source_dimensions"]
-                                != row["source_dimensions"]
-                        {
-                            return Err(err(
-                                "stage_evidence",
-                                "exposure metering dimensions must be the retained full-source dimensions",
-                            ));
-                        }
-                        let dimensions = row["dimensions"]
-                            .as_array()
-                            .filter(|values| values.len() == 2)
-                            .ok_or_else(|| err("stage_evidence", "missing output dimensions"))?;
-                        check_output_boundary(
-                            &bundle,
-                            [
-                                dimensions[0].as_u64().unwrap_or_default(),
-                                dimensions[1].as_u64().unwrap_or_default(),
-                            ],
-                        )?;
                     }
-                }
-                Some("failed") => {
-                    if row
-                        .get("error")
-                        .is_none_or(|x| !x.is_object() || x.as_object().unwrap().is_empty())
+                    if record["context"]["exposure"]["availability"] == json!("available")
+                        && record["context"]["exposure"]["source_dimensions"]
+                            != row["source_dimensions"]
                     {
-                        return Err(err(
-                            "missing_failure",
-                            "failed render requires structured error",
-                        ));
-                    }
-                    if v["execution_status"] == "completed" {
-                        return Err(err("run_status", "completed run contains failed cases"));
-                    }
-                }
-                _ => return Err(err("run_status", "invalid run case status")),
-            }
-        }
-        if observed != expected {
-            return Err(err(
-                "run_selection",
-                "rendered case/seed population differs from suite",
-            ));
-        }
-        for x in v["dependencies"].as_array().unwrap() {
-            if x["role"] != "renderer" {
-                reference(x)?
-            }
-        }
-    } else if kind == "analysis" {
-        // One source, one realisation: no seed population, no policy, and no
-        // difference to evaluate.
-        let source = obj(req(obj(v)?, "source")?)?;
-        if source.get("kind") != Some(&json!("images")) {
-            return Err(err(
-                "source_kind",
-                "an analysis source is a delivered image set",
-            ));
-        }
-        for field in ["policy", "run", "mode", "evaluation_status", "findings"] {
-            if v.get(field).is_some() {
-                return Err(err(
-                    "inapplicable_field",
-                    format!("an analysis record carries no {field}"),
-                ));
-            }
-        }
-        for case in v["cases"].as_array().unwrap() {
-            measurements(&case["measurements"])?;
-            if case.get("seed").is_some() {
-                return Err(err(
-                    "inapplicable_field",
-                    "a delivered image is one realisation and carries no seed",
-                ));
-            }
-        }
-    } else if kind == "comparison" {
-        if let Some(p) = v.get("policy") {
-            reference(p)?
-        } else if matches!(
-            v.get("evaluation_status").and_then(Value::as_str),
-            Some(status) if status != "not_evaluated"
-        ) {
-            return Err(err(
-                "evaluation_status",
-                "comparison without policy must remain not_evaluated",
-            ));
-        }
-        for case in v["cases"].as_array().unwrap() {
-            measurements(&case["measurements"])?;
-            readouts(case, case)?;
-            // Per-role run evidence: identity consistency, indexed references,
-            // and the copied stage bundle exactly as the producer wrote it.
-            if let Some(run_evidence) = case.get("run_evidence") {
-                for (role, payload) in obj(run_evidence)? {
-                    let payload = obj(payload)?;
-                    if payload.get("role") != Some(&json!(role.as_str()))
-                        || payload.get("case_id") != Some(&case["case_id"])
-                        || payload.get("seed") != Some(&case["seed"])
-                    {
-                        return Err(err(
-                            "run_evidence_identity",
-                            "run evidence identity differs from its case",
-                        ));
-                    }
-                    for key in ["resolved_configuration", "diagnostics"] {
-                        text(obj(req(payload, key)?)?, "path")?;
-                        reference(req(payload, key)?)?;
-                    }
-                    let stage = obj(req(payload, "stage_evidence")?)?;
-                    let requested =
-                        stage
-                            .get("requested")
-                            .and_then(Value::as_bool)
-                            .ok_or_else(|| {
-                                err("stage_evidence", "stage_evidence.requested must be boolean")
-                            })?;
-                    if requested {
-                        validate_retained_bundle(
-                            root,
-                            &index,
-                            &payload["stage_evidence"],
-                            payload.get("observed"),
-                        )?;
-                        continue;
-                    }
-                    if stage.get("manifest").is_some() || stage.get("buffers").is_some() {
                         return Err(err(
                             "stage_evidence",
-                            "uncaptured stage evidence must not claim bundle artifacts",
+                            "exposure metering dimensions must be the retained full-source dimensions",
                         ));
                     }
-                    let observed = payload
-                        .get("observed")
-                        .and_then(Value::as_object)
+                    let dimensions = row["dimensions"]
+                        .as_array()
+                        .filter(|values| values.len() == 2)
+                        .ok_or_else(|| err("stage_evidence", "missing output dimensions"))?;
+                    check_output_boundary(
+                        &bundle,
+                        [
+                            dimensions[0].as_u64().unwrap_or_default(),
+                            dimensions[1].as_u64().unwrap_or_default(),
+                        ],
+                    )?;
+                }
+            }
+            Some("failed") => {
+                if row
+                    .get("error")
+                    .is_none_or(|x| !x.is_object() || x.as_object().unwrap().is_empty())
+                {
+                    return Err(err(
+                        "missing_failure",
+                        "failed render requires structured error",
+                    ));
+                }
+                if v["execution_status"] == "completed" {
+                    return Err(err("run_status", "completed run contains failed cases"));
+                }
+            }
+            _ => return Err(err("run_status", "invalid run case status")),
+        }
+    }
+    if observed != expected {
+        return Err(err(
+            "run_selection",
+            "rendered case/seed population differs from suite",
+        ));
+    }
+    for x in v["dependencies"].as_array().unwrap() {
+        if x["role"] != "renderer" {
+            indexed_reference(index, x)?
+        }
+    }
+    Ok(())
+}
+
+/// Validate a generated `analysis` document: one source, no seed population.
+fn validate_analysis_document(
+    v: &Value,
+    index: &std::collections::BTreeMap<&str, &Value>,
+) -> Result<()> {
+    // One source, one realisation: no seed population, no policy, and no
+    // difference to evaluate.
+    let source = obj(req(obj(v)?, "source")?)?;
+    if source.get("kind") != Some(&json!("images")) {
+        return Err(err(
+            "source_kind",
+            "an analysis source is a delivered image set",
+        ));
+    }
+    for field in ["policy", "run", "mode", "evaluation_status", "findings"] {
+        if v.get(field).is_some() {
+            return Err(err(
+                "inapplicable_field",
+                format!("an analysis record carries no {field}"),
+            ));
+        }
+    }
+    for case in v["cases"].as_array().unwrap() {
+        validate_measurements(index, &case["measurements"])?;
+        if case.get("seed").is_some() {
+            return Err(err(
+                "inapplicable_field",
+                "a delivered image is one realisation and carries no seed",
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Validate a generated `comparison` document: cases, findings and per-role run evidence.
+fn validate_comparison_document(
+    v: &Value,
+    root: &Path,
+    index: &std::collections::BTreeMap<&str, &Value>,
+) -> Result<()> {
+    if let Some(p) = v.get("policy") {
+        indexed_reference(index, p)?
+    } else if matches!(
+        v.get("evaluation_status").and_then(Value::as_str),
+        Some(status) if status != "not_evaluated"
+    ) {
+        return Err(err(
+            "evaluation_status",
+            "comparison without policy must remain not_evaluated",
+        ));
+    }
+    for case in v["cases"].as_array().unwrap() {
+        validate_measurements(index, &case["measurements"])?;
+        validate_readouts(index, case, case)?;
+        // Per-role run evidence: identity consistency, indexed references,
+        // and the copied stage bundle exactly as the producer wrote it.
+        if let Some(run_evidence) = case.get("run_evidence") {
+            for (role, payload) in obj(run_evidence)? {
+                let payload = obj(payload)?;
+                if payload.get("role") != Some(&json!(role.as_str()))
+                    || payload.get("case_id") != Some(&case["case_id"])
+                    || payload.get("seed") != Some(&case["seed"])
+                {
+                    return Err(err(
+                        "run_evidence_identity",
+                        "run evidence identity differs from its case",
+                    ));
+                }
+                for key in ["resolved_configuration", "diagnostics"] {
+                    text(obj(req(payload, key)?)?, "path")?;
+                    indexed_reference(index, req(payload, key)?)?;
+                }
+                let stage = obj(req(payload, "stage_evidence")?)?;
+                let requested =
+                    stage
+                        .get("requested")
+                        .and_then(Value::as_bool)
                         .ok_or_else(|| {
-                            err(
-                                "stage_evidence",
-                                "run evidence must name unobserved sections",
-                            )
+                            err("stage_evidence", "stage_evidence.requested must be boolean")
                         })?;
-                    for key in ["exposure", "print_normalization"] {
-                        let section = obj(observed.get(key).ok_or_else(|| {
-                            err(
-                                "stage_evidence",
-                                "run evidence must name unobserved sections",
-                            )
-                        })?)?;
-                        if section["availability"] != json!("unavailable")
-                            || section["reason"]
-                                .as_str()
-                                .is_none_or(|reason| reason.is_empty())
-                        {
-                            return Err(err(
-                                "stage_evidence",
-                                "uncaptured exposure and normalization must be named unobserved",
-                            ));
-                        }
-                    }
-                    let stages = observed["stages"].as_array().ok_or_else(|| {
+                if requested {
+                    validate_retained_bundle(
+                        root,
+                        index,
+                        &payload["stage_evidence"],
+                        payload.get("observed"),
+                    )?;
+                    continue;
+                }
+                if stage.get("manifest").is_some() || stage.get("buffers").is_some() {
+                    return Err(err(
+                        "stage_evidence",
+                        "uncaptured stage evidence must not claim bundle artifacts",
+                    ));
+                }
+                let observed = payload
+                    .get("observed")
+                    .and_then(Value::as_object)
+                    .ok_or_else(|| {
                         err(
                             "stage_evidence",
-                            "uncaptured stages must be named explicitly",
+                            "run evidence must name unobserved sections",
                         )
                     })?;
-                    if stages.len() != STAGE_IDS.len()
-                        || stages.iter().enumerate().any(|(index, record)| {
-                            record["id"] != json!(STAGE_IDS[index])
-                                || record["availability"] != json!("unavailable")
-                                || record["reason"]
-                                    .as_str()
-                                    .is_none_or(|reason| reason.is_empty())
+                for key in ["exposure", "print_normalization"] {
+                    let section = obj(observed.get(key).ok_or_else(|| {
+                        err(
+                            "stage_evidence",
+                            "run evidence must name unobserved sections",
+                        )
+                    })?)?;
+                    if section["availability"] != json!("unavailable")
+                        || section["reason"]
+                            .as_str()
+                            .is_none_or(|reason| reason.is_empty())
+                    {
+                        return Err(err(
+                            "stage_evidence",
+                            "uncaptured exposure and normalization must be named unobserved",
+                        ));
+                    }
+                }
+                let stages = observed["stages"].as_array().ok_or_else(|| {
+                    err(
+                        "stage_evidence",
+                        "uncaptured stages must be named explicitly",
+                    )
+                })?;
+                if stages.len() != STAGE_IDS.len()
+                    || stages.iter().enumerate().any(|(index, record)| {
+                        record["id"] != json!(STAGE_IDS[index])
+                            || record["availability"] != json!("unavailable")
+                            || record["reason"]
+                                .as_str()
+                                .is_none_or(|reason| reason.is_empty())
+                    })
+                {
+                    return Err(err(
+                        "stage_evidence",
+                        "uncaptured stages must be named unobserved explicitly",
+                    ));
+                }
+            }
+        }
+        if v["mode"] == "single_run" {
+            let pairs = case["pairs"].as_array().ok_or_else(|| {
+                err(
+                    "comparison_pair",
+                    "Single-run case requires comparison pairs",
+                )
+            })?;
+            unique(pairs, "id")?;
+            if !pairs.iter().any(|pair| pair["id"] == v["default_pair"]) {
+                return Err(err("comparison_pair", "Default pair is absent from case"));
+            }
+            for pair in pairs {
+                if pair["left_role"] != pair["id"] || pair["right_role"] != "simulation" {
+                    return Err(err(
+                        "comparison_pair",
+                        "Pair roles must identify input/reference and simulation",
+                    ));
+                }
+                if case["status"] == "completed" && pair["status"] != "completed" {
+                    return Err(err(
+                        "comparison_status",
+                        "Completed case contains an incomplete pair",
+                    ));
+                }
+                if pair["id"] == "reference" && pair["status"] == "completed" {
+                    let scope = pair["reference"]["scope"].as_str().ok_or_else(|| {
+                        err("comparison_pair", "Reference pair requires retained scope")
+                    })?;
+                    let aligned = scope == "aligned_scene"
+                        && pair["reference"]["geometry"] == "pixel_aligned";
+                    if pair["pixel_aligned"] != aligned {
+                        return Err(err(
+                            "comparison_correspondence",
+                            "Pair alignment conflicts with retained reference correspondence",
+                        ));
+                    }
+                    if pair["measurements"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .any(|row| {
+                            row["availability"] == "available"
+                                && (scope == "visual"
+                                    || (scope == "aligned_scene" && !aligned)
+                                    || pair["reference"]["color_available"] == false)
                         })
                     {
                         return Err(err(
-                            "stage_evidence",
-                            "uncaptured stages must be named unobserved explicitly",
+                            "measurement_applicability",
+                            "Available reference score conflicts with retained scope or interpretation",
                         ));
                     }
                 }
-            }
-            if v["mode"] == "single_run" {
-                let pairs = case["pairs"].as_array().ok_or_else(|| {
-                    err(
-                        "comparison_pair",
-                        "Single-run case requires comparison pairs",
-                    )
-                })?;
-                unique(pairs, "id")?;
-                if !pairs.iter().any(|pair| pair["id"] == v["default_pair"]) {
-                    return Err(err("comparison_pair", "Default pair is absent from case"));
-                }
-                for pair in pairs {
-                    if pair["left_role"] != pair["id"] || pair["right_role"] != "simulation" {
+                validate_measurements(index, &pair["measurements"])?;
+                validate_readouts(index, pair, case)?;
+                for measurement in pair["measurements"].as_array().into_iter().flatten() {
+                    if measurement["case_id"] != case["case_id"]
+                        || measurement["pair_id"] != pair["id"]
+                    {
                         return Err(err(
                             "comparison_pair",
-                            "Pair roles must identify input/reference and simulation",
+                            "Measurement identity differs from its pair",
                         ));
                     }
-                    if case["status"] == "completed" && pair["status"] != "completed" {
-                        return Err(err(
-                            "comparison_status",
-                            "Completed case contains an incomplete pair",
-                        ));
-                    }
-                    if pair["id"] == "reference" && pair["status"] == "completed" {
-                        let scope = pair["reference"]["scope"].as_str().ok_or_else(|| {
-                            err("comparison_pair", "Reference pair requires retained scope")
-                        })?;
-                        let aligned = scope == "aligned_scene"
-                            && pair["reference"]["geometry"] == "pixel_aligned";
-                        if pair["pixel_aligned"] != aligned {
-                            return Err(err(
-                                "comparison_correspondence",
-                                "Pair alignment conflicts with retained reference correspondence",
-                            ));
-                        }
-                        if pair["measurements"]
-                            .as_array()
-                            .into_iter()
-                            .flatten()
-                            .any(|row| {
-                                row["availability"] == "available"
-                                    && (scope == "visual"
-                                        || (scope == "aligned_scene" && !aligned)
-                                        || pair["reference"]["color_available"] == false)
-                            })
-                        {
-                            return Err(err(
-                                "measurement_applicability",
-                                "Available reference score conflicts with retained scope or interpretation",
-                            ));
-                        }
-                    }
-                    measurements(&pair["measurements"])?;
-                    readouts(pair, case)?;
-                    for measurement in pair["measurements"].as_array().into_iter().flatten() {
-                        if measurement["case_id"] != case["case_id"]
-                            || measurement["pair_id"] != pair["id"]
-                        {
-                            return Err(err(
-                                "comparison_pair",
-                                "Measurement identity differs from its pair",
-                            ));
-                        }
-                    }
-                    for item in pair["review"]
-                        .as_object()
-                        .into_iter()
-                        .flat_map(|map| map.values())
-                    {
-                        reference(item)?;
-                    }
-                    for item in pair["artifacts"].as_array().into_iter().flatten() {
-                        reference(item)?;
-                    }
-                    if let Some(item) = pair.get("measurement_artifact") {
-                        reference(item)?;
-                    }
-                    for key in ["left_master", "right_master", "right_resolved"] {
-                        if let Some(item) = pair.get(key) {
-                            reference(item)?;
-                        }
+                }
+                for item in pair["review"]
+                    .as_object()
+                    .into_iter()
+                    .flat_map(|map| map.values())
+                {
+                    indexed_reference(index, item)?;
+                }
+                for item in pair["artifacts"].as_array().into_iter().flatten() {
+                    indexed_reference(index, item)?;
+                }
+                if let Some(item) = pair.get("measurement_artifact") {
+                    indexed_reference(index, item)?;
+                }
+                for key in ["left_master", "right_master", "right_resolved"] {
+                    if let Some(item) = pair.get(key) {
+                        indexed_reference(index, item)?;
                     }
                 }
             }
-            for x in case["review"]
-                .as_object()
-                .into_iter()
-                .flat_map(|m| m.values())
-            {
-                reference(x)?
-            }
-            for x in case["artifacts"].as_array().into_iter().flatten() {
-                reference(x)?
-            }
-            if v["execution_status"] == "completed" && case["status"] == "failed" {
-                return Err(err(
-                    "comparison_status",
-                    "completed comparison contains failed measurements",
-                ));
-            }
         }
-        if let Some(rows) = v.get("seed_measurements") {
-            measurements(rows)?;
+        for x in case["review"]
+            .as_object()
+            .into_iter()
+            .flat_map(|m| m.values())
+        {
+            indexed_reference(index, x)?
         }
-        // A comparison either evaluated a policy and states its findings, or
-        // it measured without one and states neither.
-        let findings = v
-            .get("findings")
-            .and_then(Value::as_array)
-            .cloned()
-            .unwrap_or_default();
-        unique(&findings, "id")?;
-        for finding in &findings {
-            let f = obj(finding)?;
-            for k in [
-                "id",
-                "case_id",
-                "region_id",
-                "metric",
-                "decision",
-                "evidence",
-            ] {
-                req(f, k)?;
-            }
-            let e = finding["evidence"]
-                .as_array()
-                .filter(|x| !x.is_empty())
-                .ok_or_else(|| err("finding_evidence", "finding requires inspectable evidence"))?;
-            for x in e {
-                reference(x)?
-            }
+        for x in case["artifacts"].as_array().into_iter().flatten() {
+            indexed_reference(index, x)?
         }
-        if v["evaluation_status"] == "passed" && v["execution_status"] != "completed" {
-            return Err(err("evaluation_status", "failed execution cannot qualify"));
+        if v["execution_status"] == "completed" && case["status"] == "failed" {
+            return Err(err(
+                "comparison_status",
+                "completed comparison contains failed measurements",
+            ));
         }
+    }
+    if let Some(rows) = v.get("seed_measurements") {
+        validate_measurements(index, rows)?;
+    }
+    // A comparison either evaluated a policy and states its findings, or
+    // it measured without one and states neither.
+    let findings = v
+        .get("findings")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    unique(&findings, "id")?;
+    for finding in &findings {
+        let f = obj(finding)?;
+        for k in [
+            "id",
+            "case_id",
+            "region_id",
+            "metric",
+            "decision",
+            "evidence",
+        ] {
+            req(f, k)?;
+        }
+        let e = finding["evidence"]
+            .as_array()
+            .filter(|x| !x.is_empty())
+            .ok_or_else(|| err("finding_evidence", "finding requires inspectable evidence"))?;
+        for x in e {
+            indexed_reference(index, x)?
+        }
+    }
+    if v["evaluation_status"] == "passed" && v["execution_status"] != "completed" {
+        return Err(err("evaluation_status", "failed execution cannot qualify"));
     }
     Ok(())
 }
