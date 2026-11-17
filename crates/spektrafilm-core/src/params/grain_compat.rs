@@ -1,5 +1,6 @@
 //! Read-only migration of historical grain control names. Runtime fields and
-//! emitted documents use engine names; numbered spellings stay at this boundary.
+//! emitted documents use engine names; numbered spellings and retired no-op
+//! controls stay at this boundary.
 
 use serde_json::Value;
 
@@ -16,8 +17,17 @@ pub(super) const CONTROL_NAMES: &[(&str, &str)] = &[
     ("v2_resolution_type", "procedural_resolution_type"),
     ("v2_timer", "procedural_timer"),
     ("v2_resolution_factor", "procedural_resolution_factor"),
-    ("v3_dye_support_um", "dye_support_um"),
-    ("v3_event_area_um2", "dye_event_area_um2"),
+];
+
+/// Historical no-op grain controls. They remain readable so documents saved
+/// by earlier builds reopen, but the delivered law never reads them and
+/// emitted documents never carry them.
+pub(super) const RETIRED_CONTROLS: &[&str] = &[
+    "dye_support_um",
+    "dye_event_area_um2",
+    "channel_correlation",
+    "v3_dye_support_um",
+    "v3_event_area_um2",
 ];
 
 pub(super) fn canonical_control(name: &str) -> &str {
@@ -67,6 +77,9 @@ pub fn normalize_grain_control_names(value: &mut Value) -> Result<(), String> {
             object.insert(new.into(), value);
         }
     }
+    for retired in RETIRED_CONTROLS {
+        object.remove(*retired);
+    }
     Ok(())
 }
 
@@ -85,7 +98,7 @@ mod tests {
             "procedural_shadows":31.0,"procedural_midtones":41.0,
             "procedural_highlights":51.0,"procedural_chroma":61.0,
             "procedural_resolution_type":0,"procedural_timer":0.25,
-            "procedural_resolution_factor":73.0,"dye_support_um":4.5,"dye_event_area_um2":0.6
+            "procedural_resolution_factor":73.0
         });
         let expected: GrainParams = serde_json::from_value(canonical.clone()).unwrap();
         let mut historical = canonical.clone();
@@ -118,6 +131,52 @@ mod tests {
         let mut params = RuntimeParams::default();
         edits.apply(&mut params).unwrap();
         assert_eq!(params.film_render.grain, expected);
+    }
+
+    #[test]
+    fn retired_dye_controls_load_but_never_emit() {
+        for (field, alias, value) in [
+            ("dye_support_um", "v3_dye_support_um", json!(4.5)),
+            ("dye_event_area_um2", "v3_event_area_um2", json!(0.6)),
+            ("channel_correlation", "", json!(0.35)),
+        ] {
+            for name in [field, alias] {
+                if name.is_empty() {
+                    continue;
+                }
+                let source = json!({"engine": "dye", name: value.clone()});
+                let params: GrainParams = serde_json::from_value(source.clone()).unwrap();
+                let saved = serde_json::to_value(&params).unwrap();
+                assert!(saved.get(name).is_none(), "{name} was emitted");
+                let mut grain = source;
+                normalize_grain_control_names(&mut grain).unwrap();
+                assert!(grain.get(name).is_none(), "{name} was retained");
+                assert!(serde_json::from_value::<GrainParams>(grain).is_ok());
+            }
+        }
+        assert!(
+            serde_json::from_value::<GrainParams>(json!({"engine": "dye", "surprise": 1})).is_err()
+        );
+        let edits = ParameterEdits::from_value(json!({"film_render": {"grain": {
+            "dye_support_um": 4.5,
+            "dye_event_area_um2": 0.6,
+            "channel_correlation": 0.35
+        }}}))
+        .unwrap();
+        assert_eq!(edits.paths().count(), 0);
+    }
+
+    #[test]
+    fn retired_dye_controls_do_not_affect_engine_names() {
+        let mut grain = json!({
+            "engine": "dye",
+            "dye_strength": 1.5,
+            "dye_support_um": 4.5,
+            "v3_event_area_um2": 0.6,
+            "channel_correlation": 0.35
+        });
+        normalize_grain_control_names(&mut grain).unwrap();
+        assert_eq!(grain, json!({"engine": "dye", "dye_strength": 1.5}));
     }
 
     #[test]

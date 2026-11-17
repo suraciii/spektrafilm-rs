@@ -496,7 +496,6 @@ mod tests {
         p.camera.film_format_mm = 8.0;
         p.film_render.grain.active = true;
         p.film_render.grain.engine = crate::params::grain::GrainEngine::Dye;
-        p.film_render.grain.dye_support_um = 8.0;
         p.io.crop = true;
         p.io.crop_size = [0.5, 0.5];
         p.scanner.unsharp_mask = [0.7, 0.7];
@@ -514,7 +513,6 @@ mod tests {
         p.scanner.unsharp_mask = [0.0; 2];
         p.film_render.grain.active = true;
         p.film_render.grain.engine = crate::params::grain::GrainEngine::Dye;
-        p.film_render.grain.dye_support_um = 8.0;
         p.io.crop = true;
         p.io.crop_size = [0.5, 0.5];
         p.io.upscale_factor = 1.5;

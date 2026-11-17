@@ -86,8 +86,6 @@ particle_scale_sublayers = [
     0.4,
     0.25,
 ]
-dye_support_um = 3.5
-dye_event_area_um2 = 1.28
 mult_usm_sigma = 0.699999988079071
 mult_usm_amount = 1.5
 rms_granularity = [

@@ -474,11 +474,6 @@ fn exclusion(path: &str, description: &Value) -> Option<&'static str> {
         "settings.spectral_shape" => {
             Some("core params::validation admits only the bundled wavelength grid")
         }
-        "film_render.grain.dye_support_um"
-        | "film_render.grain.dye_event_area_um2"
-        | "film_render.grain.channel_correlation" => {
-            Some("retained legacy Dye value; the delivered Dye law does not read it")
-        }
         "settings.preview_mode" => {
             Some("render.rs derives this request flag from Preview versus Scan")
         }
@@ -1646,7 +1641,7 @@ const LABELS: &[(&str, &str)] = &[
     ("film_render.grain.dye_strength", "Grain strength (×)"),
     (
         "film_render.grain.dye_color_grain",
-        "Color grain (relative)",
+        "Inter-record grain separation",
     ),
     ("film_render.grain.exposure.strength", "Grain strength (%)"),
     ("film_render.grain.exposure.size", "Grain size (relative)"),

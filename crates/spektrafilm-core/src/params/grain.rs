@@ -282,16 +282,37 @@ pub struct GrainParams {
     /// emulsion sublayer. Retained but not read by the delivered Dye law.
     #[serde(default = "default_particle_scale_sublayers_f64")]
     pub particle_scale_sublayers: [f64; 3],
-    /// Retained legacy Dye support value, in micrometers. Loads and saves keep
-    /// it unchanged; the delivered Dye law does not read it.
-    #[serde(default = "default_dye_support_um")]
-    #[serde(alias = "v3_dye_support_um")]
-    pub dye_support_um: f32,
-    /// Retained legacy Dye event area, in square film micrometers. Loads and
-    /// saves keep it unchanged; the delivered Dye law does not read it.
-    #[serde(default = "default_dye_event_area_um2")]
-    #[serde(alias = "v3_event_area_um2")]
-    pub dye_event_area_um2: f64,
+    /// Retired no-op Dye input. Historical documents may still carry it;
+    /// serialization never emits it and the delivered law never reads it.
+    #[allow(dead_code)]
+    #[serde(
+        default,
+        skip_serializing,
+        rename = "dye_support_um",
+        alias = "v3_dye_support_um",
+        deserialize_with = "ignore_retired_control"
+    )]
+    retired_dye_support_um: (),
+    /// Retired no-op Dye input. Historical documents may still carry it;
+    /// serialization never emits it and the delivered law never reads it.
+    #[allow(dead_code)]
+    #[serde(
+        default,
+        skip_serializing,
+        rename = "dye_event_area_um2",
+        alias = "v3_event_area_um2",
+        deserialize_with = "ignore_retired_control"
+    )]
+    retired_dye_event_area_um2: (),
+    /// Retired no-op record-correlation input. Serialization never emits it.
+    #[allow(dead_code)]
+    #[serde(
+        default,
+        skip_serializing,
+        rename = "channel_correlation",
+        deserialize_with = "ignore_retired_control"
+    )]
+    retired_channel_correlation: (),
     /// Relative Dye grain amplitude. `1.0` keeps the delivered law and `0.0`
     /// realizes the target density without random grain, including the
     /// residual count noise. Scales the correlated field and the event count
@@ -310,11 +331,6 @@ pub struct GrainParams {
     /// effective record, so this control does not apply there.
     #[serde(default = "default_dye_color_grain")]
     pub dye_color_grain: f64,
-    /// Retained legacy Dye record-correlation value, in
-    /// `[0, MEASURED_CHANNEL_CORRELATION_CEILING]`. Loads and saves keep it
-    /// unchanged; the delivered Dye law does not read it.
-    #[serde(default = "default_channel_correlation")]
-    pub channel_correlation: f64,
     #[serde(default = "default_07")]
     pub mult_usm_sigma: f64,
     #[serde(default = "default_15")]
@@ -351,18 +367,16 @@ pub struct GrainParams {
     pub monochrome: bool,
 }
 
+/// Accept a retired control's historical value without retaining or emitting it.
+fn ignore_retired_control<'de, D>(deserializer: D) -> Result<(), D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    serde::de::IgnoredAny::deserialize(deserializer).map(|_| ())
+}
+
 fn default_particle_scale_sublayers_f64() -> [f64; 3] {
     [1.0, 0.4, 0.25]
-}
-/// Default dye support selected with the default event area on the reference
-/// condition (`specs/film-grain/dye/design.md` §Resolved parameter contract).
-fn default_dye_support_um() -> f32 {
-    3.5
-}
-/// Default statistical event area for the relative Dye reference scale
-/// (`kodak_portra_800`), not a validated absolute material event area.
-fn default_dye_event_area_um2() -> f64 {
-    1.28
 }
 /// The delivered Dye amplitude: a recipe at `1.0` leaves the law unchanged.
 fn default_dye_strength() -> f64 {
@@ -370,20 +384,6 @@ fn default_dye_strength() -> f64 {
 }
 fn default_dye_color_grain() -> f64 {
     0.75
-}
-/// Historical supported and acceptance ceiling for [`GrainParams::channel_correlation`].
-///
-/// The public name is retained for compatibility; it does not certify a
-/// universal material limit or attribute higher correlation to scanner
-/// processing. The Poisson split's structural domain is `[0, 1)`; the product
-/// continues to accept only `[0, 0.45]`.
-pub const MEASURED_CHANNEL_CORRELATION_CEILING: f64 = 0.45;
-
-/// Off by default: the independent-field realization stays the shipped
-/// behavior, and a recipe or preset that wants record correlation opts in
-/// (`specs/film-grain/dye/design.md` §Channel coupling).
-fn default_channel_correlation() -> f64 {
-    0.0
 }
 fn default_grain_procedural_resolution_type() -> u32 {
     1
@@ -435,11 +435,11 @@ impl Default for GrainParams {
             density_min: [0.03, 0.03, 0.03],
             uniformity: [0.97, 0.97, 0.97],
             particle_scale_sublayers: [1.0, 0.4, 0.25],
-            dye_support_um: default_dye_support_um(),
-            dye_event_area_um2: default_dye_event_area_um2(),
+            retired_dye_support_um: (),
+            retired_dye_event_area_um2: (),
+            retired_channel_correlation: (),
             dye_strength: default_dye_strength(),
             dye_color_grain: default_dye_color_grain(),
-            channel_correlation: default_channel_correlation(),
             blur: 0.89,
             mult_usm_sigma: 0.7,
             mult_usm_amount: 1.5,
@@ -659,10 +659,9 @@ mod fotufilm_tests {
             assert_eq!(params.film_render.grain.engine, GrainEngine::Dye);
             assert_eq!(params.film_render.grain.rms_granularity, [0.0; 3]);
         }
-        let edits = crate::params::sources::ParameterEdits::parse(
-            "film_render.grain.dye_event_area_um2=2.25",
-        )
-        .unwrap();
+        let edits =
+            crate::params::sources::ParameterEdits::parse("film_render.grain.dye_color_grain=0.5")
+                .unwrap();
         let mut params = crate::params::RuntimeParams::default();
         edits.apply(&mut params).unwrap();
         assert_eq!(params.film_render.grain.engine, GrainEngine::Dye);
@@ -677,7 +676,7 @@ mod fotufilm_tests {
             ("fotufilm", GrainEngine::Fotufilm),
             ("exposure", GrainEngine::Exposure),
         ] {
-            let source = serde_json::json!({"engine": name, "dye_event_area_um2": 2.25});
+            let source = serde_json::json!({"engine": name, "dye_color_grain": 0.5});
             let params: GrainParams = serde_json::from_value(source).unwrap();
             assert_eq!(params.engine, engine);
             let saved = serde_json::to_value(&params).unwrap();
@@ -685,7 +684,7 @@ mod fotufilm_tests {
                 serde_json::from_value::<GrainParams>(saved).unwrap(),
                 params
             );
-            let source = format!("engine = {name:?}\ndye_event_area_um2 = 2.25");
+            let source = format!("engine = {name:?}\ndye_color_grain = 0.5");
             assert_eq!(toml::from_str::<GrainParams>(&source).unwrap(), params);
         }
         for source in [

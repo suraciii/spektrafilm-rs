@@ -1017,9 +1017,6 @@ fn cmd_process(
         if transform_mode {
             grain_dye["active"] = json!(false);
             grain_dye["note"] = json!("Film mode is inactive");
-            grain_dye["channel_correlation"]["effective"] = json!(null);
-            grain_dye["channel_correlation"]["status"] = json!("inactive");
-            grain_dye["channel_correlation"]["reason"] = json!("Film mode is inactive");
         }
         let backend_env = std::env::var("SPEKTRAFILM_BACKEND").ok();
         let output_format = plan.as_ref().map(|plan| plan.format.name());

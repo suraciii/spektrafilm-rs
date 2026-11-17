@@ -1141,7 +1141,7 @@ fn dye_bw_keeps_look_controls_and_retains_hidden_requests() {
     select_film(h, color.info.name.as_deref().unwrap_or("kodak_portra_400"));
     open_grain(h);
     assert!(
-        !h.get_by_label("Color grain (relative)")
+        !h.get_by_label("Inter-record grain separation")
             .node()
             .is_disabled(),
         "color Dye exposes the color-film control"
@@ -1153,7 +1153,6 @@ fn dye_bw_keeps_look_controls_and_retains_hidden_requests() {
     // Secondary grain requests survive; density minimum has a shared LUT editor.
     {
         let grain = &mut h.state_mut().params.film_render.grain;
-        grain.channel_correlation = 0.35;
         grain.rms_granularity = [6.0, 7.0, 6.0];
         grain.density_min = [0.03, 0.05, 0.09];
         grain.uniformity = [0.97, 0.97, 0.85];
@@ -1167,11 +1166,10 @@ fn dye_bw_keeps_look_controls_and_retains_hidden_requests() {
     );
     assert!(h.query_by_label("Dye Advanced").is_none());
     assert!(
-        h.query_by_label("Color grain (relative)").is_none(),
+        h.query_by_label("Inter-record grain separation").is_none(),
         "black-and-white Dye hides the color-film control"
     );
     for label in [
-        "Channel correlation",
         "RMS granularity (relative) R",
         "Uniformity (relative) B",
         "Particle scale (relative) 0",
@@ -1181,8 +1179,6 @@ fn dye_bw_keeps_look_controls_and_retains_hidden_requests() {
             "Dye keeps shared requests without editors ({label})"
         );
     }
-    // Retained legacy requests have no editors and do not change the field.
-    assert!(h.query_by_label("Channel correlation").is_none());
     assert_eq!(h.state().params.film_render.grain, retained);
     // An ordinary edit must retain the material-derived single-record layout.
     open_grain(h);
@@ -1205,21 +1201,16 @@ fn dye_bw_keeps_look_controls_and_retains_hidden_requests() {
     let mut target = h.state().params.clone();
     target.camera.exposure_compensation_ev = 1.25;
     target.film_render.grain.engine = spektrafilm_core::params::GrainEngine::Spektra;
-    target.film_render.grain.channel_correlation = 0.1;
     target.film_render.grain.rms_granularity = [1.0; 3];
     target.film_render.grain.density_min = [0.02; 3];
     target.film_render.grain.uniformity = [0.9; 3];
     let restored = preset.apply_section(&target, &bw).unwrap();
     // The target switches engine and film, so material preparation re-seeds
-    // the shared Spektra fields. The Dye look controls and retained coupling
-    // are the values this section must restore unchanged.
+    // the shared Spektra fields. The Dye look controls are the values this
+    // section must restore unchanged.
     assert_eq!(
         restored.film_render.grain.dye_strength,
         retained.dye_strength
-    );
-    assert_eq!(
-        restored.film_render.grain.channel_correlation,
-        retained.channel_correlation
     );
     assert_eq!(
         restored.camera, target.camera,
@@ -1238,15 +1229,9 @@ fn dye_bw_keeps_look_controls_and_retains_hidden_requests() {
     let h = &mut s.harness;
     let reloaded = &h.state().params.film_render.grain;
     assert_eq!(reloaded.dye_strength, retained.dye_strength);
-    assert_eq!(reloaded.channel_correlation, retained.channel_correlation);
     select_film(h, color.info.name.as_deref().unwrap_or("kodak_portra_400"));
     let color_grain = &h.state().params.film_render.grain;
     assert_eq!(color_grain.dye_strength, retained.dye_strength);
-    assert_eq!(
-        color_grain.channel_correlation,
-        retained.channel_correlation
-    );
-    assert!(h.query_by_label("Channel correlation").is_none());
 }
 
 #[test]

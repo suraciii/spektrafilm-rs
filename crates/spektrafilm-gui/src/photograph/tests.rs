@@ -240,6 +240,31 @@ fn saved_record_excludes_pending_controls_and_reopens_the_accepted_endpoint() {
 }
 
 #[test]
+fn retired_dye_controls_in_old_photograph_records_are_dropped() {
+    let (mut app, directory, _ctx) = app();
+    let record = directory.path().join("retired-controls.spektra-photo.json");
+    app.save_photograph_record_to(&record).unwrap();
+    let mut value: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&record).unwrap()).unwrap();
+    let grain = &mut value["settings"]["params"]["film_render"]["grain"];
+    grain["dye_support_um"] = json!(4.5);
+    grain["dye_event_area_um2"] = json!(0.6);
+    grain["channel_correlation"] = json!(0.35);
+    std::fs::write(&record, serde_json::to_vec(&value).unwrap()).unwrap();
+
+    let loaded = PhotographRecord::load(&record).unwrap();
+    let saved = serde_json::to_value(&loaded.settings.params).unwrap();
+    let grain = &saved["film_render"]["grain"];
+    for retired in [
+        "dye_support_um",
+        "dye_event_area_um2",
+        "channel_correlation",
+    ] {
+        assert!(grain.get(retired).is_none(), "{retired} survived");
+    }
+}
+
+#[test]
 fn photograph_record_restores_finishing_and_its_explicit_ownership() {
     let (mut app, directory, ctx) = app();
     app.begin_adjustment_frame(&ctx);

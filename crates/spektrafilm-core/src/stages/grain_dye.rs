@@ -211,13 +211,6 @@ pub fn active(params: &RuntimeParams) -> bool {
 /// Report material layout without claiming device execution or stock calibration.
 pub fn configuration_report(film: &Profile, params: &RuntimeParams) -> serde_json::Value {
     let active = active(params);
-    let reason = crate::params::sources::inactive_reason(
-        "film_render.grain.channel_correlation",
-        params,
-        film,
-        film,
-    )
-    .or_else(|| (!active).then(|| "Dye is inactive".to_owned()));
     serde_json::json!({
         "active": active,
         "effective_backend": null,
@@ -226,12 +219,6 @@ pub fn configuration_report(film: &Profile, params: &RuntimeParams) -> serde_jso
         ),
         "record_layout": if film.is_bw() { "single_record" } else { "three_records" },
         "calibration_status": "uncalibrated",
-        "channel_correlation": {
-            "requested": params.film_render.grain.channel_correlation,
-            "effective": reason.is_none().then_some(params.film_render.grain.channel_correlation),
-            "status": if reason.is_some() { "inactive" } else { "active" },
-            "reason": reason,
-        },
     })
 }
 

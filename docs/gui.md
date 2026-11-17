@@ -184,11 +184,11 @@ The `input` workflow color-manages an already rendered image to the output space
 
 **Film → Grain** starts with **Enable grain** and **Engine**. It shows the selected engine's effective grain controls. Turning Grain off hides grain-only numerical controls without clearing stored values.
 
-Dye exposes **Grain strength** and **Color grain** as its numerical grain editors. Strength 1 keeps the delivered look and 0 removes random grain, including residual count noise. Color grain 0 shares one field across the color records, 1 gives each record its own, and 0.75 is the default; 0.2 reproduces the previous delivered look. The delivered cell size is an engine constant in film coordinates, not a user control. Black-and-white Dye hides Color grain and keeps only Grain strength editable; control search reveals the stored value disabled.
+Dye exposes **Grain strength** and **Inter-record grain separation** as its numerical grain editors. Strength 1 keeps the delivered look and 0 removes random grain, including residual count noise. Inter-record grain separation 0 shares one field across the color records; 1 gives each record its own field. Higher separation makes RGB grain more distinct and more chromatic. The default is 0.75. The delivered cell size is an engine constant in film coordinates, not a user control. Black-and-white Dye hides Inter-record grain separation and keeps only Grain strength editable; control search reveals the stored value disabled.
 
 Black-and-white Spektra shows only record 0 for RMS or relative strength, density minimum, and uniformity. Hidden G/B requests stay stored and reactivate for color material.
 
-Dye retains channel correlation and the shared material requests without Dye-grain editors. They do not control Dye grain formation. The three numerical-component scales remain independent editors for Spektra; they are not RGB lanes.
+Dye retains the shared material requests without Dye-grain editors. They do not control Dye grain formation. The three numerical-component scales remain independent editors for Spektra; they are not RGB lanes.
 
 The shared **density min** editor remains available when an executing film-scanner or enlarger LUT consumes its bounds, even with grain off or another engine selected. Editing it does not enable grain or select Spektra. Its components follow the current operation's material normalization.
 

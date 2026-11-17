@@ -1581,6 +1581,33 @@ fn historical_sparse_grain_presets_write_canonical_and_match_actual_values() {
 }
 
 #[test]
+fn retired_dye_controls_in_presets_are_dropped() {
+    let value = serde_json::json!({
+        "schema_version": PRESET_SCHEMA_VERSION,
+        "name": "Retired Dye controls",
+        "parameters": {"film_render": {"grain": {
+            "engine": "dye",
+            "dye_strength": 1.5,
+            "dye_support_um": 4.5,
+            "dye_event_area_um2": 0.6,
+            "channel_correlation": 0.35
+        }}},
+        "provenance": {"implementation_version": "test", "model_version": "test"}
+    });
+    let preset: Preset = serde_json::from_value(value).unwrap();
+    let saved: Value = serde_json::from_str(&preset.to_json().unwrap()).unwrap();
+    let grain = &saved["parameters"]["film_render"]["grain"];
+    assert_eq!(grain["dye_strength"], serde_json::json!(1.5));
+    for retired in [
+        "dye_support_um",
+        "dye_event_area_um2",
+        "channel_correlation",
+    ] {
+        assert!(grain.get(retired).is_none(), "{retired} survived");
+    }
+}
+
+#[test]
 fn trix400_builtin_is_one_source_print_look_and_preserves_photo_context() {
     let library = builtin_presets();
     let matches: Vec<_> = library

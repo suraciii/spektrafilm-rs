@@ -238,7 +238,6 @@ fn active_dye_field_reports_its_cpu_stage_reason() {
     params.io.crop = true;
     params.io.crop_size = [0.02, 0.02];
     params.film_render.grain.engine = spektrafilm_core::params::GrainEngine::Dye;
-    params.film_render.grain.dye_support_um = 8.0;
     let runtime =
         Runtime::from_stocks("kodak_portra_800", "kodak_portra_endura", params, &data).unwrap();
     let (width, height) = (768u32, 512u32);
@@ -291,7 +290,6 @@ fn active_dye_field_reports_its_device_stage() {
     params.io.scan_film = true;
     params.io.output_gamut_compress.algorithm = "off".into();
     params.film_render.grain.engine = spektrafilm_core::params::GrainEngine::Dye;
-    params.film_render.grain.dye_support_um = 8.0;
     let runtime = Runtime::new_with_backend(
         spektrafilm_core::profile::load_profile_by_name(&data, "kodak_portra_400").unwrap(),
         spektrafilm_core::profile::load_profile_by_name(&data, "kodak_portra_endura").unwrap(),

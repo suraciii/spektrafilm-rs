@@ -410,6 +410,40 @@ mod tests {
     }
 
     #[test]
+    fn retired_dye_controls_in_recipes_are_dropped() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("recipe.json");
+        let mut parameters = serde_json::to_value(RuntimeParams::default()).unwrap();
+        let grain = &mut parameters["film_render"]["grain"];
+        grain["dye_support_um"] = json!(4.5);
+        grain["v3_event_area_um2"] = json!(0.6);
+        grain["channel_correlation"] = json!(0.35);
+        let source = serde_json::to_vec(&json!({
+            "schemaVersion": PARAMETER_SCHEMA_VERSION,
+            "filmProfile": "kodak_portra_400",
+            "parameters": parameters,
+            "output": {
+                "format": "png", "precisionBits": 8, "colorSpace": "sRGB",
+                "transferFunction": "srgb", "geometry": "bounded",
+                "encoding": "bounded-preview", "maxEdge": 1024
+            }
+        }))
+        .unwrap();
+        std::fs::write(&path, &source).unwrap();
+        let recipe = read_recipe(&path).unwrap();
+        let grain = &recipe.parameters["film_render"]["grain"];
+        for retired in [
+            "dye_support_um",
+            "dye_event_area_um2",
+            "v3_event_area_um2",
+            "channel_correlation",
+        ] {
+            assert!(grain.get(retired).is_none(), "{retired} survived");
+        }
+        assert_eq!(std::fs::read(&path).unwrap(), source);
+    }
+
+    #[test]
     fn recipe_finishing_migrates_neutral_and_rejects_incomplete_or_invalid_current_groups() {
         let root = tempfile::tempdir().unwrap();
         let path = root.path().join("recipe.json");

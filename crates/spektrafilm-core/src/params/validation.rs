@@ -69,9 +69,6 @@ pub enum ValidationReason {
     RemovedRoute,
     UnknownProfile,
     Binary,
-    DyeSupport,
-    EventArea,
-    Correlation,
     NumericRange,
     SpectralBounds,
     SpectralIntervals,
@@ -251,15 +248,8 @@ pub(crate) fn leaf_numeric_bounds(path: &str) -> Option<(f64, Option<f64>)> {
         "film_render.grain.exposure.midtone_threshold"
         | "film_render.grain.exposure.highlight_threshold" => Some((0.0, Some(1.0))),
         "film_render.grain.exposure.seed" => Some((0.0, Some(2_147_483_647.0))),
-        "film_render.grain.dye_support_um" | "film_render.grain.dye_event_area_um2" => {
-            Some((0.0, None))
-        }
         "film_render.grain.dye_strength" => Some((0.0, Some(4.0))),
         "film_render.grain.dye_color_grain" => Some((0.0, Some(1.0))),
-        "film_render.grain.channel_correlation" => Some((
-            0.0,
-            Some(super::grain::MEASURED_CHANNEL_CORRELATION_CEILING),
-        )),
         // Discovery range only; `validate` and the sparse-source leaf check
         // own the strict positivity.
         "film_render.halation.source_compression" => Some((0.0, Some(0.999999))),
@@ -307,9 +297,7 @@ pub(crate) fn validate_scalar_detailed(path: &str, value: f64) -> Result<(), Val
     let positive = chemistry_gamma
         || matches!(
             path,
-            "film_render.grain.dye_support_um"
-                | "film_render.grain.dye_event_area_um2"
-                | "film_render.grain.exposure.midtone_threshold"
+            "film_render.grain.exposure.midtone_threshold"
                 | "film_render.grain.exposure.highlight_threshold"
                 | "io.input_gamut_compress.hull_detail"
         );
@@ -324,8 +312,6 @@ pub(crate) fn validate_scalar_detailed(path: &str, value: f64) -> Result<(), Val
     if positive && value <= 0.0 {
         let reason = match path {
             "io.input_gamut_compress.hull_detail" => Reason::HullDetail,
-            "film_render.grain.dye_support_um" => Reason::DyeSupport,
-            "film_render.grain.dye_event_area_um2" => Reason::EventArea,
             _ => Reason::FinitePositive,
         };
         return Err(ValidationError::new(
@@ -341,7 +327,6 @@ pub(crate) fn validate_scalar_detailed(path: &str, value: f64) -> Result<(), Val
         let reason = match path {
             "output_mix.amount" => Reason::OutputMix,
             "cmyk.strength" => Reason::CmykStrength,
-            "film_render.grain.channel_correlation" => Reason::Correlation,
             "film_render.grain.procedural_resolution_type" => Reason::Binary,
             "film_render.halation.source_compression" => Reason::SourceCompression,
             _ => Reason::NumericRange,
@@ -1088,11 +1073,8 @@ pub(super) fn validate_finite_values_detailed(
             grain,
             "film_render.grain",
             procedural_timer,
-            dye_support_um,
-            dye_event_area_um2,
             dye_strength,
             dye_color_grain,
-            channel_correlation,
             mult_usm_sigma,
             mult_usm_amount,
             blur,
@@ -1358,20 +1340,8 @@ pub(super) fn validate_values_detailed(params: &RuntimeParams) -> Result<(), Val
             "film_render.grain.procedural_timer",
             f64::from(grain.procedural_timer),
         ),
-        (
-            "film_render.grain.dye_support_um",
-            f64::from(grain.dye_support_um),
-        ),
-        (
-            "film_render.grain.dye_event_area_um2",
-            grain.dye_event_area_um2,
-        ),
         ("film_render.grain.dye_strength", grain.dye_strength),
         ("film_render.grain.dye_color_grain", grain.dye_color_grain),
-        (
-            "film_render.grain.channel_correlation",
-            grain.channel_correlation,
-        ),
     ] {
         validate_scalar_detailed(path, value)?;
     }

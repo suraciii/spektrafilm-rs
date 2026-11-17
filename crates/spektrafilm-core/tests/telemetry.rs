@@ -1114,7 +1114,6 @@ fn dye_grain_configuration_reports_engine_and_field_mode() {
     .unwrap();
     let mut params = params::RuntimeParams::default();
     params.film_render.grain.engine = params::GrainEngine::Dye;
-    params.film_render.grain.dye_support_um = 8.0;
     let grain = telemetry::RenderConfiguration::from_runtime(&params, &profile, &profile).grain;
     assert!(grain.active);
     assert_eq!(grain.engine, telemetry::GrainEngine::Dye);

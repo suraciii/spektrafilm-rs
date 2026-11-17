@@ -790,8 +790,6 @@ mod tests {
         for (old, new) in [
             ("v2_amount", "procedural_amount"),
             ("v2_profile", "procedural_profile"),
-            ("v3_dye_support_um", "dye_support_um"),
-            ("v3_event_area_um2", "dye_event_area_um2"),
         ] {
             let v = grain.remove(new).unwrap();
             grain.insert(old.into(), v);
@@ -805,7 +803,7 @@ mod tests {
         let saved = dir.path().join("canonical.json");
         loaded.save(&saved).unwrap();
         let text = std::fs::read_to_string(saved).unwrap();
-        assert!(!text.contains("v2_amount") && !text.contains("v3_dye_support_um"));
+        assert!(!text.contains("v2_amount"));
         value["settings"]["params"]["film_render"]["grain"]["procedural_amount"] = json!(27.0);
         assert!(PhotographRecord::decode(&serde_json::to_vec(&value).unwrap()).is_err());
         value["settings"]["params"]["film_render"]["grain"]
