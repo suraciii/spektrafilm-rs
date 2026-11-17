@@ -183,6 +183,7 @@ pub(crate) enum Commands {
     External(Vec<String>),
 }
 
+/// Run the shared command surface for the current binary.
 pub fn run() -> Result<()> {
     static IDENTITY: std::sync::LazyLock<(String, String)> = std::sync::LazyLock::new(|| {
         let name = std::env::current_exe()

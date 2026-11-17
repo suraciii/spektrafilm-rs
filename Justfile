@@ -59,9 +59,9 @@ test:
 test-f64:
     cargo test --locked --workspace --features precision-f64
 
-# The main workspace run under the thread and codegen limits the CI gate sets.
-# Local `test` uses every core and debug info, so its wall time says nothing
-# about the 45-minute CI budget; run this to predict it.
+# Both suites under the thread and codegen limits the main CI gate sets. Local
+# `test`/`test-fast` use every core and debug info, so their wall time says
+# nothing about the 45-minute CI budget; run this to predict it.
 test-ci:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -89,7 +89,7 @@ test-fast:
 test-ci-tail:
     python3 scripts/test_selected.py tail
 
-# Full default workspace, then reuse its GPU harness for the device-free policy.
+# Full default workspace, reuse its GPU harness, then build the f64 selection once.
 test-main:
     python3 scripts/test_selected.py ci
 
