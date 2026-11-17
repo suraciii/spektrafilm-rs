@@ -155,6 +155,15 @@ def main():
     evidence.mkdir(parents=True, exist_ok=True)
     environment = dict(os.environ, SPEKTRAFILM_BACKEND='cpu')
     environment.pop('LD_LIBRARY_PATH', None)
+    version_observations = []
+    for binary, precision in ((cli, 'f32'), (exporter, 'f64')):
+        result = subprocess.run([str(binary), '--version'], env=environment,
+                                capture_output=True, text=True, timeout=30)
+        assert result.returncode == 0, result.stderr
+        expected = f'native CPU {precision}'
+        assert expected in result.stdout, (binary, expected, result.stdout)
+        version_observations.append({'binary': str(binary),
+                                     'version': result.stdout.strip()})
     source = evidence / 'source.tif'
     pixels = np.array([[[-0.25, 0.5, 1.25], [0.1, 0.499, 0.01]]], dtype=np.float32)
     # The pinned Python save guard skips the transform when the saving space and
@@ -176,7 +185,7 @@ def main():
     params.write_text(json.dumps({'taps': {'inject': 'rgb_in', 'collect': 'rgb_in'},
                                 'io': {'input_color_space': 'sRGB', 'input_cctf_decoding': False,
                                        'output_color_space': 'sRGB', 'output_cctf_encoding': False}}))
-    observations = []
+    observations = [{'host_precision_versions': version_observations}]
 
     def process(input_path, output, depth, succeeds=True):
         command = [str(cli), 'process', str(input_path), '--output', str(output),
