@@ -24,7 +24,7 @@ The field lives on the film lattice. The readout resamples it: finer grids inter
 
 **Density layer**: one of the profile's one to three emulsion layers. Its raw layer curve supplies a relative share, normalized pointwise so the layer targets sum to the developed record target. A small non-monotonic toe in the measured composite curve is flattened to a monotone envelope before inversion.
 
-**Granularity taper**: the relative amplitude `sqrt(sat · p · (1 − p))`, normalized by its own peak. It vanishes at clear base and at record saturation.
+**Granularity taper**: the relative amplitude `sqrt(sat · p · (1 − p))`, normalized by its own peak. It vanishes at clear base and at the layer's own record saturation.
 
 **Record coupling**: the shared and independent split between the three records, `sqrt(rho)` on the shared field and `sqrt(1 − rho)` on each record's own field. The shared field is common to the records of one density layer; each layer has its own record streams.
 
@@ -57,18 +57,22 @@ Changing film geometry changes source and output footprint sizes. It MUST NOT si
 For record density `t`, normalized layer share `t_l` with `sum_l t_l = t`, event area `q`, output cell film area `A`, and fog baseline `f`:
 
 ```text
-p_l    = clamp(t_l / dmax, 0, 1)
-sat_l  = 1 - p_l * uniformity
-taper_l= sqrt(sat_l * p_l * (1 - p_l)) / peak
+p_l,c  = clamp(t_l,c / dmax_l,c, 0, 1)
+sat_l,c= 1 - p_l,c * uniformity
+taper_l,c = sqrt(sat_l,c * p_l,c * (1 - p_l,c)) / peak
 u_base = sqrt(1 - w) * u_coarse + sqrt(w) * u_fine
 u_c,l  = sqrt(rho) * u_shared + sqrt(1 - rho) * u_c_own,l
-e_l    = 1 + white * strength_c * taper_l * u_c,l
-lambda_l = (t_l + f/n) * e_l * A / q
-count_l  = Poisson(lambda_l)
-D      = sum_l (q * count_l / A - f/n)
+e_c,l    = 1 + white * strength_c * taper_l,c * u_c,l
+lambda_c,l = (t_c,l + f/n) * e_c,l * A / q
+count_c,l  = Poisson(lambda_c,l)
+D_c        = sum_l (q * count_c,l / A - f/n)
 ```
 
 `E[D] = t` holds exactly because `E[count_l] = lambda_l` and the layer shares sum to `t`; it holds per record, per cell, and for any strength. The fog is divided by the active layer count so the total event rate and its count variance stay those of the single-layer law at the same total density.
+
+`dmax_l,c` is the maximum of the active layer's stored density curve for channel `c`; a profile without layer curves uses its composite curve maximum. The delivered numeric fallback applies only when a profile carries no usable positive curve.
+
+The taper therefore follows the material's own record saturation rather than a stock-independent cutoff. Dmax remains an internal material value, not an appearance control.
 
 `cell_base` is 14.0 µm for negative profiles and 7.0 µm for positive profiles. The positive microcontrast uses `w = 0.35` at `0.55 * cell_base`; negative profiles use `w = 0`.
 

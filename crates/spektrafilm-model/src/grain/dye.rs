@@ -42,6 +42,10 @@ pub struct DyeGrainParams {
     /// Active profile density layers. Each layer is an independent record of
     /// the same film; their density targets sum to the developed density.
     pub layer_count: u32,
+    /// Per-layer, per-channel saturation density from the profile's density
+    /// curves. The layer taper vanishes at this density; unused entries repeat
+    /// the first layer's value.
+    pub layer_dmax: [[f64; 3]; 3],
     /// Full 64-bit seed; field and count addresses derive from it.
     pub seed: u64,
     /// Replace every draw with its conditional mean (diagnostic only).

@@ -55,6 +55,10 @@ pub struct DyeGpuParams {
     /// delivered ladder, where later entries resolve progressively finer
     /// density layers; positive profiles pass the base value for every layer.
     pub layer_scales: [f64; 3],
+    /// Per-layer, per-channel saturation density from the profile's layer
+    /// curves. The taper reaches zero at this record density. Entries beyond
+    /// `layer_count` are unused.
+    pub layer_dmax: [[f64; 3]; 3],
     /// Active profile layers. `1` means the total-density single-layer law.
     pub layer_count: u32,
     /// Profile layer curves when `layer_count > 1`.
@@ -104,7 +108,8 @@ pub mod law {
     pub const EVENT_AREA_UM2: f64 = 0.00096;
     /// Base (fog) density that keeps the event rate alive in the deep shadows.
     pub const FOG: f64 = 0.15;
-    /// Record density at which the density scale saturates.
+    /// Fallback record density when a profile has no usable positive density
+    /// curve. A resolved profile's layer/channel curve maximum overrides it.
     pub const DMAX: f64 = 1.2;
     /// Development-probability uniformity.
     pub const UNIFORMITY: f64 = 0.97;

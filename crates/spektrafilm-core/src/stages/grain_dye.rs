@@ -416,6 +416,64 @@ fn profile_layer_count(film: &Profile) -> Result<u32, String> {
     Ok(count as u32)
 }
 
+/// Per-layer, per-channel record saturation from the profile's own density
+/// curves. The taper must vanish at the saturation of the record, not at a
+/// stock-independent constant; a one-layer profile therefore keeps its grain
+/// through highlight densities that a fixed 1.2 cutoff would erase.
+fn profile_layer_dmax(film: &Profile, layer_count: u32) -> [[f64; 3]; 3] {
+    let mut dmax = [[spektrafilm_backend::dye_params::law::DMAX; 3]; 3];
+    let rows = film.density_curves_layers_f64();
+    let active = layer_count.min(3) as usize;
+    if !rows.is_empty() {
+        for (layer, values) in dmax.iter_mut().enumerate().take(active) {
+            for (channel, value) in values.iter_mut().enumerate() {
+                let peak = rows
+                    .iter()
+                    .map(|row| row[layer][channel])
+                    .filter(|value| value.is_finite() && *value > 0.0)
+                    .fold(0.0, f64::max);
+                if peak > 0.0 {
+                    *value = peak;
+                }
+            }
+        }
+    } else {
+        for (channel, value) in dmax[0].iter_mut().enumerate() {
+            let peak = film
+                .data
+                .density_curves
+                .iter()
+                .map(|row| {
+                    row.get(channel)
+                        .copied()
+                        .or_else(|| row.first().copied())
+                        .unwrap_or(0.0)
+                })
+                .filter(|value| value.is_finite() && *value > 0.0)
+                .fold(0.0, f64::max);
+            if peak > 0.0 {
+                *value = peak;
+            }
+        }
+    }
+    // A BW profile stores one silver record; the layered split replicates its
+    // channel into the three lanes, so its saturation density must replicate
+    // too. Otherwise the device would give the three equal lanes different
+    // taper amplitudes.
+    if film.is_bw() {
+        for values in dmax.iter_mut().take(active.max(1)) {
+            *values = [values[0]; 3];
+        }
+    }
+    // Inactive entries are never read, but keeping them finite leaves the
+    // law valid for every bounded layer loop.
+    let first = dmax[0];
+    for values in dmax.iter_mut().skip(active.max(1)) {
+        *values = first;
+    }
+    dmax
+}
+
 /// One layer's share of the developed density. The profile's layer curves
 /// describe the same exposure axis as the composite target, so a pointwise
 /// inverse lookup splits the target without a second exposure solve.
@@ -601,12 +659,14 @@ impl DyeLayerSplit {
 pub fn resolve(film: &Profile, params: &RuntimeParams) -> Result<DyeGrainParams, String> {
     validate_supported(film, params)?;
     let grain = &params.film_render.grain;
+    let layer_count = profile_layer_count(film)?;
     Ok(DyeGrainParams {
         monochrome: film.is_bw(),
         positive: film.is_positive(),
         dye_strength: grain.dye_strength,
         color_grain: grain.dye_color_grain,
-        layer_count: profile_layer_count(film)?,
+        layer_count,
+        layer_dmax: profile_layer_dmax(film, layer_count),
         seed: params.random_seed,
         expectation: expectation_requested(),
     })
@@ -749,7 +809,14 @@ fn try_device_field(
     if !backend.is_gpu() {
         return Ok(None);
     }
-    match device_params_with_law(source_pitch_um, grid, law, layer_scales, layer_table) {
+    match device_params_with_law(
+        source_pitch_um,
+        grid,
+        law,
+        layer_scales,
+        resolved.layer_dmax,
+        layer_table,
+    ) {
         Ok(device) => {
             let observation = super::StageObservation::new(backend, "grain_dye_field");
             let observed = observation.backend(backend);
@@ -916,6 +983,7 @@ fn law_params(resolved: &DyeGrainParams) -> texture::DyeLawParams {
     } else {
         0.0
     };
+    params.dmax = resolved.layer_dmax[0];
     params.seed = resolved.seed;
     params.expectation = resolved.expectation || zero;
     params.monochrome = resolved.monochrome;
@@ -952,6 +1020,7 @@ fn law_params_for_layer(
     let index = layer.min(2) as usize;
     params.fog /= count;
     params.layer = layer;
+    params.dmax = resolved.layer_dmax[index];
     params.length_scale *= layer_scales[index];
     params
 }
@@ -970,6 +1039,7 @@ fn device_params(
         grid,
         &law_params(resolved),
         spektrafilm_backend::dye_params::law::LAYER_SCALES,
+        resolved.layer_dmax,
         None,
     )
 }
@@ -979,9 +1049,17 @@ fn device_params_with_law(
     grid: ReadoutGrid,
     law: &texture::DyeLawParams,
     layer_scales: [f64; 3],
+    layer_dmax: [[f64; 3]; 3],
     layer_table: Option<std::sync::Arc<spektrafilm_backend::dye_params::DyeLayerTable>>,
 ) -> Result<spektrafilm_backend::dye_params::DyeGpuParams, String> {
     law.validate()?;
+    if layer_dmax
+        .iter()
+        .flatten()
+        .any(|value| !value.is_finite() || *value <= 0.0)
+    {
+        return Err("film grain Dye: layer dmax must be finite and positive".into());
+    }
     let layer_count = layer_table.as_ref().map_or(1, |table| table.layer_count);
     Ok(spektrafilm_backend::dye_params::DyeGpuParams {
         source_pitch_um,
@@ -1002,6 +1080,7 @@ fn device_params_with_law(
         fine_scale: law.fine_scale,
         fine_weight: law.fine_weight,
         layer_scales,
+        layer_dmax,
         layer_count,
         layer_table,
     })
@@ -1050,7 +1129,14 @@ pub(crate) fn resident_device_params_for_grid(
     let mut law = law_params(&resolved);
     law.fog /= count as f64;
     law.layer = 0;
-    device_params_with_law(source_pitch_um, grid, &law, layer_scales(film), table)
+    device_params_with_law(
+        source_pitch_um,
+        grid,
+        &law,
+        layer_scales(film),
+        resolved.layer_dmax,
+        table,
+    )
 }
 
 /// One geometry authority for the retained field and every downstream tail.
@@ -1224,6 +1310,115 @@ mod tests {
     use crate::params::RuntimeParams;
     use crate::test_support::data_dir;
     use spektrafilm_math::precision::{from_f64, to_f64};
+
+    #[test]
+    fn profile_layer_dmax_uses_the_layer_curve_maxima() {
+        let film = load("fujifilm_velvia_50");
+        let count = profile_layer_count(&film).unwrap();
+        let dmax = profile_layer_dmax(&film, count);
+        let rows = film.density_curves_layers_f64();
+        for layer in 0..count as usize {
+            for channel in 0..3 {
+                let expected = rows
+                    .iter()
+                    .map(|row| row[layer][channel])
+                    .filter(|value| value.is_finite() && *value > 0.0)
+                    .fold(0.0, f64::max);
+                assert_eq!(dmax[layer][channel], expected);
+            }
+        }
+        assert!(
+            dmax.iter().flatten().any(|value| *value > 1.2),
+            "the profile must expose a layer above the retired 1.2 cutoff: {dmax:?}"
+        );
+
+        let params = supported_params();
+        let resolved = resolve(&film, &params).unwrap();
+        assert_eq!(resolved.layer_dmax, dmax);
+    }
+
+    #[test]
+    fn single_layer_profile_uses_its_composite_dmax() {
+        let film = load("fujifilm_astia_100f");
+        let count = profile_layer_count(&film).unwrap();
+        assert_eq!(count, 1);
+        let dmax = profile_layer_dmax(&film, count);
+        assert!(
+            dmax[0].iter().all(|value| *value > 3.0),
+            "the one-layer profile must keep its high-curve dmax: {dmax:?}"
+        );
+
+        let params = supported_params();
+        let resolved = resolve(&film, &params).unwrap();
+        let law = law_params_for_layer(&resolved, layer_scales(&film), 0);
+        assert_eq!(law.dmax, dmax[0]);
+    }
+
+    #[test]
+    fn profile_without_layer_curves_uses_the_composite_dmax() {
+        let film = load("ilford_fp4_plus");
+        assert!(film.is_bw());
+        assert!(film.data.density_curves_layers.is_empty());
+        assert_eq!(profile_layer_count(&film).unwrap(), 1);
+
+        let expected = film
+            .data
+            .density_curves
+            .iter()
+            .map(|row| row[0])
+            .filter(|value| value.is_finite() && *value > 0.0)
+            .fold(0.0, f64::max);
+        let dmax = profile_layer_dmax(&film, 1);
+        assert!(expected > 0.0);
+        assert_eq!(dmax[0], [expected; 3]);
+    }
+
+    #[test]
+    fn high_density_layer_keeps_grain_above_the_legacy_cutoff() {
+        let film = load("fujifilm_velvia_50");
+        let params = supported_params();
+        let resolved = resolve(&film, &params).unwrap();
+        let (layer, channel) = resolved
+            .layer_dmax
+            .iter()
+            .take(resolved.layer_count as usize)
+            .enumerate()
+            .flat_map(|(layer, values)| {
+                values
+                    .iter()
+                    .enumerate()
+                    .map(move |(c, value)| (layer, c, *value))
+            })
+            .find(|(_, _, value)| *value > 1.2)
+            .map(|(layer, c, _)| (layer, c))
+            .expect("a profile layer above the retired cutoff");
+        let law = law_params_for_layer(&resolved, layer_scales(&film), layer as u32);
+        assert!(law.dmax[channel] > 1.2);
+        let mut legacy = law.clone();
+        legacy.dmax = [spektrafilm_backend::dye_params::law::DMAX; 3];
+
+        let n = 64u32;
+        let target = ImageBuf::from_data(n, n, vec![from_f64(1.5); (n * n * 3) as usize]);
+        let pitch = 4.0;
+        let geometry = texture::ReadoutGeometry::whole(n, n, pitch);
+        let current = texture::apply(&target, pitch, &geometry, &law).unwrap();
+        let old = texture::apply(&target, pitch, &geometry, &legacy).unwrap();
+        let variance = |image: &ImageBuf| {
+            let values: Vec<f64> = image
+                .data
+                .chunks(3)
+                .map(|pixel| to_f64(pixel[channel]))
+                .collect();
+            let mean = values.iter().sum::<f64>() / values.len() as f64;
+            values.iter().map(|v| (v - mean).powi(2)).sum::<f64>() / values.len() as f64
+        };
+        let current_variance = variance(&current);
+        let legacy_variance = variance(&old);
+        assert!(
+            current_variance > legacy_variance * 4.0,
+            "profile dmax {law:?} must keep correlated grain above 1.2: current variance {current_variance:.8}, legacy {legacy_variance:.8}"
+        );
+    }
 
     #[test]
     fn profile_density_layers_sum_to_the_developed_target() {
@@ -1403,6 +1598,66 @@ mod tests {
         assert!(
             (0.5..=2.0).contains(&variance_ratio),
             "layered variance mismatch: host {cpu_var:.8}, device {device_var:.8}"
+        );
+    }
+
+    /// A positive profile whose layer saturation is above the retired 1.2
+    /// cutoff must keep the same grain on both executors at high density.
+    #[test]
+    fn high_density_positive_profile_matches_host_and_device() {
+        let gpu = spektrafilm_gpu::test_support::adapter();
+        let film = load("fujifilm_velvia_50");
+        let params = supported_params();
+        let resolved = resolve(&film, &params).unwrap();
+        assert!(
+            resolved
+                .layer_dmax
+                .iter()
+                .flatten()
+                .any(|value| *value > 1.2),
+            "profile has no layer above the legacy cutoff: {:?}",
+            resolved.layer_dmax
+        );
+        let n = 64u32;
+        let source = ImageBuf::from_data(n, n, vec![from_f64(1.5); (n * n * 3) as usize]);
+        let pitch = 4.0;
+        let grid = ReadoutGrid {
+            origin_um: [0.0, 0.0],
+            pitch_um: [pitch, pitch],
+            width: n,
+            height: n,
+        };
+        let cpu = readout(
+            &source,
+            &film,
+            &params,
+            pitch,
+            grid,
+            &spektrafilm_backend::cpu_backend::CpuBackend,
+        )
+        .unwrap();
+        let device = readout(&source, &film, &params, pitch, grid, gpu.backend()).unwrap();
+        let moments = |image: &ImageBuf| {
+            let values: Vec<f64> = image.data.chunks(3).map(|p| to_f64(p[1])).collect();
+            let mean = values.iter().sum::<f64>() / values.len() as f64;
+            let variance =
+                values.iter().map(|v| (v - mean).powi(2)).sum::<f64>() / values.len() as f64;
+            (mean, variance)
+        };
+        let (cpu_mean, cpu_var) = moments(&cpu);
+        let (device_mean, device_var) = moments(&device);
+        assert!(
+            (cpu_mean - device_mean).abs() < 0.02,
+            "high-density mean mismatch: host {cpu_mean:.6}, device {device_mean:.6}"
+        );
+        assert!(
+            cpu_var > 1e-7 && device_var > 1e-7,
+            "high-density field lost its texture: host {cpu_var:.8}, device {device_var:.8}"
+        );
+        let variance_ratio = device_var / cpu_var;
+        assert!(
+            (0.5..=2.0).contains(&variance_ratio),
+            "high-density variance mismatch: host {cpu_var:.8}, device {device_var:.8}"
         );
     }
 
