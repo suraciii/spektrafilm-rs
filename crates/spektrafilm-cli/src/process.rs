@@ -173,6 +173,7 @@ pub struct ProcessArgs {
     /// Strings need no JSON quotes; arrays use [1,2,3]; null clears optional values.
     #[arg(long = "set", value_name = "PATH=VALUE|FILE", action = clap::ArgAction::Append, help_heading = "Look and workflow")]
     pub(crate) sources: Vec<String>,
+    /// Print effective controls and planned work without writing an image.
     #[arg(long, help_heading = "Execution and diagnostics")]
     pub(crate) dry_run: bool,
     /// Dry-run presentation: json or text; requires --dry-run.
