@@ -610,7 +610,10 @@ fn language_switch_preserves_staged_export_job_and_published_pixels() {
     assert!(!cancel.load(std::sync::atomic::Ordering::SeqCst));
     assert_eq!(h.state().params, params);
     assert_eq!(h.state().parameter_revision, revision);
-    assert!(h.state().status.localized(&h.ctx).contains("导出"));
+    assert!(
+        h.query_by_label("取消导出").is_some(),
+        "the running strip follows the new language"
+    );
     pause.release();
     wait_until(h, |app| app.export_job.is_none());
     let expected = image_io::convert_image(

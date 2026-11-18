@@ -512,10 +512,10 @@ fn scroll_controls_into_view(h: &mut Harness<'_, App>, label: &str) {
     }
 }
 
-/// Click an export action. The sidebar button that opens the modal and the
-/// modal's own submit now carry distinct labels, so the caller names the step
-/// it wants. The sidebar action is disabled while the modal is open, so an
-/// enabled-step query resolves the actionable node either way.
+/// Click an export action. The header button that opens the modal and the
+/// modal's own submit now carry distinct labels, and the header action is
+/// disabled while the modal is open, so an enabled-step query resolves the
+/// actionable node either way.
 fn export_action(h: &mut Harness<'_, App>, step: &str) {
     scroll_controls_into_view(h, step);
     let buttons: Vec<_> = h
@@ -525,12 +525,6 @@ fn export_action(h: &mut Harness<'_, App>, step: &str) {
     assert_eq!(buttons.len(), 1, "expected one enabled {step} action");
     buttons[0].simulate_click();
     h.run_steps(3);
-    if step == "Export file…" {
-        assert!(
-            !h.state().export_dialog.is_open(),
-            "Export submit closes its draft"
-        );
-    }
 }
 
 /// The production Open action selects the decoder from the accepted file kind.
@@ -654,6 +648,16 @@ fn wait_until(h: &mut Harness<'_, App>, condition: impl Fn(&App) -> bool) {
         );
         wait_tick();
     }
+}
+
+/// Interactive exports report on the strip; the shared status line stays with
+/// the photograph, so completion is observed through the notice.
+fn export_succeeded(app: &App) -> bool {
+    app.export_job.is_none()
+        && matches!(
+            app.export_notice,
+            Some(crate::export_job::ExportNotice::Succeeded { .. })
+        )
 }
 
 fn analysis_output_ready(app: &App) -> bool {
@@ -985,12 +989,7 @@ fn scanner_ui_real_preview_scan_persistence_save_and_export() {
     let ctx = h.ctx.clone();
     h.state_mut()
         .start_export_to_path(&ctx, options, &export_path);
-    wait_until(h, |a| a.export_job.is_none());
-    assert!(
-        h.state().status.to_string().starts_with("Exported"),
-        "{}",
-        h.state().status
-    );
+    wait_until(h, export_succeeded);
     let expected_export = image_io::convert_image(
         &scan,
         &h.state().output_color_space,
@@ -1026,12 +1025,7 @@ fn scanner_ui_real_preview_scan_persistence_save_and_export() {
     let float_path = s.directory.path().join("full-float.tiff");
     h.state_mut()
         .start_export_to_path(&ctx, float_options, &float_path);
-    wait_until(h, |a| a.export_job.is_none());
-    assert!(
-        h.state().status.to_string().starts_with("Exported"),
-        "{}",
-        h.state().status
-    );
+    wait_until(h, export_succeeded);
     assert_float_tiff(&float_path);
     let float_output = image_io::load(&float_path).unwrap().image;
     let linear = image_io::convert_image(
@@ -1177,7 +1171,10 @@ mod layout_snapshots {
             h.query_by_role_and_label(egui::accesskit::Role::ComboBox, "Compression")
                 .is_some()
         );
-        assert!(h.query_by_label("Advanced").is_some());
+        assert!(
+            h.query_by_role_and_label(egui::accesskit::Role::Switch, "Apply saving CCTF encoding")
+                .is_some()
+        );
         // Attach the offscreen renderer only in this opt-in gate; render the
         // real dialog's TIFF-specific controls selected above.
         let dimensions = h
@@ -1569,12 +1566,7 @@ fn scanner_state_rejection_uses_the_neutral_scan_model() {
     let options = h.state().export_options.clone();
     h.state_mut()
         .start_export_to_path(&ctx, options, &export_path);
-    wait_until(h, |a| a.export_job.is_none());
-    assert!(
-        h.state().status.to_string().starts_with("Exported"),
-        "{}",
-        h.state().status
-    );
+    wait_until(h, export_succeeded);
     let expected = image_io::convert_image(
         &scan,
         &h.state().output_color_space,

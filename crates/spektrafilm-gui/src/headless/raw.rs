@@ -297,13 +297,7 @@ fn raw_import_through_the_app_sets_linear_aces_and_renders() {
         "modal still open after submit: status={}",
         h.state().status
     );
-    wait_until(h, |a| a.export_job.is_some());
-    wait_until(h, |a| a.export_job.is_none());
-    assert!(
-        h.state().status.to_string().starts_with("Exported"),
-        "{}",
-        h.state().status
-    );
+    wait_until(h, export_succeeded);
     assert_float_tiff(&destination);
     let exported = image_io::load(&destination).unwrap().image;
     assert_eq!((exported.width, exported.height), (RAW_WIDTH, RAW_HEIGHT));
@@ -453,9 +447,7 @@ fn gpu_raw_import_preview_scan_and_export_reuse_retained_samples() {
     open_export(&mut h);
     assert!(h.state().export_dialog.is_open());
     export_action(&mut h, "Export file…");
-    wait_until(&mut h, |a| {
-        a.export_job.is_none() && a.status.to_string().starts_with("Exported")
-    });
+    wait_until(&mut h, export_succeeded);
     assert_float_tiff(&destination);
     assert_retained_gpu_report(
         h.state(),

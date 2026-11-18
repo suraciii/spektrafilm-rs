@@ -70,9 +70,7 @@ fn save_import_and_export_buttons_use_scripted_chooser_and_remember_directories(
     let exported = s.directory.path().join("button-export.png");
     script(h, chooser::ChooserResult::Scripted(exported.clone()));
     export_action(h, "Export file…");
-    wait_until(h, |a| {
-        a.export_job.is_none() && a.status.to_string().starts_with("Exported")
-    });
+    wait_until(h, export_succeeded);
     let expected = image_io::convert_image(
         &scan,
         &h.state().output_color_space,
@@ -499,9 +497,7 @@ fn rotation_save_and_export_preserve_pixel_positions_and_normalize_metadata() {
     let exported = s.directory.path().join("rotated-export.tiff");
     script(h, chooser::ChooserResult::Scripted(exported.clone()));
     export_action(h, "Export file…");
-    wait_until(h, |a| {
-        a.export_job.is_none() && a.status.to_string().starts_with("Exported")
-    });
+    wait_until(h, export_succeeded);
     assert_float_tiff(&exported);
     let actual = image_io::load(&exported).unwrap().image;
     assert_eq!((actual.width, actual.height), (2, 4));

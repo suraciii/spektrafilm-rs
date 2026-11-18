@@ -332,14 +332,10 @@ impl App {
                         self.photograph_toolbar(ui);
                         ui.separator();
                         let settings_name = crate::i18n::text(ctx, "surfaces.settings.title");
-                        let export_name = crate::i18n::text(
-                            ctx,
-                            if self.export_job.is_some() {
-                                "surfaces.export.cancel"
-                            } else {
-                                "surfaces.action.export"
-                            },
-                        );
+                        // The header keeps one stable action. Progress and
+                        // cancellation belong to the export job strip, which
+                        // names the file; the slot never turns destructive.
+                        let export_name = crate::i18n::text(ctx, "surfaces.action.export");
                         let text_action_width = |label: &str| {
                             let text = egui::WidgetText::from(label).into_galley(
                                 ui,
@@ -548,45 +544,31 @@ impl App {
                             },
                         );
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if self.export_job.is_some() {
-                                if ui
-                                    .add_enabled_ui(true, |ui| {
-                                        controls::action_button(
-                                            ui,
-                                            export_name.as_ref(),
-                                            controls::Icon::Close,
-                                        )
-                                    })
-                                    .inner
-                                    .on_hover_text(crate::i18n::text(
-                                        ctx,
-                                        "surfaces.export.cancel_help",
-                                    ))
-                                    .clicked()
-                                {
-                                    self.cancel_export();
-                                }
+                            let enabled = self.image.is_some()
+                                && self.calibration_job.is_none()
+                                && !self.export_dialog.is_open()
+                                && self.export_job.is_none();
+                            // A disabled Export states its reason, including the
+                            // running job whose cancellation lives in the strip.
+                            let export_help = if self.export_job.is_some() {
+                                crate::i18n::text(ctx, "surfaces.export.wait_for_export")
                             } else {
-                                let enabled = self.image.is_some()
-                                    && self.calibration_job.is_none()
-                                    && !self.export_dialog.is_open();
-                                let export_help =
-                                    crate::i18n::text(ctx, "surfaces.action.export_help");
-                                let export = ui
-                                    .add_enabled_ui(enabled, |ui| {
-                                        controls::action_button(
-                                            ui,
-                                            export_name.as_ref(),
-                                            controls::Icon::Export,
-                                        )
-                                    })
-                                    .inner
-                                    .on_hover_text(export_help.clone())
-                                    .on_disabled_hover_text(export_help);
-                                if export.clicked() {
-                                    self.export_return_focus = Some(export.id);
-                                    self.export_dialog.open(&self.export_options);
-                                }
+                                crate::i18n::text(ctx, "surfaces.action.export_help")
+                            };
+                            let export = ui
+                                .add_enabled_ui(enabled, |ui| {
+                                    controls::action_button(
+                                        ui,
+                                        export_name.as_ref(),
+                                        controls::Icon::Export,
+                                    )
+                                })
+                                .inner
+                                .on_hover_text(export_help.clone())
+                                .on_disabled_hover_text(export_help.clone());
+                            if export.clicked() && enabled {
+                                self.export_return_focus = Some(export.id);
+                                self.export_dialog.open(&self.export_options);
                             }
                             let settings = controls::action_button(
                                 ui,

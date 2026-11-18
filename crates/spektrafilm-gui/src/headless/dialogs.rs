@@ -2,6 +2,7 @@ use super::*;
 use crate::export_job::ExportPause;
 use parking_lot::{Condvar, Mutex};
 use spektrafilm_core::presets::{Preset, PresetLibrary, Provenance};
+use std::sync::atomic::Ordering;
 use std::sync::mpsc;
 
 fn expand_preset_library(h: &mut Harness<'_, App>) {
@@ -634,7 +635,6 @@ fn export_dialog_format_controls_are_conditional_and_both_cancel_paths_write_not
             .is_some()
     );
     assert_codec_inactive(h);
-    click(h, "Advanced");
     assert!(
         !h.get_by_role_and_label(egui::accesskit::Role::Switch, "Apply saving CCTF encoding")
             .node()
@@ -753,7 +753,7 @@ fn export_destination_is_chosen_before_submission_and_used_without_a_second_prom
         !destination.exists(),
         "choosing a destination does not export"
     );
-    click(h, "Export file…");
+    export_action(h, "Export");
     wait_until(h, |app| app.export_job.is_none() && destination.is_file());
     assert!(destination.is_file());
 }
@@ -774,38 +774,222 @@ fn changing_format_drops_a_destination_chosen_for_the_previous_container() {
         h.state().export_dialog.destination().is_none(),
         "a destination confirmed for PNG must not be reused for TIFF"
     );
+    assert!(
+        h.query_by_label_contains("Destination cleared").is_some(),
+        "discarding the confirmed destination must say so"
+    );
 }
 
 #[test]
-fn export_advanced_locator_opens_hidden_computation_rows() {
+fn exporting_over_an_existing_file_asks_before_replacing_it() {
+    let mut s = session();
+    let destination = s.directory.path().join("existing.png");
+    std::fs::write(&destination, b"keep me").unwrap();
+    let h = &mut s.harness;
+    open_export_dialog(h);
+    script(h, chooser::Chooser::chooser_path(&destination));
+    click(h, "Choose…");
+    h.run_steps(3);
+    export_action(h, "Export");
+    h.run_steps(3);
+    assert!(
+        h.query_by_label_contains("already exists").is_some(),
+        "the dialog names the file it would replace"
+    );
+    assert!(
+        h.state().export_job.is_none(),
+        "the confirmation must not start an export"
+    );
+    assert_eq!(std::fs::read(&destination).unwrap(), b"keep me");
+
+    // Declining keeps the draft and the file untouched.
+    click(h, "Cancel");
+    h.run_steps(3);
+    assert!(h.state().export_dialog.is_open());
+    assert_eq!(std::fs::read(&destination).unwrap(), b"keep me");
+
+    // Replacing publishes the new file.
+    export_action(h, "Export");
+    h.run_steps(3);
+    click(h, "Replace");
+    wait_until(h, |app| app.export_job.is_none());
+    assert!(destination.is_file());
+    assert_ne!(std::fs::read(&destination).unwrap(), b"keep me");
+}
+
+#[test]
+fn a_destination_that_does_not_match_the_container_keeps_the_draft_open() {
+    let mut s = session();
+    let destination = s.directory.path().join("wrong-container.tiff");
+    let h = &mut s.harness;
+    open_export_dialog(h);
+    script(h, chooser::Chooser::chooser_path(&destination));
+    click(h, "Choose…");
+    h.run_steps(3);
+    export_action(h, "Export");
+    h.run_steps(3);
+    assert!(
+        h.state().export_dialog.is_open(),
+        "a rejected destination must not discard the draft"
+    );
+    assert!(
+        h.query_by_label_contains("does not have an extension")
+            .is_some(),
+        "the dialog states why the destination was rejected"
+    );
+    assert!(h.state().export_job.is_none());
+    assert!(!destination.exists());
+}
+
+#[test]
+fn command_e_opens_the_export_dialog() {
+    let mut s = session();
+    let h = &mut s.harness;
+    assert!(!h.state().export_dialog.is_open());
+    h.press_key_modifiers(egui::Modifiers::COMMAND, egui::Key::E);
+    h.run_steps(3);
+    assert!(h.state().export_dialog.is_open());
+    h.press_key(egui::Key::Escape);
+    h.run_steps(3);
+    assert!(!h.state().export_dialog.is_open());
+
+    // A running export owns the next submit, so the shortcut stays inert.
+    let pause = stage_export(h, &s.directory.path().join("shortcut-blocked.png"));
+    h.run_steps(3);
+    h.press_key_modifiers(egui::Modifiers::COMMAND, egui::Key::E);
+    h.run_steps(3);
+    assert!(
+        !h.state().export_dialog.is_open(),
+        "a running export blocks the shortcut"
+    );
+    pause.release();
+    wait_until(h, |app| app.export_job.is_none());
+}
+
+#[test]
+fn the_running_export_strip_names_the_file_and_owns_cancellation() {
+    let mut s = session();
+    let h = &mut s.harness;
+    let destination = s.directory.path().join("strip-running.png");
+    let pause = stage_export(h, &destination);
+    h.run_steps(3);
+    assert!(
+        h.query_by_label_contains("strip-running.png").is_some(),
+        "the strip names the file being written"
+    );
+    assert!(
+        h.query_by_label("Cancel export").is_some(),
+        "the strip owns the only cancel action"
+    );
+    assert!(
+        h.query_by_label("Dismiss export status").is_none(),
+        "a running job has no dismiss action"
+    );
+    assert!(
+        h.query_by_label("Export")
+            .is_some_and(|node| node.node().is_disabled()),
+        "the header keeps one stable export action, disabled while the job runs"
+    );
+    click(h, "Cancel export");
+    assert!(
+        h.state()
+            .export_job
+            .as_ref()
+            .unwrap()
+            .cancel
+            .load(Ordering::SeqCst)
+    );
+    pause.release();
+    wait_until(h, |app| app.export_job.is_none());
+    h.run_steps(3);
+    assert!(
+        matches!(
+            h.state().export_notice,
+            Some(ExportNotice::Cancelled { .. })
+        ),
+        "the outcome stays on the strip after cancellation"
+    );
+}
+
+#[test]
+fn a_finished_export_stays_visible_with_its_path_and_dimensions() {
+    let mut s = session();
+    let h = &mut s.harness;
+    let destination = s.directory.path().join("strip-done.png");
+    open_export_dialog(h);
+    script(h, chooser::Chooser::chooser_path(&destination));
+    export_action(h, "Export file…");
+    wait_until(h, |app| app.export_job.is_none() && destination.is_file());
+    h.run_steps(3);
+    assert!(
+        h.query_by_label_contains("strip-done.png").is_some(),
+        "the finished export keeps naming its file"
+    );
+    assert!(
+        h.query_by_label("Open containing folder").is_some(),
+        "the outcome offers the delivered file's folder"
+    );
+    assert!(
+        h.query_all_by_label_contains("×").next().is_some(),
+        "the outcome states the delivered dimensions"
+    );
+    assert!(
+        h.query_by_label("Dismiss export status").is_some(),
+        "a finished outcome can be dismissed"
+    );
+    click(h, "Dismiss export status");
+    h.run_steps(3);
+    assert!(
+        h.query_by_label("Open containing folder").is_none(),
+        "dismissing removes the finished strip"
+    );
+}
+
+#[test]
+fn export_states_fixed_encoding_and_the_tiff_switch_without_a_disclosure() {
     let mut s = session();
     let h = &mut s.harness;
     open_export_dialog(h);
+    assert!(
+        h.query_by_label("Transfer encoding").is_some(),
+        "PNG must state the encoding it fixes"
+    );
+    assert!(
+        h.get_by_label("Transfer encoding")
+            .description()
+            .is_some_and(|text| text.contains("encoded color")),
+        "the fixed value's reason is its accessible description"
+    );
+    assert!(
+        h.query_by_label("Encoded").is_some(),
+        "the fixed value stays visible in the editor column"
+    );
+    assert!(
+        h.query_by_label_contains("encoded color").is_none(),
+        "the reason stays out of the visible paragraphs"
+    );
+    choose(h, "Format", "JPEG");
+    h.run_steps(3);
+    assert!(h.query_by_label("Transfer encoding").is_some());
+    choose(h, "Format", "EXR");
+    h.run_steps(3);
+    assert!(h.query_by_label("Transfer encoding").is_some());
+    assert!(h.query_by_label("Compression").is_some());
     choose(h, "Format", "TIFF");
-    assert!(
-        h.query_by_role_and_label(egui::accesskit::Role::ComboBox, "Backend")
-            .is_none(),
-        "Export must follow Settings instead of exposing a second backend choice"
-    );
-    assert!(
-        h.query_by_role_and_label(egui::accesskit::Role::Switch, "Apply saving CCTF encoding",)
-            .is_none()
-    );
-    controls::request_focus(
-        &h.ctx,
-        "Export options",
-        "extras.rust.export_saving_cctf_encoding",
-    );
     h.run_steps(3);
     assert!(
         h.query_by_role_and_label(egui::accesskit::Role::Switch, "Apply saving CCTF encoding")
             .is_some(),
-        "a canonical locator opens Advanced and focuses the TIFF encoding switch"
+        "the TIFF transfer encoding is a normal row"
+    );
+    assert!(
+        h.query_by_label("Advanced").is_none(),
+        "the archival encoding is not behind a disclosure"
     );
     assert!(
         h.query_by_role_and_label(egui::accesskit::Role::ComboBox, "Backend")
             .is_none(),
-        "Advanced must not reintroduce a separate export backend"
+        "Export must follow Settings instead of exposing a second backend choice"
     );
 }
 

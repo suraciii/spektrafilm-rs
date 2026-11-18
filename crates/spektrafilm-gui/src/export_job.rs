@@ -67,6 +67,35 @@ pub(super) struct ExportResult {
     pub(super) staged: image_io::PreparedImageOutput,
 }
 
+/// The finished state of one interactive export. The strip owns it because the
+/// shared status line cannot hold a path, a reason, and a recovery action.
+#[derive(Clone)]
+pub(crate) enum ExportNotice {
+    Succeeded {
+        path: PathBuf,
+        size: [u32; 2],
+        elapsed: f32,
+        warning: Option<crate::app::Message>,
+    },
+    Failed {
+        path: PathBuf,
+        message: crate::app::Message,
+    },
+    Cancelled {
+        path: PathBuf,
+    },
+}
+
+impl ExportNotice {
+    pub(crate) fn path(&self) -> &Path {
+        match self {
+            Self::Succeeded { path, .. } | Self::Failed { path, .. } | Self::Cancelled { path } => {
+                path
+            }
+        }
+    }
+}
+
 impl App {
     /// Export follows the running execution selection rather than carrying a
     /// second backend preference in the save dialog.
@@ -246,6 +275,10 @@ impl App {
         let (queue_entry, dependencies) = queued.map_or((None, None), |(index, identities)| {
             (Some(index), Some(identities))
         });
+        if queue_entry.is_none() {
+            // A new delivery supersedes the last one's notice.
+            self.export_notice = None;
+        }
         let crate::app::export_queue::QueueSubmission {
             image,
             rotation_quarter_turns,
@@ -544,8 +577,12 @@ impl App {
                 ctx_for_worker.request_repaint();
             })
             .expect("OS thread spawn");
-        self.status = crate::app::Message::new("operations.export_starting")
-            .arg("backend", export_backend.label());
+        // Interactive exports report on the strip; only queued work uses the
+        // shared status line, which the work list also owns.
+        if queue_entry.is_some() {
+            self.status = crate::app::Message::new("operations.export_starting")
+                .arg("backend", export_backend.label());
+        }
         self.export_job = Some(ExportJob {
             rx,
             handle: Some(handle),
@@ -572,7 +609,9 @@ impl App {
             if let Some(pause) = &job.pause {
                 pause.notify_cancelled();
             }
-            self.status = crate::app::Message::new("operations.export_cancelling");
+            if job.queue_entry.is_some() {
+                self.status = crate::app::Message::new("operations.export_cancelling");
+            }
         }
     }
 
@@ -590,21 +629,14 @@ impl App {
         let msg = match job.rx.try_recv() {
             Ok(m) => m,
             Err(mpsc::TryRecvError::Empty) => {
-                let secs = job.started_at.elapsed().as_secs();
-                self.status = if job.cancel.load(Ordering::SeqCst) {
-                    crate::app::Message::new("operations.export_cancelling_elapsed")
-                        .arg("seconds", secs)
-                } else {
-                    crate::app::Message::new("operations.export_running")
-                        .arg("backend", job.backend.label())
-                        .arg("seconds", secs)
-                };
+                // The strip reads the job itself (elapsed, backend, cancel),
+                // so the shared status line stays free for other operations.
                 ctx.request_repaint_after(Duration::from_secs(1));
                 return;
             }
             Err(mpsc::TryRecvError::Disconnected) => {
-                self.status = crate::app::Message::new("operations.export_worker_vanished");
-                self.last_export_error = Some(self.status.clone());
+                let message = crate::app::Message::new("operations.export_worker_vanished");
+                self.last_export_error = Some(message.clone());
                 let mut job = self.export_job.take().expect("export job exists");
                 if let Some(handle) = job.handle.take() {
                     let _ = handle.join();
@@ -619,7 +651,15 @@ impl App {
                 job.operation
                     .issue(IssueCategory::Backend, IssueBoundary::Operation);
                 self.diagnostics.finish(job.operation, Outcome::Failed);
-                self.finish_queued_export(job.queue_entry, Outcome::Failed, self.status.clone());
+                if job.queue_entry.is_some() {
+                    self.status = message.clone();
+                } else {
+                    self.export_notice = Some(ExportNotice::Failed {
+                        path: job.destination.clone(),
+                        message: message.clone(),
+                    });
+                }
+                self.finish_queued_export(job.queue_entry, Outcome::Failed, message);
                 self.start_next_queued_export(ctx);
                 return;
             }
@@ -642,32 +682,39 @@ impl App {
         } else {
             Outcome::Failed
         };
-        self.status = match msg {
+        let mut published: Option<([u32; 2], f32)> = None;
+        let mut warning: Option<crate::app::Message> = None;
+        let terminal = match msg {
             Ok(_) if cancelled => crate::app::Message::new("operations.export_cancelled"),
             Ok(result) => {
                 let publication =
                     operation.scope("publication", ObservationKind::Phase, Purpose::Image);
-                let published = result.staged.publish(job.replace_existing);
-                let published = observed_result(
+                let publish_result = result.staged.publish(job.replace_existing);
+                let publish_result = observed_result(
                     publication,
-                    published,
+                    publish_result,
                     IssueCategory::Publication,
                     IssueBoundary::Publication,
                 );
-                match published {
+                match publish_result {
                     Ok(report) => {
                         outcome = Outcome::Succeeded;
                         self.last_export_error = None;
                         operation.set_published_dimensions(result.size[0], result.size[1]);
+                        published = Some((result.size, result.elapsed));
+                        warning = report
+                            .metadata_warning
+                            .as_ref()
+                            .map(crate::app::Message::bridge_error);
                         let exported = crate::app::Message::new("operations.exported")
                             .arg("file", result.filename)
                             .arg("width", result.size[0])
                             .arg("height", result.size[1])
                             .arg("seconds", format!("{:.1}", result.elapsed));
-                        if let Some(warning) = report.metadata_warning {
+                        if let Some(detail) = warning.clone() {
                             crate::app::Message::new("operations.metadata_warning")
                                 .message_arg("operation", exported)
-                                .message_arg("detail", crate::app::Message::bridge_error(&warning))
+                                .message_arg("detail", detail)
                         } else {
                             exported
                         }
@@ -692,7 +739,29 @@ impl App {
             operation.issue(IssueCategory::Cancelled, IssueBoundary::Operation);
         }
         self.diagnostics.finish(operation, outcome);
-        self.finish_queued_export(job.queue_entry, outcome, self.status.clone());
+        // Interactive exports own a persistent notice; queued ones keep their
+        // per-entry outcome in the work list and their line in the status bar.
+        if job.queue_entry.is_some() {
+            self.status = terminal.clone();
+        } else if matches!(outcome, Outcome::Succeeded) {
+            let (size, elapsed) = published.unwrap_or(([0, 0], 0.0));
+            self.export_notice = Some(ExportNotice::Succeeded {
+                path: job.destination.clone(),
+                size,
+                elapsed,
+                warning,
+            });
+        } else if matches!(outcome, Outcome::Cancelled) {
+            self.export_notice = Some(ExportNotice::Cancelled {
+                path: job.destination.clone(),
+            });
+        } else {
+            self.export_notice = Some(ExportNotice::Failed {
+                path: job.destination.clone(),
+                message: terminal.clone(),
+            });
+        }
+        self.finish_queued_export(job.queue_entry, outcome, terminal);
         self.start_next_queued_export(ctx);
     }
 }

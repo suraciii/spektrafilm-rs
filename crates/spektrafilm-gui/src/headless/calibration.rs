@@ -144,6 +144,26 @@ fn assert_detect_base_applied(app: &App) {
 }
 
 #[test]
+fn a_combo_choice_invalidates_calibration_like_any_other_edit() {
+    let mut s = session();
+    let h = &mut s.harness;
+    drain(h);
+    open_convert_controls(h);
+    let revision = h.state().parameter_revision;
+    let epoch = h.state().calibration_epoch;
+    choose(h, "Scan illuminant", "D65");
+    assert_eq!(h.state().params.film_render.convert.scan_illuminant, "D65");
+    assert!(
+        h.state().parameter_revision > revision,
+        "a combo choice is a parameter edit"
+    );
+    assert!(
+        h.state().calibration_epoch > epoch,
+        "a combo choice invalidates calibration"
+    );
+}
+
+#[test]
 fn detect_base_button_fits_the_film_base_and_scan_exposure_from_the_loaded_ramp() {
     let mut s = session();
     let h = &mut s.harness;

@@ -380,7 +380,6 @@ fn key(label: &str) -> Option<&'static str> {
             Some("controls.crop.crop_help")
         }
         "Current look: %{group} / %{name} • %{state}" => Some("surfaces.presets.current"),
-        "Advanced" => Some("surfaces.export.advanced"),
         "Destination" => Some("surfaces.export.destination"),
         "Custom" => Some("controls.scanner.custom"),
         "Edited" => Some("controls.scanner.edited"),

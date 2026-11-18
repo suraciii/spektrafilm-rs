@@ -105,6 +105,9 @@ pub(crate) struct App {
     pub(crate) status: crate::app::Message,
     pub(crate) last_state_normalization: Option<crate::app::Message>,
     pub(crate) last_export_error: Option<crate::app::Message>,
+    /// Last finished interactive export, kept on screen until dismissed or
+    /// superseded. The strip owns this outcome; `status` no longer carries it.
+    pub(crate) export_notice: Option<ExportNotice>,
     /// Controls changed since the latest submitted render snapshot.
     pub(crate) dirty: bool,
     pub(crate) dirty_since: Option<Instant>,
@@ -452,6 +455,7 @@ impl App {
                 })
                 .unwrap_or_else(|| crate::app::Message::new("operations.load_to_start")),
             last_export_error: None,
+            export_notice: None,
             dirty: false,
             #[cfg(target_os = "macos")]
             metal_colorspace_tagged: false,
