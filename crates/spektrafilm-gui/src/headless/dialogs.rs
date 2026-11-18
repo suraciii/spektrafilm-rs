@@ -852,6 +852,18 @@ fn command_e_opens_the_export_dialog() {
     h.press_key(egui::Key::Escape);
     h.run_steps(3);
     assert!(!h.state().export_dialog.is_open());
+
+    // A running export owns the next submit, so the shortcut stays inert.
+    let pause = stage_export(h, &s.directory.path().join("shortcut-blocked.png"));
+    h.run_steps(3);
+    h.press_key_modifiers(egui::Modifiers::COMMAND, egui::Key::E);
+    h.run_steps(3);
+    assert!(
+        !h.state().export_dialog.is_open(),
+        "a running export blocks the shortcut"
+    );
+    pause.release();
+    wait_until(h, |app| app.export_job.is_none());
 }
 
 #[test]
@@ -868,6 +880,10 @@ fn the_running_export_strip_names_the_file_and_owns_cancellation() {
     assert!(
         h.query_by_label("Cancel export").is_some(),
         "the strip owns the only cancel action"
+    );
+    assert!(
+        h.query_by_label("Dismiss export status").is_none(),
+        "a running job has no dismiss action"
     );
     assert!(
         h.query_by_label("Export")
@@ -917,6 +933,16 @@ fn a_finished_export_stays_visible_with_its_path_and_dimensions() {
         h.query_all_by_label_contains("×").next().is_some(),
         "the outcome states the delivered dimensions"
     );
+    assert!(
+        h.query_by_label("Dismiss export status").is_some(),
+        "a finished outcome can be dismissed"
+    );
+    click(h, "Dismiss export status");
+    h.run_steps(3);
+    assert!(
+        h.query_by_label("Open containing folder").is_none(),
+        "dismissing removes the finished strip"
+    );
 }
 
 #[test]
@@ -929,8 +955,18 @@ fn export_states_fixed_encoding_and_the_tiff_switch_without_a_disclosure() {
         "PNG must state the encoding it fixes"
     );
     assert!(
-        h.query_by_label_contains("encoded color").is_some(),
-        "the fixed encoding's reason is visible, not hover-only"
+        h.get_by_label("Transfer encoding")
+            .description()
+            .is_some_and(|text| text.contains("encoded color")),
+        "the fixed value's reason is its accessible description"
+    );
+    assert!(
+        h.query_by_label("Encoded").is_some(),
+        "the fixed value stays visible in the editor column"
+    );
+    assert!(
+        h.query_by_label_contains("encoded color").is_none(),
+        "the reason stays out of the visible paragraphs"
     );
     choose(h, "Format", "JPEG");
     h.run_steps(3);

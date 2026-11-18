@@ -162,17 +162,6 @@ impl App {
 
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             ui.spacing_mut().item_spacing.x = theme::SPACE_2;
-                            let dismiss_label =
-                                crate::i18n::text(ui.ctx(), "operations.export_dismiss");
-                            if controls::icon_button(
-                                ui,
-                                dismiss_label.as_ref(),
-                                controls::Icon::Close,
-                            )
-                            .clicked()
-                            {
-                                dismiss = true;
-                            }
                             match &running {
                                 Some((_, _, _, cancelling)) => {
                                     if !*cancelling {
@@ -193,6 +182,19 @@ impl App {
                                     }
                                 }
                                 None => {
+                                    // Only a finished outcome can be dismissed;
+                                    // a running job owns the strip's actions.
+                                    let dismiss_label =
+                                        crate::i18n::text(ui.ctx(), "operations.export_dismiss");
+                                    if controls::icon_button(
+                                        ui,
+                                        dismiss_label.as_ref(),
+                                        controls::Icon::Close,
+                                    )
+                                    .clicked()
+                                    {
+                                        dismiss = true;
+                                    }
                                     let notice = notice.as_ref().expect("notice exists");
                                     if matches!(notice, ExportNotice::Failed { .. }) {
                                         let label =

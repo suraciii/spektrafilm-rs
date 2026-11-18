@@ -372,44 +372,40 @@ fn section_break(ui: &mut egui::Ui) {
 }
 
 /// A read-only option row: product label and fixed value in the shared
-/// editor column, locatable at its canonical path. The value carries the
-/// row's accessible name like an editor does, so the row reads as the
-/// option's state rather than a disabled editor. Its bounded reason line is
-/// visible under the row rather than hover-only, and is also the accessible
-/// description: a fixed value the user cannot change must say why.
+/// editor column, locatable at its canonical path. The reason a value cannot
+/// change is the row's accessible description and hover text, not a second
+/// paragraph — a fixed capability stays one visible line.
 fn readonly_row(ui: &mut egui::Ui, label: &str, value: &str, help: &str, path: &str) {
-    let response = ui
+    let name = controls::localized(ui.ctx(), label);
+    let (value_response, name_response) = ui
         .horizontal(|ui| {
-            ui.label(
-                egui::RichText::new(controls::localized(ui.ctx(), label))
-                    .color(theme::FG_SECONDARY),
-            )
-            .on_hover_text(help);
+            let name_response = ui
+                .label(egui::RichText::new(name.as_ref()).color(theme::FG_SECONDARY))
+                .on_hover_text(help);
             let cell = editor_width(ui);
             ui.add_space((ui.available_width() - cell).max(0.0));
-            ui.add_sized(
-                egui::vec2(cell, theme::HEIGHT_CONTROL),
-                egui::Label::new(
-                    egui::RichText::new(value)
-                        .color(theme::FG_SECONDARY)
-                        .size(theme::SIZE_LABEL),
+            let value_response = ui
+                .add_sized(
+                    egui::vec2(cell, theme::HEIGHT_CONTROL),
+                    egui::Label::new(
+                        egui::RichText::new(value)
+                            .color(theme::FG_SECONDARY)
+                            .size(theme::SIZE_LABEL),
+                    )
+                    .halign(egui::Align::Max)
+                    .sense(egui::Sense::focusable_noninteractive()),
                 )
-                .halign(egui::Align::Max)
-                .sense(egui::Sense::focusable_noninteractive()),
-            )
-            .on_hover_text(help)
+                .on_hover_text(help);
+            (value_response, name_response)
         })
         .inner;
-    let name = controls::localized(ui.ctx(), label);
-    ui.ctx().accesskit_node_builder(response.id, |node| {
-        node.set_label(name.as_ref());
-        node.set_value(value);
-        node.set_description(help);
-    });
-    controls::locate_row(ui, path, &response);
-    // The reason is content, not a tooltip: a fixed value the user cannot
-    // change must say why in the place they read the value.
-    ui.label(egui::RichText::new(help).small().color(theme::FG_MUTED));
+    // Both published nodes carry the reason: the label text is read in browse
+    // order, and the focusable value cell is what the locator focuses.
+    for id in [value_response.id, name_response.id] {
+        ui.ctx()
+            .accesskit_node_builder(id, |node| node.set_description(help));
+    }
+    controls::locate_row(ui, path, &value_response);
 }
 
 #[derive(Default)]
@@ -854,8 +850,8 @@ impl ExportDialog {
                     );
                     controls::locate_row(ui, "extras.rust.export_saving_cctf_encoding", &encoding);
                 } else {
-                    // Fixed by the container, so the row states the value and
-                    // the reason instead of hiding a choice that cannot change.
+                    // Fixed by the container: one visible value row, with the
+                    // reason in its accessible description.
                     let fixed = draft.format == ExportFormat::Exr;
                     let value = crate::i18n::text(
                         ui.ctx(),

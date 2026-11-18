@@ -577,8 +577,12 @@ impl App {
                 ctx_for_worker.request_repaint();
             })
             .expect("OS thread spawn");
-        self.status = crate::app::Message::new("operations.export_starting")
-            .arg("backend", export_backend.label());
+        // Interactive exports report on the strip; only queued work uses the
+        // shared status line, which the work list also owns.
+        if queue_entry.is_some() {
+            self.status = crate::app::Message::new("operations.export_starting")
+                .arg("backend", export_backend.label());
+        }
         self.export_job = Some(ExportJob {
             rx,
             handle: Some(handle),
@@ -605,7 +609,9 @@ impl App {
             if let Some(pause) = &job.pause {
                 pause.notify_cancelled();
             }
-            self.status = crate::app::Message::new("operations.export_cancelling");
+            if job.queue_entry.is_some() {
+                self.status = crate::app::Message::new("operations.export_cancelling");
+            }
         }
     }
 

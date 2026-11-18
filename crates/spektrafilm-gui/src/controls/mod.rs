@@ -195,7 +195,11 @@ pub(crate) fn enum_choice<T: Copy + PartialEq>(
     choices: &[(T, &str)],
     tooltip: &str,
 ) -> bool {
-    enum_choice_response(ui, label, value, choices, tooltip).changed()
+    // `ComboBox` never marks its own response changed, so the flag comes from
+    // the value comparison, not from the popup response.
+    let previous = *value;
+    enum_choice_response(ui, label, value, choices, tooltip);
+    previous != *value
 }
 
 /// The same row, returning its selector so a surface can move keyboard focus
@@ -220,7 +224,9 @@ pub(crate) fn enum_choice_with_disabled<T: Copy + PartialEq>(
     tooltip: &str,
     disabled: impl Fn(&T) -> Option<&'static str>,
 ) -> bool {
-    enum_choice_response_with_disabled(ui, label, value, choices, tooltip, disabled).changed()
+    let previous = *value;
+    enum_choice_response_with_disabled(ui, label, value, choices, tooltip, disabled);
+    previous != *value
 }
 
 fn enum_choice_response_with_disabled<T: Copy + PartialEq>(

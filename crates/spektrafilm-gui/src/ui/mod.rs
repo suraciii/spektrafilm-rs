@@ -82,7 +82,11 @@ impl eframe::App for App {
             && !self.stale_save_confirmation
             && !self.input_transition_pending()
         {
-            let export_available = self.image.is_some() && self.calibration_job.is_none();
+            // Same guard as the header action: a running export owns the
+            // next submit, so the shortcut must not open a draft that the
+            // submit would discard.
+            let export_available =
+                self.image.is_some() && self.calibration_job.is_none() && self.export_job.is_none();
             if export_available
                 && ctx.input_mut(|input| input.consume_key(egui::Modifiers::COMMAND, egui::Key::E))
             {
