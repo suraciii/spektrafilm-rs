@@ -365,7 +365,7 @@ fn grain_conditions(path: &str, component: Option<usize>) -> [Option<Condition>;
                 out[3] = Some(Analogue);
             }
         }
-    } else if path.ends_with(".dye_strength") {
+    } else if path.ends_with(".dye_strength") || path.ends_with(".dye_size") {
         out[1] = Some(Dye);
     } else if path.ends_with(".dye_color_grain") {
         out[1] = Some(Dye);

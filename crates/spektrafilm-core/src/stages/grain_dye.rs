@@ -682,6 +682,7 @@ pub fn resolve(film: &Profile, params: &RuntimeParams) -> Result<DyeGrainParams,
         monochrome: film.is_bw(),
         positive: film.is_positive(),
         dye_strength: grain.dye_strength,
+        dye_size: grain.dye_size,
         color_grain: grain.dye_color_grain,
         layer_count,
         layer_dmax: profile_layer_peak(film, layer_count),
@@ -845,6 +846,7 @@ fn try_device_field(
                 output_pitch_um = ?grid.pitch_um,
                 output = format_args!("{}x{}", grid.width, grid.height),
                 dye_strength = resolved.dye_strength,
+                dye_size = resolved.dye_size,
                 layer,
                 layer_count,
                 expectation = resolved.expectation,
@@ -946,8 +948,8 @@ fn cpu_field(
     )
 }
 
-/// The delivered law with the recipe's one effective Dye look control
-/// applied. This is the one mapping both executors consume.
+/// The delivered law with the recipe's Dye look controls applied. This is the
+/// one mapping both executors consume.
 ///
 /// The look strength scales the correlated field's amplitude and the event
 /// count's standard deviation together: the field amplitude scales `white`,
@@ -990,7 +992,7 @@ fn law_params(resolved: &DyeGrainParams) -> texture::DyeLawParams {
         POSITIVE_BASE_SCALE
     } else {
         1.0
-    };
+    } * resolved.dye_size;
     params.fine_scale = if resolved.positive {
         spektrafilm_backend::dye_params::law::POSITIVE_FINE_SCALE
     } else {
@@ -2693,6 +2695,104 @@ mod tests {
         assert!(
             (law_params(&resolved).length_scale - 1.0).abs() < 1e-12,
             "negative profile lost its delivered base cell"
+        );
+    }
+
+    /// The relative size scales the delivered base, layer ladder, and fine
+    /// cell together. The device handoff receives the same mapped scale.
+    #[test]
+    fn dye_size_scales_correlation_length_on_both_handoffs() {
+        let grid = ReadoutGrid {
+            origin_um: [0.0; 2],
+            pitch_um: [3.5; 2],
+            width: 4,
+            height: 4,
+        };
+        for stock in ["kodak_portra_400", "kodak_kodachrome_64"] {
+            let film = load(stock);
+            let base = if film.is_positive() {
+                POSITIVE_BASE_SCALE
+            } else {
+                1.0
+            };
+            for size in [1.0, 2.0, 4.0] {
+                let mut params = supported_params();
+                params.film_render.grain.dye_size = size;
+                let resolved = resolve(&film, &params).unwrap();
+                let law = law_params(&resolved);
+                assert!(
+                    (law.length_scale - base * size).abs() < 1e-12,
+                    "{stock} size {size} did not scale the delivered base"
+                );
+                let scales = layer_scales(&film);
+                for layer in 0..resolved.layer_count {
+                    let layer_law = law_params_for_layer(&resolved, scales, layer);
+                    assert!(
+                        (layer_law.length_scale - base * size * scales[layer as usize]).abs()
+                            < 1e-12,
+                        "{stock} size {size} layer {layer} did not scale its ladder"
+                    );
+                }
+                let device = device_params_with_law(
+                    3.5,
+                    grid,
+                    &law,
+                    layer_scales(&film),
+                    resolved.layer_dmax,
+                    None,
+                )
+                .unwrap();
+                assert!(
+                    (device.length_scale - base * size).abs() < 1e-12,
+                    "{stock} size {size} did not reach the device handoff"
+                );
+            }
+        }
+    }
+
+    /// Larger size lengthens the realized lattice while the target mean stays
+    /// fixed. This checks the actual field, not only the mapped handoff.
+    #[test]
+    fn dye_size_changes_realized_correlation_without_a_tone_shift() {
+        use spektrafilm_model::grain::dye::texture::{ReadoutGeometry, apply};
+        let film = load("kodak_portra_400");
+        let width = 128;
+        let target = {
+            let mut image = ImageBuf::new(width as u32, width as u32);
+            image.data.iter_mut().for_each(|v| *v = from_f64(0.30));
+            image
+        };
+        let pitch = 3.5;
+        let grid = ReadoutGeometry {
+            origin_um: [0.0, 0.0],
+            pitch_um: [pitch, pitch],
+            width: width as u32,
+            height: width as u32,
+        };
+        let sample = |size: f64| {
+            let mut params = supported_params();
+            params.film_render.grain.dye_size = size;
+            let resolved = resolve(&film, &params).unwrap();
+            let out = apply(&target, pitch, &grid, &law_params(&resolved)).unwrap();
+            let green: Vec<f64> = out.data.chunks(3).map(|p| p[1] as f64).collect();
+            let mean = green.iter().sum::<f64>() / green.len() as f64;
+            let mut left = Vec::with_capacity(width * (width - 4));
+            let mut right = Vec::with_capacity(width * (width - 4));
+            for row in green.chunks(width) {
+                left.extend_from_slice(&row[..width - 4]);
+                right.extend_from_slice(&row[4..]);
+            }
+            (mean, correlation(&left, &right))
+        };
+        let (base_mean, base_lag) = sample(1.0);
+        let (double_mean, double_lag) = sample(2.0);
+        let (quad_mean, quad_lag) = sample(4.0);
+        for mean in [base_mean, double_mean, quad_mean] {
+            assert!((mean - 0.30).abs() < 5e-3, "mean {mean} left the target");
+        }
+        assert!(
+            base_lag < double_lag && double_lag < quad_lag,
+            "size must lengthen lag-4 correlation: {base_lag} {double_lag} {quad_lag}"
         );
     }
 

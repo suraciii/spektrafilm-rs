@@ -1722,20 +1722,24 @@ mod tests {
     #[test]
     fn dye_look_controls_are_effective() {
         use super::effects::conditions;
-        let path = "film_render.grain.dye_strength";
-        let described: Vec<_> = conditions(path).iter().map(|c| c.description()).collect();
-        assert!(
-            described
-                .iter()
-                .any(|d| d.starts_with("film_render.grain.engine = dye;")),
-            "missing the Dye engine condition for {path}: {described:?}"
-        );
-        assert!(
-            !described
-                .iter()
-                .any(|d| d.starts_with("retained legacy Dye")),
-            "an effective Dye control must not be marked retained: {path}: {described:?}"
-        );
+        for path in [
+            "film_render.grain.dye_strength",
+            "film_render.grain.dye_size",
+        ] {
+            let described: Vec<_> = conditions(path).iter().map(|c| c.description()).collect();
+            assert!(
+                described
+                    .iter()
+                    .any(|d| d.starts_with("film_render.grain.engine = dye;")),
+                "missing the Dye engine condition for {path}: {described:?}"
+            );
+            assert!(
+                !described
+                    .iter()
+                    .any(|d| d.starts_with("retained legacy Dye")),
+                "an effective Dye control must not be marked retained: {path}: {described:?}"
+            );
+        }
     }
 
     #[test]

@@ -16,7 +16,9 @@ This context defines the domain language for the film-coordinate Dye grain model
 
 **Single-record BW field**: One stochastic material-density realization for a monochrome profile. It describes record layout, not identified silver chemistry or stock calibration.
 
-**Dye correlation length**: The delivered value-noise cell scale of the field in film coordinates. Negative profiles deliver 14.0 µm; positive profiles deliver 7.0 µm. It is an engine constant, independent of the output grid and event area.
+**Dye correlation length**: The value-noise cell scale of the field in film coordinates. At relative size `1`, negative profiles deliver 14.0 µm and positive profiles deliver 7.0 µm.
+
+The public `dye_size` scales this base, every active layer's relative cell, and the positive microcontrast cell. It is independent of the output grid and event area.
 
 **Dye microcontrast component**: An independent value-noise lattice mixed into the positive field by variance at a finer delivered cell. It sharpens the texture without replacing the base correlation length; negative profiles carry none.
 
