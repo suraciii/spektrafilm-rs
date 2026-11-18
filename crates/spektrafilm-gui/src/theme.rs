@@ -38,6 +38,8 @@ pub const FG_SECONDARY: Color32 = Color32::from_rgb(0xb8, 0xb5, 0xae);
 pub const FG_MUTED: Color32 = Color32::from_rgb(0x91, 0x8e, 0x87);
 /// Error red.
 pub const ERROR: Color32 = Color32::from_rgb(0xe0, 0x55, 0x55);
+/// Completed-state green for a finished delivery.
+pub const SUCCESS: Color32 = Color32::from_rgb(0x6a, 0xbf, 0x69);
 /// Warning amber, for capability notices that are not errors.
 pub const WARNING: Color32 = Color32::from_rgb(0xe0, 0xa0, 0x55);
 
@@ -203,6 +205,8 @@ pub const HEIGHT_PHOTOGRAPH_MIN: f32 = 300.0;
 pub const HEIGHT_DIALOG_HEADER: f32 = 56.0;
 /// Dialog actions, including their vertical spacing.
 pub const HEIGHT_DIALOG_FOOTER: f32 = HEIGHT_CONTROL + 2.0 * SPACE_DIALOG;
+/// One-line export job strip under the header: spinner, file, facts, actions.
+pub const HEIGHT_EXPORT_STRIP: f32 = 38.0;
 
 /// A default-width stroke in `color`.
 pub fn stroke(color: Color32) -> Stroke {

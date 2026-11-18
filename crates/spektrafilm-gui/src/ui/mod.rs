@@ -2,6 +2,7 @@
 use crate::*;
 use std::sync::atomic::Ordering;
 
+mod export_status;
 mod inspector;
 mod settings;
 mod workbench;
@@ -81,7 +82,12 @@ impl eframe::App for App {
             && !self.stale_save_confirmation
             && !self.input_transition_pending()
         {
-            if ctx.input_mut(|input| {
+            let export_available = self.image.is_some() && self.calibration_job.is_none();
+            if export_available
+                && ctx.input_mut(|input| input.consume_key(egui::Modifiers::COMMAND, egui::Key::E))
+            {
+                self.export_dialog.open(&self.export_options);
+            } else if ctx.input_mut(|input| {
                 input.consume_key(
                     egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
                     egui::Key::Z,
@@ -131,6 +137,7 @@ impl eframe::App for App {
             }
         }
         self.window_header(ctx);
+        self.export_job_strip(ctx);
         self.show_stale_save_confirmation(ctx);
         self.photograph_dialogs(ctx);
         self.work_list_controls(ctx);

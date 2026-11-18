@@ -20,7 +20,7 @@ spektrafilm-gui IMAGE --state GUI_STATE.json
 
 ## Workspace
 
-The header provides a **Photographs** menu (**照片**) containing **Save adjustments…**, **Reopen adjustments…**, and **Photographs…**, plus **Open**, **Undo**, **Redo**, **Settings**, and **Export**. Export is the independent file-delivery action: its full-resolution render is distinct from the retained **SCAN** and **SAVE** actions. The header identifies the accepted source, film, print material, and workflow route as read-only context, and reports import, delivery, completion, and error messages. While an export runs, **Cancel export** replaces **Export**. The single viewer status strip above the canvas owns result identity and live rendering status.
+The header provides a **Photographs** menu (**照片**) containing **Save adjustments…**, **Reopen adjustments…**, and **Photographs…**, plus **Open**, **Undo**, **Redo**, **Settings**, and **Export**. Export is the independent file-delivery action: its full-resolution render is distinct from the retained **SCAN** and **SAVE** actions. The header identifies the accepted source, film, print material, and workflow route as read-only context, and reports import, delivery, completion, and error messages. While an export runs, an **export job strip** under the header names the file, its backend, and elapsed time and owns the only cancel action; the header keeps one stable **Export** action, disabled until the run ends. The single viewer status strip above the canvas owns result identity and live rendering status.
 
 The header keeps global actions on one row. Undo and Redo use named icon buttons. The source name sits above the read-only material and workflow summary; hover reveals truncated details.
 
@@ -224,7 +224,7 @@ Undo restores accepted controls, materials, route, explicit edit ownership, and 
 
 Rotation Undo/Redo refreshes input presentation without discarding the completed output. Modified remains viewable and Save continues to write the same retained samples until the automatic replacement render is accepted.
 
-Use Ctrl/Cmd+Z and Ctrl/Cmd+Shift+Z outside text editors and the Settings/Export dialogs. When a text editor has focus, its own text-editing shortcuts do not undo photograph adjustments.
+Use Ctrl/Cmd+Z and Ctrl/Cmd+Shift+Z outside text editors and the Settings/Export dialogs. When a text editor has focus, its own text-editing shortcuts do not undo photograph adjustments. Ctrl/Cmd+E opens **Export options** for the accepted source.
 
 Accepting another source, completing RAW reprocessing, or loading a complete GUI state begins a new history. Failed imports, reprocessing, and state loads preserve the preceding context and history. The undo stack is not saved in GUI state. Viewer presentation, application settings, unsubmitted Export drafts, preset-library changes, startup-default files, diagnostic reports, and completed Save/Export files are outside adjustment history. Undo does not delete or rewrite those files, and it does not change an in-flight Export's captured configuration.
 
@@ -332,7 +332,7 @@ Analysis reports below-range, above-range, and invalid samples separately. Previ
 
 The canvas uses the pinned 18% gray (`#767676`) or black. It includes normalized white padding and the upstream paper watermark. Hovering reports the original floating RGB pixel. GPU hover readings arrive asynchronously without blocking viewer navigation. Moving to another source pixel or changing the source or layer clears the old reading until the current result is ready.
 
-The single status strip above the canvas identifies **Original**, **Paper back**, or the retained Preview/Scan result and its detail-effects caveat where applicable. It shows **Rendering…**, or **渲染中……** in Simplified Chinese, during debounce, pipeline work, and the latest viewer composition. The running message disappears on completion or failure and is absent without a source. The last completed image and pointer navigation remain available while it runs. There is no top-right canvas overlay or duplicate result identity in the header. The header retains import, Save, Export, completion, and error evidence, including Export elapsed time and cancellation. Status ownership follows [labels and surfaces](../specs/gui-workflow/spec.md#labels-and-surfaces).
+The single status strip above the canvas identifies **Original**, **Paper back**, or the retained Preview/Scan result and its detail-effects caveat where applicable. It shows **Rendering…**, or **渲染中……** in Simplified Chinese, during debounce, pipeline work, and the latest viewer composition. The running message disappears on completion or failure and is absent without a source. The last completed image and pointer navigation remain available while it runs. There is no top-right canvas overlay or duplicate result identity in the header. The header retains import, Save, and error evidence; an export's progress, outcome, and cancellation belong to the export job strip below it. Status ownership follows [labels and surfaces](../specs/gui-workflow/spec.md#labels-and-surfaces).
 
 The strip reserves two text lines so changing status does not resize the canvas. A long identity is shortened on screen; hover shows its full text.
 
@@ -356,7 +356,9 @@ On macOS, the Metal surface is tagged sRGB.
 
 ## Independent Export
 
-Header **Export** opens the modal **Export options** dialog. Choose **Format**, **Bit depth**, **Saving color space**, and the applicable codec/compression settings. **Apply saving CCTF encoding** is under **Advanced** for TIFF. Choose **Destination** inline, or leave it for the native chooser after **Export file…**. Export uses the execution backend selected in **Settings → Execution**; the dialog has no separate backend setting. Export renders a snapshot of the full input and simulation parameters independently of retained preview output. **Cancel**, an explicit close action, or Escape when Export is the topmost modal discards its unsubmitted draft without changing accepted adjustments or retained output. A backdrop click does not dismiss it.
+Header **Export** (or Ctrl/Cmd+E) opens the modal **Export options** dialog. Choose **Format**, **Bit depth**, **Saving color space**, and the applicable codec/compression settings. **Apply saving CCTF encoding** is a normal TIFF row, not a disclosure. Fixed rows state the value and the reason: JPEG and PNG show **Transfer encoding** as Encoded, and OpenEXR shows Linear plus ZIP compression. Choose **Destination** inline, or leave it for the native chooser when the submit action opens it. The submit action states what the click does: **Export** writes to the confirmed destination, while **Export file…** opens the native chooser. Export uses the execution backend selected in **Settings → Execution**; the dialog has no separate backend setting. Export renders a snapshot of the full input and simulation parameters independently of retained preview output. **Cancel**, an explicit close action, or Escape when Export is the topmost modal discards its unsubmitted draft without changing accepted adjustments or retained output. A backdrop click does not dismiss it.
+
+The destination row shows the folder and the file name on separate lines. Switching **Format** discards a destination confirmed for the other container, and the row says so instead of clearing silently.
 
 Locating another Export control while the dialog is open preserves its draft. Switching **Format** restores that container's last draft instead of carrying incompatible bit-depth or compression choices. The locator changes focus, not the selected delivery options.
 
@@ -364,7 +366,7 @@ Export uses the in-memory input pixels with the simulation parameters. It runs a
 
 Export has no second options area in the inspector. Bottom **SAVE** chooses its format from the filename extension independently of Export preferences; it does not submit an Export request.
 
-Save and Export publish to the exact destination confirmed in the native chooser. Export rejects an extension that does not match the selected format instead of changing the filename. On GTK, **Ctrl+L** can select only the filename stem; use **Ctrl+A** to replace the whole name, including its extension, before entering a full path. Check the displayed final name before confirming replacement.
+Save and Export publish to the exact destination confirmed in the native chooser. Exporting over an existing file asks for **Replace** in the dialog first; declining keeps the draft open. Export rejects an extension that does not match the selected format instead of changing the filename, and a chosen destination that no longer matches is reported in the dialog with the draft intact. On GTK, **Ctrl+L** can select only the filename stem; use **Ctrl+A** to replace the whole name, including its extension, before entering a full path. Check the displayed final name before confirming replacement.
 
 Export's saving color space and transfer encoding are independent of Save's current simulation saving settings. Format capabilities follow the [shared writer](../specs/photo-export/spec.md) and [saving conversion rules](../specs/cli/spec.md#export-and-execution-options):
 
@@ -375,9 +377,9 @@ Export's saving color space and transfer encoding are independent of Save's curr
 | TIFF | 8-bit, 16-bit, or 32-bit float | Optional CCTF | ZIP or none |
 | OpenEXR | 16-bit half or 32-bit float | Linear | ZIP |
 
-Fixed rows show only their effective values; reasons live in the tooltip and accessible description. JPEG quality and subsampling are hidden in other formats until a canonical locator reveals them read-only. Every row remains locatable by its canonical control identity; locating it does not alter the draft.
+Fixed rows show the effective value and state its reason under the row, so a value the user cannot change still explains itself; the same text is the accessible description. JPEG quality and subsampling are hidden in other formats until a canonical locator reveals them read-only. Every row remains locatable by its canonical control identity; locating it does not alter the draft.
 
-The header reports Export status and elapsed time. **Cancel export** discards the result before publication through the active worker's cancellation path. Cancellation may wait for active computation or writing.
+The export job strip under the header owns an interactive export from start to finish. While the render runs it names the file, the execution backend, and the elapsed time, and it carries the run's only **Cancel** action; cancellation discards the result before publication through the active worker's cancellation path and may wait for active computation or writing. When the run ends, the same row becomes the outcome: a success states the delivered dimensions and elapsed time, a failure states its cause in full, and both offer **Open containing folder**, with **Export again…** added for a failure. The row stays until dismissed or superseded by the next export. Queued exports keep their per-entry outcomes in the work list instead.
 
 ### JPEG Export
 
@@ -415,7 +417,7 @@ Choose an output directory and explicitly permit replacement when needed, then s
 
 At submission, the queue resolves parent-directory symlinks and keeps the selected filename. Retargeting that directory alias does not redirect queued writes. If the final filename is a symlink, replacement replaces that link rather than its target.
 
-The queue shows waiting, running, completed, failed, and canceled outcomes. Cancel one job or all remaining jobs without removing completed files. A failure does not stop unrelated entries. **Retry submitted snapshot** repeats the failed submission, not current adjustments. Queue work and interactive Export share the existing staged publication path; the batch is not one atomic transaction. Restart recovery is not supported.
+The queue shows waiting, running, completed, failed, and cancelled outcomes. Cancel one job or all remaining jobs without removing completed files. A failure does not stop unrelated entries. **Retry submitted snapshot** repeats the failed submission, not current adjustments. Queue work and interactive Export share the existing staged publication path; the batch is not one atomic transaction. Restart recovery is not supported.
 
 ## State and defaults
 

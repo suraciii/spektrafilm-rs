@@ -61,7 +61,7 @@ use controls::{normalize_scanner_selections, scan_medium};
 #[cfg(test)]
 use export::ExportBackend;
 use export::{ExportDialog, ExportOptions};
-use export_job::ExportJob;
+use export_job::{ExportJob, ExportNotice};
 use profiles::{
     ProfileEntry, dev_time_combo, pick_data_dir, profile_combo, profile_dev_times, scan_profiles,
 };

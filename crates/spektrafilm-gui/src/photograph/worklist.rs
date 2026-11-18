@@ -1057,19 +1057,10 @@ impl App {
                             }),
                     );
                 });
-                let options = &self.export_options;
-                ui.label(crate::tr!(
-                    ctx,
-                    "photo_work.list.export_summary",
-                    format = options.format.label(),
-                    backend = options.backend.label(),
-                    depth = format!("{:?}", options.depth),
-                    color = &options.saving_color_space,
-                    encoded = options.saving_cctf_encoding,
-                    quality = options.jpeg_quality,
-                    subsampling = format!("{:?}", options.jpeg_subsampling),
-                    compression = options.compression.argument()
-                ));
+                ui.label(
+                    egui::RichText::new(self.export_options.summary(ctx))
+                        .color(crate::theme::FG_SECONDARY),
+                );
                 ui.label(crate::i18n::text(
                     ctx,
                     "photo_work.list.export_options_guidance",

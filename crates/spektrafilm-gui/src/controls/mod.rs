@@ -195,7 +195,20 @@ pub(crate) fn enum_choice<T: Copy + PartialEq>(
     choices: &[(T, &str)],
     tooltip: &str,
 ) -> bool {
-    enum_choice_with_disabled(ui, label, value, choices, tooltip, |_| None)
+    enum_choice_response(ui, label, value, choices, tooltip).changed()
+}
+
+/// The same row, returning its selector so a surface can move keyboard focus
+/// onto the first editable choice — the Export dialog opens there instead of
+/// on its icon-only close action.
+pub(crate) fn enum_choice_response<T: Copy + PartialEq>(
+    ui: &mut Ui,
+    label: &str,
+    value: &mut T,
+    choices: &[(T, &str)],
+    tooltip: &str,
+) -> egui::Response {
+    enum_choice_response_with_disabled(ui, label, value, choices, tooltip, |_| None)
 }
 
 /// Like [`enum_choice`], but a choice may be unavailable with a reason.
@@ -207,6 +220,17 @@ pub(crate) fn enum_choice_with_disabled<T: Copy + PartialEq>(
     tooltip: &str,
     disabled: impl Fn(&T) -> Option<&'static str>,
 ) -> bool {
+    enum_choice_response_with_disabled(ui, label, value, choices, tooltip, disabled).changed()
+}
+
+fn enum_choice_response_with_disabled<T: Copy + PartialEq>(
+    ui: &mut Ui,
+    label: &str,
+    value: &mut T,
+    choices: &[(T, &str)],
+    tooltip: &str,
+    disabled: impl Fn(&T) -> Option<&'static str>,
+) -> egui::Response {
     let selected = choices
         .iter()
         .find(|(option, _)| *option == *value)
@@ -216,58 +240,63 @@ pub(crate) fn enum_choice_with_disabled<T: Copy + PartialEq>(
     // Label first, selector second, so a choice row reads like every other
     // parameter row. The selector paints in its own horizontal row inside a
     // vertical section body, so both share one explicit row here.
-    ui.horizontal(|ui| {
-        let width = ui
-            .available_width()
-            .clamp(theme::WIDTH_COMBO_MIN, theme::WIDTH_COMBO_MAX);
-        let label_width = (ui.available_width() - width - ui.spacing().item_spacing.x).max(0.0);
-        ui.allocate_ui_with_layout(
-            egui::vec2(label_width, theme::HEIGHT_CONTROL),
-            egui::Layout::top_down(egui::Align::Min),
-            |ui| {
-                ui.set_min_width(label_width);
-                ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
-                ui.label(crate::controls::localized(ui.ctx(), label))
-                    .on_hover_text(crate::controls::localized(ui.ctx(), tooltip));
-            },
-        );
-        let response = egui::ComboBox::from_id_salt(label)
-            .width(width)
-            .wrap_mode(egui::TextWrapMode::Truncate)
-            .selected_text(crate::controls::localized(ui.ctx(), selected))
-            .show_ui(ui, |ui| {
-                for &(option, option_label) in choices {
-                    let reason = disabled(&option);
-                    let response = ui
-                        .add_enabled_ui(reason.is_none(), |ui| {
-                            ui.selectable_value(
-                                value,
-                                option,
-                                crate::controls::localized(ui.ctx(), option_label),
-                            )
-                        })
-                        .inner;
-                    if let Some(reason) = reason {
-                        response
-                            .on_disabled_hover_text(crate::controls::localized(ui.ctx(), reason));
+    let response = ui
+        .horizontal(|ui| {
+            let width = ui
+                .available_width()
+                .clamp(theme::WIDTH_COMBO_MIN, theme::WIDTH_COMBO_MAX);
+            let label_width = (ui.available_width() - width - ui.spacing().item_spacing.x).max(0.0);
+            ui.allocate_ui_with_layout(
+                egui::vec2(label_width, theme::HEIGHT_CONTROL),
+                egui::Layout::top_down(egui::Align::Min),
+                |ui| {
+                    ui.set_min_width(label_width);
+                    ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
+                    ui.label(crate::controls::localized(ui.ctx(), label))
+                        .on_hover_text(crate::controls::localized(ui.ctx(), tooltip));
+                },
+            );
+            let response = egui::ComboBox::from_id_salt(label)
+                .width(width)
+                .wrap_mode(egui::TextWrapMode::Truncate)
+                .selected_text(crate::controls::localized(ui.ctx(), selected))
+                .show_ui(ui, |ui| {
+                    for &(option, option_label) in choices {
+                        let reason = disabled(&option);
+                        let response = ui
+                            .add_enabled_ui(reason.is_none(), |ui| {
+                                ui.selectable_value(
+                                    value,
+                                    option,
+                                    crate::controls::localized(ui.ctx(), option_label),
+                                )
+                            })
+                            .inner;
+                        if let Some(reason) = reason {
+                            response.on_disabled_hover_text(crate::controls::localized(
+                                ui.ctx(),
+                                reason,
+                            ));
+                        }
                     }
-                }
-            })
-            .response
-            .on_hover_text(crate::controls::localized(ui.ctx(), tooltip));
-        if let Some(entry) = inventory().iter().find(|entry| {
-            entry.owner == ControlOwner::Export && entry.label.eq_ignore_ascii_case(label)
-        }) {
-            locate_row(ui, &entry.path, &response);
-        }
-        focus_response(ui, label, &response);
-        // The selector carries the parameter's own accessible name.
-        widgets::name_choice(ui, label);
-    });
+                })
+                .response
+                .on_hover_text(crate::controls::localized(ui.ctx(), tooltip));
+            if let Some(entry) = inventory().iter().find(|entry| {
+                entry.owner == ControlOwner::Export && entry.label.eq_ignore_ascii_case(label)
+            }) {
+                locate_row(ui, &entry.path, &response);
+            }
+            focus_response(ui, label, &response);
+            // The selector carries the parameter's own accessible name.
+            widgets::name_choice(ui, label);
+            response
+        })
+        .inner;
     if prev != *value {
         record_label_edit(ui.ctx(), label);
     }
-    prev != *value
+    response
 }
 
 pub(crate) fn apply_feature_profile(

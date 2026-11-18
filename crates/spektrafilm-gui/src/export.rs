@@ -3,7 +3,7 @@
 //! inapplicable codec values remain readable, and only submission commits it.
 use std::path::{Path, PathBuf};
 
-use crate::controls::{self, enum_choice};
+use crate::controls::{self, enum_choice, enum_choice_response};
 use crate::theme;
 use eframe::egui;
 use serde_json::{Value, json};
@@ -243,6 +243,61 @@ impl ExportOptions {
         }
     }
 
+    /// One line stating exactly what the writer will receive. Shared by the
+    /// dialog and the work list's accepted-options block, so both speak the
+    /// writer's vocabulary instead of debug spellings.
+    pub(crate) fn summary(&self, ctx: &egui::Context) -> String {
+        let depth_label = match self.depth {
+            BitDepth::Eight => "8 bit",
+            BitDepth::Sixteen => "16 bit",
+            BitDepth::ThirtyTwo => "32 bit",
+        };
+        let format_label = self.format.label();
+        match self.format {
+            ExportFormat::Exr => crate::tr!(
+                ctx,
+                "surfaces.export.summary_exr",
+                format = format_label,
+                depth = depth_label,
+                space = &self.saving_color_space
+            )
+            .into_owned(),
+            ExportFormat::Jpeg => crate::tr!(
+                ctx,
+                "surfaces.export.summary_jpeg",
+                format = format_label,
+                space = &self.saving_color_space,
+                quality = self.jpeg_quality,
+                subsampling = self.jpeg_subsampling.as_str()
+            )
+            .into_owned(),
+            ExportFormat::Png => crate::tr!(
+                ctx,
+                "surfaces.export.summary_png",
+                format = format_label,
+                space = &self.saving_color_space
+            )
+            .into_owned(),
+            ExportFormat::Tiff => crate::tr!(
+                ctx,
+                "surfaces.export.summary_tiff",
+                format = format_label,
+                depth = depth_label,
+                space = &self.saving_color_space,
+                encoding = if self.saving_cctf_encoding {
+                    std::borrow::Cow::Borrowed("CCTF")
+                } else {
+                    crate::i18n::text(ctx, "surfaces.export.linear")
+                },
+                compression = match self.compression {
+                    ExportCompression::Zip => std::borrow::Cow::Borrowed("ZIP"),
+                    ExportCompression::None => crate::i18n::text(ctx, "surfaces.export.none"),
+                }
+            )
+            .into_owned(),
+        }
+    }
+
     /// Export preferences live in the Rust extension; Save uses simulation settings.
     pub(crate) fn write_state(&self, state: &mut Value) {
         if !state["rust"].is_object() {
@@ -277,24 +332,6 @@ pub(crate) fn output_dimensions(
         io.upscale_factor,
     )?;
     Ok([width, height])
-}
-
-/// Keep the filename end visible in the narrow destination row. The full path
-/// remains available as the row's tooltip.
-fn compact_path(path: &Path) -> String {
-    let text = path.display().to_string();
-    if text.chars().count() <= 24 {
-        return text;
-    }
-    let tail: String = text
-        .chars()
-        .rev()
-        .take(23)
-        .collect::<Vec<_>>()
-        .into_iter()
-        .rev()
-        .collect();
-    format!("…{tail}")
 }
 
 /// Editor column width shared with the choice and switch rows, so a
@@ -338,7 +375,8 @@ fn section_break(ui: &mut egui::Ui) {
 /// editor column, locatable at its canonical path. The value carries the
 /// row's accessible name like an editor does, so the row reads as the
 /// option's state rather than a disabled editor. Its bounded reason line is
-/// visible rather than hover-only, and is also the accessible description.
+/// visible under the row rather than hover-only, and is also the accessible
+/// description: a fixed value the user cannot change must say why.
 fn readonly_row(ui: &mut egui::Ui, label: &str, value: &str, help: &str, path: &str) {
     let response = ui
         .horizontal(|ui| {
@@ -369,6 +407,9 @@ fn readonly_row(ui: &mut egui::Ui, label: &str, value: &str, help: &str, path: &
         node.set_description(help);
     });
     controls::locate_row(ui, path, &response);
+    // The reason is content, not a tooltip: a fixed value the user cannot
+    // change must say why in the place they read the value.
+    ui.label(egui::RichText::new(help).small().color(theme::FG_MUTED));
 }
 
 #[derive(Default)]
@@ -385,6 +426,14 @@ pub(crate) struct ExportDialog {
     /// A locator request for an inactive JPEG row opens the individual
     /// read-only rows for the rest of this dialog session.
     codec_revealed: bool,
+    /// Container whose destination a format switch discarded, so the row can
+    /// say why the previously confirmed path disappeared.
+    cleared_destination: Option<ExportFormat>,
+    /// A destination rejected before submission; the draft stays open.
+    path_error: Option<crate::app::Message>,
+    /// A submit that would replace an existing file waits here for the
+    /// explicit confirmation the header cannot express.
+    replace_confirm: Option<PathBuf>,
 }
 
 pub(crate) enum ExportDialogResult {
@@ -401,6 +450,9 @@ impl ExportDialog {
         self.destination = None;
         self.initial_focus = true;
         self.codec_revealed = false;
+        self.cleared_destination = None;
+        self.path_error = None;
+        self.replace_confirm = None;
     }
     pub(crate) fn is_open(&self) -> bool {
         self.draft.is_some()
@@ -412,6 +464,9 @@ impl ExportDialog {
 
     pub(crate) fn set_destination(&mut self, destination: PathBuf) {
         self.destination = Some(destination);
+        self.cleared_destination = None;
+        self.path_error = None;
+        self.replace_confirm = None;
     }
 
     pub(crate) fn draft(&self) -> Option<&ExportOptions> {
@@ -450,7 +505,8 @@ impl ExportDialog {
             height = dimensions[1]
         );
         // A canonical locator request owns the focus of its frame; otherwise
-        // the dialog places it once, on its explicit close action.
+        // the dialog places it once, on the first editable choice. Enter must
+        // not land on the icon-only close action and discard a fresh draft.
         let locator_requested = ctx.data(|data| {
             data.get_temp::<(String, String)>(egui::Id::new("control_focus_request"))
                 .is_some()
@@ -499,9 +555,6 @@ impl ExportDialog {
                                     close_label.as_ref(),
                                     controls::Icon::Close,
                                 );
-                                if initial_focus {
-                                    close_button.request_focus();
-                                }
                                 close = close_button.clicked();
                             });
                         });
@@ -527,12 +580,15 @@ impl ExportDialog {
                 section_heading(ui, "File and container");
                 let previous_format = draft.format;
                 let previous_draft = draft.clone();
-                enum_choice(ui, "Format", &mut draft.format, &[
+                let format_response = enum_choice_response(ui, "Format", &mut draft.format, &[
                     (ExportFormat::Jpeg, ExportFormat::Jpeg.label()),
                     (ExportFormat::Png, ExportFormat::Png.label()),
                     (ExportFormat::Tiff, ExportFormat::Tiff.label()),
                     (ExportFormat::Exr, ExportFormat::Exr.label()),
                 ], "JPEG: lossy 8-bit for web. PNG: lossless 8-bit. TIFF: 8/16-bit integer or 32-bit float, ZIP or uncompressed. EXR: 16/32-bit linear for compositing.");
+                if initial_focus {
+                    format_response.request_focus();
+                }
                 draft.normalize();
                 if draft.format != previous_format {
                     format_drafts[format_index(previous_format)] =
@@ -553,9 +609,15 @@ impl ExportDialog {
                     // A path chosen through the native save sheet was confirmed
                     // for the previous container. Reusing or rewriting its
                     // extension could overwrite a different existing file
-                    // without a prompt, so make the user choose again.
+                    // without a prompt, so make the user choose again — and
+                    // say so, because the file they picked is now gone.
+                    if destination.is_some() {
+                        self.cleared_destination = Some(previous_format);
+                    }
                     destination = None;
                     self.destination = None;
+                    self.path_error = None;
+                    self.replace_confirm = None;
                 }
                 self.format_drafts = format_drafts;
                 ui.horizontal(|ui| {
@@ -563,36 +625,80 @@ impl ExportDialog {
                         egui::RichText::new(crate::i18n::text(ui.ctx(), "surfaces.export.destination"))
                             .color(theme::FG_SECONDARY),
                     );
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        let button_label = crate::i18n::text(
-                            ui.ctx(),
-                            if destination.is_some() {
-                                "surfaces.export.change_destination"
-                            } else {
-                                "surfaces.export.choose_destination"
-                            },
-                        );
-                        if ui
-                            .add_sized(
-                                egui::vec2(88.0, theme::HEIGHT_CONTROL),
-                                egui::Button::new(button_label),
-                            )
-                            .clicked()
-                        {
-                            choose_destination = true;
-                        }
-                    });
-                });
-                if let Some(path) = destination.as_ref() {
-                    ui.add(
-                        egui::Label::new(
-                            egui::RichText::new(compact_path(path))
-                                .size(theme::SIZE_LABEL)
-                                .color(theme::FG_SECONDARY),
+                    // Same editor column as the choice rows: the button's right
+                    // edge is the column's right edge.
+                    ui.add_space((ui.available_width() - 88.0).max(0.0));
+                    let button_label = crate::i18n::text(
+                        ui.ctx(),
+                        if destination.is_some() {
+                            "surfaces.export.change_destination"
+                        } else {
+                            "surfaces.export.choose_destination"
+                        },
+                    );
+                    if ui
+                        .add_sized(
+                            egui::vec2(88.0, theme::HEIGHT_CONTROL),
+                            egui::Button::new(button_label),
                         )
-                        .truncate(),
-                    )
-                    .on_hover_text(path.display().to_string());
+                        .clicked()
+                    {
+                        choose_destination = true;
+                    }
+                });
+                match destination.as_ref() {
+                    Some(path) => {
+                        let folder = path
+                            .parent()
+                            .map(|parent| parent.display().to_string())
+                            .unwrap_or_default();
+                        let file = path
+                            .file_name()
+                            .map(|name| name.to_string_lossy().into_owned())
+                            .unwrap_or_else(|| path.display().to_string());
+                        ui.vertical(|ui| {
+                            if !folder.is_empty() {
+                                ui.add(
+                                    egui::Label::new(
+                                        egui::RichText::new(&folder)
+                                            .small()
+                                            .color(theme::FG_MUTED),
+                                    )
+                                    .truncate(),
+                                )
+                                .on_hover_text(path.display().to_string());
+                            }
+                            ui.add(
+                                egui::Label::new(
+                                    egui::RichText::new(&file)
+                                        .size(theme::SIZE_LABEL)
+                                        .color(theme::FG),
+                                )
+                                .truncate(),
+                            )
+                            .on_hover_text(path.display().to_string());
+                        });
+                    }
+                    None => {
+                        if let Some(format) = self.cleared_destination {
+                            ui.label(
+                                egui::RichText::new(crate::tr!(
+                                    ui.ctx(),
+                                    "surfaces.export.destination_cleared",
+                                    format = format.label()
+                                ))
+                                .small()
+                                .color(theme::WARNING),
+                            );
+                        }
+                    }
+                }
+                if let Some(error) = self.path_error.as_ref() {
+                    ui.label(
+                        egui::RichText::new(error.localized(ui.ctx()))
+                            .small()
+                            .color(theme::ERROR),
+                    );
                 }
                 let depth_choices: &[(BitDepth, &str)] = match draft.format {
                     ExportFormat::Jpeg | ExportFormat::Png => &[],
@@ -736,65 +842,57 @@ impl ExportDialog {
                 // the same presentation, state, and accessible naming an
                 // inspector boolean gets. Its response keeps the row
                 // locatable by canonical path through the draft's real owner.
+                // It is a normal row, not an "Advanced" drawer: encoded versus
+                // linear is the archival decision, and the summary quotes it.
                 if draft.format == ExportFormat::Tiff {
-                    let advanced_requested = ui.ctx().data(|data| {
-                        data.get_temp::<(String, String)>(egui::Id::new("control_focus_request"))
-                    })
-                    .is_some_and(|(section, target)| {
-                        (section == "Export" || section == "Export options")
-                            && target == "extras.rust.export_saving_cctf_encoding"
-                    });
-                    let advanced_id = ui.make_persistent_id("export-advanced");
-                    let mut advanced =
-                        egui::collapsing_header::CollapsingState::load_with_default_open(
-                            ui.ctx(),
-                            advanced_id,
-                            false,
-                        );
-                    if advanced_requested {
-                        advanced.set_open(true);
-                    }
-                    let advanced_label = crate::controls::localized(ui.ctx(), "Advanced");
-                    let header = ui.horizontal(|ui| {
-                        if crate::controls::disclosure_header(
-                            ui,
-                            advanced_label.as_ref(),
-                            advanced.is_open(),
-                        )
-                        .clicked()
-                        {
-                            advanced.toggle(ui);
-                        }
-                    });
-                    advanced.show_body_indented(&header.response, ui, |ui| {
-                        let cctf_help =
-                            crate::i18n::text(ui.ctx(), "surfaces.export.cctf_help");
-                        let encoding = controls::toggle_row(
-                            ui,
-                            "Apply saving CCTF encoding",
-                            &mut draft.saving_cctf_encoding,
-                            &cctf_help,
-                        );
-                        controls::locate_row(
-                            ui,
-                            "extras.rust.export_saving_cctf_encoding",
-                            &encoding,
-                        );
-                    });
+                    let cctf_help = crate::i18n::text(ui.ctx(), "surfaces.export.cctf_help");
+                    let encoding = controls::toggle_row(
+                        ui,
+                        "Apply saving CCTF encoding",
+                        &mut draft.saving_cctf_encoding,
+                        &cctf_help,
+                    );
+                    controls::locate_row(ui, "extras.rust.export_saving_cctf_encoding", &encoding);
+                } else {
+                    // Fixed by the container, so the row states the value and
+                    // the reason instead of hiding a choice that cannot change.
+                    let fixed = draft.format == ExportFormat::Exr;
+                    let value = crate::i18n::text(
+                        ui.ctx(),
+                        if fixed {
+                            "surfaces.export.encoding_linear"
+                        } else {
+                            "surfaces.export.encoding_encoded"
+                        },
+                    );
+                    let reason = crate::i18n::text(
+                        ui.ctx(),
+                        if fixed {
+                            "surfaces.export.exr_fixed"
+                        } else {
+                            "surfaces.export.encoded_fixed"
+                        },
+                    );
+                    readonly_row(
+                        ui,
+                        "Transfer encoding",
+                        &value,
+                        &reason,
+                        "extras.rust.export_saving_cctf_encoding",
+                    );
+                }
+                if draft.format == ExportFormat::Exr {
+                    let reason = crate::i18n::text(ui.ctx(), "surfaces.export.compression_exr");
+                    readonly_row(
+                        ui,
+                        "Compression",
+                        "ZIP",
+                        &reason,
+                        "extras.rust.export_compression",
+                    );
                 }
                 draft.normalize();
-                let depth_label = match draft.depth {
-                    BitDepth::Eight => "8 bit",
-                    BitDepth::Sixteen => "16 bit",
-                    BitDepth::ThirtyTwo => "32 bit",
-                };
-                let format_label = draft.format.label();
-                let summary = match draft.format {
-                    ExportFormat::Exr => crate::tr!(ui.ctx(), "surfaces.export.summary_exr", format = format_label, depth = depth_label, space = &draft.saving_color_space),
-                    ExportFormat::Jpeg => crate::tr!(ui.ctx(), "surfaces.export.summary_jpeg", format = format_label, space = &draft.saving_color_space, quality = draft.jpeg_quality, subsampling = draft.jpeg_subsampling.as_str()),
-                    ExportFormat::Png => crate::tr!(ui.ctx(), "surfaces.export.summary_png", format = format_label, space = &draft.saving_color_space),
-                    ExportFormat::Tiff => crate::tr!(ui.ctx(), "surfaces.export.summary_tiff", format = format_label, depth = depth_label, space = &draft.saving_color_space, encoding = if draft.saving_cctf_encoding { std::borrow::Cow::Borrowed("CCTF") } else { crate::i18n::text(ui.ctx(), "surfaces.export.linear") }, compression = match draft.compression { ExportCompression::Zip => std::borrow::Cow::Borrowed("ZIP"), ExportCompression::None => crate::i18n::text(ui.ctx(), "surfaces.export.none") }),
-                };
+                let summary = draft.summary(ui.ctx());
                 section_break(ui);
                 section_heading(ui, "Summary and actions");
                 ui.label(egui::RichText::new(source_text.as_ref()).small().color(theme::FG_SECONDARY));
@@ -823,29 +921,103 @@ impl ExportDialog {
                 egui::Frame::NONE
                     .inner_margin(theme::SPACE_DIALOG as i8)
                     .show(ui, |ui| {
-                        ui.allocate_ui_with_layout(
-                            egui::vec2(ui.available_width(), theme::HEIGHT_CONTROL),
-                            egui::Layout::right_to_left(egui::Align::Center),
-                            |ui| {
+                        if let Some(path) = self.replace_confirm.clone() {
+                            let file = path
+                                .file_name()
+                                .map(|name| name.to_string_lossy().into_owned())
+                                .unwrap_or_else(|| path.display().to_string());
+                            ui.label(
+                                egui::RichText::new(crate::tr!(
+                                    ui.ctx(),
+                                    "surfaces.export.replace_title",
+                                    file = file
+                                ))
+                                .strong()
+                                .color(theme::WARNING),
+                            );
+                            ui.label(
+                                egui::RichText::new(crate::i18n::text(
+                                    ui.ctx(),
+                                    "surfaces.export.replace_body",
+                                ))
+                                .small()
+                                .color(theme::FG_SECONDARY),
+                            );
+                            ui.add_space(theme::SPACE_2);
+                            ui.horizontal(|ui| {
                                 ui.spacing_mut().item_spacing.x = theme::SPACE_2;
-                                // The opener and submit are two distinct steps.
-                                let export = ui.add(
-                                    egui::Button::new(
-                                        egui::RichText::new(crate::i18n::text(ui.ctx(), "surfaces.export.submit"))
-                                            .color(theme::CONTRAST_ON_ACCENT),
-                                    ).fill(theme::ACCENT)
+                                let replace = ui.add(
+                                    egui::Button::new(crate::i18n::text(
+                                        ui.ctx(),
+                                        "surfaces.export.replace_confirm",
+                                    ))
+                                    .min_size(egui::vec2(0.0, theme::HEIGHT_CONTROL)),
+                                );
+                                submit = replace.clicked();
+                                let keep = ui.add(
+                                    egui::Button::new(crate::i18n::text(
+                                        ui.ctx(),
+                                        "surfaces.action.cancel",
+                                    ))
+                                    .min_size(egui::vec2(0.0, theme::HEIGHT_CONTROL)),
+                                );
+                                if keep.clicked() {
+                                    self.replace_confirm = None;
+                                }
+                            });
+                        } else if self.replace_confirm.is_none() {
+                            // While the replace confirmation owns the decision,
+                            // the footer offers no second path to the same submit.
+                            ui.allocate_ui_with_layout(
+                                egui::vec2(ui.available_width(), theme::HEIGHT_CONTROL),
+                                egui::Layout::right_to_left(egui::Align::Center),
+                                |ui| {
+                                    ui.spacing_mut().item_spacing.x = theme::SPACE_2;
+                                    // The label states what the click does: with a
+                                    // destination already confirmed it writes there,
+                                    // otherwise it opens the native chooser.
+                                    let submit_label = crate::i18n::text(
+                                        ui.ctx(),
+                                        if destination.is_some() {
+                                            "surfaces.export.submit_ready"
+                                        } else {
+                                            "surfaces.export.submit"
+                                        },
+                                    );
+                                    let export = ui.add(
+                                        egui::Button::new(
+                                            egui::RichText::new(submit_label)
+                                                .color(theme::CONTRAST_ON_ACCENT),
+                                        )
+                                        .fill(theme::ACCENT)
                                         .min_size(egui::vec2(0.0, theme::HEIGHT_CONTROL)),
-                                ).on_hover_text(crate::i18n::text(ui.ctx(), "surfaces.export.submit_help"));
-                                controls::locate_row(ui, "action.export", &export);
-                                submit = export.clicked();
-                                let discard = ui.add(
-                                    egui::Button::new(crate::i18n::text(ui.ctx(), "surfaces.action.cancel"))
+                                    )
+                                    .on_hover_text(crate::i18n::text(
+                                        ui.ctx(),
+                                        "surfaces.export.submit_help",
+                                    ));
+                                    controls::locate_row(ui, "action.export", &export);
+                                    submit = export.clicked();
+                                    let discard = ui.add(
+                                        egui::Button::new(crate::i18n::text(
+                                            ui.ctx(),
+                                            "surfaces.action.cancel",
+                                        ))
                                         .min_size(egui::vec2(0.0, theme::HEIGHT_CONTROL)),
-                                ).on_hover_text(crate::i18n::text(ui.ctx(), "surfaces.export.discard_help"));
-                                controls::locate_row(ui, "action.cancel_export_draft", &discard);
-                                cancel = discard.clicked();
-                            },
-                        );
+                                    )
+                                    .on_hover_text(crate::i18n::text(
+                                        ui.ctx(),
+                                        "surfaces.export.discard_help",
+                                    ));
+                                    controls::locate_row(
+                                        ui,
+                                        "action.cancel_export_draft",
+                                        &discard,
+                                    );
+                                    cancel = discard.clicked();
+                                },
+                            );
+                        }
                     });
             });
         // The modal root carries the dialog's accessible name and bounds.
@@ -872,6 +1044,23 @@ impl ExportDialog {
         if submit {
             let mut options = self.draft.take()?;
             options.normalize();
+            if let Some(path) = destination.as_ref() {
+                // The native chooser cannot be the only guard: a path chosen
+                // earlier can stop matching the container, and an existing file
+                // must be replaced on purpose. Both keep the draft open.
+                if let Err(error) = options.format.validate_path(path) {
+                    self.path_error = Some(error);
+                    self.draft = Some(options);
+                    return None;
+                }
+                let approved = self.replace_confirm.as_deref() == Some(path.as_path());
+                if !approved && path.try_exists().unwrap_or(false) {
+                    self.replace_confirm = Some(path.clone());
+                    self.draft = Some(options);
+                    return None;
+                }
+            }
+            self.replace_confirm = None;
             return Some(ExportDialogResult::Export(options));
         }
         None
@@ -913,6 +1102,54 @@ mod tests {
             saving_color_space: "sRGB".to_owned(),
             saving_cctf_encoding: true,
         }
+    }
+
+    /// The shared summary speaks the writer's vocabulary for every container:
+    /// no debug enum, boolean literal, or CLI token reaches the user.
+    #[test]
+    fn the_shared_summary_states_writer_values_for_every_container() {
+        let ctx = egui::Context::default();
+        for format in [
+            ExportFormat::Jpeg,
+            ExportFormat::Png,
+            ExportFormat::Tiff,
+            ExportFormat::Exr,
+        ] {
+            let space = if format == ExportFormat::Exr {
+                "ACES2065-1"
+            } else {
+                "Adobe RGB (1998)"
+            };
+            let mut draft = options(BitDepth::Sixteen, format, ExportCompression::Zip);
+            draft.saving_color_space = space.into();
+            draft.normalize();
+            let summary = draft.summary(&ctx);
+            for leak in [
+                "Eight",
+                "Sixteen",
+                "ThirtyTwo",
+                "Yuv",
+                "encoded=",
+                "zip",
+                "none",
+            ] {
+                assert!(
+                    !summary.contains(leak),
+                    "{format:?} summary leaks {leak}: {summary}"
+                );
+            }
+            assert!(
+                summary.contains(space),
+                "{format:?} summary omits the saving color space: {summary}"
+            );
+        }
+        let mut tiff = options(
+            BitDepth::Sixteen,
+            ExportFormat::Tiff,
+            ExportCompression::Zip,
+        );
+        tiff.normalize();
+        assert_eq!(tiff.summary(&ctx), "TIFF · 16 bit · sRGB · CCTF · ZIP");
     }
 
     /// The fixed rows state exactly what the writer receives: a normalized
