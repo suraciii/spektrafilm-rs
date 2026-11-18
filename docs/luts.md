@@ -2,6 +2,20 @@
 
 This page describes LUT baker inputs, bundle contents, and format orders. The [LUT delivery specification](../specs/lut-delivery/spec.md) owns the delivery contract.
 
+## Runtime LUT mode
+
+LUT mode consumes **one external `.cube`** at the final RGB boundary. It
+evaluates one display-encoded sRGB to sRGB table; it does not run film or print
+stages, normalize a negative, or bake print exposure between stages. A look
+that needs film/print behavior must be compiled into that single cube by an
+external tool.
+
+A LUT preset keeps the external file path and content hash. A missing or
+changed file fails validation; the product does not search for a replacement.
+LUT assets are user files, not a built-in library or preview cache.
+Proprietary or private LUTs must remain outside the repository and release
+package.
+
 ## Baker inputs
 
 The calibrated LUT creator mirrors the upstream LUT path in deterministic `lut_mode`.
